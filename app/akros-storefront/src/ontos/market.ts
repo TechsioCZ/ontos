@@ -1,24 +1,24 @@
 import "server-only";
 // Storefront market resolution (owner: commerce.market-catalog; offer/currency: merchandise).
-//   1. `current-market-catalog {at}` (cached 60 s): associations of this storefront (configured app id), channel B2C,
+//   1. `current-market-catalog {at}` (once per operation): associations of this storefront (configured app id), channel B2C,
 //      effective now, sold by the configured legal entity → the market whose primary locale (supportedLocales[0]) is the path.
 //   2. The market's own definition decides: ACTIVE and effective now = live market, SUSPENDED or outside its validity =
 //      „dočasně nedostupný“, a locale without an association = unknown (404). (`resolve-commerce-market` needs a
 //      trusted-storefront gateway context that the Shell gateway does not issue to the storefront service key.)
 //   3. merchandise `storefrontCatalog {marketId}` returns the market's currency and whether its offer is configured.
 // Before any market exists (no market of this seller, no association of this storefront, or the market owner not
-// active/granted for this storefront yet), `/cs` serves the Czech CZK catalogue without a market filter; every other
+// part of this storefront's approved composition yet), `/cs` serves the Czech CZK catalogue without a market filter; every other
 // locale is unknown. As soon as one market or association exists, only the owners' markets are served.
 // The path locale is only a selector: nothing a browser sends is used before the owners confirmed it.
-import { Match } from "effect";
+import { Effect, Match } from "effect";
 import { getConfig } from "./config";
-import { OntosError, readRecords } from "./gateway";
+import { createOperation, OntosError, OperationError, readRecords } from "./gateway";
+import type { OperationOptions } from "./gateway";
 import { isLocaleSegment } from "./market-locale";
 import { isStoreCurrency, type StoreCurrency } from "@/lib/format";
 
 const MARKET_CATALOG_AUDIENCE = "commerce-market-catalog";
 const CHANNEL = "B2C";
-export const MARKET_CACHE_MS = 60_000;
 
 type Raw = Record<string, unknown>;
 const isRaw = (value: unknown): value is Raw =>
@@ -235,105 +235,172 @@ export function marketOfferOf(body: unknown, marketId: string): MarketOffer {
   return { currency: market.currency, configured: market.configured !== false };
 }
 
-/** Isolate-local 60 s cache with in-flight sharing; failures are never cached. */
-const ttlCache = <T>(ttlMs: number, limit: number) => {
-  const entries = new Map<string, { at: number; value: Promise<T> }>();
-  return (key: string, load: () => Promise<T>): Promise<T> => {
-    const held = entries.get(key);
-    if (held !== undefined && Date.now() - held.at < ttlMs) return held.value;
-    entries.delete(key);
-    if (entries.size >= limit) {
-      const oldest = entries.keys().next().value;
-      if (oldest !== undefined) entries.delete(oldest);
-    }
-    const value = load();
-    entries.set(key, { at: Date.now(), value });
-    value.catch(() => {
-      if (entries.get(key)?.value === value) entries.delete(key);
-    });
-    return value;
+/** Read the directory at this operation's instant; a denial is never proof of an empty installation. */
+const loadMarketDirectory = async (options: OperationOptions): Promise<MarketDirectory> => {
+  const now = Date.now();
+  const { appId, legalEntityId } = getConfig();
+  const identity: StorefrontIdentity = { appId, legalEntityId };
+  let body: unknown;
+  try {
+    body = await readRecords(
+      MARKET_CATALOG_AUDIENCE,
+      "current-market-catalog",
+      {
+        at: new Date(now).toISOString(),
+      },
+      options,
+    );
+  } catch (error) {
+    if (!isMarketOwnerNotProvisioned(error)) throw error;
+    console.warn(
+      "[akros] commerce-market-catalog is not available to this storefront; serving /cs without a market",
+    );
+    return { entries: [], unmarketed: true };
+  }
+  return {
+    entries: storefrontMarkets(body, now, identity),
+    unmarketed: !hasMarketData(body, identity),
   };
 };
 
-const directoryCache = ttlCache<MarketDirectory>(MARKET_CACHE_MS, 1);
-const offerCache = ttlCache<MarketOffer>(MARKET_CACHE_MS, 20);
-
-/** This storefront's associated markets (cached 60 s, also when the market owner is not provisioned). */
-export const readMarketDirectory = (): Promise<MarketDirectory> =>
-  directoryCache("", async () => {
-    const now = Date.now();
-    const { appId, legalEntityId } = getConfig();
-    const identity: StorefrontIdentity = { appId, legalEntityId };
-    let body: unknown;
-    try {
-      body = await readRecords(MARKET_CATALOG_AUDIENCE, "current-market-catalog", {
-        at: new Date(now).toISOString(),
-      });
-    } catch (error) {
-      if (!isMarketOwnerNotProvisioned(error)) throw error;
-      console.warn(
-        "[akros] commerce-market-catalog is not available to this storefront; serving /cs without a market",
-      );
-      return { entries: [], unmarketed: true };
-    }
-    return {
-      entries: storefrontMarkets(body, now, identity),
-      unmarketed: !hasMarketData(body, identity),
-    };
-  });
-
-/** Currency and offer state of one market (cached 60 s); the smallest product read that carries `market`. */
-export const readMarketOffer = (marketId: string): Promise<MarketOffer> =>
-  offerCache(marketId, async () =>
-    marketOfferOf(
-      await readRecords("merchandise", "records", {
+/** The smallest product read carrying this market's currency and offer state. */
+const loadMarketOffer = async (marketId: string, options: OperationOptions): Promise<MarketOffer> =>
+  marketOfferOf(
+    await readRecords(
+      "merchandise",
+      "records",
+      {
         view: {
           storefront: true,
           storefrontCatalog: { marketId, pageSize: 1, fields: "card", includeCategories: false },
         },
-      }),
-      marketId,
+      },
+      options,
     ),
+    marketId,
   );
 
-/** Markets a customer can open now, with their currency when merchandise reports it. */
-async function liveMarkets(entries: StorefrontMarketEntry[]): Promise<LiveMarket[]> {
+/** Promises belong to one operation, including rejected promises; no owner state crosses requests. */
+export const createMarketReadOperation = (options: OperationOptions = {}) => {
+  const owned = options.operation === undefined || options.signal !== undefined;
+  const operation = owned
+    ? Effect.runSync(
+        createOperation({
+          signal: options.operation
+            ? AbortSignal.any([
+                options.operation.signal,
+                ...(options.signal ? [options.signal] : []),
+              ])
+            : options.signal,
+          parent: options.operation,
+        }),
+      )
+    : options.operation!;
+  const lifetime = { operation };
+  let directory: Promise<MarketDirectory> | undefined;
+  const offers = new Map<string, Promise<MarketOffer>>();
+  return {
+    dispose: () => {
+      if (owned) operation.dispose();
+    },
+    check: () => operation.check(),
+    directory: (): Promise<MarketDirectory> => {
+      operation.check();
+      return (directory ??= loadMarketDirectory(lifetime));
+    },
+    offer: (marketId: string): Promise<MarketOffer> => {
+      operation.check();
+      const held = offers.get(marketId);
+      if (held !== undefined) return held;
+      const offer = loadMarketOffer(marketId, lifetime);
+      offers.set(marketId, offer);
+      return offer;
+    },
+  };
+};
+export type MarketReadOperation = ReturnType<typeof createMarketReadOperation>;
+export type ActiveMarketResolution =
+  | { kind: "live"; market: ActiveMarket }
+  | { kind: "not-active"; locale: string; marketCode: string }
+  | { kind: "unknown"; locale: string };
+
+/** Markets a customer can open now, with currency when merchandise reports it. */
+async function liveMarkets(
+  entries: StorefrontMarketEntry[],
+  operation: MarketReadOperation,
+): Promise<LiveMarket[]> {
   const open = entries.filter((entry) => entry.lifecycle === "ACTIVE" && entry.marketEffective);
-  const offers = await Promise.allSettled(open.map((entry) => readMarketOffer(entry.marketId)));
-  return open.map((entry, index) => {
-    const offer = offers[index];
-    return {
-      locale: entry.locale,
-      marketCode: entry.marketCode,
-      label: entry.label,
-      ...(offer.status === "fulfilled" ? { currency: offer.value.currency } : {}),
-    };
-  });
+  const live: LiveMarket[] = open.map(({ locale, marketCode, label }) => ({
+    locale,
+    marketCode,
+    label,
+  }));
+  let next = 0;
+  const worker = async () => {
+    while (next < open.length) {
+      operation.check();
+      const index = next++;
+      try {
+        const offer = await operation.offer(open[index].marketId);
+        live[index].currency = offer.currency;
+      } catch (error) {
+        operation.check();
+        if (
+          error instanceof OperationError &&
+          (error.kind === "cancelled" || error.kind === "deadline")
+        )
+          throw error;
+        // Switcher currencies are optional, including when owner admission is saturated.
+      }
+    }
+  };
+  // Start owner work lazily: the number of open markets must not exhaust process admission.
+  await Promise.all(Array.from({ length: Math.min(2, open.length) }, worker));
+  operation.check();
+  return live;
 }
 
-/** Proxy routing only: whether a path locale is a live, unavailable or unknown market (no merchandise read). */
-export async function storefrontMarketKind(locale: string): Promise<ResolutionOutcome> {
-  const directory = await readMarketDirectory();
-  if (directory.unmarketed) return locale === UNMARKETED_LOCALE ? "live" : "unknown";
-  const entry = directory.entries.find((candidate) => candidate.locale === locale);
-  return entry === undefined ? "unknown" : outcomeOf(entry);
+/** Proxy routing only. This is a separate operation from the subsequent Next render. */
+export async function storefrontMarketKind(
+  locale: string,
+  options: OperationOptions = {},
+): Promise<ResolutionOutcome> {
+  const operation = createMarketReadOperation(options);
+  try {
+    const directory = await operation.directory();
+    if (directory.unmarketed) return locale === UNMARKETED_LOCALE ? "live" : "unknown";
+    const entry = directory.entries.find((candidate) => candidate.locale === locale);
+    return entry === undefined ? "unknown" : outcomeOf(entry);
+  } finally {
+    operation.dispose();
+  }
 }
 
-/** Resolves a path locale to the request's market (owner reads cached 60 s). */
-export async function resolveStorefrontMarket(locale: string): Promise<MarketResolution> {
-  const { entries, unmarketed } = await readMarketDirectory();
+/** API reads need only the selected offer, never the switcher's all-market fanout. */
+export async function resolveActiveStorefrontMarket(
+  locale: string,
+  operation?: MarketReadOperation,
+): Promise<ActiveMarketResolution> {
+  if (operation === undefined) {
+    const owned = createMarketReadOperation();
+    try {
+      return await resolveActiveStorefrontMarket(locale, owned);
+    } finally {
+      owned.dispose();
+    }
+  }
+  const { entries, unmarketed } = await operation.directory();
   if (unmarketed)
     return locale === UNMARKETED_LOCALE
-      ? { kind: "live", market: UNMARKETED_MARKET, live: UNMARKETED_LIVE }
-      : { kind: "unknown", locale, live: UNMARKETED_LIVE };
-  const live = await liveMarkets(entries);
+      ? { kind: "live", market: UNMARKETED_MARKET }
+      : { kind: "unknown", locale };
   const entry = isLocaleSegment(locale)
     ? entries.find((candidate) => candidate.locale === locale)
     : undefined;
-  if (entry === undefined) return { kind: "unknown", locale, live };
+  if (entry === undefined) return { kind: "unknown", locale };
   if (outcomeOf(entry) === "not-active")
-    return { kind: "not-active", locale, marketCode: entry.marketCode, live };
-  const offer = await readMarketOffer(entry.marketId);
+    return { kind: "not-active", locale, marketCode: entry.marketCode };
+  const offer = await operation.offer(entry.marketId);
   return {
     kind: "live",
     market: {
@@ -344,6 +411,25 @@ export async function resolveStorefrontMarket(locale: string): Promise<MarketRes
       currency: offer.currency,
       configured: offer.configured,
     },
-    live,
   };
+}
+
+/** Render chrome and selected market share one directory and the same selected-offer promise. */
+export async function resolveStorefrontMarket(
+  locale: string,
+  operation?: MarketReadOperation,
+): Promise<MarketResolution> {
+  if (operation === undefined) {
+    const owned = createMarketReadOperation();
+    try {
+      return await resolveStorefrontMarket(locale, owned);
+    } finally {
+      owned.dispose();
+    }
+  }
+  const { entries, unmarketed } = await operation.directory();
+  // Required work takes precedence over optional switcher currencies.
+  const resolution = await resolveActiveStorefrontMarket(locale, operation);
+  const live = unmarketed ? UNMARKETED_LIVE : await liveMarkets(entries, operation);
+  return { ...resolution, live };
 }

@@ -1,10 +1,10 @@
+import { Effect } from "effect";
 // @vitest-environment node
 import { spawn } from "node:child_process";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { build } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as gateway from "@/ontos/gateway";
-import { withRetryClock } from "../support/clock";
 import { serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
 
@@ -21,7 +21,7 @@ const deferred = () => {
 
 // Node's react-server condition selects the real server cache. Next's RSC renderer
 // installs the dispatcher; request stores alone and ordinary SSR do not do that.
-// Only TypeScript is bundled. React and the renderer remain native dependencies.
+// Only application TypeScript is bundled. React, Effect and Next remain native dependencies.
 async function render(
   operation: string,
   checkpoint: (value: unknown) => void | Promise<void> = () => {},
@@ -31,7 +31,9 @@ async function render(
     stdin: {
       resolveDir: storefront,
       contents: `
+        import 'next/dist/server/node-environment-baseline';
         import * as gateway from './src/ontos/gateway';
+        import { renderOperation } from './src/ontos/render-operation';
         import * as React from 'react';
         import { randomUUID } from 'node:crypto';
         import { renderToReadableStream } from 'next/dist/compiled/react-server-dom-webpack/server.node';
@@ -46,7 +48,10 @@ async function render(
           const request = nextRequest();
           return request.run(async () => {
             let result;
+            let operation;
             async function Probe() {
+              operation = renderOperation();
+              if (operation !== renderOperation()) throw new Error("Render lifetime was acquired twice");
               const renderKey = cached();
               if (renderKey !== cached()) throw new Error('Missing real RSC cache dispatcher');
               result = { value: await (async () => { ${operation} })(), renderKey };
@@ -59,7 +64,10 @@ async function render(
               const payload = await new Response(stream).text();
               if (!payload.includes('gateway render complete')) throw new Error(payload);
               return result;
-            } finally { await request.close(); }
+            } finally {
+              await request.close();
+              if (operation && !operation.signal.aborted) throw new Error("Next after left the acquired scope open");
+            }
           });
         }
         Promise.all(Array.from({length: ${renderCount}}, renderOne)).then(results => {
@@ -76,7 +84,7 @@ async function render(
     write: false,
     platform: "node",
     format: "cjs",
-    external: ["react", "react-dom", "next/*"],
+    external: ["react", "react-dom", "next/*", "effect", "effect/*"],
     // Same Next-owned empty marker as the existing Vitest configuration.
     alias: {
       "server-only": fileURLToPath(
@@ -206,8 +214,8 @@ afterEach(async () => {
   await network.close();
   vi.unstubAllEnvs();
 });
-const read = (query: unknown = {}) =>
-  context.run(() => gateway.readRecords("merchandise", "records", query));
+const read = (query: unknown = {}, options: gateway.OperationOptions = {}) =>
+  context.run(() => gateway.readRecords("merchandise", "records", query, options));
 const action = (...args: Parameters<typeof gateway.callAction>) =>
   context.run(() => gateway.callAction(...args));
 const requestAt = (index: number) => {
@@ -275,6 +283,19 @@ describe("OntOS gateway assertions", () => {
       blockedTree.resolve();
     }
   });
+  it("shares one acquired request admission across 33 parallel owner calls in a native render", async () => {
+    const result = await render(
+      `return await Promise.all(Array.from({ length: 33 }, (_, index) => read({ index })));`,
+    );
+    expect(result.value).toEqual(
+      Array.from({ length: 33 }, (_, index) => ({
+        ok: expect.stringMatching(/^Bearer t\d+$/u),
+        query: { index },
+      })),
+    );
+    await network.idle();
+    expect(network.requests).toHaveLength(33);
+  });
   it("never shares pending issuance between renders", async () => {
     pendingRenders = deferred();
     const renders = await render("return await read();", () => {}, 2);
@@ -325,38 +346,88 @@ describe("OntOS gateway assertions", () => {
     expect(network.requests).toHaveLength(5);
   });
   it.each([400, 401, 409])(
-    "replaces a rejected assertion (HTTP %s) and rebinds to the current revision",
+    "does not replay an arbitrary assertion rejection (HTTP %s)",
     async (status) => {
-      revision = "b".repeat(64);
       responses.push(json(status, { code: "assertion_rejected" }));
-      await render(`await checkpoint(await read()); await read();`, (value) => {
-        expect(value).toEqual({ ok: "Bearer t1", query: {} });
-      });
+      await expect(read()).rejects.toMatchObject({ status, code: "assertion_rejected" });
       await network.idle();
-      expect(network.requests.at(-1)?.url).toContain("/auth/api-key/gateway-read");
-      expect(minted).toBe(2);
+      expect(network.requests).toHaveLength(1);
+      expect(minted).toBe(0);
     },
   );
-  it("waits out a deploy handoff of several unavailable responses before serving the read", async () => {
-    for (let index = 0; index < 6; index += 1)
-      responses.push(json(503, { code: "backend_unreachable" }));
-    await withRetryClock(async () => {
-      expect(await read({ slug: "during-deploy" })).toMatchObject({
-        query: { slug: "during-deploy" },
-      });
-    });
+  it("reissues the combined read for an explicit release change, never replaying an assertion", async () => {
+    revision = "b".repeat(64);
+    responses.push(
+      json(409, {
+        type: "https://ontos.dev/problems/gateway-reload-required",
+        reloadRequired: true,
+      }),
+    );
+    expect(await read()).toEqual({ ok: "Bearer t1", query: {} });
+    expect(await read()).toEqual({ ok: "Bearer t2", query: {} });
+    await network.idle();
+    expect(network.requests).toHaveLength(3);
+    expect(minted).toBe(2);
+    expect(redeemed).toEqual(new Set(["Bearer t1", "Bearer t2"]));
+    const attempts = network.requests.slice(0, 2);
+    expect(new Set(attempts.map((request) => request.headers.get("x-correlation-id"))).size).toBe(
+      2,
+    );
+    for (const request of attempts) {
+      expect(request.url).toContain("/auth/api-key/gateway-read");
+      expect(request.headers.get("authorization")).toBeNull();
+      expect(request.headers.get("x-api-key")).toBe("key");
+    }
   });
-  it("gives up on a read once the unavailable budget is spent", async () => {
-    always = () => json(503, { code: "backend_unreachable" });
-    await withRetryClock(async () => {
-      expect(await read().catch((error: unknown) => error)).toMatchObject({ status: 503 });
+  it("recovers within the allowed read-admission attempts during a deploy handoff", async () => {
+    for (let index = 0; index < 2; index += 1)
+      responses.push(
+        json(503, {
+          type: "https://ontos.dev/problems/gateway-unavailable",
+          retryable: true,
+        }),
+      );
+    expect(await read({ slug: "during-deploy" })).toMatchObject({
+      query: { slug: "during-deploy" },
     });
     await network.idle();
-    const readCalls = network.requests.filter((request) =>
-      request.url.endsWith("/auth/api-key/gateway-read"),
-    ).length;
-    expect(readCalls).toBeGreaterThan(3);
-    expect(readCalls).toBeLessThan(20);
+    expect(network.requests).toHaveLength(3);
+    expect(
+      new Set(network.requests.map((request) => request.headers.get("x-correlation-id"))).size,
+    ).toBe(3);
+  });
+  it.each([
+    { type: "https://ontos.dev/problems/gateway-unavailable", retryable: true },
+    { code: "read_handler_unavailable" },
+  ])("stops after three explicitly recoverable read-admission refusals (%j)", async (body) => {
+    always = () => json(503, body);
+    await expect(read()).rejects.toMatchObject({ status: 503 });
+    await network.idle();
+    expect(network.requests).toHaveLength(3);
+    expect(
+      new Set(network.requests.map((request) => request.headers.get("x-correlation-id"))).size,
+    ).toBe(3);
+  });
+  it.each([502, 503])("does not infer retry authority from HTTP %s alone", async (status) => {
+    always = () => json(status, {});
+    await expect(read()).rejects.toMatchObject({ status });
+    await network.idle();
+    expect(network.requests).toHaveLength(1);
+  });
+  it("ends a 50ms total operation during 400ms backoff without starting another credential request", async () => {
+    always = () =>
+      json(503, {
+        type: "https://ontos.dev/problems/gateway-unavailable",
+        retryable: true,
+      });
+    const operation = Effect.runSync(gateway.createOperation({ timeoutMs: 50 }));
+    try {
+      await expect(read({}, { operation })).rejects.toMatchObject({ kind: "deadline" });
+      await network.idle();
+      expect(network.requests).toHaveLength(1);
+    } finally {
+      operation.dispose();
+    }
   });
   it("does not retry forbidden reads or serve an earlier result", async () => {
     await read();

@@ -1,3 +1,10 @@
+import {
+  actionMayHaveDispatched,
+  boundOwnerClient,
+  recordActionDispatch,
+  withActionDispatch,
+  withOwnerOperation,
+} from "./owner-operation";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { executeSubmitStorefrontInquiryWithAuthorization } from "@app/work-tasks/clients/submit-storefront-inquiry";
@@ -37,7 +44,6 @@ const mintAssertion = (config: StorefrontConfiguration) =>
       { audience: "work-tasks", legalEntityId: config.legalEntityId },
     ).pipe(Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })));
     const response = yield* HttpClient.execute(request).pipe(
-      Effect.timeout("10 seconds"),
       Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
     );
     if (response.status < 200 || response.status >= 300) {
@@ -46,13 +52,22 @@ const mintAssertion = (config: StorefrontConfiguration) =>
       });
     }
     const raw = yield* response.json.pipe(
-      Effect.timeout("10 seconds"),
       Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
     );
     return yield* Schema.decodeUnknownEffect(ContextSchema)(raw).pipe(
       Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
     );
   });
+
+const inquiryDispatchFailure = actionMayHaveDispatched.pipe(
+  Effect.flatMap((dispatched) =>
+    Effect.fail(
+      new InquiryFailure({
+        reason: dispatched ? "unconfirmed" : "unavailable",
+      }),
+    ),
+  ),
+);
 
 /** One `work.tasks.submit-storefront-inquiry` write under the given idempotency key; never repeated here. */
 const writeInquiry = (
@@ -70,9 +85,9 @@ const writeInquiry = (
         baseUrl: `${config.shellUrl}${context.apiBaseUrl}`,
         compositionRevision: context.compositionRevision,
         idempotencyKey,
+        transformClient: (client) => boundOwnerClient(client, recordActionDispatch),
       },
     ).pipe(
-      Effect.timeout("20 seconds"),
       Effect.catchTags({
         SubmitStorefrontInquiryActionAlreadyCommittedProblem: () =>
           Effect.fail(new InquiryFailure({ reason: "committed" })),
@@ -89,7 +104,7 @@ const writeInquiry = (
       Effect.catch((error) =>
         Match.value(error).pipe(
           Match.tag("InquiryFailure", (failure) => Effect.fail(failure)),
-          Match.orElse(() => Effect.fail(new InquiryFailure({ reason: "unconfirmed" }))),
+          Match.orElse(() => inquiryDispatchFailure),
         ),
       ),
     );
@@ -110,12 +125,21 @@ export const readInquiryProduct = (locale: string, selector: InquiryProduct) =>
   );
 
 export const persistInquiry = (inquiry: Inquiry) =>
-  Effect.gen(function* persistInquiryProgram() {
-    const config = yield* readConfiguration(process.env).pipe(
-      Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
-    );
-    return yield* sendInquiry(inquiry, {
-      product: (selector) => readInquiryProduct(inquiry.locale, selector),
-      submit: (payload, idempotencyKey) => writeInquiry(config, payload, idempotencyKey),
-    });
-  });
+  withActionDispatch(
+    withOwnerOperation(
+      Effect.gen(function* persistInquiryProgram() {
+        const config = yield* readConfiguration(process.env).pipe(
+          Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
+        );
+        return yield* sendInquiry(inquiry, {
+          product: (selector) => readInquiryProduct(inquiry.locale, selector),
+          submit: (payload, idempotencyKey) => writeInquiry(config, payload, idempotencyKey),
+        });
+      }),
+    ).pipe(
+      Effect.catchTags({
+        OperationError: () => inquiryDispatchFailure,
+        SchemaError: () => Effect.fail(new InquiryFailure({ reason: "unavailable" })),
+      }),
+    ),
+  );

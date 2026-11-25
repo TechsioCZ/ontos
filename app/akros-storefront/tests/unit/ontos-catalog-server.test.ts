@@ -129,6 +129,7 @@ async function renderConcurrentCatalog() {
             server.getCategoryTree(undefined),
             server.getCategoryTree(""),
             server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }),
+            server.readProducts({ slug: "p1", pageSize: 1 }, "full"),
             server.getCatalog(),
           ]);
           probe.push(memo());
@@ -292,13 +293,11 @@ afterEach(async () => {
 });
 
 describe("OntOS catalog server reads", () => {
-  it("reads navigation for each request and expires home and detail prices after 10 seconds", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+  it("reads navigation, home and detail anew on independent requests", async () => {
     await inRequest(() => server.getCatalog());
     await inRequest(() => server.readProducts({ slug: "p1", pageSize: 1 }, "full"));
     await network.idle();
     calls.length = 0;
-    vi.advanceTimersByTime(14 * 60_000);
     await inRequest(() => server.getShellSnapshot());
     await network.idle();
     expect(calls.map(catalogOf)).toEqual([{ mode: "categories", includeCategories: true }]);
@@ -308,7 +307,6 @@ describe("OntOS catalog server reads", () => {
       { featured: true, pageSize: 20, fields: "card", includeCategories: false },
       { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
     ]);
-    expect(server.CATALOG_CACHE_MS).toBe(10_000);
   });
   const pricedViews = [
     {
@@ -335,9 +333,8 @@ describe("OntOS catalog server reads", () => {
     },
   ];
   it.each(pricedViews)(
-    "shows an admin price and stock edit on the very next $name view after 10 seconds",
-    async ({ name, read }) => {
-      vi.useFakeTimers({ toFake: ["Date"] });
+    "shows an admin price and stock edit on the very next independent $name view",
+    async ({ read }) => {
       expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
       answer = () => ({
         revision: 6,
@@ -348,26 +345,16 @@ describe("OntOS catalog server reads", () => {
         products: [{ ...product("p1"), grossPriceMinor: 242, stockOnHand: 2 }],
         categories: tree,
       });
-      vi.advanceTimersByTime(9_999);
-      expect(await read()).toMatchObject(
-        name === "category first page"
-          ? { priceMinor: 242, stockCount: 2 }
-          : { priceMinor: 121, stockCount: 5 },
-      );
-      await network.idle();
-      vi.advanceTimersByTime(1);
       expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 });
       await network.idle();
     },
   );
   it.each(pricedViews)(
-    "rejects expired $name prices when the owner is unavailable instead of rendering old data",
+    "rejects $name prices immediately when the owner becomes unavailable",
     async ({ read }) => {
-      vi.useFakeTimers({ toFake: ["Date"] });
       await read();
-      vi.advanceTimersByTime(10_000);
       ownerUnavailable = true;
-      await expect(read()).rejects.toThrow("owner_unavailable");
+      await expect(read()).rejects.toMatchObject({ code: "owner_unavailable" });
     },
   );
   it("reads products as bounded cards without the category tree and without unset keys", async () => {
@@ -399,7 +386,7 @@ describe("OntOS catalog server reads", () => {
       ],
     ]);
   });
-  it("answers every read for the request's market and keys the caches by market", async () => {
+  it("answers every independent read for the request's market", async () => {
     await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
     await inRequest(() => server.getCategoryTree());
     requestMarket.id = skMarketId;
@@ -415,7 +402,7 @@ describe("OntOS catalog server reads", () => {
     await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
     await inRequest(() => server.getCategoryTree());
     await network.idle();
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
   });
   it("sends no market before any market exists (the whole CZK catalogue)", async () => {
     requestMarket.id = undefined;
@@ -426,15 +413,14 @@ describe("OntOS catalog server reads", () => {
     await network.idle();
     expect(calls).toHaveLength(2);
   });
-  it("caches equal product queries briefly and bypasses the cache for fresh reads", async () => {
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
-    await network.idle();
-    expect(calls).toHaveLength(1);
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full", true));
+  it("does not retain equal product queries across independent requests", async () => {
+    await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
+    await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
     await network.idle();
     expect(calls).toHaveLength(2);
-    expect(server.CATALOG_CACHE_MS).toBeLessThanOrEqual(15_000);
+    await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full", true));
+    await network.idle();
+    expect(calls).toHaveLength(3);
   });
   it("reads the navigation tree on each request, separately from products", async () => {
     await inRequest(() => server.getCatalogPage({ q: "a", pageSize: 24 }));

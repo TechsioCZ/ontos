@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/ontos/inquiries/route";
 import { readProducts } from "@/ontos/catalog-server";
+import { parseInquirySubmission, type InquirySubmission } from "@/ontos/inquiry-model";
 import { browserAt, serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
 
@@ -12,7 +13,9 @@ const inquiry = {
   subject: "Dostupnost materiálu",
   message: "Prosím o ověření dostupnosti.",
 };
-const firstKey = `sf-inquiry-${inquiry.requestId}`;
+const submissionKey = expect.stringMatching(
+  new RegExp(`^sf-inquiry-${inquiry.requestId}-[\\da-f-]{36}$`, "u"),
+);
 const accepted = (resourceId = "persisted-task", requestId = inquiry.requestId) => ({
   requestId,
   taskRef: {
@@ -31,6 +34,7 @@ const revision = "a".repeat(64);
 let network: Awaited<ReturnType<typeof serveHttp>>;
 let actionResponses: Array<{ status: number; body: unknown }>;
 let actionCalls: Array<[string, string, unknown, string | null]>;
+let answerAction: ((payload: unknown, key: string | null) => Response) | undefined;
 let recordReads: unknown[];
 let catalogReads: unknown[];
 let previousUrl: string;
@@ -58,6 +62,7 @@ beforeEach(async () => {
   httpFailures = [];
   actionResponses = [{ status: 200, body: accepted() }];
   actionCalls = [];
+  answerAction = undefined;
   recordReads = [];
   catalogReads = [];
   products = [];
@@ -117,6 +122,10 @@ beforeEach(async () => {
           await request.json(),
           request.headers.get("idempotency-key"),
         ]);
+        if (answerAction !== undefined) {
+          const call = actionCalls.at(-1);
+          return answerAction(call?.[2], request.headers.get("idempotency-key"));
+        }
         const answer =
           actionResponses[Math.min(actionCalls.length - 1, actionResponses.length - 1)];
         return Response.json(answer.body, { status: answer.status });
@@ -157,7 +166,7 @@ describe("persisted storefront inquiries", () => {
           description: "Kontakt: Zákazník <customer@example.test>\n\nProsím o ověření dostupnosti.",
           storefrontInquiry: inquiry,
         },
-        firstKey,
+        submissionKey,
       ],
     ]);
     // The storefront key is admitted on this one action only: no Work Tasks read precedes it.
@@ -188,48 +197,77 @@ describe("persisted storefront inquiries", () => {
     expect(actionCalls).toHaveLength(1);
   });
   it.each(["action_already_committed", "work_revision_conflict"])(
-    "resends %s once under a new idempotency key with the same request id",
+    "does not replay %s under a new key or claim definite non-delivery",
     async (code) => {
       actionResponses = [refused(409, code), { status: 200, body: accepted("existing-task") }];
       const response = await submit();
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ taskId: "existing-task" });
-      const [first, second] = actionCalls;
-      expect(actionCalls).toHaveLength(2);
-      expect(first?.[3]).toBe(firstKey);
-      expect(second?.[3]).toMatch(new RegExp(`^${firstKey}-[\\da-f-]{36}$`, "u"));
-      expect(second?.slice(0, 3)).toEqual(first?.slice(0, 3));
-      expect(second?.[2]).toMatchObject({ storefrontInquiry: { requestId: inquiry.requestId } });
+      expect(response.status).toBe(503);
+      const { message } = await response.json();
+      expect(message).toContain("nepodařilo potvrdit");
+      expect(message).not.toContain("nebyl odeslán");
+      expect(actionCalls).toHaveLength(1);
+      expect(actionCalls[0]?.[3]).toEqual(submissionKey);
+      expect(actionCalls[0]?.[2]).toMatchObject({
+        storefrontInquiry: { requestId: inquiry.requestId },
+      });
     },
   );
-  it("stops after the one resend instead of looping", async () => {
-    actionResponses = [refused(409, "action_already_committed")];
-    const response = await submit();
-    expect(response.status).toBe(503);
-    expect((await response.json()).message).toContain("nepodařilo potvrdit");
+  it("recovers a lost committed receipt on explicit resend without creating another inquiry", async () => {
+    const committedKeys = new Set<string | null>();
+    const tasks = new Map<
+      string,
+      { submission: InquirySubmission; receipt: ReturnType<typeof accepted> }
+    >();
+    // Model the two owner boundaries separately: Action keys cannot replay a commit, but the
+    // Work Tasks owner returns the existing task for the same request id and customer fields.
+    answerAction = (payload, key) => {
+      if (committedKeys.has(key))
+        return Response.json({ code: "action_already_committed" }, { status: 409 });
+      const submission = parseInquirySubmission(
+        payload !== null && typeof payload === "object" && "storefrontInquiry" in payload
+          ? payload.storefrontInquiry
+          : null,
+      );
+      if (submission === null) throw new Error("Invalid inquiry reached the owner");
+      const existing = tasks.get(submission.requestId);
+      if (existing !== undefined) {
+        if (JSON.stringify(existing.submission) !== JSON.stringify(submission))
+          return Response.json({ code: "work_lifecycle_conflict" }, { status: 409 });
+        committedKeys.add(key);
+        return Response.json(existing.receipt);
+      }
+      tasks.set(submission.requestId, {
+        submission,
+        receipt: accepted("existing-task", submission.requestId),
+      });
+      committedKeys.add(key);
+      // The owner committed, but its acknowledgement was truncated before it reached AKROS.
+      return new Response('{"requestId":', {
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const uncertain = await submit();
+    expect(uncertain.status).toBe(503);
+    expect((await uncertain.json()).message).toContain("nepodařilo potvrdit");
+    expect(actionCalls).toHaveLength(1);
+    expect(tasks.size).toBe(1);
+    const retried = await submit();
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual({ taskId: "existing-task" });
     expect(actionCalls).toHaveLength(2);
-  });
-  it("never claims non-delivery when the resend of a committed key is refused", async () => {
-    actionResponses = [
-      refused(409, "action_already_committed"),
-      refused(403, "action_permission_denied"),
-    ];
-    const response = await submit();
-    expect(response.status).toBe(503);
-    const { message } = await response.json();
-    expect(message).toContain("nepodařilo potvrdit");
-    expect(message).not.toContain("nebyl odeslán");
-    expect(actionCalls).toHaveLength(2);
-  });
-  it("shows the unavailable form when the resend after a revision race is denied", async () => {
-    actionResponses = [
-      refused(409, "work_revision_conflict"),
-      refused(403, "action_permission_denied"),
-    ];
-    const response = await submit();
-    expect(response.status).toBe(503);
-    expect((await response.json()).message).toContain("Dotaz nebyl odeslán");
-    expect(actionCalls).toHaveLength(2);
+    expect(actionCalls[1]?.slice(0, 3)).toEqual(actionCalls[0]?.slice(0, 3));
+    expect(actionCalls[0]?.[3]).toEqual(submissionKey);
+    expect(actionCalls[1]?.[3]).toEqual(submissionKey);
+    expect(actionCalls[1]?.[3]).not.toBe(actionCalls[0]?.[3]);
+    expect(tasks.size).toBe(1);
+    expect(recordReads).toEqual([]);
+
+    const changed = await submit({ ...inquiry, message: "Jiný dotaz pod stejným ID." });
+    expect(changed.status).toBe(503);
+    expect((await changed.json()).message).toContain("nepodařilo potvrdit");
+    expect(actionCalls).toHaveLength(3);
+    expect(tasks.size).toBe(1);
+    expect(tasks.get(inquiry.requestId)?.submission).toEqual(inquiry);
   });
   it.each([
     ["no task reference", { requestId: inquiry.requestId }],

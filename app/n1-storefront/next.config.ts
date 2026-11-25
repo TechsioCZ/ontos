@@ -2,6 +2,7 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const config: NextConfig = {
+  env: { ONTOS_SOURCE_REVISION: process.env.GITHUB_SHA ?? "unknown" },
   agentRules: false,
   experimental: {
     // Compile only the core-runtime modules N1's platform contracts use. Without this, the root and enforcement

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
 import { accountMessage, portalRequest } from "@/ontos/account";
 import {
@@ -21,6 +23,8 @@ const states = [
 
 async function progress(request: Request, operation: "read" | "resume" | "restart") {
   const t = requestDictionary(request);
+  const responseHeaders = new Headers(noStore);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     const url = new URL(request.url);
     if (url.search) throw new RequestError(400, t.server.request.noAccountIdentifier);
@@ -28,7 +32,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
       guard(request, t);
       if (request.headers.get("origin") !== requestOrigin(request))
         throw new RequestError(403, t.server.request.foreignOrigin);
-      const body: unknown = await jsonBody(request, t);
+      const body: unknown = await jsonBody(request, t, lifetime);
       if (
         !body ||
         typeof body !== "object" ||
@@ -39,15 +43,22 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
     }
     const cookie = request.headers.get("cookie");
     // A created provider session is not customer admission. Recheck the real account each time.
-    const admitted = await portalRequest("/customer-account", requestOrigin(request), cookie);
+    const admitted = await portalRequest(
+      "/customer-account",
+      requestOrigin(request),
+      cookie,
+      undefined,
+      undefined,
+      { operation: lifetime, responseHeaders },
+    );
     if (admitted.ok) {
       const account = (await admitted.json()) as { state?: string };
       if (account.state === "authenticated")
-        return Response.json({ state: "ADMITTED" }, { headers: noStore });
+        return Response.json({ state: "ADMITTED" }, { headers: responseHeaders });
     } else if (admitted.status !== 401 && admitted.status !== 403) {
       return Response.json(
         { message: accountMessage(t, admitted.status) },
-        { status: admitted.status, headers: noStore },
+        { status: admitted.status, headers: responseHeaders },
       );
     }
     const response = await portalRequest(
@@ -55,6 +66,8 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
       requestOrigin(request),
       cookie,
       operation === "read" ? undefined : {},
+      undefined,
+      { operation: lifetime, responseHeaders },
     );
     if (!response.ok)
       return Response.json(
@@ -66,15 +79,20 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
                 ? t.server.account.enrollmentSignIn
                 : accountMessage(t, response.status),
         },
-        { status: response.status, headers: noStore },
+        { status: response.status, headers: responseHeaders },
       );
     const result = (await response.json()) as { state?: string; revision?: number };
     if (!result.state || !states.includes(result.state) || !Number.isInteger(result.revision))
       throw new Error("Enrollment progress response is malformed");
     // Never forward Attempt/Party/provider identifiers or private owner failure evidence.
-    return Response.json({ state: result.state, revision: result.revision }, { headers: noStore });
+    return Response.json(
+      { state: result.state, revision: result.revision },
+      { headers: responseHeaders },
+    );
   } catch (error) {
-    return problem(error, accountMessage(t, 503));
+    return problem(error, accountMessage(t, 503), responseHeaders);
+  } finally {
+    lifetime.dispose();
   }
 }
 

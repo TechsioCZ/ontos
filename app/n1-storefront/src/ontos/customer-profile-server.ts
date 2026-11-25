@@ -1,3 +1,4 @@
+import { withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { Effect, Match, Schema } from "effect";
 import type { StorefrontConfiguration } from "./config";
@@ -57,29 +58,36 @@ export const readCustomerProfileWithConfiguration = (
   config: StorefrontConfiguration,
   request: PortalRequestContext,
 ) =>
-  Effect.gen(function* readCustomerProfileProgram() {
-    const identity = yield* admission(config, request);
-    if (identity.state === "anonymous") {
-      return { state: "anonymous" as const };
-    }
-    const native = yield* readPortalOwnProfile(config, request).pipe(
-      Effect.catch((error) =>
-        Match.value(error).pipe(
-          Match.tag("CustomerOwnProfileAuthenticationProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "anonymous" })),
+  withOwnerOperation(
+    Effect.gen(function* readCustomerProfileProgram() {
+      const identity = yield* admission(config, request);
+      if (identity.state === "anonymous") {
+        return { state: "anonymous" as const };
+      }
+      const native = yield* readPortalOwnProfile(config, request).pipe(
+        Effect.catch((error) =>
+          Match.value(error).pipe(
+            Match.tag("CustomerOwnProfileAuthenticationProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "anonymous" })),
+            ),
+            Match.tag("CustomerOwnProfileForbiddenProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "forbidden" })),
+            ),
+            Match.orElse(() => Effect.fail(new CustomerProfileFailure({ state: "unavailable" }))),
           ),
-          Match.tag("CustomerOwnProfileForbiddenProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "forbidden" })),
-          ),
-          Match.orElse(() => Effect.fail(new CustomerProfileFailure({ state: "unavailable" }))),
         ),
-      ),
-    );
-    const profile = yield* Schema.decodeUnknownEffect(CustomerProfileSchema)(native).pipe(
-      Effect.mapError(() => new CustomerProfileFailure({ state: "unavailable" })),
-    );
-    return { profile, state: "ready" as const, viewerEmail: identity.account.email };
-  });
+      );
+      const profile = yield* Schema.decodeUnknownEffect(CustomerProfileSchema)(native).pipe(
+        Effect.mapError(() => new CustomerProfileFailure({ state: "unavailable" })),
+      );
+      return { profile, state: "ready" as const, viewerEmail: identity.account.email };
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CustomerProfileFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CustomerProfileFailure({ state: "unavailable" })),
+    }),
+  );
 
 export const readCustomerProfile = (request: PortalRequestContext) =>
   configuration().pipe(
@@ -96,43 +104,55 @@ export const updateCustomerProfileWithConfiguration = (
   input: CustomerProfileUpdate,
   request: PortalRequestContext,
 ) =>
-  Effect.gen(function* updateCustomerProfileProgram() {
-    const payload = yield* Schema.decodeUnknownEffect(CustomerProfileUpdateSchema, {
-      onExcessProperty: "error",
-    })(input).pipe(Effect.mapError(() => new CustomerProfileFailure({ state: "invalid" })));
-    const identity = yield* admission(config, request);
-    if (identity.state === "anonymous") {
-      return yield* new CustomerProfileFailure({ state: "anonymous" });
-    }
-    // Admission consumed its assertion. The profile update always acquires a new one.
-    const native = yield* updatePortalOwnProfile(config, payload, request).pipe(
-      Effect.catch((error) =>
-        Match.value(error).pipe(
-          Match.tag("PortalFailure", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "unavailable" })),
+  withOwnerOperation(
+    Effect.gen(function* updateCustomerProfileProgram() {
+      const payload = yield* Schema.decodeUnknownEffect(CustomerProfileUpdateSchema, {
+        onExcessProperty: "error",
+      })(input).pipe(Effect.mapError(() => new CustomerProfileFailure({ state: "invalid" })));
+      const identity = yield* admission(config, request);
+      if (identity.state === "anonymous") {
+        return yield* new CustomerProfileFailure({ state: "anonymous" });
+      }
+      // Admission consumed its assertion. The profile update always acquires a new one.
+      const native = yield* updatePortalOwnProfile(config, payload, request).pipe(
+        Effect.catch((error) =>
+          Match.value(error).pipe(
+            Match.tag("PortalFailure", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "unavailable" })),
+            ),
+            Match.tag("CustomerOwnProfileAuthenticationProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "anonymous" })),
+            ),
+            Match.tag("CustomerOwnProfileForbiddenProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "forbidden" })),
+            ),
+            Match.tag("CustomerOwnProfileInvalidProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "invalid" })),
+            ),
+            Match.tag("CustomerOwnProfileConflictProblem", () =>
+              Effect.fail(new CustomerProfileFailure({ state: "conflict" })),
+            ),
+            // A failed transport, unavailable owner or malformed reply may follow a committed update.
+            Match.orElse(() => Effect.fail(new CustomerProfileFailure({ state: "unconfirmed" }))),
           ),
-          Match.tag("CustomerOwnProfileAuthenticationProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "anonymous" })),
-          ),
-          Match.tag("CustomerOwnProfileForbiddenProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "forbidden" })),
-          ),
-          Match.tag("CustomerOwnProfileInvalidProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "invalid" })),
-          ),
-          Match.tag("CustomerOwnProfileConflictProblem", () =>
-            Effect.fail(new CustomerProfileFailure({ state: "conflict" })),
-          ),
-          // A failed transport, unavailable owner or malformed reply may follow a committed update.
-          Match.orElse(() => Effect.fail(new CustomerProfileFailure({ state: "unconfirmed" }))),
         ),
-      ),
-    );
-    const profile = yield* Schema.decodeUnknownEffect(CustomerProfileSchema)(native).pipe(
-      Effect.mapError(() => new CustomerProfileFailure({ state: "unconfirmed" })),
-    );
-    return { profile, state: "ready" as const };
-  });
+      );
+      const profile = yield* Schema.decodeUnknownEffect(CustomerProfileSchema)(native).pipe(
+        Effect.mapError(() => new CustomerProfileFailure({ state: "unconfirmed" })),
+      );
+      return { profile, state: "ready" as const };
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: (error) =>
+        Effect.fail(
+          new CustomerProfileFailure({
+            state: error.kind === "overloaded" ? "unavailable" : "unconfirmed",
+          }),
+        ),
+      SchemaError: () => Effect.fail(new CustomerProfileFailure({ state: "unavailable" })),
+    }),
+  );
 export const updateCustomerProfile = (
   input: CustomerProfileUpdate,
   request: PortalRequestContext,

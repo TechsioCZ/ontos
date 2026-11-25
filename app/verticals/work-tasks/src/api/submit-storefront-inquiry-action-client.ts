@@ -2,6 +2,7 @@
 // @ontos-action-http-owner work.tasks
 // @ontos-action-http-slug submit-storefront-inquiry
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import {
   SubmitStorefrontInquiryActionApi,
@@ -19,6 +20,7 @@ export interface SubmitStorefrontInquiryActionClientOptions {
   readonly idempotencyKey: string;
   readonly referenceCredentials?: Redacted.Redacted;
   readonly [traceIdOption]?: string;
+  readonly transformClient?: EffectBffClientOptions['transformClient'];
 }
 
 type AuthorizedInvocation = readonly [

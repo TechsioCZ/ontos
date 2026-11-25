@@ -1,4 +1,5 @@
 import { Schema, Struct } from "effect";
+import { categoryForestIssue } from "@app/merchandise/domain/category-forest";
 import { isStorefrontMediaPath, productMediaPath } from "./media-path";
 
 const optionalNumber = Schema.optionalKey(Schema.Number);
@@ -28,6 +29,10 @@ export const CatalogResponseSchema = Schema.Struct({
         published: Schema.optionalKey(Schema.Boolean),
         slug: Schema.String,
       }),
+    ).check(
+      Schema.makeFilter(
+        (categories) => categoryForestIssue(categories, "projection") === undefined,
+      ),
     ),
   ),
   market: Schema.Struct({

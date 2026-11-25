@@ -157,11 +157,16 @@ describe("customer newsletter consent boundary", () => {
     ).toEqual([]);
   });
 
-  it("reads the current choice again after a transient owner outage", async () => {
+  it("reads the current choice again after an explicit read-admission failure", async () => {
     let reads = 0;
     ownerResponse = () => {
       reads += 1;
-      return reads === 1 ? Response.json({}, { status: 503 }) : Response.json(projection);
+      return reads === 1
+        ? Response.json(
+            { type: "https://ontos.dev/problems/gateway-unavailable", retryable: true },
+            { status: 503 },
+          )
+        : Response.json(projection);
     };
     const response = await fetch(`${network.origin}${routePath}`, {
       headers: { cookie: "commerce-portal.session_token=customer" },

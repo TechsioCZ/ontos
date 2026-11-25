@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
 import type { FavoriteCatalogProduct } from "@/features/favorites/catalog";
 import { createCatalog } from "@/ontos/catalog-model";
@@ -22,12 +24,16 @@ export async function GET(
   },
 ) {
   const t = requestDictionary(request);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     const { slug } = await params;
     if (!slug || slug.length > 200) throw new RequestError(400, t.server.productVariants.invalid);
-    const catalog = createCatalog(await read({ slug, pageSize: 1 }, "full"), {
-      categories: [],
-    });
+    const catalog = createCatalog(
+      await read({ slug, pageSize: 1 }, "full", false, { operation: lifetime }),
+      {
+        categories: [],
+      },
+    );
     const product = catalog.getProductBySlug(slug);
     if (!product) throw new RequestError(404, t.server.productVariants.notFound);
     // A product without variants is itself the one concrete item (same OntOS values, nothing invented).
@@ -61,5 +67,7 @@ export async function GET(
     return Response.json(body, { headers: noStore });
   } catch (error) {
     return problem(error, t.server.outage.catalog);
+  } finally {
+    lifetime.dispose();
   }
 }

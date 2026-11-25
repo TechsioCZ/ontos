@@ -1,8 +1,12 @@
+import { constUndefined } from "effect/Function";
+import type { OperationError } from "@ontos/storefront-runtime";
+import { storefrontHttpClientLayer, ownerHttp } from "./owner-operation";
 import "server-only";
-import { Effect, Layer, ManagedRuntime, Match, Schema, Struct } from "effect";
+import { ByteSize, Context, Effect, Layer, ManagedRuntime, Match, Schema, Struct } from "effect";
 import {
   Cookies,
   FetchHttpClient,
+  HttpEffect,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -44,6 +48,13 @@ import {
 } from "./portal-server";
 import type { PortalRequestContext } from "./portal-server";
 
+const PortalChannelRequest = Context.Reference<PortalRequestContext | undefined>(
+  "n1/PortalChannelRequest",
+  {
+    defaultValue: constUndefined,
+  },
+);
+
 const problemContentType = "application/problem+json";
 const details = {
   detail: "Portal account request could not be completed.",
@@ -57,6 +68,31 @@ const verificationRedirect = (state: "verified" | "reconciliation" | "invalid" |
     headers: { "cache-control": "no-store", "referrer-policy": "no-referrer" },
     status: 303,
   });
+const operationStatuses = {
+  body_oversize: 502,
+  cancelled: 499,
+  deadline: 504,
+  overloaded: 503,
+} as const;
+const portalOperationFailure = (
+  error: OperationError,
+  request: HttpServerRequest.HttpServerRequest,
+) =>
+  Effect.succeed(
+    new URL(request.originalUrl).pathname ===
+      "/commerce-customer-context-api/api/portal-auth/verify-email"
+      ? verificationRedirect("unconfirmed").pipe(
+          HttpServerResponse.setHeader("x-storefront-failure", error.kind),
+        )
+      : HttpServerResponse.jsonUnsafe(
+          { code: error.kind, state: "unconfirmed" },
+          {
+            headers: { "cache-control": "no-store" },
+            status: operationStatuses[error.kind],
+          },
+        ),
+  );
+
 const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(PortalSchemaErrorMiddleware, () =>
   Effect.fail(invalidProblem()),
 );
@@ -159,9 +195,15 @@ const channel = <A, E, R>(
   respond: (value: A) => ReturnType<typeof responseForOutcome>,
 ) =>
   Effect.gen(function* portalChannel() {
-    const context = portalRequestContext(
-      new URL(request.originalUrl).origin,
-      request.headers.cookie,
+    const context = yield* PortalChannelRequest;
+    if (context === undefined) {
+      return yield* Effect.die(new Error("Missing Portal request boundary"));
+    }
+    // Preserve provider cookie updates even when a follow-up read is interrupted by the total deadline.
+    yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(
+        response.pipe(HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies))),
+      ),
     );
     const response =
       request.method !== "GET" && !isPortalOrigin(request.headers.origin, request.originalUrl)
@@ -184,7 +226,13 @@ const channel = <A, E, R>(
 const handlers = HttpApiBuilder.group(PortalApi, "portal", (group) =>
   group
     .handle("verifyEmail", ({ query }) =>
-      verifyPortalEmailServer(query.token).pipe(Effect.map(verificationRedirect)),
+      verifyPortalEmailServer(query.token).pipe(
+        Effect.catchTags({
+          OperationError: () => Effect.succeed("unconfirmed" as const),
+          SchemaError: () => Effect.succeed("unconfirmed" as const),
+        }),
+        Effect.map(verificationRedirect),
+      ),
     )
     .handle("login", ({ payload, request }) =>
       channel(
@@ -231,7 +279,8 @@ const handlers = HttpApiBuilder.group(PortalApi, "portal", (group) =>
 const application = HttpApiBuilder.layer(PortalApi).pipe(
   Layer.provide(handlers),
   Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(storefrontHttpClientLayer),
+  Layer.provideMerge(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(100_000))),
   Layer.provideMerge(
     Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
   ),
@@ -239,42 +288,59 @@ const application = HttpApiBuilder.layer(PortalApi).pipe(
 export const portalWeb = HttpRouter.toWebHandler(application, {
   disableLogger: true,
   middleware: (effect) =>
-    Effect.gen(function* guardPortalRequest() {
+    Effect.gen(function* portalRequestBoundary() {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      if (
-        request.method !== "GET" &&
-        !isPortalOrigin(request.headers.origin, request.originalUrl)
-      ) {
-        return yield* responseForOutcome({
-          diagnostic: "bff-origin-refused",
-          state: "refused",
-        }).pipe(Effect.orDie);
-      }
-      const url = new URL(request.originalUrl);
-      if (
-        url.pathname === "/commerce-customer-context-api/api/portal-auth/verify-email" &&
-        request.method === "GET"
-      ) {
-        const tokens = url.searchParams.getAll("token");
-        const callbacks = url.searchParams.getAll("callbackURL");
-        const [token] = tokens;
-        const [callbackURL] = callbacks;
-        if (
-          tokens.length !== 1 ||
-          token === undefined ||
-          callbacks.length > 1 ||
-          [...url.searchParams.keys()].some((key) => key !== "token" && key !== "callbackURL")
-        ) {
-          return verificationRedirect("invalid");
-        }
-        const query = callbackURL === undefined ? { token } : { callbackURL, token };
-        if (!Schema.is(PortalVerificationQuerySchema)(query)) {
-          return verificationRedirect("invalid");
-        }
-      } else if (url.search !== "") {
-        return yield* responseForOutcome({ state: "invalid" }).pipe(Effect.orDie);
-      }
-      return yield* effect;
+      const context = portalRequestContext(
+        new URL(request.originalUrl).origin,
+        request.headers.cookie,
+      );
+      return yield* ownerHttp(
+        Effect.gen(function* guardPortalRequest() {
+          if (
+            request.method !== "GET" &&
+            !isPortalOrigin(request.headers.origin, request.originalUrl)
+          ) {
+            return yield* responseForOutcome({
+              diagnostic: "bff-origin-refused",
+              state: "refused",
+            }).pipe(Effect.orDie);
+          }
+          const url = new URL(request.originalUrl);
+          if (
+            url.pathname === "/commerce-customer-context-api/api/portal-auth/verify-email" &&
+            request.method === "GET"
+          ) {
+            const tokens = url.searchParams.getAll("token");
+            const callbacks = url.searchParams.getAll("callbackURL");
+            const [token] = tokens;
+            const [callbackURL] = callbacks;
+            if (
+              tokens.length !== 1 ||
+              token === undefined ||
+              callbacks.length > 1 ||
+              [...url.searchParams.keys()].some((key) => key !== "token" && key !== "callbackURL")
+            ) {
+              return verificationRedirect("invalid");
+            }
+            const query = callbackURL === undefined ? { token } : { callbackURL, token };
+            if (!Schema.is(PortalVerificationQuerySchema)(query)) {
+              return verificationRedirect("invalid");
+            }
+          } else if (url.search !== "") {
+            return yield* responseForOutcome({ state: "invalid" }).pipe(Effect.orDie);
+          }
+          return yield* effect;
+        }),
+        (error, failedRequest) =>
+          portalOperationFailure(error, failedRequest).pipe(
+            // A middleware short-circuit bypasses the native pre-response stage.
+            Effect.map((response) =>
+              response.pipe(
+                HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies)),
+              ),
+            ),
+          ),
+      ).pipe(Effect.updateService(PortalChannelRequest, () => context));
     }),
 });
 const edgeRuntime = ManagedRuntime.make(Layer.empty);

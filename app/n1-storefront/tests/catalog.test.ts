@@ -20,6 +20,21 @@ const response: typeof CatalogResponseSchema.Type = {
 };
 
 describe("owner catalogue presentation", () => {
+  it("rejects cyclic owner categories while accepting a legitimate partial projection", () => {
+    const category = (id: string, parentId: string | null) => ({
+      id,
+      parentId,
+      name: id,
+      slug: id,
+    });
+    const decode = Schema.decodeUnknownSync(CatalogResponseSchema);
+    expect(() =>
+      decode({ ...response, categories: [category("a", "b"), category("b", "a")] }),
+    ).toThrow();
+    expect(
+      decode({ ...response, categories: [category("child", "omitted")] }).categories,
+    ).toHaveLength(1);
+  });
   it("retains each variant's own package and native default minimum without parent inheritance", () => {
     const variant = {
       active: true,

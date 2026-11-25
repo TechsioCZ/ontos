@@ -19,7 +19,9 @@
     "@app/merchandise": "workspace:*",
     "@app/shared-contracts": "catalog:",
     "@app/work-tasks": "catalog:",
+    "@effect/platform-node": "4.0.7",
     "@modern-js/bff-effect": "catalog:ultramodern",
+    "@ontos/storefront-runtime": "workspace:*",
     "@techsio/ui-kit": "catalog:",
     "@zag-js/dom-query": "1.47.0",
     "effect": "4.0.7",
@@ -29,7 +31,6 @@
     "server-only": "0.0.1"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.7",
     "@rstest/core": "0.12.6",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "^26.4.1",

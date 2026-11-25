@@ -11,6 +11,11 @@ const url = `${origin}/api/ontos/enrollment`;
 const cookie = "staff.session=private; commerce-portal.session_token=customer";
 const contextPath = "/shell-super-app-api/auth/api-key/gateway-context";
 const ownerBase = "/shell-super-app-api/commerce-customer-context";
+const unavailableRead = () =>
+  Response.json(
+    { type: "https://ontos.dev/problems/gateway-unavailable", retryable: true },
+    { status: 503 },
+  );
 const gatewayContext = {
   apiBaseUrl: ownerBase,
   compositionRevision: "a".repeat(64),
@@ -153,11 +158,8 @@ it("confirms real customer admission before navigation, including mid-session bi
   expect(ownerRequests()).toHaveLength(1);
 });
 
-it("admits a verified customer after a transient account-status outage", async () => {
-  answers.push(
-    () => Response.json({}, { status: 503 }),
-    () => Response.json({ state: "authenticated" }),
-  );
+it("admits a verified customer after an explicit account read-admission failure", async () => {
+  answers.push(unavailableRead, () => Response.json({ state: "authenticated" }));
   const response = await call(GET, new Request(url, { headers: { cookie } }));
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ state: "ADMITTED" });
@@ -171,28 +173,17 @@ it("admits a verified customer after a transient account-status outage", async (
   }
 });
 
-it("recovers a transient gateway transport failure before the account response", async () => {
-  brokenShell = await serveBrokenShell(1);
-  vi.stubEnv("ONTOS_SHELL_URL", brokenShell.origin);
-  const response = await call(GET, new Request(url, { headers: { cookie } }));
-  expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ state: "ADMITTED" });
-  expect(brokenShell.paths.filter((path) => path === contextPath)).toHaveLength(2);
-  expect(brokenShell.paths).toEqual([
-    contextPath,
-    contextPath,
-    `${ownerBase}/api/portal-auth/customer-account`,
-  ]);
-});
-
-it("bounds unavailable transport retries and never treats them as admission", async () => {
-  brokenShell = await serveBrokenShell(3);
-  vi.stubEnv("ONTOS_SHELL_URL", brokenShell.origin);
-  const response = await call(GET, new Request(url, { headers: { cookie } }));
-  expect(response.status).toBe(503);
-  expect(await response.json()).not.toHaveProperty("state");
-  expect(brokenShell.paths).toEqual([contextPath, contextPath, contextPath]);
-});
+it.each([1, 3])(
+  "never retries an ambiguous gateway transport failure (%s pending failures)",
+  async (failures) => {
+    brokenShell = await serveBrokenShell(failures);
+    vi.stubEnv("ONTOS_SHELL_URL", brokenShell.origin);
+    const response = await call(GET, new Request(url, { headers: { cookie } }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).not.toHaveProperty("state");
+    expect(brokenShell.paths).toEqual([contextPath]);
+  },
+);
 
 it.each([
   [503, "storefront_not_configured"],
@@ -208,10 +199,10 @@ it.each([
   expect(ownerRequests()).toHaveLength(0);
 });
 
-it("reads pending enrollment after a transient outage without inventing customer admission", async () => {
+it("reads pending enrollment after an explicit read-admission failure without inventing customer admission", async () => {
   answers.push(
     () => Response.json({}, { status: 403 }),
-    () => Response.json({}, { status: 503 }),
+    unavailableRead,
     () => Response.json({ state: "VERIFICATION_REQUIRED", revision: 3 }),
   );
   const response = await call(GET, new Request(url, { headers: { cookie } }));
@@ -224,8 +215,8 @@ it("reads pending enrollment after a transient outage without inventing customer
   ]);
 });
 
-it("stops after three unavailable account reads and keeps access closed", async () => {
-  answers.push(...Array.from({ length: 3 }, () => () => Response.json({}, { status: 503 })));
+it("stops after three explicit account read-admission failures and keeps access closed", async () => {
+  answers.push(...Array.from({ length: 3 }, () => unavailableRead));
   const response = await call(GET, new Request(url, { headers: { cookie } }));
   expect(response.status).toBe(503);
   expect(await response.json()).not.toHaveProperty("state");
@@ -281,12 +272,12 @@ it.each([401, 404, 429, 503])(
   async (status) => {
     answers.push(
       () => Response.json({}, { status: 403 }),
-      ...Array.from({ length: status === 503 ? 3 : 1 }, () => () => Response.json({}, { status })),
+      () => Response.json({}, { status }),
     );
     const response = await call(GET, new Request(url));
     expect(response.status).toBe(status);
     expect(await response.json()).not.toHaveProperty("state");
-    expect(ownerRequests()).toHaveLength(status === 503 ? 4 : 2);
+    expect(ownerRequests()).toHaveLength(2);
   },
 );
 

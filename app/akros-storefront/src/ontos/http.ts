@@ -1,7 +1,18 @@
 import "server-only";
+import { Effect } from "effect";
+import {
+  createOperation,
+  INGRESS_BYTES,
+  OperationError,
+  readJson,
+} from "@ontos/storefront-runtime";
+import type { Operation } from "@ontos/storefront-runtime";
 import { dictionaryFor, type Dictionary } from "@/i18n";
 import { cs } from "@/i18n/cs";
 import { MARKET_LOCALE_HEADER } from "./market-locale";
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -48,22 +59,52 @@ export function guard(request: Request, t: Dictionary = requestDictionary(reques
   if (Number(request.headers.get("content-length") ?? 0) > 100_000)
     throw new RequestError(413, t.server.request.tooLarge);
 }
-export async function jsonBody(request: Request, t: Dictionary = requestDictionary(request)) {
-  const text = await request.text();
-  if (text.length > 100_000) throw new RequestError(413, t.server.request.tooLarge);
+export async function jsonBody(
+  request: Request,
+  t: Dictionary = requestDictionary(request),
+  holder?: Operation,
+) {
+  const operation =
+    holder ?? (await Effect.runPromise(createOperation({ signal: request.signal })));
   try {
-    return JSON.parse(text);
-  } catch {
+    const value = await Effect.runPromise(
+      readJson(request, { operation, maxBytes: INGRESS_BYTES }),
+    );
+    if (!isJsonObject(value)) throw new RequestError(400, t.server.request.invalidFormat);
+    return value;
+  } catch (error) {
+    if (error instanceof OperationError) {
+      if (error.kind === "body_oversize") throw new RequestError(413, t.server.request.tooLarge);
+      throw error;
+    }
     throw new RequestError(400, t.server.request.invalidFormat);
+  } finally {
+    if (holder === undefined) operation.dispose();
   }
 }
 /** `message`: the route's localized fallback text for a real OntOS failure (`t.server.outage.*`). */
-export function problem(error: unknown, message: string) {
+export function problem(
+  error: unknown,
+  message: string,
+  headers: HeadersInit = { "cache-control": "no-store" },
+) {
   if (RequestError.is(error))
+    return Response.json({ message: error.message }, { status: error.status, headers });
+  if (error instanceof OperationError)
     return Response.json(
-      { message: error.message },
-      { status: error.status, headers: { "cache-control": "no-store" } },
+      { message, code: error.kind },
+      {
+        status:
+          error.kind === "cancelled"
+            ? 499
+            : error.kind === "deadline"
+              ? 504
+              : error.kind === "body_oversize"
+                ? 502
+                : 503,
+        headers,
+      },
     );
   console.error("[AKROS]", isError(error) ? error.message : "Request failed");
-  return Response.json({ message }, { status: 503, headers: { "cache-control": "no-store" } });
+  return Response.json({ message }, { status: 503, headers });
 }

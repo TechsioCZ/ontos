@@ -1,3 +1,10 @@
+import {
+  actionMayHaveDispatched,
+  boundOwnerClient,
+  recordActionDispatch,
+  withActionDispatch,
+  withOwnerOperation,
+} from "./owner-operation";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { cache } from "react";
@@ -339,18 +346,36 @@ export const recoverCheckoutWithConfiguration = (
   input: CheckoutRecoveryRequest,
   portal?: PortalRequestContext,
 ) =>
-  Effect.gen(function* recoverCheckoutProgram() {
-    const request = yield* Schema.decodeUnknownEffect(CheckoutRecoveryRequestSchema, {
-      onExcessProperty: "error",
-    })(input).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
-    yield* scopedContext(config, request.locale, request.scope);
-    const buyer = yield* checkoutBuyer(config, portal);
-    return yield* readCheckoutReceipt(config, request, buyer);
-  });
+  withOwnerOperation(
+    Effect.gen(function* recoverCheckoutProgram() {
+      const request = yield* Schema.decodeUnknownEffect(CheckoutRecoveryRequestSchema, {
+        onExcessProperty: "error",
+      })(input).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+      yield* scopedContext(config, request.locale, request.scope);
+      const buyer = yield* checkoutBuyer(config, portal);
+      return yield* readCheckoutReceipt(config, request, buyer);
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
+    }),
+  );
 
 export const recoverCheckout = (input: CheckoutRecoveryRequest, portal?: PortalRequestContext) =>
   configuration().pipe(
     Effect.flatMap((config) => recoverCheckoutWithConfiguration(config, input, portal)),
+  );
+
+const checkoutDispatchFailure = (mode: CheckoutRequest["mode"]) =>
+  actionMayHaveDispatched.pipe(
+    Effect.flatMap((dispatched) =>
+      Effect.fail(
+        new CheckoutFailure({
+          state: mode === "place" && dispatched ? "uncertain" : "unavailable",
+        }),
+      ),
+    ),
   );
 
 export const submitCheckoutWithConfiguration = (
@@ -358,104 +383,111 @@ export const submitCheckoutWithConfiguration = (
   input: CheckoutRequest,
   portal?: PortalRequestContext,
 ) =>
-  Effect.gen(function* submitCheckoutProgram() {
-    const request = yield* Schema.decodeUnknownEffect(CheckoutRequestSchema, {
-      onExcessProperty: "error",
-    })(input).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
-    yield* Schema.decodeUnknownEffect(Schema.Array(StorefrontOrderLineRequestSchema))(
-      request.lines,
-    ).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
-    const contact = yield* Schema.decodeUnknownEffect(OrderContactSchema)({
-      email: request.contact.email,
-      name: `${request.contact.firstName} ${request.contact.lastName}`,
-      ...Struct.pick(request.contact, ["phone"]),
-    }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
-    const context = yield* scopedContext(config, request.locale, request.scope);
-    const buyer = yield* checkoutBuyer(config, portal);
-    if (request.mode === "place") {
-      const existing = yield* readCheckoutReceipt(config, request, buyer);
-      if (existing.state === "confirmed") {
-        return existing.result;
-      }
-    }
-    if (
-      request.address.country === undefined ||
-      !context.countryCodes.includes(request.address.country)
-    ) {
-      return yield* new CheckoutFailure({ state: "invalid" });
-    }
-    const method = context.shippingMethods.find((entry) => entry.id === request.shippingMethod);
-    if (method === undefined || method.priceMinor !== request.expectedShippingPriceMinor) {
-      return yield* new CheckoutFailure({ state: "invalid" });
-    }
-    const assertion = yield* mintCheckoutContext(config);
-    const quoteId = `n1-checkout-quote-${randomUUID()}`;
-    const command: MutableGuestCommand = {
-      _tag: "PlaceStorefrontOrder",
-      billingAddress: request.address,
-      clientRequestId: request.mode === "place" ? request.clientRequestId : quoteId,
-      contact,
-      deliveryAddress: request.address,
-      dryRun: request.mode === "quote",
-      expectedShippingPriceMinor: request.expectedShippingPriceMinor,
-      lines: request.lines,
-      marketId: context.scope.marketId,
-      shippingMethod: method.id,
-    };
-    if (buyer.state === "admitted") {
-      command.customerAccountId = buyer.account.id;
-      command.partyId = buyer.account.partyId;
-    }
-    if (request.contact.phone !== undefined && request.contact.phone !== "") {
-      command.deliveryRecipient = {
-        firstName: request.contact.firstName,
-        lastName: request.contact.lastName,
-        phone: request.contact.phone,
-      };
-    }
-    const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
-      command,
-      // This native command explicitly ignores the aggregate revision under the head lock.
-      // Keep the Core request hash stable across duplicate submissions; no browser revision is trusted.
-      expectedRevision: request.mode === "place" ? 0 : context.revision,
-    }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
-    const result = yield* executePlaceStorefrontOrderWithAuthorization(
-      payload,
-      `Bearer ${assertion.token}`,
-      randomUUID(),
-      {
-        baseUrl: `${config.shellUrl}${assertion.apiBaseUrl}`,
-        compositionRevision: assertion.compositionRevision,
-        idempotencyKey:
-          request.mode === "place" ? `n1-checkout-place-${request.clientRequestId}` : quoteId,
-      },
-    ).pipe(
-      Effect.timeout("20 seconds"),
-      Effect.catch((error) =>
-        Match.value(error).pipe(
-          Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
-            Effect.fail(new CheckoutFailure({ state: "forbidden" })),
-          ),
-          Match.tag("PlaceStorefrontOrderActionInvalidProblem", () =>
-            Effect.fail(new CheckoutFailure({ state: "invalid" })),
-          ),
-          Match.orElse(() =>
-            Effect.fail(
-              new CheckoutFailure({
-                state: request.mode === "place" ? "uncertain" : "unavailable",
-              }),
+  withActionDispatch(
+    withOwnerOperation(
+      Effect.gen(function* submitCheckoutProgram() {
+        const request = yield* Schema.decodeUnknownEffect(CheckoutRequestSchema, {
+          onExcessProperty: "error",
+        })(input).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+        yield* Schema.decodeUnknownEffect(Schema.Array(StorefrontOrderLineRequestSchema))(
+          request.lines,
+        ).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+        const contact = yield* Schema.decodeUnknownEffect(OrderContactSchema)({
+          email: request.contact.email,
+          name: `${request.contact.firstName} ${request.contact.lastName}`,
+          ...Struct.pick(request.contact, ["phone"]),
+        }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+        const context = yield* scopedContext(config, request.locale, request.scope);
+        const buyer = yield* checkoutBuyer(config, portal);
+        if (request.mode === "place") {
+          const existing = yield* readCheckoutReceipt(config, request, buyer);
+          if (existing.state === "confirmed") {
+            return existing.result;
+          }
+        }
+        if (
+          request.address.country === undefined ||
+          !context.countryCodes.includes(request.address.country)
+        ) {
+          return yield* new CheckoutFailure({ state: "invalid" });
+        }
+        const method = context.shippingMethods.find((entry) => entry.id === request.shippingMethod);
+        if (method === undefined || method.priceMinor !== request.expectedShippingPriceMinor) {
+          return yield* new CheckoutFailure({ state: "invalid" });
+        }
+        const assertion = yield* mintCheckoutContext(config);
+        const quoteId = `n1-checkout-quote-${randomUUID()}`;
+        const command: MutableGuestCommand = {
+          _tag: "PlaceStorefrontOrder",
+          billingAddress: request.address,
+          clientRequestId: request.mode === "place" ? request.clientRequestId : quoteId,
+          contact,
+          deliveryAddress: request.address,
+          dryRun: request.mode === "quote",
+          expectedShippingPriceMinor: request.expectedShippingPriceMinor,
+          lines: request.lines,
+          marketId: context.scope.marketId,
+          shippingMethod: method.id,
+        };
+        if (buyer.state === "admitted") {
+          command.customerAccountId = buyer.account.id;
+          command.partyId = buyer.account.partyId;
+        }
+        if (request.contact.phone !== undefined && request.contact.phone !== "") {
+          command.deliveryRecipient = {
+            firstName: request.contact.firstName,
+            lastName: request.contact.lastName,
+            phone: request.contact.phone,
+          };
+        }
+        const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
+          command,
+          // This native command explicitly ignores the aggregate revision under the head lock.
+          // Keep the Core request hash stable across duplicate submissions; no browser revision is trusted.
+          expectedRevision: request.mode === "place" ? 0 : context.revision,
+        }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+        const result = yield* executePlaceStorefrontOrderWithAuthorization(
+          payload,
+          `Bearer ${assertion.token}`,
+          randomUUID(),
+          {
+            baseUrl: `${config.shellUrl}${assertion.apiBaseUrl}`,
+            compositionRevision: assertion.compositionRevision,
+            idempotencyKey:
+              request.mode === "place" ? `n1-checkout-place-${request.clientRequestId}` : quoteId,
+            transformClient: (client) =>
+              boundOwnerClient(
+                client,
+                request.mode === "place" ? recordActionDispatch : Effect.void,
+              ),
+          },
+        ).pipe(
+          Effect.catch((error) =>
+            Match.value(error).pipe(
+              Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
+                Effect.fail(new CheckoutFailure({ state: "forbidden" })),
+              ),
+              Match.tag("PlaceStorefrontOrderActionInvalidProblem", () =>
+                Effect.fail(new CheckoutFailure({ state: "invalid" })),
+              ),
+              Match.orElse(() => checkoutDispatchFailure(request.mode)),
             ),
           ),
-        ),
-      ),
-    );
-    if (Predicate.isTagged(result, "ActionProposalAccepted")) {
-      return yield* new CheckoutFailure({ state: "unavailable" });
-    }
-    // Return commit evidence immediately. Canonical receipt enrichment is a separate read-only status call,
-    // so its timeout cannot turn an already confirmed placement into an uncertain submission.
-    return yield* confirmCheckoutResult(request, result);
-  });
+        );
+        if (Predicate.isTagged(result, "ActionProposalAccepted")) {
+          return yield* new CheckoutFailure({ state: "unavailable" });
+        }
+        // Return commit evidence immediately. Canonical receipt enrichment is a separate read-only status call,
+        // so its timeout cannot turn an already confirmed placement into an uncertain submission.
+        return yield* confirmCheckoutResult(request, result);
+      }),
+    ).pipe(
+      Effect.catchTags({
+        OperationError: () => checkoutDispatchFailure(input.mode),
+        SchemaError: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
+      }),
+    ),
+  );
 
 export const submitCheckout = (input: CheckoutRequest, portal?: PortalRequestContext) =>
   configuration().pipe(

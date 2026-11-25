@@ -7,8 +7,10 @@ import type {
   CategoryData,
 } from "@/ontos/catalog-types";
 import { getProductStockStatus } from "@/lib/product-stock";
+import { assertCategoryForest } from "@app/merchandise/domain/category-forest";
 
 export function createCatalog(catalogData: CatalogData, categoryData: CategoryData) {
+  assertCategoryForest(categoryData.categories, "projection");
   const categoriesById = new Map(
     categoryData.categories.map((category) => [category.id, category] as const),
   );

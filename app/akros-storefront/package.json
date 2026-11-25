@@ -30,7 +30,11 @@
     "test:addresses": "node tests/browser/address-autocomplete-live.mjs"
   },
   "dependencies": {
+    "@app/merchandise": "workspace:*",
+    "@effect/platform-node": "4.0.7",
+    "@ontos/storefront-runtime": "workspace:*",
     "@techsio/ui-kit": "catalog:",
+    "effect": "4.0.7",
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1"

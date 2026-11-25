@@ -19,6 +19,9 @@ export async function GET(
         `/reset-password/${encodeURIComponent(token)}`,
         origin,
         null,
+        undefined,
+        undefined,
+        { signal: request.signal },
       );
       if (response.ok) {
         const result = (await response.json()) as { outcome?: string };

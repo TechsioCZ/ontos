@@ -1,3 +1,4 @@
+import { ownerHttp } from "./owner-operation";
 import "server-only";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
@@ -18,5 +19,5 @@ export const cardVariantsWeb = HttpRouter.toWebHandler(
     Layer.provide(handlers),
     Layer.provide(HttpServer.layerServices),
   ),
-  { disableLogger: true },
+  { disableLogger: true, middleware: ownerHttp },
 );

@@ -1,3 +1,4 @@
+import { withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { cache } from "react";
 import { Clock, Effect, Schema } from "effect";
@@ -10,36 +11,38 @@ import type { FulfillmentResult } from "./fulfillment-model";
 import { storefrontRuntime } from "./runtime";
 
 export const readFulfillment = (config: StorefrontConfiguration, locale: string) =>
-  Effect.gen(function* readFulfillmentProgram() {
-    yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale);
-    const now = yield* Clock.currentTimeMillis;
-    const catalog = yield* readOwner(
-      config,
-      "commerce-market-catalog",
-      "current-market-catalog",
-      { at: new Date(now).toISOString() },
-      MarketCatalogSchema,
-    );
-    const market = yield* selectMarket(catalog, config, locale, now);
-    const snapshot = yield* readOwner(
-      config,
-      "merchandise",
-      "records",
-      {
-        view: {
-          storefront: true,
-          storefrontCatalog: {
-            includeCategories: false,
-            marketId: market.marketRef.resourceId,
-            mode: "categories",
+  withOwnerOperation(
+    Effect.gen(function* readFulfillmentProgram() {
+      yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale);
+      const now = yield* Clock.currentTimeMillis;
+      const catalog = yield* readOwner(
+        config,
+        "commerce-market-catalog",
+        "current-market-catalog",
+        { at: new Date(now).toISOString() },
+        MarketCatalogSchema,
+      );
+      const market = yield* selectMarket(catalog, config, locale, now);
+      const snapshot = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              includeCategories: false,
+              marketId: market.marketRef.resourceId,
+              mode: "categories",
+            },
+            storefrontCheckout: true,
           },
-          storefrontCheckout: true,
         },
-      },
-      FulfillmentSnapshotSchema,
-    );
-    return yield* projectFulfillment(snapshot, market.marketRef.resourceId);
-  });
+        FulfillmentSnapshotSchema,
+      );
+      return yield* projectFulfillment(snapshot, market.marketRef.resourceId);
+    }),
+  );
 
 /** Request-local SSR cache only. No unfiltered catalog or fixture tariff fallback. */
 export const getFulfillment = cache(

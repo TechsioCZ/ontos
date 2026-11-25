@@ -205,6 +205,25 @@ const submit = async (
   });
 };
 describe("real order boundary", () => {
+  it("shares directory and selected offer through checkout and revision reads without switcher fanout", async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const before = (await ownerReads()).length;
+      expect((await submit()).status).toBe(200);
+      const reads = (await ownerReads()).slice(before);
+      expect(reads.filter(({ audience }) => audience === "commerce-market-catalog")).toHaveLength(
+        1,
+      );
+      const merchandise = reads.filter(({ audience }) => audience === "merchandise");
+      // Selected offer, shipping methods and fresh aggregate revision are distinct owner queries.
+      expect(merchandise).toHaveLength(3);
+      expect(merchandise.map(({ query }) => query.view.storefrontCatalog?.marketId)).toEqual([
+        testMarket.marketId,
+        testMarket.marketId,
+        testMarket.marketId,
+      ]);
+    }
+  });
+
   it("places against fresh revision using admitted identity and owner shipping prices, not browser identity", async () => {
     expect((await submit()).status).toBe(200);
     const admission = network.requests.find((request) =>

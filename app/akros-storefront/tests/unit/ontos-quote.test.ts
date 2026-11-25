@@ -176,6 +176,23 @@ async function quoteInRequest(...args: Parameters<typeof quoteCart>) {
 }
 
 describe("server cart quote", () => {
+  it("resolves one directory and selected offer for the entire quote", async () => {
+    const quote = await quoteInRequest(cart(5, 121));
+    expect(quote.canCheckout).toBe(true);
+    const reads = await Promise.all(
+      network.requests
+        .filter((request) => new URL(request.url).pathname.endsWith("/gateway-read"))
+        .map((request) => request.json()),
+    );
+    expect(reads.filter((read) => read.audience === "commerce-market-catalog")).toHaveLength(1);
+    expect(
+      reads.filter(
+        (read) =>
+          read.query?.view?.storefrontCatalog?.pageSize === 1 &&
+          read.query.view.storefrontCatalog.fields === "card",
+      ),
+    ).toHaveLength(1);
+  });
   it("quotes an unpackaged variant without inheriting its parent's package constraint", async () => {
     catalog = {
       revision: 3,

@@ -1,8 +1,12 @@
-import { describe, expect } from "@rstest/core";
+import { describe, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
 import { Context, Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { customerOrdersWeb } from "../src/ontos/customer-orders-http";
+import { readCustomerOrders } from "../src/ontos/customer-orders-server";
+import { CurrentOperation } from "../src/ontos/owner-operation";
+
+rs.mock("../src/ontos/customer-orders-server", { spy: true });
 
 const origin = "https://n1.example";
 const noNetwork = () => {
@@ -19,6 +23,24 @@ const request = (query: string, headers: Record<string, string> = {}) =>
   });
 
 describe("private own-orders HTTP boundary", () => {
+  it.effect("preserves captured cookie deletion on the HTTP operation deadline", () =>
+    Effect.gen(function* outerOrdersDeadline() {
+      rs.mocked(readCustomerOrders).mockImplementationOnce((_query, context) =>
+        Effect.gen(function* interruptedOrders() {
+          context.setCookies.push("commerce-portal.session=; Path=/; Max-Age=0; HttpOnly");
+          const operation = yield* CurrentOperation;
+          operation?.abort("deadline");
+          return yield* Effect.never;
+        }),
+      );
+      const response = yield* Effect.promise(() =>
+        customerOrdersWeb.handler(request("?locale=cs")),
+      );
+      expect(response.status).toBe(503);
+      expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }),
+  );
   for (const query of [
     "?locale=cs&customerAccountId=attacker",
     "?locale=cs&partyId=attacker",

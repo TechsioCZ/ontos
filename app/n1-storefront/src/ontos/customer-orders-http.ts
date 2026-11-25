@@ -1,5 +1,8 @@
+import { constUndefined } from "effect/Function";
+import type { OperationError } from "@ontos/storefront-runtime";
+import { storefrontHttpClientLayer, ownerHttp } from "./owner-operation";
 import "server-only";
-import { Effect, Layer, ManagedRuntime, Match } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Match } from "effect";
 import {
   Cookies,
   FetchHttpClient,
@@ -22,7 +25,15 @@ import {
 import { readCustomerOrders } from "./customer-orders-server";
 import type { CustomerOrdersFailure } from "./customer-orders-server";
 import { portalRequestContext } from "./portal-server";
+import type { PortalRequestContext } from "./portal-server";
 import { normalizePublicRequest } from "./request-origin";
+
+const OrdersChannelRequest = Context.Reference<PortalRequestContext | undefined>(
+  "n1/OrdersChannelRequest",
+  {
+    defaultValue: constUndefined,
+  },
+);
 
 const details = {
   detail: "Customer orders could not be read.",
@@ -32,8 +43,14 @@ const details = {
 const problemContentType = "application/problem+json";
 const invalidProblem = () =>
   CustomerOrdersInvalidProblem.make({ ...details, state: "invalid", status: 400 });
-const toProblem = (error: CustomerOrdersFailure) =>
-  Match.value(error.state).pipe(
+const toProblem = (error: CustomerOrdersFailure | OperationError) =>
+  Match.value(
+    Match.value(error).pipe(
+      Match.tag("OperationError", () => "unavailable" as const),
+      Match.tag("CustomerOrdersFailure", (failure) => failure.state),
+      Match.exhaustive,
+    ),
+  ).pipe(
     Match.when("invalid", invalidProblem),
     Match.when("anonymous", () =>
       CustomerOrdersAnonymousProblem.make({ ...details, state: "anonymous", status: 401 }),
@@ -83,12 +100,12 @@ const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   () => Effect.fail(invalidProblem()),
 );
 const handlers = HttpApiBuilder.group(CustomerOrdersApi, "customerOrders", (group) =>
-  group.handle("list", ({ query, request }) =>
+  group.handle("list", ({ query }) =>
     Effect.gen(function* customerOrdersChannel() {
-      const context = portalRequestContext(
-        new URL(request.originalUrl).origin,
-        request.headers.cookie,
-      );
+      const context = yield* OrdersChannelRequest;
+      if (context === undefined) {
+        return yield* Effect.die(new Error("Missing Orders request boundary"));
+      }
       const response = yield* readCustomerOrders(query, context).pipe(
         Effect.matchEffect({
           onFailure: (error) => {
@@ -114,7 +131,7 @@ const application = Layer.merge(
 ).pipe(
   Layer.provide(handlers),
   Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(storefrontHttpClientLayer),
   Layer.provideMerge(
     Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
   ),
@@ -122,34 +139,48 @@ const application = Layer.merge(
 export const customerOrdersWeb = HttpRouter.toWebHandler(application, {
   disableLogger: true,
   middleware: (effect) =>
-    Effect.gen(function* guardCustomerOrdersRequest() {
+    Effect.gen(function* ordersRequestBoundary() {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const actual = new URL(request.originalUrl);
-      const { origin } = request.headers;
-      const fetchSite = request.headers["sec-fetch-site"];
-      if (
-        (origin !== undefined && URL.parse(origin)?.origin !== actual.origin) ||
-        (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none")
-      ) {
-        return yield* failureResponse("forbidden");
-      }
-      const allowed = new Set(["locale", "offset", "orderId"]);
-      if (
-        actual.search.length > 2048 ||
-        [...actual.searchParams.keys()].some(
-          (key) => !allowed.has(key) || actual.searchParams.getAll(key).length !== 1,
-        )
-      ) {
-        return yield* failureResponse("invalid");
-      }
-      return yield* effect;
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: "45 seconds",
-        orElse: () => failureResponse("unavailable"),
-      }),
-      Effect.map(responsePolicy),
-    ),
+      const context = portalRequestContext(
+        new URL(request.originalUrl).origin,
+        request.headers.cookie,
+      );
+      return yield* ownerHttp(
+        Effect.gen(function* guardCustomerOrdersRequest() {
+          const actual = new URL(request.originalUrl);
+          const { origin } = request.headers;
+          const fetchSite = request.headers["sec-fetch-site"];
+          if (
+            (origin !== undefined && URL.parse(origin)?.origin !== actual.origin) ||
+            (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none")
+          ) {
+            return yield* failureResponse("forbidden");
+          }
+          const allowed = new Set(["locale", "offset", "orderId"]);
+          if (
+            actual.search.length > 2048 ||
+            [...actual.searchParams.keys()].some(
+              (key) => !allowed.has(key) || actual.searchParams.getAll(key).length !== 1,
+            )
+          ) {
+            return yield* failureResponse("invalid");
+          }
+          return yield* effect;
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: "45 seconds",
+            orElse: () => failureResponse("unavailable"),
+          }),
+          Effect.map(responsePolicy),
+        ),
+        () =>
+          failureResponse("unavailable").pipe(
+            Effect.map(
+              HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies)),
+            ),
+          ),
+      ).pipe(Effect.updateService(OrdersChannelRequest, () => context));
+    }),
 });
 const edgeRuntime = ManagedRuntime.make(Layer.empty);
 export const customerOrdersHandler = async (request: Request) =>

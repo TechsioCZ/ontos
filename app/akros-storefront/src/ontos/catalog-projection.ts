@@ -8,6 +8,7 @@ import {
 import { imagePlaceholder, isImagePlaceholder, productMediaPath } from "./media-path";
 import { purchaseConstraints } from "./purchase-constraints";
 import { sourceUnitWeightKg } from "./variant-weights";
+import { assertCategoryForest } from "@app/merchandise/domain/category-forest";
 import type {
   CatalogVariantSummary,
   CatalogData,
@@ -516,5 +517,6 @@ export function projectCategories(body: Raw): CatalogCategory[] {
     }));
   const parentIds = new Set(categories.map((category) => category.parentId));
   for (const category of categories) category.hasChildren = parentIds.has(category.id);
+  assertCategoryForest(categories, "projection");
   return categories;
 }

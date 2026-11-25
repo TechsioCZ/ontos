@@ -1,14 +1,16 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
 import {
   accountMessage,
   passwordResetCookie,
   passwordResetToken,
-  portalCookie,
+  appendPortalCookies,
   portalRequest,
   readAccount,
   registrationInput,
 } from "@/ontos/account";
-import type { AccountSubmissionResponse } from "@/ontos/account";
+import type { AccountSubmissionResponse, PortalRequestOptions } from "@/ontos/account";
 import type { Dictionary } from "@/i18n";
 import {
   guard,
@@ -30,6 +32,7 @@ async function passwordResetSubmission(
   origin: string,
   cookie: string | null,
   t: Dictionary,
+  options: PortalRequestOptions,
 ): Promise<Response> {
   if (data.operation === "request-password-reset") {
     if (
@@ -39,9 +42,16 @@ async function passwordResetSubmission(
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())
     )
       throw new RequestError(400, t.server.account.invalidEmail);
-    const response = await portalRequest("/request-password-reset", origin, null, {
-      email: data.email.trim().toLowerCase(),
-    });
+    const response = await portalRequest(
+      "/request-password-reset",
+      origin,
+      null,
+      {
+        email: data.email.trim().toLowerCase(),
+      },
+      undefined,
+      options,
+    );
     if (!response.ok)
       return Response.json(
         { message: accountMessage(t, response.status) } satisfies AccountSubmissionResponse,
@@ -71,7 +81,14 @@ async function passwordResetSubmission(
       { message: t.server.account.resetLinkInvalid } satisfies AccountSubmissionResponse,
       { status: 400, headers: clearCookie },
     );
-  const response = await portalRequest("/reset-password", origin, null, { newPassword, token });
+  const response = await portalRequest(
+    "/reset-password",
+    origin,
+    null,
+    { newPassword, token },
+    undefined,
+    options,
+  );
   if (response.status === 400)
     return Response.json(
       { message: t.server.account.resetLinkInvalid } satisfies AccountSubmissionResponse,
@@ -89,11 +106,18 @@ async function passwordResetSubmission(
 }
 
 export async function GET(request: Request) {
+  const responseHeaders = new Headers(noStore);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
-    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
-    return Response.json({ account }, { headers: noStore });
+    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"), {
+      operation: lifetime,
+      responseHeaders,
+    });
+    return Response.json({ account }, { headers: responseHeaders });
   } catch (error) {
-    return problem(error, accountMessage(requestDictionary(request), 503));
+    return problem(error, accountMessage(requestDictionary(request), 503), responseHeaders);
+  } finally {
+    lifetime.dispose();
   }
 }
 
@@ -113,17 +137,22 @@ export async function POST(request: Request) {
     });
   }
   const t = requestDictionary(request);
+  const responseHeaders = new Headers(noStore);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     guard(request, t);
     const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin)
       throw new RequestError(403, t.server.request.foreignOrigin);
-    const input: unknown = await jsonBody(request, t);
+    const input: unknown = await jsonBody(request, t, lifetime);
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new RequestError(400, t.server.request.invalid);
     const data = input as Record<string, unknown>;
     if (data.operation === "request-password-reset" || data.operation === "reset-password")
-      return await passwordResetSubmission(data, origin, request.headers.get("cookie"), t);
+      return await passwordResetSubmission(data, origin, request.headers.get("cookie"), t, {
+        operation: lifetime,
+        responseHeaders,
+      });
     let path: string;
     let body: unknown;
     let idempotencyKey: string | undefined;
@@ -169,6 +198,7 @@ export async function POST(request: Request) {
       data.operation === "resend-verification" ? null : request.headers.get("cookie"),
       body,
       idempotencyKey,
+      { operation: lifetime, responseHeaders },
     );
     const result = (await response.json()) as { code?: string; outcome?: string };
     if (!response.ok)
@@ -181,23 +211,19 @@ export async function POST(request: Request) {
         } satisfies AccountSubmissionResponse,
         {
           status: response.status,
-          headers: noStore,
+          headers: responseHeaders,
         },
       );
     if (data.operation === "resend-verification") {
       if (result.outcome !== "EMAIL_VERIFICATION_STARTED")
         throw new Error("Verification resend was not acknowledged");
-      return Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }, { headers: noStore });
+      return Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }, { headers: responseHeaders });
     }
     // Never return provider subjects, session references or credentials to browser JavaScript.
-    const headers = new Headers(noStore);
-    for (const cookie of response.headers.getSetCookie()) {
-      if (portalCookie(cookie.split(";")[0] ?? null)) headers.append("set-cookie", cookie);
-    }
     if (data.operation === "login" && result.outcome !== "SESSION_CREATED")
       return Response.json(
         { message: t.server.account.twoFactorRequired },
-        { status: 403, headers: noStore },
+        { status: 403, headers: responseHeaders },
       );
     if (
       data.operation === "register" &&
@@ -205,14 +231,18 @@ export async function POST(request: Request) {
       result.outcome !== "EXISTING"
     )
       throw new Error("Enrollment start was not acknowledged");
+    if (data.operation === "login" || data.operation === "register")
+      appendPortalCookies(responseHeaders, response.headers.getSetCookie());
     return Response.json(
       {
         // The remaining governed owner transitions continue durably; this is not customer completion.
         outcome: data.operation === "register" ? "ENROLLMENT_STARTED" : result.outcome,
       },
-      { headers },
+      { headers: responseHeaders },
     );
   } catch (error) {
-    return problem(error, accountMessage(t, 503));
+    return problem(error, accountMessage(t, 503), responseHeaders);
+  } finally {
+    lifetime.dispose();
   }
 }

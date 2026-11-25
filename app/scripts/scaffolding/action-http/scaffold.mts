@@ -847,6 +847,7 @@ ${payloadDiscriminator.values
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { Effect, ${payloadDiscriminator === undefined ? '' : 'Match, '}Redacted, Schema } from 'effect';
 import { ${type}ActionApi, ${type}PayloadSchema } from '../../shared/apis/${action}-action.ts';
 import type { ${type}Payload } from '../../shared/actions/${action}.ts';
@@ -859,7 +860,8 @@ export interface ${type}ActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey${required ? '' : '?'}: string;
-${proposalAccepted ? "  /**\n   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a\n   * refusal is never turned into a proposal on the caller's behalf.\n   */\n  readonly intent?: 'propose';\n" : ''}  readonly [traceIdOption]?: string;
+${proposalAccepted ? "  /**\n   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a\n   * refusal is never turned into a proposal on the caller's behalf.\n   */\n  readonly intent?: 'propose';\n" : ''}  readonly transformClient?: EffectBffClientOptions['transformClient'];
+  readonly [traceIdOption]?: string;
 }
 
 type AuthorizedInvocation = readonly [credential: string, requestCorrelation: string, options: ${type}ActionClientOptions];

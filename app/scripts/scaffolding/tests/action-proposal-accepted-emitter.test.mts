@@ -136,4 +136,6 @@ it('does not advertise a proposal intent from a run-only, ephemeral or undeclare
   expect(client).toContain('makeGovernedEffectBffClient({ api: CreateHoldActionApi,');
   expect(client).toContain('idempotencyKey: options.idempotencyKey,');
   expect(client).toContain('requestCorrelation }, options);');
+  expect(client).toContain("import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';");
+  expect(client).toContain("readonly transformClient?: EffectBffClientOptions['transformClient'];");
 });

@@ -1,5 +1,8 @@
+import type { OperationOptions } from "@ontos/storefront-runtime";
+import { MissingMediaIsTerminal, withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { Effect, Schema } from "effect";
+import { constTrue } from "effect/Function";
 import { readConfiguration } from "./config";
 import { readOwner } from "./gateway";
 import { ASSET_ID, PRODUCT_ID } from "./media-path";
@@ -41,12 +44,14 @@ export const readProductImage = async (
   productId: string,
   assetId: string,
   size: ProductImageSize,
+  options: OperationOptions = {},
 ): Promise<ProductImage | undefined> => {
   if (!PRODUCT_ID.test(productId) || !ASSET_ID.test(assetId)) {
     return undefined;
   }
   const image = await storefrontRuntime.runPromise(
-    readProductImageProgram(productId, assetId, size).pipe(
+    withOwnerOperation(readProductImageProgram(productId, assetId, size), options).pipe(
+      Effect.updateService(MissingMediaIsTerminal, constTrue),
       Effect.catchTag("StorefrontReadUnavailable", (failure) =>
         failure.status === 403 || failure.status === 404 ? Effect.void : Effect.fail(failure),
       ),

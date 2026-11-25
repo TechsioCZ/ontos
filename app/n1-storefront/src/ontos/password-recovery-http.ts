@@ -1,3 +1,5 @@
+import type { OperationError } from "@ontos/storefront-runtime";
+import { storefrontHttpClientLayer, ownerHttp } from "./owner-operation";
 import "server-only";
 import { ByteSize, Effect, Layer, ManagedRuntime, Match, Redacted } from "effect";
 import {
@@ -94,6 +96,21 @@ const responseForFailure = (state: PasswordRecoveryFailure["state"]) =>
     Effect.orDie,
     Effect.map(noStore),
   );
+const recoveryOperationFailure = (
+  error: OperationError,
+  request: HttpServerRequest.HttpServerRequest,
+) =>
+  new URL(request.originalUrl).pathname.startsWith(callbackPrefix)
+    ? callbackRedirect(request.originalUrl).pipe(
+        Effect.map(HttpServerResponse.setHeader("x-storefront-failure", error.kind)),
+      )
+    : responseForFailure(error.kind === "overloaded" ? "unavailable" : "unconfirmed").pipe(
+        Effect.flatMap((response) =>
+          error.kind !== "overloaded" && new URL(request.originalUrl).pathname === resetPath
+            ? cookieResponse(response, request.originalUrl)
+            : Effect.succeed(response),
+        ),
+      );
 const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   PasswordRecoverySchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
@@ -170,7 +187,7 @@ const responsePolicy = HttpRouter.middleware(
 const application = Layer.merge(HttpApiBuilder.layer(PasswordRecoveryApi), responsePolicy).pipe(
   Layer.provide(handlers),
   Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(storefrontHttpClientLayer),
   Layer.provideMerge(
     Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
   ),
@@ -179,54 +196,57 @@ const application = Layer.merge(HttpApiBuilder.layer(PasswordRecoveryApi), respo
 export const passwordRecoveryWeb = HttpRouter.toWebHandler(application, {
   disableLogger: true,
   middleware: (effect) =>
-    Effect.gen(function* guardPasswordRecovery() {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const url = new URL(request.originalUrl);
-      if (request.method === "GET" && url.pathname.startsWith(callbackPrefix)) {
-        const keys = [...url.searchParams.keys()];
-        const callbacks = url.searchParams.getAll("callbackURL");
+    ownerHttp(
+      Effect.gen(function* guardPasswordRecovery() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = new URL(request.originalUrl);
+        if (request.method === "GET" && url.pathname.startsWith(callbackPrefix)) {
+          const keys = [...url.searchParams.keys()];
+          const callbacks = url.searchParams.getAll("callbackURL");
+          if (
+            keys.some((key) => key !== "callbackURL") ||
+            callbacks.length > 1 ||
+            (callbacks[0]?.length ?? 0) > 2048
+          ) {
+            return yield* callbackRedirect(request.originalUrl);
+          }
+          return yield* effect.pipe(
+            Effect.timeoutOrElse({
+              duration: "45 seconds",
+              orElse: () => callbackRedirect(request.originalUrl),
+            }),
+          );
+        }
         if (
-          keys.some((key) => key !== "callbackURL") ||
-          callbacks.length > 1 ||
-          (callbacks[0]?.length ?? 0) > 2048
+          request.method !== "POST" ||
+          !isPortalOrigin(request.headers.origin, request.originalUrl)
         ) {
-          return yield* callbackRedirect(request.originalUrl);
+          return yield* responseForFailure("forbidden");
+        }
+        const length = request.headers["content-length"];
+        if (
+          url.search !== "" ||
+          !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
+          (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
+        ) {
+          return yield* responseForFailure("invalid");
         }
         return yield* effect.pipe(
           Effect.timeoutOrElse({
             duration: "45 seconds",
-            orElse: () => callbackRedirect(request.originalUrl),
+            orElse: () =>
+              responseForFailure("unconfirmed").pipe(
+                Effect.flatMap((response) =>
+                  url.pathname === resetPath
+                    ? cookieResponse(response, request.originalUrl)
+                    : Effect.succeed(response),
+                ),
+              ),
           }),
         );
-      }
-      if (
-        request.method !== "POST" ||
-        !isPortalOrigin(request.headers.origin, request.originalUrl)
-      ) {
-        return yield* responseForFailure("forbidden");
-      }
-      const length = request.headers["content-length"];
-      if (
-        url.search !== "" ||
-        !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
-        (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
-      ) {
-        return yield* responseForFailure("invalid");
-      }
-      return yield* effect.pipe(
-        Effect.timeoutOrElse({
-          duration: "45 seconds",
-          orElse: () =>
-            responseForFailure("unconfirmed").pipe(
-              Effect.flatMap((response) =>
-                url.pathname === resetPath
-                  ? cookieResponse(response, request.originalUrl)
-                  : Effect.succeed(response),
-              ),
-            ),
-        }),
-      );
-    }).pipe(Effect.map(noStore)),
+      }).pipe(Effect.map(noStore)),
+      recoveryOperationFailure,
+    ),
 });
 const edgeRuntime = ManagedRuntime.make(Layer.empty);
 export const passwordRecoveryHandler = async (request: Request) =>

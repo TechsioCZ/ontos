@@ -1,6 +1,9 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
+import type { OperationOptions } from "@ontos/storefront-runtime";
 import "server-only";
-import { getBrand } from "@/brand";
 import { randomUUID } from "node:crypto";
+import { getBrand } from "@/brand";
 import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError } from "@/ontos/gateway";
 import { guard, jsonBody, problem, RequestError, requestDictionary } from "@/ontos/http";
@@ -12,42 +15,24 @@ import {
 } from "@/ontos/inquiry-model";
 
 /**
- * Work Tasks refusals that are answered by sending the same inquiry once more under a new idempotency key:
- * the key already committed (the owner then answers the task this request id created), or two first tasks of
- * a company raced. The request id stays the same, so the owner can never create a second task.
+ * One dispatch per explicit submission. Work Tasks deduplicates unchanged customer fields by requestId;
+ * a fresh Action key lets a deliberate resend recover its receipt after a committed response was lost.
  */
-const ALREADY_COMMITTED = "action_already_committed";
-const RESENT_ONCE = new Set([ALREADY_COMMITTED, "work_revision_conflict"]);
-const refusal = (error: unknown) =>
-  OntosError.is(error) && error.status === 409 ? error.code : undefined;
-
-/** The only Work Tasks surface a storefront key is admitted on: no records read, no caller revision. */
-const fileInquiry = async (payload: InquiryActionPayload): Promise<unknown> => {
-  const key = `sf-inquiry-${payload.storefrontInquiry.requestId}`;
-  const send = (idempotencyKey: string) =>
-    callAction("work-tasks", "submit-storefront-inquiry", payload, idempotencyKey);
-  try {
-    return await send(key);
-  } catch (first) {
-    const code = refusal(first);
-    // Every other refusal, and every unknown outcome, is final for this request.
-    if (code === undefined || !RESENT_ONCE.has(code)) throw first;
-    try {
-      return await send(`${key}-${randomUUID()}`);
-    } catch (second) {
-      // A committed key means a saved task: a failed read-back must never read as "not sent".
-      if (code === ALREADY_COMMITTED || refusal(second) === ALREADY_COMMITTED)
-        throw new Error("Inquiry task was saved but its reference was not confirmed");
-      throw second;
-    }
-  }
-};
+const fileInquiry = (payload: InquiryActionPayload, options: OperationOptions): Promise<unknown> =>
+  callAction(
+    "work-tasks",
+    "submit-storefront-inquiry",
+    payload,
+    `sf-inquiry-${payload.storefrontInquiry.requestId}-${randomUUID()}`,
+    options,
+  );
 
 export async function POST(request: Request) {
   const t = requestDictionary(request);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     guard(request, t);
-    const inquiry = parseInquirySubmission(await jsonBody(request, t));
+    const inquiry = parseInquirySubmission(await jsonBody(request, t, lifetime));
     if (inquiry === null) throw new RequestError(400, t.server.inquiry.invalid);
     // Resolve product identity now: a stale browser label or a caller-supplied URL is never persisted.
     let product: InquiryProduct | undefined;
@@ -56,6 +41,7 @@ export async function POST(request: Request) {
         { productIds: [inquiry.productId], pageSize: 1 },
         "card",
         true,
+        { operation: lifetime },
       );
       const record = page.products.find((item) => item.id === inquiry.productId);
       if (record === undefined) throw new RequestError(404, t.server.inquiry.productGone);
@@ -64,7 +50,7 @@ export async function POST(request: Request) {
     // The owner refuses a text beyond its limits; ask the customer to shorten it instead of clipping it.
     const payload = inquiryActionPayload(inquiry, product);
     if (payload === null) throw new RequestError(400, t.server.inquiry.invalid);
-    const result = (await fileInquiry(payload)) as {
+    const result = (await fileInquiry(payload, { operation: lifetime })) as {
       requestId?: unknown;
       taskRef?: { resourceId?: unknown };
     } | null;
@@ -82,5 +68,7 @@ export async function POST(request: Request) {
       );
     }
     return problem(error, t.server.inquiry.unconfirmed);
+  } finally {
+    lifetime.dispose();
   }
 }

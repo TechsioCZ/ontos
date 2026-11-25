@@ -1,7 +1,9 @@
 import "server-only";
+import { Effect } from "effect";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { OntosError, ownerRequest } from "./gateway";
+import { ownerRequest } from "./gateway";
+import type { OperationOptions } from "@ontos/storefront-runtime";
 import { getConfig } from "./config";
 import type { Dictionary } from "@/i18n";
 import { cs } from "@/i18n/cs";
@@ -37,12 +39,43 @@ export const portalCookie = (cookie: string | null): string =>
     .filter((part) => /^(?:__Secure-)?commerce-portal\.[\w.-]+=/.test(part))
     .join("; ");
 
+/** Response state is owned by the native incoming request, never the gateway or a render cache. */
+export interface PortalRequestOptions extends OperationOptions {
+  readonly responseHeaders?: Headers;
+}
+
+/** Only host-only commerce-realm cookies may leave the Portal boundary. */
+export const portalSetCookies = (cookies: readonly string[]): string[] =>
+  cookies.filter((cookie) => {
+    const first = cookie.split(";")[0] ?? "";
+    return (
+      first.length > 0 &&
+      portalCookie(first) === first &&
+      !/[\r\n]/u.test(cookie) &&
+      !/;\s*domain\s*=/iu.test(cookie)
+    );
+  });
+
+export const appendPortalCookies = (headers: Headers, cookies: readonly string[]): void => {
+  for (const cookie of portalSetCookies(cookies)) headers.append("set-cookie", cookie);
+};
+
+const publicPortalPath = (path: string) =>
+  /^\/(?:request-password-reset|reset-password|verify-email|send-verification-email)(?:[/?]|$)/u.test(
+    path,
+  );
+const createsPortalSession = (path: string) =>
+  path === "/sign-in/email" || path === "/enrollment/start";
+const revokesPortalCookie = (cookie: string) =>
+  /^[^=]+=\s*(?:;|$)/u.test(cookie) || /;\s*max-age=0(?:;|$)/iu.test(cookie);
+
 export const portalRequest = async (
   path: string,
   origin: string,
   cookie: string | null,
   body?: unknown,
   idempotencyKey?: string,
+  options: PortalRequestOptions = {},
 ): Promise<Response> => {
   const init: RequestInit = {
     method: body === undefined ? "GET" : "POST",
@@ -54,30 +87,21 @@ export const portalRequest = async (
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
-  // A transient admission read must not strand a verified login. Only these reads are safe:
-  // email verification also uses GET, but consumes a one-time token and must never be replayed.
-  const readOnly =
-    body === undefined &&
-    (path === "/customer-account" ||
-      path === "/enrollment/current" ||
-      path === "/customer-consent");
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const response = await ownerRequest(owner, `${base}${path}`, init);
-      if (!readOnly || response.status !== 503 || attempt >= 2) return response;
-      await response.body?.cancel();
-    } catch (error) {
-      if (
-        !readOnly ||
-        !OntosError.is(error) ||
-        error.status !== 503 ||
-        error.code === "storefront_not_configured" ||
-        attempt >= 2
-      )
-        throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
-  }
+  return ownerRequest(owner, `${base}${path}`, init, {
+    ...options,
+    onResponse: (response) =>
+      Effect.sync(() => {
+        const headers = options.responseHeaders;
+        if (headers === undefined || publicPortalPath(path)) return;
+        const updates = portalSetCookies(response.headers.getSetCookie());
+        // A sign-in/enrollment body must confirm admission before creating a session.
+        // Revocations, and rotations by existing-session operations, survive body failures.
+        appendPortalCookies(
+          headers,
+          createsPortalSession(path) ? updates.filter(revokesPortalCookie) : updates,
+        );
+      }),
+  });
 };
 
 /** Holds the one-time reset credential between the mail link and the new-password form. Scripts cannot read it. */
@@ -142,8 +166,16 @@ export const registrationInput = (input: Record<string, unknown>, t: Dictionary 
 export const readAccount = async (
   origin: string,
   cookie: string | null,
+  options: PortalRequestOptions = {},
 ): Promise<CustomerAccount | null> => {
-  const response = await portalRequest("/customer-account", origin, cookie);
+  const response = await portalRequest(
+    "/customer-account",
+    origin,
+    cookie,
+    undefined,
+    undefined,
+    options,
+  );
   if (response.status === 401) return null;
   if (!response.ok) throw new Error("Customer account unavailable");
   const value = (await response.json()) as { state?: string; account?: CustomerAccount };
@@ -177,14 +209,18 @@ export const requestPortal = async (): Promise<{ origin: string; cookie: string 
 };
 
 /** The fresh owner admission of the current server request, or null for a guest. */
-export const readRequestAccount = async (): Promise<CustomerAccount | null> => {
+export const readRequestAccount = async (
+  options: PortalRequestOptions = {},
+): Promise<CustomerAccount | null> => {
   const { origin, cookie } = await requestPortal();
-  return readAccount(origin, cookie);
+  return readAccount(origin, cookie, options);
 };
 
 /** Server pages require a fresh owner admission. No browser-storage or email-based identity fallback. */
-export const requireCustomerAccount = async (): Promise<CustomerAccount> => {
-  const account = await readRequestAccount();
+export const requireCustomerAccount = async (
+  options: PortalRequestOptions = {},
+): Promise<CustomerAccount> => {
+  const account = await readRequestAccount(options);
   if (!account) redirect(await marketHref("/prihlaseni"));
   return account;
 };

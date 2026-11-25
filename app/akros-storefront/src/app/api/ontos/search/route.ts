@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
 import { guard, jsonBody, problem, requestDictionary } from "@/ontos/http";
 import { getCatalogPage } from "@/ontos/catalog-server";
@@ -17,15 +19,19 @@ export const fetchCache = "force-no-store";
 const noStore = { "cache-control": "no-store" };
 export async function POST(request: Request) {
   const t = requestDictionary(request);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     guard(request, t);
-    const { q } = (await jsonBody(request, t)) as { q?: unknown };
+    const { q } = (await jsonBody(request, t, lifetime)) as { q?: unknown };
     const term = searchQueryText(q);
     if (term.length < SEARCH_QUERY_MIN_LENGTH)
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
         headers: noStore,
       });
-    const listing = await getCatalogPage({ q: term, page: 1, pageSize: 6 });
+    const listing = await getCatalogPage(
+      { q: term, page: 1, pageSize: 6 },
+      { operation: lifetime },
+    );
     // Every card carries validated owner attribution plus at most one market-priced presentation offer.
     const products = placeholdersLast(listing.products);
     const matches = await readSearchVariantMatches(products, term);
@@ -46,5 +52,7 @@ export async function POST(request: Request) {
     );
   } catch (e) {
     return problem(e, t.server.outage.search);
+  } finally {
+    lifetime.dispose();
   }
 }

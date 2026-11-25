@@ -12,7 +12,9 @@ export async function GET(
   const size =
     new URL(request.url).searchParams.get("velikost") === "nahled" ? "thumbnail" : "full";
   try {
-    const image = await readProductImage(decodeURIComponent(product), asset, size);
+    const image = await readProductImage(decodeURIComponent(product), asset, size, {
+      signal: request.signal,
+    });
     if (!image)
       return new Response(null, { status: 404, headers: { "cache-control": "no-store" } });
     return new Response(image.bytes, {

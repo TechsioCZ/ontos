@@ -1,3 +1,4 @@
+import type { OperationOptions } from "@ontos/storefront-runtime";
 import "server-only";
 // Product photos uploaded in OntOS are Core Media Assets. The storefront serves them from its own origin through the
 // governed media read; OntOS records every read (the storefront's service principal, the asset and its content hash).
@@ -19,14 +20,20 @@ export const readProductImage = async (
   productId: string,
   assetId: string,
   size: ProductImageSize,
+  options: OperationOptions = {},
 ): Promise<ProductImage | undefined> => {
   if (!PRODUCT_ID.test(productId) || !ASSET_ID.test(assetId)) return undefined;
   try {
-    const body = (await readRecords("merchandise", "media", {
-      image: `media:${assetId}`,
-      productId,
-      rendition: size,
-    })) as { contentBase64?: unknown; mimeType?: unknown };
+    const body = (await readRecords(
+      "merchandise",
+      "media",
+      {
+        image: `media:${assetId}`,
+        productId,
+        rendition: size,
+      },
+      options,
+    )) as { contentBase64?: unknown; mimeType?: unknown };
     if (
       typeof body.contentBase64 !== "string" ||
       typeof body.mimeType !== "string" ||

@@ -1,3 +1,4 @@
+import type { PortalRequestOptions } from "./account";
 import "server-only";
 import { headers } from "next/headers";
 import { portalRequest } from "./account";
@@ -17,7 +18,11 @@ async function profileResponse(response: Response) {
   return value;
 }
 
-export async function readCustomerProfile(origin?: string, cookie?: string | null) {
+export async function readCustomerProfile(
+  origin?: string,
+  cookie?: string | null,
+  options: PortalRequestOptions = {},
+) {
   if (origin === undefined) {
     const requestHeaders = await headers();
     const host = requestHeaders.get("host");
@@ -31,7 +36,14 @@ export async function readCustomerProfile(origin?: string, cookie?: string | nul
   }
   return {
     profile: await profileResponse(
-      await portalRequest("/customer-profile", origin, cookie ?? null),
+      await portalRequest(
+        "/customer-profile",
+        origin,
+        cookie ?? null,
+        undefined,
+        undefined,
+        options,
+      ),
     ),
   };
 }
@@ -40,6 +52,9 @@ export async function saveCustomerProfile(
   origin: string,
   cookie: string | null,
   input: CustomerProfile,
+  options: PortalRequestOptions = {},
 ) {
-  return await profileResponse(await portalRequest("/customer-profile", origin, cookie, input));
+  return await profileResponse(
+    await portalRequest("/customer-profile", origin, cookie, input, undefined, options),
+  );
 }

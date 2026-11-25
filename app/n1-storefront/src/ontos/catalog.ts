@@ -1,3 +1,5 @@
+import type { OperationOptions } from "@ontos/storefront-runtime";
+import { withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { cache } from "react";
 import { Effect, Match, Schema } from "effect";
@@ -30,51 +32,53 @@ const CatalogQuerySchema = Schema.Struct({
 
 /** Read-only public channel. No writes, seed catalog or alternate data source lives in this app. */
 export const loadCatalog = (locale: string, query: CatalogQuery) =>
-  Effect.gen(function* loadCatalogProgram() {
-    const config = yield* readConfiguration(process.env);
-    const { markets, now } = yield* readCurrentMarketCatalog(config);
-    const market = yield* selectMarket(markets, config, locale, now);
-    const { productId, ...filters } = query;
-    const full = query.slug !== undefined || productId !== undefined;
-    const fields: "card" | "full" = full ? "full" : "card";
-    const catalogQuery = {
-      ...filters,
-      fields,
-      includeCategories: productId === undefined,
-      marketId: market.marketRef.resourceId,
-      pageSize: full ? 1 : 24,
-      storefrontAppId: config.appId,
-    };
-    const storefrontCatalog =
-      productId === undefined ? catalogQuery : { ...catalogQuery, productIds: [productId] };
-    const body = yield* readOwner(
-      config,
-      "merchandise",
-      "records",
-      {
-        view: {
-          storefront: true,
-          storefrontCatalog,
+  withOwnerOperation(
+    Effect.gen(function* loadCatalogProgram() {
+      const config = yield* readConfiguration(process.env);
+      const { markets, now } = yield* readCurrentMarketCatalog(config);
+      const market = yield* selectMarket(markets, config, locale, now);
+      const { productId, ...filters } = query;
+      const full = query.slug !== undefined || productId !== undefined;
+      const fields: "card" | "full" = full ? "full" : "card";
+      const catalogQuery = {
+        ...filters,
+        fields,
+        includeCategories: productId === undefined,
+        marketId: market.marketRef.resourceId,
+        pageSize: full ? 1 : 24,
+        storefrontAppId: config.appId,
+      };
+      const storefrontCatalog =
+        productId === undefined ? catalogQuery : { ...catalogQuery, productIds: [productId] };
+      const body = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        {
+          view: {
+            storefront: true,
+            storefrontCatalog,
+          },
         },
-      },
-      CatalogResponseSchema,
-    );
-    if (body.market.marketId !== market.marketRef.resourceId) {
-      return yield* new StorefrontReadUnavailable({ reason: "contract" });
-    }
-    const hosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
-      .split(",")
-      .map((host) => host.trim())
-      .filter(Boolean);
-    return projectCatalog(body, hosts);
-  });
+        CatalogResponseSchema,
+      );
+      if (body.market.marketId !== market.marketRef.resourceId) {
+        return yield* new StorefrontReadUnavailable({ reason: "contract" });
+      }
+      const hosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
+        .split(",")
+        .map((host) => host.trim())
+        .filter(Boolean);
+      return projectCatalog(body, hosts);
+    }),
+  );
 
 /** Framework edge: retain typed failures until they become an explicit page state. Request-local cache only. */
 export const getCatalog = cache(
-  async (locale: string, queryKey: string) =>
+  async (locale: string, queryKey: string, options: OperationOptions = {}) =>
     await storefrontRuntime.runPromise(
       Schema.decodeUnknownEffect(Schema.fromJsonString(CatalogQuerySchema))(queryKey).pipe(
-        Effect.flatMap((query) => loadCatalog(locale, query)),
+        Effect.flatMap((query) => withOwnerOperation(loadCatalog(locale, query), options)),
         Effect.tapError((error) =>
           Effect.logWarning("N1 catalog read unavailable").pipe(
             Effect.annotateLogs(
@@ -90,7 +94,13 @@ export const getCatalog = cache(
           ),
         ),
         Effect.match({
-          onFailure: (error) => ({ reason: error._tag, state: "unavailable" as const }),
+          onFailure: (error) => ({
+            reason: Match.value(error).pipe(
+              Match.tag("OperationError", (failure) => failure.kind),
+              Match.orElse((failure) => failure._tag),
+            ),
+            state: "unavailable" as const,
+          }),
           onSuccess: (catalog) => ({ catalog, state: "ready" as const }),
         }),
       ),

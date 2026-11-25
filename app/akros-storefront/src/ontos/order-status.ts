@@ -1,3 +1,4 @@
+import type { OperationOptions } from "@ontos/storefront-runtime";
 import "server-only";
 import { readRecords } from "./gateway";
 
@@ -31,10 +32,16 @@ export function parseOrderStatusRequest(value: unknown): OrderStatusRequest | nu
 /** Owner read `view.storefrontOrderStatus` (no PII). Null when OntOS does not know this pair. */
 export async function readOrderStatus(
   request: OrderStatusRequest,
+  options: OperationOptions = {},
 ): Promise<LiveOrderStatus | null> {
-  const body = (await readRecords("merchandise", "records", {
-    view: { storefront: true, storefrontOrderStatus: request },
-  })) as { orderStatus?: unknown };
+  const body = (await readRecords(
+    "merchandise",
+    "records",
+    {
+      view: { storefront: true, storefrontOrderStatus: request },
+    },
+    options,
+  )) as { orderStatus?: unknown };
   const value = body.orderStatus;
   if (!value || typeof value !== "object") return null;
   const { id, number, status, updatedAt } = value as Record<string, unknown>;

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner demo.merchandise
 // @ontos-action-http-slug place-storefront-order
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import {
   PlaceStorefrontOrderActionApi,
@@ -24,6 +25,7 @@ export interface PlaceStorefrontOrderActionClientOptions {
   readonly intent?: 'propose';
   readonly referenceCredentials?: Redacted.Redacted;
   readonly [traceIdOption]?: string;
+  readonly transformClient?: EffectBffClientOptions['transformClient'];
 }
 
 type AuthorizedInvocation = readonly [

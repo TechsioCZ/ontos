@@ -20,6 +20,13 @@ esac
 started="$(date +%s)"
 export NEXT_TELEMETRY_DISABLED=1
 
+# Both clients consume the same resource policy and native instrumentation. Test its real streams and controller
+# parsing before packaging it; a source-only import test cannot prove the relocated server contains the hook.
+mise exec -- pnpm --filter @ontos/storefront-runtime test
+mise exec -- pnpm exec rstest --project scripts scripts/zerops/storefront-instrumentation.test.mts \
+  scripts/zerops/prove-storefront-runtime.test.mts --pool.maxWorkers 1
+node --test scripts/zerops/prove-storefront-artifact.test.mjs
+
 # `next typegen`, then tsrs over Next's tsconfig.json with the generated route types. The build still runs Next's own
 # type step too, until the storefronts emit declarations cleanly under the workspace typecheck.
 mise exec -- pnpm --filter "$package" run typecheck
@@ -46,6 +53,7 @@ mv "$package/.next/standalone" "$out/$package"
 cp -a "$package/.next/static" "$out/$package/$package/.next/static"
 cp -a "$package/public" "$out/$package/$package/public"
 test -f "$out/$package/$package/server.js"
+node scripts/zerops/prove-storefront-artifact.mts "$out/$package" "$package" "$GITHUB_SHA"
 native="$(find "$out" -name '*.node' -print)"
 if [ -n "$native" ]; then echo "::error::native addons in the standalone server:"; echo "$native"; exit 1; fi
 absolute="$(find "$out" -type l -lname '/*' -print)"
@@ -53,10 +61,7 @@ if [ -n "$absolute" ]; then echo "::error::absolute symlinks in the standalone s
 tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
   --file "$push/.zerops-storefront.tar.gz" -C "$out" "$package"
 # The committed inputs of this build: the storefront, the workspace sources N1 imports, and the install.
-case "$package" in
-  akros-storefront) inputs=(akros-storefront) ;;
-  n1-storefront) inputs=(n1-storefront apps packages verticals tsconfig.json tsconfig.base.json) ;;
-esac
+inputs=("$package" apps packages verticals tsconfig.json tsconfig.base.json)
 inputs+=(package.json pnpm-lock.yaml pnpm-workspace.yaml patches .mise.toml)
 input_digest="$(git ls-files -s -- "${inputs[@]}" | sha256sum | cut -d' ' -f1)"
 jq -n --arg setup "$setup" --arg package "$package" --arg sourceRevision "$GITHUB_SHA" \

@@ -1,3 +1,4 @@
+import { CurrentOperation } from "./owner-operation";
 import "server-only";
 import { Effect, Struct } from "effect";
 import { productCardForVariant } from "@/features/product-selection";
@@ -22,9 +23,13 @@ export const readCardVariants = (
   query: CardVariantsQuery,
   readCatalog: typeof getCatalog = getCatalog,
 ): Effect.Effect<CardVariantsResult> =>
-  Effect.promise(
-    async () => await readCatalog(query.locale, JSON.stringify({ slug: query.slug })),
-  ).pipe(
+  Effect.gen(function* cardVariantsOperation() {
+    const operation = yield* CurrentOperation;
+    return yield* Effect.promise(
+      async () =>
+        await readCatalog(query.locale, JSON.stringify({ slug: query.slug }), { operation }),
+    );
+  }).pipe(
     Effect.map((result): CardVariantsResult => {
       if (result.state !== "ready" || !result.catalog.configured) {
         return { state: "unavailable" };

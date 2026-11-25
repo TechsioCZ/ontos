@@ -1,3 +1,4 @@
+import { boundOwnerClient, withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { executePlaceStorefrontOrderWithAuthorization } from "@app/merchandise/clients/place-storefront-order";
@@ -25,7 +26,6 @@ export class CartQuoteFailure extends Schema.TaggedError<CartQuoteFailure>()("Ca
   state: Schema.Literals(["unavailable", "invalid", "forbidden", "scope-mismatch"]),
 }) {}
 const scopeMismatchState = "scope-mismatch";
-const readDeadline = "10 seconds";
 const gatewayContextUnavailableDiagnostic = "gateway-context-unavailable";
 const DryRunEvidenceSchema = Schema.Struct({
   entityIds: Schema.Array(Schema.Never),
@@ -158,15 +158,22 @@ const readCartStocks = (config: StorefrontConfiguration, request: CartQuoteReque
 
 /** Fresh server-only scope for SSR. No browser identity, catalog fallback or cached market is accepted. */
 export const getCartScope = (locale: string) =>
-  Effect.gen(function* getCartScopeProgram() {
-    yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale).pipe(
-      Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })),
-    );
-    const config = yield* readConfiguration(process.env).pipe(
-      Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
-    );
-    return (yield* readQuoteContext(config, locale)).scope;
-  });
+  withOwnerOperation(
+    Effect.gen(function* getCartScopeProgram() {
+      yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale).pipe(
+        Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })),
+      );
+      const config = yield* readConfiguration(process.env).pipe(
+        Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
+      );
+      return (yield* readQuoteContext(config, locale)).scope;
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CartQuoteFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CartQuoteFailure({ state: "unavailable" })),
+    }),
+  );
 
 const mintQuoteContext = (config: StorefrontConfiguration) =>
   Effect.gen(function* mintQuoteContextProgram() {
@@ -190,7 +197,6 @@ const mintQuoteContext = (config: StorefrontConfiguration) =>
       ),
     );
     const response = yield* HttpClient.execute(request).pipe(
-      Effect.timeout(readDeadline),
       Effect.mapError(
         () =>
           new CartQuoteFailure({
@@ -210,7 +216,6 @@ const mintQuoteContext = (config: StorefrontConfiguration) =>
     }
     return yield* response.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ContextSchema)),
-      Effect.timeout(readDeadline),
       Effect.mapError(
         () =>
           new CartQuoteFailure({
@@ -320,79 +325,86 @@ const logNativeQuoteFailure = (error: NativeQuoteFailure) =>
   );
 
 export const quoteCart = (input: CartQuoteRequest) =>
-  Effect.gen(function* quoteCartProgram() {
-    const request = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema, {
-      onExcessProperty: "error",
-    })(input).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
-    // The public owner has tighter quantity bounds than the cart's storage envelope. Refuse them before any HTTP.
-    yield* Schema.decodeUnknownEffect(Schema.Array(StorefrontOrderLineRequestSchema))(
-      request.lines,
-    ).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
-    const config = yield* readConfiguration(process.env).pipe(
-      Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
-    );
-    if (
-      request.scope.tenantId !== config.tenantId ||
-      request.scope.legalEntityId !== config.legalEntityId
-    ) {
-      return yield* new CartQuoteFailure({ state: scopeMismatchState });
-    }
-    const snapshot = yield* readQuoteContext(config, request.locale);
-    if (!sameScope(snapshot.scope, request.scope)) {
-      return yield* new CartQuoteFailure({ state: scopeMismatchState });
-    }
-    // Both combined reads redeemed their assertions. The command always mints a new one.
-    const context = yield* mintQuoteContext(config);
-    const requestId = `n1-quote-${randomUUID()}`;
-    const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
-      command: {
-        _tag: "PlaceStorefrontOrder",
-        clientRequestId: requestId,
-        dryRun: true,
-        expectedShippingPriceMinor: 0,
-        lines: request.lines,
-        marketId: snapshot.scope.marketId,
-        shippingMethod: "OSOBNI_ODBER",
-      },
-      expectedRevision: snapshot.revision,
-    }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
-    const result = yield* executePlaceStorefrontOrderWithAuthorization(
-      payload,
-      `Bearer ${context.token}`,
-      randomUUID(),
-      {
-        baseUrl: `${config.shellUrl}${context.apiBaseUrl}`,
-        compositionRevision: context.compositionRevision,
-        idempotencyKey: requestId,
-      },
-    ).pipe(
-      Effect.timeout("20 seconds"),
-      Effect.tapError(logNativeQuoteFailure),
-      Effect.catch((error) =>
-        Match.value(error).pipe(
-          Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
-            Effect.fail(
-              new CartQuoteFailure({ diagnostic: "native-action-forbidden", state: "forbidden" }),
+  withOwnerOperation(
+    Effect.gen(function* quoteCartProgram() {
+      const request = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema, {
+        onExcessProperty: "error",
+      })(input).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
+      // The public owner has tighter quantity bounds than the cart's storage envelope. Refuse them before any HTTP.
+      yield* Schema.decodeUnknownEffect(Schema.Array(StorefrontOrderLineRequestSchema))(
+        request.lines,
+      ).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
+      const config = yield* readConfiguration(process.env).pipe(
+        Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
+      );
+      if (
+        request.scope.tenantId !== config.tenantId ||
+        request.scope.legalEntityId !== config.legalEntityId
+      ) {
+        return yield* new CartQuoteFailure({ state: scopeMismatchState });
+      }
+      const snapshot = yield* readQuoteContext(config, request.locale);
+      if (!sameScope(snapshot.scope, request.scope)) {
+        return yield* new CartQuoteFailure({ state: scopeMismatchState });
+      }
+      // Both combined reads redeemed their assertions. The command always mints a new one.
+      const context = yield* mintQuoteContext(config);
+      const requestId = `n1-quote-${randomUUID()}`;
+      const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
+        command: {
+          _tag: "PlaceStorefrontOrder",
+          clientRequestId: requestId,
+          dryRun: true,
+          expectedShippingPriceMinor: 0,
+          lines: request.lines,
+          marketId: snapshot.scope.marketId,
+          shippingMethod: "OSOBNI_ODBER",
+        },
+        expectedRevision: snapshot.revision,
+      }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
+      const result = yield* executePlaceStorefrontOrderWithAuthorization(
+        payload,
+        `Bearer ${context.token}`,
+        randomUUID(),
+        {
+          baseUrl: `${config.shellUrl}${context.apiBaseUrl}`,
+          compositionRevision: context.compositionRevision,
+          idempotencyKey: requestId,
+          transformClient: boundOwnerClient,
+        },
+      ).pipe(
+        Effect.tapError(logNativeQuoteFailure),
+        Effect.catch((error) =>
+          Match.value(error).pipe(
+            Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
+              Effect.fail(
+                new CartQuoteFailure({ diagnostic: "native-action-forbidden", state: "forbidden" }),
+              ),
             ),
-          ),
-          Match.orElse(() =>
-            Effect.fail(
-              new CartQuoteFailure({
-                diagnostic: "native-action-unavailable",
-                state: "unavailable",
-              }),
+            Match.orElse(() =>
+              Effect.fail(
+                new CartQuoteFailure({
+                  diagnostic: "native-action-unavailable",
+                  state: "unavailable",
+                }),
+              ),
             ),
           ),
         ),
-      ),
-    );
-    if (Predicate.isTagged(result, "ActionProposalAccepted")) {
-      return yield* new CartQuoteFailure({
-        diagnostic: "native-action-unavailable",
-        state: "unavailable",
-      });
-    }
-    const quote = yield* confirmCartQuote(snapshot.scope, result);
-    const stocks = yield* readCartStocks(config, request);
-    return stocks === null || stocks === undefined ? quote : { ...quote, stocks };
-  });
+      );
+      if (Predicate.isTagged(result, "ActionProposalAccepted")) {
+        return yield* new CartQuoteFailure({
+          diagnostic: "native-action-unavailable",
+          state: "unavailable",
+        });
+      }
+      const quote = yield* confirmCartQuote(snapshot.scope, result);
+      const stocks = yield* readCartStocks(config, request);
+      return stocks === null || stocks === undefined ? quote : { ...quote, stocks };
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CartQuoteFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CartQuoteFailure({ state: "unavailable" })),
+    }),
+  );

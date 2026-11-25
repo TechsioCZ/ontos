@@ -1,3 +1,4 @@
+import { withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { Clock, Effect, Schema } from "effect";
@@ -54,70 +55,73 @@ export const sameCheckoutScope = (left: CartScope, right: CartScope) =>
 
 /** Country choices are explicit market COUNTRY jurisdictions, never inferred from a language. */
 export const readCheckoutContext = (config: StorefrontConfiguration, locale: string) =>
-  Effect.gen(function* readCheckoutContextProgram() {
-    yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale).pipe(
-      Effect.mapError(() => new CheckoutFailure({ state: "invalid" })),
-    );
-    const now = yield* Clock.currentTimeMillis;
-    const catalog = yield* readOwner(
-      config,
-      "commerce-market-catalog",
-      "current-market-catalog",
-      { at: new Date(now).toISOString() },
-      CheckoutMarketCatalogSchema,
-    );
-    const selected = yield* selectMarket(catalog, config, locale, now);
-    const definition = catalog.markets.find(
-      (market) => market.marketRef.resourceId === selected.marketRef.resourceId,
-    );
-    const countries = new Set<string>();
-    if (definition !== undefined) {
-      for (const jurisdiction of definition.jurisdictions) {
-        if (jurisdiction.kind === "COUNTRY") {
-          countries.add(jurisdiction.code);
+  withOwnerOperation(
+    Effect.gen(function* readCheckoutContextProgram() {
+      yield* Schema.decodeUnknownEffect(Schema.Literals(["cs", "en"]))(locale).pipe(
+        Effect.mapError(() => new CheckoutFailure({ state: "invalid" })),
+      );
+      const now = yield* Clock.currentTimeMillis;
+      const catalog = yield* readOwner(
+        config,
+        "commerce-market-catalog",
+        "current-market-catalog",
+        { at: new Date(now).toISOString() },
+        CheckoutMarketCatalogSchema,
+      );
+      const selected = yield* selectMarket(catalog, config, locale, now);
+      const definition = catalog.markets.find(
+        (market) => market.marketRef.resourceId === selected.marketRef.resourceId,
+      );
+      const countries = new Set<string>();
+      if (definition !== undefined) {
+        for (const jurisdiction of definition.jurisdictions) {
+          if (jurisdiction.kind === "COUNTRY") {
+            countries.add(jurisdiction.code);
+          }
         }
       }
-    }
-    const countryCodes = [...countries];
-    if (countryCodes.length === 0 || countryCodes.some((code) => !/^[A-Z]{2}$/u.test(code))) {
-      return yield* new CheckoutFailure({ state: "unavailable" });
-    }
-    const snapshot = yield* readOwner(
-      config,
-      "merchandise",
-      "records",
-      {
-        view: {
-          storefront: true,
-          storefrontCatalog: {
-            includeCategories: false,
-            marketId: selected.marketRef.resourceId,
-            mode: "categories",
+      const countryCodes = [...countries];
+      if (countryCodes.length === 0 || countryCodes.some((code) => !/^[A-Z]{2}$/u.test(code))) {
+        return yield* new CheckoutFailure({ state: "unavailable" });
+      }
+      const snapshot = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              includeCategories: false,
+              marketId: selected.marketRef.resourceId,
+              mode: "categories",
+            },
+            storefrontCheckout: true,
           },
-          storefrontCheckout: true,
         },
-      },
-      CheckoutSnapshotSchema,
-    );
-    const info = yield* projectFulfillment(snapshot, selected.marketRef.resourceId);
-    const scope: CartScope = {
-      currency: info.currency,
-      legalEntityId: config.legalEntityId,
-      marketId: snapshot.market.marketId,
-      tenantId: config.tenantId,
-    };
-    return { ...info, countryCodes, revision: snapshot.revision, scope };
-  }).pipe(
-    Effect.catchTags({
-      FulfillmentUnavailable: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
-      StorefrontMarketUnavailable: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
-      StorefrontReadUnavailable: (error) =>
-        Effect.fail(
-          new CheckoutFailure({
-            state: error.reason === "forbidden" ? "forbidden" : "unavailable",
-          }),
-        ),
-    }),
+        CheckoutSnapshotSchema,
+      );
+      const info = yield* projectFulfillment(snapshot, selected.marketRef.resourceId);
+      const scope: CartScope = {
+        currency: info.currency,
+        legalEntityId: config.legalEntityId,
+        marketId: snapshot.market.marketId,
+        tenantId: config.tenantId,
+      };
+      return { ...info, countryCodes, revision: snapshot.revision, scope };
+    }).pipe(
+      Effect.catchTags({
+        FulfillmentUnavailable: () => Effect.fail(new CheckoutFailure({ state: "unavailable" })),
+        StorefrontMarketUnavailable: () =>
+          Effect.fail(new CheckoutFailure({ state: "unavailable" })),
+        StorefrontReadUnavailable: (error) =>
+          Effect.fail(
+            new CheckoutFailure({
+              state: error.reason === "forbidden" ? "forbidden" : "unavailable",
+            }),
+          ),
+      }),
+    ),
   );
 
 /** An assertion redeemed by a combined read is never reused for an Action. */
@@ -135,7 +139,6 @@ export const mintCheckoutContext = (config: StorefrontConfiguration) =>
       { audience: "merchandise", legalEntityId: config.legalEntityId },
     ).pipe(Effect.mapError(() => new CheckoutFailure({ state: "unavailable" })));
     const response = yield* HttpClient.execute(request).pipe(
-      Effect.timeout("10 seconds"),
       Effect.mapError(() => new CheckoutFailure({ state: "unavailable" })),
     );
     if (response.status < 200 || response.status >= 300) {
@@ -145,7 +148,6 @@ export const mintCheckoutContext = (config: StorefrontConfiguration) =>
     }
     return yield* response.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextSchema)),
-      Effect.timeout("10 seconds"),
       Effect.mapError(() => new CheckoutFailure({ state: "unavailable" })),
     );
   });

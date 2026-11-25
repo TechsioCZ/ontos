@@ -1,7 +1,9 @@
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { GET } from "@/app/api/ontos/product-variants/[slug]/route";
 import type { readProducts } from "@/ontos/catalog-server";
 import type { CatalogProduct } from "@/ontos/catalog-types";
+import { createOperation } from "@ontos/storefront-runtime";
 import { fixtureProducts } from "../support/catalog-fixture";
 
 const withVariants = fixtureProducts.find((product) => product.detail.variants.length > 1)!;
@@ -26,11 +28,11 @@ const call = (slug: string, read: typeof readProducts) =>
 describe("GET /api/ontos/product-variants/[slug]", () => {
   it("reads the product's full OntOS record and returns its card and variants", async () => {
     const requests: unknown[] = [];
-    const response = await call(withVariants.slug, async (query, fields) => {
-      requests.push([query, fields]);
+    const response = await call(withVariants.slug, async (query, fields, fresh, options) => {
+      requests.push([query, fields, fresh, options?.operation !== undefined]);
       return page([withVariants]);
     });
-    expect(requests).toEqual([[{ slug: withVariants.slug, pageSize: 1 }, "full"]]);
+    expect(requests).toEqual([[{ slug: withVariants.slug, pageSize: 1 }, "full", false, true]]);
     expect(response.headers.get("cache-control")).toBe("no-store");
     const body = await response.json();
     expect(body.product).toMatchObject({ id: withVariants.id, hasVariants: true });
@@ -60,5 +62,32 @@ describe("GET /api/ontos/product-variants/[slug]", () => {
         })
       ).status,
     ).toBe(503);
+  });
+
+  it("cancels the product read when the caller disconnects", async () => {
+    const caller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const response = GET(
+      new Request(`https://shop.test/api/ontos/product-variants/${plain.slug}`, {
+        signal: caller.signal,
+      }),
+      {
+        params: Promise.resolve({ slug: plain.slug }),
+        read: async (_query, _fields, _fresh, options) => {
+          const operation = options?.operation ?? Effect.runSync(createOperation());
+          started.resolve();
+          try {
+            await Effect.runPromise(operation.wait(50));
+            return page([plain]);
+          } finally {
+            if (!options?.operation) operation.dispose();
+          }
+        },
+      },
+    );
+    await started.promise;
+    caller.abort();
+    expect((await response).status).toBe(499);
+    expect(await (await response).json()).toMatchObject({ code: "cancelled" });
   });
 });

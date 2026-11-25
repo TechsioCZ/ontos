@@ -77,31 +77,33 @@ logs: `app/.scratch/demo-logs/{build-akros-storefront,akros-storefront}.log`.
 
 `config`, `gateway`, `catalog-server`, `quote`, `http`, and every API route import `server-only`.
 Only these server modules read the key. No direct vertical/backend URL or bearer token is
-serialized to the browser. Gateway implementation follows `apps/eshop-storefront/server/ontos.ts`:
-fresh single-use assertion per read/action, fixed merchandise audience and AKROS legal entity,
-composition refresh, 4–6 second timeouts, at most three attempts for reads with backoff.
-Product reads are cached per query for 10 seconds (`CATALOG_CACHE_MS`, at most 100 queries), the
-navigation tree for 60 seconds (`CATEGORY_CACHE_MS`, at most 20 detailed categories); checkout,
-quote and order-revision reads are always fresh.
+serialized to the browser. Each read or action receives a fresh single-use assertion for its
+owner audience and the configured company. Both storefront implementations use
+`@ontos/storefront-runtime` for operation deadlines, byte limits, cancellation and fail-fast
+owner-work admission. Retries are restricted to replay-safe reads and recoverable admission
+failures. A mutation is not retried after an uncertain result.
+Product, category and market results are not retained in process caches. Equal reads can share
+one result within an operation or React render. Checkout, quote and order-revision reads remain fresh.
 
 Catalog source: EVERYTHING the customer sees comes from OntOS. No page, provider or route reads
 Kai's generated JSON (it is only the OntOS seed input). `src/ontos/catalog-server.ts` sends
 merchandise `records` with `{view:{storefront:true,storefrontCatalog:{…}}}`. Product reads always
 send `includeCategories:false`; listings read `fields:"card"`, only product detail reads `"full"`.
-The navigation tree is a separate cached read merged into the model (`createCatalog`):
+The navigation tree is a separate request-local read merged into the model (`createCatalog`).
+Every category projection is checked before merging; the merged graph is checked again before use.
 
-| Page / caller                                           | `storefrontCatalog`                                                                       | Size (AKROS) |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------ |
-| Navigation tree (layout sidebar, trails, header search) | `{pageSize:1,fields:"card",includeCategories:true}` (60 s)                                | ≈ 230 kB     |
-| Category content (`/kategorie/[slug]` heading, grid)    | `{pageSize:1,fields:"card",includeCategories:true,categorySlug}` (60 s)                   | ≈ 230 kB     |
-| Homepage, cart/product recommendations, favourites      | `{featured:true,pageSize:20,fields:"card"}`                                               | ≈ 26 kB      |
-| `/kategorie/[slug]`                                     | `{categorySlug,page,pageSize:24,sort,q?,minMinor?,maxMinor?,availability?,fields:"card"}` | ≈ 30 kB      |
-| `/vyhledavani`                                          | `{q,page,pageSize:24,fields:"card"}`                                                      | ≈ 30 kB      |
-| Header suggestions `POST /api/ontos/search`             | `{q,page:1,pageSize:6,fields:"card"}` + cached tree                                       | ≈ 8 kB       |
-| `/novinky-a-akce`                                       | `{label:"new"\|"action"\|"sale",pageSize:48,fields:"card"}`                               | ≈ 60 kB      |
-| `/produkt/[slug]`                                       | `{slug,pageSize:1,fields:"full"}`                                                         | ≤ 210 kB     |
-| Cart quote / checkout                                   | `{productIds,variantIds,pageSize:n,fields:"full"}` fresh (only the cart's variants)       | small        |
-| Order revision                                          | `{pageSize:1,fields:"card"}` fresh                                                        | ≈ 2 kB       |
+| Page / caller                                           | `storefrontCatalog`                                                                            | Size (AKROS) |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------ |
+| Navigation tree (layout sidebar, trails, header search) | `{mode:"categories",includeCategories:true}`                                                   | ≈ 230 kB     |
+| Category content (`/kategorie/[slug]` heading, grid)    | `{pageSize:24,fields:"card",includeCategories:false,includeCategoryContent:true,categorySlug}` | ≈ 230 kB     |
+| Homepage, cart/product recommendations, favourites      | `{featured:true,pageSize:20,fields:"card"}`                                                    | ≈ 26 kB      |
+| `/kategorie/[slug]`                                     | `{categorySlug,page,pageSize:24,sort,q?,minMinor?,maxMinor?,availability?,fields:"card"}`      | ≈ 30 kB      |
+| `/vyhledavani`                                          | `{q,page,pageSize:24,fields:"card"}`                                                           | ≈ 30 kB      |
+| Header suggestions `POST /api/ontos/search`             | `{q,page:1,pageSize:6,fields:"card"}` + request-local tree                                     | ≈ 8 kB       |
+| `/novinky-a-akce`                                       | `{label:"new"\|"action"\|"sale",pageSize:48,fields:"card"}`                                    | ≈ 60 kB      |
+| `/produkt/[slug]`                                       | `{slug,pageSize:1,fields:"full"}`                                                              | ≤ 210 kB     |
+| Cart quote / checkout                                   | `{productIds,variantIds,pageSize:n,fields:"full"}` fresh (only the cart's variants)            | small        |
+| Order revision                                          | `{pageSize:1,fields:"card"}` fresh                                                             | ≈ 2 kB       |
 
 Every product response carries `total`, `page`, `pageSize`, `revision` and
 `homepageFeaturedProductIds`; every product carries the owner's `variantSummary`
@@ -197,14 +199,16 @@ would not fit (also a description over 2000 characters) gets the form's validati
 HTTP 400. The Action answers `{requestId, taskRef}`; the form shows `taskRef.resourceId` only when
 `requestId` matches the submission.
 
-The browser keeps one `requestId` for an unchanged form, so sending the same text again answers the
-task it already created instead of a second one. The first write uses the idempotency key
-`sf-inquiry-<requestId>`. Two refusals are answered by one resend with a new key
-(`sf-inquiry-<requestId>-<uuid>`) and the same `requestId`, never a loop: 409
-`action_already_committed` (the owner then returns the existing `taskRef`) and 409
-`work_revision_conflict` (two first tasks of a company raced). 409 `work_lifecycle_conflict` (the
-`requestId` belongs to other content), `action_request_hash_conflict`, 503 and every unknown outcome
-are not repeated and show „Přijetí dotazu se nepodařilo potvrdit“.
+The browser keeps one `requestId` for an unchanged form. Each explicit submission dispatches once
+with a fresh Action key, `sf-inquiry-<requestId>-<uuid>`. After an uncertain response, the customer
+can submit the unchanged form again. Work Tasks returns the existing `taskRef` for matching
+customer fields instead of creating another task. Changed content under the same `requestId`
+is refused with `work_lifecycle_conflict`. No transport failure or refusal triggers an automatic
+mutation resend. Unconfirmed outcomes show „Přijetí dotazu se nepodařilo potvrdit“.
+
+Product questions still require a current product before dispatch. If a product is delisted after
+an uncertain submission, the route returns 404 even if Work Tasks committed the original inquiry.
+Receipt recovery for that case is not implemented.
 
 Every 403 (`action_permission_denied` and the other denials) shows „Kontaktní formulář je dočasně
 nedostupný. Dotaz nebyl odeslán.“ with the brand's e-mail and phone. A key is admitted only when an

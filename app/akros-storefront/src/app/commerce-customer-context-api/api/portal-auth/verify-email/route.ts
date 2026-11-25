@@ -15,6 +15,9 @@ export async function GET(request: Request): Promise<Response> {
         `/verify-email?${new URLSearchParams({ token })}`,
         requestOrigin(request),
         null,
+        undefined,
+        undefined,
+        { signal: request.signal },
       );
       if (response.ok) {
         const result: unknown = await response.json();

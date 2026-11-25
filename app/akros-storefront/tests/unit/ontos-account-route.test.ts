@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { createServer } from "node:http";
+import { channel } from "node:diagnostics_channel";
+import { ERROR_BYTES, RESPONSE_BYTES } from "@ontos/storefront-runtime";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "@/app/api/ontos/account/route";
@@ -88,7 +90,11 @@ beforeEach(async () => {
       }
       const cookies = response.headers.getSetCookie();
       if (cookies.length) outgoing.setHeader("set-cookie", cookies);
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
+      outgoing.flushHeaders();
+      if (response.body !== null) {
+        for await (const chunk of response.body) outgoing.write(chunk);
+      }
+      outgoing.end();
     } catch (error) {
       outgoing.statusCode = 500;
       outgoing.end(String(error));
@@ -182,7 +188,7 @@ describe("owner-backed customer account transport", () => {
     expect(ownerRequests).toHaveLength(0);
     expect(issuerRequests).toHaveLength(0);
   });
-  it("loads the admitted account after a transient owner outage", async () => {
+  it("loads the admitted account after an explicit retryable read-admission failure", async () => {
     const account = {
       id: "provider-subject",
       partyId: "party",
@@ -193,7 +199,10 @@ describe("owner-backed customer account transport", () => {
     let reads = 0;
     ownerAnswer = () =>
       ++reads === 1
-        ? Response.json({}, { status: 503 })
+        ? Response.json(
+            { type: "https://ontos.dev/problems/gateway-unavailable", retryable: true },
+            { status: 503 },
+          )
         : Response.json({ state: "authenticated", account });
     const response = await callRoute(
       GET,
@@ -420,6 +429,209 @@ describe("owner-backed customer account transport", () => {
     ownerAnswer = () => Response.json({ code: "authentication_failed" }, { status: 401 });
     const response = await callRoute(GET, new Request(`${origin}/api/ontos/account`));
     expect(await response.json()).toEqual({ account: null });
+  });
+  it.each([200, 503])(
+    "preserves only host-only Portal cookies when a logout body exceeds its %s bound",
+    async (status) => {
+      const headers = new Headers();
+      headers.append("set-cookie", "commerce-portal.session_token=; Max-Age=0; HttpOnly");
+      headers.append(
+        "set-cookie",
+        "__Secure-commerce-portal.session_data=rotated; HttpOnly; Secure",
+      );
+      headers.append("set-cookie", "staff.session=must-not-cross; HttpOnly");
+      headers.append("set-cookie", "unrelated=must-not-cross; HttpOnly");
+      headers.append("set-cookie", "commerce-portal.session_data=must-not-cross; Domain=shop.test");
+      ownerAnswer = () =>
+        Response.json(
+          { padding: "x".repeat((status === 200 ? RESPONSE_BYTES : ERROR_BYTES) + 1) },
+          { status, headers },
+        );
+      const response = await submit({ operation: "logout" });
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ code: "body_oversize" });
+      expect(response.headers.getSetCookie()).toEqual([
+        "commerce-portal.session_token=; Max-Age=0; HttpOnly",
+        "__Secure-commerce-portal.session_data=rotated; HttpOnly; Secure",
+      ]);
+      expect(ownerRequests).toHaveLength(1);
+      expect(issuerRequests).toHaveLength(1);
+      ownerAnswer = () => Response.json({ outcome: "SESSION_REVOKED" });
+      expect((await submit({ operation: "logout" })).headers.getSetCookie()).toEqual([]);
+      expect(ownerRequests).toHaveLength(2);
+    },
+  );
+  it.each([
+    ["account read", "/api/ontos/account", async () => GET, undefined],
+    [
+      "profile",
+      "/api/ontos/account/profile",
+      async () => (await import("@/app/api/ontos/account/profile/route")).GET,
+      undefined,
+    ],
+    [
+      "consent",
+      "/api/ontos/account/consent",
+      async () => (await import("@/app/api/ontos/account/consent/route")).GET,
+      undefined,
+    ],
+    [
+      "password",
+      "/api/ontos/account/password",
+      async () => (await import("@/app/api/ontos/account/password/route")).POST,
+      { currentPassword: "old-password", newPassword: "new-long-enough-password" },
+    ],
+    [
+      "enrollment",
+      "/api/ontos/enrollment",
+      async () => (await import("@/app/api/ontos/enrollment/route")).GET,
+      undefined,
+    ],
+    [
+      "orders",
+      "/api/ontos/orders",
+      async () => (await import("@/app/api/ontos/orders/route")).GET,
+      undefined,
+    ],
+    [
+      "reorder",
+      "/api/ontos/account/reorder",
+      async () => (await import("@/app/api/ontos/account/reorder/route")).POST,
+      { orderId: "saved-order" },
+    ],
+  ] as const)(
+    "preserves Portal rotation at the %s outer failure boundary",
+    async (_name, path, load, body) => {
+      ownerAnswer = () =>
+        Response.json(
+          { padding: "x".repeat(ERROR_BYTES + 1) },
+          {
+            status: 503,
+            headers: { "set-cookie": "commerce-portal.session_token=rotated; HttpOnly" },
+          },
+        );
+      const response = await callRoute(
+        await load(),
+        new Request(`${origin}${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            origin,
+            "content-type": "application/json",
+            cookie: "commerce-portal.session_token=old",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+      );
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ code: "body_oversize" });
+      expect(response.headers.getSetCookie()).toEqual([
+        "commerce-portal.session_token=rotated; HttpOnly",
+      ]);
+      expect(ownerRequests).toHaveLength(1);
+      expect(issuerRequests).toHaveLength(1);
+    },
+  );
+  it.each([
+    { operation: "login", email: "real@example.test", password: registration.password },
+    registration,
+    { operation: "resend-verification", email: "real@example.test" },
+    { operation: "request-password-reset", email: "real@example.test" },
+    {
+      operation: "reset-password",
+      newPassword: "new-long-enough-password",
+      passwordConfirmation: "new-long-enough-password",
+    },
+  ])(
+    "does not relay unconfirmed session or public recovery/resend cookies after a body failure (%j)",
+    async (body) => {
+      ownerAnswer = () =>
+        Response.json(
+          { padding: "x".repeat(ERROR_BYTES + 1) },
+          {
+            status: 503,
+            headers: { "set-cookie": "commerce-portal.session_token=must-not-cross; HttpOnly" },
+          },
+        );
+      const response = await callRoute(
+        POST,
+        new Request(`${origin}/api/ontos/account`, {
+          method: "POST",
+          headers: {
+            origin,
+            "content-type": "application/json",
+            cookie: "akros-password-reset=reset-token-value",
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(response.status).toBe(502);
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(ownerRequests).toHaveLength(1);
+      expect(issuerRequests).toHaveLength(1);
+    },
+  );
+  it("preserves received Portal revocation cookies when the caller aborts a logout body", async () => {
+    const controller = new AbortController();
+    const received = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const events = channel("undici:request:headers");
+    const observe = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "request" in message &&
+        typeof message.request === "object" &&
+        message.request !== null &&
+        "path" in message.request &&
+        message.request.path === `${ownerBase}/api/portal-auth/sign-out`
+      )
+        received.resolve();
+    };
+    events.subscribe(observe);
+    ownerAnswer = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(body) {
+            body.enqueue(new TextEncoder().encode('{"outcome":'));
+            void release.promise.then(() => body.close());
+          },
+        }),
+        {
+          headers: {
+            "content-type": "application/json",
+            "set-cookie": "commerce-portal.session_token=; Max-Age=0; HttpOnly",
+          },
+        },
+      );
+    const pending = callRoute(
+      POST,
+      new Request(`${origin}/api/ontos/account`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify({ operation: "logout" }),
+      }),
+    );
+    try {
+      await received.promise;
+      // The native HTTP header event precedes fetch's resolution microtask; let it deliver the headers first.
+      await setImmediate();
+      controller.abort();
+      release.resolve();
+      const response = await pending;
+      expect(response.status).toBe(499);
+      expect(await response.json()).toMatchObject({ code: "cancelled" });
+      expect(response.headers.getSetCookie()).toEqual([
+        "commerce-portal.session_token=; Max-Age=0; HttpOnly",
+      ]);
+      expect(ownerRequests).toHaveLength(1);
+      expect(issuerRequests).toHaveLength(1);
+    } finally {
+      events.unsubscribe(observe);
+      controller.abort();
+      release.resolve();
+      await pending;
+    }
   });
   it("logs out through the real owner and forwards only its expired realm cookie", async () => {
     ownerAnswer = () =>

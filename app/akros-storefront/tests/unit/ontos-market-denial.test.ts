@@ -152,7 +152,9 @@ describe("legitimate pre-market installation", () => {
     expect(await request.run(() => market$.storefrontMarketKind("cs"))).toBe("live");
     expect(await request.run(() => market$.storefrontMarketKind("sk"))).toBe("unknown");
     // Nothing to scope: no catalogue read is attempted, let alone one without a marketId.
-    expect(await ownerReads()).toEqual(["commerce-market-catalog/current-market-catalog"]);
+    expect(await ownerReads()).toEqual(
+      Array(3).fill("commerce-market-catalog/current-market-catalog"),
+    );
   });
 
   it("keeps /cs when the market module is not part of the approved composition", async () => {
@@ -208,10 +210,8 @@ describe("denied access to the market catalog", () => {
       },
     ]);
 
-    // Access is revoked. After the 60 s directory cache expires, /cs must not silently answer with
-    // the whole published catalogue because the denial cannot prove the market is gone.
+    // Access is revoked. The very next operation must refuse unrestricted catalogue access.
     ownerResponse = { body: { _tag: "CurrentMarketCatalogForbiddenProblem" }, status: 403 };
-    vi.setSystemTime(NOW + 61_000);
     await expect(request.run(() => market$.resolveStorefrontMarket("cs"))).rejects.toMatchObject({
       status: 403,
     });

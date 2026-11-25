@@ -1,3 +1,4 @@
+import type { OperationOptions } from "@ontos/storefront-runtime";
 import { Schema } from "effect";
 import { getCatalog } from "./catalog";
 
@@ -9,6 +10,7 @@ export const readSearchSuggestions = async (
   locale: string,
   query: string,
   readCatalog: typeof getCatalog = getCatalog,
+  options: OperationOptions = {},
 ) => {
   if (!Schema.is(localeSchema)(locale) || !Schema.is(querySchema)(query)) {
     return { state: "unavailable" as const };
@@ -17,7 +19,7 @@ export const readSearchSuggestions = async (
   if (q.length === 0) {
     return { state: "idle" as const };
   }
-  const result = await readCatalog(locale, JSON.stringify({ q }));
+  const result = await readCatalog(locale, JSON.stringify({ q }), options);
   if (result.state === "unavailable" || !result.catalog.configured) {
     return { state: "unavailable" as const };
   }

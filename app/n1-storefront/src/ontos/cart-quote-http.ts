@@ -1,3 +1,5 @@
+import type { OperationError } from "@ontos/storefront-runtime";
+import { storefrontHttpClientLayer, ownerHttp } from "./owner-operation";
 import "server-only";
 import { ByteSize, Effect, Layer, ManagedRuntime, Match, Struct } from "effect";
 import {
@@ -17,8 +19,7 @@ import {
   CartQuoteScopeProblem,
   CartQuoteUnavailableProblem,
 } from "./cart-quote";
-import type { CartQuoteFailure } from "./cart-quote-server";
-import { quoteCart } from "./cart-quote-server";
+import { CartQuoteFailure, quoteCart } from "./cart-quote-server";
 import { normalizePublicRequest } from "./request-origin";
 
 const maxBodyBytes = 65_536;
@@ -31,13 +32,18 @@ const details = {
 };
 const invalidProblem = () =>
   CartQuoteInvalidProblem.make({ ...details, state: "invalid", status: 400 });
-const toProblem = (error: CartQuoteFailure) =>
-  Match.value(error.state).pipe(
+const toProblem = (error: CartQuoteFailure | OperationError) => {
+  const failure = Match.value(error).pipe(
+    Match.tag("OperationError", () => new CartQuoteFailure({ state: "unavailable" })),
+    Match.tag("CartQuoteFailure", (problem) => problem),
+    Match.exhaustive,
+  );
+  return Match.value(failure.state).pipe(
     Match.when("invalid", invalidProblem),
     Match.when("forbidden", () =>
       CartQuoteForbiddenProblem.make({
         ...details,
-        ...Struct.pick(error, ["diagnostic"]),
+        ...Struct.pick(failure, ["diagnostic"]),
         state: "forbidden",
         status: 403,
       }),
@@ -48,13 +54,14 @@ const toProblem = (error: CartQuoteFailure) =>
     Match.when("unavailable", () =>
       CartQuoteUnavailableProblem.make({
         ...details,
-        ...Struct.pick(error, ["diagnostic"]),
+        ...Struct.pick(failure, ["diagnostic"]),
         state: "unavailable",
         status: 503,
       }),
     ),
     Match.exhaustive,
   );
+};
 const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   CartQuoteSchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
@@ -108,7 +115,7 @@ const responsePolicy = HttpRouter.middleware(
 const application = Layer.merge(HttpApiBuilder.layer(CartQuoteApi), responsePolicy).pipe(
   Layer.provide(handlers),
   Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(storefrontHttpClientLayer),
   Layer.provideMerge(
     Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
   ),
@@ -117,28 +124,30 @@ const application = Layer.merge(HttpApiBuilder.layer(CartQuoteApi), responsePoli
 export const cartQuoteWeb = HttpRouter.toWebHandler(application, {
   disableLogger: true,
   middleware: (effect) =>
-    Effect.gen(function* guardCartQuoteRequest() {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const origin = URL.parse(request.headers.origin ?? "");
-      const actual = new URL(request.originalUrl);
-      if (origin === null || origin.origin !== actual.origin) {
-        return yield* failureResponse("forbidden");
-      }
-      const length = request.headers["content-length"];
-      if (
-        actual.search !== "" ||
-        !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
-        (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
-      ) {
-        return yield* failureResponse("invalid");
-      }
-      return yield* effect;
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: "55 seconds",
-        orElse: () => failureResponse("unavailable"),
-      }),
-      Effect.map(noStore),
+    ownerHttp(
+      Effect.gen(function* guardCartQuoteRequest() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const origin = URL.parse(request.headers.origin ?? "");
+        const actual = new URL(request.originalUrl);
+        if (origin === null || origin.origin !== actual.origin) {
+          return yield* failureResponse("forbidden");
+        }
+        const length = request.headers["content-length"];
+        if (
+          actual.search !== "" ||
+          !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
+          (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
+        ) {
+          return yield* failureResponse("invalid");
+        }
+        return yield* effect;
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: "55 seconds",
+          orElse: () => failureResponse("unavailable"),
+        }),
+        Effect.map(noStore),
+      ),
     ),
 });
 const edgeRuntime = ManagedRuntime.make(Layer.empty);

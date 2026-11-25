@@ -48,7 +48,7 @@ const forwarded = (response: Response, header: string) =>
   response.headers.get(`x-middleware-request-${header}`);
 
 beforeEach(async () => {
-  // Reload the real modules to isolate their process-local market cache between cases.
+  // Each proxy invocation has its own owner operation, separate from a later render.
   vi.resetModules();
   ownerUnavailable = false;
   // Match next.config.ts: preserve the real receiving URL in NextRequest.
@@ -95,6 +95,18 @@ afterEach(async () => {
 });
 
 describe("market routing proxy", () => {
+  it("does not start owner work for an already abandoned navigation", async () => {
+    const caller = new AbortController();
+    caller.abort();
+    const context = nextRequest(`${origin}/cs`, { signal: caller.signal });
+    try {
+      await context.run(() => proxy(context.request));
+      await network.idle();
+      expect(network.requests).toHaveLength(0);
+    } finally {
+      await context.close();
+    }
+  });
   it.each([
     ["/", "/cs"],
     ["/kategorie/srouby", "/cs/kategorie/srouby"],
@@ -169,7 +181,7 @@ describe("market routing proxy", () => {
     const inactive = await run("/pl");
     expect(rewrite(inactive)).toBe(`${origin}/trh-nedostupny`);
     expect(forwarded(inactive, "x-akros-market-locale")).toBe("pl");
-    expect(network.requests).toHaveLength(1);
+    expect(network.requests).toHaveLength(2);
   });
 
   it("leaves an OntOS outage to the page render instead of reporting an unknown market", async () => {

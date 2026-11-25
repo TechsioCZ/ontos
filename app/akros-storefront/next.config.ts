@@ -11,6 +11,7 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
 // Zerops runs the storefront as a plain Node server from the self-contained standalone bundle
 // (.next/standalone/akros-storefront/server.js). The server serves image URLs as is.
 const nextConfig: NextConfig = {
+  env: { ONTOS_SOURCE_REVISION: process.env.GITHUB_SHA ?? "unknown" },
   agentRules: false,
   output: "standalone",
   // Build-only tooling the workspace hoists next to Next.js; the server never loads it. Native
@@ -40,7 +41,7 @@ const nextConfig: NextConfig = {
     ],
   },
   reactStrictMode: true,
-  // Catalog responses already have a strict ten-second owner-read window. Never extend it in the router.
+  // The owner supplies current catalogue state. Do not retain it across visits in the client router.
   experimental: { staleTimes: { static: 0, dynamic: 0 } },
   async headers() {
     return [

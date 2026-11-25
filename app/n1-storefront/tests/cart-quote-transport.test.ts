@@ -820,9 +820,9 @@ for (const scenario of [
     status: 403,
   },
   {
-    calls: 3,
+    calls: 1,
     diagnostic: "context-read-unavailable",
-    label: "context read unavailable after its existing bounded retry policy",
+    label: "arbitrary context-read 503 is terminal without an explicit admission retry contract",
     options: { readStatus: 503 },
     status: 503,
   },

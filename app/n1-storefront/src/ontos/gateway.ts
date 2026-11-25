@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { Clock, Effect, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { HttpClientResponse } from "effect/http";
+import { recoverableReadAdmission } from "@ontos/storefront-runtime";
+import type { OperationOptions } from "@ontos/storefront-runtime";
+import { boundedBody, withOwnerOperation } from "./owner-operation";
 import type { StorefrontConfiguration } from "./config";
 
 type OwnerReadQuery =
@@ -56,7 +59,17 @@ type OwnerReadQuery =
 export class StorefrontReadUnavailable extends Schema.TaggedError<StorefrontReadUnavailable>()(
   "StorefrontReadUnavailable",
   {
-    reason: Schema.Literals(["transport", "forbidden", "response", "contract"]),
+    reason: Schema.Literals([
+      "transport",
+      "forbidden",
+      "response",
+      "contract",
+      "cancelled",
+      "deadline",
+      "overloaded",
+      "body_oversize",
+    ]),
+    retryable: Schema.optionalKey(Schema.Boolean),
     status: Schema.optionalKey(Schema.Number),
   },
 ) {}
@@ -115,9 +128,26 @@ const decodeOwnerResponse = <A, I>(
   schema: Schema.Codec<A, I>,
 ) =>
   Effect.gen(function* decodeOwnerResponseProgram() {
+    const bytes = yield* boundedBody(response).pipe(
+      Effect.mapError(
+        () => new StorefrontReadUnavailable({ reason: "contract", status: response.status }),
+      ),
+    );
+    const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+      new TextDecoder().decode(bytes),
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new StorefrontReadUnavailable({
+            reason: response.status === 401 || response.status === 403 ? "forbidden" : "contract",
+            status: response.status,
+          }),
+      ),
+    );
     if (response.status < 200 || response.status >= 300) {
       return yield* new StorefrontReadUnavailable({
         reason: response.status === 401 || response.status === 403 ? "forbidden" : "response",
+        retryable: recoverableReadAdmission(response.status, body),
         status: response.status,
       });
     }
@@ -128,10 +158,6 @@ const decodeOwnerResponse = <A, I>(
     yield* Schema.decodeUnknownEffect(Schema.fromJsonString(GatewayContextSchema))(
       response.headers["x-ontos-gateway-context"],
     ).pipe(Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })));
-    const body = yield* response.json.pipe(
-      Effect.timeout("10 seconds"),
-      Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })),
-    );
     return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
       Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })),
     );
@@ -144,47 +170,53 @@ export const readOwner = <A, I>(
   readName: OwnerReadName,
   query: OwnerReadQuery,
   schema: Schema.Codec<A, I>,
+  options: OperationOptions = {},
 ) =>
-  Effect.suspend(() => {
-    // Counted per execution of this read, across its retries.
-    let attempt = 0;
-    return Effect.gen(function* readOwnerProgram() {
-      attempt += 1;
-      const correlationId = randomUUID();
-      const request = yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post(
-          `${config.shellUrl}/shell-super-app-api/auth/api-key/gateway-read`,
-        ).pipe(
-          HttpClientRequest.setHeaders({
-            "x-api-key": config.apiKey,
-            "x-correlation-id": correlationId,
-          }),
-        ),
-        { audience, legalEntityId: config.legalEntityId, query, readName },
-      ).pipe(Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })));
-      const read: OwnerReadAttempt = {
-        attempt,
-        audience,
-        correlationId,
-        readName,
-        startedAt: yield* Clock.currentTimeMillis,
-      };
-      const response = yield* HttpClient.execute(request).pipe(
-        Effect.timeout("10 seconds"),
-        Effect.tapError(() => logOwnerRead(read, "transport", null)),
-        Effect.mapError(() => new StorefrontReadUnavailable({ reason: "transport" })),
+  withOwnerOperation(
+    Effect.suspend(() => {
+      // Counted per execution of this read, across its retries.
+      let attempt = 0;
+      return Effect.gen(function* readOwnerProgram() {
+        attempt += 1;
+        const correlationId = randomUUID();
+        const request = yield* HttpClientRequest.bodyJson(
+          HttpClientRequest.post(
+            `${config.shellUrl}/shell-super-app-api/auth/api-key/gateway-read`,
+          ).pipe(
+            HttpClientRequest.setHeaders({
+              "x-api-key": config.apiKey,
+              "x-correlation-id": correlationId,
+            }),
+          ),
+          { audience, legalEntityId: config.legalEntityId, query, readName },
+        ).pipe(Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })));
+        const read: OwnerReadAttempt = {
+          attempt,
+          audience,
+          correlationId,
+          readName,
+          startedAt: yield* Clock.currentTimeMillis,
+        };
+        const response = yield* HttpClient.execute(request).pipe(
+          Effect.onExit((exit) =>
+            exit._tag === "Failure" ? logOwnerRead(read, "transport", null) : Effect.void,
+          ),
+          Effect.mapError(() => new StorefrontReadUnavailable({ reason: "transport" })),
+        );
+        yield* logOwnerRead(read, response.status, response.headers["server-timing"] ?? null);
+        return yield* decodeOwnerResponse(response, schema);
+      }).pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("400 millis"),
+          times: 2,
+          while: (error) => error.reason === "response" && error.retryable === true,
+        }),
       );
-      yield* logOwnerRead(read, response.status, response.headers["server-timing"] ?? null);
-      return yield* decodeOwnerResponse(response, schema);
-    }).pipe(
-      // Retry the combined read so every attempt receives a newly issued/redeemed
-      // gateway context, as in AKROS. Denials and malformed contracts stay failures.
-      Effect.retry({
-        schedule: Schedule.spaced("250 millis"),
-        times: 2,
-        while: (error) =>
-          error.reason === "response" &&
-          (error.status === 409 || error.status === 502 || error.status === 503),
-      }),
-    );
-  });
+    }),
+    options,
+  ).pipe(
+    Effect.catchTags({
+      OperationError: (error) => Effect.fail(new StorefrontReadUnavailable({ reason: error.kind })),
+      SchemaError: () => Effect.fail(new StorefrontReadUnavailable({ reason: "contract" })),
+    }),
+  );

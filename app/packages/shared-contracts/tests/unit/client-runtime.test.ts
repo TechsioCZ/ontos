@@ -11,7 +11,7 @@ import {
 } from '@modern-js/bff-effect/effect-client';
 import { Predicate, Redacted, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 import {
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
@@ -39,6 +39,44 @@ const representativeClient = (config: EffectBffClientOptionsConfig) =>
   makeEffectBffClientOptions(config).pipe(
     Effect.flatMap((clientOptions) => makeEffectHttpApiClient(RepresentativeApi, clientOptions)),
   );
+
+it.effect('composes native transport policy without replacing caller tracing or resolved headers', () =>
+  Effect.gen(function* nativeTransportPolicy() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'bounded-native-client' }));
+    };
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    let constructions = 0;
+    const baseOptions = {
+      defaultApiPrefix: 'https://owner.example/representative-api',
+      transformClient: (native: HttpClient.HttpClient) => {
+        constructions += 1;
+        return HttpClient.mapRequest(native, HttpClientRequest.setHeader('x-native-policy', 'applied'));
+      },
+      transportHeaders: { authorization: 'Bearer caller', 'x-correlation-id': 'caller-correlation' },
+    };
+    for (const requestContext of [{ traceparent }, undefined]) {
+      const client = yield* representativeClient(
+        requestContext === undefined ? baseOptions : { ...baseOptions, requestContext },
+      );
+      expect(
+        yield* client.representative
+          .read({})
+          .pipe(Effect.withSpan('native-policy-test'), Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
+      ).toEqual({ value: 'bounded-native-client' });
+    }
+    expect(constructions).toBe(2);
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.headers.get('traceparent'))).toEqual([traceparent, null]);
+    for (const request of requests) {
+      expect(request.headers.get('x-native-policy')).toBe('applied');
+      expect(request.headers.get('authorization')).toBe('Bearer caller');
+      expect(request.headers.get('x-correlation-id')).toBe('caller-correlation');
+    }
+  }),
+);
 
 const controlledTransportFailureFetch: typeof fetch = () =>
   Promise.reject(new TypeError('controlled transport failure'));

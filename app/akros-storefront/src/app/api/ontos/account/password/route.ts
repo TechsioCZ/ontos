@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
 import { portalRequest } from "@/ontos/account";
 import type { Dictionary } from "@/i18n";
@@ -35,13 +37,15 @@ async function ownerCode(response: Response): Promise<string | undefined> {
 
 export async function POST(request: Request) {
   const t = requestDictionary(request);
+  const responseHeaders = new Headers(noStore);
+  const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     guard(request, t);
     const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin) {
       throw new RequestError(403, t.server.request.foreignOrigin);
     }
-    const input = passwordChangeInput(await jsonBody(request, t));
+    const input = passwordChangeInput(await jsonBody(request, t, lifetime));
     if (!input) {
       throw new RequestError(400, t.server.password.invalid);
     }
@@ -51,14 +55,18 @@ export async function POST(request: Request) {
       origin,
       request.headers.get("cookie"),
       input,
+      undefined,
+      { operation: lifetime, responseHeaders },
     );
     if (response.ok) {
-      return Response.json({ outcome: "PASSWORD_CHANGED" }, { headers: noStore });
+      return Response.json({ outcome: "PASSWORD_CHANGED" }, { headers: responseHeaders });
     }
     const status = [400, 401, 403, 429].includes(response.status) ? response.status : 503;
     const message = refusal(status, t, await ownerCode(response));
-    return Response.json({ message }, { headers: noStore, status });
+    return Response.json({ message }, { headers: responseHeaders, status });
   } catch (error) {
-    return problem(error, t.server.password.unavailable);
+    return problem(error, t.server.password.unavailable, responseHeaders);
+  } finally {
+    lifetime.dispose();
   }
 }

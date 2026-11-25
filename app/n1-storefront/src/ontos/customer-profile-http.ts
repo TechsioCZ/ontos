@@ -1,5 +1,8 @@
+import { constUndefined } from "effect/Function";
+import type { OperationError } from "@ontos/storefront-runtime";
+import { storefrontHttpClientLayer, ownerHttp } from "./owner-operation";
 import "server-only";
-import { ByteSize, Effect, Layer, ManagedRuntime, Match } from "effect";
+import { ByteSize, Context, Effect, Layer, ManagedRuntime, Match } from "effect";
 import {
   Cookies,
   FetchHttpClient,
@@ -32,6 +35,13 @@ import { normalizePublicRequest } from "./request-origin";
 import { changeCustomerAddress, readCustomerAddresses } from "./customer-addresses-server";
 import { CustomerAddressesReadSchema, CustomerAddressSavedSchema } from "./customer-addresses";
 
+const ProfileChannelRequest = Context.Reference<PortalRequestContext | undefined>(
+  "n1/ProfileChannelRequest",
+  {
+    defaultValue: constUndefined,
+  },
+);
+
 const maxBodyBytes = 16_384;
 const problemContentType = "application/problem+json";
 const noStore = HttpServerResponse.setHeaders({
@@ -45,6 +55,10 @@ const details = {
 };
 const invalidProblem = () =>
   CustomerProfileInvalidProblem.make({ ...details, state: "invalid", status: 400 });
+const operationFailureState = (
+  error: OperationError,
+  request: HttpServerRequest.HttpServerRequest,
+) => (error.kind === "overloaded" || request.method === "GET" ? "unavailable" : "unconfirmed");
 const responseForFailure = (state: CustomerProfileFailure["state"]) =>
   Match.value(state).pipe(
     Match.when("invalid", () =>
@@ -91,6 +105,9 @@ const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   CustomerProfileSchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
 );
+type ProfileService<F> = F extends (...args: infer Args) => Effect.Effect<infer A, infer E, infer R>
+  ? (...args: Args) => Effect.Effect<A, E | OperationError, R>
+  : never;
 type ProfileProgram =
   | ReturnType<typeof readCustomerProfile>
   | ReturnType<typeof readCustomerAddresses>
@@ -102,15 +119,15 @@ const channel = (
     context: PortalRequestContext,
   ) => Effect.Effect<
     HttpServerResponse.HttpServerResponse,
-    CustomerProfileFailure,
+    CustomerProfileFailure | OperationError,
     Effect.Services<ProfileProgram>
   >,
 ) =>
   Effect.gen(function* customerProfileChannel() {
-    const context = portalRequestContext(
-      new URL(request.originalUrl).origin,
-      request.headers.cookie,
-    );
+    const context = yield* ProfileChannelRequest;
+    if (context === undefined) {
+      return yield* Effect.die(new Error("Missing Profile request boundary"));
+    }
     yield* HttpEffect.appendPreResponseHandler((_request, response) =>
       Effect.succeed(
         response.pipe(
@@ -119,14 +136,28 @@ const channel = (
         ),
       ),
     );
-    return yield* program(context).pipe(Effect.catch((error) => responseForFailure(error.state)));
+    return yield* program(context).pipe(
+      Effect.catch((error) =>
+        responseForFailure(
+          Match.value(error).pipe(
+            Match.tag("OperationError", (failure) => operationFailureState(failure, request)),
+            Match.tag("CustomerProfileFailure", (failure) => failure.state),
+            Match.exhaustive,
+          ),
+        ),
+      ),
+    );
   });
 
 const profileChannel = (
   request: HttpServerRequest.HttpServerRequest,
   program: (
     context: PortalRequestContext,
-  ) => Effect.Effect<CustomerProfileRead, CustomerProfileFailure, Effect.Services<ProfileProgram>>,
+  ) => Effect.Effect<
+    CustomerProfileRead,
+    CustomerProfileFailure | OperationError,
+    Effect.Services<ProfileProgram>
+  >,
 ) =>
   channel(request, (context) =>
     program(context).pipe(
@@ -140,10 +171,10 @@ const addressResponse = (value: typeof CustomerAddressesReadSchema.Type) =>
 const savedAddressResponse = (value: typeof CustomerAddressSavedSchema.Type) =>
   HttpServerResponse.schemaJson(CustomerAddressSavedSchema)(value).pipe(Effect.orDie);
 const makeHandlers = (
-  readAddresses: typeof readCustomerAddresses,
-  readProfile: typeof readCustomerProfile,
-  updateProfile: typeof updateCustomerProfile,
-  changeAddress: typeof changeCustomerAddress,
+  readAddresses: ProfileService<typeof readCustomerAddresses>,
+  readProfile: ProfileService<typeof readCustomerProfile>,
+  updateProfile: ProfileService<typeof updateCustomerProfile>,
+  changeAddress: ProfileService<typeof changeCustomerAddress>,
 ) =>
   HttpApiBuilder.group(CustomerProfileApi, "customerProfile", (group) =>
     group
@@ -194,15 +225,15 @@ export const makeCustomerProfileWeb = ({
   readProfile = readCustomerProfile,
   updateProfile = updateCustomerProfile,
 }: {
-  changeAddress?: typeof changeCustomerAddress;
-  readAddresses?: typeof readCustomerAddresses;
-  readProfile?: typeof readCustomerProfile;
-  updateProfile?: typeof updateCustomerProfile;
+  changeAddress?: ProfileService<typeof changeCustomerAddress>;
+  readAddresses?: ProfileService<typeof readCustomerAddresses>;
+  readProfile?: ProfileService<typeof readCustomerProfile>;
+  updateProfile?: ProfileService<typeof updateCustomerProfile>;
 } = {}) => {
   const application = Layer.merge(HttpApiBuilder.layer(CustomerProfileApi), responsePolicy).pipe(
     Layer.provide(makeHandlers(readAddresses, readProfile, updateProfile, changeAddress)),
     Layer.provide(HttpServer.layerServices),
-    Layer.provideMerge(FetchHttpClient.layer),
+    Layer.provideMerge(storefrontHttpClientLayer),
     Layer.provideMerge(
       Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
     ),
@@ -211,26 +242,41 @@ export const makeCustomerProfileWeb = ({
   return HttpRouter.toWebHandler(application, {
     disableLogger: true,
     middleware: (effect) =>
-      Effect.gen(function* guardCustomerProfileRequest() {
+      Effect.gen(function* profileRequestBoundary() {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (
-          (request.method !== "GET" || request.headers.origin !== undefined) &&
-          !isPortalOrigin(request.headers.origin, request.originalUrl)
-        ) {
-          return yield* responseForFailure("forbidden");
-        }
-        const url = new URL(request.originalUrl);
-        const length = request.headers["content-length"];
-        if (
-          url.search !== "" ||
-          (request.method !== "GET" &&
-            (!/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
-              (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))))
-        ) {
-          return yield* responseForFailure("invalid");
-        }
-        return yield* effect;
-      }).pipe(Effect.map(noStore)),
+        const context = portalRequestContext(
+          new URL(request.originalUrl).origin,
+          request.headers.cookie,
+        );
+        return yield* ownerHttp(
+          Effect.gen(function* guardCustomerProfileRequest() {
+            if (
+              (request.method !== "GET" || request.headers.origin !== undefined) &&
+              !isPortalOrigin(request.headers.origin, request.originalUrl)
+            ) {
+              return yield* responseForFailure("forbidden");
+            }
+            const url = new URL(request.originalUrl);
+            const length = request.headers["content-length"];
+            if (
+              url.search !== "" ||
+              (request.method !== "GET" &&
+                (!/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
+                  (length !== undefined &&
+                    (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))))
+            ) {
+              return yield* responseForFailure("invalid");
+            }
+            return yield* effect;
+          }).pipe(Effect.map(noStore)),
+          (error, failedRequest) =>
+            responseForFailure(operationFailureState(error, failedRequest)).pipe(
+              Effect.map(
+                HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies)),
+              ),
+            ),
+        ).pipe(Effect.updateService(ProfileChannelRequest, () => context));
+      }),
   });
 };
 export const customerProfileWeb = makeCustomerProfileWeb();

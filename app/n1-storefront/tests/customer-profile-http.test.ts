@@ -1,8 +1,10 @@
 import { describe, expect } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Context, Effect } from "effect";
+import { Context, Deferred, Effect } from "effect";
+import { createOperation, OperationError, REQUEST_LIMIT } from "@ontos/storefront-runtime";
 import { FetchHttpClient } from "effect/http";
-import { customerProfileWeb } from "../src/ontos/customer-profile-http";
+import { customerProfileWeb, makeCustomerProfileWeb } from "../src/ontos/customer-profile-http";
+import { CurrentOperation, withOwnerOperation } from "../src/ontos/owner-operation";
 
 const origin = "https://n1.example";
 const profile = {
@@ -25,6 +27,31 @@ const noNetwork = () => {
   };
   return { context: Context.make(FetchHttpClient.Fetch, fetch), count: () => calls };
 };
+
+it.effect("preserves captured Portal deletion on an interrupted profile response", () =>
+  Effect.gen(function* interruptedProfileCookie() {
+    const web = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        makeCustomerProfileWeb({
+          updateProfile: (_input, context) =>
+            Effect.gen(function* interruptedWrite() {
+              context.setCookies.push("better-auth.session_token=; Path=/; HttpOnly; Max-Age=0");
+              const operation = yield* CurrentOperation;
+              operation?.abort("deadline");
+              return yield* Effect.never;
+            }),
+        }),
+      ),
+      (handler) => Effect.promise(() => handler.dispose()),
+    );
+    const response = yield* Effect.promise(() =>
+      web.handler(updateRequest(JSON.stringify(profile))),
+    );
+    expect(response.status).toBe(503);
+    expect(response.headers.get("set-cookie")).toContain("better-auth.session_token=");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  }).pipe(Effect.scoped),
+);
 
 for (const suffix of ["?profileId=foreign", "?tenantId=foreign"]) {
   it.effect(`refuses address subject selection ${suffix} before contacting the native owner`, () =>
@@ -163,3 +190,149 @@ describe("own profile HTTP contract", () => {
     }),
   );
 });
+
+for (const boundary of ["channel", "outer"] as const) {
+  it.effect(`keeps a profile read deadline at the ${boundary} boundary unavailable`, () =>
+    Effect.gen(function* unavailableRead() {
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          makeCustomerProfileWeb({
+            readProfile: () =>
+              Effect.gen(function* failedRead() {
+                if (boundary === "channel") {
+                  return yield* Effect.fail(new OperationError("deadline"));
+                }
+                const operation = yield* CurrentOperation;
+                expect(operation).toBeDefined();
+                operation?.abort("deadline");
+                return yield* Effect.never;
+              }),
+          }),
+        ),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const response = yield* Effect.promise(() =>
+        web.handler(new Request(`${origin}/api/customer-profile`)),
+      );
+      expect(response.status).toBe(503);
+      expect(response.headers.get("content-type")).toContain("application/problem+json");
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        _tag: "CustomerProfileUnavailableProblem",
+        state: "unavailable",
+        status: 503,
+      });
+    }).pipe(Effect.scoped),
+  );
+  for (const kind of ["cancelled", "deadline", "body_oversize"] as const) {
+    for (const path of ["customer-profile", "customer-addresses"] as const) {
+      it.effect(
+        `keeps a possibly committed ${path} ${kind} at the ${boundary} boundary unconfirmed`,
+        () =>
+          Effect.gen(function* uncertainWrite() {
+            let writes = 0;
+            const failWrite = () =>
+              Effect.gen(function* dispatchedWrite() {
+                writes += 1;
+                if (boundary === "channel") {
+                  return yield* Effect.fail(new OperationError(kind));
+                }
+                const operation = yield* CurrentOperation;
+                expect(operation).toBeDefined();
+                operation?.abort(kind);
+                return yield* Effect.never;
+              });
+            const web = yield* Effect.acquireRelease(
+              Effect.sync(() =>
+                makeCustomerProfileWeb({
+                  changeAddress: failWrite,
+                  updateProfile: failWrite,
+                }),
+              ),
+              (handler) => Effect.promise(() => handler.dispose()),
+            );
+            const response = yield* Effect.promise(() =>
+              web.handler(
+                new Request(`${origin}/api/${path}`, {
+                  body: JSON.stringify(
+                    path === "customer-profile"
+                      ? profile
+                      : {
+                          addressId: "own-address",
+                          operation: "remove",
+                          operationId: "00000000-0000-4000-8000-000000000010",
+                          revision: 2,
+                        },
+                  ),
+                  headers: { "content-type": "application/json", origin },
+                  method: "POST",
+                }),
+              ),
+            );
+            expect(response.status).toBe(503);
+            expect(response.headers.get("content-type")).toContain("application/problem+json");
+            expect(response.headers.get("cache-control")).toBe("no-store");
+            expect(yield* Effect.promise(() => response.json())).toMatchObject({
+              _tag: "CustomerProfileUnconfirmedProblem",
+              state: "unconfirmed",
+              status: 503,
+            });
+            expect(writes).toBe(1);
+          }).pipe(Effect.scoped),
+      );
+    }
+  }
+}
+
+it.effect(
+  "reports saturated admission as typed unavailable without dispatching a profile write",
+  () =>
+    Effect.gen(function* unavailableBeforeDispatch() {
+      const full = yield* Deferred.make<null>();
+      let admitted = 0;
+      yield* Effect.all(
+        Array.from({ length: REQUEST_LIMIT }, () =>
+          Effect.acquireUseRelease(
+            createOperation(),
+            (operation) =>
+              withOwnerOperation(
+                Effect.gen(function* holdAdmission() {
+                  admitted += 1;
+                  if (admitted === REQUEST_LIMIT) {
+                    yield* Deferred.succeed(full, null);
+                  }
+                  return yield* Effect.never;
+                }),
+                { operation },
+              ),
+            (operation) => Effect.sync(() => operation.dispose()),
+          ),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(full);
+      let writes = 0;
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          makeCustomerProfileWeb({
+            updateProfile: () =>
+              Effect.sync(() => {
+                writes += 1;
+                return { profile, state: "ready" as const };
+              }),
+          }),
+        ),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const response = yield* Effect.promise(() =>
+        web.handler(updateRequest(JSON.stringify(profile))),
+      );
+      expect(response.status).toBe(503);
+      expect(response.headers.get("content-type")).toContain("application/problem+json");
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        _tag: "CustomerProfileUnavailableProblem",
+        state: "unavailable",
+        status: 503,
+      });
+      expect(writes).toBe(0);
+    }).pipe(Effect.scoped),
+);

@@ -1,3 +1,4 @@
+import { withOwnerOperation } from "./owner-operation";
 import "server-only";
 import { OrderSchema } from "@app/merchandise/contracts/records";
 import type { RecordsViewSchema } from "@app/merchandise/contracts/records";
@@ -79,87 +80,103 @@ const readCustomerOrdersSnapshot = (
   input: CustomerOrdersInput,
   request: PortalRequestContext,
 ) =>
-  Effect.gen(function* readCustomerOrdersProgram() {
-    const selection = yield* Schema.decodeEffect(CustomerOrdersInputSchema, {
-      onExcessProperty: "error",
-    })(input).pipe(Effect.mapError(() => new CustomerOrdersFailure({ state: "invalid" })));
-    const requestedOrderId =
-      selection.orderId === undefined
-        ? undefined
-        : yield* Schema.decodeEffect(OrderSchema.fields.id)(selection.orderId).pipe(
-            Effect.mapError(() => new CustomerOrdersFailure({ state: "invalid" })),
-          );
-    const identity = yield* readPortalIdentityWithConfiguration(config, request).pipe(
-      Effect.mapError(
-        (error) =>
-          new CustomerOrdersFailure({
-            state: portalFailureOutcome(error).state === "refused" ? "forbidden" : "unavailable",
-          }),
-      ),
-    );
-    if (identity.state === "anonymous") {
-      return yield* new CustomerOrdersFailure({ state: "anonymous" });
-    }
-    if (identity.account.tenantId !== config.tenantId) {
-      return yield* new CustomerOrdersFailure({ state: "unavailable" });
-    }
-    const pageOffset = selection.offset ?? 0;
-    const baseFilter = {
-      customerAccountId: identity.account.id,
-      offset: pageOffset,
-    } satisfies CustomerOrdersFilter;
-    const filter =
-      requestedOrderId === undefined
-        ? baseFilter
-        : ({ ...baseFilter, orderId: requestedOrderId } satisfies CustomerOrdersFilter);
-    const snapshot = yield* readOwner(
-      config,
-      "merchandise",
-      "records",
-      { view: { storefront: true, storefrontCustomerOrders: filter } },
-      snapshotSchema,
-    ).pipe(
-      Effect.mapError(
-        (error) =>
-          new CustomerOrdersFailure({
-            state: error.reason === "forbidden" ? "forbidden" : "unavailable",
-          }),
-      ),
-    );
-    if (
-      new Set(snapshot.orders.map((order) => order.id)).size !== snapshot.orders.length ||
-      snapshot.orders.length > Math.min(50, Math.max(0, snapshot.totalOrders - pageOffset)) ||
-      (requestedOrderId !== undefined && snapshot.totalOrders > 1)
-    ) {
-      return yield* new CustomerOrdersFailure({ state: "unavailable" });
-    }
-    const orders: CustomerOrdersResult["orders"][number][] = [];
-    for (const order of snapshot.orders) {
+  withOwnerOperation(
+    Effect.gen(function* readCustomerOrdersProgram() {
+      const selection = yield* Schema.decodeEffect(CustomerOrdersInputSchema, {
+        onExcessProperty: "error",
+      })(input).pipe(Effect.mapError(() => new CustomerOrdersFailure({ state: "invalid" })));
+      const requestedOrderId =
+        selection.orderId === undefined
+          ? undefined
+          : yield* Schema.decodeEffect(OrderSchema.fields.id)(selection.orderId).pipe(
+              Effect.mapError(() => new CustomerOrdersFailure({ state: "invalid" })),
+            );
+      const identity = yield* readPortalIdentityWithConfiguration(config, request).pipe(
+        Effect.mapError(
+          (error) =>
+            new CustomerOrdersFailure({
+              state: portalFailureOutcome(error).state === "refused" ? "forbidden" : "unavailable",
+            }),
+        ),
+      );
+      if (identity.state === "anonymous") {
+        return yield* new CustomerOrdersFailure({ state: "anonymous" });
+      }
+      if (identity.account.tenantId !== config.tenantId) {
+        return yield* new CustomerOrdersFailure({ state: "unavailable" });
+      }
+      const pageOffset = selection.offset ?? 0;
+      const baseFilter = {
+        customerAccountId: identity.account.id,
+        offset: pageOffset,
+      } satisfies CustomerOrdersFilter;
+      const filter =
+        requestedOrderId === undefined
+          ? baseFilter
+          : ({ ...baseFilter, orderId: requestedOrderId } satisfies CustomerOrdersFilter);
+      const snapshot = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        { view: { storefront: true, storefrontCustomerOrders: filter } },
+        snapshotSchema,
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new CustomerOrdersFailure({
+              state: error.reason === "forbidden" ? "forbidden" : "unavailable",
+            }),
+        ),
+      );
       if (
-        order.channel !== "STOREFRONT" ||
-        order.customerAccountId !== identity.account.id ||
-        order.demoCleanup !== undefined ||
-        (requestedOrderId !== undefined && order.id !== requestedOrderId)
+        new Set(snapshot.orders.map((order) => order.id)).size !== snapshot.orders.length ||
+        snapshot.orders.length > Math.min(50, Math.max(0, snapshot.totalOrders - pageOffset)) ||
+        (requestedOrderId !== undefined && snapshot.totalOrders > 1)
       ) {
         return yield* new CustomerOrdersFailure({ state: "unavailable" });
       }
-      orders.push(yield* projectCustomerOrder(order, requestedOrderId !== undefined));
-    }
-    const data = yield* Schema.decodeEffect(CustomerOrdersResultSchema)({
-      offset: pageOffset,
-      orders,
-      pageSize: 50,
-      total: snapshot.totalOrders,
-    }).pipe(Effect.mapError(() => new CustomerOrdersFailure({ state: "unavailable" })));
-    return { data, viewerEmail: identity.account.email };
-  });
+      const orders: CustomerOrdersResult["orders"][number][] = [];
+      for (const order of snapshot.orders) {
+        if (
+          order.channel !== "STOREFRONT" ||
+          order.customerAccountId !== identity.account.id ||
+          order.demoCleanup !== undefined ||
+          (requestedOrderId !== undefined && order.id !== requestedOrderId)
+        ) {
+          return yield* new CustomerOrdersFailure({ state: "unavailable" });
+        }
+        orders.push(yield* projectCustomerOrder(order, requestedOrderId !== undefined));
+      }
+      const data = yield* Schema.decodeEffect(CustomerOrdersResultSchema)({
+        offset: pageOffset,
+        orders,
+        pageSize: 50,
+        total: snapshot.totalOrders,
+      }).pipe(Effect.mapError(() => new CustomerOrdersFailure({ state: "unavailable" })));
+      return { data, viewerEmail: identity.account.email };
+    }),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CustomerOrdersFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CustomerOrdersFailure({ state: "unavailable" })),
+    }),
+  );
 
 export const readCustomerOrdersWithConfiguration = (
   config: StorefrontConfiguration,
   input: CustomerOrdersInput,
   request: PortalRequestContext,
 ) =>
-  readCustomerOrdersSnapshot(config, input, request).pipe(Effect.map((snapshot) => snapshot.data));
+  withOwnerOperation(
+    readCustomerOrdersSnapshot(config, input, request).pipe(
+      Effect.map((snapshot) => snapshot.data),
+    ),
+  ).pipe(
+    Effect.catchTags({
+      OperationError: () => Effect.fail(new CustomerOrdersFailure({ state: "unavailable" })),
+      SchemaError: () => Effect.fail(new CustomerOrdersFailure({ state: "unavailable" })),
+    }),
+  );
 
 const configuration = readConfiguration(process.env).pipe(
   Effect.mapError(() => new CustomerOrdersFailure({ state: "unavailable" })),

@@ -1,0 +1,20 @@
+{
+  "name": "@ontos/storefront-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./observability": "./src/observability.ts"
+  },
+  "scripts": {
+    "test": "rstest run --root . --include 'tests/*.test.ts' --maxConcurrency 1"
+  },
+  "dependencies": {
+    "effect": "4.0.7"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.12.6",
+    "effect-rstest": "1.0.0"
+  }
+}

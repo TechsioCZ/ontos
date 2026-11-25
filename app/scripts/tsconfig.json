@@ -2,7 +2,8 @@
   "extends": "../tsconfig.node-tooling.json",
   "include": [
     "**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    "zerops/prove-storefront-artifact.test.mjs"
   ],
   "exclude": [
     "scaffolding",

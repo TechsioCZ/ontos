@@ -1,23 +1,32 @@
+import { hasRenderLifetime, renderOperation } from "./render-operation";
 import "server-only";
-// OntOS client for the storefront BFF: the same nonhuman-principal path as tools/ontos-agent-mcp.
-//   Reads authenticate the scoped API key and read the owner in one Shell invocation.
-//   Actions mint their own assertion, then POST to the approved owner URL with an `idempotency-key`.
-//   Gateway assertions are single-use, including the one already redeemed by a combined read.
-//   Never cache or share them between invocations, even within the same server render.
-// Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
+import { Effect, Schedule, Schema } from "effect";
 import { randomUUID } from "node:crypto";
+import {
+  createAdmission,
+  createOperation,
+  createWorkPool,
+  ERROR_BYTES,
+  RESPONSE_BYTES,
+  readBytes,
+  recoverableReadAdmission,
+  OperationError,
+} from "@ontos/storefront-runtime";
+import type { Operation, OperationOptions } from "@ontos/storefront-runtime";
 import { getConfig } from "./config";
 import { shellFetch } from "./shell-fetch";
 
+export { createOperation, OperationError } from "@ontos/storefront-runtime";
+export type { Operation, OperationOptions } from "@ontos/storefront-runtime";
 const GATEWAY_CONTEXT_PATH = "/shell-super-app-api/auth/api-key/gateway-context";
 const GATEWAY_READ_PATH = "/shell-super-app-api/auth/api-key/gateway-read";
-const GATEWAY_CONTEXT_HEADER = "x-ontos-gateway-context";
+const admission = createAdmission();
+const workPool = createWorkPool();
 
 export class OntosError extends Error {
   static is(value: unknown): value is OntosError {
     return value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
   }
-
   readonly status: number;
   readonly code: string | undefined;
   readonly detail: string | undefined;
@@ -31,254 +40,322 @@ export class OntosError extends Error {
     this.body = body;
   }
 }
-
 interface GatewayContext {
   readonly apiBaseUrl: string;
   readonly compositionRevision: string;
   readonly token: string;
 }
 
-/** fetch that reports an unreachable shell as a retryable 503 instead of a TypeError. */
-const reach = async (url: string, init: RequestInit): Promise<Response> => {
-  try {
-    return await shellFetch(url, init);
-  } catch (error) {
-    throw new OntosError(
-      `OntOS unreachable: ${url.replace(/\?.*$/u, "")} (${String((error as Error).cause ?? error)})`,
-      503,
-      "backend_unreachable",
-    );
-  }
-};
+/** The native owner transport runs one scoped admission/permit chain, including body consumption. */
+const ownerWork = <A, E>(
+  options: OperationOptions,
+  work: (operation: Operation) => Effect.Effect<A, E>,
+): Promise<A> =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* ownerLifetime() {
+        const standalone = options.operation === undefined && !hasRenderLifetime();
+        const base =
+          options.operation ?? (standalone ? yield* createOperation() : renderOperation());
+        if (standalone) yield* Effect.addFinalizer(() => Effect.sync(base.dispose));
+        const operation = options.signal
+          ? yield* createOperation({
+              signal: AbortSignal.any([base.signal, options.signal]),
+              parent: base,
+            })
+          : base;
+        if (operation !== base) yield* Effect.addFinalizer(() => Effect.sync(operation.dispose));
+        yield* admission.acquire(operation);
+        yield* workPool.acquire(operation);
+        return yield* operation.run(work(operation));
+      }),
+    ),
+  );
 
-const credentialRequest = async (path: string, body: unknown): Promise<Response> => {
+/** The Web fetch Promise enters Effect only at this native transport boundary. */
+const reach = (
+  url: string,
+  init: RequestInit,
+  operation: Operation,
+  onResponse?: (response: Response) => Effect.Effect<void>,
+) =>
+  operation.run(
+    Effect.tryPromise({
+      try: () => shellFetch(url, { ...init, signal: operation.signal }),
+      catch: () => new OntosError("OntOS is unreachable", 503, "backend_unreachable"),
+    }).pipe(Effect.tap((response) => onResponse?.(response) ?? Effect.void)),
+  );
+
+const credentialRequest = Effect.fn("akros.credentialRequest")(function* credentialRequest(
+  path: string,
+  body: unknown,
+  operation: Operation,
+) {
   const config = getConfig();
-  if (config.apiKey === undefined) {
-    throw new OntosError(
-      "ONTOS_AKROS_STOREFRONT_API_KEY is not configured",
-      503,
-      "storefront_not_configured",
+  if (config.apiKey === undefined)
+    return yield* Effect.fail(
+      new OntosError(
+        "ONTOS_AKROS_STOREFRONT_API_KEY is not configured",
+        503,
+        "storefront_not_configured",
+      ),
     );
-  }
-  return await reach(`${config.shellUrl}${path}`, {
-    body: JSON.stringify(body),
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": config.apiKey,
-      "x-correlation-id": randomUUID(),
+  return yield* reach(
+    `${config.shellUrl}${path}`,
+    {
+      body: JSON.stringify(body),
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": config.apiKey,
+        "x-correlation-id": randomUUID(),
+      },
+      method: "POST",
+      cache: "no-store",
+      redirect: "manual",
     },
-    method: "POST",
-    signal: AbortSignal.timeout(20_000),
-  });
-};
-
-const parseProblem = (text: string): { code?: string; detail?: string; title?: string } => {
-  try {
-    const value = JSON.parse(text) as Record<string, unknown>;
-    return {
-      code: typeof value.code === "string" ? value.code : undefined,
-      detail: typeof value.detail === "string" ? value.detail : undefined,
-      title: typeof value.title === "string" ? value.title : undefined,
-    };
-  } catch {
-    return {};
-  }
-};
-
-const parseContext = (body: Partial<GatewayContext> & { expiresAt?: unknown }): GatewayContext => {
+    operation,
+  );
+});
+const parseContext = (body: unknown): GatewayContext => {
   if (
     body === null ||
     typeof body !== "object" ||
+    !("apiBaseUrl" in body) ||
     typeof body.apiBaseUrl !== "string" ||
     !body.apiBaseUrl.startsWith("/shell-super-app-api/") ||
+    !("token" in body) ||
     typeof body.token !== "string" ||
     body.token.length === 0 ||
+    !("compositionRevision" in body) ||
     typeof body.compositionRevision !== "string" ||
     !/^[\da-f]{64}$/u.test(body.compositionRevision) ||
+    !("expiresAt" in body) ||
     typeof body.expiresAt !== "number" ||
     !Number.isSafeInteger(body.expiresAt)
-  ) {
+  )
     throw new OntosError("Gateway context response is malformed", 502, "gateway_context_malformed");
-  }
   return {
     apiBaseUrl: body.apiBaseUrl,
     compositionRevision: body.compositionRevision,
     token: body.token,
   };
 };
-
-const mintContext = async (audience: string): Promise<GatewayContext> => {
-  const payload = { audience, legalEntityId: getConfig().legalEntityId };
-  let response = await credentialRequest(GATEWAY_CONTEXT_PATH, payload);
-  // A publish between release admission and issuance can reject the revision. Rebind server-side.
-  if (response.status === 409 || response.status === 400) {
-    await response.body?.cancel();
-    response = await credentialRequest(GATEWAY_CONTEXT_PATH, payload);
-  }
-  const body = await parseResponse(response, GATEWAY_CONTEXT_PATH);
-  return parseContext(body as Partial<GatewayContext>);
+const failure = (response: Response, body: unknown, path: string): OntosError => {
+  const problem = body !== null && typeof body === "object" ? body : {};
+  const code = "code" in problem && typeof problem.code === "string" ? problem.code : undefined;
+  const detail =
+    "detail" in problem && typeof problem.detail === "string" ? problem.detail : undefined;
+  return new OntosError(
+    `OntOS ${path} failed: HTTP ${response.status}`,
+    response.status,
+    code,
+    detail,
+    body,
+  );
 };
-
+const parseResponse = Effect.fn("akros.parseResponse")(function* parseResponse(
+  response: Response,
+  path: string,
+  operation: Operation,
+) {
+  const bytes = yield* readBytes(response, {
+    operation,
+    maxBytes: response.ok ? RESPONSE_BYTES : ERROR_BYTES,
+  });
+  const body = yield* Effect.try({
+    try: (): unknown => JSON.parse(new TextDecoder().decode(bytes)),
+    catch: (cause) => cause,
+  }).pipe(Effect.catch((error) => (response.ok ? Effect.fail(error) : Effect.succeed(undefined))));
+  if (!response.ok) return yield* Effect.fail(failure(response, body, path));
+  return body;
+});
+const mintContext = Effect.fn("akros.mintContext")(function* mintContext(
+  audience: string,
+  operation: Operation,
+) {
+  const response = yield* credentialRequest(
+    GATEWAY_CONTEXT_PATH,
+    { audience, legalEntityId: getConfig().legalEntityId },
+    operation,
+  );
+  const body = yield* parseResponse(response, GATEWAY_CONTEXT_PATH, operation);
+  return yield* Effect.try({ try: () => parseContext(body), catch: (cause) => cause });
+});
 const segment = (value: string): string => {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value))
     throw new Error(`Invalid path segment ${value}`);
   return encodeURIComponent(value);
 };
+const retryRead = <A, E>(
+  operation: Operation,
+  attempt: Effect.Effect<A, E>,
+): Effect.Effect<A, E | OperationError> =>
+  attempt.pipe(
+    Effect.retry({
+      times: 2,
+      while: (error) =>
+        OntosError.is(error) &&
+        Schema.is(Schema.Json)(error.body) &&
+        recoverableReadAdmission(error.status, error.body),
+      schedule: Schedule.exponential("400 millis"),
+    }),
+    operation.run,
+  );
 
-const post = async (
-  context: GatewayContext,
-  path: string,
-  body: unknown,
-  headers: Record<string, string> = {},
-): Promise<unknown> => {
-  const { shellUrl } = getConfig();
-  const correlationId = randomUUID();
-  const response = await reach(`${shellUrl}${context.apiBaseUrl}${path}`, {
-    body: JSON.stringify(body),
-    headers: {
-      authorization: `Bearer ${context.token}`,
-      "content-type": "application/json",
-      "x-correlation-id": correlationId,
-      "x-ontos-composition-revision": context.compositionRevision,
-      ...headers,
-    },
-    method: "POST",
-    signal: AbortSignal.timeout(20_000),
-  });
-  return await parseResponse(response, path);
-};
-
-const parseResponse = async (response: Response, path: string): Promise<unknown> => {
-  const text = await response.text();
-  if (!response.ok) {
-    const problem = parseProblem(text);
-    console.error(
-      `[ontos] ${path} -> HTTP ${response.status} ${problem.code ?? ""} (correlation ${response.headers.get("x-correlation-id") ?? "missing"})`,
-    );
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = undefined;
-    }
-    throw new OntosError(
-      `OntOS ${path} failed: HTTP ${response.status} ${problem.code ?? ""}`.trim(),
-      response.status,
-      problem.code,
-      problem.detail ?? problem.title,
-      parsed,
-    );
-  }
-  return JSON.parse(text) as unknown;
-};
-
-/**
- * A deploy hands the Shell over one container at a time, and the old one can refuse governed reads for minutes
- * while the new one publishes its composition. An unavailable backend is retried until this budget runs out,
- * with capped backoff, so the page waits for the handoff instead of failing whole.
- */
-const READ_UNAVAILABLE_BUDGET_MS = 30_000;
-const READ_BACKOFF_CAP_MS = 3_000;
-
-/**
- * Governed records read, with a fresh assertion issued and redeemed inside the combined gateway. `company: false`
- * sends no Legal Entity: a read whose scope forbids a company (Catalog's product page) is refused with one.
- */
-export const readRecords = async (
+/** Every attempt issues/redeems a new assertion; arbitrary denials/contracts never authorize replay. */
+export const readRecords = (
   vertical: string,
   readName: string,
   query: unknown,
-  { company = true }: { company?: boolean } = {},
-): Promise<unknown> => {
-  // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
-  const startedAt = Date.now();
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const path = `/reads/${segment(readName)}`;
-      const response = await credentialRequest(GATEWAY_READ_PATH, {
-        audience: vertical,
-        ...(company ? { legalEntityId: getConfig().legalEntityId } : {}),
-        readName: segment(readName),
-        query,
-      });
-      const encoded = response.headers.get(GATEWAY_CONTEXT_HEADER);
-      if (encoded === null) {
-        if (!response.ok) await parseResponse(response, path);
-        throw new OntosError(
-          "Gateway read response has no assertion",
-          502,
-          "gateway_context_malformed",
+  { company = true, ...options }: OperationOptions & { company?: boolean } = {},
+): Promise<unknown> =>
+  ownerWork(options, (operation) =>
+    retryRead(
+      operation,
+      Effect.gen(function* readAttempt() {
+        const name = yield* Effect.try({ try: () => segment(readName), catch: (cause) => cause });
+        const path = `/reads/${name}`;
+        const response = yield* credentialRequest(
+          GATEWAY_READ_PATH,
+          {
+            audience: vertical,
+            ...(company ? { legalEntityId: getConfig().legalEntityId } : {}),
+            readName: name,
+            query,
+          },
+          operation,
         );
-      }
-      let decoded: Partial<GatewayContext>;
-      try {
-        decoded = JSON.parse(encoded) as Partial<GatewayContext>;
-      } catch {
-        throw new OntosError(
-          "Gateway context response is malformed",
-          502,
-          "gateway_context_malformed",
-        );
-      }
-      parseContext(decoded);
-      return await parseResponse(response, path);
-    } catch (error) {
-      const retryable =
-        OntosError.is(error) &&
-        (error.status === 503 ||
-          error.status === 409 ||
-          error.status === 400 ||
-          error.status === 502 ||
-          error.status === 401) &&
-        error.code !== "storefront_not_configured";
-      if (!retryable) throw error;
-      const unavailable = error.status === 503;
-      const exhausted = unavailable
-        ? Date.now() - startedAt >= READ_UNAVAILABLE_BUDGET_MS
-        : attempt >= 2;
-      if (exhausted) throw error;
-      // A rejected assertion is replaced at once; an unavailable backend waits out the handoff with backoff.
-      const pause = unavailable
-        ? Math.min(READ_BACKOFF_CAP_MS, 400 * 2 ** attempt)
-        : 600 * (attempt + 1);
-      if (error.status !== 401) await new Promise((resolve) => setTimeout(resolve, pause));
-    }
-  }
-};
+        // Drain/validate the bounded body even if the assertion header is absent or malformed.
+        const body = yield* parseResponse(response, path, operation);
+        const encoded = response.headers.get("x-ontos-gateway-context");
+        if (encoded === null)
+          return yield* Effect.fail(
+            new OntosError(
+              "Gateway read response has no assertion",
+              502,
+              "gateway_context_malformed",
+            ),
+          );
+        yield* Effect.try({
+          try: () => parseContext(JSON.parse(encoded)),
+          catch: () =>
+            new OntosError(
+              "Gateway context response is malformed",
+              502,
+              "gateway_context_malformed",
+            ),
+        });
+        return body;
+      }),
+    ),
+  );
 
-/** Owner HTTP surface reached through the same scoped, governed Shell gateway as Actions. */
-export const ownerRequest = async (
+const safeAccountRead = (path: string, init: RequestInit) =>
+  (init.method ?? "GET") === "GET" &&
+  init.body === undefined &&
+  [
+    "/api/portal-auth/customer-account",
+    "/api/portal-auth/enrollment/current",
+    "/api/portal-auth/customer-consent",
+  ].includes(path);
+
+export interface OwnerRequestOptions extends OperationOptions {
+  /** Native response observation precedes body bounds, parsing and the operation's final deadline check. */
+  readonly onResponse?: (response: Response) => Effect.Effect<void>;
+}
+
+/** Buffer before returning: the deadline/permit cover the body, not just response headers. */
+export const ownerRequest = (
   vertical: string,
   path: string,
   init: RequestInit,
+  options: OwnerRequestOptions = {},
 ): Promise<Response> => {
   if (!path.startsWith("/api/") || path.includes("..")) throw new Error("Invalid owner path");
-  // Enrollment redeems its assertion once for its composed Actions. Never lend it an assertion
-  // held by another request (or retry a credential-carrying request after an unknown outcome).
-  const context = await mintContext(vertical);
-  return reach(`${getConfig().shellUrl}${context.apiBaseUrl}${path}`, {
-    ...init,
-    cache: "no-store",
-    redirect: "manual",
-    headers: {
-      ...Object.fromEntries(new Headers(init.headers)),
-      authorization: `Bearer ${context.token}`,
-      "x-correlation-id": randomUUID(),
-      "x-ontos-composition-revision": context.compositionRevision,
-    },
-    signal: AbortSignal.timeout(30_000),
+  const signal =
+    init.signal && options.signal
+      ? AbortSignal.any([init.signal, options.signal])
+      : (init.signal ?? options.signal);
+  return ownerWork({ ...options, ...(signal ? { signal } : {}) }, (operation) => {
+    const attempt = Effect.gen(function* ownerAttempt() {
+      const context = yield* mintContext(vertical, operation);
+      const response = yield* reach(
+        `${getConfig().shellUrl}${context.apiBaseUrl}${path}`,
+        {
+          ...init,
+          cache: "no-store",
+          redirect: "manual",
+          headers: {
+            ...Object.fromEntries(new Headers(init.headers)),
+            authorization: `Bearer ${context.token}`,
+            "x-correlation-id": randomUUID(),
+            "x-ontos-composition-revision": context.compositionRevision,
+          },
+        },
+        operation,
+        options.onResponse,
+      );
+      const bytes = yield* readBytes(response, {
+        operation,
+        maxBytes: response.ok ? RESPONSE_BYTES : ERROR_BYTES,
+      });
+      let body: unknown;
+      if (bytes.byteLength && response.headers.get("content-type")?.includes("json")) {
+        body = yield* Effect.try({
+          try: (): unknown => JSON.parse(new TextDecoder().decode(bytes)),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.catch((error) => (response.ok ? Effect.fail(error) : Effect.succeed(undefined))),
+        );
+      }
+      if (
+        safeAccountRead(path, init) &&
+        Schema.is(Schema.Json)(body) &&
+        recoverableReadAdmission(response.status, body)
+      )
+        return yield* Effect.fail(failure(response, body, path));
+      return new Response([204, 205, 304].includes(response.status) ? null : bytes, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    });
+    return safeAccountRead(path, init) ? retryRead(operation, attempt) : attempt;
   });
 };
 
-/** Governed action. `idempotencyKey` must be reused verbatim (with the identical payload) on retries. */
-export const callAction = async (
+/** Mutations, including consuming GETs, are sent once. The caller owns its idempotency key. */
+export const callAction = (
   vertical: string,
   actionSlug: string,
   payload: unknown,
   idempotencyKey: string,
-): Promise<unknown> => {
-  const context = await mintContext(vertical);
-  return await post(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
-    "idempotency-key": idempotencyKey,
-  });
-};
+  options: OperationOptions = {},
+): Promise<unknown> =>
+  ownerWork(options, (operation) =>
+    Effect.gen(function* actionAttempt() {
+      const context = yield* mintContext(vertical, operation);
+      const path = yield* Effect.try({
+        try: () => `/${segment(vertical)}/actions/${segment(actionSlug)}`,
+        catch: (cause) => cause,
+      });
+      const response = yield* reach(
+        `${getConfig().shellUrl}${context.apiBaseUrl}${path}`,
+        {
+          body: JSON.stringify(payload),
+          method: "POST",
+          cache: "no-store",
+          redirect: "manual",
+          headers: {
+            authorization: `Bearer ${context.token}`,
+            "content-type": "application/json",
+            "x-correlation-id": randomUUID(),
+            "x-ontos-composition-revision": context.compositionRevision,
+            "idempotency-key": idempotencyKey,
+          },
+        },
+        operation,
+      );
+      return yield* parseResponse(response, path, operation);
+    }),
+  );

@@ -530,9 +530,21 @@ importers:
 
   akros-storefront:
     dependencies:
+      '@app/merchandise':
+        specifier: workspace:*
+        version: link:../verticals/merchandise
+      '@effect/platform-node':
+        specifier: 4.0.7
+        version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
+      '@ontos/storefront-runtime':
+        specifier: workspace:*
+        version: link:../packages/storefront-runtime
       '@techsio/ui-kit':
         specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
       next:
         specifier: 16.4.6
         version: 16.4.6(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@playwright/test@1.61.0)(@types/node@26.4.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sass@1.105.1)
@@ -844,9 +856,15 @@ importers:
       '@app/work-tasks':
         specifier: 'catalog:'
         version: link:../verticals/work-tasks
+      '@effect/platform-node':
+        specifier: 4.0.7
+        version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@modern-js/bff-effect':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-bff-effect@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@ontos/storefront-runtime':
+        specifier: workspace:*
+        version: link:../packages/storefront-runtime
       '@techsio/ui-kit':
         specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
@@ -869,9 +887,6 @@ importers:
         specifier: 0.0.1
         version: 0.0.1
     devDependencies:
-      '@effect/platform-node':
-        specifier: 4.0.7
-        version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -1320,6 +1335,19 @@ importers:
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
+      effect-rstest:
+        specifier: 1.0.0
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+
+  packages/storefront-runtime:
+    dependencies:
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@rstest/core':
+        specifier: 0.12.6
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)

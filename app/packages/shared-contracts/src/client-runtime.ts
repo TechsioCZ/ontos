@@ -27,6 +27,8 @@ export interface EffectBffClientOptions {
   /** Explicit read freshness; this transport directive grants no operation or data authority. */
   readonly requestCache?: 'no-store';
   readonly requestContext?: EffectBffRequestContext;
+  /** Native transport policy applied at client construction, before caller tracing is enforced. */
+  readonly transformClient?: EffectHttpApiClientOptions['transformClient'];
   /** Owner-resolved transport headers; undefined values stay absent on the wire. */
   readonly transportHeaders?: HttpHeaders.Input;
 }
@@ -54,6 +56,7 @@ export const makeEffectBffClientOptions = ({
   baseUrl,
   defaultApiPrefix,
   requestContext,
+  transformClient,
   transportHeaders,
 }: EffectBffClientOptionsConfig): Effect.Effect<EffectHttpApiClientOptions, Schema.SchemaError> => {
   const { operationContext, ...callerContext } = requestContext ?? {};
@@ -71,7 +74,8 @@ export const makeEffectBffClientOptions = ({
       const options: EffectHttpApiClientOptions = {
         baseUrl: baseUrl ?? defaultApiPrefix,
         headers: { ...operationHeaders, ...HttpHeaders.fromInput(transportHeaders) },
-        transformClient: withCallerTraceContext,
+        transformClient: (client) =>
+          withCallerTraceContext(transformClient === undefined ? client : transformClient(client)),
       };
       if (requestContext !== undefined) {
         options.requestContext = callerContext;
@@ -130,7 +134,10 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials' | 'requestCache'>,
+  options: Pick<
+    EffectBffClientOptions,
+    'baseUrl' | 'compositionRevision' | 'referenceCredentials' | 'requestCache' | 'transformClient'
+  >,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   // The intent is decoded before the client exists, so a caller outside the closed literal fails with the
@@ -144,6 +151,7 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
       makeEffectBffClientOptions({
         baseUrl,
         defaultApiPrefix,
+        transformClient: options.transformClient,
         // Header construction skips undefined values, so absent optional headers stay absent: no intent
         // produces no `x-action-intent` at all.
         transportHeaders: {
