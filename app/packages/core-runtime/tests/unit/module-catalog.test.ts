@@ -378,3 +378,29 @@ it('gives each system workload key one owning module: its own id and a dot start
   );
   expect(resolved.moduleIds).toEqual(['documents.center']);
 });
+
+it('keeps core system modules out of the installed catalog: neither their id nor a key they declare may be claimed', () => {
+  // `core.media` is a core system module, declared by Core itself and always active; no deployment may claim its id.
+  expect(() =>
+    buildInstalledModuleCatalog([{ contract: contract('claims-media', 'core.media'), expectedAppId: 'claims-media' }]),
+  ).toThrow();
+  expect(() =>
+    buildInstalledModuleCatalog([
+      {
+        contract: declaring('claims-media', 'core.media', ['core.media.integrity']),
+        expectedAppId: 'claims-media',
+      },
+    ]),
+  ).toThrow();
+  const resolved = resolveInstalledModuleCatalog(
+    [
+      { contract: contract('claims-media', 'core.media'), expectedAppId: 'claims-media' },
+      { contract: contract('documents-center', 'documents.center'), expectedAppId: 'documents-center' },
+    ].map((input) => ({ ...input, outcome: 'fetched' as const })),
+  );
+  expect(resolved.moduleIds).toEqual(['documents.center']);
+  expect(resolved.deploymentStatuses).toEqual([
+    { appId: 'claims-media', reason: 'incompatible', status: 'unavailable' },
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+  ]);
+});

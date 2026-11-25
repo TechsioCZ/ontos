@@ -19,6 +19,7 @@ import {
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
 } from '../packages/core-runtime/src/index.ts';
+import { coreSystemModuleDeclarations } from '../packages/core-runtime/src/modules/core-system-workloads.ts';
 import type {
   InstalledDeploymentContractInput,
   OntosModuleDeploymentContract,
@@ -77,7 +78,10 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
-import { systemWorkloadRegistrationIssues } from './system-workload-registrations.mts';
+import {
+  coreSystemWorkloadRegistrationIssues,
+  systemWorkloadRegistrationIssues,
+} from './system-workload-registrations.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -496,6 +500,32 @@ const validateSystemWorkloadRegistrations = (
     return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
   });
 
+/**
+ * The system workloads the Shell's own source registers are exactly keys Core declares for its core modules
+ * (`core-system-workloads.ts`), which have no manifest. Only the Shell is read: the core-runtime package defines and
+ * re-exports `registerSystemWorkload`, which is not a registration. Tests are not Core's source.
+ */
+const validateCoreSystemWorkloadRegistrations = (workspaceRoot: string) =>
+  Effect.gen(function* validateCoreSystemWorkloads() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const shellDirectory = path.join(workspaceRoot, 'apps/shell-super-app');
+    const paths = (yield* walkSourceFiles(shellDirectory)).filter(
+      (filePath) => !filePath.includes(`${path.sep}tests${path.sep}`),
+    );
+    const files = [];
+    for (const filePath of paths) {
+      const content = yield* fileSystem.readFileString(filePath);
+      if (content.includes('registerSystemWorkload')) {
+        files.push({ content, path: path.relative(shellDirectory, filePath) });
+      }
+    }
+    const issues = coreSystemWorkloadRegistrationIssues({
+      declared: coreSystemModuleDeclarations.flatMap(({ systemWorkloads }) => systemWorkloads),
+      files,
+    });
+    return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
+  });
+
 const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contractUrl: string) =>
   Effect.gen(function* checkVerticalContract() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -596,6 +626,7 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
         checkVertical(workspaceRoot, vertical, overlay.ontosModuleManifests[vertical.id]),
       ),
     );
+    yield* validateCoreSystemWorkloadRegistrations(workspaceRoot);
     const moduleIds = contracts.map((entry) => entry.contract.manifest.module.id);
     const duplicateModuleId = moduleIds.find((moduleId, index) => moduleIds.indexOf(moduleId) !== index);
     if (duplicateModuleId !== undefined) {

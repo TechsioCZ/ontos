@@ -8,6 +8,7 @@ import type {
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
 import { decodeOntosModuleDeploymentContract } from './manifest.ts';
+import { coreSystemWorkloadKeys, isCoreSystemModule } from './core-system-workloads.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
@@ -107,6 +108,14 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   }
   if (contract.manifest.module.kind !== 'business_module') {
     throw invalid('V0 deployments may claim only one business module');
+  }
+  // A core system module is declared by Core itself (`core-system-workloads.ts`) and is always active: no deployment
+  // claims its id or a system workload key it declares, so one owner stands behind each.
+  if (isCoreSystemModule(contract.manifest.module.id)) {
+    throw invalid('a deployment may not claim the module ID of a core system module');
+  }
+  if ((contract.manifest.systemWorkloads ?? []).some((key) => coreSystemWorkloadKeys.has(key))) {
+    throw invalid('a deployment may not declare a system workload key a core system module declares');
   }
   const { publicSurface } = contract.manifest;
   try {

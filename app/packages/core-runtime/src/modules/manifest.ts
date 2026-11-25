@@ -236,7 +236,8 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
    * The system workloads this module's own code runs as (absent: none), each the key under which Core resolves the
    * Tenant's one enrolled system Principal for that work, and each starting with this module's own id and a dot.
    * `core.identity.change-system-workload-enrollment` enrolls a Tenant's system Principal only for a key the active
-   * module declares here; an installed catalog refuses two modules declaring one key.
+   * module declares here (a core system module declares its keys in `core-system-workloads.ts`); an installed catalog refuses
+   * two modules declaring one key.
    */
   systemWorkloads: Schema.optionalKey(Schema.Array(WorkloadKeySchema).check(Schema.isUnique())),
 }).check(
