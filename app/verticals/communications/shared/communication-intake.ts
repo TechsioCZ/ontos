@@ -4,8 +4,6 @@ export {
   CommunicationDecisionIdSchema,
   MessageIntentIdSchema,
   DeliveryAttemptIdSchema,
-  MessageIntentStatusSchema,
-  MessageIntentSummarySchema,
   CommunicationDecisionViewSchema,
   SubmitCommunicationRequestResultSchema,
 } from '@app/communications-contracts/communication-intake';

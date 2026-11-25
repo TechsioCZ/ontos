@@ -2,8 +2,6 @@ export {
   HistorySlotKeySchema,
   HistoryStatusSchema,
   MessageAttentionSchema,
-  MessageOutcomeSchema,
-  RequiredOutcomeSchema,
   CommunicationOutcomeFeedSchema,
 } from '@app/communications-contracts/communication-history';
 export type {

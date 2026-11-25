@@ -1,7 +1,5 @@
 export {
   OwnerInventoryLookupSchema,
-  OwnerMeasureBlockerSchema,
-  OwnerBlockerAssessmentSchema,
   PrivacyMeasureOwnerScopeSchema,
   normalizeOwnerScope,
 } from '@app/privacy-contracts/domain/privacy-owner-scope';

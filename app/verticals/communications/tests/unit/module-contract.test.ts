@@ -3,6 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
 import { builtInTemplateDefaultsOperation } from '../../shared/apis/built-in-template-defaults.ts';
+import { communicationOutcomeFeedOperation } from '../../shared/apis/communication-outcome-feed.ts';
 import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerExecutionOutcomeOperation } from '../../shared/apis/privacy-owner-execution-outcome.ts';
@@ -86,6 +87,18 @@ describe('Communications module contract', () => {
         schemaVersion: '1',
       },
       route: { path: '/reads/language-policy' },
+    });
+  });
+
+  it('publishes the source outcome feed Read as a typed operation of exactly this owner', () => {
+    expect(communicationOutcomeFeedOperation).toMatchObject({
+      kind: 'read',
+      provider: {
+        entrypointKey: 'communications.core.api.communication-outcome-feed',
+        moduleId: 'communications.core',
+        schemaVersion: '1',
+      },
+      route: { path: '/reads/communication-outcome-feed' },
     });
   });
 
