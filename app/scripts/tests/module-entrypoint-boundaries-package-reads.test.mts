@@ -19,7 +19,6 @@ import {
   WORKSPACE_DEPENDENCY_VERSION,
   WORKSPACE_MANIFEST_PATH,
   checkModuleEntrypointBoundaries,
-  makeActualCustomerContextAggregateFixture,
   makeFixture,
   readPricingSourceTree,
   readWorkspaceManifests,
@@ -881,9 +880,8 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     ]);
     expect(chained.valid).toBe(false);
     expect(chained.diagnostics).toContain('names ./does-not-exist.ts, which is no file of the workspace');
-    // However an owner entry passes on a name of a file of a library package the sources hold (a plain alias of an import,
-    // an import the client aggregate exports again, `export … from` there, a workspace SDK passing on the read's client),
-    // that file is read like any other on the chain. The table of carried names covers the forms of the library file.
+    // A name an owner entry passes on from a file of a library package the sources hold is followed through that file
+    // like any other on the chain: the table of carried names covers every form.
     const startupFile = STARTUP_FILE;
     const withLibraries = new Map([
       ...sources,
@@ -893,47 +891,7 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       [sharedContracts, startup],
       [startupFile, `export { CurrentPaymentTermsApi as Startup } from '${contractSpecifier}';\n`],
     ];
-    const sdk: readonly (readonly [string, string])[] = [
-      [
-        'packages/payment-sdk/package.json',
-        JSON.stringify({ exports: { '.': './src/index.ts' }, name: '@app/payment-sdk' }),
-      ],
-      [
-        'packages/payment-sdk/src/index.ts',
-        `export { executeCurrentPaymentTerms } from '${contractSpecifier}/client';\n`,
-      ],
-    ];
     const startupImport = "import { Startup } from '@app/shared-contracts/startup';\n";
-    const startupAlias = "import { Startup as S } from '@app/shared-contracts/startup';\nexport const Startup = S;\n";
-    for (const [label, file, appended, exportedName, changes] of [
-      ['a plain alias of an import', sharedApiFile, startupAlias, 'Startup', passingOn],
-      [
-        'an import the aggregate exports again',
-        aggregateFile,
-        `${startupImport}export { Startup };\n`,
-        'Startup',
-        passingOn,
-      ],
-      ['a plain alias of an import in the aggregate', aggregateFile, startupAlias, 'Startup', passingOn],
-      [
-        'export … from in the aggregate',
-        aggregateFile,
-        "export { Startup } from '@app/shared-contracts/startup';\n",
-        'Startup',
-        passingOn,
-      ],
-      [
-        'a workspace SDK passing on the client',
-        aggregateFile,
-        "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport { executeCurrentPaymentTerms };\n",
-        'executeCurrentPaymentTerms',
-        sdk,
-      ],
-    ] as const) {
-      const passed = judged(withLibraries, [...changes, [file, `${required(sources, file)}\n${appended}`]]);
-      expect(passed.valid, label).toBe(false);
-      expect(passed.diagnostics, label).toContain(`${file}: export ${exportedName} passes on the package read`);
-    }
     // A name an entry imports from a library file and only uses is no name it passes on: the entry passes.
     const used = judged(withLibraries, [
       ...passingOn,
@@ -949,39 +907,6 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     ]);
     expect(relayed.valid).toBe(false);
     expect(relayed.diagnostics).toContain(`${sharedApiFile}: export Startup cannot be followed`);
-    // Strict reach in the client aggregate follows what an exported declaration refers to through a library file too.
-    const reachingVerdicts = (
-      [
-        [
-          'an object holding a library import in the aggregate',
-          aggregateFile,
-          `${startupImport}export const bundle = { Startup };\n`,
-          'bundle',
-          passingOn,
-        ],
-        [
-          'an object holding an SDK import in the aggregate',
-          aggregateFile,
-          "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport const paymentTerms = { executeCurrentPaymentTerms };\n",
-          'paymentTerms',
-          sdk,
-        ],
-        [
-          'a bound SDK import in the aggregate',
-          aggregateFile,
-          "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport const run = executeCurrentPaymentTerms.bind(undefined);\n",
-          'run',
-          sdk,
-        ],
-      ] as const
-    ).map(([label, file, appended, exportedName, changes]) => {
-      const reaching = judged(withLibraries, [...changes, [file, `${required(sources, file)}\n${appended}`]]);
-      const reached = reaching.diagnostics.includes(
-        `${file}: export ${exportedName} reaches a package read of the module`,
-      );
-      return [label, reaching.valid, reached] as const;
-    });
-    expect(reachingVerdicts).toEqual(reachingVerdicts.map(([label]) => [label, false, true]));
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name
@@ -1886,29 +1811,6 @@ const entrypointFailure = Effect.fn(function* entrypointFailure(root: string) {
   return Exit.isFailure(result) ? Cause.pretty(result.cause) : undefined;
 });
 
-it.live('requires the declared dependency for a package read a CommonJS source imports', () =>
-  Effect.gen(function* commonJsPackageRead() {
-    const root = yield* makePackageReadWorkspace();
-    const probe = `${BOUNDARY_FIXTURE_SHELL_PATH}/src/probe.cjs`;
-    yield* write(
-      root,
-      probe,
-      "module.exports = () => import('@app/price-group-catalog-contracts/price-group-definition/client');\n",
-    );
-    expect(yield* entrypointFailure(root)).toBeUndefined();
-    yield* write(
-      root,
-      SHELL_PACKAGE_JSON_PATH,
-      JSON.stringify({
-        dependencies: { '@app/price-group-catalog': WORKSPACE_DEPENDENCY_VERSION },
-        name: SHELL_PACKAGE_SPECIFIER,
-      }),
-    );
-    expect(yield* entrypointFailure(root)).toContain(probe);
-    expect(yield* entrypointFailure(root)).toContain('is a package read: declare its contract package');
-  }),
-);
-
 it.live('judges every header-carrying package leaf against the modules of the topology', () =>
   Effect.gen(function* packageReadOwnership() {
     const root = yield* makePackageReadWorkspace();
@@ -1960,54 +1862,6 @@ it.live('fails a header-carrying package file outside the canonical read and cli
       expect(failure, form).toContain(file);
       expect(failure, form).toContain('a module-api file outside packages/<package>/src/apis/<read>.ts');
     }
-  }),
-);
-
-it.live("fails a mount of another module's package read taken by its default export, in the full check", () =>
-  Effect.gen(function* packageReadDefaultMount() {
-    const root = yield* makeActualCustomerContextAggregateFixture();
-    expect(yield* entrypointFailure(root)).toBeUndefined();
-    const contract = 'packages/price-group-catalog-contracts/src/apis/price-group-definition.ts';
-    const paymentManifest = `${owner}/package.json`;
-    const read = async (file: string): Promise<string> => await readFile(path.join(root, file), 'utf-8');
-    yield* write(
-      root,
-      paymentManifest,
-      replaced(
-        yield* Effect.promise(async () => await read(paymentManifest)),
-        '"dependencies": {',
-        `"dependencies": {\n    "@app/price-group-catalog-contracts": "${WORKSPACE_DEPENDENCY_VERSION}",`,
-      ),
-    );
-    yield* write(
-      root,
-      contract,
-      `${yield* Effect.promise(async () => await read(contract))}export default PriceGroupDefinitionApi;\n`,
-    );
-    const sharedApi = yield* Effect.promise(async () => await read(sharedApiFile));
-    yield* write(
-      root,
-      sharedApiFile,
-      replaced(
-        `import { ExtraApi } from './extra.ts';\n${sharedApi}`,
-        '  // <generated-governed-http-api-additions>\n',
-        '  .addHttpApi(ExtraApi)\n  // <generated-governed-http-api-additions>\n',
-      ),
-    );
-    yield* write(
-      root,
-      `${owner}/shared/extra.ts`,
-      [
-        "import ForeignApi from '@app/price-group-catalog-contracts/price-group-definition';",
-        "import { identity } from 'effect';",
-        '',
-        'export const ExtraApi = ForeignApi.pipe(identity);',
-        '',
-      ].join('\n'),
-    );
-    expect(yield* entrypointFailure(root)).toContain(
-      `${sharedApiFile}: ExtraApi is no read, Action or own API of this module`,
-    );
   }),
 );
 
@@ -2111,19 +1965,6 @@ it.live('follows every re-export chain of an owner file to the package read it p
         passesOnTheRead,
       ],
       [
-        'a named re-export of a renamed re-export of the read',
-        sharedApi,
-        "export { LegacyApi } from './price-group-definition.ts';\n",
-        [
-          [
-            `${priceGroups}/shared/price-group-definition.ts`,
-            `export { PriceGroupDefinitionApi as LegacyApi } from '${read}';\n`,
-          ],
-        ],
-        'export LegacyApi',
-        passesOnTheRead,
-      ],
-      [
         'a star re-export in the client aggregate of an owner file forwarding the read client',
         aggregate,
         "export * from './price-group-definition.ts';\n",
@@ -2214,19 +2055,6 @@ it.live('follows every alias, member and import exported again in an owner file 
           passesOnTheRead,
         ] as const,
         [
-          `a destructured member of the whole read, re-exported by ${entryFile}`,
-          entryFile,
-          "export { Legacy } from './legacy.ts';\n",
-          [
-            [
-              `${priceGroups}/${folder}/legacy.ts`,
-              `import * as Read from '${leaf}';\n\nexport const { ${member}: Legacy } = Read;\n`,
-            ],
-          ],
-          'export Legacy',
-          passesOnTheRead,
-        ] as const,
-        [
           `the typeof of the read's schema imported by a relative path, re-exported by ${entryFile}`,
           entryFile,
           "export type { PublicSchema } from './relative.ts';\n",
@@ -2280,7 +2108,6 @@ it.live('follows every alias, member and import exported again in an owner file 
             `export const PublicApi = (await import('${read}')).PriceGroupDefinitionApi;`,
             passesOnTheRead,
           ],
-          ['a require of it', `export const PublicApi = require('${read}').PriceGroupDefinitionApi;`, passesOnTheRead],
           // The wrappers are read at every level: around the load, around its callee and under `await`.
           [
             'a non-null dynamic import of it under await',

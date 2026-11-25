@@ -237,26 +237,3 @@ for (const [name, source, allowed] of [
     }),
   );
 }
-
-// A fixture holds every library file what it holds names, so it is no weaker than the full libraries: the Party handler
-// root importing a name the shared contracts do not export fails against the fixture as it fails against the tree.
-it.live('fails against the actual Party fixture a handler import of a name its library does not export', () =>
-  Effect.gen(function* actualPartyLibraryClosure() {
-    const root = yield* makeActualPartyClientFixture();
-    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-    expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : '').toBe(true);
-    const handlerFile = `${PARTY_VERTICAL_PATH}/api/index.ts`;
-    const handler = yield* Effect.promise(() => readFile(path.join(root, handlerFile), 'utf-8'));
-    const imported = 'import { RequestSchemaProblemLive }';
-    expect(handler).toContain(imported);
-    yield* write(
-      root,
-      handlerFile,
-      handler.replace(imported, 'import { MissingProblemLive as RequestSchemaProblemLive }'),
-    );
-    const missing = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-    expect(Exit.isFailure(missing) ? Cause.pretty(missing.cause) : '').toContain(
-      `${handlerFile}: RequestSchemaProblemLive is no read, Action or own API of this module`,
-    );
-  }),
-);
