@@ -133,6 +133,14 @@ const allowedMigrationStatements: readonly Allowance[] = [
       'the same single finishing write of a PREPARED attempt, as an unanswered INDETERMINATE after the call lease; it removes no personal data and the append-only trigger refuses any later change',
     text: /update "communications"\."delivery_attempts"\s+set/iu,
   },
+  {
+    file: 'drizzle/20261125150428_message-invalid-attempt/migration.sql',
+    kind: /^raw SQL UPDATE$/u,
+    occurrences: 1,
+    reason:
+      'the same single finishing write of a PREPARED attempt, re-declared so the proven MESSAGE_INVALID state can be written; it removes no personal data and the append-only trigger refuses any later change',
+    text: /update "communications"\."delivery_attempts" set/iu,
+  },
 ];
 
 describe('No automatic destructive mechanism (#1410 AC-05 AC-12, PRIV-COM-05/06/16, E)', () => {
@@ -185,10 +193,11 @@ describe('No automatic destructive mechanism (#1410 AC-05 AC-12, PRIV-COM-05/06/
     ).toEqual([]);
   });
 
-  it('registers exactly three workers, the pre-handoff worker, the Privacy handoff recorder and its outcome reporter: no expiry, retention, cleanup or disposition worker exists', () => {
+  it('registers exactly four workers, the pre-handoff worker, the Privacy handoff recorder, the reconciliation worker and the outcome reporter: no expiry, retention, cleanup or disposition worker exists', () => {
     expect(outboxWorkers.map((worker) => worker.descriptor.workerKey)).toEqual([
       'communications.core.prepare-message-handoff',
       'communications.core.receive-privacy-measure',
+      'communications.core.reconcile-provider-evidence',
       'communications.core.report-privacy-owner-outcome',
     ]);
   });

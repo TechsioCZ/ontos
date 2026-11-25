@@ -91,6 +91,10 @@ export const assessAttemptHistory = (
     }
     return { basis: { kind: 'PRIOR_NOT_ATTEMPTED' }, kind: 'CONTINUE', previousAttemptId: latest.attemptId };
   }
+  if (answer.technical === 'MESSAGE_INVALID') {
+    // a PROVEN failure, not an unknown effect: nothing awaits a reconciliation, and a temporary condition it is not either
+    return { attemptId: latest.attemptId, code: 'MESSAGE_INVALID', kind: 'HALT' };
+  }
   const rejected = latest.state === 'REJECTED';
   const basis: Option.Option<RetryBasis> = rejected
     ? Option.some({ kind: 'PRIOR_REJECTED' })

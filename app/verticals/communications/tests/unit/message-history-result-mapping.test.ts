@@ -63,7 +63,7 @@ describe('A stored submission answer in the history vocabulary (#1402)', () => {
     expect(submissionFactOfAttempt('INDETERMINATE', 'transport').effect).toBe('UNKNOWN');
   });
 
-  it('keeps an invalid message expressible as a PROVEN failure with its own evidence (no stored attempt state carries it yet)', () => {
+  it('keeps an invalid message expressible as a PROVEN failure with its own evidence', () => {
     expect(submissionFactOfAttempt('MESSAGE_INVALID', 'empty')).toEqual({
       effect: 'ABSENT',
       reason: 'empty',
@@ -103,6 +103,7 @@ describe('A stored submission answer in the history vocabulary (#1402)', () => {
     const states: readonly AttemptState[] = [
       'ACCEPTED',
       'INDETERMINATE',
+      'MESSAGE_INVALID',
       'NOT_ATTEMPTED',
       'PREPARED',
       'REJECTED',
@@ -111,6 +112,7 @@ describe('A stored submission answer in the history vocabulary (#1402)', () => {
     expect(states.map((state) => submissionFactOfAttempt(state).technical)).toEqual([
       'PROVIDER_ACCEPTED',
       'ACCEPTANCE_INDETERMINATE',
+      'MESSAGE_INVALID',
       'NOT_ATTEMPTED',
       'SUBMISSION_STARTED',
       'PROVIDER_REJECTED',

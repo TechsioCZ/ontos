@@ -36,6 +36,7 @@ const GENERATED_DEFAULTS_FILE = 'src/handoff/outbox-worker-defaults.ts';
 const CORE_WORKER_DEFINITIONS = [
   'src/workers/prepare-message-handoff.worker.ts',
   'src/workers/receive-privacy-measure.worker.ts',
+  'src/workers/reconcile-provider-evidence.worker.ts',
   'src/workers/report-privacy-owner-outcome.worker.ts',
 ];
 /** The Codesmith Outbox Worker generator's template: the authority for "generated defaults". */

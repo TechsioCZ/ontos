@@ -41,6 +41,11 @@ export {
   executeRecordOwnerExecutionEvidenceWithAuthorization,
 } from './record-owner-execution-evidence-action-client.ts';
 export type { RecordOwnerExecutionEvidenceActionClientOptions } from './record-owner-execution-evidence-action-client.ts';
+export {
+  executeIngestProviderObservation,
+  executeIngestProviderObservationWithAuthorization,
+} from './ingest-provider-observation-action-client.ts';
+export type { IngestProviderObservationActionClientOptions } from './ingest-provider-observation-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

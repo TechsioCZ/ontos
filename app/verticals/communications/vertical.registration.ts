@@ -8,6 +8,7 @@ import { activateTemplateRevisionAction } from './src/actions/activate-template-
 import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
 import { communicationOutcomeFeedRead } from './src/api/communication-outcome-feed.read.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
+import { ingestProviderObservationAction } from './src/actions/ingest-provider-observation.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
 import { messageHistoryDetailRead } from './src/api/message-history-detail.read.ts';
@@ -17,6 +18,7 @@ import { prepareTemplateRevisionAction } from './src/actions/prepare-template-re
 import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
 import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execution-outcome.read.ts';
 import { receivePrivacyMeasureWorker } from './src/workers/receive-privacy-measure.worker.ts';
+import { reconcileProviderEvidenceWorker } from './src/workers/reconcile-provider-evidence.worker.ts';
 import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
 import { reportPrivacyOwnerOutcomeWorker } from './src/workers/report-privacy-owner-outcome.worker.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
@@ -28,6 +30,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-actions>
     activateTemplateRevisionAction,
     deactivateTemplateRevisionAction,
+    ingestProviderObservationAction,
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,
     recordOwnerExecutionEvidenceAction,
@@ -69,6 +72,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-workers>
     prepareMessageHandoffWorker,
     receivePrivacyMeasureWorker,
+    reconcileProviderEvidenceWorker,
     reportPrivacyOwnerOutcomeWorker,
     // </generated-module-registration-workers>
   ],

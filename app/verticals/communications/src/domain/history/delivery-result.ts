@@ -14,10 +14,9 @@ import type { AttemptEffect, AttemptState, ObservationKind, TechnicalEvidence } 
  *   does not prove it (INDETERMINATE), exactly as the attempt state machine already treats it: nothing may be resent blindly;
  * - UNAVAILABLE with the reason `configuration` means the deployment could not even build the request: NO request was made,
  *   so provably nothing was submitted. It reads exactly like NOT_ATTEMPTED (still only prepared, the effect is absent);
- * - MESSAGE_INVALID (`EmailDeliveryInvalidMessage`: our own message was malformed and the provider was never asked) is
- *   expressible here as a PROVEN failure with its own evidence. The stored attempt state machine has NO state for it yet, so no
- *   stored attempt can read as MESSAGE_INVALID today. That is a documented gap for the Messaging Adapter (step 22) and the
- *   recovery lane (d21-10): they add the state by a forward migration and the case below needs no other change.
+ * - MESSAGE_INVALID (`EmailDeliveryInvalidMessage`: our own message was malformed and the provider was never asked) is a PROVEN
+ *   failure with its own evidence. It is stored only when the Messaging Adapter states the proof `PROVIDER_NOT_ASKED` in the
+ *   handoff contract (a guess of the worker never becomes this state), so a certain failure is never reported INDETERMINATE.
  */
 
 /** What one submission answer proves on its own, before any later observation. */
@@ -33,9 +32,6 @@ export interface SubmissionFact {
   readonly technical: TechnicalEvidence;
 }
 
-/** A stored attempt state, or the answer no stored state carries yet (see MESSAGE_INVALID above). */
-export type SubmissionState = AttemptState | 'MESSAGE_INVALID';
-
 /** The reason of an UNAVAILABLE answer that says no request was made at all (a deployment without a usable configuration). */
 export const NO_REQUEST_MADE_REASON = 'configuration';
 
@@ -47,7 +43,7 @@ const notSubmitted = (reason: string | undefined): SubmissionFact => ({
 });
 
 /** The submission fact of a stored attempt state (and the reason its evidence kept, if any). */
-export const submissionFactOfAttempt = (state: SubmissionState, reason?: string): SubmissionFact =>
+export const submissionFactOfAttempt = (state: AttemptState, reason?: string): SubmissionFact =>
   Match.value(state).pipe(
     Match.when('ACCEPTED', (): SubmissionFact => ({
       effect: 'PRESENT',
@@ -75,7 +71,7 @@ export const submissionFactOfAttempt = (state: SubmissionState, reason?: string)
     })),
     // no adapter exists: provably nothing was submitted, so the intent is still only prepared
     Match.when('NOT_ATTEMPTED', (): SubmissionFact => notSubmitted(reason)),
-    // our own message was malformed and the provider was never asked: a PROVEN failure, with its own evidence
+    // our own message was malformed and the adapter proved the provider was never asked: a PROVEN failure, with its own evidence
     Match.when('MESSAGE_INVALID', (): SubmissionFact => ({
       effect: 'ABSENT',
       reason,
@@ -130,7 +126,5 @@ export const effectAfterObservations = (
  * every other attempt, answered or not, may have. The timeline, the stop of the pre-handoff step and the recovery limit all read
  * it here, so they can never disagree about whether a stopped message might already have been sent.
  */
-export const attemptMayHaveLeft = (attempt: {
-  readonly reason?: string | undefined;
-  readonly state: SubmissionState;
-}) => submissionFactOfAttempt(attempt.state, attempt.reason).technical !== 'NOT_ATTEMPTED';
+export const attemptMayHaveLeft = (attempt: { readonly reason?: string | undefined; readonly state: AttemptState }) =>
+  submissionFactOfAttempt(attempt.state, attempt.reason).technical !== 'NOT_ATTEMPTED';

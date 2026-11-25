@@ -9,6 +9,7 @@ import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-c
 import { privacyOwnerExecutionOutcomeOperation } from '../../shared/apis/privacy-owner-execution-outcome.ts';
 import { activateTemplateRevisionAction } from '../../src/actions/activate-template-revision.action.ts';
 import { deactivateTemplateRevisionAction } from '../../src/actions/deactivate-template-revision.action.ts';
+import { ingestProviderObservationAction } from '../../src/actions/ingest-provider-observation.action.ts';
 import { invalidateTemplateRevisionAction } from '../../src/actions/invalidate-template-revision.action.ts';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
 import { recordOwnerExecutionEvidenceAction } from '../../src/actions/record-owner-execution-evidence.action.ts';
@@ -39,6 +40,7 @@ describe('Communications module contract', () => {
     ).toEqual([
       'communications.core.activate-template-revision',
       'communications.core.deactivate-template-revision',
+      'communications.core.ingest-provider-observation',
       'communications.core.invalidate-template-revision',
       'communications.core.prepare-template-revision',
       'communications.core.record-owner-execution-evidence',
@@ -188,6 +190,7 @@ describe('Communications module contract', () => {
     const registrations = [
       activateTemplateRevisionAction,
       deactivateTemplateRevisionAction,
+      ingestProviderObservationAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
       recordOwnerExecutionEvidenceAction,
