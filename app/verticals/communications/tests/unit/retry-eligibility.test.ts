@@ -119,6 +119,19 @@ describe('assessAttemptHistory: what the history and the approved rule allow bef
     });
   });
 
+  it('[#1403 R-04 R-05] a message the adapter PROVED malformed (provider never asked) is a certain failure: no reconciliation is awaited and nothing is retried automatically, with or without a rule', () => {
+    const facts = factsOf({ attempts: [attempt('MESSAGE_INVALID', { reason: 'invalid_format' })] });
+    for (const policy of [none, approved]) {
+      expect(assessAttemptHistory(facts, policy)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'MESSAGE_INVALID',
+        kind: 'HALT',
+      });
+    }
+    // it is no unknown effect: the guard does not wait for a reconciliation that can never come
+    expect(assessAttemptHistory(facts, approved)).not.toMatchObject({ reason: 'RECONCILIATION_REQUIRED' });
+  });
+
   it('[R-10 AC-03 R-D10] a refusal that is not classified by an approved rule is INDETERMINATE: it halts, never a final PERMANENT stop', () => {
     for (const reason of ['provider_rejected', 'something_new', undefined]) {
       expect(rejectionClassOf(reason)).toBe('INDETERMINATE');

@@ -36,9 +36,13 @@ export const CONFLICT_RESOLUTION_REASON_CODE = 'RECONCILED_BY_PROVIDER_EVIDENCE'
  *   automatically and the source owner decides;
  * - RECOVERY_LIMIT_REACHED: the owner's own approved limit of submitted attempts was reached;
  * - REFUSAL_UNCLASSIFIED: the provider provably refused, but no approved rule classifies that refusal as temporary or permanent,
- *   so it is neither retried nor stopped for good (R-D10).
+ *   so it is neither retried nor stopped for good (R-D10);
+ * - MESSAGE_INVALID: the Messaging Adapter proved that our own message was malformed and the provider was never asked. That is
+ *   a certain failure, not an unknown effect, so no reconciliation is awaited; it is no temporary condition either, so the same
+ *   pinned message is not retried automatically and the source owner decides.
  */
 export const RecoveryHaltCodeSchema = Schema.Literals([
+  'MESSAGE_INVALID',
   'NO_RECOVERY_RULE',
   'RECOVERY_LIMIT_REACHED',
   'REFUSAL_UNCLASSIFIED',

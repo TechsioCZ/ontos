@@ -133,6 +133,14 @@ const allowedMigrationStatements: readonly Allowance[] = [
       'the same single finishing write of a PREPARED attempt, as an unanswered INDETERMINATE after the call lease; it removes no personal data and the append-only trigger refuses any later change',
     text: /update "communications"\."delivery_attempts"\s+set/iu,
   },
+  {
+    file: 'drizzle/20261125150428_message-invalid-attempt/migration.sql',
+    kind: /^raw SQL UPDATE$/u,
+    occurrences: 1,
+    reason:
+      'the same single finishing write of a PREPARED attempt, re-declared so the proven MESSAGE_INVALID state can be written; it removes no personal data and the append-only trigger refuses any later change',
+    text: /update "communications"\."delivery_attempts" set/iu,
+  },
 ];
 
 describe('No automatic destructive mechanism (#1410 AC-05 AC-12, PRIV-COM-05/06/16, E)', () => {

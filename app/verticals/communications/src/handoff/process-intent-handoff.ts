@@ -1,4 +1,5 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
+import { MessageHandoffResultSchema } from '@app/communications-contracts/message-handoff';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Schema } from 'effect';
 
@@ -498,6 +499,8 @@ const finishState = (evidence: ProviderEvidence) =>
     Match.when({ kind: 'INDETERMINATE' }, () => 'INDETERMINATE' as const),
     // no adapter exists: provably nothing was submitted, which a real provider UNAVAILABLE never proves
     Match.when({ kind: 'NOT_ATTEMPTED' }, () => 'NOT_ATTEMPTED' as const),
+    // the adapter proved the provider was never asked (the contract carries that proof; see `answersContract`)
+    Match.when({ kind: 'MESSAGE_INVALID' }, () => 'MESSAGE_INVALID' as const),
     Match.orElse(() => 'UNAVAILABLE' as const),
   );
 
@@ -505,6 +508,12 @@ const echoes = (evidence: ProviderEvidence, message: PinnedHandoff) =>
   evidence.tenantId === message.tenantId &&
   evidence.intentId === message.intentId &&
   evidence.attemptId === message.attemptId;
+
+/**
+ * Whether an answer meets the published handoff contract. A certain failure (`MESSAGE_INVALID`) is stored only with the proof the
+ * contract demands; an answer that is not a contract answer at all is an unreadable one, never a guess, so it ends INDETERMINATE.
+ */
+const answersContract = Schema.is(MessageHandoffResultSchema);
 
 /**
  * The handoff call. Whatever comes back, or does not, is data: a defect, an interruption, an answer bound to another
@@ -536,7 +545,7 @@ const callHandoff = Effect.fn('Communications.callHandoff')(function* call(
   if (Exit.isFailure(exit)) {
     return indeterminate('transport');
   }
-  return echoes(exit.value, message) ? exit.value : indeterminate('response_invalid');
+  return echoes(exit.value, message) && answersContract(exit.value) ? exit.value : indeterminate('response_invalid');
 });
 
 /** What the first phase decided: stop, skip, or "this caller owns the one attempt and may call the provider". */
@@ -564,7 +573,10 @@ const notBegunReason = (answer: typeof AttemptAnswerSchema.Type): SkipReason => 
     return 'RECONCILIATION_REQUIRED';
   }
   // an attempt that may have left, or whose answer is unknown, is reconciled; only a final answer is "finished"
-  return answer.state === 'ACCEPTED' || answer.state === 'REJECTED' || answer.state === 'NOT_ATTEMPTED'
+  return answer.state === 'ACCEPTED' ||
+    answer.state === 'MESSAGE_INVALID' ||
+    answer.state === 'REJECTED' ||
+    answer.state === 'NOT_ATTEMPTED'
     ? 'ALREADY_FINISHED'
     : 'RECONCILIATION_REQUIRED';
 };

@@ -393,6 +393,9 @@ export const messageIntents = communicationsSchema.table.withRLS(
  * is kept apart from `UNAVAILABLE` (a real provider that could not be used, which does NOT prove it did not accept),
  * and it is the only finished state after which a NEXT attempt number may begin: enabling the owner ports before the
  * Messaging Adapter exists (step 22) therefore never burns the intent's only attempt.
+ *
+ * `MESSAGE_INVALID` is a certain failure: the Messaging Adapter PROVED that our own message was malformed and the provider was
+ * never asked. It is written only from that proof in the handoff contract, never as a worker's guess; no observation can follow it.
  */
 export const deliveryAttempts = communicationsSchema.table.withRLS(
   'delivery_attempts',
@@ -404,7 +407,9 @@ export const deliveryAttempts = communicationsSchema.table.withRLS(
     intentId: uuid('intent_id').notNull(),
     preparedAt: timestamp('prepared_at', { withTimezone: true }).notNull(),
     state: text('state')
-      .$type<'ACCEPTED' | 'INDETERMINATE' | 'NOT_ATTEMPTED' | 'PREPARED' | 'REJECTED' | 'UNAVAILABLE'>()
+      .$type<
+        'ACCEPTED' | 'INDETERMINATE' | 'MESSAGE_INVALID' | 'NOT_ATTEMPTED' | 'PREPARED' | 'REJECTED' | 'UNAVAILABLE'
+      >()
       .notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
@@ -420,7 +425,7 @@ export const deliveryAttempts = communicationsSchema.table.withRLS(
     check('communications_attempts_number_ck', sql`${table.attemptNumber} > 0`),
     check(
       'communications_attempts_state_ck',
-      sql`${table.state} in ('ACCEPTED', 'INDETERMINATE', 'NOT_ATTEMPTED', 'PREPARED', 'REJECTED', 'UNAVAILABLE')`,
+      sql`${table.state} in ('ACCEPTED', 'INDETERMINATE', 'MESSAGE_INVALID', 'NOT_ATTEMPTED', 'PREPARED', 'REJECTED', 'UNAVAILABLE')`,
     ),
     ...tenantRlsPolicies('delivery_attempts', table.tenantId),
   ],
