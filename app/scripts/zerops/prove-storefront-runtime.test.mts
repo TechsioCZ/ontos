@@ -1,7 +1,13 @@
-import { Effect, Option, Schema } from 'effect';
+import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Clock, Config, Effect, FileSystem, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ChildProcess } from 'effect/process';
+import { TestClock } from 'effect/testing';
 
 import { RuntimeSummarySchema } from '../../packages/storefront-runtime/src/telemetry.ts';
+import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 import { runtimeEvidence } from './prove-storefront-runtime.mts';
 
 const revision = 'a'.repeat(40);
@@ -35,6 +41,74 @@ const sample = {
 const records = (...samples: readonly unknown[]) => samples.map((entry) => ({ message: JSON.stringify(entry) }));
 const prove = (...samples: readonly unknown[]) =>
   runtimeEvidence(records(...samples), revision, { family: akrosFamily, now: 30_000 });
+
+const deployments = [
+  { family: akrosFamily, label: 'AKROS', service: 'pY0EenoKTJC58aFi4gHjhg' },
+  { family: akrosFamily, label: 'shop', service: 'tfB8wJ12QEaW2fCzuIBd2A' },
+  { family: n1Family, label: 'N1', service: '2WQe4BcQTMeAHtWsqZpCXQ' },
+];
+const fakeZcli = `#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const limit = Number(args[args.indexOf('--limit') + 1]);
+const service = args[args.indexOf('-S') + 1];
+if (!Number.isInteger(limit) || limit < 1 || limit > 1000) process.exit(2);
+const logs = JSON.parse(readFileSync(process.env.RUNTIME_LOG_FIXTURE, 'utf8'))[service];
+if (!logs) process.exit(3);
+process.stdout.write(JSON.stringify(logs.slice(-limit)));
+`;
+const LabelledSummary = Schema.Struct({ ...RuntimeSummarySchema.fields, label: Schema.String });
+
+for (const noisy of deployments) {
+  it.effect(`${noisy.label}: real proof CLI finds telemetry behind more than 200 request logs`, () =>
+    Effect.gen(function* busyDeployment() {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const executable = path.join(directory, 'zcli');
+      const fixtureFile = path.join(directory, 'logs.json');
+      const now = yield* Clock.currentTimeMillis;
+      const logs = Object.fromEntries(
+        deployments.map(({ family, service }) => {
+          const summary = { ...sample, at: now, family, service };
+          const telemetry = records({ ...summary, at: now - 1, event: bootEvent, node: '26' }, summary);
+          const requests =
+            service === noisy.service
+              ? records(...Array.from({ length: 250 }, () => ({ event: 'http.request', query: privateValue })))
+              : [];
+          return [service, [...telemetry, ...requests]];
+        }),
+      );
+      yield* fs.writeFileString(fixtureFile, JSON.stringify(logs));
+      yield* fs.writeFileString(executable, fakeZcli);
+      yield* fs.chmod(executable, 0o700);
+      const result = yield* collectToolingProcess(
+        ChildProcess.make(
+          process.execPath,
+          [path.join(import.meta.dirname, 'prove-storefront-runtime.mts'), revision],
+          {
+            env: {
+              PATH: `${directory}:${yield* Config.String('PATH')}`,
+              RUNTIME_LOG_FIXTURE: fixtureFile,
+            },
+            extendEnv: true,
+            stdin: 'ignore',
+          },
+        ),
+      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const summaries = yield* Effect.forEach(result.stdout.trim().split('\n'), (line) =>
+        Schema.decodeUnknownEffect(Schema.fromJsonString(LabelledSummary))(line),
+      );
+      expect(summaries.map(({ family, label, service }) => ({ family, label, service }))).toEqual(deployments);
+      for (const summary of summaries) {
+        expect(summary.revision).toBe(revision);
+        expect(summary.bootId).toBe(sample.bootId);
+        expect(summary.at).toBe(now);
+      }
+      expect(result.stdout + result.stderr).not.toContain(privateValue);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  );
+}
 
 it.effect('requires measured telemetry for the current release and emits only contract fields', () =>
   Effect.gen(function* safeOutput() {

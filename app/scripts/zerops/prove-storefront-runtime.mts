@@ -114,7 +114,7 @@ const platformLogs = (service: string) =>
     const handle = yield* spawner.spawn(
       ChildProcess.make(
         'zcli',
-        ['service', 'log', '-P', 't1ljmn3DRDafgi8AuPvhdQ', '-S', service, '--limit', '200', '--format', 'JSON'],
+        ['service', 'log', '-P', 't1ljmn3DRDafgi8AuPvhdQ', '-S', service, '--limit', '1000', '--format', 'JSON'],
         { forceKillAfter: Duration.seconds(2), stdin: 'ignore' },
       ),
     );
