@@ -38,8 +38,13 @@ export const scopeDemandsSourceVisibility = (scope: CommunicationRequestScope) =
   scope.profileRef !== undefined || scope.counterpartyRef !== undefined || scope.storefrontRef !== undefined;
 
 /**
- * The only production composition today: no source owner publishes a history visibility Read yet, so a source-scoped
- * history is refused as not composed (a non-retryable refusal, not an outage). It is explicit so nothing is ever shown by default or by a missing adapter.
+ * The only production composition today: no source owner publishes a Read that says whether a given principal may see the
+ * history of a profile, a Counterparty or a Storefront, so a source-scoped history is refused as not composed (a
+ * non-retryable refusal, not an outage). It is explicit so nothing is ever shown by default or by a missing adapter.
+ *
+ * Portal Auth's published issuance-source Read does not fill the gap: it answers the state and the original endpoint of one
+ * issuance for one named Auth account, never whether a staff principal may see a scope, and no Portal Auth request names a
+ * profile, Counterparty or Storefront reference. Mapping it to a visibility answer would invent a fact the owner never stated.
  */
 export const unavailableSourceScopeVisibilityLayer = Layer.succeed(SourceScopeVisibility, {
   check: () => Effect.fail(new SourceScopeVisibilityUnavailable({ reason: 'NOT_COMPOSED' })),
