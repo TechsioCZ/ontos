@@ -65,6 +65,7 @@ import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-
 import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
 import { NO_CATALOG_MARKET } from './market-store.ts';
+import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 import type { CatalogMarketScope, StoredMarket } from './market-store.ts';
 import { productInMarketCurrency, searchVariantOffer } from './market-pricing.ts';
 import {
@@ -1513,6 +1514,10 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
       .orderBy(asc(categories.ordinal)),
     'Categories could not be read',
   );
+  const issue = categoryForestIssue(rows, 'projection');
+  if (issue !== undefined) {
+    return yield* new MerchandiseStoreFailure({ reason: `Invalid stored category forest: ${issue.kind}` });
+  }
   const byId = new Map(rows.map((row) => [row.id, row] as const));
   const contentId = input.activeId ?? rows.find((row) => row.slug === input.activeSlug)?.id;
   const visible = (id: string) => {

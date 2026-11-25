@@ -37,6 +37,7 @@ import {
 } from '../../src/services/merchandise-queries.ts';
 import {
   catalogHeads,
+  categories as categoryTable,
   merchandiseRelations,
   priceTiers,
   productVariants,
@@ -449,7 +450,58 @@ const node = (id: string, parentId: string | null, published = true) => ({
   slug: id,
 });
 
-it.live('reads compact content with the full tree visibility rules across ancestors, cycles and company scopes', () => {
+it.live('rejects malformed complete graphs before replacing any published catalog rows', () =>
+  withMerchandise(catalogState, (fixture) =>
+    Effect.gen(function* rejectMalformedSnapshot() {
+      const before = yield* fixture.db.select().from(categoryTable).where(whereScope(categoryTable, fixture.scope));
+      for (const links of [
+        [node('cycle-a', 'cycle-b'), node('cycle-b', 'cycle-a')],
+        [node('orphan', 'missing-parent')],
+        [node('duplicate', null), node('duplicate', null)],
+      ]) {
+        const invalid = decodeState({ ...catalogInput, categories: links });
+        const failure = yield* fixture.db
+          .transaction((transaction) => replaceSnapshot(transaction, fixture.scope, invalid, TEST_PRICING))
+          .pipe(Effect.flip);
+        expect(failure.reason).toMatch(/^Invalid category forest:/u);
+        expect(yield* fixture.db.select().from(categoryTable).where(whereScope(categoryTable, fixture.scope))).toEqual(
+          before,
+        );
+        expect((yield* loadHead(fixture.db, fixture.scope))?.revision).toBe(fixture.revision);
+      }
+    }),
+  ),
+);
+
+it.live('refuses a corrupted stored cycle on both full and compact storefront reads', () => {
+  const state = decodeState({
+    ...catalogInput,
+    categories: [...catalogInput.categories, node('cycle-a', null), node('cycle-b', null)],
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* corruptStoredGraph() {
+      // Simulate pre-existing corruption below the publication boundary, never through a bypass in production.
+      yield* fixture.db
+        .update(categoryTable)
+        .set({ parentId: 'cycle-b' })
+        .where(and(whereScope(categoryTable, fixture.scope), eq(categoryTable.id, 'cycle-a')));
+      yield* fixture.db
+        .update(categoryTable)
+        .set({ parentId: 'cycle-a' })
+        .where(and(whereScope(categoryTable, fixture.scope), eq(categoryTable.id, 'cycle-b')));
+      for (const contentOnly of [false, true]) {
+        const failure = yield* categoryTree(fixture.db, fixture.scope, {
+          activeId: 'cycle-a',
+          contentOnly,
+          storefront: true,
+        }).pipe(Effect.flip);
+        expect(failure.reason).toBe('Invalid stored category forest: cycle');
+      }
+    }),
+  );
+});
+
+it.live('reads compact content with the full tree visibility rules across ancestors and company scopes', () => {
   const state = decodeState({
     ...catalogInput,
     categories: [
@@ -460,9 +512,6 @@ it.live('reads compact content with the full tree visibility rules across ancest
       node('hidden', 'root', false),
       node('hidden-active', 'hidden'),
       node('hidden-child', 'hidden-active'),
-      node('cycle-a', 'cycle-b'),
-      node('cycle-b', 'cycle-a'),
-      node('orphan', 'missing-parent'),
       ...Array.from({ length: 100 }, (_, index) => node(`unrelated-${index}`, 'root')),
     ],
   });
@@ -472,7 +521,7 @@ it.live('reads compact content with the full tree visibility rules across ancest
       decodeState({ ...catalogInput, categories: [node('root', null, false), node('active', 'root', false)] }),
       () =>
         Effect.gen(function* compactStoredBranches() {
-          for (const activeId of ['active', 'hidden-active', 'cycle-a', 'orphan', 'missing']) {
+          for (const activeId of ['active', 'hidden-active', 'missing']) {
             const full = yield* categoryTree(fixture.db, fixture.scope, { activeId, storefront: true });
             const expected = full.filter(
               (category) => category.id === activeId || Option.getOrNull(category.parentId) === activeId,

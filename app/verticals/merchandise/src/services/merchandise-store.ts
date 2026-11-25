@@ -1,4 +1,5 @@
 import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
+import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
@@ -794,6 +795,13 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
   /** The rates new prices without a stored gross are derived at; by default the company's current rates. */
   pricingNow?: StorePricing,
 ) {
+  const issue = categoryForestIssue(
+    (state.categories ?? []).map((category) => ({ id: category.id, parentId: Option.getOrNull(category.parentId) })),
+    'complete',
+  );
+  if (issue !== undefined) {
+    return yield* new MerchandiseStoreFailure({ reason: `Invalid category forest: ${issue.kind}` });
+  }
   const { held, rates } = pricingNow ?? (yield* currentPricingOf(db, scope));
   yield* deleteScope(db, scope);
   yield* insertSnapshotPart(db, scope, state, rates, held);

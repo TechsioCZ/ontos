@@ -24,6 +24,7 @@
     "./domain/market-offers": "./shared/domain/market-offers.ts",
     "./domain/order-totals": "./shared/domain/order-totals.ts",
     "./domain/merchandise-model": "./shared/domain/merchandise-model.ts",
+    "./domain/category-forest": "./shared/domain/category-forest.ts",
     "./outbox/demo-merchandise-search-rebuild-requested-v1": "./shared/outbox/demo-merchandise-search-rebuild-requested-v1.ts",
     "./outbox/demo-merchandise-search-refresh-requested-v1": "./shared/outbox/demo-merchandise-search-refresh-requested-v1.ts",
     "./resources/order": "./shared/resources/order.ts",

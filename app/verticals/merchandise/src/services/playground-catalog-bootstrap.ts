@@ -28,6 +28,7 @@ import {
   stockMovements,
 } from '../database/schema.ts';
 import { currentPricingOf, insertSnapshotPart, query, whereScope } from './merchandise-store.ts';
+import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 
 type Payload = typeof BootstrapPlaygroundCatalogPayloadSchema.Type;
 const unavailable = <Cause>(cause: Cause) =>
@@ -219,6 +220,16 @@ export const playgroundBootstrapServices = Effect.fn('Merchandise.playgroundBoot
     },
   );
   const verify: BootstrapTransaction['verify'] = Effect.fn('Merchandise.verifyBootstrap')(function* verify(state) {
+    const links = yield* query(
+      db
+        .select({ id: categories.id, parentId: categories.parentId })
+        .from(categories)
+        .where(whereScope(categories, store)),
+    ).pipe(Effect.mapError(unavailable));
+    const issue = categoryForestIssue(links, 'complete');
+    if (issue !== undefined) {
+      return yield* bootstrapRejected(`Invalid category forest: ${issue.kind}`);
+    }
     yield* Effect.forEach(
       [
         [categories, state.manifest.categories],
@@ -257,6 +268,7 @@ export const playgroundBootstrapServices = Effect.fn('Merchandise.playgroundBoot
       }),
       { concurrency: 1, discard: true },
     );
+    return yield* Effect.void;
   });
   const transaction: BootstrapTransaction = { append, begin, checkpoint, save, verify };
   return {

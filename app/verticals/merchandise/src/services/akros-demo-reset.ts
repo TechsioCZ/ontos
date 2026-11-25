@@ -9,6 +9,7 @@ import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandisePersistenceUnavailable } from '../../shared/errors/merchandise-persistence-unavailable.ts';
 import { loadAkrosBaselineParts } from './akros-baseline.generated.ts';
+import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 import { isMediaImageReference, mediaAssetIdOf } from '../../shared/domain/product-images.ts';
 import type { CatalogCategory, Product } from '../../shared/domain/merchandise-model.ts';
 import { categories } from '../database/schema.ts';
@@ -140,6 +141,10 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
     yield* Effect.forEach(categoryRows, decodeCategoryRow, { concurrency: 1 }),
   );
   const head = keepLinkedPhotos(yield* decodeAkrosBaselinePart(first), linked);
+  const categoryLinks = (head.categories ?? []).map((category) => ({
+    id: category.id,
+    parentId: Option.getOrNull(category.parentId),
+  }));
   // Baseline prices without a stored gross are entered at the company's current rates.
   const { held, rates } = yield* currentPricingOf(db, scope);
   yield* deleteScope(db, scope);
@@ -148,9 +153,18 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
     rest,
     (part) =>
       decodeAkrosBaselinePart(part).pipe(
-        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates, held)),
+        Effect.flatMap((state) => {
+          for (const category of state.categories ?? []) {
+            categoryLinks.push({ id: category.id, parentId: Option.getOrNull(category.parentId) });
+          }
+          return insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates, held);
+        }),
       ),
     { concurrency: 1, discard: true },
   );
+  const issue = categoryForestIssue(categoryLinks, 'complete');
+  if (issue !== undefined) {
+    return yield* baselineUnavailable(`Invalid category forest: ${issue.kind}`);
+  }
   return yield* writeSnapshotHead(db, scope, head);
 });
