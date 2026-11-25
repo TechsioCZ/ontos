@@ -118,7 +118,17 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
         transport: { correlationId: key, idempotencyKey: key },
       })
       .pipe(Effect.provide(ports));
-  return { harness, intake, issue, resend };
+  /** The same public call with a body that is NOT a Communication Request: whatever a source published instead of one. */
+  const issueRaw = (payload: Schema.Json, key: string) =>
+    harness.runtime
+      .runAction({
+        payload,
+        principal: sourceWorkload,
+        registration: submitCommunicationRequestAction,
+        transport: { correlationId: key, idempotencyKey: key },
+      })
+      .pipe(Effect.provide(ports));
+  return { harness, intake, issue, issueRaw, resend };
 });
 
 const ORIGINAL_INTENT_ID = '33333333-3333-4333-8333-333333333333';
@@ -235,6 +245,39 @@ describe('Communication Request intake over the public Action boundary (#1401, A
   );
 
   it.effect(
+    '[E05 BDD] a source domain event that is not a Communication Request creates no message: the public Action refuses it and nothing is stored',
+    () =>
+      Effect.gen(function* eventWithoutRequest() {
+        const t = yield* world();
+        // what a source's own business event looks like on the wire: it names what happened, never a purpose, issuer or Tenant
+        const events = [
+          { eventType: 'fixture.order.confirmed', orderId: 'order-fixture-1' },
+          { occurrence: { occurrenceId: 'fixture-occurrence-1', revision: 1 }, scope: { tenantId } },
+          Object.fromEntries(
+            Object.entries(
+              encode(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId })),
+            ).filter(([field]) => field !== 'purpose'),
+          ),
+        ];
+        for (const [index, event] of events.entries()) {
+          const failure = yield* Effect.flip(t.issueRaw(event, `k-event-${index}`));
+          expect(Schema.is(ActionAlreadyCommitted)(failure), `event ${index}`).toBe(false);
+          expect(JSON.stringify(failure)).toContain('payload');
+        }
+        // nothing was decided, stored or queued for any of them
+        expect(t.intake.stored.size).toBe(0);
+        expect(t.intake.conflicts).toHaveLength(0);
+        // the same source's real request is still decided exactly once afterwards
+        const real = yield* t.issue(
+          communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }),
+          'k-real',
+        );
+        expect(real).toMatchObject({ decision: { kind: 'MESSAGE_INTENTS' }, outcome: 'DECIDED' });
+        expect(t.intake.stored.size).toBe(1);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect(
     '[AC-02 AC-03] Core refuses a replayed transport key as already committed; a new key returns the stored decision; another meaning is a conflict',
     () =>
       Effect.gen(function* replayAndConflict() {
@@ -303,7 +346,11 @@ describe('Communication Request intake over the public Action boundary (#1401, A
     expect(Object.keys(encoded)).not.toContain('recipientAddress');
   });
 
-  it('[AC-09 ADR-0013] the owner consumes only its own pre-handoff topic and Privacy measure dispatch: no source event is ever a request, no backfill code exists', () => {
+  it('[AC-09 ADR-0013] INVENTORY (not a behaviour proof): the owner declares no replay, redrive or backfill worker and no source-event subscription', () => {
+    // This is an inventory of what the owner registers. That a source event is never turned into a send, and that a consumer
+    // installed after the events exist receives none of them, is BEHAVIOUR proven on the real Core outbox in
+    // `no-automatic-backfill.test.ts`; Core's own `matches a complete empty authority once without backfilling a later
+    // installed consumer` proves the first-match rule itself.
     const subscriptions = outboxWorkers.map(({ descriptor }) => [descriptor.producerModuleKey, descriptor.topic]);
     expect(subscriptions).toEqual([
       ['communications.core', 'communications.core.message-intent-prepared.v1'],
@@ -311,25 +358,11 @@ describe('Communication Request intake over the public Action boundary (#1401, A
       ['communications.core', 'communications.core.provider-observation-recorded.v1'],
       ['communications.core', 'communications.core.owner-execution-evidence-recorded.v1'],
     ]);
-    // The pre-handoff worker's consumer is Communications itself, for its own self-outbox only, and the one other worker
-    // consumes the Privacy measure dispatch to record the handoff of a measure: it subscribes to no business producer's
-    // event, so a source event can never be turned into a send, and `matched_at` of the first-match rule only ever concerns
-    // messages observed after a consumer exists. The activation order (worker registered before the first producer) is
-    // documented on the worker; Core's own runtime tests (`outbox:test`) prove that a later consumer receives no earlier message.
-    // The third worker reports only the owner's own evidence message to Privacy: it is a self-outbox like the first and
-    // carries the identities of a dispatch Privacy already made, never a source event or an earlier message.
-    // The reconciliation worker (#1403) consumes the owner's own record of a newly recorded provider observation, again a
-    // self-outbox that carries identities only; it is the production entry of reconciliation, not a source event.
-    const [worker, privacyWorker, reconciliationWorker, continuationWorker] = outboxWorkers;
-    expect(worker?.descriptor.consumerModuleKey).toBe('communications.core');
-    expect(worker?.descriptor.consumerModuleKey).toBe(worker?.descriptor.producerModuleKey);
-    expect(worker?.descriptor.workerKey).toBe('communications.core.prepare-message-handoff');
-    expect(privacyWorker?.descriptor.workerKey).toBe('communications.core.receive-privacy-measure');
-    expect(reconciliationWorker?.descriptor.workerKey).toBe('communications.core.reconcile-provider-evidence');
-    expect(reconciliationWorker?.descriptor.consumerModuleKey).toBe(reconciliationWorker?.descriptor.producerModuleKey);
-    expect(continuationWorker?.descriptor.workerKey).toBe('communications.core.report-privacy-owner-outcome');
-    expect(continuationWorker?.descriptor.consumerModuleKey).toBe(continuationWorker?.descriptor.producerModuleKey);
-    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly these four workers.
-    expect(outboxWorkers).toHaveLength(4);
+    expect(outboxWorkers.map(({ descriptor }) => descriptor.workerKey)).toEqual([
+      'communications.core.prepare-message-handoff',
+      'communications.core.receive-privacy-measure',
+      'communications.core.reconcile-provider-evidence',
+      'communications.core.report-privacy-owner-outcome',
+    ]);
   });
 });

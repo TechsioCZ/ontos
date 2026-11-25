@@ -84,10 +84,8 @@ describe('#1394 Rule: the source of communication is only an authorized owner re
     });
   });
 
-  it('Scenario: a domain event without a communication request sends no message', () => {
+  it('Scenario: a bare domain event is not a communication request: it cannot be decoded, so no decision can start from it', () => {
     const bareEvent = { eventType: 'fixture.order.confirmed', orderId: 'order-fixture-1' };
-    // @ts-expect-error The evaluator input type requires a decoded request; a bare domain event is not one.
-    const evaluateBareEvent = () => decideCommunication(registry, bareEvent, fixtureContext([]));
 
     // The only way to obtain a request is decoding it, and a bare event has no occurrence, purpose, issuer or tenant.
     expect(Object.keys(CommunicationDecisionRequestSchema.fields).toSorted()).toEqual([
@@ -97,7 +95,9 @@ describe('#1394 Rule: the source of communication is only an authorized owner re
       'tenantId',
     ]);
     expect(Result.isFailure(decodeRequest(bareEvent))).toBe(true);
-    expect(evaluateBareEvent).toBeInstanceOf(Function);
+    // The behaviour that follows from it (the public Action refuses the bare event and stores nothing) is proven at the
+    // public Action boundary (`communication-intake-public-boundary.test.ts`) and on the real Core outbox
+    // (`no-automatic-backfill.test.ts`), not by this schema-level case.
   });
 
   it('AC-01 (schema key space): a request has no field for a final message, recipient, language or template', () => {
