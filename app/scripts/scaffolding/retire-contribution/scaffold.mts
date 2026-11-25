@@ -264,9 +264,11 @@ const retirementGraph = (
       { dir, exports, read: readable && files.some((file) => file.startsWith(`${dir}${nodePath.sep}`)) },
     ]),
   );
+  // Its sources hold no workspace library's files: what it does not read is a package the sources do not hold.
   return moduleGraph(
     resolvedSpecifier((file) => sources.has(file), resolved),
     (file) => sources.get(file),
+    () => false,
   );
 };
 

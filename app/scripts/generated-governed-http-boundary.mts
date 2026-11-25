@@ -4947,34 +4947,15 @@ const reexportedProblems = (
   graph: ModuleGraph,
   entry: OwnerEntry,
   names: (target: string | undefined) => boolean,
-  chained: Set<string>,
 ): readonly string[] => {
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
-  const followed = (): readonly (readonly [string, ExportOrigin])[] => {
-    const exported = moduleExports(graph, entry.file);
-    return [
-      ...exported.names.flatMap((name) =>
-        exportOrigins(graph, entry.file, name).map((origin) => [name, origin] as const),
-      ),
-      ...exported.opaque.map((origin) => ['*', origin] as const),
-    ];
-  };
-  // The names the entry exports, followed to a fixed point: a file a name is followed into, whatever statement carries
-  // it there, that the graph did not read (a file of a workspace library whose files the sources hold) is read like
-  // any other file on the chain and followed again, so no trail is worked out before the files it needs are read.
-  let origins = followed();
-  const entered = (): boolean => {
-    const targets = origins.flatMap(([, origin]) =>
-      origin.kind === 'foreign' && !chained.has(origin.target) ? [origin.target] : [],
-    );
-    for (const target of targets) {
-      chained.add(target);
-    }
-    return targets.some((target) => graph.parsed(target) !== undefined);
-  };
-  while (entered()) {
-    origins = followed();
-  }
+  const exported = moduleExports(graph, entry.file);
+  const origins = [
+    ...exported.names.flatMap((name) =>
+      exportOrigins(graph, entry.file, name).map((origin) => [name, origin] as const),
+    ),
+    ...exported.opaque.map((origin) => ['*', origin] as const),
+  ];
   const files = new Set(origins.flatMap(([, origin]) => origin.trail.slice(1)));
   const problems: string[] = [];
   const pending = [entry.file, ...files];
@@ -5002,7 +4983,6 @@ const reexportedProblems = (
           !files.has(target)
         ) {
           files.add(target);
-          chained.add(target);
           pending.push(target);
         }
       }
@@ -6612,6 +6592,10 @@ const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
   return workspace;
 };
 
+/** Whether a file lies in one of the directories. */
+const isInDirectories = (directories: readonly string[], file: string): boolean =>
+  directories.some((directory) => file.startsWith(directory));
+
 /** Whether a file the graph does not read lies in a module or contract package: a link that cannot be followed. */
 const isUnreadWorkspaceTarget = (workspace: Workspace, target: string): boolean =>
   workspace.readDirectories.some((directory) => target.startsWith(directory));
@@ -7112,16 +7096,13 @@ const ownerEntryProblems = (
     ...(aggregate === undefined ? [] : [[aggregate.file, aggregate.source] as const]),
   ]);
   const workspace = workspaceOf(sources);
-  // The files an owner entry's re-exports reach (`reexportedProblems`), a workspace library's among them.
-  const chained = new Set<string>();
+  // Every code file of a package whose files the sources hold is read on demand, a workspace library's too.
   const graph = moduleGraph(
     resolvedSpecifier((file) => sources.has(file), workspace.packages),
     (target) =>
       entrySources.get(target) ??
-      (CODE_FILE.test(target) &&
-      (chained.has(target) || workspace.readDirectories.some((directory) => target.startsWith(directory)))
-        ? sources.get(target)
-        : undefined),
+      (CODE_FILE.test(target) && isInDirectories(workspace.heldDirectories, target) ? sources.get(target) : undefined),
+    (file) => isInDirectories(workspace.heldDirectories, file) && !isInDirectories(workspace.readDirectories, file),
   );
   /** Where `importer` takes `name` from when it imports it from `specifier`; nothing for a specifier naming no file. */
   const exportedAt = (importer: string, specifier: string, name: string): readonly (readonly [string, string])[] => {
@@ -7195,7 +7176,7 @@ const ownerEntryProblems = (
               (node) =>
                 `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
             ),
-            ...reexportedProblems(graph, entry, namesFile, chained),
+            ...reexportedProblems(graph, entry, namesFile),
           ];
     }),
     ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),

@@ -951,6 +951,97 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     ]);
     expect(relayed.valid).toBe(false);
     expect(relayed.diagnostics).toContain(`${sharedApiFile}: export Startup cannot be followed`);
+    // No rule stops at a workspace library whose files the sources hold. Strict reach in an owner entry follows what
+    // an exported declaration refers to through the library, and so does the mount judge in a declaration it walks.
+    const reachingVerdicts = (
+      [
+        [
+          'an object holding a library import',
+          sharedApiFile,
+          `${startupImport}export const bundle = { Startup };\n`,
+          'bundle',
+          passingOn,
+        ],
+        [
+          'a call on a library import',
+          sharedApiFile,
+          `${startupImport}export const Wrapped = Startup.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
+          'Wrapped',
+          passingOn,
+        ],
+        [
+          'an object holding a library import in the aggregate',
+          aggregateFile,
+          `${startupImport}export const bundle = { Startup };\n`,
+          'bundle',
+          passingOn,
+        ],
+        [
+          'an object holding an SDK import in the aggregate',
+          aggregateFile,
+          "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport const paymentTerms = { executeCurrentPaymentTerms };\n",
+          'paymentTerms',
+          sdk,
+        ],
+        [
+          'a bound SDK import in the aggregate',
+          aggregateFile,
+          "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport const run = executeCurrentPaymentTerms.bind(undefined);\n",
+          'run',
+          sdk,
+        ],
+      ] as const
+    ).map(([label, file, appended, exportedName, changes]) => {
+      const reaching = judged(withLibraries, [...changes, [file, `${required(sources, file)}\n${appended}`]]);
+      const reached = reaching.diagnostics.includes(
+        `${file}: export ${exportedName} reaches a package read of the module`,
+      );
+      return [label, reaching.valid, reached] as const;
+    });
+    expect(reachingVerdicts).toEqual(reachingVerdicts.map(([label]) => [label, false, true]));
+    // A library value that is no read, exported in a new object, passes: what a library declaration holds is not walked.
+    const libraryValue = judged(withLibraries, [
+      [
+        sharedApiFile,
+        `${sharedApi}\nimport { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';\nexport const helpers = { makeProblemDetailsSchema };\n`,
+      ],
+    ]);
+    expect(libraryValue.valid, libraryValue.diagnostics).toBe(true);
+    // Another module's read API, taken through a library into an owner file's own API, is found when that is mounted.
+    const throughLibrary = judged(withLibraries, [
+      [sharedContracts, startup],
+      [startupFile, `export { ${foreign} } from '${foreignSpecifier}';\n`],
+      [
+        `${owner}/shared/extra.ts`,
+        `import { HttpApi } from '@modern-js/bff-effect/effect-client';\nimport { ${foreign} } from '@app/shared-contracts/startup';\n\nexport const ExtraApi = ${foreign}.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
+      ],
+      [
+        sharedApiFile,
+        replaced(
+          `import { ExtraApi } from './extra.ts';\n${sharedApi}`,
+          additionsStart,
+          `  .addHttpApi(ExtraApi)\n${additionsStart}`,
+        ),
+      ],
+    ]);
+    expect(throughLibrary.valid).toBe(false);
+    expect(throughLibrary.diagnostics).toContain(unknown(sharedApiFile, 'ExtraApi'));
+    // A library value built with the HttpApi family, used inside the module's own API, is a library value: passes.
+    const libraryGroup = judged(withLibraries, [
+      [
+        `${owner}/shared/extra.ts`,
+        "import { HttpApi } from '@modern-js/bff-effect/effect-client';\nimport { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';\n\nexport const ExtraApi = HttpApi.make('Extra').add(ExternalIdentityApiGroup);\n",
+      ],
+      [
+        sharedApiFile,
+        replaced(
+          `import { ExtraApi } from './extra.ts';\n${sharedApi}`,
+          additionsStart,
+          `  .addHttpApi(ExtraApi)\n${additionsStart}`,
+        ),
+      ],
+    ]);
+    expect(libraryGroup.valid, libraryGroup.diagnostics).toBe(true);
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name

@@ -579,6 +579,11 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
  * undefined for a module the graph does not read (a library, a file outside the files the graph reads).
  */
 export interface ModuleGraph {
+  /**
+   * Whether a file is a workspace library's (a package whose files the sources hold that is no module or contract
+   * package): the follower goes through it as through any file it reads, and what it ends on there is a library value.
+   */
+  readonly library: (file: string) => boolean;
   readonly parsed: (target: string) => ModuleBindings | 'unparsable' | undefined;
   readonly target: (importer: string, specifier: string) => string | undefined;
 }
@@ -587,9 +592,11 @@ export interface ModuleGraph {
 export const moduleGraph = (
   target: (importer: string, specifier: string) => string | undefined,
   source: (target: string) => string | undefined,
+  library: (file: string) => boolean,
 ): ModuleGraph => {
   const cache = new Map<string, ModuleBindings | undefined>();
   return {
+    library,
     parsed: (file) => {
       const text = source(file);
       if (text !== undefined && !cache.has(file)) {
@@ -1571,6 +1578,30 @@ const expansion = (graph: ModuleGraph, link: ExportLink): readonly Expansion[] =
   return link.kind === 'binding' ? bindingLinks(graph, link) : referenceLinks(link);
 };
 
+/**
+ * What the follower ends on in a file of a workspace library, a declaration or the whole module: a library value, the
+ * export of the library file the chain entered, as a library the graph does not read gives it. Only the chain of other
+ * names is followed into the library; what a library declaration holds is not walked. A link the follower cannot follow
+ * there stays one.
+ */
+const libraryValue = (graph: ModuleGraph, origin: ExportOrigin): ExportOrigin => {
+  if ((origin.kind !== 'declared' && origin.kind !== 'namespace') || !graph.library(origin.file)) {
+    return origin;
+  }
+  const entered = origin.trail.findIndex((passed) => graph.library(passed));
+  const target = origin.trail[Math.max(entered, 0)] ?? origin.file;
+  const named =
+    origin.kind === 'declared' && origin.node.type === 'Identifier' ? specifierName(origin.node) : 'default';
+  return {
+    kind: 'foreign',
+    name: origin.kind === 'namespace' ? '*' : named,
+    specifier: target,
+    star: false,
+    target,
+    trail: origin.trail.slice(0, Math.max(entered, 1)),
+  };
+};
+
 const followedOrigins = (graph: ModuleGraph, start: readonly Expansion[], asked: string): readonly ExportOrigin[] => {
   const origins: ExportOrigin[] = [];
   const pending: ExportLink[] = [];
@@ -1594,11 +1625,12 @@ const followedOrigins = (graph: ModuleGraph, start: readonly Expansion[], asked:
       }
     }
   }
-  const declared = origins.filter((origin) => origin.kind !== 'foreign' || !origin.star);
+  const settled = origins.map((origin) => libraryValue(graph, origin));
+  const declared = settled.filter((origin) => origin.kind !== 'foreign' || !origin.star);
   if (declared.length > 0) {
     return declared;
   }
-  return origins.length > 0 ? origins : [{ file: asked, kind: 'unresolved', reason: 'has no origin', trail: [asked] }];
+  return settled.length > 0 ? settled : [{ file: asked, kind: 'unresolved', reason: 'has no origin', trail: [asked] }];
 };
 
 /**
