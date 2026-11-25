@@ -1,13 +1,11 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, Schema } from 'effect';
-import { expect } from 'effect-rstest';
+import { afterAll, expect } from 'effect-rstest';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import { hasGeneratedActionRegistrationBinding } from '../generated-governed-http-boundary.mts';
-import { PackageExportsSchema, resolvedSpecifier } from '../module-bindings.mts';
-import type { WorkspacePackage } from '../module-bindings.mts';
 import { assertPublishedCrossMicroVerticalContractUsage } from '../published-outbox-contracts.mts';
 
 export const SHELL_TSCONFIG_PATH = 'apps/shell-super-app/tsconfig.json';
@@ -143,10 +141,19 @@ export const GOVERNED_SEARCH_HEADER =
 export const acceptsTypedGtinBinding = (source: string) =>
   hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
 
-/** The workspace's library packages a fixture may hold some files of, beside their manifests. */
-const LIBRARY_PACKAGES = ['@app/core-runtime', '@app/shared-contracts'] as const;
-const LibraryManifestSchema = Schema.Struct({ exports: Schema.Record(Schema.String, PackageExportsSchema) });
+/** The workspace's library packages a fixture may hold some files of, beside their manifests, by package name. */
+const CORE_RUNTIME_PATH = 'packages/core-runtime';
+const LIBRARY_PACKAGES = new Map([
+  ['@app/core-runtime', CORE_RUNTIME_PATH],
+  ['@app/shared-contracts', SHARED_CONTRACTS_WORKSPACE_PATH],
+]);
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
+const BUILD_DIRECTORIES = new Set(['node_modules', 'dist', '.output', '.modern', 'coverage']);
+const LIBRARY_MANIFEST = 'package.json';
+const LIBRARY_COPY_PREFIX = 'ontos-libraries-';
+const LibraryExportSchema = Schema.Union([Schema.String, Schema.Struct({ default: Schema.String })]);
+const LibraryManifestSchema = Schema.Struct({ exports: Schema.Record(Schema.String, LibraryExportSchema) });
+const ProcessGoneSchema = Schema.Struct({ code: Schema.Literal('ESRCH') });
 
 const fileExists = async (file: string) => {
   try {
@@ -157,51 +164,291 @@ const fileExists = async (file: string) => {
   }
 };
 
-const directoryEntries = async (directory: string): Promise<readonly string[]> => {
-  try {
-    return await readdir(directory);
-  } catch {
-    return [];
+/** Every static specifier a source names, by a plain scan: `from '…'`, `import '…'`, `import('…')`, `require('…')`. */
+const specifiersOf = (source: string): readonly string[] =>
+  [...source.matchAll(/(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](?<specifier>[^'"\n]+)['"]/gu)].flatMap((match) =>
+    match.groups?.specifier === undefined ? [] : [match.groups.specifier],
+  );
+
+/** The specifiers a source re-exports from: `export … from '…'`, `export * from '…'`. */
+const reexportsOf = (source: string): readonly string[] =>
+  [
+    ...source.matchAll(
+      /\bexport\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*['"](?<specifier>[^'"\n]+)['"]/gu,
+    ),
+  ].flatMap((match) => (match.groups?.specifier === undefined ? [] : [match.groups.specifier]));
+
+/** What TypeScript's `Bundler` resolution tries for a path. */
+const bundlerCandidates = (base: string): readonly string[] => {
+  if (/\.(?:[cm]?js|jsx)$/u.test(base)) {
+    return [base.replace(/\.(?<module>[cm]?)js(?<jsx>x?)$/u, '.$<module>ts$<jsx>'), base];
   }
+  return /\.(?:[cm]?tsx?|json)$/u.test(base) ? [base] : [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`];
 };
 
-const holdPublishedFile = async (root: string, file: string) => {
-  if (!(await fileExists(path.join(root, file))) && (await fileExists(path.join(WORKSPACE_ROOT, file)))) {
-    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
-    await writeFile(path.join(root, file), await readFile(path.join(WORKSPACE_ROOT, file), 'utf-8'));
-  }
+/** The file a library publishes at a subpath (its manifest maps each subpath to a path, or to a `default` path). */
+const publishedFile = (directory: string, exports: ReadonlyMap<string, string>, subpath: string) => {
+  const target = exports.get(subpath);
+  return target === undefined ? undefined : path.posix.join(directory, target);
 };
 
-const holdPublishedLibrary = async (root: string, name: string) => {
-  const dir = `packages/${name.slice('@app/'.length)}`;
-  const manifestFile = 'package.json';
-  const entries = await directoryEntries(path.join(root, dir));
-  if (entries.some((entry) => entry !== manifestFile)) {
-    const manifest: unknown = JSON.parse(await readFile(path.join(WORKSPACE_ROOT, dir, manifestFile), 'utf-8'));
-    const { exports } = Schema.decodeUnknownSync(LibraryManifestSchema)(manifest);
-    const resolve = resolvedSpecifier(
-      () => true,
-      new Map<string, WorkspacePackage>([[name, { dir, exports, read: false }]]),
+/** The library packages as the workspace holds them: their source files, read once, and what their manifests export. */
+interface Libraries {
+  readonly copy: string;
+  readonly exports: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  readonly sources: ReadonlyMap<string, string>;
+}
+
+/** Where a specifier of `importer` names a library file or a file `exists` holds; nothing for any other module. */
+const resolvedIn =
+  (libraries: Libraries, exists: (file: string) => boolean) =>
+  (importer: string, specifier: string): string | undefined => {
+    if (specifier.startsWith('.')) {
+      return bundlerCandidates(path.posix.join(path.posix.dirname(importer), specifier)).find(
+        (candidate) => libraries.sources.has(candidate) || exists(candidate),
+      );
+    }
+    const [scope, name, ...rest] = specifier.split('/');
+    const directory = LIBRARY_PACKAGES.get(`${scope}/${name}`);
+    const exports = directory === undefined ? undefined : libraries.exports.get(directory);
+    return directory === undefined || exports === undefined
+      ? undefined
+      : publishedFile(directory, exports, rest.length === 0 ? '.' : `./${rest.join('/')}`);
+  };
+
+/** Every source file of a workspace directory, read, and copied read-only into `copy`. */
+const copyReadOnly = (copy: string, directory: string): Effect.Effect<readonly (readonly [string, string])[]> =>
+  Effect.gen(function* copyReadOnlyDirectory() {
+    const entries = yield* Effect.promise(
+      async () => await readdir(path.join(WORKSPACE_ROOT, directory), { withFileTypes: true }),
     );
-    const published = Object.keys(exports).flatMap((key) => {
-      const target = resolve(dir, key === '.' ? name : `${name}${key.slice(1)}`);
-      return target === undefined ? [] : [target];
-    });
-    await Promise.all(published.map(async (target) => await holdPublishedFile(root, target)));
+    yield* Effect.promise(async () => await mkdir(path.join(copy, directory), { recursive: true }));
+    const copied = yield* Effect.forEach(
+      entries,
+      (entry): Effect.Effect<readonly (readonly [string, string])[]> => {
+        const file = `${directory}/${entry.name}`;
+        if (entry.isDirectory() && !BUILD_DIRECTORIES.has(entry.name)) {
+          return copyReadOnly(copy, file);
+        }
+        return entry.isFile() && /\.(?:[cm]?ts|tsx|json)$/u.test(entry.name)
+          ? Effect.promise(async () => {
+              const source = await readFile(path.join(WORKSPACE_ROOT, file), 'utf-8');
+              await writeFile(path.join(copy, file), source, { mode: 0o444 });
+              return [[file, source] as const];
+            })
+          : Effect.succeed([]);
+      },
+      { concurrency: 'unbounded' },
+    );
+    return copied.flat();
+  });
+
+/** Whether the process that made a copy is gone, so the copy is a crashed run's. */
+const isStaleCopy = (name: string): boolean => {
+  const pid = Number(name.slice(LIBRARY_COPY_PREFIX.length).split('-')[0]);
+  if (!Number.isInteger(pid) || pid === process.pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return Schema.is(ProcessGoneSchema)(error);
   }
 };
 
 /**
- * Every file the `exports` of a library package the fixture holds publishes, copied from the workspace where the fixture
- * has none: a package whose files the sources hold names only files that exist, as it does in the workspace.
+ * One read-only copy of the library packages per test file, made when a fixture first holds files of one and removed
+ * after the file's tests; a copy a crashed run left is removed when the next copy is made. Fixtures link to it, never
+ * to the workspace's own packages.
  */
-const holdPublishedLibraryFiles = (root: string) =>
+const libraryCopies = new Map<'libraries', Libraries>();
+afterAll(async () => {
+  await Promise.all(
+    [...libraryCopies.values()].map(async ({ copy }) => await rm(copy, { force: true, recursive: true })),
+  );
+});
+const sharedLibraries = Effect.gen(function* copyLibraries() {
+  const known = libraryCopies.get('libraries');
+  if (known !== undefined) {
+    return known;
+  }
+  const stale = (yield* Effect.promise(async () => await readdir(os.tmpdir()))).filter(
+    (name) => name.startsWith(LIBRARY_COPY_PREFIX) && isStaleCopy(name),
+  );
+  yield* Effect.promise(
+    async () =>
+      await Promise.all(
+        stale.map(async (name) => await rm(path.join(os.tmpdir(), name), { force: true, recursive: true })),
+      ),
+  );
+  const copy = yield* Effect.promise(
+    async () => await mkdtemp(path.join(os.tmpdir(), `${LIBRARY_COPY_PREFIX}${process.pid}-`)),
+  );
+  const sources = new Map(
+    (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) => copyReadOnly(copy, directory))).flat(),
+  );
+  const exports = new Map(
+    [...LIBRARY_PACKAGES.values()].map((directory) => {
+      const manifest = Schema.decodeUnknownSync(Schema.fromJsonString(LibraryManifestSchema))(
+        sources.get(`${directory}/${LIBRARY_MANIFEST}`) ?? '{"exports":{}}',
+      );
+      return [
+        directory,
+        new Map(
+          Object.entries(manifest.exports).map(([subpath, published]) => [
+            subpath,
+            Schema.is(Schema.String)(published) ? published : published.default,
+          ]),
+        ),
+      ] as const;
+    }),
+  );
+  const libraries: Libraries = { copy, exports, sources };
+  libraryCopies.set('libraries', libraries);
+  return libraries;
+});
+
+/** The files a fixture holds under a directory, by their paths from the fixture's root. */
+const fixtureFiles = (root: string, directory: string): Effect.Effect<readonly string[]> =>
+  Effect.gen(function* listFixtureFiles() {
+    const entries = yield* Effect.promise(async () => {
+      try {
+        return await readdir(path.join(root, directory), { withFileTypes: true });
+      } catch {
+        return [];
+      }
+    });
+    const files = yield* Effect.forEach(
+      entries,
+      (entry) =>
+        entry.isDirectory()
+          ? fixtureFiles(root, `${directory}/${entry.name}`)
+          : Effect.succeed([`${directory}/${entry.name}`]),
+      { concurrency: 'unbounded' },
+    );
+    return files.flat();
+  });
+
+/** A fixture file's source, empty when the fixture has no such file. */
+const fixtureSource = (root: string, file: string) =>
   Effect.promise(async () => {
-    await Promise.all(LIBRARY_PACKAGES.map(async (name) => await holdPublishedLibrary(root, name)));
+    try {
+      return await readFile(path.join(root, file), 'utf-8');
+    } catch {
+      return '';
+    }
+  });
+
+/**
+ * The library files an owner entry of the fixture names (`shared/api.ts` and the `./api/client` aggregate of each
+ * module), and every file the entries' re-exports reach in the fixture names: the files the checks require to exist.
+ */
+const entryNamedLibraryFiles = (root: string, libraries: Libraries) =>
+  Effect.gen(function* namedByEntries() {
+    const modules = (yield* fixtureFiles(root, 'verticals')).flatMap((file) => {
+      const module = /^verticals\/(?<name>[^/]+)\/package\.json$/u.exec(file)?.groups?.name;
+      return module === undefined ? [] : [module];
+    });
+    const pending = modules.flatMap((module) => [
+      `verticals/${module}/shared/api.ts`,
+      `verticals/${module}/src/api/${module}-client.ts`,
+    ]);
+    const resolve = resolvedIn(libraries, () => true);
+    const visited = new Set<string>();
+    const named = new Set<string>();
+    for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+      const source = visited.has(file) ? '' : yield* fixtureSource(root, file);
+      visited.add(file);
+      for (const specifier of specifiersOf(source)) {
+        const target = resolve(file, specifier);
+        if (target !== undefined && libraries.sources.has(target)) {
+          named.add(target);
+        }
+      }
+      for (const specifier of reexportsOf(source)) {
+        const target = specifier.startsWith('.') ? resolve(file, specifier) : undefined;
+        if (target !== undefined && !libraries.sources.has(target)) {
+          pending.push(target);
+        }
+      }
+    }
+    return named;
+  });
+
+/**
+ * The library files a fixture holds: those it wrote, and, of each library it holds files of, the published files its
+ * owner entries name, with every library file those reach, so every file a held library's specifier names exists. A
+ * fixture that holds a library by its manifest alone holds none of its files.
+ */
+const heldLibraryFiles = (root: string, libraries: Libraries, named: ReadonlySet<string>) =>
+  Effect.gen(function* libraryClosure() {
+    const written = new Map(
+      (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) => fixtureFiles(root, directory)))
+        .flat()
+        .filter((file) => path.posix.basename(file) !== LIBRARY_MANIFEST)
+        .map((file) => [file, file] as const),
+    );
+    const writtenSources = new Map(
+      yield* Effect.forEach([...written.keys()], (file) =>
+        fixtureSource(root, file).pipe(Effect.map((source) => [file, source] as const)),
+      ),
+    );
+    const resolve = resolvedIn(libraries, (file) => writtenSources.has(file));
+    const libraryOf = (file: string) =>
+      [...LIBRARY_PACKAGES.values()].find((directory) => file.startsWith(`${directory}/`));
+    const held = new Set<string>();
+    const pending = [...written.keys()];
+    const heldLibraries = new Set<string>();
+    while (pending.length > 0) {
+      for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+        if (!held.has(file)) {
+          held.add(file);
+          heldLibraries.add(libraryOf(file) ?? '');
+          for (const specifier of specifiersOf(writtenSources.get(file) ?? libraries.sources.get(file) ?? '')) {
+            const target = resolve(file, specifier);
+            if (target !== undefined && (libraries.sources.has(target) || writtenSources.has(target))) {
+              pending.push(target);
+            }
+          }
+        }
+      }
+      // A library the closure enters is held: the published files the owner entries name of it are held too.
+      pending.push(...[...named].filter((file) => !held.has(file) && heldLibraries.has(libraryOf(file) ?? '')));
+    }
+    return [...held].filter((file) => !writtenSources.has(file));
+  });
+
+/**
+ * The library files a fixture holds beside the ones it wrote (`heldLibraryFiles`), linked from the shared read-only
+ * copy; `write` gives a fixture its own file before it edits a linked one.
+ */
+const holdLibraryFiles = (root: string) =>
+  Effect.gen(function* holdLibraries() {
+    const holdsAny = (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) =>
+      fixtureFiles(root, directory),
+    ))
+      .flat()
+      .some((file) => path.posix.basename(file) !== LIBRARY_MANIFEST);
+    if (holdsAny) {
+      const libraries = yield* sharedLibraries;
+      const linked = yield* heldLibraryFiles(root, libraries, yield* entryNamedLibraryFiles(root, libraries));
+      yield* Effect.forEach(
+        linked,
+        (file) =>
+          Effect.promise(async () => {
+            if (!(await fileExists(path.join(root, file)))) {
+              await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+              await link(path.join(libraries.copy, file), path.join(root, file));
+            }
+          }),
+        { concurrency: 'unbounded', discard: true },
+      );
+    }
   });
 
 export const checkModuleEntrypointBoundaries = (root: string) =>
-  holdPublishedLibraryFiles(root)
+  holdLibraryFiles(root)
     .pipe(Effect.andThen(checkModuleEntrypointBoundariesEffect(root)))
     .pipe(
       Effect.provide(NodeServices.layer),
@@ -340,6 +587,8 @@ export const write = (root: string, file: string, source: string) =>
   Effect.gen(function* testEffect1() {
     const target = path.join(root, file);
     yield* Effect.tryPromise(async () => await mkdir(path.dirname(target), { recursive: true }));
+    // A file linked from the shared library copy is replaced, never written through.
+    yield* Effect.tryPromise(async () => await rm(target, { force: true }));
     yield* Effect.tryPromise(async () => await writeFile(target, source, 'utf-8'));
   });
 
@@ -613,16 +862,12 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   );
   yield* write(root, ACTION_FILE, validAction);
   yield* write(root, WORKER_FILE, validWorker);
+  // The shell's gateway contract, as the workspace holds it.
   yield* write(
     root,
     GATEWAY_CONTRACT_FILE,
-    `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
-  .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context' };`,
+    yield* Effect.promise(async () => await readFile(path.join(WORKSPACE_ROOT, GATEWAY_CONTRACT_FILE), 'utf-8')),
   );
-  yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
 });
 
@@ -1202,7 +1447,7 @@ export const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleF
   }
   yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, target] of [
-    ['core-runtime', 'packages/core-runtime'],
+    ['core-runtime', CORE_RUNTIME_PATH],
     [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
     [CUSTOMER_CONTEXT_DEPLOYMENT_ID, CUSTOMER_CONTEXT_VERTICAL_PATH],
   ] as const) {
@@ -1304,7 +1549,7 @@ const writeLinkedCoreSdk = Effect.fn(function* writeLinkedCoreSdk(root: string, 
   yield* Effect.promise(
     async () =>
       await symlink(
-        path.join(root, 'packages/core-runtime'),
+        path.join(root, CORE_RUNTIME_PATH),
         path.join(root, APP_PACKAGE_LINK_DIRECTORY, 'core-runtime'),
         'dir',
       ),
