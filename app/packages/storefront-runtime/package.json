@@ -8,7 +8,8 @@
     "./observability": "./src/observability.ts"
   },
   "scripts": {
-    "test": "rstest run --root . --include 'tests/*.test.ts' --maxConcurrency 1"
+    "test": "rstest --project unit --pool.maxWorkers 1",
+    "test:unit": "rstest --project unit --pool.maxWorkers 1"
   },
   "dependencies": {
     "effect": "4.0.7"

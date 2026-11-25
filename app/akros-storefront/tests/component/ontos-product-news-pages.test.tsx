@@ -64,6 +64,7 @@ let runtime: Awaited<ReturnType<typeof setup>>;
 
 async function setup() {
   const reads: Array<Schema.Schema.Type<typeof CatalogRead>> = [];
+  let detailName = product.name;
   const network = await serveHttp(async (request) => {
     if (
       new URL(request.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read" ||
@@ -101,7 +102,12 @@ async function setup() {
     return Response.json(
       {
         revision: 1,
-        products: products.map((candidate) => ownerProduct(candidate, query.fields === "full")),
+        products: products.map((candidate) =>
+          ownerProduct(
+            query.slug ? { ...candidate, name: detailName } : candidate,
+            query.fields === "full",
+          ),
+        ),
         categories: query.includeCategories ? fixtureCategories : [],
         total: products.length,
         page: 1,
@@ -166,12 +172,15 @@ async function setup() {
     renderPage,
     ProductPage: productPage.default,
     generateMetadata: productPage.generateMetadata,
+    setDetailName: (name: string) => {
+      detailName = name;
+    },
     NewsPage: newsPage.default,
   };
 }
 
 beforeEach(async () => {
-  // Each case gets independent real isolate caches, so a previous success cannot hide a failed read.
+  // Fresh real module instances and owner state isolate cases without replacing exports.
   vi.resetModules();
   failFlagged = false;
   runtime = await setup();
@@ -187,7 +196,7 @@ afterEach(async () => {
 });
 
 describe("OntOS product and news pages", () => {
-  it("reads exactly one product by slug from OntOS", async () => {
+  it("reads one product for rendering and refreshes a separately invoked metadata operation", async () => {
     const { ProductPage } = runtime;
     const props = {
       params: Promise.resolve({ slug: product.slug }),
@@ -197,21 +206,30 @@ describe("OntOS product and news pages", () => {
       <ProductPage {...props} />,
       `/produkt/${product.slug}`,
     );
-    expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([
-      {
-        slug: product.slug,
-        pageSize: 1,
-        fields: "full",
-        includeCategories: false,
-        storefrontAppId: "akros-storefront",
-      },
-    ]);
+    const detailQuery = {
+      slug: product.slug,
+      pageSize: 1,
+      fields: "full",
+      includeCategories: false,
+      storefrontAppId: "akros-storefront",
+    };
+    expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([detailQuery]);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(product.name);
+    // The stream is complete. A later direct metadata call shares Next stores, not that render's holder.
+    const updatedName = `${product.name} — aktualizováno`;
+    runtime.setDetailName(updatedName);
+    const beforeMetadata = runtime.reads.length;
     expect(await runtime.request.run(() => runtime.generateMetadata(props))).toEqual({
-      title: product.name,
+      title: updatedName,
     });
     await runtime.network.idle();
-    expect(runtime.reads.filter((query) => query.slug !== undefined)).toHaveLength(1);
+    expect(runtime.reads.slice(beforeMetadata).filter((query) => query.slug !== undefined)).toEqual(
+      [detailQuery],
+    );
+    expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([
+      detailQuery,
+      detailQuery,
+    ]);
     expect(container.querySelector(".sf-shell > .sf-header")).not.toBeNull();
     expect(container.querySelector(".sf-sidebar")).not.toBeNull();
   });

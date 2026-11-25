@@ -289,6 +289,31 @@ describe("market resolution", () => {
     });
   });
 
+  it("reads offer metadata without executing product pages or category trees", async () => {
+    const resolution = await market$.resolveStorefrontMarket("cs");
+    expect(resolution.kind === "live" && resolution.market.currency).toBe("CZK");
+    expect(resolution.live.map(({ locale, currency }) => ({ locale, currency }))).toEqual([
+      { locale: "cs", currency: "CZK" },
+      { locale: "en", currency: "EUR" },
+      { locale: "sk", currency: "EUR" },
+    ]);
+    const offers = reads.filter(({ audience }) => audience === "merchandise");
+    expect(offers).toHaveLength(3);
+    for (const { query } of offers) {
+      const {
+        view: {
+          storefrontCatalog: { marketId },
+        },
+      } = Schema.decodeUnknownSync(OfferQuery)(query);
+      expect(query).toEqual({
+        view: {
+          storefront: true,
+          storefrontCatalog: { marketId, mode: "categories", includeCategories: false },
+        },
+      });
+    }
+  });
+
   it("reports a suspended market as temporarily unavailable, listing the live markets", async () => {
     const resolution = await market$.resolveStorefrontMarket("pl");
     expect(resolution).toMatchObject({ kind: "not-active", locale: "pl", marketCode: "AKROS-PL" });

@@ -129,6 +129,22 @@ const productRequests = () =>
           query.includeCategories === false
         ),
     );
+const selectedMarketQuery = {
+  marketId: "search-test-market",
+  pageSize: 1,
+  fields: "card",
+  includeCategories: false,
+};
+const selectedMarketReads = () =>
+  requests
+    .map(({ query }) => query.view.storefrontCatalog)
+    .filter(
+      (query) =>
+        query.storefrontAppId === undefined &&
+        query.marketId === "search-test-market" &&
+        query.pageSize === 1 &&
+        query.fields === "card",
+    );
 const noFullReads = async () => {
   await network.idle();
   expect(
@@ -588,10 +604,19 @@ describe("fresh searches through the real catalog/gateway transport", () => {
             view: { storefront: true, storefrontCatalog: { marketId: "search-test-market" } },
           },
         });
-      // Navigation keeps its existing price-free cache; only query/variant answers must be fresh.
+      // Each POST has a distinct operation, even inside one render. Its market and navigation are request-time state.
+      expect(selectedMarketReads()).toEqual([selectedMarketQuery, selectedMarketQuery]);
+      const navigationQuery = {
+        marketId: "search-test-market",
+        mode: "categories",
+        includeCategories: true,
+        storefrontAppId: "akros-storefront",
+      };
       expect(
-        requests.filter(({ query }) => query.view.storefrontCatalog.mode === "categories"),
-      ).toHaveLength(1);
+        requests
+          .filter(({ query }) => query.view.storefrontCatalog.mode === "categories")
+          .map(({ query }) => query.view.storefrontCatalog),
+      ).toEqual([navigationQuery, navigationQuery]);
     });
   });
 
@@ -626,15 +651,22 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
   });
 
-  it("does not serve a previous successful search when the owner refuses the next one", async () => {
+  it("does not serve a previous search or dispatch its product read when fresh market admission is refused", async () => {
     expect((await ask("šroub")).status).toBe(200);
+    const firstProductQueries = productRequests();
+    const beforeFailure = requests.length;
     unavailable = true;
     const response = await ask("šroub");
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).not.toHaveProperty("items");
     await network.idle();
-    expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
+    expect(productRequests()).toEqual(firstProductQueries);
+    // The rejected selected-offer read is terminal: no navigation/product dispatch and no stale answer.
+    expect(requests.slice(beforeFailure).map(({ query }) => query.view.storefrontCatalog)).toEqual([
+      selectedMarketQuery,
+    ]);
+    expect(selectedMarketReads()).toEqual([selectedMarketQuery, selectedMarketQuery]);
   });
 
   it("preserves the public parent/leaf SKU routing controls without hydrating their 47-variant group", async () => {
@@ -801,19 +833,35 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     await noFullReads();
   });
 
-  it("leaves non-search product caching intact and explicit fresh cart/detail reads uncached", async () => {
-    await context.run(() => server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full"));
+  it("reads non-search details freshly per request, including canonical empty queries and explicit cart/detail reads", async () => {
+    const { nextRequest: requestContext } = await import("../support/next-request");
+    const readDetail = async (query: Parameters<typeof server.readProducts>[0], fresh = false) => {
+      const request = requestContext("http://localhost:3070/produkt/sroub-din-933-a2", {
+        headers: { "x-akros-market-locale": "cs" },
+      });
+      try {
+        return await request.run(() => server.readProducts(query, "full", fresh));
+      } finally {
+        await request.close();
+      }
+    };
+    const query = { slug: "sroub-din-933-a2", pageSize: 1 };
+    expect((await readDetail(query)).revision).toBe(1);
     revision = 2;
-    await context.run(() => server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full"));
-    await context.run(() =>
-      server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1, q: "" }, "full"),
-    );
+    expect((await readDetail(query)).revision).toBe(2);
+    revision = 3;
+    expect((await readDetail({ ...query, q: "" })).revision).toBe(3);
+    revision = 4;
+    expect((await readDetail(query, true)).revision).toBe(4);
     await network.idle();
-    expect(productRequests()).toHaveLength(1);
-    await context.run(() =>
-      server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full", true),
-    );
-    await network.idle();
-    expect(productRequests()).toHaveLength(2);
+    const ownerQuery = {
+      ...query,
+      fields: "full",
+      includeCategories: false,
+      storefrontAppId: "akros-storefront",
+      marketId: "search-test-market",
+    };
+    expect(productRequests()).toEqual(Array.from({ length: 4 }, () => ownerQuery));
+    expect(selectedMarketReads()).toEqual(Array.from({ length: 4 }, () => selectedMarketQuery));
   });
 });

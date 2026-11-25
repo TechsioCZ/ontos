@@ -1,12 +1,13 @@
-import { describe, expect, rs } from "@rstest/core";
+import { TestClock } from "effect/testing";
+import { afterEach, describe, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Context, Effect } from "effect";
+import { Clock, Context, Effect, Fiber } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { customerOrdersWeb } from "../src/ontos/customer-orders-http";
-import { readCustomerOrders } from "../src/ontos/customer-orders-server";
-import { CurrentOperation } from "../src/ontos/owner-operation";
 
-rs.mock("../src/ontos/customer-orders-server", { spy: true });
+afterEach(() => {
+  rs.unstubAllEnvs();
+});
 
 const origin = "https://n1.example";
 const noNetwork = () => {
@@ -23,23 +24,88 @@ const request = (query: string, headers: Record<string, string> = {}) =>
   });
 
 describe("private own-orders HTTP boundary", () => {
-  it.effect("preserves captured cookie deletion on the HTTP operation deadline", () =>
-    Effect.gen(function* outerOrdersDeadline() {
-      rs.mocked(readCustomerOrders).mockImplementationOnce((_query, context) =>
-        Effect.gen(function* interruptedOrders() {
-          context.setCookies.push("commerce-portal.session=; Path=/; Max-Age=0; HttpOnly");
-          const operation = yield* CurrentOperation;
-          operation?.abort("deadline");
-          return yield* Effect.never;
-        }),
-      );
-      const response = yield* Effect.promise(() =>
-        customerOrdersWeb.handler(request("?locale=cs")),
-      );
-      expect(response.status).toBe(503);
-      expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
-      expect(response.headers.get("cache-control")).toBe("no-store");
-    }),
+  it.effect(
+    "preserves native admission cookie deletion when its body reaches the request deadline",
+    () =>
+      Effect.gen(function* outerOrdersDeadline() {
+        rs.stubEnv("ONTOS_N1_STOREFRONT_API_KEY", "orders-test-key");
+        rs.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", "71000000-0000-4000-8000-000000000099");
+        rs.stubEnv("ONTOS_STOREFRONT_TENANT_ID", "71000000-0000-4000-8000-000000000098");
+        rs.stubEnv("ONTOS_SHELL_URL", "https://shell.example");
+        const caller = yield* Effect.acquireRelease(
+          Effect.sync(() => new AbortController()),
+          (controller) => Effect.sync(() => controller.abort()),
+        );
+        const started = Promise.withResolvers<null>();
+        const release = Promise.withResolvers<null>();
+        const calls: Request[] = [];
+        let cancelled = false;
+        const fetch: typeof globalThis.fetch = async (input, init) => {
+          const outgoing = new Request(input, init);
+          calls.push(outgoing);
+          if (outgoing.url.endsWith("/gateway-context")) {
+            return Response.json({
+              apiBaseUrl: "/shell-super-app-api/gateway/portal",
+              compositionRevision: "a".repeat(64),
+              expiresAt: 9_999_999_999,
+              token: "orders-test-assertion",
+            });
+          }
+          expect(new URL(outgoing.url).pathname).toBe(
+            "/shell-super-app-api/gateway/portal/api/portal-auth/customer-account",
+          );
+          expect(outgoing.headers.get("cookie")).toBe("commerce-portal.session=customer-session");
+          return new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                cancel() {
+                  cancelled = true;
+                  release.resolve(null);
+                },
+                async pull() {
+                  started.resolve(null);
+                  await release.promise;
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+            {
+              headers: [
+                ["content-type", "application/json"],
+                ["set-cookie", "commerce-portal.session=; Path=/; Max-Age=0; HttpOnly"],
+                ["set-cookie", "staff.session=forbidden; Path=/; HttpOnly"],
+              ],
+            },
+          );
+        };
+        const clock = yield* Clock.Clock;
+        const context = Context.make(Clock.Clock, clock).pipe(
+          Context.add(FetchHttpClient.Fetch, fetch),
+        );
+        const incoming = new Request(
+          request("?locale=cs", {
+            cookie: "staff.session=private; commerce-portal.session=customer-session",
+          }),
+          { signal: caller.signal },
+        );
+        const pending = yield* Effect.forkChild(
+          Effect.promise(() => customerOrdersWeb.handler(incoming, context)),
+        );
+        yield* Effect.promise(() => started.promise);
+        yield* TestClock.adjust("30 seconds");
+        const response = yield* Fiber.join(pending);
+        expect(response.status).toBe(503);
+        expect(response.headers.get("set-cookie")).toContain("commerce-portal.session=");
+        expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+        expect(response.headers.get("set-cookie")).not.toContain("staff.session");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(yield* Effect.promise(() => response.json())).toMatchObject({
+          state: "unavailable",
+        });
+        expect(calls).toHaveLength(2);
+        expect(calls[1]?.signal.aborted).toBe(true);
+        expect(cancelled).toBe(true);
+      }).pipe(Effect.scoped),
   );
   for (const query of [
     "?locale=cs&customerAccountId=attacker",

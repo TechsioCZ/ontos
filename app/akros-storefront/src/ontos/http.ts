@@ -59,7 +59,8 @@ export function guard(request: Request, t: Dictionary = requestDictionary(reques
   if (Number(request.headers.get("content-length") ?? 0) > 100_000)
     throw new RequestError(413, t.server.request.tooLarge);
 }
-export async function jsonBody(
+/** The byte/JSON boundary accepts every JSON value; each endpoint owns its payload shape. */
+export async function jsonValue(
   request: Request,
   t: Dictionary = requestDictionary(request),
   holder?: Operation,
@@ -67,11 +68,7 @@ export async function jsonBody(
   const operation =
     holder ?? (await Effect.runPromise(createOperation({ signal: request.signal })));
   try {
-    const value = await Effect.runPromise(
-      readJson(request, { operation, maxBytes: INGRESS_BYTES }),
-    );
-    if (!isJsonObject(value)) throw new RequestError(400, t.server.request.invalidFormat);
-    return value;
+    return await Effect.runPromise(readJson(request, { operation, maxBytes: INGRESS_BYTES }));
   } catch (error) {
     if (error instanceof OperationError) {
       if (error.kind === "body_oversize") throw new RequestError(413, t.server.request.tooLarge);
@@ -81,6 +78,16 @@ export async function jsonBody(
   } finally {
     if (holder === undefined) operation.dispose();
   }
+}
+/** Object-shaped endpoints reject scalar/array payloads without weakening the shared byte boundary. */
+export async function jsonBody(
+  request: Request,
+  t: Dictionary = requestDictionary(request),
+  holder?: Operation,
+) {
+  const value = await jsonValue(request, t, holder);
+  if (!isJsonObject(value)) throw new RequestError(400, t.server.request.invalidFormat);
+  return value;
 }
 /** `message`: the route's localized fallback text for a real OntOS failure (`t.server.outage.*`). */
 export function problem(

@@ -201,8 +201,7 @@ describe("denied access to the market catalog", () => {
             storefront: true,
             storefrontCatalog: {
               marketId: MARKET,
-              pageSize: 1,
-              fields: "card",
+              mode: "categories",
               includeCategories: false,
             },
           },

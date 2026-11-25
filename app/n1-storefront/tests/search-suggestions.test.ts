@@ -1,3 +1,4 @@
+import { createOperation } from "@ontos/storefront-runtime";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -127,18 +128,34 @@ describe("search suggestions read boundary", () => {
     expect(reads).toEqual([]);
   });
 
-  it("uses the same owner query as the results page and bounds only the preview", async () => {
-    const reads: Parameters<typeof getCatalog>[] = [];
-    const read: typeof getCatalog = async (...args) => {
-      reads.push(args);
-      return { catalog, state: "ready" };
-    };
-    expect(await readSearchSuggestions("cs", "  helmet  ", read)).toEqual({
-      products: catalog.products.slice(0, 8),
-      state: "ready",
-    });
-    expect(reads).toEqual([["cs", JSON.stringify({ q: "helmet" })]]);
-  });
+  it.live(
+    "uses the results-page query and forwards its request lifetime while bounding the preview",
+    () =>
+      Effect.gen(function* requestLifetimePreview() {
+        const operation = yield* Effect.acquireRelease(createOperation(), (current) =>
+          Effect.sync(current.dispose),
+        );
+        const { signal } = new AbortController();
+        const options = { operation, signal };
+        const { deadline } = operation;
+        const reads: Parameters<typeof getCatalog>[] = [];
+        const read: typeof getCatalog = async (...args) => {
+          reads.push(args);
+          return { catalog, state: "ready" };
+        };
+        expect(
+          yield* Effect.promise(() => readSearchSuggestions("cs", "  helmet  ", read, options)),
+        ).toEqual({
+          products: catalog.products.slice(0, 8),
+          state: "ready",
+        });
+        expect(reads).toEqual([["cs", JSON.stringify({ q: "helmet" }), options]]);
+        expect(reads[0]?.[2]?.operation).toBe(operation);
+        expect(reads[0]?.[2]?.signal).toBe(signal);
+        expect(operation.signal.aborted).toBe(false);
+        expect(operation.deadline).toBe(deadline);
+      }).pipe(Effect.scoped),
+  );
 
   it("keeps a successful empty catalogue distinct from an unavailable read", async () => {
     expect(await readSearchSuggestions("cs", "absent", empty)).toEqual({

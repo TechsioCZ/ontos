@@ -1,3 +1,5 @@
+import { createOperation } from "@ontos/storefront-runtime";
+import { CurrentOperation } from "../src/ontos/owner-operation";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-rstest";
@@ -87,12 +89,21 @@ const GatewayRead = Schema.Struct({
 describe("card variant intent read", () => {
   it.live("uses one exact full slug query and returns only real active names in owner order", () =>
     Effect.gen(function* readSingleSlug() {
+      const operation = yield* Effect.acquireRelease(createOperation(), (current) =>
+        Effect.sync(current.dispose),
+      );
+      const { deadline } = operation;
       const reads: Parameters<typeof getCatalog>[] = [];
       const read: typeof getCatalog = async (...args) => {
+        expect(operation.signal.aborted).toBe(false);
         reads.push(args);
         return { catalog, state: "ready" };
       };
-      expect(yield* readCardVariants(query, read)).toEqual({
+      expect(
+        yield* readCardVariants(query, read).pipe(
+          Effect.updateService(CurrentOperation, () => operation),
+        ),
+      ).toEqual({
         productId: query.productId,
         slug: query.slug,
         state: "ready",
@@ -101,8 +112,10 @@ describe("card variant intent read", () => {
           { id: "second", name: "SM" },
         ],
       });
-      expect(reads).toEqual([["cs", JSON.stringify({ slug: query.slug })]]);
-    }),
+      expect(reads).toEqual([["cs", JSON.stringify({ slug: query.slug }), { operation }]]);
+      expect(reads[0]?.[2]?.operation).toBe(operation);
+      expect(operation.deadline).toBe(deadline);
+    }).pipe(Effect.scoped),
   );
   it.effect("does not substitute another product returned by the owner", () =>
     Effect.gen(function* rejectWrongProduct() {

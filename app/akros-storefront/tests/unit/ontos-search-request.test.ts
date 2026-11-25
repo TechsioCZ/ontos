@@ -1,4 +1,6 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { createOperation, INGRESS_BYTES } from "@ontos/storefront-runtime";
+import { jsonBody, jsonValue } from "@/ontos/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/ontos/search/route";
 import { browserAt, serveHttp } from "../support/http";
@@ -89,6 +91,84 @@ afterEach(async () => {
 const empty = { items: [], total: 0, categories: [] };
 
 describe("public storefront search query ingress", () => {
+  it.each(['{"q":', '["unfinished"', ""])(
+    "rejects invalid JSON instead of interpreting it as an empty query: %j",
+    async (body) => {
+      const response = await fetch(`${network.origin}${searchPath}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).not.toHaveProperty("items");
+      await network.idle();
+      expect(ownerRequests()).toEqual([]);
+    },
+  );
+  it.each([
+    JSON.stringify({ q: "x".repeat(INGRESS_BYTES) }),
+    JSON.stringify("ž".repeat(INGRESS_BYTES / 2)),
+  ])("bounds the actual ingress bytes before query normalization (%#)", async (body) => {
+    const request = new Request(`http://shop.test${searchPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    expect(request.headers.get("content-length")).toBeNull();
+    const response = await POST(request);
+    expect(response.status).toBe(413);
+    expect(await response.json()).not.toHaveProperty("items");
+    expect(ownerRequests()).toEqual([]);
+  });
+  it("does not turn browser cancellation into a successful empty result", async () => {
+    const caller = new AbortController();
+    caller.abort();
+    const response = await POST(
+      new Request(`http://shop.test${searchPath}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: caller.signal,
+        body: JSON.stringify("short"),
+      }),
+    );
+    expect(response.status).toBe(499);
+    expect(await response.json()).toMatchObject({ code: "cancelled" });
+    expect(ownerRequests()).toEqual([]);
+  });
+  it("preserves the operation deadline at the permissive JSON boundary", async () => {
+    const operation = Effect.runSync(createOperation({ timeoutMs: 0 }));
+    try {
+      await expect(
+        jsonValue(
+          new Request(`http://shop.test${searchPath}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(null),
+          }),
+          undefined,
+          operation,
+        ),
+      ).rejects.toMatchObject({ kind: "deadline" });
+    } finally {
+      operation.dispose();
+    }
+    expect(ownerRequests()).toEqual([]);
+  });
+  it.each([[], "scalar", null].map((body) => [body]))(
+    "keeps object-shaped endpoint validation strict for %j",
+    async (body) => {
+      await expect(
+        jsonBody(
+          new Request("http://shop.test/object-endpoint", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        ),
+      ).rejects.toMatchObject({ status: 400 });
+    },
+  );
+
   it.each(["šš", "Český šroub", "x".repeat(200)])(
     "forwards a valid query trimmed and never accent-stripped: %s",
     async (query) => {
@@ -128,20 +208,26 @@ describe("public storefront search query ingress", () => {
     ]);
   });
 
-  it.each([
-    {},
-    { q: null },
-    { q: 1 },
-    { q: [] },
-    { q: {} },
-    { q: "" },
-    { q: " \t\n " },
-    { q: "š" },
-    { q: " a " },
-    [],
-    "šroub",
-    1,
-  ])("answers %j with no results and no owner read, never a 400", async (body) => {
+  it.each(
+    [
+      {},
+      { q: null },
+      { q: 1 },
+      { q: [] },
+      { q: {} },
+      { q: "" },
+      { q: " \t\n " },
+      { q: "š" },
+      { q: " a " },
+      [],
+      "šroub",
+      "",
+      1,
+      null,
+      true,
+      false,
+    ].map((body) => [body]),
+  )("answers %j with no results and no owner read, never a 400", async (body) => {
     const response = await ask(body);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");

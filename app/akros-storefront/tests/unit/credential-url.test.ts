@@ -109,14 +109,20 @@ describe("credential query guard", () => {
       );
     }
     await network.idle();
-    expect(network.requests).toHaveLength(1);
-    const [read] = network.requests;
-    expect(read.headers.get("x-api-key")).toBe("credential-url-test-key");
-    expect(await read.json()).toEqual({
-      audience: "commerce-market-catalog",
-      legalEntityId,
-      readName: "current-market-catalog",
-      query: { at: expect.any(String) },
-    });
+    // Each proxy request resolves its own market; navigation must not reuse the prior request's assertion.
+    expect(network.requests).toHaveLength(2);
+    for (const read of network.requests) {
+      expect(read.headers.get("x-api-key")).toBe("credential-url-test-key");
+      expect(read.headers.get("x-correlation-id")).toEqual(expect.any(String));
+      expect(await read.json()).toEqual({
+        audience: "commerce-market-catalog",
+        legalEntityId,
+        readName: "current-market-catalog",
+        query: { at: expect.any(String) },
+      });
+    }
+    expect(new Set(network.requests.map((read) => read.headers.get("x-correlation-id"))).size).toBe(
+      2,
+    );
   });
 });

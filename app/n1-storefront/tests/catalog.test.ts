@@ -19,14 +19,15 @@ const response: typeof CatalogResponseSchema.Type = {
   ],
 };
 
+const category = (id: string, parentId: string | null) => ({
+  id,
+  name: id,
+  parentId,
+  slug: id,
+});
+
 describe("owner catalogue presentation", () => {
   it("rejects cyclic owner categories while accepting a legitimate partial projection", () => {
-    const category = (id: string, parentId: string | null) => ({
-      id,
-      parentId,
-      name: id,
-      slug: id,
-    });
     const decode = Schema.decodeUnknownSync(CatalogResponseSchema);
     expect(() =>
       decode({ ...response, categories: [category("a", "b"), category("b", "a")] }),

@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { createOperation } from "@ontos/storefront-runtime";
 import "server-only";
-import { guard, jsonBody, problem, requestDictionary } from "@/ontos/http";
+import { guard, jsonValue, problem, requestDictionary } from "@/ontos/http";
 import { getCatalogPage } from "@/ontos/catalog-server";
 import { SEARCH_QUERY_MIN_LENGTH, searchQueryText } from "@/ontos/search-query";
 import {
@@ -22,8 +22,10 @@ export async function POST(request: Request) {
   const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
     guard(request, t);
-    const { q } = (await jsonBody(request, t, lifetime)) as { q?: unknown };
-    const term = searchQueryText(q);
+    const body = await jsonValue(request, t, lifetime);
+    const term = searchQueryText(
+      body !== null && typeof body === "object" && "q" in body ? body.q : undefined,
+    );
     if (term.length < SEARCH_QUERY_MIN_LENGTH)
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
         headers: noStore,
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
     const items = products.map((product) =>
       toRemoteSuggestion(product, term, matches.get(product.id)),
     );
-    // The cached navigation tree is matched here so the browser never needs it.
+    // The request's navigation tree is matched here so the browser never needs it.
     const categories = matchCategories(
       listing.model.getCategories(),
       listing.model.getCategoryTrail,

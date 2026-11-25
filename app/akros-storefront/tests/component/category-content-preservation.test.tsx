@@ -58,7 +58,7 @@ const categories: CatalogCategory[] = [
 ];
 
 async function renderCategory(compact: boolean) {
-  // Each representation gets fresh real catalog caches and the same native Next/React runtime.
+  // Each representation gets fresh real modules and the same native Next/React SSR runtime.
   vi.resetModules();
   const [
     { default: CategoryPage },
@@ -120,14 +120,33 @@ async function renderCategory(compact: boolean) {
     headers: { "x-akros-market-locale": "cs" },
   });
   const browser = new Window();
+  const navigationQuery = {
+    mode: "categories",
+    includeCategories: true,
+    storefrontAppId: "akros-storefront",
+  };
+  const navigationQueries = async () => {
+    await network.idle();
+    const queries = await Promise.all(
+      network.requests.map(
+        async (read) => (await read.clone().json()).query?.view?.storefrontCatalog,
+      ),
+    );
+    return queries.filter((query) => query?.mode === "categories");
+  };
   try {
     return await request.run(async () => {
-      // Warm the price-free layout navigation before the category's bounded content read.
+      // These calls share Next stores, not an RSC cache dispatcher or an acquired operation holder.
+      // Loading a shell snapshot must not hide later page/branch navigation reads in this SSR fixture.
       const snapshot = await getShellSnapshot();
+      const shellNavigation = await navigationQueries();
+      expect(shellNavigation).toEqual([navigationQuery]);
       const page = await CategoryPage({
         params: Promise.resolve({ slug: "srouby" }),
         searchParams: Promise.resolve({}),
       });
+      const pageNavigation = await navigationQueries();
+      expect(pageNavigation.slice(shellNavigation.length)).toEqual([navigationQuery]);
       const Component = () => (
         <MarketProvider
           market={{
@@ -165,7 +184,10 @@ async function renderCategory(compact: boolean) {
       const queries = await Promise.all(
         network.requests.map(async (read) => (await read.json()).query?.view?.storefrontCatalog),
       );
-      expect(queries.filter((query) => query?.mode === "categories")).toHaveLength(1);
+      // The async CategoryBranch is another independent operation during the subsequent SSR render.
+      expect(
+        queries.filter((query) => query?.mode === "categories").slice(pageNavigation.length),
+      ).toEqual([navigationQuery]);
       expect(queries).toContainEqual(
         expect.objectContaining({
           categorySlug: "srouby",
@@ -202,7 +224,7 @@ function categoryInformation(document: Document) {
   };
 }
 
-it("preserves category content, child images and navigation with a cached compact tree", async () => {
+it("preserves category content, child images and compact navigation across independent shell/page/branch operations", async () => {
   const full = await renderCategory(false);
   const compact = await renderCategory(true);
 

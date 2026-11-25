@@ -31,13 +31,15 @@
         "app/scripts/zerops/verify-service.mjs",
         "app/scripts/zerops/zerops-unit-build-seconds.mts",
         "app/scripts/zerops/*.test.mts",
+        "app/scripts/zerops/*.test.mjs",
         "app/scripts/tests/*.test.mts",
         "app/scripts/tests/zerops-deployment.fixture.mts"
       ],
       "source": [
         "Repository Tooling Tests (1/3)",
         "Repository Tooling Tests (2/3)",
-        "Repository Tooling Tests (3/3)"
+        "Repository Tooling Tests (3/3)",
+        "Storefront Artifact Native Tests"
       ]
     },
     {
@@ -141,6 +143,12 @@
         "./verticals/work-tasks",
         "./verticals/workforce"
       ]
+    }
+  ],
+  "source": [
+    {
+      "name": "Storefront Artifact Native Tests",
+      "commands": "node --test scripts/zerops/prove-storefront-artifact.test.mjs\n"
     }
   ],
   "unit": [

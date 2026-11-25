@@ -583,6 +583,9 @@ const creditlessCommand = (executable: string, args: readonly string[]) =>
   (executable === 'node' && args.join(' ') === promotionGenerator) ||
   (executable === 'ultramodern-create' &&
     /^ultramodern typecheck --project tests\/(?:tsconfig|client-runtime-types\.tsconfig)\.json$/u.test(args.join(' ')));
+// Only a literal, complete native suite grants credit. Filters, patterns and plain imports do not.
+const nativeNodeTest = (args: readonly string[]) =>
+  args.length === 2 && args[0] === '--test' && /^scripts\/[\w/-]+\.test\.mjs$/u.test(args[1] ?? '');
 const supportedShellCommand = (command: readonly string[]) => {
   const [executable = '', ...args] = unwrapCommand(command);
   return (
@@ -590,7 +593,8 @@ const supportedShellCommand = (command: readonly string[]) => {
     creditlessCommand(executable, args) ||
     (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) ||
     (executable === 'node' &&
-      (args.slice(0, 3).join(' ') === integrationNodeRunner ||
+      (nativeNodeTest(args) ||
+        args.slice(0, 3).join(' ') === integrationNodeRunner ||
         (args.length === 1 && /^tests\/browser\/[\w-]+\.mjs$/u.test(args[0] ?? ''))))
   );
 };
@@ -1273,6 +1277,10 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
         commands.runPnpm(directory, args, seen);
       } else if (executable === 'rstest' || executable === 'vitest') {
         commands.runRunner(directory, args);
+      } else if (executable === 'node' && nativeNodeTest(args)) {
+        const file = path.posix.join(directory, args[1] ?? '');
+        expect(tests, `Native Node suite must exist: ${file}`).toContain(file);
+        collected.add(file);
       } else if (executable === 'node' && args.slice(0, 3).join(' ') === integrationNodeRunner) {
         commands.runRunner(directory, args.slice(3));
       } else if (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) {
@@ -1448,6 +1456,19 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
 
 it(`accounts for the bounded CI/manual census: ${censusScope}`, () => {
   checkCollection(app, manual);
+});
+
+it('credits only literal, unfiltered native Node test execution', () => {
+  const file = 'scripts/zerops/prove-storefront-artifact.test.mjs';
+  expect(supportedShellCommand(['node', '--test', file])).toBe(true);
+  for (const args of [
+    [file],
+    ['--test', '--test-name-pattern', 'one case', file],
+    ['--test', 'scripts/zerops/*.test.mjs'],
+    ['--test', '../outside.test.mjs'],
+  ]) {
+    expect(supportedShellCommand(['node', ...args])).toBe(false);
+  }
 });
 
 const rootUnitScript =

@@ -263,7 +263,7 @@ const loadMarketDirectory = async (options: OperationOptions): Promise<MarketDir
   };
 };
 
-/** The smallest product read carrying this market's currency and offer state. */
+/** Read market currency and offer state without loading products or category trees. */
 const loadMarketOffer = async (marketId: string, options: OperationOptions): Promise<MarketOffer> =>
   marketOfferOf(
     await readRecords(
@@ -272,7 +272,7 @@ const loadMarketOffer = async (marketId: string, options: OperationOptions): Pro
       {
         view: {
           storefront: true,
-          storefrontCatalog: { marketId, pageSize: 1, fields: "card", includeCategories: false },
+          storefrontCatalog: { marketId, mode: "categories", includeCategories: false },
         },
       },
       options,

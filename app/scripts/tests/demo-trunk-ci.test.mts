@@ -230,6 +230,14 @@ const PACKAGES = 'packages/';
 const VERTICALS = 'verticals/';
 const WORKSPACE = ['apps/', PACKAGES, VERTICALS, 'topology/'];
 const skippedCommandInputs = new Map<string, readonly string[]>([
+  [
+    'node --test scripts/zerops/prove-storefront-artifact.test.mjs',
+    [
+      'scripts/zerops/prove-storefront-artifact.test.mjs',
+      'scripts/zerops/prove-storefront-artifact.mts',
+      'packages/storefront-runtime/src/',
+    ],
+  ],
   ['pnpm --filter ./n1-storefront run test run', ['n1-storefront/']],
   ['pnpm --filter ./akros-storefront run lint', ['akros-storefront/src/', 'akros-storefront/tests/']],
   ['pnpm --filter ./n1-storefront run lint', ['n1-storefront/src/', 'n1-storefront/tests/']],

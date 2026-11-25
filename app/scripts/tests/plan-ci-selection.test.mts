@@ -75,6 +75,7 @@ const TYPECHECK = 'Typecheck and OntOS API Boundary Rules';
 const ROOT_TOOLING_FILE = 'app/scripts/check-local.mts';
 const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
 const TOOLING_ROWS = [1, 2, 3].map((shard) => `Repository Tooling Tests (${shard}/3)`);
+const STAGE_ROWS = [...TOOLING_ROWS, 'Storefront Artifact Native Tests'];
 /** A scoped plan builds no unit, starts no service and always runs its source rows, the static contracts and lint. */
 const SCOPED = {
   'format-and-lint': 'success',
@@ -170,14 +171,14 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
   ]) {
     const stage = plan(...changedPaths);
     expect(stage.mode, changedPaths[0]).toBe('scoped');
-    expect(names(stage.source), changedPaths[0]).toEqual(TOOLING_ROWS);
+    expect(names(stage.source), changedPaths[0]).toEqual(STAGE_ROWS);
     expect(stage.unit, changedPaths[0]).toEqual([]);
     expect(stage.expected, changedPaths[0]).toEqual(SCOPED);
   }
   // Both scopes at once run both scopes' rows.
   const both = plan(STAGE_WORKFLOW, `app/${AKROS}/src/app/page.tsx`);
   expect(both.mode).toBe('scoped');
-  expect(names(both.source)).toEqual([TYPECHECK, ...TOOLING_ROWS]);
+  expect(names(both.source)).toEqual([TYPECHECK, ...STAGE_ROWS]);
   // What the app host, the unit builds, the gates or the integration suites run is outside the scope.
   for (const changedPath of [
     'app/scripts/zerops/app-host.mts',
