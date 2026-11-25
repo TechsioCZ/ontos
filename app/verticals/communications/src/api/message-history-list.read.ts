@@ -70,11 +70,10 @@ export const messageHistoryListRead = defineRead(
       includeEndpointMask: mayReadField(context, 'items.recipient.endpointMask'),
       listAccess: context.listAccess,
     });
-    return {
-      evidence: { resultCount: page.items.length },
-      result:
-        page.nextCursor === undefined ? { items: page.items } : { items: page.items, nextCursor: page.nextCursor },
-    };
+    const withItems = { items: page.items };
+    const withCursor = page.nextCursor === undefined ? withItems : { ...withItems, nextCursor: page.nextCursor };
+    const result = page.requests.length === 0 ? withCursor : { ...withCursor, requests: page.requests };
+    return { evidence: { resultCount: page.items.length + page.requests.length }, result };
   }),
   messageHistoryReadService,
 );

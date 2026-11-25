@@ -1,3 +1,4 @@
+import { CommunicationResourceRefSchema } from '@app/communications-contracts/communication-request';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -16,8 +17,25 @@ import {
 import { HistoryEntryKindSchema } from '../../src/domain/history/timeline.ts';
 import { ObservationKindSchema, TechnicalEvidenceSchema } from '../../src/domain/history/vocabulary.ts';
 import { projectMessageHistoryItem, projectTimeline } from '../../src/history/message-history-projection.ts';
-import { intentRecord, requestRecord } from './support/access-fixtures.ts';
-import { attempt, conflict, factsOf, observation, stop } from './support/history-fixtures.ts';
+import { TemplateUseAuditSchema } from '../../shared/template-revision.ts';
+import { MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import {
+  TEMPLATE_REVISION_ID,
+  TEMPLATE_TYPE_ID,
+  intentRecord,
+  linksFixture,
+  requestRecord,
+} from './support/access-fixtures.ts';
+import {
+  ATTEMPT_1,
+  ATTEMPT_2,
+  attempt,
+  conflict,
+  factsOf,
+  minute,
+  observation,
+  stop,
+} from './support/history-fixtures.ts';
 
 const strict = { onExcessProperty: 'error' } as const;
 const decodeItem = Schema.decodeUnknownSync(Schema.toEncoded(MessageHistoryItemSchema), strict);
@@ -211,6 +229,7 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
         const allowedKeys = new Set([
           'attemptNumber',
           'kind',
+          'links',
           'observationKind',
           'occurredAt',
           'outOfOrder',
@@ -251,4 +270,180 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
     expect(TimelineObservationKindSchema.literals).toEqual(ObservationKindSchema.literals);
     expect(TimelineTechnicalEvidenceSchema.literals).toEqual(TechnicalEvidenceSchema.literals);
   });
+});
+
+const ORIGINAL = MessageIntentIdSchema.make('99999999-9999-4999-8999-999999999991');
+const RESEND = MessageIntentIdSchema.make('99999999-9999-4999-8999-999999999992');
+const ACTIVATOR = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+const REACTIVATOR = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+const RETRY_LINK = {
+  attemptId: ATTEMPT_2,
+  basisKind: 'PRIOR_REJECTED',
+  previousAttemptId: ATTEMPT_1,
+  reasonCode: 'PRIOR_NOT_ACCEPTED',
+} as const;
+const retriedFacts = factsOf({
+  attempts: [attempt('REJECTED', { prepared: 1 }), attempt('ACCEPTED', { id: ATTEMPT_2, number: 2, prepared: 3 })],
+});
+
+describe('Explicit Resend and Technical Retry explain their link from either end (#1402 D9, AC-09; #1403 AC-05)', () => {
+  it.effect('[AC-09] a resend names its original and an original names its resend, with the approved reason', () =>
+    Effect.gen(function* resendLinks() {
+      const resend = yield* project(
+        withMask,
+        intentRecord({
+          links: linksFixture({ resendOf: { intentId: ORIGINAL, reasonCode: 'PRIOR_DELIVERY_FAILED' } }),
+        }),
+      );
+      expect(resend.links).toEqual([
+        { direction: 'RESEND_OF', intentId: ORIGINAL, kind: 'EXPLICIT_RESEND', reasonCode: 'PRIOR_DELIVERY_FAILED' },
+      ]);
+      const original = yield* project(
+        withMask,
+        intentRecord({
+          links: linksFixture({ resentAs: [{ intentId: RESEND, reasonCode: 'SOURCE_APPROVED_RESEND' }] }),
+        }),
+      );
+      expect(original.links).toEqual([
+        { direction: 'RESENT_AS', intentId: RESEND, kind: 'EXPLICIT_RESEND', reasonCode: 'SOURCE_APPROVED_RESEND' },
+      ]);
+      // the timeline of each end carries the same link on the decision fact
+      const entries = yield* projectTimeline(
+        intentRecord({
+          links: linksFixture({ resendOf: { intentId: ORIGINAL, reasonCode: 'PRIOR_DELIVERY_FAILED' } }),
+        }),
+      );
+      expect(entries[0]?.links).toEqual(resend.links);
+    }),
+  );
+
+  it.effect('[AC-09] a Technical Retry names both attempts and its basis, on the item and on both attempt facts', () =>
+    Effect.gen(function* retryLinks() {
+      const intent = intentRecord({ facts: retriedFacts, links: linksFixture({ retries: [RETRY_LINK] }) });
+      const item = yield* project(withMask, intent);
+      const expected = {
+        attemptNumber: 2,
+        basisKind: 'PRIOR_REJECTED',
+        kind: 'TECHNICAL_RETRY',
+        previousAttemptNumber: 1,
+        reasonCode: 'PRIOR_NOT_ACCEPTED',
+      };
+      expect(item.links).toEqual([expected]);
+      const prepared = (yield* projectTimeline(intent)).filter(({ kind }) => kind === 'ATTEMPT_PREPARED');
+      // from the earlier attempt and from the retry, the same link explains itself
+      expect(prepared.map(({ attemptNumber, links }) => [attemptNumber, links])).toEqual([
+        [1, [expected]],
+        [2, [expected]],
+      ]);
+    }),
+  );
+
+  it.effect('a message without a link has no link at all, and a code that is not closed is never shown', () =>
+    Effect.gen(function* noLinks() {
+      const plain = yield* project();
+      expect(plain.links).toEqual([]);
+      const entries = yield* projectTimeline(intentRecord());
+      for (const entry of entries) {
+        expect(entry).not.toHaveProperty('links');
+      }
+      const dirty = yield* project(
+        withMask,
+        intentRecord({
+          links: linksFixture({ resendOf: { intentId: ORIGINAL, reasonCode: 'see https://example.test/x' } }),
+        }),
+      ).pipe(Effect.flip);
+      expect(Schema.isSchemaError(dirty)).toBe(true);
+    }),
+  );
+});
+
+describe('The history shows that a document was disclosed, by reference only (#1409, #1396)', () => {
+  it.effect('projects the pinned documents as a reference, a form and a time, never a name, link or byte', () =>
+    Effect.gen(function* documents() {
+      const item = yield* project(
+        withMask,
+        intentRecord({
+          documents: [
+            {
+              document: Schema.decodeUnknownSync(CommunicationResourceRefSchema)({
+                moduleId: 'fixture.invoicing',
+                resourceId: 'invoice-1',
+                resourceType: 'fixture.invoice',
+              }),
+              form: 'ATTACHMENT',
+              pinnedAt: minute(2),
+              position: 0,
+            },
+          ],
+        }),
+      );
+      expect(item.documents).toMatchObject([
+        { document: { moduleId: 'fixture.invoicing', resourceId: 'invoice-1' }, form: 'ATTACHMENT', position: 0 },
+      ]);
+      expect(Object.keys(item.documents[0] ?? {}).toSorted()).toEqual(['document', 'form', 'pinnedAt', 'position']);
+      expect((yield* project()).documents).toEqual([]);
+    }),
+  );
+});
+
+const audit = () =>
+  Schema.decodeUnknownSync(TemplateUseAuditSchema)({
+    activations: [
+      {
+        activatedAt: '2026-11-18T09:00:00.000Z',
+        activatedByPrincipalId: ACTIVATOR,
+        activationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
+        activationReason: 'Approved wording for invoices',
+        endedAt: '2026-11-19T10:00:00.000Z',
+        endedByPrincipalId: ACTIVATOR,
+        endedKind: 'replaced',
+        endReason: 'A newer wording',
+        scopeKey: 'tenant',
+      },
+      {
+        activatedAt: '2026-11-19T11:00:00.000Z',
+        activatedByPrincipalId: REACTIVATOR,
+        activationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+        activationReason: 'Reinstated',
+        scopeKey: 'tenant',
+      },
+    ],
+    activeAtDecisionTime: true,
+    contentDigest: 'd'.repeat(64),
+    decisionTime: '2026-11-19T12:00:00.000Z',
+    identity: { channel: 'email', language: 'cs', messageType: 'fixture.single-message', scope: { kind: 'tenant' } },
+    lifecycleState: 'active',
+    optionalPlaceholders: [],
+    requiredPlaceholders: ['invoice_number'],
+    revisionId: TEMPLATE_REVISION_ID,
+    revisionNumber: 3,
+    source: 'TENANT_REVISION',
+    templateTypeId: TEMPLATE_TYPE_ID,
+  });
+
+describe('The history answers which revision, who activated it, when, for which scope and why (#1398 AC-02, T-07)', () => {
+  it.effect('[T-07] names the activation that was in force at the decision, with who, when, scope and reason', () =>
+    Effect.gen(function* templateUse() {
+      const item = yield* projectMessageHistoryItem(requestRecord([intentRecord()]), intentRecord(), {
+        includeEndpointMask: true,
+        templateUse: audit(),
+      });
+      // the first activation ended before the decision: only the one in force then explains the message
+      expect(encodeItem(item).templateUse).toEqual({
+        activation: {
+          activatedAt: '2026-11-19T11:00:00.000Z',
+          activatedByPrincipalId: REACTIVATOR,
+          reason: 'Reinstated',
+          scope: { kind: 'tenant' },
+        },
+        activeAtDecisionTime: true,
+        contentDigest: 'd'.repeat(64),
+        lifecycleState: 'active',
+        revisionId: TEMPLATE_REVISION_ID,
+        revisionNumber: 3,
+        scope: { kind: 'tenant' },
+        source: 'TENANT_REVISION',
+      });
+    }),
+  );
 });

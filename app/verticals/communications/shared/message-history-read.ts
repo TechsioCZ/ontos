@@ -4,8 +4,18 @@ import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { Schema } from 'effect';
 
 import { HistorySlotKeySchema, HistoryStatusSchema, MessageAttentionSchema } from './communication-history.ts';
-import { CommunicationRequestIdSchema, MessageIntentIdSchema } from './communication-intake.ts';
-import { TemplateTextSourceSchema } from './template-revision.ts';
+import {
+  CommunicationDecisionIdSchema,
+  CommunicationRequestIdSchema,
+  MessageIntentIdSchema,
+} from './communication-intake.ts';
+import {
+  TemplateLifecycleStateSchema,
+  TemplatePrincipalIdSchema,
+  TemplateRevisionIdSchema,
+  TemplateScopeSchema,
+  TemplateTextSourceSchema,
+} from './template-revision.ts';
 
 /**
  * Published, schema-only SAFE projection of the message history (#1409). This is the ONLY shape a history Read can
@@ -137,17 +147,80 @@ export const MessageHistoryHeadlineSchema = Schema.Struct({
   status: HistoryStatusSchema,
 });
 
+/** One document the owner approved for disclosure with the message: a reference and a form, never a byte, link or name. */
+export const MessageHistoryDocumentSchema = Schema.Struct({
+  document: CommunicationResourceRefSchema,
+  form: Schema.Literals(['ATTACHMENT', 'LINK']),
+  pinnedAt: Schema.DateTimeUtcFromString,
+  position: Schema.Int.check(Schema.isBetween({ maximum: 9, minimum: 0 })),
+});
+export type MessageHistoryDocument = typeof MessageHistoryDocumentSchema.Type;
+
+/**
+ * Explicit Resend, told from either end (#1402 D9, AC-09): `RESEND_OF` says this message was issued as a new request to resend
+ * the named original; `RESENT_AS` says the named message is a resend of this one. The reason is from the closed approved list.
+ */
+export const MessageHistoryResendLinkSchema = Schema.Struct({
+  direction: Schema.Literals(['RESEND_OF', 'RESENT_AS']),
+  intentId: MessageIntentIdSchema,
+  kind: Schema.Literal('EXPLICIT_RESEND'),
+  reasonCode: ClosedCodeSchema,
+});
+/**
+ * Technical Retry (#1402 H-09, #1403): a later attempt of the SAME message, with the earlier attempt it follows and why that one
+ * no longer blocked it. Both attempt numbers are named, so the link explains itself from either attempt.
+ */
+export const MessageHistoryRetryLinkSchema = Schema.Struct({
+  attemptNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  basisKind: Schema.Literals(['PRIOR_NOT_ATTEMPTED', 'PRIOR_REJECTED', 'RECONCILED_NON_ACCEPTANCE']),
+  kind: Schema.Literal('TECHNICAL_RETRY'),
+  previousAttemptNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  reasonCode: ClosedCodeSchema,
+});
+export const MessageHistoryLinkSchema = Schema.Union([MessageHistoryResendLinkSchema, MessageHistoryRetryLinkSchema]);
+export type MessageHistoryLink = typeof MessageHistoryLinkSchema.Type;
+
+/**
+ * The audit of the template a message used (#1398 AC-02, T-07): which revision, whether it was in force at the decision, and who
+ * activated it, when, for which scope and why. It carries identity, a digest, a Principal reference and the reason the
+ * administrator gave (bounded text, never a template text), so it has its OWN field permission and is omitted without it.
+ */
+export const MessageHistoryTemplateUseSchema = Schema.Struct({
+  activation: Schema.optionalKey(
+    Schema.Struct({
+      activatedAt: Schema.DateTimeUtcFromString,
+      activatedByPrincipalId: TemplatePrincipalIdSchema,
+      reason: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(500)),
+      scope: TemplateScopeSchema,
+    }),
+  ),
+  activeAtDecisionTime: Schema.Boolean,
+  contentDigest: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  lifecycleState: TemplateLifecycleStateSchema,
+  revisionId: TemplateRevisionIdSchema,
+  revisionNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  scope: TemplateScopeSchema,
+  source: TemplateTextSourceSchema,
+});
+export type MessageHistoryTemplateUse = typeof MessageHistoryTemplateUseSchema.Type;
+
 export const MessageHistoryItemSchema = Schema.Struct({
   decidedAt: Schema.DateTimeUtcFromString,
+  /** The documents the owner disclosed with this message, in the order they were pinned; empty when none. */
+  documents: Schema.Array(MessageHistoryDocumentSchema),
   headline: MessageHistoryHeadlineSchema,
   intentId: MessageIntentIdSchema,
   lastEventAt: Schema.DateTimeUtcFromString,
+  /** Explicit Resend and Technical Retry links of this message, from either end; empty when it has none. */
+  links: Schema.Array(MessageHistoryLinkSchema),
   recipient: MessageHistoryRecipientSchema,
   requestId: CommunicationRequestIdSchema,
   slotKey: HistorySlotKeySchema,
   source: MessageHistorySourceSchema,
   /** Absent when the message was stopped before any template was pinned. */
   template: Schema.optionalKey(MessageHistoryTemplateSchema),
+  /** Governed by its own field permission: omitted from the result when the caller may not read it, and from a list. */
+  templateUse: Schema.optionalKey(MessageHistoryTemplateUseSchema),
   type: Schema.Struct({
     typeId: MessageTypeIdSchema,
     typeRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -191,6 +264,8 @@ export const MessageHistoryTimelineEntrySchema = Schema.Struct({
   /** Absent for a fact that belongs to no attempt (the decision of the intent). */
   attemptNumber: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   kind: TimelineEntryKindSchema,
+  /** The Explicit Resend or Technical Retry links this fact belongs to; absent when it has none. */
+  links: Schema.optionalKey(Schema.Array(MessageHistoryLinkSchema)),
   observationKind: Schema.optionalKey(TimelineObservationKindSchema),
   occurredAt: Schema.DateTimeUtcFromString,
   outOfOrder: Schema.Boolean,
@@ -201,11 +276,36 @@ export const MessageHistoryTimelineEntrySchema = Schema.Struct({
 });
 export type MessageHistoryTimelineEntry = typeof MessageHistoryTimelineEntrySchema.Type;
 
-/** The position after the last returned message (newest first). The caller only echoes it back; the scope is never taken from it. */
-export const MessageHistoryCursorSchema = Schema.Struct({
-  createdAt: Schema.DateTimeUtcFromString,
-  intentId: MessageIntentIdSchema,
+/**
+ * A request the catalog decided NO message for, or that left a slot unresolved (#1402 H-01, AC-01; #1401 I-07): a readable row
+ * of its own, because it has no Message Intent to list. `NO_MESSAGE` is the catalog's zero-message decision; `NOT_SENT` is a
+ * request whose slots could not be resolved to a legal recipient, so those messages do not exist. Neither is a provider failure
+ * and neither is a delivered message.
+ */
+export const MessageHistoryRequestItemSchema = Schema.Struct({
+  decidedAt: Schema.DateTimeUtcFromString,
+  decisionId: CommunicationDecisionIdSchema,
+  headline: Schema.Struct({
+    /** The closed reason of the no-message decision, when there is one. */
+    reasonCodes: Schema.Array(ClosedCodeSchema),
+    status: Schema.Literals(['NO_MESSAGE', 'NOT_SENT']),
+  }),
+  requestId: CommunicationRequestIdSchema,
+  source: MessageHistorySourceSchema,
+  /** Slots a required type could not resolve to a recipient, each with its closed reason. */
+  unresolvedSlots: Schema.Array(Schema.Struct({ reason: ClosedCodeSchema, slotKey: HistorySlotKeySchema })),
 });
+export type MessageHistoryRequestItem = typeof MessageHistoryRequestItemSchema.Type;
+
+/**
+ * The position after the last returned row (newest first). A row is a message (by its intent) or a request-level decision (by its
+ * request); both are ordered by their decision time and then by their identity. The caller only echoes it back; the scope is
+ * never taken from it.
+ */
+export const MessageHistoryCursorSchema = Schema.Union([
+  Schema.Struct({ createdAt: Schema.DateTimeUtcFromString, intentId: MessageIntentIdSchema }),
+  Schema.Struct({ createdAt: Schema.DateTimeUtcFromString, requestId: CommunicationRequestIdSchema }),
+]);
 export type MessageHistoryCursor = typeof MessageHistoryCursorSchema.Type;
 
 export const MessageHistoryListRequestFieldsSchema = Schema.Struct({
@@ -221,11 +321,17 @@ export const MessageHistoryListRequestFieldsSchema = Schema.Struct({
 
 export const MessageHistoryListResultSchema = Schema.Struct({
   items: Schema.Array(MessageHistoryItemSchema),
-  /** Present exactly when more messages exist after this page. */
+  /** Present exactly when more rows exist after this page. */
   nextCursor: Schema.optionalKey(MessageHistoryCursorSchema),
+  /** The request-level rows of this page (no-message and unresolved decisions); absent when the page has none. */
+  requests: Schema.optionalKey(Schema.Array(MessageHistoryRequestItemSchema)),
 });
 
-export const MessageHistoryDetailResultSchema = Schema.Struct({
-  message: MessageHistoryItemSchema,
-  timeline: Schema.Array(MessageHistoryTimelineEntrySchema),
-});
+/** The detail of ONE message (by its intent), or of ONE request-level decision that has no message (by its request). */
+export const MessageHistoryDetailResultSchema = Schema.Union([
+  Schema.Struct({
+    message: MessageHistoryItemSchema,
+    timeline: Schema.Array(MessageHistoryTimelineEntrySchema),
+  }),
+  Schema.Struct({ request: MessageHistoryRequestItemSchema }),
+]);

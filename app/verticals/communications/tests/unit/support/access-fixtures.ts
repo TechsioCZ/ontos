@@ -14,6 +14,7 @@ import { sourceOutcomeFeedOf } from '../../../src/domain/history/source-outcome.
 import { historyOfIntent } from '../../../src/domain/history/timeline.ts';
 import type { IntentTimelineFacts } from '../../../src/domain/history/timeline.ts';
 import type { IntentHistoryRecord, RequestHistoryRecord } from '../../../src/services/message-history.service.ts';
+import { TemplatePinSchema } from '../../../shared/template-revision.ts';
 import { INTENT_ID, factsOf, minute } from './history-fixtures.ts';
 
 /**
@@ -38,10 +39,26 @@ export const tenantScope = Schema.decodeUnknownSync(CommunicationRequestScopeSch
 /** The default mask of a fictional recipient: it hides part of the endpoint. */
 export const SAFE_MASK = 'p***@example.test';
 
+const FIXTURE_MESSAGE_TYPE = 'fixture.single-message';
+export const TEMPLATE_REVISION_ID = '77777777-7777-4777-8777-777777777777';
+export const TEMPLATE_TYPE_ID = '88888888-8888-4888-8888-888888888888';
+const templatePin = Schema.decodeUnknownSync(TemplatePinSchema)({
+  channel: 'email',
+  decisionTime: '2026-11-19T12:00:00.000Z',
+  language: 'cs',
+  messageType: FIXTURE_MESSAGE_TYPE,
+  revisionId: TEMPLATE_REVISION_ID,
+  revisionNumber: 3,
+  scope: { kind: 'tenant' },
+  templateTypeId: TEMPLATE_TYPE_ID,
+});
+
 interface IntentOptions {
   readonly decisionReason?: string;
+  readonly documents?: IntentHistoryRecord['documents'];
   readonly endpointMask?: string;
   readonly facts?: IntentTimelineFacts;
+  readonly links?: IntentHistoryRecord['links'];
   readonly withoutMask?: boolean;
   readonly withTemplate?: boolean;
 }
@@ -52,11 +69,12 @@ export const intentRecord = (options: IntentOptions = {}): IntentHistoryRecord =
   return {
     decidedAt: minute(0),
     decisionReason: options.decisionReason,
+    documents: options.documents ?? [],
     facts,
     history: historyOfIntent(facts),
     intentId: MessageIntentIdSchema.make(INTENT_ID),
     language: withTemplate ? { language: 'cs', mode: 'B', policy: absent() } : absent(),
-    links: { resendOf: absent(), resentAs: [], retries: [] },
+    links: options.links ?? { resendOf: absent(), resentAs: [], retries: [] },
     recipient: {
       channel: 'email',
       endpointMask: options.withoutMask === true ? absent() : (options.endpointMask ?? SAFE_MASK),
@@ -67,20 +85,34 @@ export const intentRecord = (options: IntentOptions = {}): IntentHistoryRecord =
     template: withTemplate
       ? {
           contentDigest: absent(),
-          messageType: 'fixture.single-message',
-          revisionId: '77777777-7777-4777-8777-777777777777',
+          messageType: FIXTURE_MESSAGE_TYPE,
+          pin: templatePin,
+          revisionId: TEMPLATE_REVISION_ID,
           revisionNumber: 3,
           source: 'TENANT_REVISION',
-          templateTypeId: '88888888-8888-4888-8888-888888888888',
+          templateTypeId: TEMPLATE_TYPE_ID,
         }
       : absent(),
-    type: { typeId: 'fixture.single-message', typeRevision: 1 },
+    type: { typeId: FIXTURE_MESSAGE_TYPE, typeRevision: 1 },
   };
 };
+
+/** The Explicit Resend and Technical Retry links of one fictional message; none by default. */
+export const linksFixture = (links: Partial<IntentHistoryRecord['links']> = {}): IntentHistoryRecord['links'] => ({
+  resendOf: links.resendOf ?? absent(),
+  resentAs: links.resentAs ?? [],
+  retries: links.retries ?? [],
+});
+
+interface DecisionOptions {
+  readonly noMessageReason?: string;
+  readonly unresolvedSlots?: RequestHistoryRecord['feed']['unresolvedSlots'];
+}
 
 export const requestRecord = (
   intents: readonly IntentHistoryRecord[],
   scope?: RequestHistoryRecord['request']['scope'],
+  decision: DecisionOptions = {},
 ): RequestHistoryRecord => {
   const decisionId = CommunicationDecisionIdSchema.make(DECISION_ID);
   const requestId = CommunicationRequestIdSchema.make(REQUEST_ID);
@@ -90,10 +122,10 @@ export const requestRecord = (
     feed: sourceOutcomeFeedOf({
       decision: {
         decisionId,
-        noMessageReason: absent(),
-        outcome: 'MESSAGE_INTENTS',
+        noMessageReason: decision.noMessageReason,
+        outcome: decision.noMessageReason === undefined ? 'MESSAGE_INTENTS' : 'NO_MESSAGE',
         requiredness: 'REQUIRED',
-        unresolvedSlots: [],
+        unresolvedSlots: decision.unresolvedSlots ?? [],
       },
       intents: intents.map((entry) => ({
         intentId: entry.intentId,
@@ -105,7 +137,7 @@ export const requestRecord = (
       requestId,
     }),
     intents,
-    noMessageReason: absent(),
+    noMessageReason: decision.noMessageReason,
     request: {
       occurrenceId: 'fixture-occurrence-1',
       occurrenceRevision: 1,

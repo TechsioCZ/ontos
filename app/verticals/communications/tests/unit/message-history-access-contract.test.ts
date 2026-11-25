@@ -28,7 +28,7 @@ const reads = [
 ] as const;
 
 describe('The public history Reads declare exact-scope Current Permissions and nothing wider (#1409, ACC-02, ACC-03)', () => {
-  it('are registered protected Reads of this owner with ONE permission each and one personal-data field group', () => {
+  it('are registered protected Reads of this owner with ONE permission each and their personal-data field groups', () => {
     for (const { fieldKey, key, read } of reads) {
       const { descriptor } = read;
       expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
@@ -40,7 +40,8 @@ describe('The public history Reads declare exact-scope Current Permissions and n
         risk: 'sensitive',
         selectors: [],
       });
-      expect(descriptor.accessFieldGroups).toHaveLength(1);
+      // the list governs the mask only; the detail also governs the template use audit, each group by its own permission
+      expect(descriptor.accessFieldGroups).toHaveLength(read === messageHistoryDetailRead ? 2 : 1);
       expect(descriptor.accessFieldGroups?.[0]).toMatchObject({
         fieldClass: 'personal_data',
         key: fieldKey,
@@ -52,6 +53,21 @@ describe('The public history Reads declare exact-scope Current Permissions and n
       expect(key.startsWith('communications.core.')).toBe(true);
       expect(descriptor.accessWorkload).toBeUndefined();
     }
+  });
+
+  it('govern who activated a revision, when and why by a field group of its own on the detail only (#1398 AC-02)', () => {
+    const group = messageHistoryDetailRead.descriptor.accessFieldGroups?.[1];
+    expect(group).toMatchObject({
+      fieldClass: 'personal_data',
+      fields: ['message.templateUse'],
+      key: 'communications.core.message-history-template-use.read',
+      kind: 'field_read',
+      modes: ['run'],
+      selectors: [],
+    });
+    expect(messageHistoryListRead.descriptor.accessFieldGroups?.map(({ fields }) => fields.join(','))).toEqual([
+      'items.recipient.endpointMask',
+    ]);
   });
 
   it('declare no export and no DSR delivery: history is a safe metadata Read, not a Data Subject Request (ACC-10)', () => {

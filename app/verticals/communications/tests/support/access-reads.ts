@@ -144,11 +144,21 @@ export const accessReads = Effect.fn('CommunicationsAccessTest.reads')(function*
   });
   const transport = { correlationId: scope.correlationId };
   return {
-    detail: (input: MessageHistoryDetailRequest) =>
-      harness.runtime.runRead({ input, principal, registration: messageHistoryDetailRead, transport }),
+    /** The detail of ONE message (by its intent); a request-level answer for it would be a defect of the Read. */
+    detail: (input: { readonly intentId: string }) =>
+      harness.runtime
+        .runRead({ input, principal, registration: messageHistoryDetailRead, transport })
+        .pipe(
+          Effect.flatMap((found) =>
+            'message' in found ? Effect.succeed(found) : Effect.die('a message detail answered a request-level row'),
+          ),
+        ),
     harness,
     list: (input: typeof MessageHistoryListRequestSchema.Encoded = {}) =>
       harness.runtime.runRead({ input, principal, registration: messageHistoryListRead, transport }),
     ownerStatements: () => statements.count,
+    /** The detail of a request-level decision that has no message (by its request), or of whatever the input names. */
+    requestDetail: (input: MessageHistoryDetailRequest) =>
+      harness.runtime.runRead({ input, principal, registration: messageHistoryDetailRead, transport }),
   };
 });

@@ -14461,6 +14461,23 @@
               },
               "risk": "sensitive",
               "selectors": []
+            },
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "message.templateUse"
+              ],
+              "key": "communications.core.message-history-template-use.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
             }
           ],
           "entrypoint": {

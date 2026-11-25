@@ -11,6 +11,8 @@ import { messageHistoryReadService } from '../services/message-history-read.serv
 import { mayReadField } from './message-history-support.ts';
 import type { MessageHistoryReadServices } from './message-history-support.ts';
 
+const HISTORY_GROUP = 'message-history';
+
 const messageHistoryDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -20,7 +22,8 @@ const messageHistoryDetailEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
- * The safe metadata detail of ONE message: its headline, its masked original recipient and its timeline of proven facts.
+ * The safe metadata detail of ONE message (by its intent) or of ONE request-level decision that has no message (by its
+ * request): the headline, the masked original recipient, the links, the disclosed documents and the timeline of proven facts.
  * It never carries a body or a template text. The permission keys are PROPOSED to the product owner (ADR-0030).
  */
 export const messageHistoryDetailRead = defineRead(
@@ -29,7 +32,7 @@ export const messageHistoryDetailRead = defineRead(
       key: 'communications.core.message-history.read',
       kind: 'read',
       modes: ['run'],
-      placement: { group: 'message-history', level: 'basic' },
+      placement: { group: HISTORY_GROUP, level: 'basic' },
       risk: 'sensitive',
       selectors: [],
     },
@@ -40,7 +43,19 @@ export const messageHistoryDetailRead = defineRead(
         key: 'communications.core.message-history-recipient-mask.read',
         kind: 'field_read',
         modes: ['run'],
-        placement: { group: 'message-history', level: 'extended' },
+        placement: { group: HISTORY_GROUP, level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      // Who activated the template revision a message used, when, for which scope and why (#1398 AC-02): a Principal
+      // reference and the administrator's own reason, so a role may see the history without it.
+      {
+        fieldClass: 'personal_data',
+        fields: ['message.templateUse'],
+        key: 'communications.core.message-history-template-use.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: HISTORY_GROUP, level: 'extended' },
         risk: 'sensitive',
         selectors: [],
       },
@@ -63,8 +78,9 @@ export const messageHistoryDetailRead = defineRead(
     input: MessageHistoryDetailRequest,
     context: ReadHandlerContext<MessageHistoryReadServices>,
   ) {
-    const found = yield* context.services.detail(input.intentId, {
+    const found = yield* context.services.detail(input, {
       includeEndpointMask: mayReadField(context, 'message.recipient.endpointMask'),
+      includeTemplateUse: mayReadField(context, 'message.templateUse'),
       listAccess: context.listAccess,
     });
     return { evidence: { resultCount: 1 }, result: found };
