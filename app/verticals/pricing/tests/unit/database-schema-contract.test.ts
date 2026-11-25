@@ -246,28 +246,118 @@ const pricingMigrationFolders = readdirSync(pricingMigrationRoot, { withFileType
   .map((entry) => entry.name)
   .toSorted();
 
-describe('Pricing Drizzle migration history contract', () => {
-  it('owns one complete linear v1 snapshot chain across every migration folder', () => {
-    let previousSnapshotId = '00000000-0000-0000-0000-000000000000';
-    const snapshotIds = new Set<string>();
+const pricingMigrationHistory = pricingMigrationFolders.map((folder) => ({
+  folder,
+  migrationSql: readFileSync(new URL(`${folder}/migration.sql`, pricingMigrationRoot), 'utf-8'),
+  snapshot: Schema.decodeSync(Schema.fromJsonString(DrizzleSnapshotHeaderSchema))(
+    readFileSync(new URL(`${folder}/snapshot.json`, pricingMigrationRoot), 'utf-8'),
+  ),
+}));
+const rootSnapshotId = '00000000-0000-0000-0000-000000000000';
 
-    for (const folder of pricingMigrationFolders) {
-      const migrationSql = readFileSync(new URL(`${folder}/migration.sql`, pricingMigrationRoot), 'utf-8');
-      const snapshot = Schema.decodeSync(Schema.fromJsonString(DrizzleSnapshotHeaderSchema))(
-        readFileSync(new URL(`${folder}/snapshot.json`, pricingMigrationRoot), 'utf-8'),
-      );
+const assertPricingMigrationHistory = (history: readonly (typeof pricingMigrationHistory)[number][]) => {
+  const snapshotIds = new Set<string>([rootSnapshotId]);
+  const parentIds = new Set<string>();
+  let headSnapshotId = rootSnapshotId;
 
-      expect(migrationSql.length, `${folder} must contain migration SQL`).toBeGreaterThan(0);
-      expect(snapshot.version, `${folder} must use the Drizzle v1 snapshot format`).toBe('8');
-      expect(snapshot.dialect, `${folder} must target PostgreSQL`).toBe('postgres');
-      expect(snapshot.prevIds, `${folder} must follow the immediately preceding Pricing snapshot`).toEqual([
-        previousSnapshotId,
-      ]);
-      expect(snapshotIds.has(snapshot.id), `${folder} must own a unique snapshot ID`).toBe(false);
-
-      snapshotIds.add(snapshot.id);
-      previousSnapshotId = snapshot.id;
+  expect(history.length, 'Pricing must own migration history').toBeGreaterThan(0);
+  for (const { folder, migrationSql, snapshot } of history) {
+    expect(migrationSql.length, `${folder} must contain migration SQL`).toBeGreaterThan(0);
+    expect(snapshot.version, `${folder} must use the Drizzle v1 snapshot format`).toBe('8');
+    expect(snapshot.dialect, `${folder} must target PostgreSQL`).toBe('postgres');
+    expect(snapshot.prevIds.length, `${folder} must follow an earlier Pricing snapshot`).toBeGreaterThan(0);
+    expect(new Set(snapshot.prevIds).size, `${folder} must not repeat a parent snapshot ID`).toBe(
+      snapshot.prevIds.length,
+    );
+    for (const prevId of snapshot.prevIds) {
+      expect(snapshotIds.has(prevId), `${folder} must follow an earlier Pricing snapshot`).toBe(true);
+      parentIds.add(prevId);
     }
+    expect(snapshotIds.has(snapshot.id), `${folder} must own a unique snapshot ID`).toBe(false);
+
+    snapshotIds.add(snapshot.id);
+    headSnapshotId = snapshot.id;
+  }
+  expect(
+    [...snapshotIds].filter((id) => !parentIds.has(id)),
+    'every fork must be joined so the latest folder is the only head',
+  ).toEqual([headSnapshotId]);
+};
+
+const migrationHistoryFixture = (id: string, prevIds: readonly string[]) => ({
+  folder: id,
+  migrationSql: 'select 1;',
+  snapshot: Schema.decodeUnknownSync(DrizzleSnapshotHeaderSchema)({
+    dialect: 'postgres',
+    id,
+    prevIds,
+    version: '8',
+  }),
+});
+
+describe('Pricing Drizzle migration history contract', () => {
+  it('owns one complete v1 snapshot history with a single head across every migration folder', () => {
+    assertPricingMigrationHistory(pricingMigrationHistory);
+  });
+
+  const first = migrationHistoryFixture('first', [rootSnapshotId]);
+  const left = migrationHistoryFixture('left', [first.snapshot.id]);
+  const right = migrationHistoryFixture('right', [first.snapshot.id]);
+  const join = migrationHistoryFixture('join', [left.snapshot.id, right.snapshot.id]);
+
+  it('accepts a linear history', () => {
+    assertPricingMigrationHistory([first, left]);
+  });
+
+  it('accepts both branches only after their explicit join', () => {
+    assertPricingMigrationHistory([first, left, right, join]);
+  });
+
+  it('rejects an unjoined fork', () => {
+    expect(() => assertPricingMigrationHistory([first, left, right])).toThrow('only head');
+  });
+
+  it('rejects a duplicate snapshot id', () => {
+    expect(() =>
+      assertPricingMigrationHistory([first, migrationHistoryFixture(first.snapshot.id, [first.snapshot.id])]),
+    ).toThrow('unique snapshot ID');
+  });
+
+  it('rejects a parent that does not exist', () => {
+    expect(() => assertPricingMigrationHistory([first, migrationHistoryFixture('orphan', ['missing'])])).toThrow(
+      'earlier Pricing snapshot',
+    );
+  });
+
+  it('rejects a repeated parent', () => {
+    expect(() =>
+      assertPricingMigrationHistory([
+        first,
+        migrationHistoryFixture('repeated-parent', [first.snapshot.id, first.snapshot.id]),
+      ]),
+    ).toThrow('must not repeat a parent snapshot ID');
+  });
+
+  it('rejects a second head after a join', () => {
+    expect(() =>
+      assertPricingMigrationHistory([
+        first,
+        left,
+        right,
+        join,
+        migrationHistoryFixture('second-head', [first.snapshot.id]),
+      ]),
+    ).toThrow('only head');
+  });
+
+  it('rejects a parent from a later folder', () => {
+    expect(() => assertPricingMigrationHistory([first, join, left, right])).toThrow('earlier Pricing snapshot');
+  });
+
+  it('rejects a snapshot without a parent', () => {
+    expect(() => assertPricingMigrationHistory([migrationHistoryFixture('disconnected', [])])).toThrow(
+      'earlier Pricing snapshot',
+    );
   });
 });
 
