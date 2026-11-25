@@ -100,17 +100,14 @@ const unresolvedSource = (reason: SourceOccurrenceUnavailable['reason']) =>
   Layer.succeed(SourceOccurrenceAuthority, { read: () => Effect.fail(new SourceOccurrenceUnavailable({ reason })) });
 
 describe('A source owner that states nothing is a durable not-sent outcome (#1401 I-07, #1400 LC-05)', () => {
-  it.effect.each([
-    ['OWNER_UNAVAILABLE', 'SOURCE_AUTHORITY_UNAVAILABLE'],
-    ['OCCURRENCE_UNKNOWN', 'SOURCE_OCCURRENCE_UNKNOWN'],
-  ] as const)(
-    'an owner failing with %s decides the request as NO_MESSAGE %s and asks no recipient or Privacy owner',
-    ([unavailable, stored]) =>
+  it.effect(
+    'an owner that answers nothing about the occurrence decides it as NO_MESSAGE SOURCE_OCCURRENCE_UNKNOWN and asks no recipient or Privacy owner',
+    () =>
       Effect.gen(function* unresolved() {
-        const { owner, plan, privacy, scope } = yield* run({ sourceAuthority: unresolvedSource(unavailable) });
+        const { owner, plan, privacy, scope } = yield* run({ sourceAuthority: unresolvedSource('OCCURRENCE_UNKNOWN') });
         // the request IS decided: a plan to persist, never a failure with nothing stored
-        expect(noMessageReason(plan)).toBe(stored);
-        expect(Schema.is(SourceUnresolvedReasonSchema)(stored)).toBe(true);
+        expect(noMessageReason(plan)).toBe('SOURCE_OCCURRENCE_UNKNOWN');
+        expect(Schema.is(SourceUnresolvedReasonSchema)('SOURCE_OCCURRENCE_UNKNOWN')).toBe(true);
         expect(plan.intents).toEqual([]);
         // no recipient is addressed and no owner is asked on a source nobody could state
         expect(owner.queries).toHaveLength(0);
@@ -119,14 +116,23 @@ describe('A source owner that states nothing is a durable not-sent outcome (#140
       }),
   );
 
+  it.effect(
+    'an owner that cannot be asked at all is a retryable failure and decides nothing: an outage never loses a message',
+    () =>
+      Effect.gen(function* outage() {
+        const failure = yield* Effect.flip(run({ sourceAuthority: unresolvedSource('OWNER_UNAVAILABLE') }));
+        expect(failure).toMatchObject({ code: 'communication_decision_unavailable' });
+      }),
+  );
+
   it.effect('a required type reports the source stop to its workflow as a failed outcome, never as prepared', () =>
     Effect.gen(function* required() {
       const { plan } = yield* run({
-        sourceAuthority: unresolvedSource('OWNER_UNAVAILABLE'),
+        sourceAuthority: unresolvedSource('OCCURRENCE_UNKNOWN'),
         type: fixtureType({ requiredness: 'REQUIRED' }),
       });
       expect(feedOfDecision(plan.decision)).toMatchObject({
-        noMessageReason: 'SOURCE_AUTHORITY_UNAVAILABLE',
+        noMessageReason: 'SOURCE_OCCURRENCE_UNKNOWN',
         requiredOutcome: 'FAILED',
         sourceImpact: 'SOURCE_OWNER_DECIDES',
       });

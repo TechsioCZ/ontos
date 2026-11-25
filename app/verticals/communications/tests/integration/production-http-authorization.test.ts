@@ -112,10 +112,8 @@ import { makeRuntimeDatabase, nativeServices } from '../support/persistence.fixt
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { communicationRequests, messageIntents } from '../../src/database/schema.ts';
 import type { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
-import {
-  PortalAuthIssuanceRefSchema,
-  portalAuthCommunicationRequest,
-} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { PortalAuthIssuanceRefSchema } from '@app/commerce-customer-context/portal-auth-communications';
+import { portalAuthCommunicationRequest } from '@app/commerce-customer-context/portal-auth-communications/request';
 
 /*
  * Q-AUTHZ (#1408, E01/E10/E12/E17): Communications Actions and Reads through the PRODUCTION HTTP assembly of the module
@@ -2020,11 +2018,12 @@ describe('submit-communication-request over real HTTP, the registered workload g
   );
 
   /**
-   * KNOWN PRODUCTION DEFECT, reported and NOT fixed here (this lane owns tests only): through the production HTTP assembly the
-   * handler fails with `Service not found: MessageTypeCatalog`, because `api/index.ts` provides the owner ports to the
-   * construction of the Action runtime and not to the handler's execution. The first real source request would therefore be a
-   * 500, never a decision. This test states the DESIRED behaviour and is marked `fails`, so it keeps passing while the defect
-   * exists and turns red the moment the composition is repaired: delete `.fails` then.
+   * OPEN DEFECT D-2 (D-1, the owner ports missing from the handler, is fixed: the first real request is no longer a 500).
+   * The production owner ports ask Auth's published Read through Core's delegated gateway, and Core refuses it:
+   * `The required module operation is not supported by the admitted composition`, because the Communications manifest declares no
+   * `requirements.operations` entry for that Read (the PROPOSED key `communications.core.condition.current-source-occurrence`).
+   * This test states the DESIRED behaviour and is marked `fails`, so it keeps passing while D-2 exists and turns red the moment
+   * the manifest declares the requirement: delete `.fails` then.
    */
   it.live.fails(
     '[T2-17 DEFECT] an admitted source worker is decided through the production owner ports: stored, suppressed on the undeclared Privacy scope, replayed on a repeat',

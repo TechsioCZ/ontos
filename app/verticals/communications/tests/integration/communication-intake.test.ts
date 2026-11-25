@@ -244,23 +244,21 @@ describe('Communication Request intake: one stored decision per source identity 
   );
 
   it.live(
-    '[I-07 LC-05] a source that could not be asked is decided as a durable NO_MESSAGE with its closed reason; the retry replays that decision and stores no second set',
+    '[I-07 LC-05] a source owner that could not be asked decides NOTHING (retryable, nothing stored); once it answers, the same request is decided normally, so an outage never loses a message',
     () =>
       Effect.gen(function* unresolvedSource() {
         const t = yield* setup();
         t.source.state.available = false;
-        const first = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
-        // the request IS decided: no legal Message Intent exists, and the source learns the truthful reason
-        expect(first.replayed).toBe(false);
-        expect(first.decision).toMatchObject({ kind: 'NO_MESSAGE', reason: 'SOURCE_AUTHORITY_UNAVAILABLE' });
-        expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toHaveLength(1);
+        const failure = yield* Effect.flip(t.runner.submit(t.tenantId, requestFor(t.tenantId)));
+        expect(failure).toMatchObject({ code: 'communication_decision_unavailable' });
+        expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toEqual([]);
         expect(yield* t.read((tx) => tx.select().from(messageIntents))).toEqual([]);
-        // the owner recovering later does not re-decide the same request: a new occurrence is a new request
+        // the owner recovering: the source's own retry is decided for the first time, not replayed as a stored stop
         t.source.state.available = true;
-        const again = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
-        expect(again.replayed).toBe(true);
-        expect(again.decision).toMatchObject({ kind: 'NO_MESSAGE', reason: 'SOURCE_AUTHORITY_UNAVAILABLE' });
-        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toEqual([]);
+        const recovered = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
+        expect(recovered.replayed).toBe(false);
+        expect(recovered.decision).toMatchObject({ kind: 'MESSAGE_INTENTS' });
+        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

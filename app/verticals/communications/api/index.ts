@@ -154,8 +154,6 @@ const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
       governedActiveApplicationCompositionLive,
     ),
   ),
-  // The owner ports the intake decision composes (catalog, source facts, Privacy scope, recipient and Privacy gates).
-  GovernedReadLayer.provide(communicationsProductionOwnerPortsLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -181,7 +179,12 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   privacyOwnerExecutionOutcomeReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordOwnerExecutionEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  // The owner ports the intake decision composes (catalog, source facts, Privacy scope, recipient and Privacy gates) are
+  // services of the handler's own execution, so they are provided to the handler layer, like the history Reads' ports.
+  submitCommunicationRequestActionApiLive.pipe(
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+    Layer.provide(communicationsProductionOwnerPortsLive),
+  ),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

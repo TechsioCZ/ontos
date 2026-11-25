@@ -46,7 +46,6 @@ import { RecipientLanguageAuthority } from './recipient-language.ts';
 import { safeCauseOf } from './safe-cause.ts';
 import { ProcessingScopeDeclaration } from './scope-declaration.ts';
 import { SourceOccurrenceAuthority } from './source-authority.ts';
-import type { SourceOccurrenceUnavailable } from './source-authority-errors.ts';
 
 /**
  * Decision orchestration (#1401): ONE committed source request in, a complete durable `DecisionPlan` out, composed only
@@ -116,11 +115,12 @@ const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit
   return resendRefusalOf(type.value, request.source.moduleKey, scopeKey(request.scope), original);
 });
 
-/** The closed reason a source owner that stated nothing stands for; the request is decided as that, never left undecided. */
-const SOURCE_UNRESOLVED_REASON = {
-  OCCURRENCE_UNKNOWN: 'SOURCE_OCCURRENCE_UNKNOWN',
-  OWNER_UNAVAILABLE: 'SOURCE_AUTHORITY_UNAVAILABLE',
-} as const satisfies Record<SourceOccurrenceUnavailable['reason'], SourceUnresolvedReason>;
+/**
+ * The closed reason a source owner that ANSWERED NOTHING about the occurrence stands for (#1401 I-07: a missing source authority is
+ * a truthful unresolved outcome). An owner that could not be ASKED at all is a different fact: it is not an answer, so no decision
+ * is stored for it and the source's own retry asks again (see `readFacts`).
+ */
+const SOURCE_UNRESOLVED_REASON: SourceUnresolvedReason = 'SOURCE_OCCURRENCE_UNKNOWN';
 
 interface SourceReading {
   readonly source: SourceOccurrenceFacts;
@@ -144,10 +144,13 @@ const factsFor = Effect.fn('Communications.readSourceFacts')(function* readFacts
   return yield* authority.read(request).pipe(
     Effect.map((source): SourceReading => ({ source, unresolved: Option.none() })),
     Effect.catchTag('SourceOccurrenceUnavailable', ({ reason }) =>
-      Effect.succeed<SourceReading>({
-        source: echoFactsOf(request),
-        unresolved: Option.some(SOURCE_UNRESOLVED_REASON[reason]),
-      }),
+      // an outage is retryable and never a final decision: a REQUIRED security message must not be lost to a brief outage
+      reason === 'OWNER_UNAVAILABLE'
+        ? Effect.fail(unavailable('The source owner could not be asked now'))
+        : Effect.succeed<SourceReading>({
+            source: echoFactsOf(request),
+            unresolved: Option.some(SOURCE_UNRESOLVED_REASON),
+          }),
     ),
   );
 });
