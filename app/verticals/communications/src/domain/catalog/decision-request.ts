@@ -12,7 +12,7 @@ import {
   RevisionSchema,
   SourceStateKeySchema,
 } from './vocabulary.ts';
-import type { ResendRefusal } from './vocabulary.ts';
+import type { ResendRefusal, SourceUnresolvedReason } from './vocabulary.ts';
 
 /**
  * What the Communication Decision needs from a committed source Communication Request. Only a request names an
@@ -66,4 +66,9 @@ export interface CommunicationDecisionContext {
    */
   readonly resendRefusal?: ResendRefusal;
   readonly source: SourceOccurrenceFacts;
+  /**
+   * Why the source owner could not state the facts of the occurrence now; absent when it did. The facts then only echo the
+   * request, and the decision stops the type with this reason before it looks at any source state or recipient.
+   */
+  readonly sourceUnresolved?: SourceUnresolvedReason;
 }

@@ -1,6 +1,7 @@
 import { OntosModuleIdSchema } from '@app/core-runtime/modules/manifest';
 import { Schema } from 'effect';
 
+import { TemplateLanguageSchema } from '../../../shared/template-revision.ts';
 import { DocumentPolicySchema } from '../documents/document-policy.ts';
 import { AudiencePolicySchema } from './audience.ts';
 import {
@@ -120,6 +121,12 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   /** Stable plain-language statement of what the type means; documentation, not message copy. */
   meaning: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   onboarding: SourceOnboardingSchema,
+  /**
+   * The ONE language the source owner binds this type to (#1399 L-02, D.3 "owner does not permit a language fallback"). Absent
+   * means the owner binds none, so both supported languages are permitted and the choice is Communications'. When declared,
+   * the message is sent in this language or not at all: neither the recipient's language nor a Czech fallback may replace it.
+   */
+  ownerRequiredLanguage: Schema.optionalKey(TemplateLanguageSchema),
   privacyPurposeRefs: Schema.Array(PrivacyPurposeKeySchema),
   purpose: CommunicationPurposeKeySchema,
   /** The approved automatic recovery rule; absent means `NONE`. See `recoveryPolicyOf`. */
@@ -135,6 +142,17 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   typeId: MessageTypeIdSchema,
 });
 export type TransactionalMessageType = typeof TransactionalMessageTypeSchema.Type;
+
+type OwnerLanguage = typeof TemplateLanguageSchema.Type;
+
+/** Every language Communications supports, in the order the owner-permitted list states them. */
+const ALL_LANGUAGES = ['cs', 'en'] as const satisfies readonly OwnerLanguage[];
+
+/** The languages the owner permits for a type: the one it requires, else every supported language. */
+export const ownerPermittedLanguagesOf = (
+  type: Pick<TransactionalMessageType, 'ownerRequiredLanguage'>,
+): readonly [OwnerLanguage, ...OwnerLanguage[]] =>
+  type.ownerRequiredLanguage === undefined ? ALL_LANGUAGES : [type.ownerRequiredLanguage];
 
 const NO_RECOVERY: RecoveryPolicy = { kind: 'NONE' };
 

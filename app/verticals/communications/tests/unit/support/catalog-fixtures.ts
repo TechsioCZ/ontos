@@ -60,6 +60,7 @@ interface TypeOverrides {
   readonly eligibleSourceStates?: readonly string[];
   readonly ineligibleSourceStates?: readonly { readonly reason: string; readonly state: string }[];
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
+  readonly ownerRequiredLanguage?: 'cs' | 'en';
   readonly privacyPurposeRefs?: readonly string[];
   readonly purpose?: string;
   readonly recovery?: unknown;
