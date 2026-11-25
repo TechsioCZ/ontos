@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq } from 'drizzle-orm';
-import { Array as EffectArray, DateTime, Effect, Order, Option, Redacted, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Exit, Order, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -150,7 +150,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
             .unsafe(`drop trigger if exists ${name} on commerce_auth."user"`)
             .pipe(Effect.andThen(admin.unsafe(`drop function if exists commerce_auth.${name}()`)), Effect.ignore),
         );
-        expect((yield* Effect.exit(create()))._tag).toBe('Failure');
+        expect(Exit.isFailure(yield* Effect.exit(create()))).toBe(true);
         // the account was never committed, and nothing of it was held by Auth either
         expect(yield* realm.accountOf(realm.email)).toHaveLength(0);
         expect(yield* world.outboxRows).toHaveLength(0);

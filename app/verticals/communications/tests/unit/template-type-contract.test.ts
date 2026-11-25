@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { TemplateRefused } from '../../shared/template-revision-errors.ts';
@@ -133,17 +133,20 @@ describe('Activation compares a revision with its approved message type (T2-04)'
     const decoded = Schema.decodeUnknownResult(TemplateContractSchema);
     // names are unique, and only an optional non-secret placeholder may be omitted
     expect(
-      decoded({
-        placeholders: [
-          { kind: 'text', name: 'a', required: false },
-          { kind: 'text', name: 'a', required: false },
-        ],
-      })._tag,
-    ).toBe('Failure');
+      Result.isFailure(
+        decoded({
+          placeholders: [
+            { kind: 'text', name: 'a', required: false },
+            { kind: 'text', name: 'a', required: false },
+          ],
+        }),
+      ),
+    ).toBe(true);
     expect(
-      decoded({ placeholders: [{ kind: 'owner-rendered', name: 'a', omission: 'omit-paragraph', required: false }] })
-        ._tag,
-    ).toBe('Failure');
+      Result.isFailure(
+        decoded({ placeholders: [{ kind: 'owner-rendered', name: 'a', omission: 'omit-paragraph', required: false }] }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -187,9 +190,9 @@ describe('The Template Actions only know approved message types (T3-14)', () => 
 
   it('knows exactly the approved types of the production catalog', () => {
     for (const type of approvedMessageTypes) {
-      expect(approvedTemplateTypes.contractOf(type.typeId)._tag).toBe('Some');
+      expect(Option.isSome(approvedTemplateTypes.contractOf(type.typeId))).toBe(true);
     }
-    expect(approvedTemplateTypes.contractOf(UNAPPROVED)._tag).toBe('None');
+    expect(Option.isNone(approvedTemplateTypes.contractOf(UNAPPROVED))).toBe(true);
   });
 });
 

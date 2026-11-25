@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { Effect, Option } from 'effect';
+import { Effect, Exit, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { historyReads } from './support/auth-communications-checks.spec.mts';
@@ -120,7 +120,7 @@ describe('The Auth -> Communications suites decide on the production owner ports
         );
         // a trusted language does not exist in production: a suite that did not ask for the labelled double cannot script one
         const refused = yield* Effect.exit(world.setTrustedLanguage('en'));
-        expect(refused._tag).toBe('Failure');
+        expect(Exit.isFailure(refused)).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 });
