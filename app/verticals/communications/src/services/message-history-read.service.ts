@@ -8,7 +8,6 @@ import { Array as EffectArray, DateTime, Effect, Option, Order, Schema } from 'e
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import { MESSAGE_HISTORY_MAX_PAGE_SIZE } from '../../shared/message-history-read.ts';
 import type {
-  HistorySourceScopeSelection,
   MessageHistoryCursor,
   MessageHistoryItem,
   MessageHistoryRequestItem,
@@ -19,9 +18,9 @@ import type { MessageHistoryDetailRequest } from '../../shared/apis/message-hist
 import type { MessageHistoryListRequest } from '../../shared/apis/message-history-list.ts';
 import type { TemplateUseAudit } from '../../shared/template-revision.ts';
 import { communicationDecisions, communicationRequests, messageIntents } from '../database/schema.ts';
-import { CommunicationTenantIdSchema } from '../domain/catalog/vocabulary.ts';
 import { scopeDemandsSourceVisibility, SourceScopeVisibility } from '../domain/access/source-visibility.ts';
 import type { SourceScopeVisibilityUnavailable } from '../domain/access/source-visibility-errors.ts';
+import { exactScopeOf } from '../domain/access/exact-scope.ts';
 import { scopeKey } from '../domain/recipient/original-binding.ts';
 import {
   hasRequestLevelRow,
@@ -78,27 +77,6 @@ const unsupportedRowFilter = () =>
 /** Absent and not visible are one answer, so a caller cannot probe which other scopes hold a message. */
 const notFound = () =>
   new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'The message history was not found' });
-
-/** The exact scope under construction: the dimensions the selection names plus the trusted Tenant and Legal Entity. */
-interface ExactScopeDraft {
-  counterpartyRef?: NonNullable<CommunicationRequestScope['counterpartyRef']>;
-  legalEntityId?: NonNullable<CommunicationRequestScope['legalEntityId']>;
-  profileRef?: NonNullable<CommunicationRequestScope['profileRef']>;
-  storefrontRef?: NonNullable<CommunicationRequestScope['storefrontRef']>;
-  tenantId: CommunicationRequestScope['tenantId'];
-}
-
-/** The exact scope of a Read: the trusted Tenant and Legal Entity plus the source references the caller selected. */
-const exactScopeOf = (
-  scope: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,
-  selection: HistorySourceScopeSelection,
-): CommunicationRequestScope => {
-  const exact: ExactScopeDraft = { ...selection, tenantId: CommunicationTenantIdSchema.make(scope.tenantId) };
-  if (scope.legalEntityId !== undefined) {
-    exact.legalEntityId = scope.legalEntityId;
-  }
-  return exact;
-};
 
 export interface ReadOptions {
   /** Whether the caller may read the personal-data field group of the endpoint mask. */
@@ -244,7 +222,7 @@ export const messageHistoryReadService = Effect.fn('Communications.messageHistor
   ) {
     yield* requireScopeWide(options.listAccess);
     const limit = input.limit ?? MESSAGE_HISTORY_MAX_PAGE_SIZE;
-    const exact = exactScopeOf(scope, input.scope ?? {});
+    const exact = exactScopeOf(scope, input.scope);
     // The source owners are asked before any row is read: an owner that cannot answer ends the Read, never an empty page.
     if (!(yield* listVisibleToCaller(exact))) {
       return yield* notFound();

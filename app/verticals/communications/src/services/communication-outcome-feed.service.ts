@@ -6,7 +6,7 @@ import { Context, Effect, Option } from 'effect';
 import type { CommunicationOutcomeFeed } from '../../shared/communication-history.ts';
 import type { CommunicationOutcomeFeedRequest } from '../../shared/apis/communication-outcome-feed.ts';
 import { communicationRequests } from '../database/schema.ts';
-import { CommunicationTenantIdSchema } from '../domain/catalog/vocabulary.ts';
+import { exactScopeOf } from '../domain/access/exact-scope.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { scopeKey } from '../domain/recipient/original-binding.ts';
 import { loadRequestHistories } from './message-history.service.ts';
@@ -24,7 +24,7 @@ import type { RequestHistoryRecord } from './message-history.service.ts';
  */
 
 /** The one exact request a source asks about: its identity (source module x scope x purpose x occurrence x revision). */
-export interface SourceRequestIdentity {
+interface SourceRequestIdentity {
   readonly occurrenceId: string;
   readonly occurrenceRevision: number;
   readonly purpose: string;
@@ -53,26 +53,6 @@ const unavailable = (cause?: unknown) =>
     enumerable: false,
     value: cause === undefined ? undefined : safeCauseOf(cause),
   });
-
-interface ExactScopeDraft {
-  counterpartyRef?: NonNullable<CommunicationRequestScope['counterpartyRef']>;
-  legalEntityId?: NonNullable<CommunicationRequestScope['legalEntityId']>;
-  profileRef?: NonNullable<CommunicationRequestScope['profileRef']>;
-  storefrontRef?: NonNullable<CommunicationRequestScope['storefrontRef']>;
-  tenantId: CommunicationRequestScope['tenantId'];
-}
-
-/** The exact scope of the request: the trusted Tenant and Legal Entity plus the source references the source selected. */
-const exactScopeOf = (
-  scope: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,
-  selection: NonNullable<CommunicationOutcomeFeedRequest['scope']> = {},
-): CommunicationRequestScope => {
-  const exact: ExactScopeDraft = { ...selection, tenantId: CommunicationTenantIdSchema.make(scope.tenantId) };
-  if (scope.legalEntityId !== undefined) {
-    exact.legalEntityId = scope.legalEntityId;
-  }
-  return exact;
-};
 
 /**
  * The outcome feed of ONE request of `sourceModule`, or none when Communications holds no such request. A record whose stored

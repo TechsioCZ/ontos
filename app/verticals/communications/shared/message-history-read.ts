@@ -93,7 +93,6 @@ export const HistorySourceScopeSelectionSchema = Schema.Struct({
   profileRef: Schema.optionalKey(CommunicationResourceRefSchema),
   storefrontRef: Schema.optionalKey(CommunicationResourceRefSchema),
 });
-export type HistorySourceScopeSelection = typeof HistorySourceScopeSelectionSchema.Type;
 
 /** The scope a listed message was requested in, as references only. */
 export const MessageHistoryScopeSchema = Schema.Struct({
@@ -148,19 +147,18 @@ export const MessageHistoryHeadlineSchema = Schema.Struct({
 });
 
 /** One document the owner approved for disclosure with the message: a reference and a form, never a byte, link or name. */
-export const MessageHistoryDocumentSchema = Schema.Struct({
+const MessageHistoryDocumentSchema = Schema.Struct({
   document: CommunicationResourceRefSchema,
   form: Schema.Literals(['ATTACHMENT', 'LINK']),
   pinnedAt: Schema.DateTimeUtcFromString,
   position: Schema.Int.check(Schema.isBetween({ maximum: 9, minimum: 0 })),
 });
-export type MessageHistoryDocument = typeof MessageHistoryDocumentSchema.Type;
 
 /**
  * Explicit Resend, told from either end (#1402 D9, AC-09): `RESEND_OF` says this message was issued as a new request to resend
  * the named original; `RESENT_AS` says the named message is a resend of this one. The reason is from the closed approved list.
  */
-export const MessageHistoryResendLinkSchema = Schema.Struct({
+const MessageHistoryResendLinkSchema = Schema.Struct({
   direction: Schema.Literals(['RESEND_OF', 'RESENT_AS']),
   intentId: MessageIntentIdSchema,
   kind: Schema.Literal('EXPLICIT_RESEND'),
@@ -170,14 +168,14 @@ export const MessageHistoryResendLinkSchema = Schema.Struct({
  * Technical Retry (#1402 H-09, #1403): a later attempt of the SAME message, with the earlier attempt it follows and why that one
  * no longer blocked it. Both attempt numbers are named, so the link explains itself from either attempt.
  */
-export const MessageHistoryRetryLinkSchema = Schema.Struct({
+const MessageHistoryRetryLinkSchema = Schema.Struct({
   attemptNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   basisKind: Schema.Literals(['PRIOR_NOT_ATTEMPTED', 'PRIOR_REJECTED', 'RECONCILED_NON_ACCEPTANCE']),
   kind: Schema.Literal('TECHNICAL_RETRY'),
   previousAttemptNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   reasonCode: ClosedCodeSchema,
 });
-export const MessageHistoryLinkSchema = Schema.Union([MessageHistoryResendLinkSchema, MessageHistoryRetryLinkSchema]);
+const MessageHistoryLinkSchema = Schema.Union([MessageHistoryResendLinkSchema, MessageHistoryRetryLinkSchema]);
 export type MessageHistoryLink = typeof MessageHistoryLinkSchema.Type;
 
 /**
@@ -185,7 +183,7 @@ export type MessageHistoryLink = typeof MessageHistoryLinkSchema.Type;
  * activated it, when, for which scope and why. It carries identity, a digest, a Principal reference and the reason the
  * administrator gave (bounded text, never a template text), so it has its OWN field permission and is omitted without it.
  */
-export const MessageHistoryTemplateUseSchema = Schema.Struct({
+const MessageHistoryTemplateUseSchema = Schema.Struct({
   activation: Schema.optionalKey(
     Schema.Struct({
       activatedAt: Schema.DateTimeUtcFromString,
@@ -202,7 +200,6 @@ export const MessageHistoryTemplateUseSchema = Schema.Struct({
   scope: TemplateScopeSchema,
   source: TemplateTextSourceSchema,
 });
-export type MessageHistoryTemplateUse = typeof MessageHistoryTemplateUseSchema.Type;
 
 export const MessageHistoryItemSchema = Schema.Struct({
   decidedAt: Schema.DateTimeUtcFromString,

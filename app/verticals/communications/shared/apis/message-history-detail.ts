@@ -10,7 +10,7 @@ import { MessageHistoryDetailResultSchema } from '../message-history-read.ts';
  * The request names ONE message (by its intent) or ONE request-level decision that has no message (by its request), never both:
  * the trusted operation scope, never the payload, chooses the Tenant and Legal Entity.
  */
-export const MessageHistoryDetailByIntentSchema = Schema.Struct({ intentId: MessageIntentIdSchema });
+const MessageHistoryDetailByIntentSchema = Schema.Struct({ intentId: MessageIntentIdSchema });
 export const MessageHistoryDetailByRequestSchema = Schema.Struct({ requestId: CommunicationRequestIdSchema });
 export const MessageHistoryDetailRequestSchema = Schema.Union([
   MessageHistoryDetailByIntentSchema,
