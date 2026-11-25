@@ -259,9 +259,9 @@ const retirementGraph = (
 ): ModuleGraph => {
   const files = [...sources.keys()];
   const resolved = new Map(
-    [...packages].map(([name, { dir, exports, readable }]) => [
+    [...packages].map(([name, { dir, exports }]) => [
       name,
-      { dir, exports, read: readable && files.some((file) => file.startsWith(`${dir}${nodePath.sep}`)) },
+      { dir, exports, held: files.some((file) => file.startsWith(`${dir}${nodePath.sep}`)) },
     ]),
   );
   // Its sources hold no workspace library's files: what it does not read is a package the sources do not hold.
@@ -522,10 +522,8 @@ const WorkspaceManifestSchema = Schema.Struct({
 });
 
 /** A package of the workspace as the retirement reads it: where it lies, what it exports, the module owning it. */
-interface RetirementPackage extends Omit<WorkspacePackage, 'read'> {
+interface RetirementPackage extends Omit<WorkspacePackage, 'held'> {
   readonly owner: string | undefined;
-  /** A module or a contract package: one the graph reads when the retirement reads its sources. */
-  readonly readable: boolean;
 }
 
 /** Every package of the workspace (`apps`, `verticals`, `packages`), by name, as its manifest declares it. */
@@ -560,7 +558,6 @@ const workspacePackages = Effect.fn('workspacePackages')(function* workspacePack
           dir: nodePath.join(directory, entry),
           exports: decoded.exports,
           owner: root === 'packages' ? decoded.ontosContractOwner?.moduleId : undefined,
-          readable: root === 'verticals' || decoded.ontosContractOwner !== undefined,
         });
       }
     }

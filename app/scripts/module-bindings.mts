@@ -651,11 +651,11 @@ export interface WorkspacePackage {
   readonly dir: string;
   readonly exports: PackageExports | undefined;
   /**
-   * Whether the graph reads its files (a module or a contract package whose files the sources hold), so a specifier
-   * naming one must name a file that exists; one of another package names what its `exports` publishes, which the
-   * graph never follows.
+   * Whether the sources hold its files beside its manifest, so the graph reads them and a specifier naming one, through
+   * its `exports` too, must name a file that exists; one held by its manifest alone names what its `exports`
+   * publishes, which the graph never reads.
    */
-  readonly read: boolean;
+  readonly held: boolean;
 }
 
 /** The scope of the workspace's packages: a specifier in it names a file of the workspace, never a library. */
@@ -762,8 +762,9 @@ const subpathEntry = (exports: PackageExports, subpath: string): PackageExports 
  * The one resolution of a module specifier, for the rules and the retirement planner alike, as TypeScript's `Bundler`
  * resolution resolves it: a relative or absolute path, with the extension substitutions (`.js` to `.ts`, …), no
  * extension, or the index of a directory (`bundlerCandidates`); a package of the workspace scope, through its
- * `exports` map (a subpath without an entry names nothing), or as a path inside it when it has none. Gives the file
- * that exists, undefined for a workspace specifier that names none, and the specifier itself for a library.
+ * `exports` map (a subpath without an entry names nothing), or as a path inside it when it has none, what it
+ * publishes taken as a path is when the sources hold the package's files. Gives the file that exists, undefined for a
+ * workspace specifier that names none, and the specifier itself for a package outside the workspace scope.
  */
 export const resolvedSpecifier = (
   exists: (file: string) => boolean,
@@ -786,8 +787,9 @@ export const resolvedSpecifier = (
     const published = found?.exports === undefined ? subpath : exportedPath(subpathEntry(found.exports, subpath));
     const target =
       found === undefined || published === undefined ? undefined : nodePath.posix.join(found.dir, published);
-    // A package the graph reads names a file that exists; another one names what it publishes.
-    const named = found?.read === false ? nodePath.posix.normalize : existing;
+    // A held package names a file that exists, its `exports` target under the `Bundler` candidates as a path is; one
+    // held by its manifest alone names what it publishes.
+    const named = found?.held === false ? nodePath.posix.normalize : existing;
     return target === undefined ? undefined : named(target);
   };
 };
@@ -840,10 +842,9 @@ interface ExportStep {
 
 /**
  * What every link still owes: the members to take from what it resolves to (`Read.X` resolves `Read`, then takes
- * `X`), and the declaration that wrote the member access, which is where a member of a declared value ends.
+ * `X`). A member of a declared value ends on that declaration, wherever the member was written on the way.
  */
 interface Pending {
-  readonly holder?: DeclaredExport;
   readonly member: readonly string[];
 }
 
@@ -1247,7 +1248,7 @@ const memberPath = (bindings: ModuleBindings, written: Node): readonly [Node, re
 /** An expansion with the members the link it came from still owes, after its own; an origin takes them. */
 const owedBy = (item: Expansion, owed: Pending): Expansion => {
   if (item.kind === 'binding' || item.kind === 'name' || item.kind === 'reference') {
-    return { ...item, holder: item.holder ?? owed.holder, member: [...item.member, ...owed.member] };
+    return { ...item, member: [...item.member, ...owed.member] };
   }
   const [first, ...rest] = owed.member;
   if (first === undefined) {
@@ -1264,7 +1265,6 @@ const owedBy = (item: Expansion, owed: Pending): Expansion => {
     }
     return {
       file: item.file,
-      holder: owed.holder,
       kind: 'name',
       member: rest,
       name: first,
@@ -1284,8 +1284,8 @@ const owedBy = (item: Expansion, owed: Pending): Expansion => {
     }
     return { ...item, name: [...(item.name === '*' ? [] : [item.name]), ...owed.member].join('.') };
   }
-  // A member of a declared value is no other name for anything: the declaration that takes it is where it ends.
-  return item.kind === 'declared' && owed.holder !== undefined ? owed.holder : item;
+  // A member of a declared value is judged on the declaration the chain ends on, never on an alias on the way.
+  return item;
 };
 
 /** A destructuring with a default on the way to a binding. */
@@ -1360,7 +1360,6 @@ const importTypeLinks = (
     ? undefined
     : [
         owedBy(namedIn(graph, step, node.source.value, specifierName(qualified[0])), {
-          holder: owed.holder,
           member: [...qualified[1], ...owed.member],
         }),
       ];
@@ -1407,12 +1406,7 @@ const rootLinks = (graph: ModuleGraph, step: ExportStep, root: Node, owed: Pendi
  * (`UNREAD_MEMBER`) taken of a whole module, a load that is not readable (`loadSpecifier`), and a loader global
  * used other than as `isReadLoaderGlobal` reads it cannot be followed.
  */
-const aliasLinks = (
-  graph: ModuleGraph,
-  step: ExportStep,
-  binding: ModuleBinding,
-  declared: DeclaredExport,
-): readonly Expansion[] | undefined => {
+const aliasLinks = (graph: ModuleGraph, step: ExportStep, binding: ModuleBinding): readonly Expansion[] | undefined => {
   const found = writtenFor(step.bindings, binding.identifier);
   if (found === UNREAD_DESTRUCTURING) {
     return [
@@ -1427,12 +1421,10 @@ const aliasLinks = (
   const taken = found?.taken ?? [];
   const inner = found === undefined ? undefined : unwrapped(step.bindings, found.written);
   if (inner?.type === 'TSExternalModuleReference') {
-    return rootLinks(graph, step, inner, { holder: declared, member: taken });
+    return rootLinks(graph, step, inner, { member: taken });
   }
   const path = inner === undefined ? undefined : memberPath(step.bindings, inner);
-  return path === undefined
-    ? undefined
-    : rootLinks(graph, step, path[0], { holder: declared, member: [...path[1], ...taken] });
+  return path === undefined ? undefined : rootLinks(graph, step, path[0], { member: [...path[1], ...taken] });
 };
 
 const destructuringParts = new Set(['ArrayPattern', 'AssignmentPattern', 'ObjectPattern', 'Property', 'RestElement']);
@@ -1473,14 +1465,11 @@ const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): reado
   if (changing !== undefined) {
     return [{ file: step.file, kind: 'unresolved', reason: changing, trail: step.trail }];
   }
-  const declared: DeclaredExport = {
-    bindings: step.bindings,
-    file: step.file,
-    kind: 'declared',
-    node: binding.identifier,
-    trail: step.trail,
-  };
-  return aliasLinks(graph, step, binding, declared) ?? [declared];
+  return (
+    aliasLinks(graph, step, binding) ?? [
+      { bindings: step.bindings, file: step.file, kind: 'declared', node: binding.identifier, trail: step.trail },
+    ]
+  );
 };
 
 /** A reference: the module bindings it names, a global (`String`, `globalThis`) no scope of the file declares. */
@@ -1603,26 +1592,23 @@ const expansion = (graph: ModuleGraph, link: ExportLink): readonly Expansion[] =
 };
 
 /**
- * What the follower ends on in a file of a workspace library, a declaration or the whole module: a library value, the
- * export of the library file the chain entered, as a library the graph does not read gives it. Only the chain of other
- * names is followed into the library; what a library declaration holds is not walked. A link the follower cannot follow
- * there stays one.
+ * What the follower ends on at a declaration of a workspace library's file (list 2 there): a library value, the
+ * export of the library file the chain entered, as a library the graph does not read gives it, with every file the
+ * chain passed. What a library declaration holds is not walked. A whole library module stays one, judged by what it
+ * exports; a link the follower cannot follow there stays one.
  */
 const libraryValue = (graph: ModuleGraph, origin: ExportOrigin): ExportOrigin => {
-  if ((origin.kind !== 'declared' && origin.kind !== 'namespace') || !graph.library(origin.file)) {
+  if (origin.kind !== 'declared' || !graph.library(origin.file)) {
     return origin;
   }
-  const entered = origin.trail.findIndex((passed) => graph.library(passed));
-  const target = origin.trail[Math.max(entered, 0)] ?? origin.file;
-  const named =
-    origin.kind === 'declared' && origin.node.type === 'Identifier' ? specifierName(origin.node) : 'default';
+  const target = origin.trail.find((passed) => graph.library(passed)) ?? origin.file;
   return {
     kind: 'foreign',
-    name: origin.kind === 'namespace' ? '*' : named,
+    name: origin.node.type === 'Identifier' ? specifierName(origin.node) : 'default',
     specifier: target,
     star: false,
     target,
-    trail: origin.trail.slice(0, Math.max(entered, 1)),
+    trail: origin.trail,
   };
 };
 

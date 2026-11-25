@@ -4874,6 +4874,7 @@ const readTakingProblems = (
 
 /** What one name an owner entry exports resolves to, judged against the module's package reads. */
 const exportedReadProblem = (
+  graph: ModuleGraph,
   entry: OwnerEntry,
   ownerPath: string,
   reads: ModuleReadFiles,
@@ -4897,11 +4898,15 @@ const exportedReadProblem = (
     }
     return origin.file.startsWith(`${ownerPath}/`) || !fromOwner ? undefined : outside;
   }
+  // A library value the entry takes itself, through library files alone, is the library's; one an owner file passes on
+  // is no declaration of an owner file.
   if (origin.kind === 'foreign') {
-    return origin.trail.length > 1 || origin.specifier.startsWith('.') ? outside : undefined;
+    const passed = origin.trail.filter((file) => !graph.library(file));
+    return passed.length > 1 || origin.specifier.startsWith('.') ? outside : undefined;
   }
-  // A name that cannot be followed fails for every owner entry (`reexportedProblems`).
-  return origin.kind === 'namespace' ? `${leaves} passes on the whole module ${origin.file}${admitted}` : undefined;
+  // A whole module is judged by its names (`entryExportOrigins`); a name that cannot be followed fails for every owner
+  // entry (`reexportedProblems`).
+  return undefined;
 };
 
 /** The module bindings of an entry it exports itself under a name: `export const`, `export { a as b }`. */
@@ -4935,24 +4940,46 @@ const entryDefaultExports = (bindings: ModuleBindings): readonly Node[] =>
   });
 
 /**
+ * Every name an owner entry exports with what the one follower resolves it to, and every `export *` whose names it
+ * cannot list (`*`). A whole module of a file the graph reads that the entry exports under any form (`export * as ns
+ * from`, a namespace import exported again, an alias of one, a readable load) is judged by every name that module
+ * exports, each followed as if the entry exported it (`ns.Name`), through the files that led to the module.
+ */
+const entryExportOrigins = (graph: ModuleGraph, file: string): readonly (readonly [string, ExportOrigin])[] => {
+  const followed = (from: string, prefix: string, before: readonly string[]) => {
+    const { names, opaque } = moduleExports(graph, from);
+    const passed = (origin: ExportOrigin): ExportOrigin => ({ ...origin, trail: [...before, ...origin.trail] });
+    return [
+      ...names.flatMap((name) =>
+        exportOrigins(graph, from, name).map((origin) => [`${prefix}${name}`, passed(origin)] as const),
+      ),
+      ...opaque.map((origin) => ['*', passed(origin)] as const),
+    ];
+  };
+  const exported: (readonly [string, ExportOrigin])[] = [];
+  const pending = [...followed(file, '', [])];
+  const expanded = new Set<string>();
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const [name, origin] = next;
+    if (origin.kind !== 'namespace') {
+      exported.push(next);
+    } else if (!expanded.has(origin.file)) {
+      expanded.add(origin.file);
+      pending.push(...followed(origin.file, `${name}.`, origin.trail.slice(0, -1)));
+    }
+  }
+  return exported;
+};
+
+/**
  * Every file an owner entry passes bindings on from, each judged once whatever names or trails reach it: each file an
  * `export … from` or `export *` of the entry names, each file one of those names in turn, and every file an export of
- * the entry passes through. A file of them that does not parse, names no file of the workspace, or holds a load no
- * static rule reads (`unreadableLoads`) may pass on anything.
+ * the entry passes through, a workspace library's too. A file of them that does not parse, names no file of the
+ * workspace, or holds a load no static rule reads (`unreadableLoads`) may pass on anything.
  */
-const reexportedProblems = (
-  graph: ModuleGraph,
-  entry: OwnerEntry,
-  names: (target: string | undefined) => boolean,
-): readonly string[] => {
+const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly string[] => {
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
-  const exported = moduleExports(graph, entry.file);
-  const origins = [
-    ...exported.names.flatMap((name) =>
-      exportOrigins(graph, entry.file, name).map((origin) => [name, origin] as const),
-    ),
-    ...exported.opaque.map((origin) => ['*', origin] as const),
-  ];
+  const origins = entryExportOrigins(graph, entry.file);
   const files = new Set(origins.flatMap(([, origin]) => origin.trail.slice(1)));
   const problems: string[] = [];
   const pending = [entry.file, ...files];
@@ -4970,7 +4997,7 @@ const reexportedProblems = (
       // Every static specifier is resolved, whether or not a binding is taken from it; re-exports are followed.
       for (const { node, specifier } of moduleSpecifiers(bindings)) {
         const target = graph.target(file, specifier);
-        if (target === undefined || !names(target)) {
+        if (target === undefined) {
           problems.push(
             `${entry.file}: ${file}:${lineOf(bindings.source, node.start)} names ${specifier}, which is no file of the workspace`,
           );
@@ -5053,11 +5080,7 @@ const ownerEntryReadProblems = (
       (ownInit !== null && isWithin(identifier, ownInit) && isMountArgument(bindings, identifier));
     const reached = readReach(graph, entry.file, bindings, reads, isAdmitted);
     const reaching = (origin: DeclaredExport): boolean => declarationReaches(graph, bindings, reached, reads, origin);
-    const { names, opaque } = moduleExports(graph, entry.file);
-    const exported = [
-      ...names.flatMap((name) => exportOrigins(graph, entry.file, name).map((origin) => [name, origin] as const)),
-      ...opaque.map((origin) => ['*', origin] as const),
-    ];
+    const exported = entryExportOrigins(graph, entry.file);
     // What the entry exports of its own is judged where it stands too, wherever it is another name for: an annotation
     // that reaches a read leaves with the value it annotates.
     const ownExports = [
@@ -5077,7 +5100,7 @@ const ownerEntryReadProblems = (
       ...new Set([
         ...readTakingProblems(graph, entry, bindings, reads),
         ...ownExports,
-        ...exported.flatMap((named) => exportedReadProblem(entry, ownerPath, reads, reaching, named) ?? []),
+        ...exported.flatMap((named) => exportedReadProblem(graph, entry, ownerPath, reads, reaching, named) ?? []),
       ]),
     ];
   });
@@ -6573,17 +6596,18 @@ const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
         dir: path.posix.dirname(file),
         exports: Option.getOrUndefined(Schema.decodeUnknownOption(Schema.fromJsonString(ManifestExportsSchema))(source))
           ?.exports,
+        held: held.has(path.posix.dirname(file)),
         owner: manifest.owner,
-        // A module (`verticals/<module>`) or a contract package (one declaring an `ontosContractOwner`) whose files
-        // the sources hold; one held by its manifest alone is named through its `exports`, as a library package is.
-        read: (root === 'verticals' || manifest.owner !== undefined) && held.has(path.posix.dirname(file)),
       });
     }
   }
   const workspace: Workspace = {
     heldDirectories: [...packages.values()].flatMap((found) => (held.has(found.dir) ? [`${found.dir}/`] : [])),
     packages,
-    readDirectories: [...packages.values()].flatMap((found) => (found.read ? [`${found.dir}/`] : [])),
+    // A module (`verticals/<module>`) or a contract package (one declaring an `ontosContractOwner`) the sources hold.
+    readDirectories: [...packages.values()].flatMap((found) =>
+      found.held && (found.dir.startsWith('verticals/') || found.owner !== undefined) ? [`${found.dir}/`] : [],
+    ),
   };
   workspaces.set(sources, workspace);
   return workspace;
@@ -7148,10 +7172,6 @@ const ownerEntryProblems = (
       ]),
     ),
   };
-  // A workspace target names a file: one that exists when the sources hold its package's files, not its manifest alone.
-  const namesFile = (target: string | undefined): boolean =>
-    target !== undefined &&
-    (sources.has(target) || !workspace.heldDirectories.some((directory) => target.startsWith(directory)));
   const entries: readonly OwnerEntry[] = [
     { file: sharedFile, mounts: true, source: inputs.sharedApi },
     ...(aggregate === undefined ? [] : [{ ...aggregate, mounts: false }]),
@@ -7173,7 +7193,7 @@ const ownerEntryProblems = (
               (node) =>
                 `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
             ),
-            ...reexportedProblems(graph, entry, namesFile),
+            ...reexportedProblems(graph, entry),
           ];
     }),
     ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),

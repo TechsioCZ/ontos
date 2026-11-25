@@ -48,6 +48,25 @@ const PRICE_GROUP_OWNER = 'verticals/price-group-catalog';
 const LOADS_UNREAD = 'loads a module it does not read statically';
 const PRICE_GROUP_ID = 'price-group-catalog';
 const priceGroupContracts = 'packages/price-group-catalog-contracts';
+
+/** A read the table of carried names takes: its API value and the contract package subpath it comes from. */
+interface CarriedRead {
+  readonly name: string;
+  readonly specifier: string;
+}
+
+const OWN_READ: CarriedRead = { name: 'CurrentPaymentTermsApi', specifier: contractSpecifier };
+const FOREIGN_READ: CarriedRead = {
+  name: 'PaymentTermAffectedUseAssessmentApi',
+  specifier: '@app/customer-payment-term-contracts/payment-term-affected-use-assessment',
+};
+const CARRIED = 'Carried';
+const SHARED_CONTRACTS_MANIFEST = 'packages/shared-contracts/package.json';
+const STARTUP_FILE = 'packages/shared-contracts/src/startup.ts';
+const ADDITIONS_START = '  // <generated-governed-http-api-additions>\n';
+const EXPORTS_OPEN = '"exports": {\n';
+const PASSES_ON_READ = 'passes on the package read';
+
 /** A declaration of an owner file that wraps an API value in a new one of its own. */
 const annotated = (api: string): string =>
   `export const ExtraApi = ${api}.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });`;
@@ -567,7 +586,7 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     const mountImport = `import { CurrentPaymentTermsApi } from '${contractSpecifier}';\n`;
     const layerImport = `import { currentPaymentTermsReadApiLive } from './${name}-read-server.ts';\n`;
     const layerLine = '    currentPaymentTermsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),\n';
-    const additionsStart = '  // <generated-governed-http-api-additions>\n';
+    const additionsStart = ADDITIONS_START;
     const layersStart = '    // <generated-governed-http-handler-layers>\n';
     /** Each line moved from its generated slot to just before the slot's opening marker. */
     const beforeMarkers = (source: string, moves: readonly (readonly [string, string])[]): string => {
@@ -795,7 +814,7 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     // a JavaScript owner file is source, read as a TypeScript one is.
     const ownerPackage = `${owner}/package.json`;
     const withExports = (entries: string): string =>
-      replaced(required(sources, ownerPackage), '"exports": {\n', `"exports": {\n${entries}\n`);
+      replaced(required(sources, ownerPackage), EXPORTS_OPEN, `"exports": {\n${entries}\n`);
     for (const [label, entries, file, specifier] of [
       [
         'the most specific of two matching export patterns',
@@ -828,10 +847,10 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     }
     // Every static specifier of an owner entry is resolved, whether or not a binding is taken from it, and a package
     // whose files the sources hold names only files that exist; one held by its manifest alone names what it publishes.
-    const sharedContracts = 'packages/shared-contracts/package.json';
+    const sharedContracts = SHARED_CONTRACTS_MANIFEST;
     const startup = replaced(
       required(sources, sharedContracts),
-      '"exports": {\n',
+      EXPORTS_OPEN,
       '"exports": {\n    "./startup": "./src/startup.ts",\n',
     );
     const reexportedStartup: readonly (readonly [string, string])[] = [
@@ -855,30 +874,17 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(unresolved.diagnostics, label).toContain(`names ${specifier}, which is no file of the workspace`);
     }
     expect(judged(sources, reexportedStartup).valid).toBe(true);
-    // A re-export chain that enters a file of a library package the sources hold reads that file as any other on it.
-    for (const [label, startupSource, expected] of [
-      [
-        'a library file passing on the package read',
-        `export { CurrentPaymentTermsApi as Startup } from '${contractSpecifier}';\n`,
-        `${sharedApiFile}: export Startup passes on the package read`,
-      ],
-      [
-        'a library file re-exporting a missing file',
-        "export { Startup } from './does-not-exist.ts';\n",
-        'names ./does-not-exist.ts, which is no file of the workspace',
-      ],
-    ] as const) {
-      const chained = judged(sources, [
-        ...reexportedStartup,
-        ['packages/shared-contracts/src/startup.ts', startupSource],
-      ]);
-      expect(chained.valid, label).toBe(false);
-      expect(chained.diagnostics, label).toContain(expected);
-    }
-    // Whatever statement carries a name an owner entry exports into a file of a library package the sources hold, that
-    // file is read like any other on the chain: an import exported again, a plain alias of one, `export … from` (the
-    // control), in `./api` and in the client aggregate, and a workspace SDK passing on the read's client.
-    const startupFile = 'packages/shared-contracts/src/startup.ts';
+    // A library file on a re-export chain is judged as any other on it: a specifier of it names a file that exists.
+    const chained = judged(sources, [
+      ...reexportedStartup,
+      [STARTUP_FILE, "export { Startup } from './does-not-exist.ts';\n"],
+    ]);
+    expect(chained.valid).toBe(false);
+    expect(chained.diagnostics).toContain('names ./does-not-exist.ts, which is no file of the workspace');
+    // However an owner entry passes on a name of a file of a library package the sources hold (a plain alias of an import,
+    // an import the client aggregate exports again, `export … from` there, a workspace SDK passing on the read's client),
+    // that file is read like any other on the chain. The table of carried names covers the forms of the library file.
+    const startupFile = STARTUP_FILE;
     const withLibraries = new Map([
       ...sources,
       ...(yield* loadSources(['packages/shared-contracts', 'packages/core-runtime'])),
@@ -900,15 +906,7 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     const startupImport = "import { Startup } from '@app/shared-contracts/startup';\n";
     const startupAlias = "import { Startup as S } from '@app/shared-contracts/startup';\nexport const Startup = S;\n";
     for (const [label, file, appended, exportedName, changes] of [
-      ['an import exported again', sharedApiFile, `${startupImport}export { Startup };\n`, 'Startup', passingOn],
       ['a plain alias of an import', sharedApiFile, startupAlias, 'Startup', passingOn],
-      [
-        'export … from',
-        sharedApiFile,
-        "export { Startup } from '@app/shared-contracts/startup';\n",
-        'Startup',
-        passingOn,
-      ],
       [
         'an import the aggregate exports again',
         aggregateFile,
@@ -936,13 +934,13 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(passed.valid, label).toBe(false);
       expect(passed.diagnostics, label).toContain(`${file}: export ${exportedName} passes on the package read`);
     }
-    // A library file no exported name is followed into stays unread: an entry that only uses what it imports passes.
+    // A name an entry imports from a library file and only uses is no name it passes on: the entry passes.
     const used = judged(withLibraries, [
       ...passingOn,
       [sharedApiFile, `${sharedApi}\n${startupImport}const started = Startup;\n`],
     ]);
     expect(used.valid, used.diagnostics).toBe(true);
-    // The chain is worked out to a fixed point: a name an `export *` of a library file passes on is followed in turn.
+    // A name an `export *` of a library file passes on is followed in turn, and one no file exports fails.
     const relayed = judged(withLibraries, [
       [sharedContracts, startup],
       [startupFile, "export { Typo as Startup } from './relay.ts';\n"],
@@ -951,24 +949,9 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     ]);
     expect(relayed.valid).toBe(false);
     expect(relayed.diagnostics).toContain(`${sharedApiFile}: export Startup cannot be followed`);
-    // No rule stops at a workspace library whose files the sources hold. Strict reach in an owner entry follows what
-    // an exported declaration refers to through the library, and so does the mount judge in a declaration it walks.
+    // Strict reach in the client aggregate follows what an exported declaration refers to through a library file too.
     const reachingVerdicts = (
       [
-        [
-          'an object holding a library import',
-          sharedApiFile,
-          `${startupImport}export const bundle = { Startup };\n`,
-          'bundle',
-          passingOn,
-        ],
-        [
-          'a call on a library import',
-          sharedApiFile,
-          `${startupImport}export const Wrapped = Startup.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
-          'Wrapped',
-          passingOn,
-        ],
         [
           'an object holding a library import in the aggregate',
           aggregateFile,
@@ -999,49 +982,6 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       return [label, reaching.valid, reached] as const;
     });
     expect(reachingVerdicts).toEqual(reachingVerdicts.map(([label]) => [label, false, true]));
-    // A library value that is no read, exported in a new object, passes: what a library declaration holds is not walked.
-    const libraryValue = judged(withLibraries, [
-      [
-        sharedApiFile,
-        `${sharedApi}\nimport { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';\nexport const helpers = { makeProblemDetailsSchema };\n`,
-      ],
-    ]);
-    expect(libraryValue.valid, libraryValue.diagnostics).toBe(true);
-    // Another module's read API, taken through a library into an owner file's own API, is found when that is mounted.
-    const throughLibrary = judged(withLibraries, [
-      [sharedContracts, startup],
-      [startupFile, `export { ${foreign} } from '${foreignSpecifier}';\n`],
-      [
-        `${owner}/shared/extra.ts`,
-        `import { HttpApi } from '@modern-js/bff-effect/effect-client';\nimport { ${foreign} } from '@app/shared-contracts/startup';\n\nexport const ExtraApi = ${foreign}.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
-      ],
-      [
-        sharedApiFile,
-        replaced(
-          `import { ExtraApi } from './extra.ts';\n${sharedApi}`,
-          additionsStart,
-          `  .addHttpApi(ExtraApi)\n${additionsStart}`,
-        ),
-      ],
-    ]);
-    expect(throughLibrary.valid).toBe(false);
-    expect(throughLibrary.diagnostics).toContain(unknown(sharedApiFile, 'ExtraApi'));
-    // A library value built with the HttpApi family, used inside the module's own API, is a library value: passes.
-    const libraryGroup = judged(withLibraries, [
-      [
-        `${owner}/shared/extra.ts`,
-        "import { HttpApi } from '@modern-js/bff-effect/effect-client';\nimport { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';\n\nexport const ExtraApi = HttpApi.make('Extra').add(ExternalIdentityApiGroup);\n",
-      ],
-      [
-        sharedApiFile,
-        replaced(
-          `import { ExtraApi } from './extra.ts';\n${sharedApi}`,
-          additionsStart,
-          `  .addHttpApi(ExtraApi)\n${additionsStart}`,
-        ),
-      ],
-    ]);
-    expect(libraryGroup.valid, libraryGroup.diagnostics).toBe(true);
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name
@@ -1550,6 +1490,329 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
   }),
 );
 
+/** A list 1 form carrying a read's API value to `Carried`: the carrier's source, and how a consumer imports and refers to it. */
+interface CarryForm {
+  readonly carrier: (read: CarriedRead) => string;
+  readonly imported: (read: CarriedRead) => string;
+  readonly label: string;
+  readonly value: (read: CarriedRead) => string;
+}
+
+const named = (): string => `{ ${CARRIED} }`;
+const carried = (): string => CARRIED;
+
+/** Every list 1 form that carries a name from one file to the next. */
+const CARRY_FORMS: readonly CarryForm[] = [
+  {
+    carrier: (read) => `export { ${read.name} as ${CARRIED} } from '${read.specifier}';\n`,
+    imported: named,
+    label: 'export … from',
+    value: carried,
+  },
+  {
+    carrier: (read) => `export * from '${read.specifier}';\n`,
+    imported: (read) => `{ ${read.name} as ${CARRIED} }`,
+    label: 'export *',
+    value: carried,
+  },
+  {
+    carrier: (read) => `export * as ${CARRIED} from '${read.specifier}';\n`,
+    imported: named,
+    label: 'export * as',
+    value: (read) => `${CARRIED}.${read.name}`,
+  },
+  {
+    carrier: (read) => `import { ${read.name} } from '${read.specifier}';\nexport { ${read.name} as ${CARRIED} };\n`,
+    imported: named,
+    label: 'an import exported again',
+    value: carried,
+  },
+  {
+    carrier: (read) => `import { ${read.name} } from '${read.specifier}';\nexport const ${CARRIED} = ${read.name};\n`,
+    imported: named,
+    label: 'a const alias',
+    value: carried,
+  },
+  {
+    carrier: (read) =>
+      `import * as Contract from '${read.specifier}';\nexport const ${CARRIED} = Contract.${read.name};\n`,
+    imported: named,
+    label: 'a namespace member',
+    value: carried,
+  },
+  {
+    carrier: (read) =>
+      `import * as Contract from '${read.specifier}';\nexport const { ${read.name}: ${CARRIED} } = Contract;\n`,
+    imported: named,
+    label: 'a destructuring',
+    value: carried,
+  },
+  {
+    carrier: (read) => `export const ${CARRIED} = require('${read.specifier}').${read.name};\n`,
+    imported: named,
+    label: 'a readable load',
+    value: carried,
+  },
+  {
+    carrier: (read) => `import { ${read.name} } from '${read.specifier}';\nexport default ${read.name};\n`,
+    imported: carried,
+    label: 'a default export of a name',
+    value: carried,
+  },
+];
+
+/** A consumer of `Carried` in the owner entries: the files it writes and the diagnostic of its rule. */
+interface CarryConsumer {
+  readonly diagnostics: readonly string[];
+  readonly files: (
+    sources: ReadonlyMap<string, string>,
+    imported: string,
+    value: string,
+  ) => readonly (readonly [string, string])[];
+  readonly label: string;
+  /** A library value that is no read, which the consumer may take. */
+  readonly libraryValue: string;
+  readonly read: CarriedRead;
+}
+
+const PROBLEM_DETAILS_VALUE = "{ makeProblemDetailsSchema as Carried } from '@app/shared-contracts/problem-details'";
+
+/** The consumer that writes `declaration` into `./api` after what it imports. */
+const entryConsumer = (
+  label: string,
+  declaration: (value: string) => string,
+  diagnostics: readonly string[],
+): CarryConsumer => ({
+  diagnostics,
+  files: (sources, imported, value) => [
+    [sharedApiFile, `${required(sources, sharedApiFile)}\n${imported}${declaration(value)}`],
+  ],
+  label,
+  libraryValue: PROBLEM_DETAILS_VALUE,
+  read: OWN_READ,
+});
+
+const REACHES = `${sharedApiFile}: export Wrapped reaches a package read of the module`;
+
+const EXPORT_CONSUMERS: readonly CarryConsumer[] = [
+  entryConsumer('a plain export', () => `export { ${CARRIED} };\n`, [
+    `${sharedApiFile}: export ${CARRIED}`,
+    PASSES_ON_READ,
+  ]),
+  {
+    ...entryConsumer('a namespace export of the carrier', () => '', [
+      `${sharedApiFile}: export Carriers.`,
+      PASSES_ON_READ,
+    ]),
+    files: (sources, imported) => {
+      const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.specifier ?? '';
+      return [[sharedApiFile, `${required(sources, sharedApiFile)}\nexport * as Carriers from '${from}';\n`]];
+    },
+  },
+];
+
+const BUILDER_CONSUMERS: readonly CarryConsumer[] = [
+  entryConsumer(
+    'a call',
+    (value) => `export const Wrapped = ${value}.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
+    [REACHES],
+  ),
+  entryConsumer('an object holding a member', (value) => `export const Wrapped = { groups: ${value}.groups };\n`, [
+    REACHES,
+  ]),
+  entryConsumer('a bound member', (value) => `export const Wrapped = ${value}.bind(undefined);\n`, [REACHES]),
+];
+
+const MOUNT_CONSUMER: CarryConsumer = {
+  diagnostics: [unknown(sharedApiFile, 'ExtraApi')],
+  files: (sources, imported, value) => [
+    [
+      `${owner}/shared/extra.ts`,
+      `import { HttpApi } from '@modern-js/bff-effect/effect-client';\n${imported}\nexport const ExtraApi = ${value}.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });\n`,
+    ],
+    [
+      sharedApiFile,
+      replaced(
+        `import { ExtraApi } from './extra.ts';\n${required(sources, sharedApiFile)}`,
+        ADDITIONS_START,
+        `  .addHttpApi(ExtraApi)\n${ADDITIONS_START}`,
+      ),
+    ],
+  ],
+  label: "a mount through an owner file of another module's API",
+  libraryValue: "{ ExternalIdentityApiGroup as Carried } from '@app/shared-contracts/external-identity'",
+  read: FOREIGN_READ,
+};
+
+/** Payment Term Catalog's sources with the workspace libraries whose files a carrier may stand in. */
+const carrySources = Effect.fn(function* carrySources() {
+  return yield* loadSources([
+    owner,
+    contracts,
+    customerContracts,
+    'packages/shared-contracts',
+    'packages/core-runtime',
+  ]);
+});
+
+/**
+ * The verdict of every cell of the table: each form in each place, consumed as `consumer` consumes it, and the two
+ * controls (the direct import of the contract package, which fails; a library value that is no read, which passes).
+ * A cell reads `fails by its rule` when the seam fails with every diagnostic of the consumer's rule.
+ */
+const carriedVerdicts = (
+  sources: ReadonlyMap<string, string>,
+  consumer: CarryConsumer,
+): readonly (readonly [string, string])[] => {
+  const startupManifest = replaced(
+    required(sources, SHARED_CONTRACTS_MANIFEST),
+    EXPORTS_OPEN,
+    '"exports": {\n    "./startup": "./src/startup.ts",\n',
+  );
+  const places = [
+    ['an owner file', './carrier.ts', (source: string) => [[`${owner}/shared/carrier.ts`, source] as const]],
+    [
+      'a held library file',
+      '@app/shared-contracts/startup',
+      (source: string) => [[SHARED_CONTRACTS_MANIFEST, startupManifest] as const, [STARTUP_FILE, source] as const],
+    ],
+  ] as const;
+  const verdict = (changes: readonly (readonly [string, string])[]): string => {
+    const seen = judged(sources, changes);
+    if (seen.valid) {
+      return 'passes';
+    }
+    return consumer.diagnostics.every((expected) => seen.diagnostics.includes(expected))
+      ? 'fails by its rule'
+      : `fails otherwise: ${seen.diagnostics}`;
+  };
+  const cells = places.flatMap(([place, carrierSpecifier, carrierFiles]) =>
+    CARRY_FORMS.map(
+      (form) =>
+        [
+          `${form.label} in ${place}, then ${consumer.label}`,
+          verdict([
+            ...carrierFiles(form.carrier(consumer.read)),
+            ...consumer.files(
+              sources,
+              `import ${form.imported(consumer.read)} from '${carrierSpecifier}';\n`,
+              form.value(consumer.read),
+            ),
+          ]),
+        ] as const,
+    ),
+  );
+  return [
+    ...cells,
+    [
+      `the direct import of the contract package, then ${consumer.label}`,
+      verdict(
+        consumer.files(
+          sources,
+          `import { ${consumer.read.name} as ${CARRIED} } from '${consumer.read.specifier}';\n`,
+          CARRIED,
+        ),
+      ),
+    ],
+    [
+      `a library value that is no read, then ${consumer.label}`,
+      verdict(consumer.files(sources, `import ${consumer.libraryValue};\n`, CARRIED)),
+    ],
+  ];
+};
+
+/** What every cell of the table must read: each form and the direct import fail by the rule, the library value passes. */
+const expectedVerdicts = (verdicts: readonly (readonly [string, string])[]) =>
+  verdicts.map(([label]) => [label, label.startsWith('a library value') ? 'passes' : 'fails by its rule']);
+
+it.live(
+  'fails every list 1 form that carries the read to what an owner entry exports, from an owner file or a held library',
+  () =>
+    Effect.gen(function* carriedToExports() {
+      const sources = yield* carrySources();
+      const verdicts = EXPORT_CONSUMERS.flatMap((consumer) => carriedVerdicts(sources, consumer));
+      expect(verdicts).toEqual(expectedVerdicts(verdicts));
+    }),
+);
+
+it.live(
+  'fails every list 1 form that carries the read into a builder an owner entry exports, from an owner file or a held library',
+  () =>
+    Effect.gen(function* carriedToBuilders() {
+      const sources = yield* carrySources();
+      const verdicts = BUILDER_CONSUMERS.flatMap((consumer) => carriedVerdicts(sources, consumer));
+      expect(verdicts).toEqual(expectedVerdicts(verdicts));
+    }),
+);
+
+it.live(
+  "fails every list 1 form that carries another module's API into a mounted owner declaration, from an owner file or a held library",
+  () =>
+    Effect.gen(function* carriedToMounts() {
+      const sources = yield* carrySources();
+      const verdicts = carriedVerdicts(sources, MOUNT_CONSUMER);
+      expect(verdicts).toEqual(expectedVerdicts(verdicts));
+    }),
+);
+
+/** A workspace SDK package whose manifest publishes `target` and whose index holds `index`. */
+const paymentSdk = (target: string, index: string): readonly (readonly [string, string])[] => [
+  ['packages/payment-sdk/package.json', JSON.stringify({ exports: { '.': target }, name: '@app/payment-sdk' })],
+  ['packages/payment-sdk/src/index.ts', index],
+];
+
+it.live("resolves a held package's exports target under the Bundler candidates, and fails one that names no file", () =>
+  Effect.gen(function* heldExportsTargets() {
+    const sources = yield* carrySources();
+    // `./src/index.js` names `src/index.ts`, as TypeScript resolves it: the foreign API it passes on is found mounted.
+    const throughJs = judged(sources, [
+      ...paymentSdk(
+        './src/index.js',
+        `export { ${FOREIGN_READ.name} as ${CARRIED} } from '${FOREIGN_READ.specifier}';\n`,
+      ),
+      ...MOUNT_CONSUMER.files(sources, "import { Carried } from '@app/payment-sdk';\n", CARRIED),
+    ]);
+    expect(throughJs.valid).toBe(false);
+    expect(throughJs.diagnostics).toContain(unknown(sharedApiFile, 'ExtraApi'));
+    // A held package's target with no file under the candidates fails closed, as a specifier naming no file does.
+    const missing = judged(sources, [
+      ...paymentSdk('./src/missing.js', 'export const Carried = 1;\n'),
+      [sharedApiFile, `${required(sources, sharedApiFile)}\nexport { Carried } from '@app/payment-sdk';\n`],
+    ]);
+    expect(missing.valid).toBe(false);
+    expect(missing.diagnostics).toContain('names @app/payment-sdk, which is no file of the workspace');
+  }),
+);
+
+it.live('judges a library file an entry passes a name on from the same whether it imports it or re-exports it', () =>
+  Effect.gen(function* libraryFilesOnChains() {
+    const sources = yield* carrySources();
+    const startupManifest = replaced(
+      required(sources, SHARED_CONTRACTS_MANIFEST),
+      EXPORTS_OPEN,
+      `${EXPORTS_OPEN}    "./startup": "./src/startup.ts",\n`,
+    );
+    const verdicts = [
+      ['an import exported again', "import { Startup } from '@app/shared-contracts/startup';\nexport { Startup };\n"],
+      ['export … from', "export { Startup } from '@app/shared-contracts/startup';\n"],
+    ].map(([label, appended]) => {
+      const seen = judged(sources, [
+        [SHARED_CONTRACTS_MANIFEST, startupManifest],
+        [STARTUP_FILE, "const target = 'x';\nvoid import(target);\nexport const Startup = 1;\n"],
+        [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
+      ]);
+      return [
+        label,
+        seen.valid,
+        seen.diagnostics.includes(
+          `${sharedApiFile}: re-exports through ${STARTUP_FILE}, which loads a module it does not read statically at line 2`,
+        ),
+      ];
+    });
+    expect(verdicts).toEqual(verdicts.map(([label]) => [label, false, true]));
+  }),
+);
+
 /** A workspace the full entrypoint check runs on: Price Group Catalog, its contract package and a readiness-only module. */
 const makePackageReadWorkspace = Effect.fn(function* makePackageReadWorkspace() {
   const root = yield* makeFixture();
@@ -1753,7 +2016,7 @@ const chainNames = {
   aggregate: `${PRICE_GROUP_OWNER}/src/api/price-group-catalog-client.ts`,
   exportsPublicApi: 'export PublicApi',
   exportsPublicRequest: 'export PublicRequest',
-  passesOnTheRead: 'passes on the package read',
+  passesOnTheRead: PASSES_ON_READ,
   priceGroups: PRICE_GROUP_OWNER,
   read: '@app/price-group-catalog-contracts/price-group-definition',
   sharedApi: `${PRICE_GROUP_OWNER}/shared/api.ts`,
