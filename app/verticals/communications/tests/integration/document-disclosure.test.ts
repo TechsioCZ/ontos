@@ -22,7 +22,8 @@ import { answers, kindOf, recoveriesOf, stepWith, stopsOf } from '../support/rec
 
 /**
  * [#1409] The document disclosure of the pre-handoff step, on native PostgreSQL as the runtime role and through the REAL scoped
- * routines. Core Media V1 and the document owners do not exist yet (#1443, #1446): the owner is the LABELLED DOUBLE of the
+ * routines. No document owner publishes a Read Communications may call, and Core Media's Reads admit no Communications caller:
+ * the owner is the LABELLED DOUBLE of the
  * port, so these tests prove how Communications ASKS, pins and stops, never that a real Media Asset is stored or authorized.
  * The Messaging Adapter is a labelled double too and records every call, so "nothing was submitted" is a measured fact.
  */

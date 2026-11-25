@@ -28,6 +28,8 @@ const messageHistoryDetailEntrypoint = defineTenantModuleEntrypoint({
  */
 export const messageHistoryDetailRead = defineRead(
   {
+    // Scope-wide like the list (`selectors: []`, owner decision on finer granularity is open): any holder reads the detail of
+    // every message of the exact scope that passes the source visibility check; there is no per-intent narrowing.
     accessDeclaration: {
       key: 'communications.core.message-history.read',
       kind: 'read',

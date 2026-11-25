@@ -7,9 +7,13 @@ import type { DocumentClassificationKeySchema, DocumentForm } from './document-p
 
 /**
  * The Core Media V1 / document owner port (#1409, ACC-06, ACC-08, ACC-09, ADR-0031). Communications never stores, renders or
- * serves a document and has no Media or ACL of its own: the OWNER of a document resolves it to its exact Media Asset and
- * authorizes every disclosure and every open. Core Media V1 availability is open work of other issues (#1443, #1446), so the
- * production composition is the explicit unavailable form and nothing here fakes a published document.
+ * serves a document, has no Media or ACL of its own and never opens a link: the OWNER of a document resolves it to its exact
+ * Media Asset and approves its disclosure, and the owner and Core Media authorize every OPEN of a delivered link afresh, outside
+ * Communications (ACC-06). Core Media now publishes Current and download Reads (`asset-current`, `asset-download`), but they
+ * answer only to the allow-listed caller `catalog`, for a person requester, about a Media Asset reference the caller already
+ * holds; no owner publishes the resolution of a business document to an Asset or the approval of its disclosure. A production
+ * adapter is therefore not buildable from Communications, so the production composition is the explicit unavailable form and
+ * nothing here fakes a published document.
  *
  * A pinned link is the exact Media Asset reference and its one Current revision, `revision = 1` (ADR-0031: one confirmed,
  * usable Media Asset has exactly one logical V1; new bytes are a NEW Asset and an explicit owner assignment). It is neither a
@@ -20,9 +24,9 @@ import type { DocumentClassificationKeySchema, DocumentForm } from './document-p
 export const CURRENT_MEDIA_REVISION = 1;
 
 /**
- * The owner and resource type of a Core Media Asset reference. These are PROPOSED keys until Core Media V1 (#1443, #1446)
- * publishes its own: a pinned link points at a Media Asset only, never at a business document, an Order, an invoice or another
- * module's resource, whatever an owner answers.
+ * The owner and resource type of a Core Media Asset reference, the same strings Core Media publishes (`docs/architecture/CORE_MEDIA.md`):
+ * a pinned link points at a Media Asset only, never at a business document, an Order, an invoice or another module's
+ * resource, whatever an owner answers.
  */
 export const CORE_MEDIA_MODULE_ID = 'core.media';
 export const CORE_MEDIA_ASSET_RESOURCE_TYPE = 'core.media.asset';
@@ -62,23 +66,7 @@ export type DocumentResolutionCase = Data.TaggedEnum<{
 }>;
 export const DocumentResolution = Data.taggedEnum<DocumentResolutionCase>();
 
-export interface DocumentOpenQuery {
-  /** The link as pinned at the message: the owner is never asked about a Current assignment instead. */
-  readonly link: ExactDocumentLink;
-  readonly opener: { readonly principalId: string; readonly tenantId: string };
-}
-
-export type DocumentOpenCase = Data.TaggedEnum<{
-  Allowed: object;
-  Denied: object;
-  /** The Asset behind the pinned link has no available content now. */
-  MediaUnavailable: object;
-}>;
-export const DocumentOpen = Data.taggedEnum<DocumentOpenCase>();
-
 export interface DocumentLinkOwnerService {
-  /** The owner's CURRENT authorization of the OPEN of one pinned link, asked at every open, even for a delivered message. */
-  readonly authorizeOpen: (query: DocumentOpenQuery) => Effect.Effect<DocumentOpenCase, DocumentOwnerUnavailable>;
   /** The owner's Current resolution of a named document and approval of its disclosure, asked before the handoff. */
   readonly resolve: (query: DocumentResolveQuery) => Effect.Effect<DocumentResolutionCase, DocumentOwnerUnavailable>;
 }
@@ -88,10 +76,10 @@ export class DocumentLinkOwner extends Context.Service<DocumentLinkOwner, Docume
 ) {}
 
 /**
- * The only production composition today: Core Media V1 and the document owners publish no such Read yet (#1443, #1446), so
- * every question fails closed. It is explicit so a document is never disclosed or opened by default or by a missing adapter.
+ * The only production composition today: no document owner publishes a Read that resolves its document to a Media Asset and
+ * approves its disclosure, and Core Media's Reads admit no Communications caller, so every question fails closed. It is explicit
+ * so a document is never disclosed by default or by a missing adapter.
  */
 export const unavailableDocumentLinkOwnerLayer = Layer.succeed(DocumentLinkOwner, {
-  authorizeOpen: () => Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' })),
   resolve: () => Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' })),
 });

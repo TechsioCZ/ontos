@@ -26,6 +26,9 @@ const messageHistoryListEntrypoint = defineTenantModuleEntrypoint({
  */
 export const messageHistoryListRead = defineRead(
   {
+    // List-level permission under ADR-0030 (owner decision on finer granularity is open): `selectors: []` is scope-wide, so any
+    // holder reads every message of the exact Tenant or Legal Entity scope that has no source reference. No per-intent, subject
+    // or ResourceRef narrowing is declared here, and the detail Read has the same scope-wide shape under its own key.
     accessDeclaration: {
       key: 'communications.core.message-history.list',
       kind: 'read',
