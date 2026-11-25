@@ -149,26 +149,24 @@ describe('Technical Retry of the same Message Intent (#1403)', () => {
   );
 
   it.live(
-    "[S17 R-10 AC-03] a documented PERMANENT refusal stops for good with a concrete reason, whatever the type's rule, and the source learns a proven failure",
+    "[S17 R-10 R-D10 AC-03] a provider refusal that no approved rule classifies halts as unclassified, whatever the type's rule: never a final stop, never retried, and the source learns it",
     () =>
-      Effect.gen(function* permanent() {
+      Effect.gen(function* unclassified() {
         const world = yield* setup({ types: [recoverableType(5)] });
         const handoff = sequence(answers.refused, answers.accepted);
         const { intentId, requestId } = yield* decideOne(world);
         yield* stepWith(world, handoff, intentId);
-        expect(yield* stepWith(world, handoff, intentId)).toMatchObject({
-          kind: 'STOPPED',
-          reasons: [{ category: 'PERMANENT_REJECTION', cause: 'PROVIDER_REJECTED', proven: true }],
-        });
-        // the proven stop is final: a later delivery neither retries nor records another evaluation
-        expect(kindOf(yield* stepWith(world, handoff, intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+        // every later delivery is only an evaluation: nothing is sent again and the halt is not a proven stop
+        for (let delivery = 0; delivery < 3; delivery += 1) {
+          expect(kindOf(yield* stepWith(world, handoff, intentId))).toBe('HALTED:REFUSAL_UNCLASSIFIED');
+        }
         expect(handoff.calls).toHaveLength(1);
         expect(yield* recoveriesOf(world, intentId)).toMatchObject([
-          { code: 'PERMANENT_REJECTION', outcome: 'STOPPED', proven: true },
+          { code: 'REFUSAL_UNCLASSIFIED', outcome: 'HALTED', proven: false },
         ]);
         const record = yield* historyOf(world, requestId);
         expect(record.feed.messages).toMatchObject([
-          { attention: 'FAILURE', reason: 'PERMANENT_REJECTION', status: 'FAILED' },
+          { attention: 'FAILURE', reason: 'REFUSAL_UNCLASSIFIED', status: 'FAILED' },
         ]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -268,14 +266,14 @@ describe('what triggers a Technical Retry (#1403 review)', () => {
   );
 
   it.live(
-    '[AC-07 R-05] no retry is due after an acceptance, an unknown effect, a permanent refusal, no approved rule or a deployment that made no request',
+    '[AC-07 R-05] no retry is due after an acceptance, an unknown effect, an unclassified refusal, no approved rule or a deployment that made no request',
     () =>
       Effect.gen(function* notDue() {
         const cases: readonly [string, Parameters<typeof setup>[0], () => Effect.Effect<ProviderEvidenceCase>][] = [
           ['accepted', { types: [recoverableType()] }, answers.accepted],
           ['timeout', { types: [recoverableType()] }, answers.timeout],
           ['unavailable', { types: [recoverableType()] }, answers.unavailable],
-          ['permanent', { types: [recoverableType()] }, answers.refused],
+          ['unclassified', { types: [recoverableType()] }, answers.refused],
           ['no rule', {}, answers.rateLimited],
           [
             'no request',

@@ -34,28 +34,38 @@ export const CONFLICT_RESOLUTION_REASON_CODE = 'RECONCILED_BY_PROVIDER_EVIDENCE'
  * the message and is evaluated again whenever the facts change:
  * - NO_RECOVERY_RULE: the approved type has no recovery rule (`NONE`, the default), so a proven non-acceptance is not retried
  *   automatically and the source owner decides;
- * - RECOVERY_LIMIT_REACHED: the owner's own approved limit of submitted attempts was reached.
+ * - RECOVERY_LIMIT_REACHED: the owner's own approved limit of submitted attempts was reached;
+ * - REFUSAL_UNCLASSIFIED: the provider provably refused, but no approved rule classifies that refusal as temporary or permanent,
+ *   so it is neither retried nor stopped for good (R-D10).
  */
-export const RecoveryHaltCodeSchema = Schema.Literals(['NO_RECOVERY_RULE', 'RECOVERY_LIMIT_REACHED']);
+export const RecoveryHaltCodeSchema = Schema.Literals([
+  'NO_RECOVERY_RULE',
+  'RECOVERY_LIMIT_REACHED',
+  'REFUSAL_UNCLASSIFIED',
+]);
 export type RecoveryHaltCode = typeof RecoveryHaltCodeSchema.Type;
 
-/** How the provider's closed refusal reason is read for recovery. Never a count, a delay or a retry schedule. */
-export const RejectionClassSchema = Schema.Literals(['PERMANENT', 'TEMPORARY']);
+/**
+ * How the provider's closed refusal reason is read for recovery. Never a count, a delay or a retry schedule. INDETERMINATE is a
+ * refusal that no approved rule classifies: it is neither recovered automatically nor stopped for good (R-D10).
+ */
+export const RejectionClassSchema = Schema.Literals(['PERMANENT', 'TEMPORARY', 'INDETERMINATE']);
 export type RejectionClass = typeof RejectionClassSchema.Type;
 
 /**
  * The classification of a provider REFUSAL. It is keyed by the provider vocabulary of `@app/email-delivery`, so a new refusal
- * reason fails to compile until it is classified. It is deliberately conservative and provisional: step 22 owns the evidence
- * classification and supplies the final one; until then only a refusal that names itself a rate limit may be recovered
- * automatically, and any other refusal (and any reason that cannot be read) is permanent.
+ * reason fails to compile until it is classified. Only a refusal that names itself a rate limit is read as TEMPORARY. The
+ * generic `provider_rejected` is not documented as final (it also carries a provider's own server error), so it stays
+ * INDETERMINATE until an owner approves a mapping, and any reason that cannot be read is INDETERMINATE too: an unknown
+ * refusal never becomes a PERMANENT stop by default.
  */
 const REJECTION_CLASS_BY_REASON = {
-  provider_rejected: 'PERMANENT',
+  provider_rejected: 'INDETERMINATE',
   rate_limited: 'TEMPORARY',
 } as const satisfies Record<EmailDeliveryRejected['reason'], RejectionClass>;
 
 export const rejectionClassOf = (reason: string | undefined): RejectionClass =>
-  Object.entries(REJECTION_CLASS_BY_REASON).find(([known]) => known === reason)?.[1] ?? 'PERMANENT';
+  Object.entries(REJECTION_CLASS_BY_REASON).find(([known]) => known === reason)?.[1] ?? 'INDETERMINATE';
 
 /** A stop reason in the shape every handoff stop of this owner uses. */
 export interface RecoveryStopReason {
