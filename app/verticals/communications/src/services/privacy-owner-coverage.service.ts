@@ -30,7 +30,8 @@ import type {
   SuppliedPrivacyReferences,
 } from '../../shared/privacy-owner/inventory.ts';
 import { externalCopyInventoryOf } from '../../shared/privacy-owner/outcome.ts';
-import type { BusinessStartObservation } from '../../shared/privacy-owner/retention-evaluation.ts';
+import { evaluateCommunicationsRetention } from '../../shared/privacy-owner/retention-evaluation.ts';
+import type { BusinessStartObservation, PrivacyEvaluatedDue } from '../../shared/privacy-owner/retention-evaluation.ts';
 import {
   attemptRetryLinks,
   communicationDecisions,
@@ -501,79 +502,6 @@ export const privacyOwnerCoverageForScope = (
 ): PrivacyOwnerCoverageService => {
   const { tenantId } = scope;
 
-  const coverage: PrivacyOwnerCoverageService['coverage'] = Effect.fn('CommunicationsPrivacyCoverage.coverage')(
-    function* coverageEffect(request) {
-      if (String(request.scope.tenantId) !== tenantId) {
-        return Option.none();
-      }
-      const { principals, resources } = splitLookups(request.trustedLookups);
-      const { attribution, gathered } = yield* Effect.all(
-        {
-          attribution: gatherAttribution(transaction, tenantId, principals),
-          gathered: gather(transaction, tenantId, scope.legalEntityId, resources),
-        },
-        { concurrency: 1 },
-      ).pipe(Effect.mapError(unavailable));
-      const data = Option.getOrUndefined(gathered);
-      const subjects: readonly ResourceReference[] = subjectsOf(resources);
-      const records = recordsOf(data, attribution);
-      // what is FOUND for this subject is only the subject's own: another recipient's records stay out of the reference list
-      const ownRecords = ownRecordsOf(data, records, subjects);
-      const reasonContext = {
-        backup: options.backup,
-        hasPrincipalLookup: principals.length > 0,
-        hasResourceLookup: resources.length > 0,
-        sharedContact: foreignIntentIdsOf(data, subjects).size > 0,
-      };
-      const observedAt = yield* DateTime.now;
-      const assessedAt = DateTime.formatIso(observedAt);
-      const lookupRefs = request.trustedLookups.map(({ lookupRef }) => lookupRef).toSorted(byText);
-      const observations = communicationsOwnDataInventory.map((category) =>
-        observationOf(
-          category,
-          recordsOfCategory(ownRecords, category.id),
-          unresolvedReasonOf(category.id, reasonContext),
-          { backup: options.backup, lookupRefs, observedAt, tenantId },
-        ),
-      );
-      const coverageResult = assessCommunicationsOwnerCoverage({
-        assessedAt,
-        evidenceRefs: observations.flatMap(({ evidenceRefs }) => evidenceRefs),
-        observations,
-        scope: { ...request.scope, tenantId: String(request.scope.tenantId) },
-      });
-      const contribution =
-        request.right === undefined
-          ? Option.none()
-          : Option.some(
-              assembleCommunicationsContribution({
-                coverage: coverageResult,
-                eligibility: options.eligibility,
-                items: contributionItemsOf(data, records, subjects),
-                right: request.right,
-              }),
-            );
-      return Option.some({
-        configuration: communicationsOwnDataInventory.map((category) => {
-          const state = assessCategoryConfiguration(category, options.supplied[category.id]);
-          return {
-            category: category.id,
-            gapInputs: state.state === 'CONFIGURATION_GAP' ? state.gaps : [],
-            state: state.state,
-          };
-        }),
-        contribution,
-        coverage: coverageResult,
-        externalCopies: externalCopyInventoryOf(
-          [...providerObservationFacts(data?.observations ?? []), ...handedOverProviderFacts(data?.attempts ?? [])],
-          options.currentTransportProviderKey,
-        ),
-        ownerCapability: COMMUNICATIONS_OWNER_CAPABILITY,
-        ownerMutationBoundary: 'NO_AUTOMATIC_OR_DESTRUCTIVE_OWNER_OPERATION',
-      } satisfies PrivacyOwnerCoverageResponse);
-    },
-  );
-
   const businessStarts: PrivacyOwnerCoverageService['businessStarts'] = () =>
     Effect.gen(function* businessStartsEffect() {
       const rows = yield* Effect.all(
@@ -626,6 +554,102 @@ export const privacyOwnerCoverageForScope = (
         ...startsOf('PROVIDER_COPY_WORKING_COPY_PROTECTION', REF_KIND.providerCorrelation, rows.observations),
       ];
     }).pipe(Effect.mapError(unavailable));
+
+  /**
+   * The owner's non-destructive Retention Evaluation (#588): the immutable business starts of this tenant's records against the
+   * Privacy references supplied and the due instants Privacy's own evaluation decided. It reports and hands over; it deletes
+   * nothing and computes no period.
+   */
+  const retentionReport = Effect.fn('CommunicationsPrivacyCoverage.retention')(function* retentionEffect(
+    privacyEvaluatedDue: readonly PrivacyEvaluatedDue[],
+  ) {
+    const starts = yield* businessStarts();
+    const evaluatedAt = yield* DateTime.now;
+    return evaluateCommunicationsRetention({
+      businessStarts: starts,
+      evaluatedAt,
+      privacyEvaluatedDue,
+      supplied: options.supplied,
+    });
+  });
+
+  const coverage: PrivacyOwnerCoverageService['coverage'] = Effect.fn('CommunicationsPrivacyCoverage.coverage')(
+    function* coverageEffect(request) {
+      if (String(request.scope.tenantId) !== tenantId) {
+        return Option.none();
+      }
+      const { principals, resources } = splitLookups(request.trustedLookups);
+      const { attribution, gathered } = yield* Effect.all(
+        {
+          attribution: gatherAttribution(transaction, tenantId, principals),
+          gathered: gather(transaction, tenantId, scope.legalEntityId, resources),
+        },
+        { concurrency: 1 },
+      ).pipe(Effect.mapError(unavailable));
+      const data = Option.getOrUndefined(gathered);
+      const subjects: readonly ResourceReference[] = subjectsOf(resources);
+      const records = recordsOf(data, attribution);
+      // what is FOUND for this subject is only the subject's own: another recipient's records stay out of the reference list
+      const ownRecords = ownRecordsOf(data, records, subjects);
+      const reasonContext = {
+        backup: options.backup,
+        hasPrincipalLookup: principals.length > 0,
+        hasResourceLookup: resources.length > 0,
+        sharedContact: foreignIntentIdsOf(data, subjects).size > 0,
+      };
+      const retention =
+        request.retentionEvaluation === undefined
+          ? undefined
+          : yield* retentionReport(request.retentionEvaluation.privacyEvaluatedDue);
+      const observedAt = yield* DateTime.now;
+      const assessedAt = DateTime.formatIso(observedAt);
+      const lookupRefs = request.trustedLookups.map(({ lookupRef }) => lookupRef).toSorted(byText);
+      const observations = communicationsOwnDataInventory.map((category) =>
+        observationOf(
+          category,
+          recordsOfCategory(ownRecords, category.id),
+          unresolvedReasonOf(category.id, reasonContext),
+          { backup: options.backup, lookupRefs, observedAt, tenantId },
+        ),
+      );
+      const coverageResult = assessCommunicationsOwnerCoverage({
+        assessedAt,
+        evidenceRefs: observations.flatMap(({ evidenceRefs }) => evidenceRefs),
+        observations,
+        scope: { ...request.scope, tenantId: String(request.scope.tenantId) },
+      });
+      const contribution =
+        request.right === undefined
+          ? Option.none()
+          : Option.some(
+              assembleCommunicationsContribution({
+                coverage: coverageResult,
+                eligibility: options.eligibility,
+                items: contributionItemsOf(data, records, subjects),
+                right: request.right,
+              }),
+            );
+      const response = {
+        configuration: communicationsOwnDataInventory.map((category) => {
+          const state = assessCategoryConfiguration(category, options.supplied[category.id]);
+          return {
+            category: category.id,
+            gapInputs: state.state === 'CONFIGURATION_GAP' ? state.gaps : [],
+            state: state.state,
+          };
+        }),
+        contribution,
+        coverage: coverageResult,
+        externalCopies: externalCopyInventoryOf(
+          [...providerObservationFacts(data?.observations ?? []), ...handedOverProviderFacts(data?.attempts ?? [])],
+          options.currentTransportProviderKey,
+        ),
+        ownerCapability: COMMUNICATIONS_OWNER_CAPABILITY,
+        ownerMutationBoundary: 'NO_AUTOMATIC_OR_DESTRUCTIVE_OWNER_OPERATION',
+      } satisfies PrivacyOwnerCoverageResponse;
+      return Option.some(retention === undefined ? response : { ...response, retention });
+    },
+  );
 
   return PrivacyOwnerCoverage.of({ businessStarts, coverage });
 };

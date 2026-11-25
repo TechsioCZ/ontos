@@ -575,6 +575,64 @@ describe('Observing, evaluating and handing over change nothing (AC-05 AC-12 AC-
   );
 
   it.live(
+    'reaches the retention hook through the coverage Read: an ended period is an open obligation and no row changes (T2-12)',
+    () =>
+      Effect.gen(function* retentionThroughRead() {
+        const world = yield* setup();
+        const { intentId } = yield* decideOne(world);
+        yield* step(world, handoffDouble(), intentId);
+        const before = yield* rowsHash(world);
+        const supplied = {
+          REQUEST_DECISION_INTENT: {
+            businessStartConfirmationRef: 'FICTIONAL-start',
+            controllerRef: 'FICTIONAL-controller',
+            controllerRole: 'CONTROLLER',
+            dataCategoryRefs: ['FICTIONAL-category'],
+            humanDispositionOwnerRef: 'FICTIONAL-human',
+            legalHoldApplicabilityRef: 'FICTIONAL-hold',
+            processingScopeRef: 'FICTIONAL-scope',
+            purposeRef: 'FICTIONAL-purpose',
+            purposeVersion: 1,
+            retentionRules: [{ applicabilityDecisionRef: 'FICTIONAL-app', ruleRef: 'FICTIONAL-rule', ruleVersion: 1 }],
+          },
+        } as const satisfies SuppliedPrivacyReferences;
+        const request = decodeRequest({
+          retentionEvaluation: {
+            // Privacy's own evaluation decided this instant: it is long past, so the period has ended
+            privacyEvaluatedDue: [
+              {
+                dueAt: '2020-01-01T00:00:00.000Z',
+                evaluationRef: 'FICTIONAL-evaluation',
+                ruleRef: 'FICTIONAL-rule',
+                ruleVersion: 1,
+              },
+            ],
+          },
+          scope: ownerScope({ tenantId: world.tenantId, trustedLookupRefs: ['lookup-customer-1'] }),
+          trustedLookups: [subject('customer-1')],
+        });
+        const answer = yield* world.database.inTenant(world.tenantId, (transaction) =>
+          privacyOwnerCoverageForScope(transaction, operationalScope(world.tenantId), withBackup(supplied)).coverage(
+            request,
+          ),
+        );
+        const { retention } = yield* Option.match(answer, {
+          onNone: () => Effect.die('not found'),
+          onSome: Effect.succeed,
+        });
+        expect(retention?.destructiveActionPerformed).toBe(false);
+        expect(retention?.findings.find(({ category }) => category === 'REQUEST_DECISION_INTENT')).toMatchObject({
+          kind: 'OBLIGATION_OPEN',
+          nextStep: 'PRIVACY_DISPOSITION_DECISION_AND_HUMAN_CONFIRMED_OWNER_ACTION',
+        });
+        // without the request for it the owner does not look at retention at all
+        const without = yield* coverageOf(world, [subject('customer-1')], withBackup(supplied));
+        expect(Option.getOrThrow(without).retention).toBeUndefined();
+        expect(yield* rowsHash(world)).toBe(before);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
     'keeps the original business start on a technical reprocess: a replayed request and a second handoff restart no period (PRIV-COM-15)',
     () =>
       Effect.gen(function* startsAreImmutable() {

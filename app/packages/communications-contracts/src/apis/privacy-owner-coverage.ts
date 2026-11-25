@@ -6,7 +6,13 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { PRIVACY_RIGHTS } from '../privacy-owner/contribution.ts';
-import { COMMUNICATIONS_OWNER_CAPABILITY, INVENTORY_CATEGORY_IDS, scopePartRefs } from '../privacy-owner/inventory.ts';
+import {
+  COMMUNICATIONS_OWNER_CAPABILITY,
+  GATE_OWNERS,
+  INVENTORY_CATEGORY_IDS,
+  REQUIRED_INPUT_KEYS,
+  scopePartRefs,
+} from '../privacy-owner/inventory.ts';
 
 const LookupRefSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const ResourceKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200), Schema.isTrimmed()).pipe(
@@ -41,7 +47,25 @@ const hasExactReferenceSet = (left: readonly string[], right: readonly string[])
   );
 };
 
+/**
+ * What Privacy's OWN Retention Evaluation decided for one rule version. Only Privacy knows the period, so only Privacy supplies
+ * the instant a version's records fall due; Communications never computes, defaults or invents one.
+ */
+const PrivacyEvaluatedDueSchema = Schema.Struct({
+  dueAt: Schema.DateTimeUtcFromString,
+  evaluationRef: LookupRefSchema,
+  ruleRef: LookupRefSchema,
+  ruleVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+
 export const PrivacyOwnerCoverageRequestSchema = Schema.Struct({
+  /**
+   * Asks for the owner's non-destructive Retention Evaluation (#588, PRIV-COM-05/06/09/15/17) alongside the coverage. Absent
+   * means the owner does not look at retention for this call.
+   */
+  retentionEvaluation: Schema.optionalKey(
+    Schema.Struct({ privacyEvaluatedDue: Schema.Array(PrivacyEvaluatedDueSchema).check(Schema.isMaxLength(100)) }),
+  ),
   /** The right the contribution is for; without it only coverage and content references are returned. */
   right: Schema.optionalKey(Schema.Literals(PRIVACY_RIGHTS)),
   scope: PrivacyOwnerScopeSchema,
@@ -86,6 +110,66 @@ const ConfigurationSchema = Schema.Struct({
   state: Schema.Literals(['CONFIGURATION_GAP', 'CONFIGURED', 'CONFLICTING_CONFIGURATION', 'NOT_APPLICABLE']),
 });
 
+const RetentionRuleSchema = Schema.Struct({
+  applicabilityDecisionRef: Schema.String,
+  applicableStartFrom: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  ruleRef: Schema.String,
+  ruleVersion: Schema.Number,
+});
+const ResponsibleSchema = Schema.Struct({ gateOwners: Schema.Array(Schema.Literals(GATE_OWNERS)) });
+const RetentionCategorySchema = Schema.Literals(INVENTORY_CATEGORY_IDS);
+
+/** One finding of the retention hook. No finding states that anything was deleted, retained forever or given a default period. */
+const RetentionFindingSchema = Schema.Union([
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    gaps: Schema.Array(
+      Schema.Struct({ input: Schema.Literals(REQUIRED_INPUT_KEYS), owner: Schema.Literals(GATE_OWNERS) }),
+    ),
+    kind: Schema.Literal('CONFIGURATION_GAP'),
+    nextStep: Schema.Literal('SUPPLY_MISSING_PRIVACY_INPUTS'),
+    pendingReview: Schema.Literal(true),
+    responsible: ResponsibleSchema,
+  }),
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    conflictingRuleRefs: Schema.Array(Schema.String),
+    kind: Schema.Literal('CONFLICTING_CONFIGURATION'),
+    nextStep: Schema.Literal('PRIVACY_OWNER_DECIDES_WHICH_RULE_APPLIES'),
+    pendingReview: Schema.Literal(true),
+    responsible: ResponsibleSchema,
+  }),
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    earliestBusinessStartAt: Schema.Union([Schema.DateTimeUtcFromString, Schema.Literal('NO_RECORD_YET')]),
+    kind: Schema.Literal('HANDED_TO_PRIVACY_EVALUATION'),
+    nextStep: Schema.Literal('PRIVACY_RETENTION_EVALUATION_DECIDES_DUE_DATE'),
+    responsible: ResponsibleSchema,
+    rule: RetentionRuleSchema,
+  }),
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    dueAt: Schema.DateTimeUtcFromString,
+    earliestBusinessStartAt: Schema.DateTimeUtcFromString,
+    kind: Schema.Literal('NOT_YET_DUE'),
+    rule: RetentionRuleSchema,
+  }),
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    dueAt: Schema.DateTimeUtcFromString,
+    earliestBusinessStartAt: Schema.DateTimeUtcFromString,
+    kind: Schema.Literal('OBLIGATION_OPEN'),
+    nextStep: Schema.Literal('PRIVACY_DISPOSITION_DECISION_AND_HUMAN_CONFIRMED_OWNER_ACTION'),
+    responsible: ResponsibleSchema,
+    rule: RetentionRuleSchema,
+  }),
+  Schema.Struct({
+    category: RetentionCategorySchema,
+    kind: Schema.Literal('NOT_APPLICABLE'),
+    reason: Schema.Literal('NO_PERSONAL_DATA_PERSISTED'),
+  }),
+]);
+
 export const PrivacyOwnerCoverageResponseSchema = Schema.Struct({
   /** Absent unless the request named a right. */
   contribution: Schema.OptionFromNullOr(
@@ -113,6 +197,17 @@ export const PrivacyOwnerCoverageResponseSchema = Schema.Struct({
   ),
   ownerCapability: Schema.Literal(COMMUNICATIONS_OWNER_CAPABILITY),
   ownerMutationBoundary: Schema.Literal('NO_AUTOMATIC_OR_DESTRUCTIVE_OWNER_OPERATION'),
+  /**
+   * The owner's Retention Evaluation report, present only when the request asked for it. It identifies and hands over: it
+   * performs no deletion, and an elapsed boundary only keeps the obligation open for Privacy's decision and a human.
+   */
+  retention: Schema.optionalKey(
+    Schema.Struct({
+      destructiveActionPerformed: Schema.Literal(false),
+      evaluatedAt: Schema.DateTimeUtcFromString,
+      findings: Schema.Array(RetentionFindingSchema),
+    }),
+  ),
 });
 export type PrivacyOwnerCoverageResponse = typeof PrivacyOwnerCoverageResponseSchema.Type;
 
