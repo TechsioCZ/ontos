@@ -234,8 +234,8 @@ it('rides the machine carrier on the upload legs and the integrity record only, 
   expect(download.accessWorkload).toBeUndefined();
   // Current is a Catalog read decided as the requester: no machine carrier.
   expect(current.accessWorkload).toBeUndefined();
-  // Only Current accepts a module that relays its requester, and only the Catalog; the requester's own right decides.
-  expect(current.accessActor).toMatchObject({ callers: ['catalog'], subject: 'rights' });
+  // Only Current permits a host-bound relay; Core itself admits no module and keeps the requester's own right.
+  expect(current.accessActor).toMatchObject({ callerBinding: 'receiving-host', callers: [], subject: 'rights' });
   for (const other of [upload, confirm, rename, integrity, metadata, download]) {
     expect(other.accessActor).toBeUndefined();
   }

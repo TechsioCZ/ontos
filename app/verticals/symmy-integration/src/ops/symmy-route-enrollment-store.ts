@@ -561,7 +561,10 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
         if (isRefused(decision)) {
           return yield* decision;
         }
-        const storedToken = bySelector.pipe(Option.map(({ changeToken }) => changeToken));
+        const storedToken =
+          decision.kind === 'replace'
+            ? Option.some(decision.previous.changeToken)
+            : bySelector.pipe(Option.map(({ changeToken }) => changeToken));
         const checked = yield* checks.pipe(Effect.tap(({ refusals }) => refused(refusals)));
         if (decision.kind === 'unchanged') {
           return yield* receipt('unchanged', checked, storedToken);

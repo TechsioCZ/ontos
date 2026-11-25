@@ -431,7 +431,11 @@ import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-defi
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
-import { authenticateHostedOperation, hostedOperationProblems } from './core-hosted-operations.ts';
+import {
+  authenticateHostedOperation,
+  coreHostedReadReceiverBindingsLive,
+  hostedOperationProblems,
+} from './core-hosted-operations.ts';
 import { ShellGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.service.ts';
 import {
   ShellGovernedReads,
@@ -4391,6 +4395,7 @@ export const makeShellAuthenticationApiRuntime = (
   // The one read runtime: the canonical access gate's decisions join the read's own transaction, and the Shell's
   // database identity enrollment stays available to owner reads.
   const readRuntimeLayer = ReadRuntimeLive.pipe(
+    Layer.provide(coreHostedReadReceiverBindingsLive),
     Layer.provide(Layer.mergeAll(sharedOperationLayers, accessEnforcementLive)),
     Layer.provide(databaseIdentitiesLive),
   );

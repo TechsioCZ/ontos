@@ -1,5 +1,11 @@
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import {
+  CoreReadReceiverBindings,
+  captureCoreReadReceiverBindings,
+  resolveCoreReadReceiverActor,
+} from './receiver-bindings.ts';
+import type { CoreReadReceiverBindingRegistry } from './receiver-bindings.ts';
+import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayWorkload,
@@ -202,6 +208,7 @@ export interface ReadRuntimeOptions {
    * resolution; without it every legacy target keeps its legacy relation check.
    */
   readonly principalKinds?: AccessPrincipalKinds;
+  readonly receiverBindings?: CoreReadReceiverBindingRegistry | undefined;
   readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
 
@@ -1272,6 +1279,7 @@ const readRuntimeFromDependencies = <
   options: ReadRuntimeOptions,
 ) => {
   const shellSystemReads = captureShellSystemReadRegistrations(options.shellSystemReads);
+  const receiverBindings = captureCoreReadReceiverBindings(options.receiverBindings);
   const withReadExecution: typeof withModuleOperationExecution = (input, effect) =>
     isBoundShellSystemRead(input.registration, shellSystemReads)
       ? withoutModuleOperationExecution(effect)
@@ -1389,10 +1397,7 @@ const readRuntimeFromDependencies = <
       }
     }
     const nativeReadHash = readVerifiedGatewayRouteScope(principal)?.nativeReadReceiver?.requestHash;
-    if (
-      nativeReadHash !== undefined &&
-      nativeReadHash !== (yield* computeRequiredReadQueryHash(decodedInput))
-    ) {
+    if (nativeReadHash !== undefined && nativeReadHash !== (yield* computeRequiredReadQueryHash(decodedInput))) {
       return yield* new ReadInputValidationError({
         code: 'read_input_invalid',
         reason: 'Native route authority does not match the exact Read request',
@@ -1422,6 +1427,7 @@ const readRuntimeFromDependencies = <
     );
     stage('input_decoded');
     const { descriptor } = input.registration;
+    const accessActor = resolveCoreReadReceiverActor(input.registration, receiverBindings);
     const usesAccessGate = descriptor.entrypoint.authorization.kind === 'protected';
     /**
      * The registered, decoded carriers of this read: definition time already decoded, validated and
@@ -1429,7 +1435,7 @@ const readRuntimeFromDependencies = <
      * carrier is answered by the gate's own `deny.declaration_missing`, never by an implicit allow
      * (O62).
      */
-    // An absent carrier stays absent, so the gate sees exactly what the descriptor declares (O59, D5).
+    // An absent carrier stays absent. Only an explicit host-bound actor receives the host's captured callers.
     const accessCarrier: GateInput['carrier'] = withOptional(
       withOptional(
         withOptional(
@@ -1441,7 +1447,7 @@ const readRuntimeFromDependencies = <
         descriptor.accessWorkload,
       ),
       'accessActor',
-      descriptor.accessActor,
+      accessActor,
     );
     /**
      * A field group is always decided on rights (D6, O17). An `identity` read admits its relayed subject
@@ -1450,11 +1456,11 @@ const readRuntimeFromDependencies = <
      * subject and its governed fields are projected out, whichever mode admitted it to the read.
      */
     const fieldGroupActor =
-      descriptor.accessActor === undefined
+      accessActor === undefined
         ? undefined
         : Object.freeze({
-            callers: descriptor.accessActor.callers,
-            reason: descriptor.accessActor.reason,
+            callers: accessActor.callers,
+            reason: accessActor.reason,
             subject: 'rights' as const,
           });
 
@@ -2482,6 +2488,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   const accessDecision = yield* bindLiveAccessGate;
   const principalKinds = yield* AccessPrincipalKindSource;
   const moduleCallRoute = yield* Effect.serviceOption(ModuleCallRoute);
+  const receiverBindings = yield* Effect.serviceOption(CoreReadReceiverBindings);
   return {
     accessDecision,
     contextAccess,
@@ -2493,6 +2500,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
       ? ownerAuthorizationOverlay.value
       : failClosedOwnerAuthorizationOverlay,
     principalKinds,
+    receiverBindings: Option.getOrUndefined(receiverBindings),
     scopeResolver,
   };
 });
@@ -2511,6 +2519,7 @@ export const ReadRuntimeLive = Layer.effect(
         moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
+        receiverBindings,
         scopeResolver,
       }) =>
         readRuntimeFromDependencies(
@@ -2519,7 +2528,7 @@ export const ReadRuntimeLive = Layer.effect(
           scopeResolver,
           contextAccess,
           withOptional(
-            { accessDecision, databaseIdentities, ownerAuthorizationOverlay, principalKinds },
+            { accessDecision, databaseIdentities, ownerAuthorizationOverlay, principalKinds, receiverBindings },
             'moduleCallRoute',
             Option.getOrUndefined(moduleCallRoute),
           ),
@@ -2550,6 +2559,7 @@ export const makeReadRuntimeLive = (
         moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
+        receiverBindings,
         scopeResolver,
       } = yield* readRuntimeDependencies;
       const shellSystemReads =
@@ -2562,6 +2572,7 @@ export const makeReadRuntimeLive = (
           expectedDeployment,
           ownerAuthorizationOverlay,
           principalKinds,
+          receiverBindings,
         },
         'moduleCallRoute',
         Option.getOrUndefined(moduleCallRoute),

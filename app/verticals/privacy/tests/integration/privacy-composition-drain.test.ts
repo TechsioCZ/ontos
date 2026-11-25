@@ -256,6 +256,23 @@ const cycleSchema = Schema.Struct({
   matched: Schema.Struct({ deliveriesCreated: Schema.Int, messagesMatched: Schema.Int }),
   type: Schema.Literal('cycle'),
 });
+const workerFailureSchema = Schema.Struct({
+  code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+  phase: Schema.Literals(['startup', 'matching', 'claim']),
+  reasonCode: Schema.Literals(['native-claim-admission', 'other']),
+  type: Schema.Literal('failed'),
+});
+const decodeWorkerCycle = Effect.fn('PrivacyCompletionTest.decodeWorkerCycle')(function* decodeWorkerCycle(
+  line: string,
+) {
+  const response = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Union([cycleSchema, workerFailureSchema])),
+  )(line).pipe(Effect.mapError(() => failure('Invalid real worker cycle response')));
+  if (response.type === 'failed') {
+    return yield* failure(`Real worker cycle failed: ${response.code}/${response.reasonCode} (${response.phase})`);
+  }
+  return response;
+});
 const barrierSchema = Schema.Struct({
   stage: Schema.Literals(['after-execute', 'after-report']),
   type: Schema.Literal('barrier'),
@@ -545,6 +562,13 @@ const fixtureRuntimeInventory = [
     rls: false,
     schema: 'privacy',
     tables: ['gateway_assertion_redemptions'],
+  },
+  {
+    // Administrator-owned source policy: runtime reads remain tenant/company scoped by forced RLS.
+    operations: 'select',
+    rls: true,
+    schema: 'privacy',
+    tables: ['demo_source_processing_policies'],
   },
   {
     operations: 'select, insert',
@@ -1125,8 +1149,6 @@ const runObservedOperatorPublication = Effect.fn('PrivacyCompletionTest.nativeOp
     return { conclusions, interleaved };
   },
 );
-
-const invalidResponse = () => failure('Invalid real worker retry cycle response');
 
 const fixture = Effect.gen(function* publicCompletionFixture() {
   yield* Effect.logInfo('Privacy fixture setup: initialize');
@@ -1710,9 +1732,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const cycle = (advanceMs = 0) =>
     Effect.gen(function* actualWorkerCycle() {
       const process = yield* worker({ advanceMs });
-      const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(process.line).pipe(
-        Effect.mapError(() => failure('Invalid real worker cycle response')),
-      );
+      const result = yield* decodeWorkerCycle(process.line);
       expect(yield* process.child.exitCode).toBe(0);
       return { ...result.cycle, matched: result.matched };
     });
@@ -1751,9 +1771,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
             yield* Queue.offer(input, '{"type":"continue"}\n');
             line = yield* Queue.take(replies);
           }
-          const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(line).pipe(
-            Effect.mapError(invalidResponse),
-          );
+          const result = yield* decodeWorkerCycle(line);
           index += 1;
           return result.cycle;
         }),
@@ -2043,6 +2061,9 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
       expect(
         fixtureRuntimeInventory.find((item) => item.schema === 'auth' && item.operations === 'select')?.tables,
       ).toEqual(['support_impersonation_recovery']);
+      expect(
+        fixtureRuntimeInventory.filter((item) => item.schema === 'privacy' && item.operations === 'select'),
+      ).toEqual([{ operations: 'select', rls: true, schema: 'privacy', tables: ['demo_source_processing_policies'] }]);
     }),
   );
 });
@@ -2115,6 +2136,48 @@ it.effect('counts only the declared dispatch transaction failure and rejects unr
     ).toBe(false);
     expect(isDispatchTransactionRefusal(new TypeError('TEST transport failed'))).toBe(false);
     expect(isDispatchTransactionRefusal(null)).toBe(false);
+  }),
+);
+
+it.effect('decodes real worker cycle responses and exposes only closed failure codes', () =>
+  Effect.gen(function* workerCycleResponses() {
+    const idle = {
+      cycle: { claimed: 0, dead: 0, failed: 0, retried: 0, succeeded: 0 },
+      matched: { deliveriesCreated: 0, messagesMatched: 0 },
+      type: 'cycle',
+    };
+    expect(yield* decodeWorkerCycle(JSON.stringify(idle))).toEqual(idle);
+    for (const code of ['composition-unavailable', 'worker-unavailable']) {
+      for (const phase of ['startup', 'matching', 'claim']) {
+        for (const reasonCode of ['native-claim-admission', 'other']) {
+          const result = yield* Effect.result(
+            decodeWorkerCycle(
+              JSON.stringify({
+                code,
+                diagnostic: [{ code: 'TEST:private code', reason: 'TEST:private reason', tag: 'TEST:private tag' }],
+                phase,
+                reason: 'TEST:private error',
+                reasonCode,
+                type: 'failed',
+              }),
+            ),
+          );
+          expect(result).toEqual(Result.fail(failure(`Real worker cycle failed: ${code}/${reasonCode} (${phase})`)));
+        }
+      }
+    }
+    for (const line of [
+      'TEST:private malformed JSON',
+      '{"type":"failed","code":"TEST:private code","reasonCode":"other","phase":"claim"}',
+      '{"type":"failed","code":"worker-unavailable","reasonCode":"TEST:private reason","phase":"claim"}',
+      '{"type":"failed","code":"worker-unavailable","reasonCode":"other","phase":"TEST:private phase"}',
+      '{"type":"cycle","cycle":{"claimed":0},"matched":{"deliveriesCreated":0,"messagesMatched":0}}',
+      '{"type":"barrier","stage":"after-execute"}',
+    ]) {
+      expect(yield* Effect.result(decodeWorkerCycle(line))).toEqual(
+        Result.fail(failure('Invalid real worker cycle response')),
+      );
+    }
   }),
 );
 
@@ -3009,14 +3072,9 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
             expect(receipt.failure).toMatchObject({ status: 503 });
           }
           const refusedWorker = yield* f.worker();
-          const refused = yield* Schema.decodeUnknownEffect(
-            Schema.fromJsonString(
-              Schema.Struct({
-                code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
-                type: Schema.Literal('failed'),
-              }),
-            ),
-          )(refusedWorker.line);
+          const refused = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(workerFailureSchema))(
+            refusedWorker.line,
+          );
           expect(['composition-unavailable', 'worker-unavailable']).toContain(refused.code);
           expect(yield* refusedWorker.child.exitCode).not.toBe(0);
           for (const operation of [
@@ -3208,7 +3266,7 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
                   and delivery.mode='RowExclusiveLock' and not delivery.granted
                   and authority.locktype='advisory' and authority.mode='ShareLock' and authority.granted
               ) as waiting`,
-                ))
+                )).waiting
               ) {
                 yield* Effect.sleep('20 millis');
               }
@@ -3222,7 +3280,7 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
               yield* Deferred.done(completed, exit);
             }).pipe(Effect.forkScoped);
             const unsynchronized = yield* f.worker();
-            const skipped = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(unsynchronized.line);
+            const skipped = yield* decodeWorkerCycle(unsynchronized.line);
             expect(yield* unsynchronized.child.exitCode).toBe(0);
             expect(skipped.matched).toEqual({ deliveriesCreated: 0, messagesMatched: 0 });
             expect(skipped.cycle).toMatchObject({ claimed: 0, failed: 0, retried: 0, succeeded: 0 });
