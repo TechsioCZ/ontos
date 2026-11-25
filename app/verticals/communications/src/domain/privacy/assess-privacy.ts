@@ -1,6 +1,7 @@
 import { Data, DateTime, Effect, Exit, identity, Option } from 'effect';
 
-import type { PrivacyEvidence } from '../catalog/vocabulary.ts';
+import { PRIVACY_STOP_OF_FACT } from '../catalog/vocabulary.ts';
+import type { PrivacyFact, PrivacyStopReason } from '../catalog/vocabulary.ts';
 import { ProcessingEligibilityGate, ProcessingEligibilityVerdict } from './eligibility-gate.ts';
 import type {
   EligibilityEvidence,
@@ -139,18 +140,44 @@ export const assessPrivacyEligibility = Effect.fn('Communications.assessPrivacyE
   );
 });
 
+/** Which Privacy fact an answer that could not evidence a decision is: only a real uncertainty stays `INDETERMINATE`. */
+const INDETERMINATE_FACT = {
+  CONTEXT_AMBIGUOUS: 'CONTEXT_AMBIGUOUS',
+  CONTEXT_NOT_SUPPORTED: 'INDETERMINATE',
+  EVIDENCE_INCONSISTENT: 'INDETERMINATE',
+  EVIDENCE_MISSING: 'INDETERMINATE',
+  EVIDENCE_SCOPE_MISMATCH: 'INDETERMINATE',
+  INPUTS_NOT_EVIDENCED: 'INDETERMINATE',
+  PROTECTED_MATERIAL: 'SOURCE_PROTECTED',
+  PURPOSE_NOT_CURRENT: 'INDETERMINATE',
+} as const satisfies Record<IndeterminateCause, Exclude<PrivacyFact, 'ALLOWED'>>;
+
+/** Which Privacy fact a failure to reach any decision is: its own fact, never Privacy uncertainty. */
+const UNAVAILABLE_FACT = {
+  AUTHORIZATION_DENIED: 'ACCESS_DENIED',
+  CONTEXT_AMBIGUOUS: 'CONTEXT_AMBIGUOUS',
+  OWNER_UNAVAILABLE: 'AUTHORITY_UNAVAILABLE',
+} as const satisfies Record<UnavailableReason, Exclude<PrivacyFact, 'ALLOWED'>>;
+
 /**
- * The positive evidence the Communication Decision (d21-02) takes. Only an evidenced ALLOWED is `ALLOWED`; a proven
- * prohibition is `NOT_ALLOWED`; everything else, including a failure to reach any decision, is `INDETERMINATE` and
- * therefore stops the message without ever being reported as a prohibition.
+ * The Privacy fact the Communication Decision (d21-02) takes and the ONE vocabulary of a Privacy stop (#1396 BR-14). Only an
+ * evidenced ALLOWED is `ALLOWED`; a proven prohibition is `NOT_ALLOWED`; an answer without evidence is `INDETERMINATE`, except
+ * an ambiguous context and a protected source, which are their own facts; a failure to reach any decision (access denied,
+ * owner unavailable, ambiguous context) is its own fact too. Nothing but evidence of a prohibition is ever `NOT_ALLOWED`.
  */
-export const privacyEvidenceOf = (assessment: PrivacyAssessmentCase): PrivacyEvidence =>
+export const privacyEvidenceOf = (assessment: PrivacyAssessmentCase): PrivacyFact =>
   PrivacyAssessment.$match(assessment, {
-    Allowed: (): PrivacyEvidence => 'ALLOWED',
-    Indeterminate: (): PrivacyEvidence => 'INDETERMINATE',
-    NotAllowed: (): PrivacyEvidence => 'NOT_ALLOWED',
-    Unavailable: (): PrivacyEvidence => 'INDETERMINATE',
+    Allowed: (): PrivacyFact => 'ALLOWED',
+    Indeterminate: ({ cause }): PrivacyFact => INDETERMINATE_FACT[cause],
+    NotAllowed: (): PrivacyFact => 'NOT_ALLOWED',
+    Unavailable: ({ reason }): PrivacyFact => UNAVAILABLE_FACT[reason],
   });
+
+/** The closed reason a Privacy answer stops a message under, at decision time and at handoff time alike; none for ALLOWED. */
+export const privacyStopOf = (assessment: PrivacyAssessmentCase): PrivacyStopReason | undefined => {
+  const fact = privacyEvidenceOf(assessment);
+  return fact === 'ALLOWED' ? undefined : PRIVACY_STOP_OF_FACT[fact];
+};
 
 /** Whether a retained assessment covers this exact question. It never does for any other scope, and never for time. */
 export const assessmentCoversScope = (assessment: PrivacyAssessmentCase, scope: ProcessingScope) =>

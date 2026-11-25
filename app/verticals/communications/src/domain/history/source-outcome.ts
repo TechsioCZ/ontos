@@ -88,7 +88,25 @@ export const messageHeadlineOf = (summary: IntentHistorySummary, decisionReason:
   reason: decisionReason ?? summary.stopReason ?? summary.recovery?.code,
 });
 
-const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly MessageOutcome[]) => {
+/**
+ * A stop BECAUSE the source owner itself moved on (BR-08): the request is no longer justified (expired, consumed, revoked,
+ * superseded, not resumable, state or revision no longer current, past its own `validUntil`). It is the closed code of a stop
+ * the last stoppable handoff recorded (`stopReasonCodeOf` shows a source stop under its specific cause), and only a SUPPRESSED
+ * message carries one: a provider refusal after a stale source is a failure of the message, not a source change.
+ */
+const isSourceStop = ({ reason, status }: MessageOutcome) =>
+  status === 'SUPPRESSED' &&
+  reason !== undefined &&
+  (isStaleSourceReason(reason) || reason === 'SOURCE_NO_LONGER_VALID');
+
+/**
+ * The ONE derivation of what a required type owes the source about a whole request, from the decision and the headline of each
+ * of its messages (#1394 AC-05, #1396 BR-12 AC-09). A source stop is truthful but not a Communications failure (BR-08), whether
+ * the source changed before the decision (the decision stopped the type) or before the last stoppable handoff (a message
+ * stopped): both are `SOURCE_STALE`, so the same fact is never reported as `FAILED` at one moment and as `SOURCE_STALE` at another.
+ * Anything the source did not cause (a Privacy, recipient or channel stop, a provider refusal, an unresolved slot) is `FAILED`.
+ */
+const requiredOutcomeOfRequest = (facts: RequestOutcomeFacts, messages: readonly MessageOutcome[]) => {
   const { decision } = facts;
   if (decision.requiredness === undefined) {
     return { partial: false, requiredOutcome: 'REQUIREDNESS_UNKNOWN' } as const;
@@ -100,18 +118,23 @@ const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly Messag
     const stale = decision.noMessageReason !== undefined && isStaleSourceReason(decision.noMessageReason);
     return { partial: false, requiredOutcome: stale ? 'SOURCE_STALE' : 'FAILED' } as const;
   }
-  const attentions = new Set(messages.map(({ attention }) => attention));
-  if (attentions.has('FAILURE') || decision.unresolvedSlots.length > 0) {
+  const failed = messages.filter(({ attention }) => attention === 'FAILURE');
+  const sourceStops = failed.filter(isSourceStop);
+  if (failed.length > sourceStops.length || decision.unresolvedSlots.length > 0) {
     // partial: something else of the same request is not a failure
     return { partial: messages.some(({ attention }) => attention !== 'FAILURE'), requiredOutcome: 'FAILED' } as const;
   }
+  const attentions = new Set(messages.map(({ attention }) => attention));
   if (attentions.has('UNKNOWN') || attentions.has('NEEDS_RECONCILIATION')) {
     return { partial: false, requiredOutcome: 'UNKNOWN' } as const;
   }
   if (attentions.has('NEEDS_REEVALUATION')) {
     return { partial: false, requiredOutcome: 'NEEDS_REEVALUATION' } as const;
   }
-  return { partial: false, requiredOutcome: attentions.has('IN_PROGRESS') ? 'IN_PROGRESS' : 'NO_FAILURE' } as const;
+  if (attentions.has('IN_PROGRESS')) {
+    return { partial: false, requiredOutcome: 'IN_PROGRESS' } as const;
+  }
+  return { partial: false, requiredOutcome: sourceStops.length > 0 ? 'SOURCE_STALE' : 'NO_FAILURE' } as const;
 };
 
 /** The typed outcome feed of one request, from the decision and the headline of each of its intents. */
@@ -123,7 +146,7 @@ export const sourceOutcomeFeedOf = (facts: RequestOutcomeFacts): CommunicationOu
     slotKey,
     status: summary.status,
   }));
-  const { partial, requiredOutcome } = requiredOutcomeOf(facts, messages);
+  const { partial, requiredOutcome } = requiredOutcomeOfRequest(facts, messages);
   const { decision } = facts;
   return {
     decisionId: decision.decisionId,

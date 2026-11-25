@@ -139,7 +139,10 @@ describe('An ACTIVE type is decided by the real production owner ports (T1-01)',
         expect(authAsked).toEqual([{ issuanceRef: ISSUANCE }, { issuanceRef: ISSUANCE, recipientSubjectId: ACCOUNT }]);
         // no producer declares a Privacy scope yet (#1396 J), so Privacy is never asked about a guess and nothing reaches handoff
         expect(privacyAsked).toHaveLength(0);
-        expect(plan.intents[0]).toMatchObject({ reason: Option.some('PRIVACY_INDETERMINATE'), status: 'SUPPRESSED' });
+        expect(plan.intents[0]).toMatchObject({
+          reason: Option.some('PRIVACY_CONTEXT_AMBIGUOUS'),
+          status: 'SUPPRESSED',
+        });
       }),
   );
 

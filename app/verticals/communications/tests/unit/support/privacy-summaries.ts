@@ -1,14 +1,9 @@
-import { Option } from 'effect';
-
 import type { PrivacyAssessmentCase } from '../../../src/domain/privacy/assess-privacy.ts';
 import { PrivacyAssessment } from '../../../src/domain/privacy/assess-privacy.ts';
 import { ProcessingEligibilityVerdict } from '../../../src/domain/privacy/eligibility-gate.ts';
 import type { ProcessingEligibilityVerdictCase } from '../../../src/domain/privacy/eligibility-gate.ts';
-import { RecoveryAdmission, RequiredHandoffOutcome } from '../../../src/domain/privacy/handoff-decision.ts';
-import type {
-  RecoveryAdmissionCase,
-  RequiredHandoffOutcomeCase,
-} from '../../../src/domain/privacy/handoff-decision.ts';
+import { RecoveryAdmission } from '../../../src/domain/privacy/handoff-decision.ts';
+import type { RecoveryAdmissionCase } from '../../../src/domain/privacy/handoff-decision.ts';
 import { MessageHandoffDecision } from '../../../src/domain/privacy/suppression.ts';
 import type { MessageHandoffDecisionCase } from '../../../src/domain/privacy/suppression.ts';
 
@@ -33,26 +28,6 @@ export const verdictSummary = (verdict: ProcessingEligibilityVerdictCase) =>
     NotAllowed: ({ basis }) => ({ basis, kind: 'NotAllowed' as const }),
   });
 
-export const requiredSummary = (outcome: RequiredHandoffOutcomeCase) =>
-  RequiredHandoffOutcome.$match(outcome, {
-    Failed: ({ partial, reconciliation, sourceImpact, stopped }) => ({
-      kind: 'Failed' as const,
-      partial,
-      reconciliation: reconciliation.map(({ recipient }) => recipient.resourceId),
-      sourceImpact,
-      stopped: stopped.map(({ identity, primary }) => ({
-        category: primary.category,
-        recipient: identity.recipient.resourceId,
-      })),
-    }),
-    NotRequired: () => ({ kind: 'NotRequired' as const }),
-    Ready: ({ identities }) => ({
-      kind: 'Ready' as const,
-      recipients: identities.map(({ recipient }) => recipient.resourceId),
-    }),
-    SourceStale: () => ({ kind: 'SourceStale' as const }),
-  });
-
 export const recoverySummary = (admission: RecoveryAdmissionCase) =>
   RecoveryAdmission.$match(admission, {
     Admitted: () => ({ kind: 'Admitted' as const }),
@@ -73,9 +48,5 @@ export const blockingFactsOf = (decision: MessageHandoffDecisionCase): readonly 
     AlreadyHandedOff: () => [],
     Proceed: () => [],
     ReconciliationRequired: () => [],
-    Suppressed: ({ evidence }) =>
-      Option.match(evidence.privacy, {
-        onNone: () => [],
-        onSome: (assessment) => reasonCodesOf(assessment),
-      }),
+    Suppressed: ({ evidence }) => reasonCodesOf(evidence.privacy),
   });

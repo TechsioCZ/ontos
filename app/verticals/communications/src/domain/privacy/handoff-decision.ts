@@ -4,7 +4,6 @@ import { isGroupComplete, isGroupMember } from '../catalog/audience.ts';
 import type { AudiencePolicy } from '../catalog/audience.ts';
 import type { MessageIntentIdentity } from '../catalog/decision.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
-import type { Requiredness } from '../catalog/vocabulary.ts';
 import { GATE_CONCURRENCY } from '../recipient/assess-recipients.ts';
 import type { RecipientEvaluationInput } from '../recipient/assess-recipients.ts';
 import type { OriginalRecipientBinding } from '../recipient/original-binding.ts';
@@ -15,13 +14,15 @@ import type { PrivacyAssessmentCase } from './assess-privacy.ts';
 import type { EligibilityEvidence, ProcessingEligibilityGate } from './eligibility-gate.ts';
 import { processingScopeKey } from './processing-scope.ts';
 import type { ProcessingScope } from './processing-scope.ts';
-import { decideMessage, HandoffFact, MessageHandoffDecision } from './suppression.ts';
+import { decideMessage, decideUnaskedMessage, HandoffFact, MessageHandoffDecision } from './suppression.ts';
 import type {
+  AskedMessageFacts,
   HandoffFactCase,
   MessageHandoffDecisionCase,
   ProviderFactCase,
   SourceCurrentnessCase,
   SuppressionReason,
+  UnaskedMessageFacts,
 } from './suppression.ts';
 import type { RecipientCurrentGate } from '../recipient/current-gate.ts';
 
@@ -47,9 +48,23 @@ export interface MessageHandoffItem {
 export interface MessageHandoffInput {
   readonly recipient: RecipientEvaluationInput;
   readonly source: SourceCurrentnessCase;
+  /**
+   * The audience slots of members of the same request that are known to be unable to proceed and are therefore not asked about
+   * again (not pending, or stopped for good): they count as members that are not ready, so an approved indivisible group
+   * that one of them belongs to can never be complete.
+   */
+  readonly withheld?: readonly MessageIntentIdentity['slotKey'][];
 }
 
-const isAsked = (item: MessageHandoffItem) => HandoffFact.$is('NotAttempted')(item.handoff);
+/** One message before its recipient verdict: asked about Privacy and carrying the answer, or not asked about at all. */
+type Staged =
+  | {
+      readonly handoff: AskedMessageFacts['handoff'];
+      readonly item: MessageHandoffItem;
+      readonly kind: 'ASKED';
+      readonly privacy: PrivacyAssessmentCase;
+    }
+  | { readonly handoff: UnaskedMessageFacts['handoff']; readonly item: MessageHandoffItem; readonly kind: 'UNASKED' };
 
 const assessFor = (input: MessageHandoffInput, item: MessageHandoffItem) => {
   const { request, type } = input.recipient;
@@ -87,11 +102,16 @@ const applyAudienceGroup = (
     readonly decision: MessageHandoffDecisionCase;
     readonly slotKey: MessageIntentIdentity['slotKey'];
   }[],
+  withheld: readonly MessageIntentIdentity['slotKey'][],
 ): readonly MessageHandoffDecisionCase[] => {
-  const members = entries.map(({ decision, slotKey }) => ({
-    ready: MessageHandoffDecision.$is('Proceed')(decision) || MessageHandoffDecision.$is('AlreadyHandedOff')(decision),
-    slotKey,
-  }));
+  const members = [
+    ...entries.map(({ decision, slotKey }) => ({
+      ready:
+        MessageHandoffDecision.$is('Proceed')(decision) || MessageHandoffDecision.$is('AlreadyHandedOff')(decision),
+      slotKey,
+    })),
+    ...withheld.map((slotKey) => ({ ready: false, slotKey })),
+  ];
   if (isGroupComplete(audience, members)) {
     return entries.map(({ decision }) => decision);
   }
@@ -140,90 +160,40 @@ export const decideMessageHandoffs = Effect.fn('Communications.decideMessageHand
       pin,
     })),
   );
-  const assessments = yield* Effect.forEach(
+  // A message that may still be handed off is asked about Privacy; one that is not (proven or unknown handoff) is never
+  const staged = yield* Effect.forEach(
     items,
-    (item): Effect.Effect<Option.Option<PrivacyAssessmentCase>, never, ProcessingEligibilityGate> =>
-      isAsked(item) ? Effect.map(assessFor(input, item), Option.some) : Effect.succeed(Option.none()),
+    (item): Effect.Effect<Staged, never, ProcessingEligibilityGate> => {
+      const { handoff } = item;
+      return HandoffFact.$is('NotAttempted')(handoff)
+        ? Effect.map(assessFor(input, item), (privacy): Staged => ({ handoff, item, kind: 'ASKED', privacy }))
+        : Effect.succeed<Staged>({ handoff, item, kind: 'UNASKED' });
+    },
     { concurrency: GATE_CONCURRENCY },
   );
-  const decisions = items.map((item, index) => {
+  const decisions = staged.map((entry, index) => {
+    const { item } = entry;
     const verdict =
       verdicts[recheckPosition[index] ?? -1] ??
       HandoffVerdict.AlreadyHandedOff({ identity: item.identity, reconciliationRequired: true });
+    const facts = {
+      evaluatedAt,
+      identity: item.identity,
+      provider: item.provider,
+      recipient: verdict,
+      scope: item.scope,
+      source: input.source,
+    };
     return {
-      decision: decideMessage({
-        evaluatedAt,
-        handoff: item.handoff,
-        identity: item.identity,
-        privacy: assessments[index] ?? Option.none(),
-        provider: item.provider,
-        recipient: verdict,
-        scope: item.scope,
-        source: input.source,
-      }),
+      decision:
+        entry.kind === 'ASKED'
+          ? decideMessage({ ...facts, handoff: entry.handoff, privacy: entry.privacy })
+          : decideUnaskedMessage({ ...facts, handoff: entry.handoff }),
       slotKey: item.identity.slotKey,
     };
   });
-  return applyAudienceGroup(input.recipient.type.audience, decisions);
+  return applyAudienceGroup(input.recipient.type.audience, decisions, input.withheld ?? []);
 });
-
-/**
- * What the source workflow learns for the messages of one request (#1394 2A, BR-12). Required is a business
- * requirement on the OUTCOME: it never bypasses Privacy, recipient or channel stops, never promises delivery and never
- * touches the confirmed source fact. The source owner alone decides what the result means for its own workflow.
- */
-export type RequiredHandoffOutcomeCase = Data.TaggedEnum<{
-  /** At least one required message is not handed off or cannot be proven; `partial` when some others may proceed. */
-  Failed: {
-    readonly partial: boolean;
-    /** Messages whose provider effect is unknown: reconciliation is owed, not a new send. */
-    readonly reconciliation: readonly MessageIntentIdentity[];
-    readonly sourceImpact: 'SOURCE_OWNER_DECIDES';
-    readonly stopped: readonly {
-      readonly identity: MessageIntentIdentity;
-      readonly primary: SuppressionReason;
-      readonly reasons: readonly SuppressionReason[];
-    }[];
-  };
-  NotRequired: { readonly requiredness: 'OPTIONAL' };
-  /** Every message may proceed or already did. This is not delivery. */
-  Ready: { readonly identities: readonly MessageIntentIdentity[] };
-  /** Every stop is the source owner's own change (BR-08): truthful, but not a Communications failure. */
-  SourceStale: { readonly stopped: readonly MessageIntentIdentity[] };
-}>;
-export const RequiredHandoffOutcome = Data.taggedEnum<RequiredHandoffOutcomeCase>();
-
-export const requiredHandoffOutcomeOf = (
-  requiredness: Requiredness,
-  decisions: readonly MessageHandoffDecisionCase[],
-): RequiredHandoffOutcomeCase => {
-  if (requiredness === 'OPTIONAL') {
-    return RequiredHandoffOutcome.NotRequired({ requiredness });
-  }
-  const stopped = decisions.flatMap((decision) =>
-    MessageHandoffDecision.$is('Suppressed')(decision)
-      ? [{ identity: decision.identity, primary: decision.primary, reasons: decision.reasons }]
-      : [],
-  );
-  const reconciliation = decisions.flatMap((decision) =>
-    MessageHandoffDecision.$is('ReconciliationRequired')(decision) ? [decision.identity] : [],
-  );
-  if (stopped.length === 0 && reconciliation.length === 0) {
-    return RequiredHandoffOutcome.Ready({ identities: decisions.map(({ identity }) => identity) });
-  }
-  if (
-    reconciliation.length === 0 &&
-    stopped.every(({ reasons }) => reasons.every(({ category }) => category === 'SOURCE_STALE'))
-  ) {
-    return RequiredHandoffOutcome.SourceStale({ stopped: stopped.map(({ identity }) => identity) });
-  }
-  return RequiredHandoffOutcome.Failed({
-    partial: stopped.length + reconciliation.length < decisions.length,
-    reconciliation,
-    sourceImpact: 'SOURCE_OWNER_DECIDES',
-    stopped,
-  });
-};
 
 /**
  * Recovery after a stop (BR-13): only a NEW Current evaluation that lets the same message proceed may admit another
@@ -259,17 +229,13 @@ export interface StopRecord {
 const decisionTimeOf = (evidence: EligibilityEvidence | undefined): Option.Option<DateTime.Utc> =>
   evidence === undefined ? Option.none() : Option.some(evidence.trustedDecisionTime);
 
-const ownerDecisionTimeOf = (privacy: Option.Option<PrivacyAssessmentCase>): Option.Option<DateTime.Utc> =>
-  privacy.pipe(
-    Option.flatMap((assessment) =>
-      PrivacyAssessment.$match(assessment, {
-        Allowed: ({ evidence }) => decisionTimeOf(evidence),
-        Indeterminate: ({ evidence }) => decisionTimeOf(evidence),
-        NotAllowed: ({ evidence }) => decisionTimeOf(evidence),
-        Unavailable: () => Option.none(),
-      }),
-    ),
-  );
+const ownerDecisionTimeOf = (assessment: PrivacyAssessmentCase): Option.Option<DateTime.Utc> =>
+  PrivacyAssessment.$match(assessment, {
+    Allowed: ({ evidence }) => decisionTimeOf(evidence),
+    Indeterminate: ({ evidence }) => decisionTimeOf(evidence),
+    NotAllowed: ({ evidence }) => decisionTimeOf(evidence),
+    Unavailable: () => Option.none(),
+  });
 
 /** The record of a stop, taken from the stop decision itself so a caller cannot invent its time. */
 export const stopRecordOf = (
@@ -302,11 +268,9 @@ export const admitRecoveryAfterStop = (prior: StopRecord, next: MessageHandoffDe
     AlreadyHandedOff: () => RecoveryAdmission.Refused({ identity, reason: 'ALREADY_HANDED_OFF' }),
     Proceed: ({ evidence }) => {
       // Only an ALLOWED the owner decided after the stop is a new evaluation; its own decision time is what counts.
-      const decidedAt = evidence.privacy.pipe(
-        Option.flatMap((assessment) =>
-          PrivacyAssessment.$is('Allowed')(assessment) ? decisionTimeOf(assessment.evidence) : Option.none(),
-        ),
-      );
+      const decidedAt = PrivacyAssessment.$is('Allowed')(evidence.privacy)
+        ? decisionTimeOf(evidence.privacy.evidence)
+        : Option.none();
       const isNew = Option.match(decidedAt, {
         onNone: () => false,
         onSome: (time) => DateTime.isGreaterThan(time, since),

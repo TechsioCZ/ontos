@@ -1,4 +1,4 @@
-import { Data, Option, Schema } from 'effect';
+import { Data, Schema } from 'effect';
 import type { DateTime } from 'effect';
 
 import type { MessageIntentIdentity, StaleSourceReason } from '../catalog/decision.ts';
@@ -9,7 +9,7 @@ import { RecipientAssessment } from '../recipient/recipient-assessment.ts';
 import type { NotAllowedReason, UnresolvedReason } from '../recipient/recipient-assessment.ts';
 import type { RecipientEvidence } from '../recipient/recipient-evidence.ts';
 import type { IndeterminateCause, NotAllowedBasis, UnavailableReason } from './eligibility-gate.ts';
-import { PrivacyAssessment } from './assess-privacy.ts';
+import { PrivacyAssessment, privacyStopOf } from './assess-privacy.ts';
 import type { PrivacyAssessmentCase } from './assess-privacy.ts';
 import type { ProcessingScope } from './processing-scope.ts';
 import { processingScopeKey } from './processing-scope.ts';
@@ -35,6 +35,8 @@ const SuppressionCategorySchema = Schema.Literals([
   'PRIVACY_AUTHORITY_UNAVAILABLE',
   'PRIVACY_CONTEXT_AMBIGUOUS',
   'PROVIDER_SUPPRESSED',
+  // The recipient rule that governed the decision of this message is no longer the approved one: a catalog fact, not a recipient fact.
+  'TYPE_RULE_CHANGED',
   // A mandatory recipient authority did not answer: uncertainty about the recipient, not a recipient fact.
   'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_INVALID',
@@ -58,7 +60,8 @@ export type SuppressionCause =
   | 'PROVIDER_BLOCKED'
   | 'PROVIDER_BOUNCED'
   | 'PROVIDER_FACT_UNAVAILABLE'
-  | 'PROVIDER_SUPPRESSED';
+  | 'PROVIDER_SUPPRESSED'
+  | 'RECIPIENT_RULE_CHANGED';
 
 export interface SuppressionReason {
   readonly category: SuppressionCategory;
@@ -94,7 +97,8 @@ export const HandoffFact = Data.taggedEnum<HandoffFactCase>();
 
 export interface MessageEvidence {
   readonly evaluatedAt: DateTime.Utc;
-  readonly privacy: Option.Option<PrivacyAssessmentCase>;
+  /** The Privacy answer this decision was made on: a message that may still be handed off is never decided without one. */
+  readonly privacy: PrivacyAssessmentCase;
   readonly provider: ProviderFactCase;
   readonly recipient: RecipientEvidence | null;
   readonly scopeKey: string;
@@ -128,32 +132,22 @@ const stop = (category: SuppressionCategory, cause: SuppressionCause, proven: bo
   proven,
 });
 
-/** Where each Privacy stop is reported. Only evidence of a prohibition is ever `PRIVACY_NOT_ALLOWED`. */
-const INDETERMINATE_CATEGORY = {
-  CONTEXT_AMBIGUOUS: 'PRIVACY_CONTEXT_AMBIGUOUS',
-  CONTEXT_NOT_SUPPORTED: 'PRIVACY_INDETERMINATE',
-  EVIDENCE_INCONSISTENT: 'PRIVACY_INDETERMINATE',
-  EVIDENCE_MISSING: 'PRIVACY_INDETERMINATE',
-  EVIDENCE_SCOPE_MISMATCH: 'PRIVACY_INDETERMINATE',
-  INPUTS_NOT_EVIDENCED: 'PRIVACY_INDETERMINATE',
-  PROTECTED_MATERIAL: 'SOURCE_PROTECTED',
-  PURPOSE_NOT_CURRENT: 'PRIVACY_INDETERMINATE',
-} as const satisfies Record<IndeterminateCause, SuppressionCategory>;
-
-const UNAVAILABLE_CATEGORY = {
-  AUTHORIZATION_DENIED: 'PRIVACY_ACCESS_DENIED',
-  CONTEXT_AMBIGUOUS: 'PRIVACY_CONTEXT_AMBIGUOUS',
-  OWNER_UNAVAILABLE: 'PRIVACY_AUTHORITY_UNAVAILABLE',
-} as const satisfies Record<UnavailableReason, SuppressionCategory>;
-
-/** Only a proven prohibition is `PRIVACY_NOT_ALLOWED`; every other Privacy stop names its own fact and is unproven. */
-export const privacySuppressionReasons = (assessment: PrivacyAssessmentCase): readonly SuppressionReason[] =>
-  PrivacyAssessment.$match(assessment, {
+/**
+ * Only a proven prohibition is `PRIVACY_NOT_ALLOWED`; every other Privacy stop names its own fact and is unproven. The category
+ * is the one the decision uses for the same answer (`privacyStopOf`), so the two moments never disagree.
+ */
+export const privacySuppressionReasons = (assessment: PrivacyAssessmentCase): readonly SuppressionReason[] => {
+  const category = privacyStopOf(assessment);
+  if (category === undefined) {
+    return [];
+  }
+  return PrivacyAssessment.$match(assessment, {
     Allowed: () => [],
-    Indeterminate: ({ cause }) => [stop(INDETERMINATE_CATEGORY[cause], cause, false)],
-    NotAllowed: ({ basis }) => [stop('PRIVACY_NOT_ALLOWED', basis, true)],
-    Unavailable: ({ reason }) => [stop(UNAVAILABLE_CATEGORY[reason], reason, false)],
+    Indeterminate: ({ cause }) => [stop(category, cause, false)],
+    NotAllowed: ({ basis }) => [stop(category, basis, true)],
+    Unavailable: ({ reason }) => [stop(category, reason, false)],
   });
+};
 
 /** A recipient stop keeps its owner reason; an ended or unsafe endpoint is a channel stop, an ended source a source stop. */
 const recipientReasons = (verdict: HandoffVerdictCase): readonly SuppressionReason[] =>
@@ -161,6 +155,7 @@ const recipientReasons = (verdict: HandoffVerdictCase): readonly SuppressionReas
     AlreadyHandedOff: () => [],
     GroupStopped: () => [],
     Proceed: () => [],
+    RuleChanged: () => [stop('TYPE_RULE_CHANGED', 'RECIPIENT_RULE_CHANGED', true)],
     Stopped: ({ assessment }) =>
       RecipientAssessment.$match(assessment, {
         RecipientAllowed: () => [],
@@ -198,6 +193,7 @@ const channelReasons = (verdict: HandoffVerdictCase, scope: ProcessingScope): re
 
 const CATEGORY_RANK: readonly SuppressionCategory[] = [
   'SOURCE_STALE',
+  'TYPE_RULE_CHANGED',
   'PRIVACY_NOT_ALLOWED',
   'RECIPIENT_INVALID',
   'CHANNEL_UNUSABLE',
@@ -219,16 +215,28 @@ const orderedReasons = (reasons: readonly SuppressionReason[]): readonly Suppres
       Number(!a.proven) - Number(!b.proven) || CATEGORY_RANK.indexOf(a.category) - CATEGORY_RANK.indexOf(b.category),
   );
 
-export interface MessageFacts {
+interface MessageFactsBase {
   readonly evaluatedAt: DateTime.Utc;
-  readonly handoff: HandoffFactCase;
   readonly identity: MessageIntentIdentity;
-  /** Absent only for a message that is not asked about (already proven or unknown handoff). */
-  readonly privacy: Option.Option<PrivacyAssessmentCase>;
   readonly provider: ProviderFactCase;
   readonly recipient: HandoffVerdictCase;
   readonly scope: ProcessingScope;
   readonly source: SourceCurrentnessCase;
+}
+
+/**
+ * A message that may still be stopped or handed off. Privacy MUST have been asked for its exact scope: the type has no
+ * way to state "not asked", so a `Proceed` without a Privacy question cannot compile (#1396 BR-01, T4-04).
+ */
+export interface AskedMessageFacts extends MessageFactsBase {
+  readonly handoff: Extract<HandoffFactCase, { readonly _tag: 'NotAttempted' }>;
+  readonly privacy: PrivacyAssessmentCase;
+}
+
+/** A message that is not asked about: its handoff is already proven, or its effect is unknown and is reconciled first. */
+export interface UnaskedMessageFacts extends MessageFactsBase {
+  readonly handoff: Exclude<HandoffFactCase, { readonly _tag: 'NotAttempted' }>;
+  readonly privacy?: PrivacyAssessmentCase;
 }
 
 const recipientEvidenceOf = (verdict: HandoffVerdictCase): RecipientEvidence | null =>
@@ -236,32 +244,39 @@ const recipientEvidenceOf = (verdict: HandoffVerdictCase): RecipientEvidence | n
     AlreadyHandedOff: () => null,
     GroupStopped: ({ evidence }) => evidence,
     Proceed: ({ evidence }) => evidence,
+    RuleChanged: () => null,
     Stopped: ({ evidence }) => evidence,
   });
 
-const allReasonsOf = (facts: MessageFacts): readonly SuppressionReason[] =>
+const allReasonsOf = (facts: AskedMessageFacts | UnaskedMessageFacts): readonly SuppressionReason[] =>
   orderedReasons([
     ...sourceReasons(facts.source),
-    ...Option.match(facts.privacy, { onNone: () => [], onSome: privacySuppressionReasons }),
+    ...(facts.privacy === undefined ? [] : privacySuppressionReasons(facts.privacy)),
     ...recipientReasons(facts.recipient),
     ...channelReasons(facts.recipient, facts.scope),
     ...providerReasons(facts.provider),
   ]);
 
 /**
- * Decide ONE message from the independent facts about it. One message's facts never reach another message, so one
- * denial never denies the others; an approved indivisible audience is applied afterwards, over decisions, by
- * `applyAudienceGroup`. Pure and total: absence of any preference record is simply not an input.
+ * Decide a message that is NOT asked about. A proven handoff is historical truth: it stays exactly as it happened and a later
+ * condition is recorded, governing only further processing. An unknown external effect is reconciled first, never resent
+ * blindly, and is never given a Privacy verdict.
  */
-export const decideMessage = (facts: MessageFacts): MessageHandoffDecisionCase => {
+export const decideUnaskedMessage = (facts: UnaskedMessageFacts): MessageHandoffDecisionCase => {
   const { identity } = facts;
-  if (HandoffFact.$is('ProvenHandedOff')(facts.handoff)) {
-    // Historical truth: the handoff happened. A later condition is recorded and governs only further processing.
-    return MessageHandoffDecision.AlreadyHandedOff({ identity, later: allReasonsOf(facts) });
-  }
-  if (HandoffFact.$is('EffectUnknown')(facts.handoff)) {
-    return MessageHandoffDecision.ReconciliationRequired({ identity });
-  }
+  return HandoffFact.$is('ProvenHandedOff')(facts.handoff)
+    ? MessageHandoffDecision.AlreadyHandedOff({ identity, later: allReasonsOf(facts) })
+    : MessageHandoffDecision.ReconciliationRequired({ identity });
+};
+
+/**
+ * Decide ONE message that may still be stopped or handed off from the independent facts about it. Its Privacy answer is a
+ * required input (`AskedMessageFacts`). One message's facts never reach another message, so one denial never denies the
+ * others; an approved indivisible audience is applied afterwards, over decisions, by `applyAudienceGroup`. Pure and total:
+ * absence of any preference record is simply not an input.
+ */
+export const decideMessage = (facts: AskedMessageFacts): MessageHandoffDecisionCase => {
+  const { identity } = facts;
   const evidence: MessageEvidence = {
     evaluatedAt: facts.evaluatedAt,
     privacy: facts.privacy,

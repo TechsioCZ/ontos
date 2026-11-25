@@ -3,7 +3,6 @@ import { Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationOutcome } from '../../src/domain/catalog/decision.ts';
-import { requiredOutcomeOf, RequiredCommunicationOutcome } from '../../src/domain/catalog/required-outcome.ts';
 import { IntentStopReasonSchema, SourceUnresolvedReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
 import { decideRequest } from '../../src/domain/intake/decide-request.ts';
 import type { DecisionPlan } from '../../src/domain/intake/plan.ts';
@@ -27,6 +26,7 @@ import { baseIdentity, makeInMemoryLanguagePolicyPort, seedLanguages } from '../
 import { fixtureType } from './support/catalog-fixtures.ts';
 import { privacyAllowed } from './support/privacy-fixtures.ts';
 import { usable } from './support/recipient-fixtures.ts';
+import { feedOfDecision } from './support/required-feed.ts';
 
 /**
  * #1401 I-07 / #1400 LC-05 (a source owner that states nothing is a durable not-sent outcome), #1399 L-02 (an owner-required
@@ -125,8 +125,11 @@ describe('A source owner that states nothing is a durable not-sent outcome (#140
         sourceAuthority: unresolvedSource('OWNER_UNAVAILABLE'),
         type: fixtureType({ requiredness: 'REQUIRED' }),
       });
-      const outcome = requiredOutcomeOf(plan.decision);
-      expect(RequiredCommunicationOutcome.$is('Failed')(outcome)).toBe(true);
+      expect(feedOfDecision(plan.decision)).toMatchObject({
+        noMessageReason: 'SOURCE_AUTHORITY_UNAVAILABLE',
+        requiredOutcome: 'FAILED',
+        sourceImpact: 'SOURCE_OWNER_DECIDES',
+      });
     }),
   );
 
@@ -237,7 +240,7 @@ describe('Every stored reason is of the closed stop vocabulary (#1401)', () => {
   it.effect('a recipient whose Privacy scope no producer declared stops as an unresolved Privacy context', () =>
     Effect.gen(function* undeclared() {
       const { plan } = yield* run({ scopeDeclared: false });
-      expect(reasonOf(plan)).toBe('PRIVACY_INDETERMINATE');
+      expect(reasonOf(plan)).toBe('PRIVACY_CONTEXT_AMBIGUOUS');
       expect(Schema.is(IntentStopReasonSchema)(reasonOf(plan))).toBe(true);
     }),
   );

@@ -6,7 +6,6 @@ import {
   admitRecoveryAfterStop,
   decideMessageHandoffs,
   RecoveryAdmission,
-  requiredHandoffOutcomeOf,
   stopRecordOf,
 } from '../../src/domain/privacy/handoff-decision.ts';
 import type { MessageHandoffInput, MessageHandoffItem } from '../../src/domain/privacy/handoff-decision.ts';
@@ -43,7 +42,7 @@ import {
   staleSource,
 } from './support/privacy-fixtures.ts';
 import type { PrivacyAnswer } from './support/privacy-fixtures.ts';
-import { blockingFactsOf, recoverySummary, requiredSummary } from './support/privacy-summaries.ts';
+import { blockingFactsOf, recoverySummary } from './support/privacy-summaries.ts';
 import {
   binding,
   evaluationInput,
@@ -56,6 +55,7 @@ import {
   usable,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
+import { feedOfHandoff, feedSummary } from './support/required-feed.ts';
 
 const owner = (response: typeof PrivacySourceEligibilityResponseSchema.Encoded) =>
   Schema.decodeUnknownSync(PrivacySourceEligibilityResponseSchema)(response);
@@ -635,9 +635,9 @@ describe('#1396 Rule: every recipient has its own outcome (BR-09)', () => {
           { kind: 'Proceed', recipient: 'recipient-b' },
           { kind: 'Suppressed', reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'], recipient: 'recipient-c' },
         ]);
-        expect(requiredSummary(requiredHandoffOutcomeOf('REQUIRED', decisions))).toMatchObject({
-          kind: 'Failed',
+        expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
           partial: true,
+          requiredOutcome: 'FAILED',
           sourceImpact: 'SOURCE_OWNER_DECIDES',
         });
       }),
@@ -744,22 +744,25 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
           privacy: { 'recipient-a': privacyNotAllowed() },
           recipients: { 'contact-a': usable() },
         }).run;
-        const outcome = requiredHandoffOutcomeOf('REQUIRED', decisions);
+        const feed = feedOfHandoff('REQUIRED', decisions);
 
-        expect(requiredSummary(outcome)).toEqual({
-          kind: 'Failed',
+        expect(feedSummary(feed)).toEqual({
+          attentions: ['FAILURE'],
           partial: false,
-          reconciliation: [],
+          reasons: ['PRIVACY_NOT_ALLOWED'],
+          requiredOutcome: 'FAILED',
           sourceImpact: 'SOURCE_OWNER_DECIDES',
-          stopped: [{ category: 'PRIVACY_NOT_ALLOWED', recipient: 'recipient-a' }],
         });
         // Communications changes nothing in the source: the outcome has no field that could.
-        expect(Object.keys(outcome).toSorted()).toEqual([
-          '_tag',
+        expect(Object.keys(feed).toSorted()).toEqual([
+          'decisionId',
+          'messages',
+          'noMessageReason',
           'partial',
-          'reconciliation',
+          'requestId',
+          'requiredOutcome',
           'sourceImpact',
-          'stopped',
+          'unresolvedSlots',
         ]);
       }),
   );
@@ -771,10 +774,9 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
         const { input, items } = requiredOne({ handoff: HandoffFact.EffectUnknown() });
         const decisions = yield* decide(input, items, { privacy: {}, recipients: {} }).run;
 
-        expect(requiredSummary(requiredHandoffOutcomeOf('REQUIRED', decisions))).toMatchObject({
-          kind: 'Failed',
-          reconciliation: ['recipient-a'],
-          stopped: [],
+        expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
+          attentions: ['UNKNOWN'],
+          requiredOutcome: 'UNKNOWN',
         });
       }),
   );
@@ -788,7 +790,10 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
         source: staleSource('SOURCE_REVISION_NOT_CURRENT'),
       }).run;
 
-      expect(requiredSummary(requiredHandoffOutcomeOf('REQUIRED', decisions)).kind).toBe('SourceStale');
+      expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
+        reasons: ['SOURCE_REVISION_NOT_CURRENT'],
+        requiredOutcome: 'SOURCE_STALE',
+      });
     }),
   );
 
@@ -802,7 +807,7 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
           recipients: { 'contact-a': usable() },
         }).run;
 
-        expect(requiredSummary(requiredHandoffOutcomeOf('OPTIONAL', decisions)).kind).toBe('NotRequired');
+        expect(feedOfHandoff('OPTIONAL', decisions).requiredOutcome).toBe('NOT_REQUIRED');
         expect(view(only(decisions)).kind).toBe('Suppressed');
       }),
   );
@@ -815,7 +820,7 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
         recipients: { 'contact-a': usable() },
       }).run;
 
-      expect(requiredSummary(requiredHandoffOutcomeOf('REQUIRED', decisions)).kind).toBe('Ready');
+      expect(feedOfHandoff('REQUIRED', decisions).requiredOutcome).toBe('IN_PROGRESS');
     }),
   );
 });

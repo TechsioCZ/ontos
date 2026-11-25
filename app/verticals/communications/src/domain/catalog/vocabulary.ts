@@ -122,6 +122,22 @@ export type CommunicationTenantId = typeof CommunicationTenantIdSchema.Type;
 export const PrivacyEvidenceSchema = Schema.Literals(['ALLOWED', 'NOT_ALLOWED', 'INDETERMINATE']);
 export type PrivacyEvidence = typeof PrivacyEvidenceSchema.Type;
 
+/**
+ * Every Privacy fact the Communication Decision can carry for one candidate: the evidence above, plus the reasons no Privacy
+ * decision was reached or the source is protected. Each is its own fact (#1396 BR-14, AC-02, AC-10), so a Communications access
+ * problem, an owner outage, an ambiguous context or a protected source is never reported as Privacy uncertainty.
+ */
+export const PrivacyFactSchema = Schema.Literals([
+  'ALLOWED',
+  'NOT_ALLOWED',
+  'INDETERMINATE',
+  'ACCESS_DENIED',
+  'AUTHORITY_UNAVAILABLE',
+  'CONTEXT_AMBIGUOUS',
+  'SOURCE_PROTECTED',
+]);
+export type PrivacyFact = typeof PrivacyFactSchema.Type;
+
 /** Stop facts the recipient algorithm (#1395, `domain/recipient`) can report besides Privacy. */
 export const RecipientStopReasonSchema = Schema.Literals([
   'RECIPIENT_NOT_ELIGIBLE',
@@ -137,12 +153,30 @@ export const RecipientStopReasonSchema = Schema.Literals([
 export const CandidateStopReasonSchema = Schema.Literals([
   'PRIVACY_NOT_ALLOWED',
   'PRIVACY_INDETERMINATE',
+  'PRIVACY_ACCESS_DENIED',
+  'PRIVACY_AUTHORITY_UNAVAILABLE',
+  'PRIVACY_CONTEXT_AMBIGUOUS',
+  'SOURCE_PROTECTED',
   'RECIPIENT_NOT_ELIGIBLE',
   'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_BASIS_MISSING',
   'AUDIENCE_GROUP_INCOMPLETE',
 ]);
 export type CandidateStopReason = typeof CandidateStopReasonSchema.Type;
+
+/**
+ * The ONE Privacy vocabulary of a stop, used by the decision and by the last stoppable handoff alike: the closed reason each
+ * non-allowing Privacy fact is reported under. Only a proven prohibition is `PRIVACY_NOT_ALLOWED`.
+ */
+export const PRIVACY_STOP_OF_FACT = {
+  ACCESS_DENIED: 'PRIVACY_ACCESS_DENIED',
+  AUTHORITY_UNAVAILABLE: 'PRIVACY_AUTHORITY_UNAVAILABLE',
+  CONTEXT_AMBIGUOUS: 'PRIVACY_CONTEXT_AMBIGUOUS',
+  INDETERMINATE: 'PRIVACY_INDETERMINATE',
+  NOT_ALLOWED: 'PRIVACY_NOT_ALLOWED',
+  SOURCE_PROTECTED: 'SOURCE_PROTECTED',
+} as const satisfies Record<Exclude<PrivacyFact, 'ALLOWED'>, CandidateStopReason>;
+export type PrivacyStopReason = (typeof PRIVACY_STOP_OF_FACT)[keyof typeof PRIVACY_STOP_OF_FACT];
 
 /**
  * Why a message the decision gave a concrete candidate still cannot be pinned to an approved text and channel, so it is stored as a

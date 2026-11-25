@@ -7,8 +7,6 @@ import type { HandoffVerdictCase } from '../../../src/domain/recipient/recheck-b
 import type { EvaluatedRecipient } from '../../../src/domain/recipient/assess-recipients.ts';
 import { RecipientAssessment } from '../../../src/domain/recipient/recipient-assessment.ts';
 import type { RecipientAssessmentCase } from '../../../src/domain/recipient/recipient-assessment.ts';
-import { RequiredCommunicationOutcome, RequiredFailureReason } from '../../../src/domain/catalog/required-outcome.ts';
-import type { RequiredCommunicationOutcomeCase } from '../../../src/domain/catalog/required-outcome.ts';
 
 /** Plain, tag-free views of decisions so tests can assert them structurally without hand-written case analysis. */
 
@@ -40,31 +38,6 @@ export const outcomeSummary = (decision: CommunicationDecision) =>
   });
 
 export const pinOf = (decision: CommunicationDecision) => Option.getOrUndefined(decision.type);
-
-const reasonSummary = RequiredFailureReason.$match({
-  CandidateSuppressed: ({ identity, reason }) => ({
-    kind: 'CandidateSuppressed' as const,
-    reason,
-    slotKey: identity.slotKey,
-  }),
-  NoMessage: ({ reason }) => ({ kind: 'NoMessage' as const, reason }),
-  SlotUnresolved: ({ reason, slotKey }) => ({ kind: 'SlotUnresolved' as const, reason, slotKey }),
-});
-
-export const requiredSummary = (outcome: RequiredCommunicationOutcomeCase) =>
-  RequiredCommunicationOutcome.$match(outcome, {
-    Failed: ({ partial, prepared, reasons, sourceImpact }) => ({
-      kind: 'Failed' as const,
-      partial,
-      preparedSlots: prepared.map(({ slotKey }) => slotKey),
-      reasons: reasons.map(reasonSummary),
-      sourceImpact,
-    }),
-    NotRequired: () => ({ kind: 'NotRequired' as const }),
-    Prepared: ({ prepared }) => ({ kind: 'Prepared' as const, preparedSlots: prepared.map(({ slotKey }) => slotKey) }),
-    RequirednessUnknown: () => ({ kind: 'RequirednessUnknown' as const }),
-    SourceStale: ({ reason }) => ({ kind: 'SourceStale' as const, reason }),
-  });
 
 /** Plain view of one recipient assessment: its business outcome, recipient id and reason, never the endpoint. */
 export const assessmentSummary = (assessment: RecipientAssessmentCase) =>
@@ -110,6 +83,7 @@ export const verdictSummary = (verdict: HandoffVerdictCase) =>
     AlreadyHandedOff: ({ reconciliationRequired }) => ({ kind: 'AlreadyHandedOff' as const, reconciliationRequired }),
     GroupStopped: ({ evidence }) => ({ kind: 'GroupStopped' as const, reason: evidence.reason }),
     Proceed: ({ endpoint }) => ({ address: Redacted.value(endpoint.value), kind: 'Proceed' as const }),
+    RuleChanged: () => ({ kind: 'RuleChanged' as const }),
     Stopped: ({ assessment }) => ({ assessment: assessmentSummary(assessment), kind: 'Stopped' as const }),
   });
 

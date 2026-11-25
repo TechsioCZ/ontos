@@ -2,7 +2,6 @@ import { DateTime, Effect, Fiber, Logger, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { requiredOutcomeOf } from '../../src/domain/catalog/required-outcome.ts';
 import { RecipientAssessment } from '../../src/domain/recipient/recipient-assessment.ts';
 import { assessRecipients, recipientFactOf } from '../../src/domain/recipient/assess-recipients.ts';
 import type { RecipientEvaluationInput } from '../../src/domain/recipient/assess-recipients.ts';
@@ -44,13 +43,8 @@ import {
   usableWithMask,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
-import {
-  assessmentSummary,
-  outcomeSummary,
-  requiredSummary,
-  revealedAddresses,
-  verdictSummaries,
-} from './support/summaries.ts';
+import { feedOfDecision, feedSummary } from './support/required-feed.ts';
+import { assessmentSummary, outcomeSummary, revealedAddresses, verdictSummaries } from './support/summaries.ts';
 
 const single = fixtureType();
 
@@ -239,9 +233,9 @@ describe('#1395 Rule: every recipient of an approved audience is evaluated indiv
           ],
         });
         // The source learns the truthful partial result; no rollback and nothing for the omitted recipient.
-        expect(requiredSummary(requiredOutcomeOf(decision))).toMatchObject({
-          kind: 'Failed',
+        expect(feedSummary(feedOfDecision(decision))).toMatchObject({
           partial: true,
+          requiredOutcome: 'FAILED',
           sourceImpact: 'SOURCE_OWNER_DECIDES',
         });
         // Each recipient has its own evidence and its own reason.
