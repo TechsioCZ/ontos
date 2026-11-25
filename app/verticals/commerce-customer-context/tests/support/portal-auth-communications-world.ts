@@ -2,7 +2,7 @@ import { BindPreVerificationSubjectResultSchema } from '@app/privacy/actions/bin
 import { NodeCrypto } from '@effect/platform-node';
 import { splitSetCookieHeader, applySetCookies } from 'better-auth/cookies';
 import { and, eq, inArray, isNotNull, like } from 'drizzle-orm';
-import { Config, Context, Crypto, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -29,8 +29,9 @@ import {
 import { CommercePortalAuthRecoveryStoreService } from '../../api/portal-auth/provider/recovery/store-service.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../api/portal-auth/provider/recovery/store-service.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import { CommercePortalAuthCommunicationOutcomeReader } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
-import type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
+import { communicationOutcomeReaderLayer } from '../../src/portal-auth/communications/communication-outcome-feed-reader.ts';
+import { CommercePortalAuthCommunicationOutcomeTransport } from '../../src/portal-auth/communications/communication-outcome-transport.ts';
+import type { CommunicationOutcomeTransportService } from '../../src/portal-auth/communications/communication-outcome-transport.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import type { CommunicationRequestSubmitterService } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
@@ -57,11 +58,16 @@ import type {
 } from '../../src/portal-auth/communications/protected-handoff.ts';
 import { protectedValueSealerLayer } from '../../src/portal-auth/communications/protected-value.ts';
 import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
-import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
 import {
+  CommercePortalAuthTrustedScope,
+  PORTAL_AUTH_TRUSTED_TENANT_VARIABLE,
+} from '../../src/portal-auth/communications/trusted-scope.ts';
+import {
+  CommercePortalAuthVerificationReplay,
   directVerificationReplayLayer,
   verificationReplayLayer,
 } from '../../src/portal-auth/communications/verification-replay.ts';
+import { commercePortalAuthCommunicationsRouteLive } from '../../api/index.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommercePortalAuthCommunicationStoreLive } from '../../src/portal-auth/persistence/portal-auth-communication-store.ts';
 import {
@@ -111,7 +117,7 @@ export {
   portalAuthOwnerRenderedSlotOf,
 } from '../../shared/portal-auth-communications.ts';
 export type { PortalAuthEmailFlow } from '../../shared/portal-auth-communications.ts';
-export type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
+export type { CommunicationOutcomeTransportService } from '../../src/portal-auth/communications/communication-outcome-transport.ts';
 export type {
   PortalAuthIntentSummary,
   PortalAuthSubmission,
@@ -127,7 +133,11 @@ export {
 export { fillOwnerRenderedSlots } from '../../src/portal-auth/communications/owner-completion.ts';
 export type { IssuanceLedgerProbe } from '../../src/portal-auth/communications/protected-handoff.ts';
 export { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
-export { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+export {
+  communicationRequestOutbox,
+  user,
+  verification,
+} from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 
 /** The FICTIONAL realm secret every Auth "process" and realm of a suite shares. */
 const REALM_SECRET = 's'.repeat(64);
@@ -471,26 +481,21 @@ export const signUp = Effect.fn('PortalAuthCommunicationsRealm.signUp')(function
 export interface EnrollmentGatewayOptions {
   /** The protected handoff the verification replay rule reads. */
   readonly handoff: ProtectedHandoffService;
-  /** What Communications proves about the message of one issuance, as the SOURCE learns it from the outcome feed. */
-  readonly outcomeOf: (issuanceRef: string) => Effect.Effect<PortalAuthSourceOutcome>;
+  /**
+   * How ONE question reaches the Communications outcome Read (the feed of the request the occurrence names, or null when
+   * Communications holds none). Auth's REAL reader puts the question, decodes the answer and reads it.
+   */
+  readonly outcomeFeedOf: CommunicationOutcomeTransportService['ask'];
   readonly withReplay: boolean;
 }
 
-/** The enrollment account-creation gateway over the realm, with the verification replay rule installed (or not). */
-export const makeEnrollmentGateway = Effect.fn('PortalAuthCommunicationsRealm.gateway')(function* makeGateway(
+/** The enrollment account-creation gateway over the realm with the given verification replay rule. */
+const makeGatewayOverReplay = Effect.fn('PortalAuthCommunicationsRealm.gatewayOverReplay')(function* makeGatewayOver(
   realm: PostgresRealm,
-  options: EnrollmentGatewayOptions,
+  replay: Layer.Layer<CommercePortalAuthVerificationReplay>,
 ) {
   const lookupLive = CommercePortalAuthAccountLookupLive.pipe(
     Layer.provide(Layer.succeed(CommercePortalAuthDatabase, realm.database)),
-  );
-  const outcomes = Layer.succeed(CommercePortalAuthCommunicationOutcomeReader, {
-    outcomeOf: ({ issuanceRef }) => options.outcomeOf(issuanceRef),
-  });
-  const replay = verificationReplayLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(Layer.succeed(CommercePortalAuthProtectedHandoff, options.handoff), outcomes, cryptoLive),
-    ),
   );
   const gatewayLive = CommercePortalAuthAccountCreationGatewayLive.pipe(
     Layer.provide(
@@ -499,11 +504,27 @@ export const makeEnrollmentGateway = Effect.fn('PortalAuthCommunicationsRealm.ga
           Layer.provide(Layer.succeed(CommercePortalAuthInstance, realm.auth)),
         ),
         lookupLive,
-        options.withReplay ? replay : directVerificationReplayLayer,
+        replay,
       ),
     ),
   );
   return yield* CommercePortalAuthAccountCreationGatewayService.pipe(Effect.provide(gatewayLive));
+});
+
+/** The enrollment account-creation gateway over the realm, with the verification replay rule installed (or not). */
+export const makeEnrollmentGateway = Effect.fn('PortalAuthCommunicationsRealm.gateway')(function* makeGateway(
+  realm: PostgresRealm,
+  options: EnrollmentGatewayOptions,
+) {
+  const outcomes = communicationOutcomeReaderLayer.pipe(
+    Layer.provide(Layer.succeed(CommercePortalAuthCommunicationOutcomeTransport, { ask: options.outcomeFeedOf })),
+  );
+  const replay = verificationReplayLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(Layer.succeed(CommercePortalAuthProtectedHandoff, options.handoff), outcomes, cryptoLive),
+    ),
+  );
+  return yield* makeGatewayOverReplay(realm, options.withReplay ? replay : directVerificationReplayLayer);
 });
 
 /**
@@ -558,3 +579,86 @@ export const otpChallengeOf = (realm: PostgresRealm) => {
     .pipe(Effect.map((rows) => rows.length));
   return { authenticatedSessionCount, pendingChallenge };
 };
+
+/**
+ * The realm on the PRODUCTION Communications route: the delivery, the verification replay rule, the protected handoff and the
+ * trusted Tenant are the very layers `api/index.ts` selects for a deployment that opted in
+ * (`commercePortalAuthCommunicationsRouteLive`), built over the realm's own database. The only inputs are the realm configuration
+ * and the trusted Tenant (a deployment value). What is NOT here: Communications itself (nothing is relayed), the worker host and
+ * the HTTP gateway.
+ */
+export const makeProductionRouteRealm = Effect.fn('PortalAuthCommunicationsRealm.productionRoute')(
+  function* makeRouteRealm(tenantId: string, caseName: string) {
+    const configuration = yield* realmConfiguration;
+    const storage = yield* acquireOutlivingCleanup(
+      Layer.build(
+        CommercePortalAuthRecoveryStoreLive.pipe(
+          Layer.provideMerge(realmDatabaseLayer(configuration)),
+          Layer.provide(cryptoLive),
+        ),
+      ),
+    );
+    const route = yield* Layer.build(
+      commercePortalAuthCommunicationsRouteLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              CommercePortalAuthRecoveryStoreService,
+              Context.get(storage, CommercePortalAuthRecoveryStoreService),
+            ),
+            Layer.succeed(CommercePortalAuthConfig, configuration),
+            cryptoLive,
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ [PORTAL_AUTH_TRUSTED_TENANT_VARIABLE]: tenantId })),
+          ),
+        ),
+      ),
+    );
+    const realm = yield* makePostgresRealm(
+      {
+        delivery: Context.get(route, CommercePortalAuthRawEmailDeliveryService),
+        ledgerProbe: { current: () => Effect.succeed('CURRENT') },
+        recoveryStore: yield* Ref.make(Option.none<CommercePortalAuthRecoveryStore>()),
+      },
+      caseName,
+    );
+    const gateway = yield* makeGatewayOverReplay(
+      realm,
+      Layer.succeed(CommercePortalAuthVerificationReplay, Context.get(route, CommercePortalAuthVerificationReplay)),
+    );
+    // the rows the Tenant left in the shared realm database are removed after it, whatever happened
+    yield* Effect.addFinalizer(() =>
+      realm.database.executor
+        .select({ issuanceRef: communicationRequestOutbox.issuanceRef })
+        .from(communicationRequestOutbox)
+        .where(eq(communicationRequestOutbox.tenantId, tenantId))
+        .pipe(
+          Effect.flatMap((rows) => {
+            const refs = rows.map(({ issuanceRef }) => issuanceRef);
+            return refs.length === 0
+              ? Effect.void
+              : realm.database.executor
+                  .delete(communicationRequestOutbox)
+                  .where(inArray(communicationRequestOutbox.issuanceRef, refs))
+                  .pipe(
+                    Effect.andThen(
+                      realm.database.executor
+                        .delete(communicationIssuance)
+                        .where(inArray(communicationIssuance.issuanceRef, refs)),
+                    ),
+                  );
+          }),
+          Effect.ignore,
+        ),
+    );
+    return {
+      gateway,
+      outbox: Effect.suspend(() =>
+        realm.database.executor
+          .select()
+          .from(communicationRequestOutbox)
+          .where(eq(communicationRequestOutbox.tenantId, tenantId)),
+      ),
+      realm,
+    };
+  },
+);

@@ -3,7 +3,7 @@ import {
   makePostgresRealm as makePortalAuthPostgresRealm,
   otpChallengeOf,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
-import type { PortalAuthSourceOutcome } from '@app/commerce-customer-context/testing/portal-auth-communications';
+import type { CommunicationOutcomeTransportService } from '@app/commerce-customer-context/testing/portal-auth-communications';
 import { Effect } from 'effect';
 
 import type { AuthWorld } from './auth-communications-world.spec.mts';
@@ -62,29 +62,23 @@ export const makePostgresRealm = Effect.fn('AuthCommunicationsRealm.postgres')(f
 });
 export type PostgresRealm = Effect.Success<ReturnType<typeof makePostgresRealm>>;
 
-/** What Communications proves about the message of one issuance, as the SOURCE learns it from the real outcome feed. */
-export const outcomeOfIssuance = (world: AuthWorld, issuanceRef: string): Effect.Effect<PortalAuthSourceOutcome> =>
-  Effect.gen(function* readOutcome() {
-    const known = world.submissions.find(({ request }) => request.occurrence.occurrenceId === issuanceRef);
-    if (known === undefined || known.submission.outcome !== 'DECIDED') {
-      return 'NOT_SUBMITTED' as const;
-    }
-    const history = yield* historyOfRequest(world, known.submission.requestId);
-    const statuses = history.feed.messages.map(({ status }) => status);
-    if (
-      statuses.length === 0 ||
-      statuses.some((status) => status === 'SUPPRESSED' || status === 'HELD_UNPROVEN' || status === 'NO_MESSAGE')
-    ) {
-      return 'STOPPED' as const;
-    }
-    if (statuses.some((status) => status === 'PROVIDER_SUBMITTED' || status === 'INDETERMINATE')) {
-      return 'UNCERTAIN' as const;
-    }
-    if (statuses.some((status) => status === 'FAILED')) {
-      return 'NON_ACCEPTANCE_PROVEN' as const;
-    }
-    return statuses.every((status) => status === 'PREPARED') ? ('IN_PROGRESS' as const) : ('ACCEPTED' as const);
-  }).pipe(Effect.orDie);
+/**
+ * The Communications outcome Read as the SOURCE asks it: the feed of the request the occurrence names, from the REAL history of the
+ * world, or null when Communications holds no request of this source for it. Auth's REAL reader puts the question, decodes the
+ * answer and reads it (`communicationOutcomeReaderLayer`); only this transport to the Read is the world's (no HTTP gateway).
+ */
+export const outcomeFeedOfWorld =
+  (world: AuthWorld): CommunicationOutcomeTransportService['ask'] =>
+  (request) =>
+    Effect.gen(function* readFeed() {
+      const known = world.submissions.find(
+        ({ request: submitted }) => submitted.occurrence.occurrenceId === request.occurrence.occurrenceId,
+      );
+      if (known === undefined || known.submission.outcome !== 'DECIDED') {
+        return null;
+      }
+      return (yield* historyOfRequest(world, known.submission.requestId)).feed;
+    }).pipe(Effect.orDie);
 
 /** The enrollment account-creation gateway over the realm, with the verification replay rule installed (or not). */
 export const makeEnrollmentGateway = (
@@ -94,7 +88,7 @@ export const makeEnrollmentGateway = (
 ) =>
   makePortalAuthEnrollmentGateway(realm, {
     handoff: world.handoff,
-    outcomeOf: (issuanceRef) => outcomeOfIssuance(world, issuanceRef),
+    outcomeFeedOf: outcomeFeedOfWorld(world),
     withReplay: options.withReplay,
   });
 

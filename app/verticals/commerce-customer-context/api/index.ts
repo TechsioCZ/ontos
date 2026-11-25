@@ -465,7 +465,7 @@ const commercePortalAuthCommunicationsPartsLive = Layer.mergeAll(
  * enrollment replay rule (`portal-auth/provider/email-routes.ts`); the realm below builds on whichever is selected and builds on
  * neither if none is, so a replay never falls open to re-issuing a link by an absent rule (#1282).
  */
-const commercePortalAuthCommunicationsRouteLive = commercePortalAuthCommunicationsEmailRouteLive.pipe(
+export const commercePortalAuthCommunicationsRouteLive = commercePortalAuthCommunicationsEmailRouteLive.pipe(
   Layer.provide(commercePortalAuthCommunicationsPartsLive),
 );
 const selectEmailRouteLive = (

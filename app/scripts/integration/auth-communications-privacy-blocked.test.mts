@@ -281,12 +281,12 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
       expect(asked.every((request) => Predicate.hasProperty(request, 'source'))).toBe(true);
       expect(pendingIntentsOf(world)).toHaveLength(0);
       expect(world.mailbox).toHaveLength(0);
-      // suppressed because Privacy could establish nothing for an unbound subject: INDETERMINATE, never NOT_ALLOWED
+      // suppressed because no scope could be declared for an unbound subject: an unresolved Privacy context, never NOT_ALLOWED
       const history = (yield* (yield* historyReads(world)).list()).items.map(({ headline }) => headline);
       expect(history).toHaveLength(1);
       expect(history[0]).toMatchObject({
         providerAccepted: false,
-        reasonCodes: ['PRIVACY_INDETERMINATE'],
+        reasonCodes: ['PRIVACY_CONTEXT_AMBIGUOUS'],
         status: 'SUPPRESSED',
       });
     }).pipe(Effect.scoped, Effect.provide(services)),
