@@ -17,7 +17,6 @@ import {
   unavailableReasonOfOwnerProblem,
 } from '../domain/privacy/source-eligibility-response.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
-import { PRIVACY_ELIGIBILITY_REQUIREMENT_KEY } from '../handoff/requirement-keys.ts';
 import { CurrentOwnerCall } from './owner-call.ts';
 import type { OwnerCall } from './owner-call.ts';
 
@@ -63,11 +62,13 @@ export const privacyRequestOf = (query: ProcessingEligibilityQuery) => {
  */
 export type PrivacyOwnerQuestion =
   | {
+      readonly ask: 'PRIVACY_PRE_VERIFICATION';
       readonly declarationKey: typeof PRE_VERIFICATION_DECLARATION_KEY;
       readonly kind: 'PRE_VERIFICATION';
       readonly request: PreVerificationEligibilityRequest;
     }
   | {
+      readonly ask: 'PRIVACY_SOURCE_PROCESSING';
       readonly declarationKey: typeof SOURCE_DECLARATION_KEY;
       readonly kind: 'SOURCE_PROCESSING';
       readonly request: SourceProcessingEligibilityRequest;
@@ -86,6 +87,7 @@ export const privacyQuestionOf = (
     }).pipe(
       Effect.mapError(ambiguous),
       Effect.map((request) => ({
+        ask: 'PRIVACY_PRE_VERIFICATION' as const,
         declarationKey: PRE_VERIFICATION_DECLARATION_KEY,
         kind: 'PRE_VERIFICATION' as const,
         request,
@@ -93,7 +95,12 @@ export const privacyQuestionOf = (
     );
   }
   return privacyRequestOf(query).pipe(
-    Effect.map((request) => ({ declarationKey: SOURCE_DECLARATION_KEY, kind: 'SOURCE_PROCESSING' as const, request })),
+    Effect.map((request) => ({
+      ask: 'PRIVACY_SOURCE_PROCESSING' as const,
+      declarationKey: SOURCE_DECLARATION_KEY,
+      kind: 'SOURCE_PROCESSING' as const,
+      request,
+    })),
   );
 };
 
@@ -185,9 +192,9 @@ export const privacyOwnerTransportLive =
         legalEntityScope: 'subject',
         requestCorrelation: call.correlation(),
         subject: call.subjectFor({
+          ask: question.ask,
           declarationKey: question.declarationKey,
           decodedRequest: question.request,
-          operationRequirementKey: PRIVACY_ELIGIBILITY_REQUIREMENT_KEY,
         }),
       },
       crypto,

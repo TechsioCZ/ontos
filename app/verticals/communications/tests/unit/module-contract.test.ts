@@ -1,3 +1,4 @@
+import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -16,6 +17,9 @@ import { recordOwnerExecutionEvidenceAction } from '../../src/actions/record-own
 import { setLanguagePolicyAction } from '../../src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
 import { privacyOwnerCoverageRead } from '../../src/api/privacy-owner-coverage.read.ts';
+import { OWNER_ASK_CONSUMERS, OWNER_ASKS, ownerAskRequirementKey } from '../../src/handoff/requirement-keys.ts';
+import type { OwnerAsk } from '../../src/handoff/requirement-keys.ts';
+import { workerOwnerCall } from '../../src/integrations/owner-call.ts';
 import { privacyOwnerExecutionOutcomeRead } from '../../src/api/privacy-owner-execution-outcome.read.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { communicationsManifest } from '../../vertical.manifest.ts';
@@ -158,22 +162,83 @@ describe('Communications module contract', () => {
       moduleId: 'privacy.core',
       schemaVersion: '1',
     };
-    expect(communicationsManifest.requirements?.operations).toEqual([
-      expect.objectContaining({
-        entrypointKey: 'communications.core.receive-privacy-measure',
-        key: 'communications.core.requirement.privacy-report-owner-outcome',
-        provider: outcomeProvider,
-      }),
-      expect.objectContaining({
-        entrypointKey: 'communications.core.report-privacy-owner-outcome',
-        key: 'communications.core.requirement.privacy-report-recorded-owner-outcome',
-        provider: outcomeProvider,
-      }),
-    ]);
+    const operations = communicationsManifest.requirements?.operations ?? [];
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entrypointKey: 'communications.core.receive-privacy-measure',
+          key: 'communications.core.requirement.privacy-report-owner-outcome',
+          provider: outcomeProvider,
+        }),
+        expect.objectContaining({
+          entrypointKey: 'communications.core.report-privacy-owner-outcome',
+          key: 'communications.core.requirement.privacy-report-recorded-owner-outcome',
+          provider: outcomeProvider,
+        }),
+      ]),
+    );
     // the evidence Action's only message is the continuation of the same Privacy dispatch: identities and an attempt
     expect(Object.keys(recordOwnerExecutionEvidenceAction.descriptor.domainEvents)).toEqual([
       'communications.core.owner-execution-evidence-recorded.v1',
     ]);
+  });
+
+  it('[D-2] declares one operation requirement per consuming entrypoint and owner Read it asks, with the keys the adapters send', () => {
+    const operations = communicationsManifest.requirements?.operations ?? [];
+    const consumers = Object.values(OWNER_ASK_CONSUMERS);
+    const asks = [
+      'AUTH_ISSUANCE_SOURCE',
+      'PRIVACY_PRE_VERIFICATION',
+      'PRIVACY_SOURCE_PROCESSING',
+    ] as const satisfies readonly OwnerAsk[];
+    expect(communicationsManifest.requirements?.coreCapabilities).toEqual([
+      { id: 'ontos.module-dependency-contracts', version: '1' },
+    ]);
+    expect(operations).toHaveLength(2 + asks.length * consumers.length);
+    for (const ask of asks) {
+      const { condition, provider } = OWNER_ASKS[ask];
+      for (const consumer of consumers) {
+        const key = ownerAskRequirementKey(consumer, ask);
+        expect(operations.filter((operation) => operation.key === key)).toEqual([
+          expect.objectContaining({ condition, entrypointKey: consumer, provider }),
+        ]);
+      }
+    }
+    // the published Reads asked, exactly as their owners publish them
+    expect(
+      [...new Set(asks.map((ask) => OWNER_ASKS[ask].provider.entrypointKey))].toSorted((left, right) =>
+        left.localeCompare(right),
+      ),
+    ).toEqual([
+      'commerce.customer-context.api.portal-auth-issuance-source',
+      'privacy.core.api.pre-verification-eligibility',
+      'privacy.core.api.source-processing-eligibility',
+    ]);
+  });
+
+  it('[D-2] names the requirement of the asking worker itself, never one of another entrypoint', () => {
+    const context: OutboxWorkerHandlerContext = {
+      attemptNumber: 1,
+      claimId: 'claim-1',
+      compositionRevision: 'a'.repeat(64),
+      consumerModuleKey: 'communications.core',
+      deliveryId: 'delivery-1',
+      domainEventId: 'event-1',
+      legalEntityScope: 'forbidden',
+      messageId: 'message-1',
+      producerModuleKey: 'communications.core',
+      tenantId: '00000000-0000-4000-8000-000000000001',
+      tenantSequenceNo: 1n,
+      topic: 'communications.core.message-intent-prepared.v1',
+      workerKey: 'communications.core.prepare-message-handoff',
+    };
+    const question = { ask: 'AUTH_ISSUANCE_SOURCE', declarationKey: 'x.read', decodedRequest: {} } as const;
+    expect(workerOwnerCall(context, OWNER_ASK_CONSUMERS.PREPARE_HANDOFF).subjectFor(question)).toMatchObject({
+      operationRequirementKey: 'communications.core.requirement.prepare-handoff-auth-issuance-source',
+    });
+    expect(workerOwnerCall(context, OWNER_ASK_CONSUMERS.RECONCILE_EVIDENCE).subjectFor(question)).toMatchObject({
+      operationRequirementKey: 'communications.core.requirement.reconcile-evidence-auth-issuance-source',
+    });
   });
 
   it('[#1400 S13] declares no Action, Read or payload field a Tenant could use to switch optional notifications', () => {

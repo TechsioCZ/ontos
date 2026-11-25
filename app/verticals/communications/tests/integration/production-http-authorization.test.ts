@@ -1675,9 +1675,9 @@ const serveAuthOwnerPeer = Effect.fnUntraced(function* serveAuthOwnerPeer(
         ]);
         if (path === DELEGATION_PATH) {
           const delegated = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)(body);
-          const origin = `http://${request.headers['host'] ?? '127.0.0.1'}`;
+          // the Shell issues a ROOT-RELATIVE owner prefix (the response schema refuses an absolute URL); the caller resolves it
           return yield* HttpServerResponse.json({
-            apiBaseUrl: `${origin}/customer-context-api`,
+            apiBaseUrl: '/commerce-customer-context-api',
             compositionRevision: delegated.compositionRevision,
             expiresAt: 4_070_908_800,
             token: 'fictional-auth-owner-token',
@@ -2017,14 +2017,13 @@ describe('submit-communication-request over real HTTP, the registered workload g
   );
 
   /**
-   * OPEN DEFECT D-2 (D-1, the owner ports missing from the handler, is fixed: the first real request is no longer a 500).
-   * The production owner ports ask Auth's published Read through Core's delegated gateway, and Core refuses it:
-   * `The required module operation is not supported by the admitted composition`, because the Communications manifest declares no
-   * `requirements.operations` entry for that Read (the PROPOSED key `communications.core.condition.current-source-occurrence`).
-   * This test states the DESIRED behaviour and is marked `fails`, so it keeps passing while D-2 exists and turns red the moment
-   * the manifest declares the requirement: delete `.fails` then.
+   * REGRESSION of D-2 (the production owner ports were refused by Core). Two causes, both fixed: the Communications manifest
+   * declared no `requirements.operations` entry for the asks of the intake Action and the pre-handoff workers (Auth's issuance
+   * Read, Privacy's two eligibility Reads), and the adapters sent a condition name instead of the requirement key; and this
+   * suite's loopback issuer answered an ABSOLUTE `apiBaseUrl`, which the published response schema refuses (the Shell issues a
+   * root-relative owner prefix). The scenario asks Auth through Core's delegated gateway with its real conditional-lease check.
    */
-  it.live.fails(
+  it.live(
     '[T2-17 DEFECT] an admitted source worker is decided through the production owner ports: stored, suppressed on the undeclared Privacy scope, replayed on a repeat',
     () =>
       Effect.scoped(

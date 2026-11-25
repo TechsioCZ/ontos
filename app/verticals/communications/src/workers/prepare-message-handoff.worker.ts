@@ -13,6 +13,7 @@ import {
 } from '@app/communications/outbox/communications-core-message-intent-prepared-v1';
 import { Effect } from 'effect';
 import { underOwnerCall, workerOwnerCall } from '../integrations/owner-call.ts';
+import { OWNER_ASK_CONSUMERS } from '../handoff/requirement-keys.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
 import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../handoff/outbox-worker-defaults.ts';
 import { processIntentHandoff, requireRedeliveryWhenRetryDue } from '../handoff/process-intent-handoff.ts';
@@ -30,7 +31,7 @@ const handlePrepareMessageHandoff = Effect.fn('PrepareMessageHandoffWorker.handl
   const tenantScope = yield* OutboxWorkerTenantScope;
   const scoped = tenantScopedRunner(tenantScope.run, context);
   const outcome = yield* processIntentHandoff({ intentId: payload.intentId, tenantId: context.tenantId }, scoped).pipe(
-    underOwnerCall(workerOwnerCall(context)),
+    underOwnerCall(workerOwnerCall(context, OWNER_ASK_CONSUMERS.PREPARE_HANDOFF)),
   );
   yield* Effect.logInfo('Message Intent pre-handoff processed').pipe(
     Effect.annotateLogs({ intentId: outcome.intentId, outcome: outcome.kind }),

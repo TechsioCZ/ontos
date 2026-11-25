@@ -13,6 +13,7 @@ import {
 } from '@app/communications/outbox/communications-core-provider-observation-recorded-v1';
 import { Effect } from 'effect';
 import { underOwnerCall, workerOwnerCall } from '../integrations/owner-call.ts';
+import { OWNER_ASK_CONSUMERS } from '../handoff/requirement-keys.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
 import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../handoff/outbox-worker-defaults.ts';
 import { requireRedeliveryWhenRetryDue } from '../handoff/process-intent-handoff.ts';
@@ -40,7 +41,7 @@ export const handleReconcileProviderEvidence = Effect.fn('ReconcileProviderEvide
   const { processing, reconciliation } = yield* reconcileAndEvaluate(
     { evidence: [], intentId: payload.intentId, tenantId: context.tenantId },
     scoped,
-  ).pipe(underOwnerCall(workerOwnerCall(context)));
+  ).pipe(underOwnerCall(workerOwnerCall(context, OWNER_ASK_CONSUMERS.RECONCILE_EVIDENCE)));
   yield* Effect.logInfo('Provider evidence reconciled').pipe(
     Effect.annotateLogs({
       closedAttempts: reconciliation.closedAttempts,
