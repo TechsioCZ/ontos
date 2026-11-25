@@ -14,6 +14,7 @@ import {
 import type { PrivacyOwnerCoverageRequest } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerCoverageForScope } from '../services/privacy-owner-coverage.service.ts';
 import type { PrivacyOwnerCoverageService } from '../services/privacy-owner-coverage.service.ts';
+import { productionPrivacyOwnerInputSource } from '../services/privacy-owner-inputs.ts';
 import { requirePrivacyCaller } from './privacy-owner-caller.ts';
 
 const privacyOwnerCoverageEntrypoint = defineTenantModuleEntrypoint({
@@ -93,5 +94,8 @@ export const privacyOwnerCoverageRead = defineRead(
     schemaVersion: '1',
   },
   readPrivacyOwnerCoverage,
-  (transaction, scope) => Effect.succeed({ privacy: privacyOwnerCoverageForScope(transaction, scope) }),
+  (transaction, scope) =>
+    Effect.succeed({
+      privacy: privacyOwnerCoverageForScope(transaction, scope, productionPrivacyOwnerInputSource(scope).coverage),
+    }),
 );

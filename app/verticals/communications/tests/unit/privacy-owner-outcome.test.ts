@@ -14,6 +14,7 @@ import {
   allComplete,
   confirmedAt,
   coverageOf,
+  enforcementOf,
   evidenceOf,
   foundCoverage,
   intentRef,
@@ -31,11 +32,16 @@ const hold = (contentRefs: readonly string[]) =>
 const relationships = (holders: ReturnType<typeof externalCopyInventoryOf>) =>
   holders.map(({ holderRef, relationship }) => [holderRef, relationship]);
 
+/**
+ * These tests are about evidence, scope, holds and phases, so they assume the owner HAS a real enforcement signal for every
+ * target; the absence of one (R-D11, the production state) is proven in `privacy-owner-enforcement.test.ts`.
+ */
 const evaluate = (overrides: Partial<OwnerMeasureEvaluationInput> = {}) =>
   evaluateCommunicationsOwnerMeasure({
     blockerAssessment: assessed(),
     confirmedAt,
     coverage: (overrides.evidence?.length ?? 0) > 0 ? coverageOf(allComplete()) : foundCoverage(),
+    enforcement: enforcementOf(overrides.measure),
     evidence: [],
     evidenceRefs: ['FICTIONAL-handoff-evidence'],
     measure: measureOf(),
@@ -372,6 +378,7 @@ const evaluateUnassessed = (overrides: Partial<OwnerMeasureEvaluationInput> = {}
     blockerAssessment: assessed(),
     confirmedAt,
     coverage: (overrides.evidence?.length ?? 0) > 0 ? coverageOf(allComplete()) : foundCoverage(),
+    enforcement: enforcementOf(overrides.measure),
     evidence: [],
     evidenceRefs: ['FICTIONAL-handoff-evidence'],
     measure: measureOf(),

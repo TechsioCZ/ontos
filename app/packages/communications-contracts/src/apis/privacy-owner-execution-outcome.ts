@@ -8,6 +8,8 @@ import {
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
+import { MeasureHandoffRecordSchema } from '../privacy-owner/outcome.ts';
+
 /**
  * The owner receipt of ONE Privacy Measure the owner took over. The request carries the exact complete handoff and the attempt:
  * it can never carry a result. The Shell binds the request hash to the handoff of the native dispatch, and the owner answers
@@ -18,6 +20,11 @@ export type PrivacyOwnerExecutionOutcomeRequest = typeof PrivacyOwnerExecutionOu
 
 export const PrivacyOwnerExecutionReceiptSchema = Schema.Struct({
   handoffFingerprint: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  /**
+   * Present exactly while the obligation is open (#1410 AC-07, AC-13): who is responsible and what happens next. It carries no
+   * deadline and no performed action, and it is the owner's observation, never an instruction to anyone to execute.
+   */
+  openObligation: Schema.optionalKey(MeasureHandoffRecordSchema),
   outcome: OwnerExecutionOutcomeSchema,
 });
 export type PrivacyOwnerExecutionReceipt = typeof PrivacyOwnerExecutionReceiptSchema.Type;

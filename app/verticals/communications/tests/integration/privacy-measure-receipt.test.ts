@@ -14,8 +14,15 @@ import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import { COMMUNICATIONS_TABLES } from '../../src/database/schema.ts';
 import { ownerExecutionEvidenceFor } from '../../src/services/owner-execution-evidence.service.ts';
 import { recordPrivacyMeasureHandoff } from '../../src/services/privacy-measure-handoff-record.ts';
-import { privacyOwnerExecutionReceiptForScope } from '../../src/services/privacy-owner-execution-receipt.service.ts';
-import { privacyOwnerCoverageForScope } from '../../src/services/privacy-owner-coverage.service.ts';
+import {
+  failClosedOwnerExecutionFacts,
+  privacyOwnerExecutionReceiptForScope,
+} from '../../src/services/privacy-owner-execution-receipt.service.ts';
+import type { OwnerExecutionFacts } from '../../src/services/privacy-owner-execution-receipt.service.ts';
+import {
+  defaultPrivacyOwnerCoverageOptions,
+  privacyOwnerCoverageForScope,
+} from '../../src/services/privacy-owner-coverage.service.ts';
 import { decideOne, step } from '../support/history-world.ts';
 import type { World } from '../support/history-world.ts';
 import { handoffDouble } from '../support/intake-fixtures.ts';
@@ -59,6 +66,37 @@ const assessment = (
   blockers,
 });
 const ownerScope = { ...baseScope, blockerAssessment: assessment() };
+/**
+ * What Privacy and the owner supply at evaluation time. The production default is `failClosedOwnerExecutionFacts` (no current
+ * blocker assessment, no enforcement signal); these tests supply a CURRENT clear assessment and, only where a test says so, a
+ * FICTIONAL real enforcement signal, because the dispatched copy of the assessment is never the decision (T3-22) and a human
+ * confirmation alone is never enforcement (R-D11).
+ */
+const currentAssessment =
+  (blockers: Parameters<typeof assessment>[0] = []) =>
+  () =>
+    Effect.succeed(Option.some(assessment(blockers)));
+const enforcedTargets: OwnerExecutionFacts['enforcement'] = (measure) =>
+  Effect.succeed(
+    Option.some({ enforcedContentRefs: measure.targetContentRefs, signalRef: 'FICTIONAL-enforcement-signal' }),
+  );
+const noEnforcement: OwnerExecutionFacts['enforcement'] = failClosedOwnerExecutionFacts.enforcement;
+const factsOf = (overrides: Partial<OwnerExecutionFacts> = {}): OwnerExecutionFacts => ({
+  blockers: currentAssessment(),
+  enforcement: enforcedTargets,
+  ...overrides,
+});
+const receiptServiceOf = (
+  transaction: Parameters<typeof privacyOwnerExecutionReceiptForScope>[0],
+  tenantId: string,
+  facts: OwnerExecutionFacts = factsOf(),
+) =>
+  privacyOwnerExecutionReceiptForScope(
+    transaction,
+    operationalScope(tenantId),
+    defaultPrivacyOwnerCoverageOptions,
+    facts,
+  );
 const restriction = {
   dispositionDecision: 'RESTRICT',
   kind: 'RESTRICT',
@@ -155,10 +193,10 @@ const recordedMeasure = (overrides: Partial<typeof PrivacyMeasureHandoffSchema.E
     const recorded = yield* world.database.inTenant(world.tenantId, (transaction) =>
       recordPrivacyMeasureHandoff(transaction, handoff, invocation),
     );
-    const receipt = (attempt = 1) =>
+    const receipt = (attempt = 1, facts: OwnerExecutionFacts = factsOf()) =>
       world.database
         .inTenant(world.tenantId, (transaction) =>
-          privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+          receiptServiceOf(transaction, world.tenantId, facts).receipt({
             attempt,
             handoff,
           }),
@@ -178,16 +216,16 @@ const recordedMeasure = (overrides: Partial<typeof PrivacyMeasureHandoffSchema.E
 
 describe('Communications owner receipt of a Privacy Measure on native PostgreSQL (AC-14 AC-15 AC-16)', () => {
   it.live(
-    'is RECEIVED after the handoff, becomes PARTIAL then SUCCEEDED only through human-confirmed evidence, and changes no owner data',
+    'is RECEIVED after the handoff, becomes PARTIAL then SUCCEEDED only through human-confirmed evidence AND a real enforcement signal, and changes no owner data',
     () =>
       Effect.gen(function* receiptLifecycle() {
         const { targets, world } = yield* measureWorld;
         // A restriction keeps the data, so the owner tables show no signal of it: the human-confirmed Action is its evidence.
         const handoff = handoffOf(world.tenantId, targets, restriction);
         const invocation = yield* nextId;
-        const receiptOf = (current: PrivacyMeasureHandoff, attempt = 1) =>
+        const receiptOf = (current: PrivacyMeasureHandoff, attempt = 1, facts: OwnerExecutionFacts = factsOf()) =>
           world.database.inTenant(world.tenantId, (transaction) =>
-            privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+            receiptServiceOf(transaction, world.tenantId, facts).receipt({
               attempt,
               handoff: current,
             }),
@@ -203,6 +241,12 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         expect(received.handoffFingerprint).toBe(recorded.fingerprint);
         expect(received.outcome).toMatchObject({ reason: 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION', status: 'RECEIVED' });
         expect(received.outcome.remainingResourceRefs).toEqual(targets);
+        // the obligation is open and nobody was assigned: the receipt shows who is responsible and what happens next
+        expect(received.openObligation).toMatchObject({
+          destructiveActionPerformed: false,
+          nextStep: 'ASSIGN_HUMAN_DISPOSITION_OWNER',
+          responsibleOwner: { kind: 'UNASSIGNED_ESCALATE', missingInput: 'HUMAN_DISPOSITION_OWNER' },
+        });
         expect(
           validateOwnerExecutionAuthorityResult(
             handoff,
@@ -252,6 +296,15 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
           measureId: handoff.measureId,
           taskId: handoff.taskId,
         });
+        // R-D11: a human confirmation alone enforces nothing, so without a real enforcement signal the claim is held
+        const unenforced = Option.getOrThrow(
+          yield* receiptOf(handoff, 1, factsOf({ enforcement: noEnforcement })),
+        ).outcome;
+        expect(unenforced).toMatchObject({
+          reason: 'OWNER_RESTRICTION_ENFORCEMENT_NOT_VERIFIABLE',
+          status: 'INDETERMINATE',
+        });
+        expect(unenforced.includedResourceRefs).toEqual([]);
         const partialReceipt = Option.getOrThrow(yield* receiptOf(handoff)).outcome;
         expect(partialReceipt.status).toBe('PARTIAL');
         expect(partialReceipt.includedResourceRefs).toEqual([first]);
@@ -263,9 +316,16 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
             results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })),
           }),
         );
-        const done = Option.getOrThrow(yield* receiptOf(handoff)).outcome;
+        expect(
+          Option.getOrThrow(yield* receiptOf(handoff, 1, factsOf({ enforcement: noEnforcement }))).outcome.status,
+        ).toBe('INDETERMINATE');
+        const finished = Option.getOrThrow(yield* receiptOf(handoff));
+        const done = finished.outcome;
         expect(done.status).toBe('SUCCEEDED');
         expect(done.remainingResourceRefs).toEqual([]);
+        expect(done.evidenceRefs).toContain('FICTIONAL-enforcement-signal');
+        // nothing is open any more
+        expect(finished.openObligation).toBeUndefined();
         // recording evidence and reading receipts never touched any owner business data
         expect(yield* ownerDataHash(world)).toBe(dataBefore);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
@@ -313,7 +373,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
       );
       const receipt = Option.getOrThrow(
         yield* world.database.inTenant(world.tenantId, (transaction) =>
-          privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+          receiptServiceOf(transaction, world.tenantId).receipt({
             attempt: 1,
             handoff,
           }),
@@ -332,7 +392,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
       });
       const conflict = Option.getOrThrow(
         yield* world.database.inTenant(world.tenantId, (transaction) =>
-          privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+          receiptServiceOf(transaction, world.tenantId).receipt({
             attempt: 1,
             handoff: rescoped,
           }),
@@ -348,7 +408,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
       expect(
         Option.isNone(
           yield* world.database.inTenant(world.tenantId, (transaction) =>
-            privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+            receiptServiceOf(transaction, world.tenantId).receipt({
               attempt: 1,
               handoff: foreign,
             }),
@@ -378,7 +438,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         );
         const receipt = Option.getOrThrow(
           yield* world.database.inTenant(world.tenantId, (transaction) =>
-            privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+            receiptServiceOf(transaction, world.tenantId).receipt({
               attempt: 1,
               handoff,
             }),
@@ -417,45 +477,49 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         ...restriction,
         ownerScope: baseScope,
       });
-      expect((yield* receipt()).outcome).toMatchObject({
+      // no CURRENT assessment can be asked (the production default): the dispatched copy is never the decision
+      const readUnassessed = () => receipt(1, factsOf({ blockers: failClosedOwnerExecutionFacts.blockers }));
+      expect((yield* readUnassessed()).outcome).toMatchObject({
         reason: 'HOLD_APPLICABILITY_NOT_ASSESSED',
         status: 'RECEIVED',
       });
       yield* confirm({ results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })) });
-      const answer = (yield* receipt()).outcome;
+      const answer = (yield* readUnassessed()).outcome;
       expect(answer).toMatchObject({ reason: 'HOLD_APPLICABILITY_NOT_ASSESSED', status: 'BLOCKED' });
       expect(answer.includedResourceRefs).toEqual([]);
       expect(answer.remainingResourceRefs).toEqual(targets);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
-  it.live('keeps a held target out of the achieved part even with confirmed human evidence', () =>
+  it.live('keeps a target held AFTER the dispatch out of the achieved part, whatever the dispatched copy said', () =>
     Effect.gen(function* heldTarget() {
       const { targets, world } = yield* measureWorld;
       const [held] = targets;
-      const handoff = handoffOf(world.tenantId, targets, {
-        ...restriction,
-        ownerScope: {
-          ...baseScope,
-          blockerAssessment: assessment([
-            { blockerRef: 'FICTIONAL-legal-hold-1', contentRefs: [held ?? ''], kind: 'LEGAL_HOLD' },
-          ]),
-        },
-      });
+      // the dispatched assessment is clear; the hold appears only in Privacy's CURRENT assessment asked at evaluation time
+      const handoff = handoffOf(world.tenantId, targets, restriction);
       const invocation = yield* nextId;
       const recorded = yield* world.database.inTenant(world.tenantId, (transaction) =>
         recordPrivacyMeasureHandoff(transaction, handoff, invocation),
       );
-      const read = () =>
+      const holdNow = factsOf({
+        blockers: currentAssessment([
+          { blockerRef: 'FICTIONAL-legal-hold-1', contentRefs: [held ?? ''], kind: 'LEGAL_HOLD' },
+        ]),
+      });
+      const read = (facts: OwnerExecutionFacts) =>
         world.database
           .inTenant(world.tenantId, (transaction) =>
-            privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+            receiptServiceOf(transaction, world.tenantId, facts).receipt({
               attempt: 1,
               handoff,
             }),
           )
           .pipe(Effect.map((answer) => Option.getOrThrow(answer).outcome));
-      expect(yield* read()).toMatchObject({
+      expect(yield* read(factsOf())).toMatchObject({
+        reason: 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION',
+        status: 'RECEIVED',
+      });
+      expect(yield* read(holdNow)).toMatchObject({
         reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT',
         status: 'BLOCKED',
       });
@@ -467,7 +531,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
           invocation,
         ),
       );
-      const answer = yield* read();
+      const answer = yield* read(holdNow);
       expect(answer).toMatchObject({ status: 'PARTIAL' });
       expect(answer.includedResourceRefs).toEqual(targets.slice(1));
       expect(answer.remainingResourceRefs).toEqual([held]);

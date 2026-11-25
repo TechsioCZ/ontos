@@ -1,5 +1,5 @@
 import { DateTime, Match, Schema } from 'effect';
-import { PrivacyOwnerScopeSchema } from '@app/shared-contracts';
+import { PrivacyOwnerExecutionStatusSchema, PrivacyOwnerScopeSchema } from '@app/shared-contracts';
 import type {
   PrivacyMeasureEncoded,
   PrivacyOwnerCoverageResultEncoded,
@@ -7,17 +7,19 @@ import type {
   PrivacyOwnerScopeEncoded,
 } from '@app/shared-contracts';
 
-import { COMMUNICATIONS_OWNER_CAPABILITY, INPUT_OWNER } from './inventory.ts';
-import type { GateOwner } from './inventory.ts';
+import { COMMUNICATIONS_OWNER_CAPABILITY, GATE_OWNERS, INPUT_OWNER } from './inventory.ts';
 
 /**
  * Communications' truthful answer to an approved Privacy Measure (#600-#602, D21 PRIV-COM-07/12/17).
  *
  * This module only EVALUATES. It performs no mutation of any kind and there is no DELETE, ANONYMIZE or PURGE Action in
- * Communications. Receiving a measure is not executing it: the only way an exact scope reaches ACHIEVED or PARTIAL is an
+ * Communications. Receiving a measure is not executing it: an exact scope reaches ACHIEVED or PARTIAL only from an
  * authoritative record of a SEPARATELY executed, human-confirmed owner Action for exactly this owner, tenant, scope,
- * measure and source decision revision (`OwnerExecutionEvidenceRecord`). Evidence for anything else is ignored and named,
- * never counted. The record's writer is a future, separately approved owner Action: it is deliberately not part of D21.
+ * measure and source decision revision (`OwnerExecutionEvidenceRecord`) AND a real enforcement signal for the claimed
+ * targets (`OwnerEnforcementSignal`). A human's confirmation is a claim, never the enforcement: Communications has no
+ * restriction gate, no rectification record and no disposition routine, so production supplies no signal and every claimed
+ * result stays INDETERMINATE (R-D11). Evidence for anything else is ignored and named, never counted. The record's writer is
+ * the `record-owner-execution-evidence` Action; it records what a human confirmed and executes nothing.
  */
 
 /** The result an authorized human's owner Action reported for ONE target content reference. */
@@ -85,11 +87,25 @@ export interface OwnerBlockerAssessment {
   readonly blockers: readonly OwnerMeasureBlocker[];
 }
 
+/**
+ * A real, owner-observed signal that an owner Action took effect for exact target content: a gate that withholds restricted
+ * content, a record of a rectification, or a disposition routine's own result. A human's confirmation is NOT such a signal.
+ * Communications has none of them today, so the production composition never supplies one; absent means NO signal, and a
+ * claimed target without one never counts as achieved.
+ */
+export interface OwnerEnforcementSignal {
+  readonly enforcedContentRefs: readonly string[];
+  /** The evidence reference of the signal; it is cited in the outcome's evidence. */
+  readonly signalRef: string;
+}
+
 export interface OwnerMeasureEvaluationInput {
   /** Absent means NOT ASSESSED, which is never read as "no blocker": an unassessed measure can never be ACHIEVED. */
   readonly blockerAssessment?: OwnerBlockerAssessment | undefined;
   readonly confirmedAt: PrivacyOwnerExecutionOutcomeEncoded['confirmedAt'];
   readonly coverage: PrivacyOwnerCoverageResultEncoded;
+  /** Absent means no enforcement signal: every claimed result stays INDETERMINATE. */
+  readonly enforcement?: OwnerEnforcementSignal | undefined;
   readonly evidence: readonly OwnerExecutionEvidenceRecord[];
   readonly evidenceRefs: readonly string[];
   readonly measure: PrivacyMeasureEncoded;
@@ -276,8 +292,8 @@ const heldRefsOf = (assessment: OwnerBlockerAssessment | undefined): ReadonlySet
  *   of ANONYMIZE), so a claimed target that the lookup still FINDS is a contradiction that only reconciliation settles.
  * - RECTIFY and RESTRICT keep the data, so a claimed target the owner does not hold cannot be achieved: absence from complete
  *   coverage contradicts the claim, and absence from incomplete coverage proves nothing either way.
- * Communications' own tables carry no signal of a rectification or a restriction, so for those two the confirmed result of the
- * human-confirmed owner Action (#600) is the evidence once the owner holds the target and Privacy assessed the blockers.
+ * Consistency with the current coverage is necessary, never sufficient: `unverifiedReasonOf` additionally requires a real
+ * enforcement signal for every claimed target.
  */
 const contradictionOf = (
   outcome: PrivacyMeasureEncoded['intendedOutcome'],
@@ -301,13 +317,40 @@ const contradictionOf = (
     : 'COMMUNICATIONS_OWNER_SCOPE_COVERAGE_INCOMPLETE';
 };
 
+const UNVERIFIED_REASON = {
+  ANONYMIZE: 'OWNER_DISPOSITION_NOT_VERIFIABLE_NO_DISPOSITION_ROUTINE',
+  DELETE: 'OWNER_DISPOSITION_NOT_VERIFIABLE_NO_DISPOSITION_ROUTINE',
+  ENFORCE_DISPOSITION_RESTRICTION: 'OWNER_RESTRICTION_ENFORCEMENT_NOT_VERIFIABLE',
+  ENFORCE_PROCESSING_RESTRICTION: 'OWNER_RESTRICTION_ENFORCEMENT_NOT_VERIFIABLE',
+  RECTIFY: 'OWNER_RECTIFICATION_NOT_VERIFIABLE',
+} as const satisfies Record<PrivacyMeasureEncoded['intendedOutcome'], string>;
+
+/**
+ * R-D11: a claimed target counts only with a real enforcement signal for exactly that target. Communications enforces no
+ * restriction, records no rectification and has no disposition routine, so a human's claim alone is never a result.
+ */
+const unverifiedReasonOf = (
+  outcome: PrivacyMeasureEncoded['intendedOutcome'],
+  affected: readonly string[],
+  enforcement: OwnerEnforcementSignal | undefined,
+): string | undefined => {
+  const enforced = new Set(enforcement?.enforcedContentRefs);
+  return affected.some((ref) => !enforced.has(ref)) ? UNVERIFIED_REASON[outcome] : undefined;
+};
+
 const evaluateWithEvidence = (
   input: OwnerMeasureEvaluationInput,
   matching: readonly OwnerExecutionEvidenceRecord[],
 ): PrivacyOwnerExecutionOutcomeEncoded => {
   const { measure } = input;
   const partition = partitionByEvidence(measure, matching);
-  const evidenceRefs = [...new Set([...input.evidenceRefs, ...matching.map(({ evidenceRef }) => evidenceRef)])];
+  const evidenceRefs = [
+    ...new Set([
+      ...input.evidenceRefs,
+      ...matching.map(({ evidenceRef }) => evidenceRef),
+      ...(input.enforcement === undefined ? [] : [input.enforcement.signalRef]),
+    ]),
+  ];
   const conclude = (
     status: OutcomeStatus,
     reason: string,
@@ -337,6 +380,11 @@ const evaluateWithEvidence = (
   const contradiction = contradictionOf(measure.intendedOutcome, affected, input.coverage);
   if (contradiction !== undefined) {
     return conclude('INDETERMINATE', contradiction);
+  }
+  const unverified = unverifiedReasonOf(measure.intendedOutcome, affected, input.enforcement);
+  if (unverified !== undefined) {
+    // Nothing proves the human-confirmed Action took effect: the claim is held, never reported as achieved or partial.
+    return conclude('INDETERMINATE', unverified, [], [...measure.targetContentRefs]);
   }
   if (affected.length > 0 && blockerAssessment === undefined) {
     // Blocker applicability was never assessed by Privacy: no target counts as achieved, whatever a human confirmed.
@@ -440,13 +488,15 @@ export const evaluateCommunicationsOwnerMeasure = (
 /* Handoff record: who owns a pending obligation and what happens next                              */
 /* ------------------------------------------------------------------------------------------------ */
 
-export type ResponsibleOwner =
-  | { readonly kind: 'ASSIGNED_HUMAN_OWNER'; readonly ownerRef: string }
-  | {
-      readonly escalateTo: GateOwner;
-      readonly kind: 'UNASSIGNED_ESCALATE';
-      readonly missingInput: 'HUMAN_DISPOSITION_OWNER';
-    };
+export const ResponsibleOwnerSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('ASSIGNED_HUMAN_OWNER'), ownerRef: Schema.String }),
+  Schema.Struct({
+    escalateTo: Schema.Literals(GATE_OWNERS),
+    kind: Schema.Literal('UNASSIGNED_ESCALATE'),
+    missingInput: Schema.Literal('HUMAN_DISPOSITION_OWNER'),
+  }),
+]);
+export type ResponsibleOwner = typeof ResponsibleOwnerSchema.Type;
 
 export const NextStepSchema = Schema.Literals([
   'ASSIGN_HUMAN_DISPOSITION_OWNER',
@@ -462,17 +512,18 @@ export type NextStep = typeof NextStepSchema.Type;
  * approved process's, and no SLA is invented here. `destructiveActionPerformed` is a literal `false`: the type cannot say
  * otherwise. Repeating the handoff or reaching a retention boundary yields the same record.
  */
-export interface MeasureHandoffRecord {
-  readonly destructiveActionPerformed: false;
-  readonly measureRef: string;
-  readonly nextStep: NextStep;
-  readonly outcomeStatus: OutcomeStatus;
-  readonly remainingContentRefs: readonly string[];
-  readonly responsibleOwner: ResponsibleOwner;
-  readonly sourceDecisionRef: string;
-  readonly sourceDecisionRevision: string;
-  readonly timeLimit: 'SET_BY_APPROVED_PROCESS_NOT_BY_THIS_OWNER';
-}
+export const MeasureHandoffRecordSchema = Schema.Struct({
+  destructiveActionPerformed: Schema.Literal(false),
+  measureRef: Schema.String,
+  nextStep: NextStepSchema,
+  outcomeStatus: PrivacyOwnerExecutionStatusSchema,
+  remainingContentRefs: Schema.Array(Schema.String),
+  responsibleOwner: ResponsibleOwnerSchema,
+  sourceDecisionRef: Schema.String,
+  sourceDecisionRevision: Schema.String,
+  timeLimit: Schema.Literal('SET_BY_APPROVED_PROCESS_NOT_BY_THIS_OWNER'),
+});
+export type MeasureHandoffRecord = typeof MeasureHandoffRecordSchema.Type;
 
 const nextStepOf = (status: OutcomeStatus, assigned: boolean): NextStep => {
   if (status === 'BLOCKED') {
@@ -603,7 +654,9 @@ export interface ManualDispositionStep {
  * The process an approved obligation follows, as data. Only the owner Action step changes data, only a human starts it, and
  * the steps before and after it observe, decide, evidence or protect. The responsible owner and any time limit are inputs the
  * approved process supplies (`MeasureHandoffRecord.timeLimit`); none is invented here, and disabling automatic deletion is
- * not this process: an open obligation stays open and escalates through the handoff record until it is evidenced.
+ * not this process: an open obligation stays open and escalates through the handoff record until it is evidenced. No Action in
+ * Communications performs the data-changing step today (every personal-data table blocks UPDATE and DELETE): it is a human act
+ * outside the application, and its result counts only with a real enforcement signal (`OwnerEnforcementSignal`).
  */
 export const manualDispositionProcess: readonly ManualDispositionStep[] = Object.freeze([
   {
