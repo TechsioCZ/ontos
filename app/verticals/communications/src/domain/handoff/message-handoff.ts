@@ -1,8 +1,4 @@
-import type {
-  EmailDeliveryAcceptanceIndeterminate,
-  EmailDeliveryRejected,
-  EmailDeliveryUnavailable,
-} from '@app/email-delivery/server';
+import type { MessageHandoffOutcomeSchema } from '@app/communications-contracts/message-handoff';
 import { Context, Effect, Layer } from 'effect';
 
 import type { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../../shared/communication-intake.ts';
@@ -41,21 +37,12 @@ export interface PinnedHandoff {
 }
 
 /**
- * The provider's answer in the vocabulary of `@app/email-delivery` (the reasons are its own literals, taken by type so
- * the two cannot drift), plus one case that the provider never produces: `NOT_ATTEMPTED`, for a deployment that has no
- * adapter wired, where nothing left the process at all.
- * - ACCEPTED: the provider accepted the submission (`providerRef` is its opaque reference); not delivered;
- * - REJECTED: the provider explicitly refused it; not accepted;
- * - UNAVAILABLE: the provider could not be used; it does NOT prove that it did not accept the message;
- * - INDETERMINATE: timeout, transport or an unreadable answer; it may have been accepted, so it is never retried blindly;
- * - NOT_ATTEMPTED: no adapter exists in this deployment; provably nothing was submitted.
+ * The provider's answer, as the PUBLISHED handoff contract (`@app/communications-contracts/message-handoff`) defines it: the
+ * reasons are the closed literals of `@app/email-delivery` (a unit test keeps the two from drifting), plus two cases the provider
+ * never produces: `NOT_ATTEMPTED`, for a deployment that has no adapter wired, and `MESSAGE_INVALID`, which the adapter may state
+ * only with the proof that it never asked the provider. The meaning of each case is documented on the contract.
  */
-export type ProviderEvidenceCase =
-  | { readonly kind: 'ACCEPTED'; readonly providerKey: string; readonly providerRef: string }
-  | { readonly kind: 'INDETERMINATE'; readonly reason: EmailDeliveryAcceptanceIndeterminate['reason'] }
-  | { readonly kind: 'NOT_ATTEMPTED'; readonly reason: 'NO_ADAPTER_CONFIGURED' }
-  | { readonly kind: 'REJECTED'; readonly reason: EmailDeliveryRejected['reason'] }
-  | { readonly kind: 'UNAVAILABLE'; readonly reason: EmailDeliveryUnavailable['reason'] };
+export type ProviderEvidenceCase = typeof MessageHandoffOutcomeSchema.Encoded;
 
 /** The evidence of one attempt, bound to the identities it was asked for so a mixed-up answer is recognized. */
 export interface ProviderEvidence {
