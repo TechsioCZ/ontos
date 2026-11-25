@@ -479,21 +479,26 @@ const selectEmailRouteLive = (
 const commercePortalAuthEmailRouteLive = Layer.unwrap(portalAuthEmailRoute.pipe(Effect.map(selectEmailRouteLive)));
 /**
  * The issuance state the issuance-source Read answers from, selected by the same route: a Communications-routed deployment answers
- * from Auth's own protected handoff, a direct one holds no issuance and answers typed unavailable.
+ * from Auth's own protected handoff, a direct one holds no issuance and answers typed unavailable. The realm's configuration, its
+ * database and the crypto are supplied to the Communications branch ONLY: `Layer.provide` builds what it provides whether or not
+ * the provided layer reads it, so a provider stacked over the selection would turn a host with no realm into a 500 on every route.
  */
+const commercePortalAuthCommunicationsIssuanceRealmLive = commercePortalAuthProtectedHandoffLive.pipe(
+  Layer.provide(commercePortalAuthRecoveryStoreLive),
+  Layer.provide(CommercePortalAuthConfigLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
+);
 const selectIssuanceStateLive = (
   route: PortalAuthEmailRoute,
 ): Layer.Layer<
   CommercePortalAuthProtectedHandoff,
-  Layer.Error<typeof commercePortalAuthProtectedHandoffLive>,
-  Layer.Services<typeof commercePortalAuthProtectedHandoffLive>
-> => (route === 'COMMUNICATIONS' ? commercePortalAuthProtectedHandoffLive : commercePortalAuthDirectIssuanceStateLive);
-const commercePortalAuthIssuanceStateLive = Layer.unwrap(
+  Layer.Error<typeof commercePortalAuthCommunicationsIssuanceRealmLive>
+> =>
+  route === 'COMMUNICATIONS'
+    ? commercePortalAuthCommunicationsIssuanceRealmLive
+    : commercePortalAuthDirectIssuanceStateLive;
+export const commercePortalAuthIssuanceStateLive = Layer.unwrap(
   portalAuthEmailRoute.pipe(Effect.map(selectIssuanceStateLive)),
-).pipe(
-  Layer.provide(commercePortalAuthRecoveryStoreLive),
-  Layer.provide(CommercePortalAuthConfigLive),
-  Layer.provide(commercePortalAuthPlatformCryptoLive),
 );
 const commercePortalAuthEmailDeliveryLive = CommercePortalAuthEmailDeliveryLive.pipe(
   Layer.provideMerge(commercePortalAuthEmailRouteLive),
