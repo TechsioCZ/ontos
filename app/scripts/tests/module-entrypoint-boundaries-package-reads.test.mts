@@ -1785,6 +1785,38 @@ it.live(
         ];
       });
       expect(mountedVerdicts).toEqual(mountedVerdicts.map(([label]) => [label, true]));
+      // A whole module a mounted declaration uses is judged by its names: one that cannot be followed fails the mount.
+      const optionsMount = (binding: string) =>
+        judged(sources, [
+          [`${owner}/shared/options.ts`, `export ${binding} onExcessProperty = 'error' as const;\n`],
+          [
+            `${owner}/shared/extra.ts`,
+            "import { HttpApi } from '@modern-js/bff-effect/effect-client';\nimport * as Options from './options.ts';\nexport const ExtraApi = HttpApi.make('Extra').annotate(HttpApi.ParseOptions, { ...Options });\n",
+          ],
+          [
+            sharedApiFile,
+            replaced(
+              `import { ExtraApi } from './extra.ts';\n${required(sources, sharedApiFile)}`,
+              ADDITIONS_START,
+              `  .addHttpApi(ExtraApi)\n${ADDITIONS_START}`,
+            ),
+          ],
+        ]);
+      const mutableOption = `(cannot be followed: ${owner}/shared/options.ts onExcessProperty is declared with let, so what it holds cannot be read from its declaration)`;
+      const optionVerdicts = [
+        ['a mounted declaration spreading a whole module whose name is a let', 'let', mutableOption],
+        ['a mounted declaration spreading a whole module whose name is a const', 'const', null],
+      ].map(([label, binding, reason]) => {
+        const seen = optionsMount(binding ?? '');
+        const mountLine = seen.diagnostics
+          .split('\n')
+          .find((line) => line.startsWith(unknown(sharedApiFile, 'ExtraApi')));
+        return [
+          label,
+          reason === null ? seen.valid && seen.diagnostics === '' : !seen.valid && mountLine?.endsWith(reason) === true,
+        ];
+      });
+      expect(optionVerdicts).toEqual(optionVerdicts.map(([label]) => [label, true]));
     }),
 );
 
