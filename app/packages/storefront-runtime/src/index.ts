@@ -1,6 +1,7 @@
 import {
   Clock,
   Data,
+  Deferred,
   Duration,
   Effect,
   Exit,
@@ -13,6 +14,7 @@ import {
   Semaphore,
   Stream,
 } from 'effect';
+import type { Fiber } from 'effect';
 
 export const OperationFailureSchema = Schema.Literals(['cancelled', 'deadline', 'overloaded', 'body_oversize']);
 export type OperationFailure = typeof OperationFailureSchema.Type;
@@ -45,11 +47,11 @@ interface WorkBudget {
 }
 
 export interface Operation {
-  readonly abort: (kind: OperationFailure) => void;
+  readonly abort: (kind: OperationFailure) => Fiber.Fiber<void>;
   readonly check: () => void;
   /** Effect Clock monotonic milliseconds, never a wall-clock timestamp. */
   readonly deadline: OperationDeadline;
-  readonly dispose: () => void;
+  readonly dispose: () => Fiber.Fiber<void>;
   readonly id: symbol;
   readonly remainingMs: () => number;
   readonly request: Operation | undefined;
@@ -144,11 +146,18 @@ export const createOperation = Effect.fn('storefront.createOperation')(function*
   );
   const controller = new AbortController();
   const scope = yield* Scope.make();
+  const closeRequested = yield* Deferred.make<boolean>();
+  const closing = Effect.runForkWith(services)(
+    Deferred.await(closeRequested).pipe(Effect.andThen(Scope.close(scope, Exit.void))),
+  );
   const abort = (kind: OperationFailure) => {
     controller.abort(new OperationError(kind));
-    Effect.runForkWith(services)(Scope.close(scope, Exit.void));
+    Deferred.doneUnsafe(closeRequested, Effect.succeed(true));
+    return closing;
   };
-  const cancel = () => abort(signal === undefined ? 'cancelled' : failureFromSignal(signal).kind);
+  const cancel = () => {
+    abort(signal === undefined ? 'cancelled' : failureFromSignal(signal).kind);
+  };
   const check = () => checkDeadline(clock, deadline, controller, abort);
   const checked = Effect.try({
     catch: (cause) => (isOperationError(cause) ? cause : new OperationError('cancelled', cause)),

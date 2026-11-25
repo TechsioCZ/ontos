@@ -1,8 +1,12 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Option, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
+import { buildSync } from 'esbuild';
 
 import { RuntimeTelemetrySchema } from '../../packages/storefront-runtime/src/telemetry.ts';
 
@@ -255,3 +259,86 @@ it.layer(NodeServices.layer)('native storefront instrumentation', (test) => {
     );
   }
 });
+
+for (const storefront of families) {
+  it(`${storefront} render after waits for its first disposal's gated async finalizer`, () => {
+    const cwd = fileURLToPath(new URL(`../../${storefront}/`, import.meta.url));
+    const bundle = buildSync({
+      alias: { 'server-only': `${cwd}node_modules/next/dist/compiled/server-only/empty.js` },
+      bundle: true,
+      external: ['react', 'next/*', 'effect'],
+      format: 'cjs',
+      platform: 'node',
+      stdin: {
+        contents: `
+          import 'next/dist/server/node-environment-baseline';
+          import { Effect, Scope } from 'effect';
+          import { NextRequest } from 'next/server';
+          import { createRequestStoreForAPI } from 'next/dist/server/async-storage/request-store';
+          import { createWorkStore } from 'next/dist/server/async-storage/work-store';
+          import { workAsyncStorage } from 'next/dist/server/app-render/work-async-storage.external';
+          import { workUnitAsyncStorage } from 'next/dist/server/app-render/work-unit-async-storage.external';
+          import { renderOperation } from './src/ontos/render-operation';
+          const request = new NextRequest('http://storefront.test/');
+          const unit = createRequestStoreForAPI(request, new URL(request.url),
+            { tags: [], expirationsByCacheKind: new Map() }, undefined, undefined, undefined);
+          const closes = [];
+          const waits = [];
+          const errors = [];
+          const work = createWorkStore({
+            page: '/test/page', buildId: 'test', deploymentId: 'test', previouslyRevalidatedTags: [],
+            renderOpts: {
+              cacheLifeProfiles: {}, staticPageGenerationTimeout: 30, cacheComponents: false,
+              validationLevel: 'none', experimental: { useCacheTimeout: 30, durableUseCacheEntries: false },
+              isBuildTimePrerendering: false, isDraftMode: false,
+              onClose: callback => closes.push(callback), waitUntil: promise => waits.push(promise),
+              onAfterTaskError: error => errors.push(String(error)),
+            },
+          });
+          workAsyncStorage.run(work, () => workUnitAsyncStorage.run(unit, async () => {
+            const operation = await renderOperation();
+            const entered = Promise.withResolvers();
+            const release = Promise.withResolvers();
+            const finalized = Promise.withResolvers();
+            let finalizerRuns = 0;
+            Effect.runSync(Scope.addFinalizer(operation.scope, Effect.promise(async () => {
+              finalizerRuns++;
+              entered.resolve();
+              await release.promise;
+              finalized.resolve();
+            })));
+            let afterSettled = false;
+            const completion = Promise.all(waits).then(() => { afterSettled = true; });
+            for (const close of closes) close();
+            await entered.promise;
+            // Drain runnable callbacks while the finalizer remains gated, without a timed sleep.
+            await new Promise(setImmediate);
+            const beforeRelease = { afterSettled, aborted: operation.signal.aborted };
+            release.resolve();
+            await completion;
+            await finalized.promise;
+            console.log(JSON.stringify({ beforeRelease, afterSettled, finalizerRuns, errors, waits: waits.length }));
+          })).catch(error => { console.error(error); process.exitCode = 1; });
+        `,
+        resolveDir: cwd,
+      },
+      write: false,
+    });
+    const [output] = bundle.outputFiles;
+    if (output === undefined) {
+      throw new Error('Missing native render lifetime entry');
+    }
+    const result = execFileSync(
+      process.execPath,
+      ['--conditions=react-server', '--input-type=commonjs', '-e', output.text],
+      { cwd, encoding: 'utf-8', timeout: 10_000 },
+    );
+    expect(JSON.parse(result)).toEqual({
+      afterSettled: true,
+      beforeRelease: { aborted: true, afterSettled: false },
+      errors: [],
+      finalizerRuns: 1,
+      waits: 1,
+    });
+  });
+}

@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { Layer, ManagedRuntime } from "effect";
+import { Fiber, Layer, ManagedRuntime } from "effect";
 import { after } from "next/server";
 import { workAsyncStorage } from "next/dist/server/app-render/work-async-storage.external";
 import { workUnitAsyncStorage } from "next/dist/server/app-render/work-unit-async-storage.external";
@@ -14,7 +14,9 @@ const lifetimeRuntime = ManagedRuntime.make(Layer.empty);
 export const renderOperation = cache(async () => {
   const operation = await lifetimeRuntime.runPromise(createOperation());
   if (hasRenderLifetime()) {
-    after(() => operation.dispose());
+    after(async () => {
+      await lifetimeRuntime.runPromise(Fiber.join(operation.dispose()));
+    });
   }
   return operation;
 });

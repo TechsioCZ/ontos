@@ -264,6 +264,78 @@ it.effect('dispose aborts outstanding siblings and is idempotent', () =>
   }),
 );
 
+for (const stop of ['dispose', 'caller cancellation', 'deadline'] as const) {
+  it.effect(`${stop} starts cleanup promptly and repeated disposal joins its gated async finalizer`, () =>
+    Effect.gen(function* sharedDisposal() {
+      const caller = new AbortController();
+      const operation = yield* operationFixture({ signal: caller.signal, timeoutMs: 100 });
+      const entered = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const finalizerRuns = yield* Ref.make(0);
+      let finalized = false;
+      yield* Scope.addFinalizer(
+        operation.scope,
+        Ref.update(finalizerRuns, (runs) => runs + 1).pipe(
+          Effect.andThen(Deferred.succeed(entered, true)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(
+            Effect.sync(() => {
+              finalized = true;
+            }),
+          ),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
+      const sibling = yield* Effect.forkChild(Effect.flip(operation.wait(10_000)));
+      if (stop === 'caller cancellation') {
+        caller.abort();
+      } else if (stop === 'deadline') {
+        yield* TestClock.adjust(Duration.millis(100));
+      } else {
+        operation.dispose();
+      }
+      yield* Deferred.await(entered);
+      expect(operation.signal.aborted).toBe(true);
+      expect(yield* Fiber.join(sibling)).toMatchObject({ kind: stop === 'deadline' ? 'deadline' : 'cancelled' });
+      const closing = operation.dispose();
+      expect(operation.dispose()).toBe(closing);
+      expect(operation.abort('overloaded')).toBe(closing);
+      expect(closing.pollUnsafe()).toBeUndefined();
+      expect(finalized).toBe(false);
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(closing);
+      expect(finalized).toBe(true);
+      expect(yield* Ref.get(finalizerRuns)).toBe(1);
+      expect(operation.dispose()).toBe(closing);
+    }),
+  );
+}
+
+for (const fails of [false, true]) {
+  it.effect(`reentrant disposal shares the pending completion and preserves finalizer failure=${fails}`, () =>
+    Effect.gen(function* reentrantDisposal() {
+      const operation = yield* operationFixture();
+      const nested = yield* Deferred.make<Fiber.Fiber<void>>();
+      const release = yield* Deferred.make<boolean>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
+      yield* Scope.addFinalizer(
+        operation.scope,
+        Effect.suspend(() => Deferred.succeed(nested, operation.dispose())).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(fails ? Effect.die('gated-finalizer-defect') : Effect.void),
+        ),
+      );
+      const outer = operation.dispose();
+      const inner = yield* Deferred.await(nested);
+      expect(inner).toBe(outer);
+      expect(inner.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, true);
+      expect(Exit.isFailure(yield* Effect.exit(Fiber.join(outer)))).toBe(fails);
+      expect(Exit.isFailure(yield* Effect.exit(Fiber.join(inner)))).toBe(fails);
+    }),
+  );
+}
+
 it.effect('children inherit the exact monotonic deadline and only explicitly linked cancellation', () =>
   Effect.gen(function* inheritDeadline() {
     const parent = yield* operationFixture({ timeoutMs: 60_000 });

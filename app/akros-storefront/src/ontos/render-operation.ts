@@ -1,4 +1,4 @@
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Fiber } from "effect";
 import "server-only";
 import { cache } from "react";
 import { after } from "next/server";
@@ -14,8 +14,7 @@ export const renderOperation = cache(() => {
   const operation = Effect.runSync(createOperation());
   if (hasRenderLifetime())
     after(async () => {
-      operation.dispose();
-      await Effect.runPromise(Scope.close(operation.scope, Exit.void));
+      await Effect.runPromise(Fiber.join(operation.dispose()));
     });
   return operation;
 });
