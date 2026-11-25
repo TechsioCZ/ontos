@@ -79,7 +79,6 @@ export const TemplateRevisionListItemSchema = Schema.Struct({
   revisionNumber: Schema.Int,
   templateTypeId: TemplateTypeIdSchema,
 });
-export type TemplateRevisionListItem = typeof TemplateRevisionListItemSchema.Type;
 
 export const TemplateRevisionListPageSchema = Schema.Struct({
   items: Schema.Array(TemplateRevisionListItemSchema),
