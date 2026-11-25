@@ -52,6 +52,12 @@ describe('a message the adapter proved malformed (#1402 T3-11)', () => {
         const record = yield* intentHistoryOf(world, requestId);
         expect(record.history.summary).toMatchObject({ status: 'FAILED' });
         expect(record.history.summary.status).not.toBe('INDETERMINATE');
+        // the public history schema advertises this technical evidence, and now a stored attempt can really produce it
+        expect(record.history.entries.find(({ kind }) => kind === 'SUBMISSION_ANSWERED')).toMatchObject({
+          reasonCodes: ['invalid_format'],
+          status: 'FAILED',
+          technical: 'MESSAGE_INVALID',
+        });
         expect((yield* historyOf(world, requestId)).feed.messages).toMatchObject([
           { attention: 'FAILURE', status: 'FAILED' },
         ]);

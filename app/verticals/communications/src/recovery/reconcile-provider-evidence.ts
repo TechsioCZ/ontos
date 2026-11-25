@@ -33,8 +33,10 @@ import {
  *   and NEVER while its provider call may still be running (see `callLeaseMs`): such an attempt stays PREPARED and the outcome
  *   says RECONCILIATION_PENDING, because a late ACCEPTED answer would otherwise meet a closed attempt and a second send.
  *
- * There is no real step 22 yet: the evidence of this flow is the labelled double of the tests, and a production composition
- * calls this flow only when the Messaging Adapter exists. No endpoint, callback or scheduler is created here.
+ * Production entry: the Action `ingest-provider-observation` records the Messaging Adapter's evidence and queues a self-outbox
+ * message, and the owner worker `reconcile-provider-evidence` runs `reconcileAndEvaluate` over what is then recorded (its
+ * `evidence` is empty: the Action already appended it). There is no real step 22 yet: the evidence in the tests is the labelled
+ * double. No callback endpoint, scheduler or queue is created here.
  */
 
 export interface ReconciliationInput {

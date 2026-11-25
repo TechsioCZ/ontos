@@ -12,6 +12,7 @@ import { ActivateTemplateRevisionActionApi } from './apis/activate-template-revi
 import { BuiltInTemplateDefaultsApi } from './apis/built-in-template-defaults.ts';
 import { CommunicationOutcomeFeedApi } from './apis/communication-outcome-feed.ts';
 import { DeactivateTemplateRevisionActionApi } from './apis/deactivate-template-revision-action.ts';
+import { IngestProviderObservationActionApi } from './apis/ingest-provider-observation-action.ts';
 import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-revision-action.ts';
 import { LanguagePolicyApi } from './apis/language-policy.ts';
 import { MessageHistoryDetailApi } from './apis/message-history-detail.ts';
@@ -51,6 +52,7 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(BuiltInTemplateDefaultsApi)
   .addHttpApi(CommunicationOutcomeFeedApi)
   .addHttpApi(DeactivateTemplateRevisionActionApi)
+  .addHttpApi(IngestProviderObservationActionApi)
   .addHttpApi(InvalidateTemplateRevisionActionApi)
   .addHttpApi(LanguagePolicyApi)
   .addHttpApi(MessageHistoryDetailApi)

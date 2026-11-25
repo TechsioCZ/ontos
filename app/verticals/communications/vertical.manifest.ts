@@ -10,6 +10,7 @@ import { builtInTemplateDefaultsRead } from './src/api/built-in-template-default
 import { CommunicationOutcomeFeedApi } from './shared/apis/communication-outcome-feed.ts';
 import { communicationOutcomeFeedRead } from './src/api/communication-outcome-feed.read.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
+import { ingestProviderObservationAction } from './src/actions/ingest-provider-observation.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
@@ -47,6 +48,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       // <generated-module-manifest-actions>
       activateTemplateRevisionAction,
       deactivateTemplateRevisionAction,
+      ingestProviderObservationAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
       recordOwnerExecutionEvidenceAction,

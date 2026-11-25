@@ -2,6 +2,7 @@ import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import type { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import { IngestOutcomeSchema } from '../../shared/provider-observation-ingest.ts';
 import { observationIdOf } from '../domain/history/provider-observation.ts';
 import type { ProviderObservationInput } from '../domain/history/provider-observation.ts';
 import { ObservationEvidenceSchema } from '../domain/history/vocabulary.ts';
@@ -21,19 +22,11 @@ import {
  */
 
 /**
- * The answer to one observation. None of the refusals carries a value of a row: the same `UNBOUND` is given for another
- * Tenant's intent, an unknown intent and an attempt of another intent, so a caller learns nothing about foreign data.
- * - RECORDED: appended;  DUPLICATE: the same observation again, nothing changes;
- * - CONFLICT: the same identity (attempt, provider, key AND evidence kind) with another content, including another claimed
- *   time: the first one stays untouched and the disagreement is kept as a trace (the history then needs reconciliation);
- *   the same key with ANOTHER evidence kind is not a conflict but a new observation (a bounce after an acceptance);
- * - UNBOUND: Tenant, intent and attempt do not belong together;
- * - NOT_SUBMITTED: the attempt provably submitted nothing, so there is nothing to observe;
- * - PROVIDER_MISMATCH: another provider identity than the one the attempt is bound to.
+ * The answer to one observation is the published `IngestOutcome` (`shared/provider-observation-ingest.ts`, where each answer is
+ * explained). None of the refusals carries a value of a row, so a caller learns nothing about foreign data. The same key with
+ * ANOTHER evidence kind is not a conflict but a new observation (a bounce after an acceptance).
  */
-export const IngestAnswerSchema = Schema.Struct({
-  outcome: Schema.Literals(['CONFLICT', 'DUPLICATE', 'NOT_SUBMITTED', 'PROVIDER_MISMATCH', 'RECORDED', 'UNBOUND']),
-});
+export const IngestAnswerSchema = Schema.Struct({ outcome: IngestOutcomeSchema });
 
 export const ingestProviderObservation = Effect.fn('Communications.ingestProviderObservation')(function* ingest(
   invoker: ScopedRoutineInvoker,
