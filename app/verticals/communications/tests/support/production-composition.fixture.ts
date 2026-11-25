@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 
 import {
   applicationCompositionContentRevision,
@@ -29,7 +29,7 @@ import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
  * as the Core authority exactly as Core's own native tests publish theirs. Shared by the production HTTP suite and the
  * no-automatic-backfill scenario so both stand on the same composition.
  */
-const digest = (value: string) => createHash('sha256').update(value, 'utf-8').digest('hex');
+const digest = (value: string) => hash('sha256', value, 'hex');
 
 /** The Core database as the administrator role, the owner of authority publication in these native suites. */
 class AdministratorCore extends Context.Service<AdministratorCore, TestDatabaseFromClient<typeof coreRelations>>()(
