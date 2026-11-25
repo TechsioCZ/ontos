@@ -19,11 +19,8 @@ import {
 } from '../portal-auth/communications/decision-report.ts';
 import { portalAuthCommunicationRelayConfiguration } from '../portal-auth/communications/relay-configuration.ts';
 import { PortalAuthRelayTransportLive } from '../portal-auth/communications/relay-transport.ts';
-import {
-  PortalAuthCommunicationRelayLive,
-  portalAuthCommunicationRelayAdopted,
-  portalAuthCommunicationRelayAdoption,
-} from '../portal-auth/communications/request-relay.ts';
+import { portalAuthEmailRoute } from '../portal-auth/communications/email-route.ts';
+import { PortalAuthCommunicationRelayLive } from '../portal-auth/communications/request-relay.ts';
 import { configuredTrustedScopeLayer } from '../portal-auth/communications/trusted-scope.ts';
 import { CommercePortalAuthCommunicationStoreLive } from '../portal-auth/persistence/portal-auth-communication-store.ts';
 import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
@@ -90,11 +87,15 @@ const portalAuthCommunicationDecisionReporterLive = communicationDecisionReporte
     () => unreportedCommunicationDecisionLayer,
   ),
 );
-/** Composed only for a host that adopted the relay; any other host gets no loop and a callback that reports nothing. */
+/**
+ * Composed only for a host whose deployment routes the Portal Auth e-mails through Communications: the very route whose API
+ * composition WRITES the Auth-local outbox this loop relays (`portalAuthEmailRoute`, one decision for both). A host on the direct
+ * route has an outbox nothing writes, so it gets no loop and a callback that reports nothing.
+ */
 const portalAuthCommunicationRelayDriverLive = Layer.unwrap(
-  portalAuthCommunicationRelayAdoption.pipe(
-    Effect.map((adoption) =>
-      portalAuthCommunicationRelayAdopted(adoption)
+  portalAuthEmailRoute.pipe(
+    Effect.map((route) =>
+      route === 'COMMUNICATIONS'
         ? Layer.merge(portalAuthCommunicationRelayLive, portalAuthCommunicationDecisionReporterLive)
         : unreportedCommunicationDecisionLayer,
     ),

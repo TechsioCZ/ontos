@@ -8,6 +8,11 @@ import type {
   CommercePortalAuthRecoveryReconciliationConflictClass,
 } from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
+import {
+  OTP_CODE_PATTERN,
+  otpStorageIdentifierOf,
+  storedOneTimeCodeOf,
+} from '../../../api/portal-auth/provider/better-auth-two-factor.ts';
 import { withSafeCause } from '../../../api/portal-auth/provider/safe-failure.ts';
 import { normalizeCommercePortalAuthEmail } from '../email-normalization.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/portal-auth/rate-limit-service.ts';
@@ -55,9 +60,6 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
-/** Better Auth stores a two-factor code under `2fa-otp-<key>`; the realm hashes every verification identifier at rest. */
-const OTP_IDENTIFIER_PREFIX = '2fa-otp-';
-
 const digestBytes = (crypto: Crypto.Crypto, value: string) => crypto.digest('SHA-256', new TextEncoder().encode(value));
 
 const base64UrlOf = (bytes: Uint8Array): string =>
@@ -65,12 +67,6 @@ const base64UrlOf = (bytes: Uint8Array): string =>
     .replaceAll('+', '-')
     .replaceAll('/', '_')
     .replaceAll('=', '');
-
-/** The code part of a stored one-time code (`<code>:<count>`). */
-const otpCodeOf = (value: string): string => value.split(':')[0] ?? '';
-
-/** The failed presentations Better Auth counted in a stored one-time code (`<code>:<count>`). */
-const otpAttemptsOf = (value: string): number => Math.trunc(Number(value.split(':')[1] ?? '')) || 0;
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(
@@ -1116,11 +1112,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       },
     );
 
-    const OTP_ONLY_DIGITS = /^\d{1,12}$/u;
-
     /** The identifier Better Auth stores a two-factor code under: its key, hashed (SHA-256, base64url) as the realm configures. */
     const storedOtpIdentifier = (key: string) =>
-      digestBytes(crypto, `${OTP_IDENTIFIER_PREFIX}${key}`).pipe(Effect.map(base64UrlOf));
+      digestBytes(crypto, otpStorageIdentifierOf(key)).pipe(Effect.map(base64UrlOf));
 
     /** The pending two-factor sign-in row names the user, so the user a sign-in challenge belongs to is read from it, never assumed. */
     const challengeOwnedBy = Effect.fn('CommercePortalAuthRecoveryStore.challengeOwnedBy')(function* ownership(
@@ -1155,7 +1149,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly userId: string;
       }): Effect.fn.Return<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable> {
         const code = Redacted.value(input.otp);
-        if (!OTP_ONLY_DIGITS.test(code)) {
+        if (!OTP_CODE_PATTERN.test(code)) {
           return Option.none();
         }
         const now = yield* DateTime.nowAsDate;
@@ -1186,12 +1180,12 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           .pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-locate', cause)));
         const matches =
           newest !== undefined &&
-          (yield* sameSecret(crypto, otpCodeOf(newest.value), code).pipe(
+          (yield* sameSecret(crypto, storedOneTimeCodeOf(newest.value).code, code).pipe(
             Effect.mapError((cause) => unavailableSafe('otp-challenge-locate-compare', cause)),
           ));
         return newest !== undefined && matches
           ? Option.some({
-              attempts: otpAttemptsOf(newest.value),
+              attempts: storedOneTimeCodeOf(newest.value).failedAttempts,
               challenge: Redacted.make(identifier),
               expiresAt: newest.expiresAt,
             })
@@ -1220,13 +1214,15 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         if (epochMillis(newest.expiresAt) <= epochMillis(now)) {
           return 'EXPIRED';
         }
-        const sameCode = yield* sameSecret(crypto, otpCodeOf(newest.value), Redacted.value(input.otp)).pipe(
-          Effect.mapError((cause) => unavailableSafe('otp-challenge-read-compare', cause)),
-        );
+        const sameCode = yield* sameSecret(
+          crypto,
+          storedOneTimeCodeOf(newest.value).code,
+          Redacted.value(input.otp),
+        ).pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-read-compare', cause)));
         if (!sameCode) {
           return 'SUPERSEDED';
         }
-        return otpAttemptsOf(newest.value) < input.maxFailedAttempts ? 'CURRENT' : 'CONSUMED';
+        return storedOneTimeCodeOf(newest.value).failedAttempts < input.maxFailedAttempts ? 'CURRENT' : 'CONSUMED';
       },
     );
 

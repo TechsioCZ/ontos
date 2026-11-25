@@ -11,7 +11,7 @@ import { CommercePortalAuthIssuedFacts } from '../../../src/portal-auth/communic
 import { CommercePortalAuthTrustedScope } from '../../../src/portal-auth/communications/trusted-scope.ts';
 import type { PortalAuthTrustedScopeUnavailable } from '../../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import type { CommercePortalAuthEmailDelivery } from './auth.ts';
-import { otpChallengeKeyOf } from './otp-challenge-key.ts';
+import { CommercePortalAuthOtpChallengeKeyReader } from './otp-challenge-key-service.ts';
 import type { CommercePortalAuthOtpChallengeKey } from './recovery/store-service.ts';
 import { withSafeCause } from './safe-failure.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-service.ts';
@@ -141,6 +141,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
   Effect.gen(function* makeCommercePortalAuthCommunicationsEmail() {
     const handoff = yield* CommercePortalAuthProtectedHandoff;
     const trustedScope = yield* CommercePortalAuthTrustedScope;
+    const challengeKeys = yield* CommercePortalAuthOtpChallengeKeyReader;
     const context = yield* Effect.context<Crypto.Crypto | CommercePortalAuthIssuedFacts>();
     const runWithContext = Effect.runPromiseWith(context);
     const run: <A, E>(
@@ -202,7 +203,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       data: Parameters<CommercePortalAuthEmailDelivery['sendOTP']>[0],
       ctx?: Parameters<CommercePortalAuthEmailDelivery['sendOTP']>[1],
     ) {
-      const challengeKey = yield* otpChallengeKeyOf(ctx);
+      const challengeKey = yield* challengeKeys.keyOf(ctx);
       yield* issue({
         challengeKey,
         flow: 'otp',

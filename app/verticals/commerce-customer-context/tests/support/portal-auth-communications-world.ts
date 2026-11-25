@@ -17,6 +17,7 @@ import { CommercePortalAuthCommunicationsEmailLive } from '../../api/portal-auth
 import { ledgerProbeOver } from '../../api/portal-auth/provider/communications-ledger-probe.ts';
 import { CommercePortalAuthConfig, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthEmailDeliveryService } from '../../api/portal-auth/provider/email-delivery-service.ts';
+import { CommercePortalAuthOtpChallengeKeyReaderLive } from '../../api/portal-auth/provider/otp-challenge-key.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from '../../api/portal-auth/provider/raw-email-delivery-service.ts';
 import { CommercePortalAuthEmailDeliveryLive } from '../../api/portal-auth/provider/recovery/email-delivery.ts';
 import { CommercePortalAuthRecoveryProviderLive } from '../../api/portal-auth/provider/recovery/provider-service.ts';
@@ -57,7 +58,10 @@ import type {
 import { protectedValueSealerLayer } from '../../src/portal-auth/communications/protected-value.ts';
 import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
 import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
-import { verificationReplayLayer } from '../../src/portal-auth/communications/verification-replay.ts';
+import {
+  directVerificationReplayLayer,
+  verificationReplayLayer,
+} from '../../src/portal-auth/communications/verification-replay.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommercePortalAuthCommunicationStoreLive } from '../../src/portal-auth/persistence/portal-auth-communication-store.ts';
 import {
@@ -300,6 +304,7 @@ export const makePortalAuthSource = Effect.fn('PortalAuthCommunicationsSource.ma
             Layer.succeed(CommercePortalAuthProtectedHandoff, auth.process.handoff),
             Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId }) }),
             Layer.succeed(CommercePortalAuthIssuedFacts, delegatingStore),
+            CommercePortalAuthOtpChallengeKeyReaderLive,
             cryptoLive,
           ),
         ),
@@ -494,7 +499,7 @@ export const makeEnrollmentGateway = Effect.fn('PortalAuthCommunicationsRealm.ga
           Layer.provide(Layer.succeed(CommercePortalAuthInstance, realm.auth)),
         ),
         lookupLive,
-        options.withReplay ? replay : Layer.empty,
+        options.withReplay ? replay : directVerificationReplayLayer,
       ),
     ),
   );
