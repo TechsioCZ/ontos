@@ -40,6 +40,12 @@ const readSources = (directory: string, sources = new Map<string, string>()) => 
   return sources;
 };
 
+// The whole-entry proof follows the readiness root's shared runtime exports.
+const availabilitySources = readSources(owner);
+for (const directory of ['packages/core-runtime', 'packages/shared-contracts']) {
+  readSources(directory, availabilitySources);
+}
+
 const slotBody = (source: string, start: string, end: string): string => {
   const startIndex = source.indexOf(start);
   const endIndex = source.indexOf(end);
@@ -49,11 +55,10 @@ const slotBody = (source: string, start: string, end: string): string => {
 };
 
 const availabilityInventory = (manifestAdd: string, registrationAdd: string) => {
-  const sources = readSources(owner);
-  const manifest = sources.get(manifestFile) ?? '';
-  const registration = sources.get(registrationFile) ?? '';
+  const manifest = availabilitySources.get(manifestFile) ?? '';
+  const registration = availabilitySources.get(registrationFile) ?? '';
   return new Map([
-    ...sources,
+    ...availabilitySources,
     [manifestFile, manifest.replace(manifestApiSlot, `${manifestApiSlot}${manifestAdd}`)],
     [registrationFile, registration.replace(registrationApiSlot, `${registrationApiSlot}${registrationAdd}`)],
   ]);
@@ -66,7 +71,7 @@ const seamDiagnostics = (sources: ReadonlyMap<string, string>): readonly string[
 };
 
 it('keeps the availability foundation readiness-only with an intentionally empty API inventory', () => {
-  const sources = readSources(owner);
+  const sources = availabilitySources;
   const shared = sources.get(sharedApi) ?? '';
   // The published contract stays a readiness-only foundation: one readiness endpoint, one composed api.
   const endpoints = [...shared.matchAll(/HttpApiEndpoint\.(?:get|post)\(\s*'(?<name>[^']+)'/gu)].map(

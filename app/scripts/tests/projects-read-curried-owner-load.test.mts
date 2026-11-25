@@ -30,7 +30,11 @@ const readSources = (directory: string, sources = new Map<string, string>()): Ma
   return sources;
 };
 
+// Whole-entry composition follows the real approval, client and server runtime exports.
 const sources = readSources(owner);
+for (const directory of ['packages/core-runtime', 'packages/shared-contracts']) {
+  readSources(directory, sources);
+}
 const source = sources.get(readFile) ?? '';
 const accepts = (input: string, diagnostics?: string[]): boolean =>
   hasCompleteGeneratedModuleRead(

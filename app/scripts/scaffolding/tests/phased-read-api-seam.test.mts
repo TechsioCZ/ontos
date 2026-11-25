@@ -25,10 +25,20 @@ for (const directory of [
   'packages/catalog-selection-contracts',
   // The provider whose operation Market Catalog's `{ run }` reads declare as a call.
   'packages/customer-market-retirement-contracts',
+  // Whole-entry composition follows the real runtime and client library exports.
+  'packages/core-runtime',
+  'packages/shared-contracts',
+  'packages/party-registry-contracts',
   // The provider whose published module-api contract manufacturer-relation-current declares as a call.
   'verticals/party-registry',
 ]) {
   collect(directory);
+}
+for (const entry of readdirSync(path.join(appRoot, 'verticals'), { withFileTypes: true })) {
+  if (entry.isDirectory()) {
+    const file = `verticals/${entry.name}/package.json`;
+    sources.set(file, readFileSync(path.join(appRoot, file), 'utf-8'));
+  }
 }
 
 // Market Catalog's reads run on the SDK kernel (`{ run }`) since main #1518, so only Catalog still has a phased
