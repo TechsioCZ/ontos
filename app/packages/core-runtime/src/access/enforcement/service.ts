@@ -820,19 +820,13 @@ const finiteWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean 
   );
 };
 
-const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
-  if (
-    !privacyDispatchCarrierMatches(input) ||
-    !organizationGovernanceCarrierMatches(input) ||
-    !finiteWorkloadCarrierMatches(input)
-  ) {
-    return false;
-  }
+const registeredRouteCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
   const routeScope = readVerifiedGatewayRouteScope(input.scope);
   if (
     routeScope?.nativeReadReceiver !== undefined &&
     (input.carrier.accessDeclaration?.kind !== 'read' ||
-      input.carrier.accessWorkload?.workloads.some((key) => key === routeScope.nativeReadReceiver?.workloadKey) !== true)
+      input.carrier.accessWorkload?.workloads.some((key) => key === routeScope.nativeReadReceiver?.workloadKey) !==
+        true)
   ) {
     return false;
   }
@@ -846,6 +840,18 @@ const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): bool
           operation.entrypointKey === input.carrier.entrypoint?.entrypointKey &&
           operation.schemaVersion === input.carrier.schemaVersion,
       ))
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+  if (
+    !privacyDispatchCarrierMatches(input) ||
+    !organizationGovernanceCarrierMatches(input) ||
+    !finiteWorkloadCarrierMatches(input) ||
+    !registeredRouteCarrierMatches(input)
   ) {
     return false;
   }

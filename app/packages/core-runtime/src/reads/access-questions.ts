@@ -91,7 +91,9 @@ const sameCarrier = (left: GateCarrier, right: GateCarrier): boolean =>
  * own field groups.
  */
 const fieldGroupActorOf = (actor: GateCarrier['accessActor']): GateCarrier['accessActor'] =>
-  actor === undefined ? undefined : Object.freeze({ callers: actor.callers, reason: actor.reason, subject: 'rights' });
+  actor === undefined || actor.callerBinding === 'receiving-host'
+    ? actor
+    : Object.freeze({ callers: actor.callers, reason: actor.reason, subject: 'rights' });
 
 const fieldQuestionOf = (
   name: string,

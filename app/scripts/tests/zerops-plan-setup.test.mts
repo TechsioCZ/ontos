@@ -69,7 +69,7 @@ it.effect(
         Effect.flatMap((source) =>
           Schema.decodeUnknownEffect(
             Schema.Struct({
-              concurrency: Schema.Struct({ group: Schema.String, 'cancel-in-progress': Schema.Boolean }),
+              concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
               jobs: Schema.Record(
                 Schema.String,
                 Schema.Struct({
@@ -86,7 +86,7 @@ it.effect(
           )(parse(source)),
         ),
       );
-      expect(workflow.concurrency).toEqual({ group: 'zerops-stage', 'cancel-in-progress': false });
+      expect(workflow.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
       const directory = yield* fs.makeTempDirectoryScoped();
       const git = path.join(directory, 'git');
       yield* fs.writeFileString(
@@ -101,18 +101,26 @@ printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
       yield* fs.chmod(git, 0o700);
       for (const name of ['deliver', 'build', 'deliver_app']) {
         const job = workflow.jobs[name];
-        if (job === undefined) return expect.fail(`Missing stage job ${name}`);
+        if (job === undefined) {
+          expect.fail(`Missing stage job ${name}`);
+        }
         const checkpoint = job.steps.findIndex((step) => step.name === SUPERSEDED_HEAD);
-        const checkout = job.steps.findIndex((step) => step.uses?.startsWith('actions/checkout@'));
+        const checkout = job.steps.findIndex((step) => step.uses?.startsWith('actions/checkout@') === true);
         expect(checkpoint).toBe(checkout + 1);
         const script = job.steps[checkpoint]?.run;
-        if (script === undefined) return expect.fail(`Missing stage checkpoint ${name}`);
+        if (script === undefined) {
+          expect.fail(`Missing stage checkpoint ${name}`);
+        }
         // No credential sync, download, install or build can occur before the head is checked.
         expect(job.steps.slice(0, checkpoint).map((step) => step.name)).toEqual(['Checkout']);
         for (const head of [HEAD, BASE, '', 'unavailable']) {
           const result = yield* collectToolingProcess(
             ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', script], {
-              env: { GITHUB_SHA: HEAD, REMOTE_HEAD: head, PATH: `${directory}:${process.env.PATH ?? ''}` },
+              env: {
+                GITHUB_SHA: HEAD,
+                PATH: `${directory}:${yield* Config.String('PATH').pipe(Config.withDefault(''))}`,
+                REMOTE_HEAD: head,
+              },
               extendEnv: true,
             }),
           );

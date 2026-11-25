@@ -1,4 +1,4 @@
-import { Context, Result, Schema } from 'effect';
+import { Result, Schema } from 'effect';
 
 import { decodeAccessActor } from '../authorization/access-declaration.ts';
 import type { AccessActor } from '../authorization/access-declaration.ts';
@@ -6,6 +6,8 @@ import { isGenuineCoreOperation } from '../modules/module-operation-execution.ts
 import { governedReadRegistration, isReadRegistration } from './definition.ts';
 import type { AnyReadRegistration } from './definition.ts';
 import { ReadDefinitionInvariantError } from './read-definition-invariant-error.ts';
+
+export { CoreReadReceiverBindings } from './receiver-bindings-context.ts';
 
 export interface CoreReadReceiverBinding {
   readonly callers: readonly [string, ...string[]];
@@ -37,10 +39,6 @@ Object.freeze(CoreReadReceiverBindingSet.prototype);
 Object.freeze(CoreReadReceiverBindingSet);
 
 export type CoreReadReceiverBindingRegistry = CoreReadReceiverBindingSet;
-
-export const CoreReadReceiverBindings = Context.Service<CoreReadReceiverBindingRegistry>(
-  '@app/core-runtime/reads/CoreReadReceiverBindings',
-);
 
 const isReceiverBindingSet = Schema.is(
   Schema.instanceOf(CoreReadReceiverBindingSet).check(

@@ -26,6 +26,7 @@ const PARTY_API = `${PARTY}/src/api.ts`;
 const CRM_ENTRY = `${CRM}/src/index.ts`;
 const CRM_IMPORTED_TEST_HELPER = `${CRM}/tests/support/fixture-ids.ts`;
 const OWNER_ENTRY = 'app/scripts/zerops/owner-entry.mts';
+const VERIFY_DB_SCHEMA = 'node scripts/verify-db-schema.mts';
 const EMPTY_MODULE = 'export {};';
 const ZEROPS_YAML = 'app/zerops.yaml';
 const packages: readonly WorkspacePackage[] = [
@@ -137,10 +138,7 @@ it.effect('keeps deployment-only schema verification out of owner and importer b
   Effect.gen(function* verificationOnly() {
     const verifier = `${PARTY}/scripts/verify-db-schema.mts`;
     const additions = [
-      [
-        `${PARTY}/package.json`,
-        JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' } }),
-      ],
+      [`${PARTY}/package.json`, JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': VERIFY_DB_SCHEMA } })],
       [verifier, 'export const verified = true;'],
       ['app/scripts/run-zerops-migrator.mjs', "import '../verticals/party/scripts/verify-db-schema.mts';"],
     ] as const;
@@ -153,7 +151,7 @@ it.effect('keeps deployment-only schema verification out of owner and importer b
       expect((yield* unitInputs(directory, before)).inputs.some(({ path }) => path === verifier)).toBe(false);
     }
     // Deployment still runs and fingerprints the verifier through its migrator root.
-    expect((yield* deliveryReads(before, [{ id: 'crm', directory: CRM }], new Map())).has(verifier)).toBe(true);
+    expect((yield* deliveryReads(before, [{ directory: CRM, id: 'crm' }], new Map())).has(verifier)).toBe(true);
   }),
 );
 
@@ -161,10 +159,7 @@ it.effect('still invalidates a schema verifier explicitly reached by a build, im
   Effect.gen(function* verificationIsBuildInput() {
     const verifier = `${PARTY}/scripts/verify-db-schema.mts`;
     const base = [
-      [
-        `${PARTY}/package.json`,
-        JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' } }),
-      ],
+      [`${PARTY}/package.json`, JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': VERIFY_DB_SCHEMA } })],
       [verifier, 'export const verified = true;'],
     ] as const;
     const cases = [
@@ -175,9 +170,9 @@ it.effect('still invalidates a schema verifier explicitly reached by a build, im
         [
           `${PARTY}/package.json`,
           JSON.stringify({
-            name: PARTY_PACKAGE,
             exports: { './verify': './scripts/verify-db-schema.mts' },
-            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+            name: PARTY_PACKAGE,
+            scripts: { 'db:verify': VERIFY_DB_SCHEMA },
           }),
         ],
       ],
@@ -186,23 +181,20 @@ it.effect('still invalidates a schema verifier explicitly reached by a build, im
         [
           `${PARTY}/package.json`,
           JSON.stringify({
-            name: PARTY_PACKAGE,
             imports: { '#verify': './scripts/verify-db-schema.mts' },
-            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+            name: PARTY_PACKAGE,
+            scripts: { 'db:verify': VERIFY_DB_SCHEMA },
           }),
         ],
       ],
-      ...[
-        { exports: { './*': './*' } },
-        { imports: { '#*': './*' } },
-      ].map((mapping) => [
+      ...[{ exports: { './*': './*' } }, { imports: { '#*': './*' } }].map((mapping) => [
         ...base,
         [
           `${PARTY}/package.json`,
           JSON.stringify({
             name: PARTY_PACKAGE,
             ...mapping,
-            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+            scripts: { 'db:verify': VERIFY_DB_SCHEMA },
           }),
         ] as const,
       ]),
