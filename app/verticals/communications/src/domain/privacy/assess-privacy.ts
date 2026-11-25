@@ -178,7 +178,3 @@ export const privacyStopOf = (assessment: PrivacyAssessmentCase): PrivacyStopRea
   const fact = privacyEvidenceOf(assessment);
   return fact === 'ALLOWED' ? undefined : PRIVACY_STOP_OF_FACT[fact];
 };
-
-/** Whether a retained assessment covers this exact question. It never does for any other scope, and never for time. */
-export const assessmentCoversScope = (assessment: PrivacyAssessmentCase, scope: ProcessingScope) =>
-  assessment.scopeKey === processingScopeKey(scope);

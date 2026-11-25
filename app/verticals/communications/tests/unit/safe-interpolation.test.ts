@@ -1,4 +1,4 @@
-import { Option, Result, Schema } from 'effect';
+import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { htmlToPlainText, renderMessage } from '../../src/domain/language/interpolation.ts';
 import type {
@@ -7,10 +7,12 @@ import type {
   RenderRefusal,
   RenderedMessage,
 } from '../../src/domain/language/interpolation.ts';
-import { GenericValueSchema, amountDigits, formatDate, formatMoney } from '../../src/domain/language/values.ts';
+import { GenericValueSchema, formatDate, formatMoney } from '../../src/domain/language/values.ts';
 import type { GenericValue } from '../../src/domain/language/values.ts';
 
 const NBSP = '\u00A0';
+// The digits and sign of an amount as shown, to prove that formatting changed no digit.
+const amountDigits = (shown: string) => shown.replace(/\u00A0[A-Z]{3}$/u, '').replaceAll(/[\u00A0,.]/gu, '');
 // the owner approves one origin and declares the only two query parameters its links carry
 const linkPolicy = { allowedOrigins: ['https://portal.fictional.test'], allowedQueryParameters: ['lang', 'tab'] };
 // Clearly labelled FICTIONAL copy: no production wording, no recipient, no secret.
@@ -72,8 +74,8 @@ describe('Business values are shown exactly as the owner published them (L-06, S
       const czech = Result.getOrThrow(formatMoney(amount, 'CZK', 'cs'));
       const english = Result.getOrThrow(formatMoney(amount, 'CZK', 'en'));
       const digits = amount.replaceAll('.', '');
-      expect(Option.getOrUndefined(amountDigits(czech))).toBe(digits);
-      expect(Option.getOrUndefined(amountDigits(english))).toBe(digits);
+      expect(amountDigits(czech)).toBe(digits);
+      expect(amountDigits(english)).toBe(digits);
       expect(czech.endsWith(`${NBSP}CZK`) && english.endsWith(`${NBSP}CZK`)).toBe(true);
     }
   });

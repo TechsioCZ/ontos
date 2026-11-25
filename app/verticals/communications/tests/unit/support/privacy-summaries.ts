@@ -2,8 +2,6 @@ import type { PrivacyAssessmentCase } from '../../../src/domain/privacy/assess-p
 import { PrivacyAssessment } from '../../../src/domain/privacy/assess-privacy.ts';
 import { ProcessingEligibilityVerdict } from '../../../src/domain/privacy/eligibility-gate.ts';
 import type { ProcessingEligibilityVerdictCase } from '../../../src/domain/privacy/eligibility-gate.ts';
-import { RecoveryAdmission } from '../../../src/domain/privacy/handoff-decision.ts';
-import type { RecoveryAdmissionCase } from '../../../src/domain/privacy/handoff-decision.ts';
 import { MessageHandoffDecision } from '../../../src/domain/privacy/suppression.ts';
 import type { MessageHandoffDecisionCase } from '../../../src/domain/privacy/suppression.ts';
 
@@ -26,12 +24,6 @@ export const verdictSummary = (verdict: ProcessingEligibilityVerdictCase) =>
     Allowed: () => ({ kind: 'Allowed' as const }),
     Indeterminate: ({ cause }) => ({ cause, kind: 'Indeterminate' as const }),
     NotAllowed: ({ basis }) => ({ basis, kind: 'NotAllowed' as const }),
-  });
-
-export const recoverySummary = (admission: RecoveryAdmissionCase) =>
-  RecoveryAdmission.$match(admission, {
-    Admitted: () => ({ kind: 'Admitted' as const }),
-    Refused: ({ reason }) => ({ kind: 'Refused' as const, reason }),
   });
 
 const reasonCodesOf = (assessment: PrivacyAssessmentCase): readonly string[] =>

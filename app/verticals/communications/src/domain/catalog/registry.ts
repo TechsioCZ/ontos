@@ -92,12 +92,5 @@ export const buildMessageTypeRegistry = (
     : Result.succeed({ byPurpose: new Map(types.map((type) => [type.purpose, type])), types });
 };
 
-/**
- * The only way to add types: a new registry that keeps every existing entry unchanged. Adding a type cannot alter
- * another type's decision, and it activates no producer: sending still needs the source onboarding contract.
- */
-export const extendMessageTypeRegistry = (registry: MessageTypeRegistry, added: readonly TransactionalMessageType[]) =>
-  buildMessageTypeRegistry([...registry.types, ...added]);
-
 export const findMessageTypeByPurpose = (registry: MessageTypeRegistry, purpose: CommunicationPurposeKey) =>
   Option.fromNullishOr(registry.byPurpose.get(purpose));

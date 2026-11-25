@@ -101,7 +101,8 @@ export const fixtureType = (overrides: TypeOverrides = {}): TransactionalMessage
 
 /**
  * TEST-ONLY recovery rule of a fictional type: the owner-approved limit is test data and not a default of any code. The
- * production catalog approves no type and no rule, so nothing here is ever approved outside tests.
+ * production catalog approves no recovery rule (its three Portal Auth types have recovery NONE), so nothing here is ever
+ * approved outside tests.
  */
 export const fixtureRecovery = (maxAttempts: number) =>
   ({ kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE', maxAttempts }) as const;

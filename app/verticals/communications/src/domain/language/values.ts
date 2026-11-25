@@ -1,4 +1,4 @@
-import { Option, Result, Schema } from 'effect';
+import { Result, Schema } from 'effect';
 import type { SupportedLanguage } from './vocabulary.ts';
 
 /**
@@ -109,10 +109,3 @@ export const formatDate = (value: string, language: SupportedLanguage): Result.R
   const monthName = englishMonths[month - 1] ?? '';
   return Result.succeed(language === 'cs' ? `${day}. ${month}. ${year}` : `${day} ${monthName} ${year}`);
 };
-
-const shownAmount = /^(?<number>-?[0-9][0-9\u00A0,.]*)\u00A0[A-Z]{3}$/u;
-/** The digits and sign of an amount as shown, used to prove that formatting changed no digit. */
-export const amountDigits = (shown: string): Option.Option<string> =>
-  Option.fromNullishOr(shownAmount.exec(shown)?.groups?.['number']).pipe(
-    Option.map((number) => number.replaceAll(/[\u00A0,.]/gu, '')),
-  );

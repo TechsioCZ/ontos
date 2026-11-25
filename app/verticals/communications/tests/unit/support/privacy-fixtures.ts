@@ -108,24 +108,6 @@ export type PrivacyAnswer = (query: ProcessingEligibilityQuery) => OwnerReply;
 export const privacyAllowed: PrivacyAnswer = ({ scope }) =>
   Effect.succeed(ProcessingEligibilityVerdict.Allowed({ evidence: ownerEvidence(scope, 'ALLOWED') }));
 
-/** An ALLOWED the owner decided at its own time, so a test can tell a new owner evaluation from an old one. */
-export const privacyAllowedAt =
-  (decidedAt: string): PrivacyAnswer =>
-  ({ scope }) =>
-    Effect.succeed(
-      ProcessingEligibilityVerdict.Allowed({ evidence: ownerEvidence(scope, 'ALLOWED', undefined, decidedAt) }),
-    );
-
-export const privacyIndeterminateAt =
-  (decidedAt: string): PrivacyAnswer =>
-  ({ scope }) =>
-    Effect.succeed(
-      ProcessingEligibilityVerdict.Indeterminate({
-        cause: 'INPUTS_NOT_EVIDENCED',
-        evidence: ownerEvidence(scope, 'INDETERMINATE', undefined, decidedAt),
-      }),
-    );
-
 /** The owner answered with an already mapped verdict, for example from its public response. */
 export const privacyVerdict =
   (verdict: ProcessingEligibilityVerdictCase): PrivacyAnswer =>

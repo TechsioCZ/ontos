@@ -9,7 +9,6 @@ import {
   TransactionalMessageTypeSchema,
 } from '../../src/domain/catalog/message-type.ts';
 import {
-  extendMessageTypeRegistry,
   findMessageTypeByPurpose,
   buildMessageTypeRegistry,
   MessageTypeRegistryInvalid,
@@ -35,6 +34,12 @@ const violationTags = (types: Parameters<typeof buildMessageTypeRegistry>[0]) =>
     onFailure: (error) => error.violations.map((violation) => violation._tag),
     onSuccess: () => [],
   });
+
+/** A registry rebuilt from an existing one plus added types: the same builder, so every invariant is checked again. */
+const extendMessageTypeRegistry = (
+  registry: Parameters<typeof findMessageTypeByPurpose>[0],
+  added: Parameters<typeof buildMessageTypeRegistry>[0],
+) => buildMessageTypeRegistry([...registry.types, ...added]);
 
 const group = (slotKeys: readonly string[]) => ({
   approvalRuleKey: 'fixture.rule.indivisible',

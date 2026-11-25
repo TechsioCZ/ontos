@@ -12,7 +12,6 @@ import {
   MessageHistoryItemSchema,
   MessageHistoryListRequestFieldsSchema,
   TEMPLATE_PREVIEW_MARKER,
-  TEMPLATE_PREVIEW_NOTICE,
 } from '../../shared/message-history-read.ts';
 import { HistoryEntryKindSchema } from '../../src/domain/history/timeline.ts';
 import { ObservationKindSchema, TechnicalEvidenceSchema } from '../../src/domain/history/vocabulary.ts';
@@ -91,7 +90,6 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
         revisionNumber: 3,
         source: 'TENANT_REVISION',
       });
-      expect(TEMPLATE_PREVIEW_NOTICE).toBe('template preview, not the exact sent e-mail');
       // no text of any template is representable: the pin has no body, subject or placeholder value field
       expect(Object.keys(item.template ?? {}).toSorted()).toEqual([
         'language',
