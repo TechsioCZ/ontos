@@ -38,6 +38,7 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/commerce-customer-context": "workspace:*",
     "@app/communications-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",

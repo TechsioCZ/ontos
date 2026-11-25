@@ -21,9 +21,9 @@ export class SourceOccurrenceAuthority extends Context.Service<
 >()('@app/communications/domain/intake/source-authority/SourceOccurrenceAuthority') {}
 
 /**
- * The only production composition today: no source owner publishes a current-occurrence read yet (a per-owner input
- * gate of the plan), so every read fails closed and no request is decided on a guess. It is explicit so nothing is
- * decided by default or by a missing adapter.
+ * The explicit fail-closed form for a deployment or test that composes no source owner: every read fails closed and no request
+ * is decided on a guess. Production composes Portal Auth's published Read instead (`portalAuthSourceOccurrenceAuthorityOver`),
+ * and a source module with no adapter there is the same unavailable owner. Nothing is decided by default or by a missing adapter.
  */
 export const unavailableSourceOccurrenceAuthorityLayer = Layer.succeed(SourceOccurrenceAuthority, {
   read: () => Effect.fail(new SourceOccurrenceUnavailable({ reason: 'OWNER_UNAVAILABLE' })),

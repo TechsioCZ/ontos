@@ -32,9 +32,11 @@ export class ProcessingScopeDeclaration extends Context.Service<
 >()('@app/communications/domain/intake/scope-declaration/ProcessingScopeDeclaration') {}
 
 /**
- * The only production composition today: no producer has declared a Privacy scope (Controller, purpose and activity
- * per approved type are open input gates), so a recipient has no scope, Privacy is never asked about a guess, and the
- * message is stopped as an unresolved Privacy context.
+ * The only production composition today. The scope is SOURCE-SUPPLIED (#1396 J: every involved source producer declares its exact
+ * Privacy Subject, Controller, Purpose, Activity and material scope; Communications declares none and a type catalog entry never
+ * could, as it would have to invent the Privacy owner's values). No approved Communication Request field carries it yet, and the
+ * Privacy owner has not confirmed the purpose and operation names, so a recipient has no scope, Privacy is never asked about a
+ * guess, and the message is stopped as an unresolved Privacy context (R-D9: any PROPOSED name stays marked).
  */
 export const undeclaredProcessingScopeLayer = Layer.succeed(ProcessingScopeDeclaration, {
   declare: () => Effect.fail(new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' })),

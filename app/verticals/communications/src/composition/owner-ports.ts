@@ -1,13 +1,17 @@
-import { Layer } from 'effect';
+import { Crypto, Effect, Layer } from 'effect';
 
 import { unavailableDocumentLinkOwnerLayer } from '../domain/documents/document-owner.ts';
 import { unavailableMessageHandoffLayer } from '../domain/handoff/message-handoff.ts';
 import { productionCatalogLayer } from '../domain/intake/message-type-catalog.ts';
 import { notEstablishedRecipientLanguageLayer } from '../domain/intake/recipient-language.ts';
 import { undeclaredProcessingScopeLayer } from '../domain/intake/scope-declaration.ts';
-import { unavailableSourceOccurrenceAuthorityLayer } from '../domain/intake/source-authority.ts';
-import { unavailableRecipientCurrentGateLayer } from '../domain/recipient/current-gate.ts';
-import { privacyProcessingEligibilityGateLive } from '../integrations/privacy-eligibility-gate.ts';
+import { portalAuthOwnerPortsOver, portalAuthOwnerTransportLive } from '../integrations/portal-auth-owner.ts';
+import type { PortalAuthOwnerTransport } from '../integrations/portal-auth-owner.ts';
+import {
+  privacyOwnerTransportLive,
+  privacyProcessingEligibilityGateOver,
+} from '../integrations/privacy-eligibility-gate.ts';
+import type { PrivacyOwnerTransport } from '../integrations/privacy-eligibility-gate.ts';
 
 /**
  * Owner-decided deadline of one Current-gate check. The domain has no default on purpose: a check that cannot be
@@ -15,25 +19,42 @@ import { privacyProcessingEligibilityGateLive } from '../integrations/privacy-el
  */
 const GATE_CHECK_TIMEOUT = '10 seconds';
 
+/** How each owner is reached; the only thing a composition replaces, never what is asked or how an answer is read. */
+export interface CommunicationsOwnerTransports {
+  readonly portalAuth: PortalAuthOwnerTransport;
+  readonly privacy: PrivacyOwnerTransport;
+}
+
 /**
- * Every owner port of the production composition. Each one that no owner has published yet is the EXPLICIT fail-closed
- * form, so nothing is ever decided or allowed by default or by a missing adapter:
- * - the approved catalog approves no type, so every purpose is an unknown purpose;
+ * Every owner port of the decision, over given transports to the owners. The ports are real: the catalog approves the three
+ * Portal Auth types, each ask of Auth and Privacy is made again with fresh authority (never remembered), and every port no owner
+ * has published yet stays the EXPLICIT fail-closed form, so nothing is ever decided or allowed by default or by a missing adapter:
  * - no owner publishes a trusted recipient language, so none is established and the default `cs` applies;
- * - no source owner publishes its current occurrence facts, so no request is decided on a guess;
- * - no producer declares a Privacy scope, so a recipient has no scope and is stopped as an unresolved Privacy context;
- * - no owner publishes a recipient authority, so every Current recipient check is an unavailable source owner;
- * - Privacy is the real public Read, asked again with fresh delegated authority on every check;
+ * - Portal Auth, the sole source owner of the approved types, states the current occurrence and recipient endpoint through its
+ *   published Read; a source with no adapter is an unavailable owner;
+ * - no producer declares a Privacy scope (#1396 J: the source producer declares it, and no approved contract field carries it yet),
+ *   so a recipient has no scope and is stopped as an unresolved Privacy context;
  * - Core Media V1 and the document owners publish no Read yet (#1443, #1446), so every document question is unavailable.
  */
-export const communicationsProductionOwnerPortsLive = Layer.mergeAll(
-  productionCatalogLayer,
-  notEstablishedRecipientLanguageLayer,
-  unavailableSourceOccurrenceAuthorityLayer,
-  undeclaredProcessingScopeLayer,
-  unavailableRecipientCurrentGateLayer({ checkTimeout: GATE_CHECK_TIMEOUT }),
-  privacyProcessingEligibilityGateLive({ checkTimeout: GATE_CHECK_TIMEOUT }),
-  unavailableDocumentLinkOwnerLayer,
+export const communicationsOwnerPortsOver = (transports: CommunicationsOwnerTransports) =>
+  Layer.mergeAll(
+    productionCatalogLayer,
+    notEstablishedRecipientLanguageLayer,
+    portalAuthOwnerPortsOver({ checkTimeout: GATE_CHECK_TIMEOUT }, transports.portalAuth),
+    undeclaredProcessingScopeLayer,
+    privacyProcessingEligibilityGateOver({ checkTimeout: GATE_CHECK_TIMEOUT }, transports.privacy),
+    unavailableDocumentLinkOwnerLayer,
+  );
+
+/** The production composition: both owners are reached through their published Reads with a fresh delegated assertion per ask. */
+export const communicationsProductionOwnerPortsLive = Layer.unwrap(
+  Effect.gen(function* productionOwnerPorts() {
+    const crypto = yield* Crypto.Crypto;
+    return communicationsOwnerPortsOver({
+      portalAuth: portalAuthOwnerTransportLive(crypto),
+      privacy: privacyOwnerTransportLive(crypto),
+    });
+  }),
 );
 
 /**

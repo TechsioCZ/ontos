@@ -34,7 +34,7 @@ export const approvedCatalogLayer = (types: readonly TransactionalMessageType[])
   Layer.unwrap(Effect.fromResult(buildMessageTypeRegistry(types)).pipe(Effect.map(layerOver)));
 
 /**
- * The production composition: the explicit approved registry, which currently approves no type. An invalid approved
+ * The production composition: the explicit approved registry (the three Portal Auth e-mails). An invalid approved
  * list is a defect of the build itself and never becomes an empty registry that silently drops approved types.
  */
 export const productionCatalogLayer = Layer.unwrap(

@@ -25,6 +25,9 @@
   ],
   "references": [
     {
+      "path": "../commerce-customer-context"
+    },
+    {
       "path": "../../packages/communications-contracts"
     },
     {

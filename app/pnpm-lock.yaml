@@ -1937,6 +1937,9 @@ importers:
 
   verticals/communications:
     dependencies:
+      '@app/commerce-customer-context':
+        specifier: workspace:*
+        version: link:../commerce-customer-context
       '@app/communications-contracts':
         specifier: workspace:*
         version: link:../../packages/communications-contracts

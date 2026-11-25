@@ -39,5 +39,5 @@ export const approvedTypesDecisionLayer = (types: readonly TransactionalMessageT
     Effect.fromResult(buildMessageTypeRegistry(types)).pipe(Effect.map(evaluatorOver)),
   );
 
-/** The production composition: the explicit approved registry, which currently approves no type. */
+/** The production composition: the explicit approved registry (the three Portal Auth e-mails). */
 export const approvedCommunicationDecisionLayer = approvedTypesDecisionLayer(approvedMessageTypes);
