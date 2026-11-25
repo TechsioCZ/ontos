@@ -1,0 +1,34 @@
+{
+  "name": "@app/portal-auth-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portal Auth-owned public contract of the issuance source Read and the issuance vocabulary that Communications consumes.",
+  "type": "module",
+  "exports": {
+    "./portal-auth-issuance": "./src/portal-auth-issuance.ts",
+    "./portal-auth-issuance-source": "./src/apis/portal-auth-issuance-source.ts",
+    "./portal-auth-issuance-source/client": "./src/api/portal-auth-issuance-source-client.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.7"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.12.6",
+    "@types/node": "20.19.43",
+    "effect-rstest": "1.0.0"
+  },
+  "ontosContractOwner": {
+    "appId": "commerce-customer-context",
+    "moduleApis": [
+      "portal-auth-issuance-source"
+    ],
+    "moduleId": "commerce.customer-context",
+    "packageName": "@app/commerce-customer-context"
+  }
+}

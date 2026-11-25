@@ -7461,6 +7461,12 @@
       "package": "@app/privacy-contracts",
       "path": "packages/privacy-contracts",
       "description": "Privacy-owned eligibility, Privacy Measure handoff and owner-outcome contracts that Communications and other consumers import."
+    },
+    {
+      "id": "portal-auth-contracts",
+      "package": "@app/portal-auth-contracts",
+      "path": "packages/portal-auth-contracts",
+      "description": "Portal Auth-owned issuance source Read contract, generated client and issuance vocabulary that Communications imports."
     }
   ],
   "validation": {

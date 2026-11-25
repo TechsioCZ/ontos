@@ -25,9 +25,6 @@
   ],
   "references": [
     {
-      "path": "../commerce-customer-context"
-    },
-    {
       "path": "../../packages/communications-contracts"
     },
     {
@@ -38,6 +35,9 @@
     },
     {
       "path": "../../packages/gateway-principal-verifier"
+    },
+    {
+      "path": "../../packages/portal-auth-contracts"
     },
     {
       "path": "../../packages/privacy-contracts"

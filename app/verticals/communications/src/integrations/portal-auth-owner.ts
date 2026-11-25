@@ -1,12 +1,12 @@
-import { executePortalAuthIssuanceSourceWithAuthorization } from '@app/commerce-customer-context/api/portal-auth-issuance-source/client';
+import { executePortalAuthIssuanceSourceWithAuthorization } from '@app/portal-auth-contracts/portal-auth-issuance-source/client';
 import {
   PortalAuthIssuanceSourceRequestSchema,
   PortalAuthIssuanceSourceResponseSchema,
-} from '@app/commerce-customer-context/api/portal-auth-issuance-source';
+} from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import type {
   PortalAuthIssuanceSourceRequest,
   PortalAuthIssuanceSourceResponse,
-} from '@app/commerce-customer-context/api/portal-auth-issuance-source';
+} from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Data, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Crypto, Duration } from 'effect';

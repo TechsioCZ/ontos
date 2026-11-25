@@ -652,6 +652,24 @@
       }
     },
     {
+      "id": "portal-auth-contracts",
+      "package": "@app/portal-auth-contracts",
+      "path": "packages/portal-auth-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
+        }
+      }
+    },
+    {
       "id": "payment",
       "package": "@app/payment",
       "path": "verticals/payment",

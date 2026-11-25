@@ -937,6 +937,28 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
 
+  packages/portal-auth-contracts:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@rstest/core':
+        specifier: 0.12.6
+        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
+      effect-rstest:
+        specifier: 1.0.0
+        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+
   packages/price-group-catalog-contracts:
     dependencies:
       '@app/core-runtime':
@@ -1583,6 +1605,9 @@ importers:
       '@app/payment-term-catalog-contracts':
         specifier: workspace:*
         version: link:../../packages/payment-term-catalog-contracts
+      '@app/portal-auth-contracts':
+        specifier: workspace:*
+        version: link:../../packages/portal-auth-contracts
       '@app/price-group-catalog-contracts':
         specifier: workspace:*
         version: link:../../packages/price-group-catalog-contracts
@@ -1937,9 +1962,6 @@ importers:
 
   verticals/communications:
     dependencies:
-      '@app/commerce-customer-context':
-        specifier: workspace:*
-        version: link:../commerce-customer-context
       '@app/communications-contracts':
         specifier: workspace:*
         version: link:../../packages/communications-contracts
@@ -1952,6 +1974,9 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/portal-auth-contracts':
+        specifier: workspace:*
+        version: link:../../packages/portal-auth-contracts
       '@app/privacy-contracts':
         specifier: workspace:*
         version: link:../../packages/privacy-contracts

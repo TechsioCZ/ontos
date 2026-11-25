@@ -101,6 +101,9 @@
       "path": "packages/privacy-contracts"
     },
     {
+      "path": "packages/portal-auth-contracts"
+    },
+    {
       "path": "verticals/commerce-order"
     },
     {

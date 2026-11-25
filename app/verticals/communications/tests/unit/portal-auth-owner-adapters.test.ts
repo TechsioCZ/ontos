@@ -1,4 +1,4 @@
-import { PortalAuthIssuanceSourceStateSchema } from '@app/commerce-customer-context/api/portal-auth-issuance-source';
+import { PortalAuthIssuanceSourceStateSchema } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Duration, Effect, Fiber, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
