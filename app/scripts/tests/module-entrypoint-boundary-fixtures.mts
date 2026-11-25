@@ -151,6 +151,8 @@ const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
 const BUILD_DIRECTORIES = new Set(['node_modules', 'dist', '.output', '.modern', 'coverage']);
 const LIBRARY_MANIFEST = 'package.json';
 const LIBRARY_COPY_PREFIX = 'ontos-libraries-';
+/** A JavaScript, TypeScript or JSON file: what a fixture's specifiers may name. */
+const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx|json)$/u;
 const LibraryExportSchema = Schema.Union([Schema.String, Schema.Struct({ default: Schema.String })]);
 const LibraryManifestSchema = Schema.Struct({ exports: Schema.Record(Schema.String, LibraryExportSchema) });
 const ProcessGoneSchema = Schema.Struct({ code: Schema.Literal('ESRCH') });
@@ -170,26 +172,27 @@ const specifiersOf = (source: string): readonly string[] =>
     match.groups?.specifier === undefined ? [] : [match.groups.specifier],
   );
 
-/** The specifiers a source re-exports from: `export … from '…'`, `export * from '…'`. */
-const reexportsOf = (source: string): readonly string[] =>
-  [
-    ...source.matchAll(
-      /\bexport\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*['"](?<specifier>[^'"\n]+)['"]/gu,
-    ),
-  ].flatMap((match) => (match.groups?.specifier === undefined ? [] : [match.groups.specifier]));
+/** What TypeScript's `Bundler` resolution substitutes for a JavaScript extension, in its order (the specification's table). */
+const SUBSTITUTED_EXTENSIONS = new Map([
+  ['.cjs', ['.cts', '.d.cts', '.cjs']],
+  ['.js', ['.ts', '.tsx', '.d.ts', '.js', '.jsx']],
+  ['.jsx', ['.tsx', '.d.ts', '.jsx']],
+  ['.mjs', ['.mts', '.d.mts', '.mjs']],
+]);
+const IMPLIED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx'];
 
-/** What TypeScript's `Bundler` resolution tries for a path. */
+/** What TypeScript's `Bundler` resolution tries for a path, in its order. */
 const bundlerCandidates = (base: string): readonly string[] => {
-  if (/\.(?:[cm]?js|jsx)$/u.test(base)) {
-    return [base.replace(/\.(?<module>[cm]?)js(?<jsx>x?)$/u, '.$<module>ts$<jsx>'), base];
+  const extension = path.posix.extname(base);
+  const substituted = SUBSTITUTED_EXTENSIONS.get(extension);
+  if (substituted !== undefined) {
+    return substituted.map((replacement) => `${base.slice(0, -extension.length)}${replacement}`);
   }
-  return /\.(?:[cm]?tsx?|json)$/u.test(base) ? [base] : [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`];
-};
-
-/** The file a library publishes at a subpath (its manifest maps each subpath to a path, or to a `default` path). */
-const publishedFile = (directory: string, exports: ReadonlyMap<string, string>, subpath: string) => {
-  const target = exports.get(subpath);
-  return target === undefined ? undefined : path.posix.join(directory, target);
+  return [
+    base,
+    ...IMPLIED_EXTENSIONS.map((implied) => `${base}${implied}`),
+    ...IMPLIED_EXTENSIONS.map((implied) => `${base}/index${implied}`),
+  ];
 };
 
 /** The library packages as the workspace holds them: their source files, read once, and what their manifests export. */
@@ -199,21 +202,28 @@ interface Libraries {
   readonly sources: ReadonlyMap<string, string>;
 }
 
-/** Where a specifier of `importer` names a library file or a file `exists` holds; nothing for any other module. */
+/**
+ * Where a specifier of `importer` names a library file or a file `exists` holds, a path and what a library's
+ * `exports` publishes alike under the `Bundler` candidates; nothing for any other module.
+ */
 const resolvedIn =
   (libraries: Libraries, exists: (file: string) => boolean) =>
   (importer: string, specifier: string): string | undefined => {
-    if (specifier.startsWith('.')) {
-      return bundlerCandidates(path.posix.join(path.posix.dirname(importer), specifier)).find(
-        (candidate) => libraries.sources.has(candidate) || exists(candidate),
-      );
-    }
     const [scope, name, ...rest] = specifier.split('/');
     const directory = LIBRARY_PACKAGES.get(`${scope}/${name}`);
-    const exports = directory === undefined ? undefined : libraries.exports.get(directory);
-    return directory === undefined || exports === undefined
+    const published =
+      directory === undefined
+        ? undefined
+        : libraries.exports.get(directory)?.get(rest.length === 0 ? '.' : `./${rest.join('/')}`);
+    let target: string | undefined;
+    if (specifier.startsWith('.')) {
+      target = path.posix.join(path.posix.dirname(importer), specifier);
+    } else if (directory !== undefined && published !== undefined) {
+      target = path.posix.join(directory, published);
+    }
+    return target === undefined
       ? undefined
-      : publishedFile(directory, exports, rest.length === 0 ? '.' : `./${rest.join('/')}`);
+      : bundlerCandidates(target).find((candidate) => libraries.sources.has(candidate) || exists(candidate));
   };
 
 /** Every source file of a workspace directory, read, and copied read-only into `copy`. */
@@ -230,7 +240,7 @@ const copyReadOnly = (copy: string, directory: string): Effect.Effect<readonly (
         if (entry.isDirectory() && !BUILD_DIRECTORIES.has(entry.name)) {
           return copyReadOnly(copy, file);
         }
-        return entry.isFile() && /\.(?:[cm]?ts|tsx|json)$/u.test(entry.name)
+        return entry.isFile() && SOURCE_FILE.test(entry.name)
           ? Effect.promise(async () => {
               const source = await readFile(path.join(WORKSPACE_ROOT, file), 'utf-8');
               await writeFile(path.join(copy, file), source, { mode: 0o444 });
@@ -341,35 +351,22 @@ const fixtureSource = (root: string, file: string) =>
   });
 
 /**
- * The library files an owner entry of the fixture names (`shared/api.ts` and the `./api/client` aggregate of each
- * module), and every file the entries' re-exports reach in the fixture names: the files the checks require to exist.
+ * The library files the fixture's own sources name, every source file of it outside the library packages (owner files,
+ * contract package files, the Shell's), by a plain scan of their specifiers: what any check may read of a library.
  */
-const entryNamedLibraryFiles = (root: string, libraries: Libraries) =>
-  Effect.gen(function* namedByEntries() {
-    const modules = (yield* fixtureFiles(root, 'verticals')).flatMap((file) => {
-      const module = /^verticals\/(?<name>[^/]+)\/package\.json$/u.exec(file)?.groups?.name;
-      return module === undefined ? [] : [module];
-    });
-    const pending = modules.flatMap((module) => [
-      `verticals/${module}/shared/api.ts`,
-      `verticals/${module}/src/api/${module}-client.ts`,
-    ]);
-    const resolve = resolvedIn(libraries, () => true);
-    const visited = new Set<string>();
+const fixtureNamedLibraryFiles = (root: string, libraries: Libraries) =>
+  Effect.gen(function* namedByFixture() {
+    const libraryDirectories = [...LIBRARY_PACKAGES.values()].map((directory) => `${directory}/`);
+    const sources = (yield* Effect.forEach(['apps', 'verticals', 'packages'], (top) => fixtureFiles(root, top)))
+      .flat()
+      .filter((file) => SOURCE_FILE.test(file) && !libraryDirectories.some((directory) => file.startsWith(directory)));
+    const resolve = resolvedIn(libraries, () => false);
     const named = new Set<string>();
-    for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
-      const source = visited.has(file) ? '' : yield* fixtureSource(root, file);
-      visited.add(file);
-      for (const specifier of specifiersOf(source)) {
+    for (const file of sources) {
+      for (const specifier of specifiersOf(yield* fixtureSource(root, file))) {
         const target = resolve(file, specifier);
         if (target !== undefined && libraries.sources.has(target)) {
           named.add(target);
-        }
-      }
-      for (const specifier of reexportsOf(source)) {
-        const target = specifier.startsWith('.') ? resolve(file, specifier) : undefined;
-        if (target !== undefined && !libraries.sources.has(target)) {
-          pending.push(target);
         }
       }
     }
@@ -377,9 +374,9 @@ const entryNamedLibraryFiles = (root: string, libraries: Libraries) =>
   });
 
 /**
- * The library files a fixture holds: those it wrote, and, of each library it holds files of, the published files its
- * owner entries name, with every library file those reach, so every file a held library's specifier names exists. A
- * fixture that holds a library by its manifest alone holds none of its files.
+ * The library files a fixture holds: those it wrote, and, of each library it holds files of, the files its own sources
+ * name, with every library file those reach, so every file a held library's specifier names exists. A fixture that
+ * holds a library by its manifest alone holds none of its files.
  */
 const heldLibraryFiles = (root: string, libraries: Libraries, named: ReadonlySet<string>) =>
   Effect.gen(function* libraryClosure() {
@@ -413,7 +410,7 @@ const heldLibraryFiles = (root: string, libraries: Libraries, named: ReadonlySet
           }
         }
       }
-      // A library the closure enters is held: the published files the owner entries name of it are held too.
+      // A library the closure enters is held: the files the fixture's sources name of it are held too.
       pending.push(...[...named].filter((file) => !held.has(file) && heldLibraries.has(libraryOf(file) ?? '')));
     }
     return [...held].filter((file) => !writtenSources.has(file));
@@ -432,7 +429,7 @@ const holdLibraryFiles = (root: string) =>
       .some((file) => path.posix.basename(file) !== LIBRARY_MANIFEST);
     if (holdsAny) {
       const libraries = yield* sharedLibraries;
-      const linked = yield* heldLibraryFiles(root, libraries, yield* entryNamedLibraryFiles(root, libraries));
+      const linked = yield* heldLibraryFiles(root, libraries, yield* fixtureNamedLibraryFiles(root, libraries));
       yield* Effect.forEach(
         linked,
         (file) =>
