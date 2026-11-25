@@ -504,6 +504,8 @@ const declaredMarketPrerequisite1225 = (payload: PricingCurrentMarketEvidenceReq
     const response = yield* Schema.decodeUnknownEffect(PricingCurrentMarketEvidenceResponseSchema)(declared);
     return yield* Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)(response);
   }).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock));
+/** Node runs an inline TypeScript ES module program with the workspace's source imports. */
+const NODE_TYPESCRIPT_MODULE = ['--experimental-strip-types', '--input-type=module'];
 const catalogBuildIdentitySchema = Schema.Struct({ buildMarker: Schema.String, sourceRevision: Schema.String });
 const currentCatalogBuildIdentity = Effect.fn('WholeCandidate.currentCatalogBuildIdentity')(
   function* currentIdentity() {
@@ -525,11 +527,12 @@ const currentCatalogBuildIdentity = Effect.fn('WholeCandidate.currentCatalogBuil
       }));
       return JSON.stringify({buildMarker: identity.buildMarker, sourceRevision: identity.sourceRevision});
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-    const child = yield* ChildProcess.make(
-      process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', program],
-      { cwd: appRoot, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
-    );
+    const child = yield* ChildProcess.make(process.execPath, [...NODE_TYPESCRIPT_MODULE, '--eval', program], {
+      cwd: appRoot,
+      stderr: 'pipe',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    });
     const [code, output] = yield* Effect.all(
       [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
       { concurrency: 3 },
@@ -549,57 +552,118 @@ const readOwnerContractDocument = Effect.fn('PublicPricingReadHarness.ownerContr
     .pipe(Effect.mapError(() => unavailable(`owner-contract-not-built:${vertical}`)));
 });
 
+/**
+ * The Shell's SOURCE sharing policy when no packaged browser pair is available: the Shell hosts every governed
+ * singleton, so its observation lists each one with the version the Shell's own dependencies resolve to.
+ */
+const observeShellSourceFederation = Effect.fn('PublicPricingReadHarness.shellSourceFederation')(function* shellSource(
+  environment: Readonly<Record<string, string>>,
+) {
+  const program = `import { createRequire } from 'node:module';
+    import { readFileSync } from 'node:fs';
+    import { Schema } from 'effect';
+    import { createSharedRuntimeConfig } from './module-federation.shared.ts';
+    const require = createRequire(process.cwd() + '/apps/shell-super-app/package.json');
+    const version = (name) => Schema.decodeUnknownSync(Schema.Struct({ version: Schema.NonEmptyString }))(
+      require(name + '/package.json')).version;
+    const { dependencies } = Schema.decodeUnknownSync(Schema.Struct({
+      dependencies: Schema.Record(Schema.String, Schema.NonEmptyString)
+    }))(require('./package.json'));
+    const { shell } = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+      shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) })
+    })))(readFileSync('./topology/reference-topology.json', 'utf8'));
+    const sharing = createSharedRuntimeConfig({
+      '@modern-js/plugin-i18n/runtime': version('@modern-js/plugin-i18n'),
+      '@modern-js/runtime': version('@modern-js/runtime'),
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: version('react'), 'react-dom': version('react-dom')
+    });
+    process.stdout.write(JSON.stringify({ name: shell.moduleFederation.name, exposes: [],
+      shared: Object.entries(sharing).map(([name, { requiredVersion, singleton }]) => ({ name, requiredVersion, singleton }))
+    }));`;
+  const child = yield* ChildProcess.make(process.execPath, [...NODE_TYPESCRIPT_MODULE, '-'], {
+    cwd: appRoot,
+    env: environment,
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: Stream.make(new TextEncoder().encode(program)),
+    stdout: 'pipe',
+  });
+  const [document, code, diagnostics] = yield* Effect.all(
+    [
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.exitCode,
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
+    { concurrency: 3 },
+  );
+  expect({ code, diagnostics: code === 0 ? '' : diagnostics.slice(-4000) }).toEqual({ code: 0, diagnostics: '' });
+  return document;
+});
+
 const deriveHarnessSnapshot = Effect.fn('PublicPricingReadHarness.deriveSnapshot')(function* deriveSnapshot(
   catalogContractDocument: string,
   pricingContractDocument: string,
   extraContractDocuments: readonly string[],
 ) {
-  const catalogContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-    catalogContractDocument,
-  );
   const fs = yield* FileSystem.FileSystem;
-  const topology = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) }),
-      }),
-    ),
-  )(yield* fs.readFileString(`${appRoot}topology/reference-topology.json`));
-  const boundaries = new Set(catalogContract.manifest.publicSurface.components.map(({ mfBoundaryId }) => mfBoundaryId));
-  const [catalogBoundary] = boundaries;
-  if (boundaries.size !== 1 || catalogBoundary === undefined) {
-    return yield* unavailable('catalog-source-mf-boundary');
-  }
+  const contracts = yield* Effect.forEach([catalogContractDocument, ...extraContractDocuments], (document) =>
+    Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document),
+  );
+  // Every owner with public components is a browser remote; API-only owners such as Pricing observe server-only.
+  const browserOwners = yield* Effect.forEach(
+    contracts.filter(({ manifest }) => manifest.publicSurface.components.length > 0),
+    ({ deployment, manifest }) => {
+      const boundaries = new Set(manifest.publicSurface.components.map(({ mfBoundaryId }) => mfBoundaryId));
+      const [boundary] = boundaries;
+      return boundaries.size === 1 && boundary !== undefined
+        ? Effect.succeed({
+            appId: deployment.appId,
+            boundary,
+            exposes: manifest.publicSurface.components.map(({ expose }) => ({ path: expose })),
+          })
+        : unavailable(`${deployment.appId}-source-mf-boundary`);
+    },
+  );
   const sourceFederationSchema = Schema.Struct({
     exposes: Schema.Array(Schema.Struct({ path: Schema.String })),
     name: Schema.String,
     shared: Schema.Array(Schema.Never),
   });
-  const catalogManifestPath = `${appRoot}verticals/catalog/.output/mf-manifest.json`;
+  const ownerManifestPath = (appId: string) => `${appRoot}verticals/${appId}/.output/mf-manifest.json`;
   const shellManifestPath = `${appRoot}apps/shell-super-app/.output/mf-manifest.json`;
-  const available = yield* Effect.all({ catalog: fs.exists(catalogManifestPath), shell: fs.exists(shellManifestPath) });
-  const observedBuildPair = available.catalog && available.shell;
+  const available = yield* Effect.all(
+    [...browserOwners.map(({ appId }) => ownerManifestPath(appId)), shellManifestPath].map((path) => fs.exists(path)),
+  );
+  const observedBuild = available.every(Boolean);
+  const environment = {
+    APP_ENV_PATH: '/dev/null',
+    HOME: yield* Config.String('HOME'),
+    PATH: yield* Config.String('PATH'),
+    TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+  };
   // SOURCE-native fixture observations when backend-only CI has no browser artifacts; no browser receipt is claimed.
-  const metadata = yield* Effect.all({
-    catalog: observedBuildPair
-      ? fs.readFileString(catalogManifestPath)
-      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
-          exposes: catalogContract.manifest.publicSurface.components.map(({ expose }) => ({ path: expose })),
-          name: catalogBoundary,
-          shared: [],
-        }),
-    shell: observedBuildPair
-      ? fs.readFileString(shellManifestPath)
-      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
-          exposes: [],
-          name: topology.shell.moduleFederation.name,
-          shared: [],
-        }),
-  });
-  // Pricing is an actual API-only owner with no MF boundary or public components; its observation is server-only.
+  // The Shell hosts every governed singleton, so its observation carries the Shell SOURCE sharing policy.
+  const ownerMetadata = yield* Effect.all(
+    browserOwners.map(({ appId, boundary, exposes }) =>
+      Effect.gen(function* observeOwnerFederation() {
+        const document = observedBuild
+          ? yield* fs.readFileString(ownerManifestPath(appId))
+          : yield* Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
+              exposes,
+              name: boundary,
+              shared: [],
+            });
+        return [`/${appId}/source-native-mf-fixture.json`, document] as const;
+      }),
+    ),
+  );
+  const shellMetadata = observedBuild
+    ? yield* fs.readFileString(shellManifestPath)
+    : yield* observeShellSourceFederation(environment);
   const documents = new Map<string, string>([
-    ['/catalog/source-native-mf-fixture.json', metadata.catalog],
-    ['/shell-super-app/source-native-mf-fixture.json', metadata.shell],
+    ...ownerMetadata,
+    ['/shell-super-app/source-native-mf-fixture.json', shellMetadata],
   ]);
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* server.serve(
@@ -679,28 +743,23 @@ const deriveHarnessSnapshot = Effect.fn('PublicPricingReadHarness.deriveSnapshot
         validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))});
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const child = yield* ChildProcess.make(
-    process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', program, inputPath],
-    {
-      cwd: appRoot,
-      env: {
-        APP_ENV_PATH: '/dev/null',
-        HOME: yield* Config.String('HOME'),
-        PATH: yield* Config.String('PATH'),
-        TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
-      },
-      extendEnv: false,
-      stderr: 'pipe',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    },
-  );
-  const [code, output] = yield* Effect.all(
-    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+  const child = yield* ChildProcess.make(process.execPath, [...NODE_TYPESCRIPT_MODULE, '--eval', program, inputPath], {
+    cwd: appRoot,
+    env: environment,
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: 'ignore',
+    stdout: 'pipe',
+  });
+  const [code, output, errors] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
     { concurrency: 3 },
   );
-  expect(code).toBe(0);
+  expect(code, errors).toBe(0);
   const snapshot = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     output,
   );
