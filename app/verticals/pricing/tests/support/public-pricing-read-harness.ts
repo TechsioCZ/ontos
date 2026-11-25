@@ -124,6 +124,7 @@ import {
   HttpServerResponse,
 } from 'effect/http';
 import { assert, expect } from 'effect-rstest';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { commercialFeePersistenceForScope } from '../../src/services/commercial-fee-persistence.service.ts';
 import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
 import { zeroFloorSetHeads } from '../../src/database/schema.ts';
@@ -2373,10 +2374,11 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       }),
     );
     const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell.address);
+    // Pricing's own module key, handed over the way the host does: delegated calls read no environment key.
+    yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-harness' });
     const callerShell = yield* Layer.build(
       ConfigProvider.layerAdd(
         ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-harness',
           ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
             shellGatewayContextContract.apiPrefix,
             `http://127.0.0.1:${shellAddress.port}`,
