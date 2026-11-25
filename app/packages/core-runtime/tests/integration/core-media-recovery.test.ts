@@ -54,6 +54,7 @@ import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { makeTestPgClient } from '../support/database.ts';
+import { insertSystemWorkloadBinding } from '../support/system-workload-binding.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 
 /*
@@ -298,22 +299,31 @@ const openHarness = Effect.fn('CoreMediaRecoveryHarness.harness')(function* open
     const bindingId = yield* nextUuid.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AccessWorkloadBindingIdSchema)));
     const incarnation = yield* nextUuid.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AccessWorkloadBindingIdSchema)));
     const trusted = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(principalOf(world, actor));
-    yield* writeWorkloadBindings(
-      database,
-      { ...trusted, correlationId: 'media-recovery-bind' },
-      {
-        bindings: [
+    // The writer refuses a system principal: its binding is stated directly, as a system enrollment leaves it.
+    yield* actor.kind === 'system'
+      ? insertSystemWorkloadBinding(admin, {
+          bindingId,
+          incarnation,
+          principalId: actor.principalId,
+          tenantId: world.tenantId,
+          workloadKey: WorkloadKeySchema.make(workloadKey),
+        })
+      : writeWorkloadBindings(
+          database,
+          { ...trusted, correlationId: 'media-recovery-bind' },
           {
-            bindingId,
-            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
-            incarnation,
-            principalId: PrincipalIdSchema.make(actor.principalId),
-            tenantId: TenantIdSchema.make(world.tenantId),
-            workloadKey: WorkloadKeySchema.make(workloadKey),
+            bindings: [
+              {
+                bindingId,
+                createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                incarnation,
+                principalId: PrincipalIdSchema.make(actor.principalId),
+                tenantId: TenantIdSchema.make(world.tenantId),
+                workloadKey: WorkloadKeySchema.make(workloadKey),
+              },
+            ],
           },
-        ],
-      },
-    );
+        );
   });
   return { admin, bind, countOf, database, rowCount, rowOf, runtimeFor, storage };
 });
