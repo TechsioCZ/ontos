@@ -41,6 +41,20 @@ const stepInput = (overrides: Partial<DocumentStepInput> = {}): DocumentStepInpu
   typeId: fixtureType().typeId,
   ...overrides,
 });
+const withAttachment = decodePolicy({
+  attachment: { approvalKey: 'fixture.rule.attachment', kind: 'APPROVED' },
+  classification: 'fixture.classification.customer',
+  documentOwner: 'fixture.documents',
+  link: 'ALLOWED',
+  recipientScope: 'ORIGINAL_RECIPIENT',
+});
+const attachmentReference = (id: string) =>
+  decodeReference({
+    classification: 'fixture.classification.customer',
+    document: { moduleId: 'fixture.documents', resourceId: id, resourceType: 'fixture.documents.document' },
+    form: 'ATTACHMENT',
+    recipientScope: 'ORIGINAL_RECIPIENT',
+  });
 const pinOf = (assetId: string, position = 0): DocumentPin =>
   Schema.decodeUnknownSync(DocumentPinSchema)({
     assetRef: assetRef(assetId),
@@ -52,6 +66,57 @@ const pinOf = (assetId: string, position = 0): DocumentPin =>
   });
 
 describe('the document step asks the owner only for named documents and never repoints a pin', () => {
+  it.effect('an attachment is cleared only while the caller-read gates stay clear after the owner call', () =>
+    Effect.gen(function* attachmentGates() {
+      const owner = documentOwnerDouble();
+      owner.assign('doc-1', assetRef('asset-1'));
+      const clear = { privacy: 'ALLOWED', recipient: 'CURRENT' } as const;
+      const cleared = yield* discloseDocuments(
+        stepInput({
+          documents: [attachmentReference('doc-1')],
+          policy: withAttachment,
+          readGates: Effect.succeed(clear),
+        }),
+      ).pipe(Effect.provide(owner.layer));
+      expect(cleared).toMatchObject({ kind: 'CLEARED', toPin: [{ form: 'ATTACHMENT' }] });
+      // Privacy turns NOT_ALLOWED right after the owner approved: nothing travels and the reason is the truthful one
+      let privacyTurned = false;
+      owner.afterNextResolve(
+        Effect.sync(() => {
+          privacyTurned = true;
+        }),
+      );
+      const stopped = yield* discloseDocuments(
+        stepInput({
+          documents: [attachmentReference('doc-1')],
+          policy: withAttachment,
+          readGates: Effect.sync(() =>
+            privacyTurned ? ({ privacy: 'NOT_ALLOWED', recipient: 'CURRENT' } as const) : clear,
+          ),
+        }),
+      ).pipe(Effect.provide(owner.layer));
+      expect(stopped).toEqual({
+        kind: 'STOPPED',
+        reasons: [{ category: 'DOCUMENT_PRIVACY_NOT_ALLOWED', cause: 'DOCUMENT_PRIVACY_NOT_ALLOWED', proven: true }],
+      });
+    }),
+  );
+
+  it.effect('an attachment whose gates the caller did not read is held as not established and never cleared', () =>
+    Effect.gen(function* unreadGates() {
+      const owner = documentOwnerDouble();
+      owner.assign('doc-1', assetRef('asset-1'));
+      const verdict = yield* discloseDocuments(
+        stepInput({ documents: [attachmentReference('doc-1')], policy: withAttachment }),
+      ).pipe(Effect.provide(owner.layer));
+      expect(verdict).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'DOCUMENT_RECIPIENT_UNKNOWN', proven: false }],
+      });
+      expect(owner.asked).toEqual([]);
+    }),
+  );
+
   it.effect('a message that names no document never asks the owner', () =>
     Effect.gen(function* none() {
       const owner = documentOwnerDouble();

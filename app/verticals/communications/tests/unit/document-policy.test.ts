@@ -3,13 +3,12 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { MessageTypeIdSchema, RecipientRoleSchema } from '../../src/domain/catalog/vocabulary.ts';
 import { buildMessageTypeRegistry } from '../../src/domain/catalog/registry.ts';
-import {
-  assessDocumentDisclosure,
-  authorizeLinkOpen,
-  DocumentDisclosure,
-  effectOfOwnerRevocation,
+import { assessDocumentDisclosure, DocumentDisclosure } from '../../src/domain/documents/disclosure.ts';
+import type {
+  DocumentDisclosureCase,
+  DocumentDisclosureQuery,
+  DocumentGates,
 } from '../../src/domain/documents/disclosure.ts';
-import type { DocumentDisclosureCase, DocumentDisclosureQuery } from '../../src/domain/documents/disclosure.ts';
 import { unavailableDocumentLinkOwnerLayer } from '../../src/domain/documents/document-owner.ts';
 import {
   DocumentClassificationKeySchema,
@@ -44,19 +43,18 @@ const withAttachment = decodePolicy({
 /** A type that approved no documents at all: the absence of a policy is the default. */
 const noPolicy = Option.getOrUndefined(Option.none<DocumentPolicy>());
 const TENANT = '11111111-1111-4111-8111-111111111111';
-const OPENER = '99999999-9999-4999-8999-999999999999';
 
 const query = (
   policy: DocumentPolicy | undefined,
   form: DocumentForm,
-  gates: Partial<DocumentDisclosureQuery['gates']> = {},
+  gates: Partial<DocumentGates> = {},
   overrides: Partial<Pick<DocumentDisclosureQuery, 'classification' | 'document' | 'recipientScope'>> = {},
 ): DocumentDisclosureQuery => ({
   classification: linkOnly.classification,
   document: documentRef('doc-1'),
   form,
-  gates: { privacy: 'ALLOWED', recipient: 'CURRENT', ...gates },
   policy,
+  readGates: Effect.succeed({ privacy: 'ALLOWED', recipient: 'CURRENT', ...gates }),
   recipient: { recipientRef, role: RecipientRoleSchema.make('original-recipient') },
   recipientScope: 'ORIGINAL_RECIPIENT',
   tenantId: TENANT,
@@ -79,7 +77,7 @@ const linkOf = (outcome: DocumentDisclosureCase) =>
 
 const assessWith = (
   policy: DocumentPolicy | undefined,
-  gates: Partial<DocumentDisclosureQuery['gates']>,
+  gates: Partial<DocumentGates>,
   configure: (owner: ReturnType<typeof documentOwnerDouble>) => void = () => {},
 ) =>
   Effect.gen(function* run() {
@@ -134,48 +132,16 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
   );
 
   it.effect(
-    '[S09 AC-05] against the labelled owner double: every open asks the owner again, and a revoked permission blocks the NEXT open only',
-    () =>
-      Effect.gen(function* revokedLink() {
-        const owner = documentOwnerDouble();
-        owner.assign('doc-1', assetRef('asset-A'));
-        owner.grantOpen(assetRef('asset-A'), OPENER);
-        const link = yield* linkOf(
-          yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer)),
-        );
-        const open = () =>
-          authorizeLinkOpen(link, { principalId: OPENER, tenantId: TENANT }).pipe(Effect.provide(owner.layer));
-        expect(yield* open()).toBe('OPENED');
-        owner.revokeOpen(assetRef('asset-A'), OPENER);
-        expect(yield* open()).toBe('DENIED');
-        // this proves only that the DOUBLE was asked about the pinned Asset at each open; a real owner and Core Media V1
-        // (#1443, #1446) are not exercised here
-        // the pinned reference is untouched: a revoked open deletes, anonymizes and repoints nothing
-        expect(link).toEqual({ assetRef: assetRef('asset-A'), revision: 1 });
-        expect(owner.asked.filter(({ kind }) => kind === 'authorizeOpen')).toHaveLength(2);
-      }),
-  );
-
-  it.effect(
-    '[S10 ACC-08] against the labelled owner double: new bytes are a NEW Asset B by explicit assignment and the earlier link is asked about Asset A only',
+    '[S10 ACC-08] against the labelled owner double: new bytes are a NEW Asset B by explicit assignment and the earlier pinned link stays Asset A',
     () =>
       Effect.gen(function* newAsset() {
         const owner = documentOwnerDouble();
         owner.assign('doc-1', assetRef('asset-A'));
-        owner.grantOpen(assetRef('asset-A'), OPENER);
-        owner.grantOpen(assetRef('asset-B'), OPENER);
         const first = yield* linkOf(
           yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer)),
         );
         owner.assign('doc-1', assetRef('asset-B'));
-        // the earlier link is opened as Asset A: only the pinned reference is asked, never the Current assignment
-        owner.clearAsked();
-        const stillA = yield* authorizeLinkOpen(first, { principalId: OPENER, tenantId: TENANT }).pipe(
-          Effect.provide(owner.layer),
-        );
-        expect(stillA).toBe('OPENED');
-        // only the DOUBLE was asked, and about the pinned Asset: it proves how Communications asks, not a real Core Media
-        expect(owner.asked).toEqual([{ kind: 'authorizeOpen', subject: 'asset-A' }]);
+        // the earlier pinned reference is a value Communications stored: nothing repoints it to the new assignment
         expect(first.assetRef).toEqual(assetRef('asset-A'));
         // a NEW message resolves the new assignment: Asset B, revision 1
         const second = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
@@ -192,31 +158,23 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
     }),
   );
 
-  it.effect(
-    '[AC-07 ACC-09] an outage or an unavailable Asset discloses and opens nothing, with a truthful reason',
-    () =>
-      Effect.gen(function* outage() {
-        const owner = documentOwnerDouble();
-        owner.assign('doc-1', assetRef('asset-A'));
-        owner.grantOpen(assetRef('asset-A'), OPENER);
-        owner.setOutage(true);
-        const held = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
-        expect(summaryOf(held)).toEqual({ outcome: 'STOP', proven: false, reason: 'DOCUMENT_OWNER_UNAVAILABLE' });
-        const opened = yield* authorizeLinkOpen(
-          { assetRef: assetRef('asset-A'), revision: 1 },
-          { principalId: OPENER, tenantId: TENANT },
-        ).pipe(Effect.provide(owner.layer));
-        expect(opened).toBe('OWNER_UNAVAILABLE');
-        owner.setOutage(false);
-        owner.assign('doc-1', assetRef('asset-A'), { media: 'UNAVAILABLE' });
-        const media = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
-        expect(summaryOf(media)).toEqual({ outcome: 'STOP', proven: false, reason: 'DOCUMENT_MEDIA_UNAVAILABLE' });
-        // the production composition has no Core Media V1 yet: it is the explicit unavailable form, never a silent allow
-        const production = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(
-          Effect.provide(unavailableDocumentLinkOwnerLayer),
-        );
-        expect(summaryOf(production)).toMatchObject({ outcome: 'STOP', reason: 'DOCUMENT_OWNER_UNAVAILABLE' });
-      }),
+  it.effect('[AC-07 ACC-09] an outage or an unavailable Asset discloses nothing, with a truthful reason', () =>
+    Effect.gen(function* outage() {
+      const owner = documentOwnerDouble();
+      owner.assign('doc-1', assetRef('asset-A'));
+      owner.setOutage(true);
+      const held = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
+      expect(summaryOf(held)).toEqual({ outcome: 'STOP', proven: false, reason: 'DOCUMENT_OWNER_UNAVAILABLE' });
+      owner.setOutage(false);
+      owner.assign('doc-1', assetRef('asset-A'), { media: 'UNAVAILABLE' });
+      const media = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
+      expect(summaryOf(media)).toEqual({ outcome: 'STOP', proven: false, reason: 'DOCUMENT_MEDIA_UNAVAILABLE' });
+      // the production composition has no Core Media V1 yet: it is the explicit unavailable form, never a silent allow
+      const production = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(
+        Effect.provide(unavailableDocumentLinkOwnerLayer),
+      );
+      expect(summaryOf(production)).toMatchObject({ outcome: 'STOP', reason: 'DOCUMENT_OWNER_UNAVAILABLE' });
+    }),
   );
 
   it.effect('[S08] a type with no policy discloses no document at all, and the owner is never asked', () =>
@@ -296,6 +254,61 @@ describe('An attachment is an irreversible disclosure and needs every approval (
   );
 
   it.effect(
+    '[ACC-07 ACC-09] a gate that turns not clear while the owner was being asked stops the attachment: the gates are read again after the owner call',
+    () =>
+      Effect.gen(function* turnsDuringOwnerCall() {
+        const cases = [
+          [{ privacy: 'NOT_ALLOWED' }, 'DOCUMENT_PRIVACY_NOT_ALLOWED', true],
+          [{ privacy: 'INDETERMINATE' }, 'DOCUMENT_PRIVACY_INDETERMINATE', false],
+          [{ recipient: 'NOT_CURRENT' }, 'DOCUMENT_RECIPIENT_NOT_CURRENT', true],
+          [{ recipient: 'UNKNOWN' }, 'DOCUMENT_RECIPIENT_UNKNOWN', false],
+        ] as const;
+        const results = yield* Effect.forEach(
+          cases,
+          ([change]) =>
+            Effect.gen(function* one() {
+              const owner = documentOwnerDouble();
+              owner.assign('doc-1', assetRef('asset-A'));
+              let gates: DocumentGates = { privacy: 'ALLOWED', recipient: 'CURRENT' };
+              // the gates were clear when the owner was asked; they change right after its approval, before the handoff
+              owner.afterNextResolve(
+                Effect.sync(() => {
+                  gates = { ...gates, ...change };
+                }),
+              );
+              const outcome = yield* assessDocumentDisclosure({
+                ...query(withAttachment, 'ATTACHMENT'),
+                readGates: Effect.sync(() => gates),
+              }).pipe(Effect.provide(owner.layer));
+              return { asked: owner.asked.length, outcome: summaryOf(outcome) };
+            }),
+          { concurrency: 1 },
+        );
+        // the owner WAS asked (it approved), and the approval alone disclosed nothing
+        expect(results).toEqual(
+          cases.map(([, reason, proven]) => ({ asked: 1, outcome: { outcome: 'STOP', proven, reason } })),
+        );
+      }),
+  );
+
+  it.effect('a link is reversible and re-authorized by its owner at every open, so it reads no Current gate', () =>
+    Effect.gen(function* linkReadsNoGate() {
+      const owner = documentOwnerDouble();
+      owner.assign('doc-1', assetRef('asset-A'));
+      let reads = 0;
+      const outcome = yield* assessDocumentDisclosure({
+        ...query(linkOnly, 'LINK'),
+        readGates: Effect.sync(() => {
+          reads += 1;
+          return { privacy: 'NOT_ALLOWED', recipient: 'NOT_CURRENT' } satisfies DocumentGates;
+        }),
+      }).pipe(Effect.provide(owner.layer));
+      expect(summaryOf(outcome).outcome).toBe('DISCLOSE');
+      expect(reads).toBe(0);
+    }),
+  );
+
+  it.effect(
     '[S14 ACC-07] a permission change after the disclosure leaves the pinned (delivered) record exactly as it was and recalls nothing',
     () =>
       Effect.gen(function* afterDelivery() {
@@ -318,15 +331,6 @@ describe('An attachment is an irreversible disclosure and needs every approval (
         );
         // nothing was asked of the owner but the two disclosure evaluations: no recall, no delete, no rewrite exists to ask for
         expect(new Set(owner.asked.map(({ kind }) => kind))).toEqual(new Set(['resolve']));
-        // the contract statement the evaluation relies on: bytes already delivered are not recallable by any permission
-        expect(effectOfOwnerRevocation('ATTACHMENT')).toEqual({
-          attachmentRecalled: false,
-          nextOpen: 'NOT_APPLICABLE_BYTES_ALREADY_DELIVERED',
-        });
-        expect(effectOfOwnerRevocation('LINK')).toEqual({
-          attachmentRecalled: false,
-          nextOpen: 'RE_AUTHORIZED_BY_OWNER',
-        });
       }),
   );
 });

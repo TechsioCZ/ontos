@@ -35,7 +35,8 @@ export interface CommunicationsOwnerTransports {
  *   published Read; a source with no adapter is an unavailable owner;
  * - no producer declares a Privacy scope (#1396 J: the source producer declares it, and no approved contract field carries it yet),
  *   so a recipient has no scope and is stopped as an unresolved Privacy context;
- * - Core Media V1 and the document owners publish no Read yet (#1443, #1446), so every document question is unavailable;
+ * - Core Media publishes Current and download Reads, but admits only the caller `catalog`, and no document owner publishes the
+ *   resolution of its document to a Media Asset or the approval of its disclosure, so every document question is unavailable;
  * - Privacy publishes no protection store for Communications yet, so every Anti-Resurrection question is unavailable and the
  *   guard refuses (a path that re-materializes removed content must ask it; none exists today).
  */
@@ -72,8 +73,9 @@ export const communicationsWorkerOwnerPortsLive = Layer.mergeAll(
 );
 
 /**
- * The owner port of the public history Reads. No source owner publishes a history visibility Read yet, so the production
- * port is the explicit unavailable form: a history of a source-owned scope (a profile, a Counterparty, a Storefront) is
- * refused as unavailable instead of being shown on a guess, and a Tenant or Legal Entity history needs no source owner.
+ * The owner port of the public history Reads. No source owner publishes a Read that says whether a principal may see the
+ * history of a profile, a Counterparty or a Storefront (Portal Auth's issuance-source Read is not one), so the production port
+ * is the explicit unavailable form: a history of a source-owned scope is refused as not composed instead of being shown on a
+ * guess, and a Tenant or Legal Entity history needs no source owner.
  */
 export { unavailableSourceScopeVisibilityLayer as communicationsHistoryReadPortsLive } from '../domain/access/source-visibility.ts';

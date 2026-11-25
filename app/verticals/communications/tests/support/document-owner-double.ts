@@ -3,18 +3,14 @@ import { Effect, Layer, Schema } from 'effect';
 import { CommunicationResourceRefSchema } from '../../src/domain/catalog/vocabulary.ts';
 import type { CommunicationResourceRef } from '../../src/domain/catalog/vocabulary.ts';
 import { DocumentOwnerUnavailable } from '../../src/domain/documents/document-owner-errors.ts';
-import { DocumentLinkOwner, DocumentOpen, DocumentResolution } from '../../src/domain/documents/document-owner.ts';
-import type {
-  DocumentOpenCase,
-  DocumentOpenQuery,
-  DocumentResolutionCase,
-  DocumentResolveQuery,
-} from '../../src/domain/documents/document-owner.ts';
+import { DocumentLinkOwner, DocumentResolution } from '../../src/domain/documents/document-owner.ts';
+import type { DocumentResolutionCase, DocumentResolveQuery } from '../../src/domain/documents/document-owner.ts';
 
 /**
- * TEST-ONLY LABELLED DOUBLE of the Core Media V1 / document owner port (#1409). It stands in for an owner that does not
- * exist yet (Core Media V1 is open work of #1443 and #1446): it proves how Communications ASKS and how it reads an answer,
- * never that a real Media Asset is stored, available or authorized. Nothing here is a published document, an Order document or
+ * TEST-ONLY LABELLED DOUBLE of the document owner port (#1409). It stands in for an owner that does not exist: no document
+ * owner publishes the resolution of its document to a Media Asset or the approval of its disclosure, and Core Media's Reads
+ * admit no Communications caller. It proves how Communications ASKS and how it reads an answer, never that a real Media Asset
+ * is stored, available or authorized, and #1409 AC-05, AC-06, AC-07 and AC-10 are proven only against it. Nothing here is a published document, an Order document or
  * an invoice, and no byte is stored.
  */
 
@@ -52,9 +48,8 @@ const resolutionOf = (assignment: Assignment | undefined): DocumentResolutionCas
 
 export const documentOwnerDouble = () => {
   const assignments = new Map<string, Assignment>();
-  const openers = new Map<string, Set<string>>();
   const state = { afterResolve: Effect.void, outage: false };
-  const asked: { readonly kind: 'authorizeOpen' | 'resolve'; readonly subject: string }[] = [];
+  const asked: { readonly kind: 'resolve'; readonly subject: string }[] = [];
   const resolve = (query: DocumentResolveQuery) =>
     Effect.suspend((): Effect.Effect<DocumentResolutionCase, DocumentOwnerUnavailable> => {
       asked.push({ kind: 'resolve', subject: `${query.form}:${query.document.resourceId}` });
@@ -65,20 +60,8 @@ export const documentOwnerDouble = () => {
       // a concurrent evaluation may act between the owner's answer and the caller's next step (the first-write race of a pin)
       return state.afterResolve.pipe(Effect.as(resolutionOf(assignment)));
     });
-  const authorizeOpen = (query: DocumentOpenQuery) =>
-    Effect.suspend((): Effect.Effect<DocumentOpenCase, DocumentOwnerUnavailable> => {
-      asked.push({ kind: 'authorizeOpen', subject: query.link.assetRef.resourceId });
-      if (state.outage) {
-        return Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' }));
-      }
-      const allowed = openers.get(query.link.assetRef.resourceId)?.has(query.opener.principalId) === true;
-      return Effect.succeed(allowed ? DocumentOpen.Allowed() : DocumentOpen.Denied());
-    });
   return {
     asked,
-    clearAsked: () => {
-      asked.length = 0;
-    },
     /** The owner assigns the business document to an Asset (new bytes are a NEW Asset and an explicit assignment). */
     assign: (
       documentId: string,
@@ -93,17 +76,7 @@ export const documentOwnerDouble = () => {
         ...overrides,
       });
     },
-    grantOpen: (asset: CommunicationResourceRef, principalId: string) => {
-      openers.set(asset.resourceId, (openers.get(asset.resourceId) ?? new Set()).add(principalId));
-    },
-    layer: Layer.succeed(DocumentLinkOwner, { authorizeOpen, resolve }),
-    revokeOpen: (asset: CommunicationResourceRef, principalId: string) => {
-      // rebuilt without the principal: a test double has no reason to use a member the destruction guard reserves
-      openers.set(
-        asset.resourceId,
-        new Set([...(openers.get(asset.resourceId) ?? [])].filter((id) => id !== principalId)),
-      );
-    },
+    layer: Layer.succeed(DocumentLinkOwner, { resolve }),
     /** Runs `action` right after the owner answered a resolve and before the caller goes on, once; the next answers are plain. */
     afterNextResolve: (action: Effect.Effect<void>) => {
       state.afterResolve = action.pipe(

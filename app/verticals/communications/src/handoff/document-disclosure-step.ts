@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 
 import type { CommunicationResourceRef, MessageTypeId, RecipientRole } from '../domain/catalog/vocabulary.ts';
 import { assessDocumentDisclosure, DocumentDisclosure, stopIsProven } from '../domain/documents/disclosure.ts';
-import type { DocumentDisclosureQuery, DocumentStopReason } from '../domain/documents/disclosure.ts';
+import type { DocumentDisclosureQuery, DocumentGates, DocumentStopReason } from '../domain/documents/disclosure.ts';
 import { pinStillHolds } from '../domain/documents/document-pin.ts';
 import type { DocumentPin } from '../domain/documents/document-pin.ts';
 import type { DocumentPolicy } from '../domain/documents/document-policy.ts';
@@ -21,12 +21,27 @@ import type { RecoveryStopReason } from '../domain/recovery/vocabulary.ts';
  * are a new Asset and a new source request, and an already sent attachment is never recalled by anything here.
  */
 
+/**
+ * The Current gates of an attachment when the caller read none. Nothing is established, so it is the "could not establish"
+ * answer of each gate: the attachment is held (never proven, never cleared) and the owner is not asked. A caller that wants an
+ * attachment to travel must supply `readGates`.
+ */
+const GATES_NOT_ESTABLISHED = Effect.succeed({
+  privacy: 'INDETERMINATE',
+  recipient: 'UNKNOWN',
+} satisfies DocumentGates);
+
 export interface DocumentStepInput {
   readonly documents: readonly DocumentReference[];
   readonly legalEntityId?: string | undefined;
   /** The pins stored by an earlier evaluation of this intent, by position. */
   readonly pinned: readonly DocumentPin[];
   readonly policy: DocumentPolicy | undefined;
+  /**
+   * Reads the Current recipient and Privacy gates NOW, with fresh owner calls. An attachment is irreversible, so it reads them
+   * before the owner is asked and again after the owner answered; no literal and no earlier verdict stands in for either reading.
+   */
+  readonly readGates?: Effect.Effect<DocumentGates> | undefined;
   readonly recipient: { readonly recipientRef: CommunicationResourceRef; readonly role: RecipientRole };
   readonly tenantId: string;
   readonly typeId: MessageTypeId;
@@ -58,9 +73,8 @@ const assessOne = Effect.fn('Communications.assessOneDocument')(function* assess
     classification: reference.classification,
     document: reference.document,
     form,
-    // this step runs after the Current recipient and Privacy gates cleared this very evaluation: an attachment needs both
-    gates: { privacy: 'ALLOWED', recipient: 'CURRENT' },
     policy: input.policy,
+    readGates: input.readGates ?? GATES_NOT_ESTABLISHED,
     recipient: input.recipient,
     recipientScope: reference.recipientScope,
     tenantId: input.tenantId,
