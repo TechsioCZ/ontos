@@ -36,17 +36,22 @@ const handlePrepareMessageHandoff = Effect.fn('PrepareMessageHandoffWorker.handl
   yield* Effect.logInfo('Message Intent pre-handoff processed').pipe(
     Effect.annotateLogs({ intentId: outcome.intentId, outcome: outcome.kind }),
   );
-  // WHO triggers a Technical Retry (#1403). Nothing here runs on a clock, and success would make Core complete the delivery, so a
-  // retry that is due (the provider provably refused, the approved rule allows another attempt) ends the step with a typed
-  // failure instead: Core then redelivers the same message under the generated default `retryPolicy` Core requires on every
-  // descriptor (`outbox-worker-defaults.ts`; Communications adds no count or wait of its own), and the redelivered step is a
-  // fresh evaluation of every Current gate. Every other end is final for this delivery. Two cases are NOT redelivered by this
-  // worker and are re-evaluated only when something else triggers the step again: an unknown effect (a Core operator redrive of
-  // the dead delivery, or `reconcileAndEvaluate` once step 22's reconciliation evidence exists) and a deployment that made no
-  // request at all. The type's approved `maxAttempts` is the limit of a Technical Retry, counted by Communications over its own
-  // attempt history (`assessAttemptHistory`), never over Core deliveries. Core's budget is only the delivery's own
-  // `maxAttempts`; a type limit above it would be spent by Core first and the delivery would be `dead`, visible to operators, and
-  // only an operator redrive (never a send approval) gives it a fresh budget (open question for the Core owner).
+  // WHO triggers a Technical Retry (#1403). Nothing here runs on a clock, and success would make Core complete the delivery, so
+  // two ends of the step become a typed failure instead: a retry that is due (the provider provably refused, the approved rule
+  // allows another attempt) and an owner that could not be ASKED (the source owner, Privacy, the recipient owner or the document
+  // owner was unavailable, so an unproven stop was recorded and nothing was submitted; a REQUIRED security message must not be
+  // lost to a brief outage). Core then redelivers the same message under the generated default `retryPolicy` Core requires on
+  // every descriptor (`outbox-worker-defaults.ts`; Communications adds no count or wait of its own), and the redelivered step is
+  // a fresh evaluation of every Current gate. Every other end is final for this delivery, and a PROVEN stop is never redelivered.
+  // Required and optional types are treated alike: the specification states no difference. Cases NOT redelivered by this worker
+  // are re-evaluated only when something else triggers the step again, a Core operator redrive of the dead delivery or
+  // `reconcileAndEvaluate` once step 22's reconciliation evidence exists: an unknown effect, an owner ANSWER that proves nothing
+  // (Privacy INDETERMINATE), and a deployment that made no request at all. The type's approved `maxAttempts` is the limit of a
+  // Technical Retry, counted by Communications over its own attempt history (`assessAttemptHistory`), never over Core
+  // deliveries, and an outage begins no attempt, so it never spends it. Core's budget is only the delivery's own `maxAttempts`;
+  // a limit above it, or an outage that outlasts it, would be spent by Core first and the delivery would be `dead`, visible to
+  // operators, with the intent held (`NEEDS_REEVALUATION` in the history), and only an operator redrive (never a send approval)
+  // gives it a fresh budget (open question for the Core owner).
   yield* requireRedeliveryWhenRetryDue(outcome);
 });
 

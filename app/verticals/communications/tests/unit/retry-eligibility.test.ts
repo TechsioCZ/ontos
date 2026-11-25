@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { recoveryPolicyOf, resendPolicyOf } from '../../src/domain/catalog/message-type.ts';
 import { assessAttemptHistory, confirmContinuation } from '../../src/domain/recovery/retry-eligibility.ts';
 import type { CurrentGates } from '../../src/domain/recovery/retry-eligibility.ts';
-import { rejectionClassOf } from '../../src/domain/recovery/vocabulary.ts';
+import { isOwnerUnavailableStop, rejectionClassOf } from '../../src/domain/recovery/vocabulary.ts';
 import { fixtureRecovery, fixtureType } from './support/catalog-fixtures.ts';
 import { ATTEMPT_1, ATTEMPT_2, attempt, conflict, factsOf, observation } from './support/history-fixtures.ts';
 
@@ -314,5 +314,34 @@ describe('the approved recovery and resend attributes of a type (platform catalo
     expect(() => fixtureType({ recovery: fixtureRecovery(0) })).toThrow();
     expect(() => fixtureType({ recovery: { kind: 'RETRY_FOREVER' } })).toThrow();
     expect(() => fixtureType({ resend: 'ANYONE' })).toThrow();
+  });
+});
+
+const reason = (category: string, proven: boolean) => ({ category, cause: 'FIXTURE', proven });
+
+describe('isOwnerUnavailableStop: an owner that could not be asked is the only stop Core is asked to redeliver (#1403 D10)', () => {
+  it('is true for an unproven outage of the source, Privacy, the recipient or the document owner', () => {
+    for (const category of [
+      'DOCUMENT_OWNER_UNAVAILABLE',
+      'PRIVACY_AUTHORITY_UNAVAILABLE',
+      'RECIPIENT_AUTHORITY_UNAVAILABLE',
+      'SOURCE_AUTHORITY_UNAVAILABLE',
+    ]) {
+      expect(isOwnerUnavailableStop([reason(category, false)])).toBe(true);
+    }
+  });
+
+  it('is false for a proven stop, for an owner answer that proves nothing and for no reason at all', () => {
+    expect(isOwnerUnavailableStop([reason('PRIVACY_NOT_ALLOWED', true)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('PRIVACY_INDETERMINATE', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('PRIVACY_ACCESS_DENIED', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('HANDOFF_INDETERMINATE', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([])).toBe(false);
+  });
+
+  it('is false when any reason is proven: a proven stop beside an outage stays final', () => {
+    expect(
+      isOwnerUnavailableStop([reason('PRIVACY_NOT_ALLOWED', true), reason('SOURCE_AUTHORITY_UNAVAILABLE', false)]),
+    ).toBe(false);
   });
 });

@@ -12,8 +12,13 @@ import {
   resolveTemplatePin,
 } from '../../src/services/template-revision-domain.service.ts';
 import { fixtureType } from '../unit/support/catalog-fixtures.ts';
-import { privacyAllowed, privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
-import { ORIGINAL_ADDRESS, unusable } from '../unit/support/recipient-fixtures.ts';
+import {
+  privacyAllowed,
+  privacyIndeterminate,
+  privacyNotAllowed,
+  privacyUnavailable,
+} from '../unit/support/privacy-fixtures.ts';
+import { ORIGINAL_ADDRESS, unusable, usable } from '../unit/support/recipient-fixtures.ts';
 import { decideOne, historyOf, intentHistoryOf } from '../support/history-world.ts';
 import { handoffDouble } from '../support/intake-fixtures.ts';
 import { intakeWorld, templateBase } from '../support/intake-world.ts';
@@ -34,6 +39,8 @@ import {
 
 const setup = (options: Parameters<typeof intakeWorld>[1] = {}) =>
   makeRuntimeDatabase().pipe(Effect.flatMap((database) => intakeWorld(database, options)));
+
+type World = Effect.Success<ReturnType<typeof setup>>;
 
 /**
  * [#1403 Technical Retry] A later attempt of the SAME intent, on native PostgreSQL as the runtime role and through the REAL
@@ -289,6 +296,163 @@ describe('what triggers a Technical Retry (#1403 review)', () => {
           expect(processing).toMatchObject({ followUp: 'NONE', kind: 'HANDED_OFF' });
           expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(processing)))).toBe(true);
         }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+describe('an owner that could not be asked is redelivered by Core, never stranded (#1403 D10, #1396 BR-14)', () => {
+  /** Each Current owner the last stoppable handoff asks, with how a test takes it down and brings it back. */
+  const owners: readonly {
+    readonly category: string;
+    readonly down: (world: World) => void;
+    readonly up: (world: World) => void;
+  }[] = [
+    {
+      category: 'SOURCE_AUTHORITY_UNAVAILABLE',
+      down: (world) => {
+        world.source.state.available = false;
+      },
+      up: (world) => {
+        world.source.state.available = true;
+      },
+    },
+    {
+      category: 'PRIVACY_AUTHORITY_UNAVAILABLE',
+      down: (world) => {
+        world.privacy.answers.set('customer-1', privacyUnavailable('OWNER_UNAVAILABLE'));
+      },
+      up: (world) => {
+        world.privacy.answers.set('customer-1', privacyAllowed);
+      },
+    },
+    {
+      category: 'RECIPIENT_AUTHORITY_UNAVAILABLE',
+      down: (world) => {
+        world.recipientAuthority.answers.delete('contact-customer-1');
+      },
+      up: (world) => {
+        world.recipientAuthority.answers.set('contact-customer-1', usable());
+      },
+    },
+  ];
+
+  it.live(
+    '[REQUIRED security message] a brief outage of an owner ends the delivery with a typed failure so Core redelivers; the redelivery hands the SAME message off once',
+    () =>
+      Effect.gen(function* outageThenRecovery() {
+        for (const owner of owners) {
+          const world = yield* setup();
+          const handoff = handoffDouble();
+          const { intentId, requestId } = yield* decideOne(world);
+          owner.down(world);
+          const first = yield* stepWith(world, handoff, intentId);
+          expect(first).toMatchObject({ kind: 'STOPPED', reasons: [{ category: owner.category, proven: false }] });
+          // nothing went to any provider, so a Core redelivery is safe and is asked for
+          const redelivery = yield* Effect.exit(requireRedeliveryWhenRetryDue(first));
+          expect(Exit.isFailure(redelivery)).toBe(true);
+          expect(JSON.stringify(redelivery)).toContain('OwnerUnavailableRetryDue');
+          expect(handoff.calls).toEqual([]);
+          // the history is truthful while nothing is decided: held, to be evaluated again, never a failure
+          expect((yield* historyOf(world, requestId)).feed.messages[0]).toMatchObject({
+            attention: 'NEEDS_REEVALUATION',
+            reason: owner.category,
+          });
+          // Core delivers again after the outage: the owners are asked again and the message leaves exactly once
+          owner.up(world);
+          const second = yield* stepWith(world, handoff, intentId);
+          expect(second).toMatchObject({ followUp: 'NONE', kind: 'HANDED_OFF' });
+          expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(second)))).toBe(true);
+          expect(handoff.calls).toHaveLength(1);
+          expect(yield* stopsOf(world, intentId)).toMatchObject([{ evaluationSeq: 1, proven: false }]);
+          expect((yield* attemptsOf(world, intentId)).map(({ state }) => state)).toEqual(['ACCEPTED']);
+          expect(kindOf(yield* stepWith(world, handoff, intentId))).toBe('SKIPPED:ALREADY_FINISHED');
+          expect(handoff.calls).toHaveLength(1);
+        }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'an outage while a proven temporary refusal is being continued is redelivered too, and spends no attempt of the type limit',
+    () =>
+      Effect.gen(function* outageDuringRecovery() {
+        const world = yield* setup({ types: [recoverableType(2)] });
+        const handoff = sequence(answers.rateLimited, answers.accepted);
+        const { intentId } = yield* decideOne(world);
+        yield* stepWith(world, handoff, intentId);
+        world.source.state.available = false;
+        const stopped = yield* stepWith(world, handoff, intentId);
+        expect(stopped).toMatchObject({ kind: 'STOPPED', reasons: [{ category: 'SOURCE_AUTHORITY_UNAVAILABLE' }] });
+        expect(Exit.isFailure(yield* Effect.exit(requireRedeliveryWhenRetryDue(stopped)))).toBe(true);
+        // the outage made no request, so the type's own limit (2 submitted attempts) is untouched
+        expect(yield* attemptsOf(world, intentId)).toHaveLength(1);
+        world.source.state.available = true;
+        expect(yield* stepWith(world, handoff, intentId)).toMatchObject({ kind: 'HANDED_OFF' });
+        expect((yield* attemptsOf(world, intentId)).map(({ state }) => state)).toEqual(['REJECTED', 'ACCEPTED']);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'a PROVEN stop and an owner ANSWER that proves nothing are final for the delivery: Core is not asked to redeliver',
+    () =>
+      Effect.gen(function* finalStops() {
+        const cases: readonly ((world: World) => void)[] = [
+          (world) => {
+            world.privacy.answers.set('customer-1', privacyNotAllowed());
+          },
+          (world) => {
+            world.privacy.answers.set('customer-1', privacyIndeterminate);
+          },
+          (world) => {
+            world.recipientAuthority.answers.set('contact-customer-1', unusable('ORIGINAL_ENDPOINT_UNUSABLE'));
+          },
+          (world) => {
+            world.source.state.state = 'fixture.state.not-open';
+          },
+        ];
+        for (const change of cases) {
+          const world = yield* setup();
+          const { intentId } = yield* decideOne(world);
+          change(world);
+          const stopped = yield* stepWith(world, handoffDouble(), intentId);
+          expect(stopped.kind).toBe('STOPPED');
+          expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(stopped)))).toBe(true);
+        }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('a PROVEN stop beside an outage keeps the stop final: Core is not asked to redeliver', () =>
+    Effect.gen(function* provenWins() {
+      const world = yield* setup();
+      const { intentId } = yield* decideOne(world);
+      world.privacy.answers.set('customer-1', privacyNotAllowed());
+      world.recipientAuthority.answers.delete('contact-customer-1');
+      const stopped = yield* stepWith(world, handoffDouble(), intentId);
+      expect(stopped).toMatchObject({ kind: 'STOPPED', reasons: [{ proven: true }, { proven: false }] });
+      expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(stopped)))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'when the outage outlasts the Core delivery budget the intent stays held: the history says it needs re-evaluation, and a later Core redrive hands it off',
+    () =>
+      Effect.gen(function* outlasted() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideOne(world);
+        world.source.state.available = false;
+        // each Core delivery of the budget is an evaluation that finds the owner still down; then the delivery is dead
+        for (let delivery = 0; delivery < 5; delivery += 1) {
+          expect(yield* stepWith(world, handoff, intentId)).toMatchObject({ kind: 'STOPPED' });
+        }
+        expect(handoff.calls).toEqual([]);
+        expect((yield* historyOf(world, requestId)).feed.messages[0]).toMatchObject({
+          attention: 'NEEDS_REEVALUATION',
+          reason: 'SOURCE_AUTHORITY_UNAVAILABLE',
+        });
+        // a Core operator redrive after the owner is back is the same evaluation and hands the message off
+        world.source.state.available = true;
+        expect(yield* stepWith(world, handoff, intentId)).toMatchObject({ kind: 'HANDED_OFF' });
+        expect(handoff.calls).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

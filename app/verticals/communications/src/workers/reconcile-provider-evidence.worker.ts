@@ -29,7 +29,8 @@ import { reconcileAndEvaluate } from '../recovery/reconcile-provider-evidence.ts
  * No scheduler or queue is created: this is the owner's own Outbox Worker under Core's delivery and redelivery.
  *
  * The provider call of a continuation is bounded by the same lease as the pre-handoff worker's, which is what reconciliation
- * relies on before it closes a PREPARED attempt (`handoff-lease.ts`). A retry that becomes due is redelivered exactly as there.
+ * relies on before it closes a PREPARED attempt (`handoff-lease.ts`). A retry that becomes due, and an owner that could not be
+ * asked, are redelivered exactly as there.
  */
 export const handleReconcileProviderEvidence = Effect.fn('ReconcileProviderEvidenceWorker.handle')(function* handle(
   payload: typeof OutboxPayloadSchema.Type,

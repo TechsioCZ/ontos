@@ -37,7 +37,7 @@ import { OriginalRecipientBindingSchema } from '../domain/recipient/original-bin
 import { HandoffPinSchema } from '../domain/recipient/recheck-before-handoff.ts';
 import { assessAttemptHistory, confirmContinuation } from '../domain/recovery/retry-eligibility.ts';
 import type { Continuation, HistoryAssessment } from '../domain/recovery/retry-eligibility.ts';
-import { RETRY_REASON_CODE } from '../domain/recovery/vocabulary.ts';
+import { isOwnerUnavailableStop, RETRY_REASON_CODE } from '../domain/recovery/vocabulary.ts';
 import type { RecoveryHaltCode } from '../domain/recovery/vocabulary.ts';
 import { ingestProviderObservation } from '../history/provider-observations.ts';
 import { StoredIntentFactsSchema, timelineFactsOfStored } from '../history/stored-intent-facts.ts';
@@ -57,6 +57,7 @@ import type { DocumentVerdict } from './document-disclosure-step.ts';
 import { storeUnavailable } from './handoff-errors.ts';
 import type { HandoffStoreUnavailable } from './handoff-errors.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from './handoff-lease.ts';
+import { OwnerUnavailableRetryDue } from './owner-unavailable-retry-due.ts';
 import { languagePolicyPortOverRoutines, readTemplatePortOverRoutines } from '../persistence/snapshot-ports.ts';
 import { verifyLanguageForHandoff } from '../services/language-selection.service.ts';
 import type { TemplateReadPortContract } from '../services/template-revision-port.service.ts';
@@ -79,7 +80,9 @@ import { pinnedTemplateText } from '../services/template-revision-domain.service
  * a recorded reconciliation is what triggers one. A later attempt of the SAME intent follows only a PROVEN non-acceptance of
  * the earlier one (nothing submitted, a provider refusal, or a reconciled non-acceptance) and only when the approved recovery
  * rule of the type says so; the Current gates are asked again from scratch and the history guard has the last word. An
- * unknown or contradicted effect, and an acceptance, begin nothing. See `domain/recovery/retry-eligibility.ts`.
+ * unknown or contradicted effect, and an acceptance, begin nothing. See `domain/recovery/retry-eligibility.ts`. An owner that
+ * could not be asked is not a retry of an attempt: it records an unproven stop and, as `requireRedeliveryWhenRetryDue` says,
+ * asks Core to deliver the same message again (`OwnerUnavailableRetryDue`).
  */
 
 /**
@@ -93,12 +96,22 @@ import { pinnedTemplateText } from '../services/template-revision-domain.service
 export class NonAcceptanceRetryDue extends Data.TaggedError('NonAcceptanceRetryDue')<{ readonly intentId: string }> {}
 
 export { HandoffStoreUnavailable, storeUnavailable } from './handoff-errors.ts';
+export { OwnerUnavailableRetryDue } from './owner-unavailable-retry-due.ts';
 
-/** Core redelivers the message (see `NonAcceptanceRetryDue`) exactly when the step ended with a retry that is due; otherwise it is done. */
-export const requireRedeliveryWhenRetryDue = (processing: HandoffProcessing) =>
-  processing.kind === 'HANDED_OFF' && processing.followUp === 'RETRY_DUE'
-    ? Effect.fail(new NonAcceptanceRetryDue({ intentId: processing.intentId }))
+/**
+ * Core redelivers the message exactly when the step ended with a retry that is due (`NonAcceptanceRetryDue`) or with an owner that
+ * could not be asked (`OwnerUnavailableRetryDue`); every other end is final for this delivery.
+ */
+export const requireRedeliveryWhenRetryDue = (
+  processing: HandoffProcessing,
+): Effect.Effect<void, NonAcceptanceRetryDue | OwnerUnavailableRetryDue> => {
+  if (processing.kind === 'HANDED_OFF' && processing.followUp === 'RETRY_DUE') {
+    return Effect.fail(new NonAcceptanceRetryDue({ intentId: processing.intentId }));
+  }
+  return processing.kind === 'STOPPED' && isOwnerUnavailableStop(processing.reasons)
+    ? Effect.fail(new OwnerUnavailableRetryDue({ intentId: processing.intentId }))
     : Effect.void;
+};
 
 /** Why an intent stopped, in the vocabulary of the suppression lane plus the checks of this step. */
 export interface StopReason {
