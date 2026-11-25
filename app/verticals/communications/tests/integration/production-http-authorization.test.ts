@@ -1594,7 +1594,7 @@ const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message
 
 describe('Built-in template defaults with the real authorization engine (SpiceDB) and native PostgreSQL (#1398, #1406)', () => {
   it.live(
-    'lets only a permitted member review the texts in force, replace one through prepare + activate, and refuses once revoked',
+    'lets only a permitted member review the seed texts, prepare and activate one through the Actions, and refuses once revoked',
     () =>
       Effect.scoped(
         Effect.gen(function* builtInDefaults() {
@@ -1661,14 +1661,15 @@ describe('Built-in template defaults with the real authorization engine (SpiceDB
             );
           });
 
-          // ALLOWED: day one, the manager sees every built-in text in force and no own revision
+          // ALLOWED: day one, the manager sees every seed text with nothing in force and no own revision
           const dayOne = Option.getOrThrow((yield* review(manager)).result);
           expect(dayOne.entries).toHaveLength(6);
-          expect(dayOne.entries.every((entry) => entry.inForce.source === 'BUILT_IN_DEFAULT')).toBe(true);
+          expect(dayOne.entries.every((entry) => entry.inForce.source === 'NONE')).toBe(true);
+          expect(dayOne.entries.every((entry) => entry.builtInDefault.approval === 'PENDING-APPROVER')).toBe(true);
           expect(dayOne.entries.every((entry) => entry.revisions.length === 0)).toBe(true);
           // DENIED: a member without the capability reads nothing
           expect((yield* review(reader)).reply.status).toBe(403);
-          // REPLACE through the EXISTING Actions, under the manager's own session
+          // PREPARE and ACTIVATE through the EXISTING Actions, under the manager's own session
           const prepared = yield* send(
             manager,
             '/communications/actions/prepare-template-revision',
@@ -1696,12 +1697,11 @@ describe('Built-in template defaults with the real authorization engine (SpiceDB
           expect(activated.status, JSON.stringify(activated.body)).toBe(200);
           const replaced = yield* czechOf(manager);
           expect(replaced).toMatchObject({
-            builtInDefault: { state: 'BUILT_IN_DEFAULT_REPLACED' },
             inForce: { revisionId, source: 'TENANT_REVISION' },
           });
 
-          // CROSS-TENANT: the foreign manager sees only the foreign Tenant, where the built-in text is still in force
-          expect((yield* czechOf(foreignManager)).inForce.source).toBe('BUILT_IN_DEFAULT');
+          // CROSS-TENANT: the foreign manager sees only the foreign Tenant, where nothing is in force
+          expect((yield* czechOf(foreignManager)).inForce.source).toBe('NONE');
           // a forged Tenant claim is refused before any Communications code runs
           expect([401, 403]).toContain((yield* review({ ...foreignManager, tenantId: tenant.tenantId })).reply.status);
 

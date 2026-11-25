@@ -1,4 +1,5 @@
-import { Match, Result, Schema } from 'effect';
+import { Match, Result } from 'effect';
+import type { PlaceholderKind } from '../catalog/template-contract.ts';
 import { escapeHtml, unescapeHtml } from './escape.ts';
 import { approveLink } from './links.ts';
 import type { LinkPolicy } from './links.ts';
@@ -12,13 +13,8 @@ import type { SupportedLanguage } from './vocabulary.ts';
  * rate, never invents a value, and never holds a secret.
  */
 
-/**
- * What a declared placeholder accepts. `owner-rendered` is the secret-bearing kind (OTP, reset or claim URL): the generic
- * path refuses any value for it and leaves its slot untouched, so the owner completes it under its own authority.
- */
-const OWNER_RENDERED = 'owner-rendered' as const;
-const PlaceholderKindSchema = Schema.Literals(['date', 'link', 'money', OWNER_RENDERED, 'text']);
-type PlaceholderKind = typeof PlaceholderKindSchema.Type;
+/** The secret-bearing placeholder kind: the generic path refuses any value for it and leaves its slot untouched. */
+const OWNER_RENDERED = 'owner-rendered' as const satisfies PlaceholderKind;
 export interface PlaceholderContract {
   readonly kind: PlaceholderKind;
   readonly name: string;
@@ -51,7 +47,11 @@ const RENDER_REFUSAL_CODES = [
   'content_not_equivalent',
   'link_not_permitted',
   'optional_omission_not_approved',
+  // a secret-bearing slot sits in the subject, which no owner step ever completes and every mail client shows in clear
+  'owner_slot_in_subject',
   'rendered_content_empty',
+  // a secret slot the revision requires does not reach the rendered message, so the owner would have nothing to complete
+  'required_owner_slot_missing',
   'required_value_missing',
   // a value was offered for a secret-bearing placeholder: the generic path never takes one
   'secret_value_in_generic_path',
@@ -159,6 +159,10 @@ export const renderMessage = (input: RenderInput): Result.Result<RenderedMessage
       [...new Set([...undeclared, ...contract.map((entry) => entry.name)])].toSorted(),
     );
   }
+  const secretInSubject = namesIn(template.subject).filter((name) => byName.get(name)?.kind === OWNER_RENDERED);
+  if (secretInSubject.length > 0) {
+    return refuse('owner_slot_in_subject', secretInSubject.toSorted());
+  }
   const extra = Object.keys(values).filter((name) => !declared.has(name));
   if (extra.length > 0) {
     return refuse('value_not_declared', extra.toSorted());
@@ -225,5 +229,12 @@ export const renderMessage = (input: RenderInput): Result.Result<RenderedMessage
   const ownerSlots = [...new Set([...namesIn(template.subject), ...paragraphs.flatMap(namesIn)])]
     .filter((name) => byName.get(name)?.kind === OWNER_RENDERED)
     .toSorted();
+  const reached = new Set(ownerSlots);
+  const unreachable = template.requiredPlaceholders.filter(
+    (name) => byName.get(name)?.kind === OWNER_RENDERED && !reached.has(name),
+  );
+  if (unreachable.length > 0) {
+    return refuse('required_owner_slot_missing', unreachable.toSorted());
+  }
   return Result.succeed({ html, ownerSlots, subject, text });
 };

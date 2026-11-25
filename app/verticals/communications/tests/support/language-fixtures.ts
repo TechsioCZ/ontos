@@ -20,7 +20,7 @@ import type {
   LanguagePolicyPortContract,
 } from '../../src/services/language-policy-port.service.ts';
 import type { TemplateRevisionPortContract } from '../../src/services/template-revision-port.service.ts';
-import { actorFor, domainFor, fictionalDraft, identity } from './template-fixtures.ts';
+import { actorFor, domainFor, fictionalDraft, fixtureTemplateTypes, identity } from './template-fixtures.ts';
 
 export const baseIdentity: TemplateBaseIdentity = {
   channel: 'email',
@@ -111,9 +111,21 @@ export const seedLanguages = (
     const t = domainFor(port);
     // a Legal Entity scoped template is written by an operation that runs in exactly that Legal Entity
     const actor = actorFor(base.scope.kind === 'tenant' ? null : base.scope.legalEntityId);
+    // Exactly the placeholders the type requires and no other: nothing publishes values to Communications, so a revision with
+    // a generic placeholder could not be handed off, while a required owner-rendered slot is the owner's to fill.
+    const required = Option.match(fixtureTemplateTypes.contractOf(base.messageType), {
+      onNone: () => [],
+      onSome: (contract) => contract.placeholders.filter(({ required: must }) => must).map(({ name }) => name),
+    });
     for (const language of languages) {
       const prepared = yield* t.prepare(
-        fictionalDraft({ ...identity({ ...base, language }), body: `[FICTIONAL TEST COPY ${language}] {{purpose}}` }),
+        fictionalDraft({
+          ...identity({ ...base, language }),
+          body: [`[FICTIONAL TEST COPY ${language}]`, ...required.map((name) => `{{${name}}}`)].join('\n\n'),
+          optionalPlaceholders: [],
+          requiredPlaceholders: required,
+          subject: `[FICTIONAL TEST COPY ${language}]`,
+        }),
         actor,
       );
       yield* t.approve(prepared.revision.revisionId, actor);

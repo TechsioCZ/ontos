@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import { TemplateLanguageSchema } from '../../../shared/template-revision.ts';
 import { DocumentPolicySchema } from '../documents/document-policy.ts';
 import { AudiencePolicySchema } from './audience.ts';
+import { TemplateContractSchema } from './template-contract.ts';
 import {
   ApprovedRuleKeySchema,
   AudienceSlotKeySchema,
@@ -139,6 +140,11 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   revision: RevisionSchema,
   sourceOwner: OntosModuleIdSchema,
   status: MessageTypeStatusSchema,
+  /**
+   * The placeholders and link policy a Template Revision of this type must fit (#1398, #1399). Absent means the type allows
+   * no placeholder: activation compares a revision with it, and the last stoppable handoff renders against it.
+   */
+  placeholderContract: Schema.optionalKey(TemplateContractSchema),
   typeId: MessageTypeIdSchema,
 });
 export type TransactionalMessageType = typeof TransactionalMessageTypeSchema.Type;

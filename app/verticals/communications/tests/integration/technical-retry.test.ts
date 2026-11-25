@@ -18,6 +18,7 @@ import { decideOne, historyOf, intentHistoryOf } from '../support/history-world.
 import { handoffDouble } from '../support/intake-fixtures.ts';
 import { intakeWorld, templateBase } from '../support/intake-world.ts';
 import { actorWith, makeRuntimeDatabase, nativeServices } from '../support/persistence.fixture.ts';
+import { fixtureTemplateTypes } from '../support/template-fixtures.ts';
 import {
   answers,
   attemptsOf,
@@ -458,6 +459,7 @@ describe('Current gates during recovery (#1403 R-06 AC-03)', () => {
           templates,
           { reason: 'Fictional unsafe wording', revisionId: stored?.templateRevisionId ?? '' },
           actorWith('00000000-0000-4000-8000-0000000000a5'),
+          fixtureTemplateTypes,
         ),
       );
       expect(yield* stepWith(world, handoff, intentId)).toMatchObject({
@@ -491,6 +493,7 @@ describe('Current gates during recovery (#1403 R-06 AC-03)', () => {
             templates,
             { reason: 'Fictional retirement', revisionId: czech.revisionId },
             actorWith('00000000-0000-4000-8000-0000000000a6'),
+            fixtureTemplateTypes,
           ),
         );
         yield* world.database.withPorts(world.tenantId, (_templates, policies) =>

@@ -4,24 +4,22 @@ import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Array as EffectArray, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { TemplatePinBlocked, TemplateResolutionFailed } from '../../shared/template-revision-errors.ts';
+import { TemplateResolutionFailed } from '../../shared/template-revision-errors.ts';
 import type { BuiltInTemplateDefaultEntry, TemplateIdentity, TemplateScope } from '../../shared/template-revision.ts';
 import { builtInTemplateDefaultsRead } from '../../src/api/built-in-template-defaults.read.ts';
-import { builtInTemplateDefaultOf } from '../../src/domain/catalog/built-in-template-defaults.ts';
 import { portalAuthDefaultCopy } from '../../src/domain/catalog/portal-auth-copy-draft.ts';
 import { reviewBuiltInTemplateDefaults } from '../../src/services/built-in-template-default-domain.service.ts';
 import { decideMessageLanguage } from '../../src/services/language-selection.service.ts';
-import { pinnedTemplateText, templateContentDigest } from '../../src/services/template-revision-domain.service.ts';
+import { templateContentDigest } from '../../src/services/template-revision-domain.service.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts';
 import { makeInMemoryLanguagePolicyPort } from '../support/language-fixtures.ts';
 import { adminOne, adminTwo, companyA, companyScope, domainFor, fictionalDraft } from '../support/template-fixtures.ts';
 
 /**
- * #1398 / #1406 (product owner, 2026-11-23): the six approved Portal Auth texts are ACTIVE BY DEFAULT. Resolution falls
- * back to the built-in text, as its last step, only for an identity the Tenant never took over; the Tenant's own active
- * revision always wins, and once the Tenant activated an own revision it owns the identity: a deactivated or invalidated
- * own revision fails closed and never silently re-enables the built-in text. Every pin records its source.
+ * #1398 (PO decision 1A), #1397 TPL-05, R-D1: only a revision an authorised administrator prepared AND activated is ever
+ * used. The six Portal Auth texts are seed content: an untouched Tenant has NO text for those types, so tenant mode B and
+ * "no Czech text, do not send" apply, and nothing resolves to a shared or built-in text.
  */
 
 const VERIFY = 'commerce.customer-context.portal-auth.verify-email-message';
@@ -53,90 +51,61 @@ const ownDraft = (language: 'cs' | 'en', scope: TemplateScope = tenantScope) =>
     scope,
     subject: `[FICTIONAL TEST COPY] ${language} verify`,
   });
-const UUID_V8 = /^[\da-f]{8}-[\da-f]{4}-8[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u;
 
-describe('Template resolution falls back to the built-in default as its last step (#1398, #1406)', () => {
-  it.effect(
-    'pins the built-in text, with its source, version and digest, for an identity the Tenant never took over',
-    () =>
-      Effect.gen(function* builtIn() {
-        const memory = makeInMemoryTemplatePort();
-        const t = domainFor(memory.port);
-        const copy = copyOf(VERIFY, 'cs');
-        const pin = yield* t.resolve(identityOf('cs'));
-        expect(pin).toMatchObject({
-          contentDigest: yield* templateContentDigest(copy.subject, copy.body),
-          language: 'cs',
-          messageType: VERIFY,
-          revisionNumber: 1,
-          scope: tenantScope,
-          source: 'BUILT_IN_DEFAULT',
-        });
-        // the same text always pins the same reference, and nothing is stored to do so
-        expect((yield* t.resolve(identityOf('cs'))).revisionId).toBe(pin.revisionId);
-        expect([memory.state.types, memory.state.revisions, memory.state.activations]).toEqual([[], [], []]);
-        // the handoff gate passes it and the adapter gets exactly the approved text
-        expect((yield* t.verify(pin)).revisionId).toBe(pin.revisionId);
-        expect(Option.getOrThrow(yield* pinnedTemplateText(memory.port, pin))).toMatchObject({
-          body: copy.body,
-          requiredPlaceholders: ['verification_link'],
-          subject: copy.subject,
-        });
-        // the audit names the built-in source and no principal: nobody activated it
-        expect(yield* t.describe(pin)).toMatchObject({
-          activations: [],
-          lifecycleState: 'active',
-          source: 'BUILT_IN_DEFAULT',
-        });
-        // a prepared, never activated own draft does not take the identity over
-        yield* t.prepare(ownDraft('cs'));
-        expect((yield* t.resolve(identityOf('cs'))).source).toBe('BUILT_IN_DEFAULT');
-      }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
-
-  it.effect("lets the Tenant's own active revision win, attributed to the real person who activated it", () =>
-    Effect.gen(function* own() {
+describe('Template resolution never falls back to a built-in text (#1398, R-D1)', () => {
+  it.effect('fails with no active revision for every identity an administrator never activated', () =>
+    Effect.gen(function* untouched() {
       const memory = makeInMemoryTemplatePort();
       const t = domainFor(memory.port);
-      const prepared = yield* t.prepare(ownDraft('cs'), adminTwo);
-      yield* t.approve(prepared.revision.revisionId, adminTwo);
-      const pin = yield* t.resolve(identityOf('cs'));
-      expect(pin).toMatchObject({
-        contentDigest: prepared.revision.contentDigest,
-        revisionId: prepared.revision.revisionId,
-        source: 'TENANT_REVISION',
-      });
-      expect(memory.state.activations[0]?.activatedByPrincipalId).toBe(adminTwo.principalId);
-      expect(memory.state.revisions[0]?.createdByPrincipalId).toBe(adminTwo.principalId);
-      // English, never taken over, still uses its built-in text next to the own Czech one
-      expect((yield* t.resolve(identityOf('en'))).source).toBe('BUILT_IN_DEFAULT');
+      for (const copy of portalAuthDefaultCopy) {
+        const failure = yield* Effect.flip(t.resolve(identityOf(copy.language, { messageType: copy.messageType })));
+        expect(Schema.is(TemplateResolutionFailed)(failure)).toBe(true);
+        expect(failure).toMatchObject({ code: 'template_no_active_revision' });
+      }
+      // nothing was stored to answer, and a prepared but never activated own draft does not change the answer
+      expect([memory.state.types, memory.state.revisions, memory.state.activations]).toEqual([[], [], []]);
+      yield* t.prepare(ownDraft('cs'));
+      expect(yield* Effect.flip(t.resolve(identityOf('cs')))).toMatchObject({ code: 'template_no_active_revision' });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect(
-    'never falls back once the Tenant took the identity over: a deactivated or invalidated own text fails closed',
+    "uses the Tenant's own active revision, attributed to the real person who activated it, and nothing else",
     () =>
-      Effect.gen(function* takenOver() {
+      Effect.gen(function* own() {
         const memory = makeInMemoryTemplatePort();
         const t = domainFor(memory.port);
-        const czech = yield* t.prepare(ownDraft('cs'));
-        yield* t.approve(czech.revision.revisionId);
-        yield* t.deactivate(czech.revision.revisionId);
-        const deactivated = yield* Effect.flip(t.resolve(identityOf('cs')));
-        expect(Schema.is(TemplateResolutionFailed)(deactivated)).toBe(true);
-        expect(deactivated).toMatchObject({ code: 'template_no_active_revision' });
-        const english = yield* t.prepare(ownDraft('en'));
-        yield* t.approve(english.revision.revisionId);
-        yield* t.invalidate(english.revision.revisionId);
+        const prepared = yield* t.prepare(ownDraft('cs'), adminTwo);
+        yield* t.approve(prepared.revision.revisionId, adminTwo);
+        const pin = yield* t.resolve(identityOf('cs'));
+        expect(pin).toMatchObject({
+          contentDigest: prepared.revision.contentDigest,
+          revisionId: prepared.revision.revisionId,
+          source: 'TENANT_REVISION',
+        });
+        expect(memory.state.activations[0]?.activatedByPrincipalId).toBe(adminTwo.principalId);
+        expect(memory.state.revisions[0]?.createdByPrincipalId).toBe(adminTwo.principalId);
+        // English was never taken over: it has no text, there is no built-in to stand in for it
         expect(yield* Effect.flip(t.resolve(identityOf('en')))).toMatchObject({ code: 'template_no_active_revision' });
-        // a message type without a built-in default fails closed as before
-        expect(
-          yield* Effect.flip(t.resolve(identityOf('cs', { messageType: 'fixture.transactional-notice' }))),
-        ).toMatchObject({ code: 'template_no_active_revision' });
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('keeps scopes exact: an own Legal Entity text replaces the default only in that Legal Entity', () =>
+  it.effect('fails closed once the Tenant took the identity over and stopped it', () =>
+    Effect.gen(function* takenOver() {
+      const memory = makeInMemoryTemplatePort();
+      const t = domainFor(memory.port);
+      const czech = yield* t.prepare(ownDraft('cs'));
+      yield* t.approve(czech.revision.revisionId);
+      yield* t.deactivate(czech.revision.revisionId);
+      expect(yield* Effect.flip(t.resolve(identityOf('cs')))).toMatchObject({ code: 'template_no_active_revision' });
+      const english = yield* t.prepare(ownDraft('en'));
+      yield* t.approve(english.revision.revisionId);
+      yield* t.invalidate(english.revision.revisionId);
+      expect(yield* Effect.flip(t.resolve(identityOf('en')))).toMatchObject({ code: 'template_no_active_revision' });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('keeps scopes exact: a Legal Entity text is not a Tenant-wide text', () =>
     Effect.gen(function* scopes() {
       const memory = makeInMemoryTemplatePort();
       const t = domainFor(memory.port);
@@ -144,22 +113,11 @@ describe('Template resolution falls back to the built-in default as its last ste
       const prepared = yield* t.prepare(ownDraft('cs', companyScope(companyA)), company);
       yield* t.approve(prepared.revision.revisionId, company);
       expect((yield* t.resolve(identityOf('cs', { scope: companyScope(companyA) }))).source).toBe('TENANT_REVISION');
-      expect((yield* t.resolve(identityOf('cs'))).source).toBe('BUILT_IN_DEFAULT');
+      expect(yield* Effect.flip(t.resolve(identityOf('cs')))).toMatchObject({ code: 'template_no_active_revision' });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('blocks a built-in pin whose text the catalog no longer holds: nothing is upgraded silently', () =>
-    Effect.gen(function* withdrawn() {
-      const memory = makeInMemoryTemplatePort();
-      const t = domainFor(memory.port);
-      const pin = yield* t.resolve(identityOf('cs'));
-      const blocked = yield* Effect.flip(t.verify({ ...pin, revisionNumber: pin.revisionNumber + 1 }));
-      expect(Schema.is(TemplatePinBlocked)(blocked)).toBe(true);
-      expect(blocked).toMatchObject({ code: 'pinned_template_revision_unavailable' });
-    }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
-
-  it.effect('keeps the language rule: Czech by default, English for a trusted English recipient only with Czech', () =>
+  it.effect('stops an untouched Tenant at "no Czech text, do not send" (TPL-05), whatever the recipient asks for', () =>
     Effect.gen(function* languages() {
       const memory = makeInMemoryTemplatePort();
       const policies = makeInMemoryLanguagePolicyPort();
@@ -170,40 +128,28 @@ describe('Template resolution falls back to the built-in default as its last ste
           recipient,
         });
       expect(yield* decide({ kind: 'not-established' })).toMatchObject({
-        language: 'cs',
-        outcome: 'selected',
-        pin: { source: 'BUILT_IN_DEFAULT' },
+        outcome: 'not-sent',
+        reason: 'czech_revision_unavailable',
       });
       expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({
-        language: 'en',
-        outcome: 'selected',
-        pin: { source: 'BUILT_IN_DEFAULT' },
+        outcome: 'not-sent',
+        reason: 'czech_revision_unavailable',
       });
-      // the Tenant took Czech over and stopped it: mode B sends no English without Czech
+      // with an own active Czech text, Czech is selected and English still needs its own text
       const t = domainFor(memory.port);
       const czech = yield* t.prepare(ownDraft('cs'));
       yield* t.approve(czech.revision.revisionId);
-      yield* t.deactivate(czech.revision.revisionId);
-      expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({ outcome: 'not-sent' });
+      expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({
+        language: 'cs',
+        outcome: 'selected',
+        pin: { source: 'TENANT_REVISION' },
+      });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
-
-  it('derives a stable, valid reference for each of the six built-in texts', () => {
-    const references = portalAuthDefaultCopy.map((copy) =>
-      Option.getOrThrow(
-        builtInTemplateDefaultOf({ channel: 'email', language: copy.language, messageType: copy.messageType }),
-      ),
-    );
-    expect(new Set(references.map(({ revisionId }) => revisionId)).size).toBe(6);
-    for (const reference of references) {
-      expect(reference.revisionId).toMatch(UUID_V8);
-      expect(reference.templateTypeId).toMatch(UUID_V8);
-    }
-  });
 });
 
-describe('The built-in template default review (#1398, #1406)', () => {
-  it.effect('lists every Portal Auth type and language with the built-in text in force and its exact text', () =>
+describe('The seed text review shows content, never a text in force (#1398, R-D1, E-09)', () => {
+  it.effect('lists every Portal Auth type and language as pending the approver with nothing in force', () =>
     Effect.gen(function* review() {
       const memory = makeInMemoryTemplatePort();
       const entries = yield* reviewBuiltInTemplateDefaults(memory.port, tenantScope);
@@ -213,24 +159,27 @@ describe('The built-in template default review (#1398, #1406)', () => {
       for (const entry of entries) {
         const copy = copyOf(entry.identity.messageType, entry.identity.language);
         expect(entry.builtInDefault).toEqual({
-          approval: 'APPROVED-DEFAULT-TEXT',
-          approvedOn: '2026-11-23',
+          approval: 'PENDING-APPROVER',
           body: copy.body,
-          contentDigest: yield* templateContentDigest(copy.subject, copy.body),
+          contentDigest: yield* templateContentDigest({
+            body: copy.body,
+            optionalPlaceholders: [],
+            requiredPlaceholders: [copy.ownerRenderedSlot],
+            subject: copy.subject,
+          }),
           optionalPlaceholders: [],
           requiredPlaceholders: [copy.ownerRenderedSlot],
-          state: 'BUILT_IN_DEFAULT_IN_USE',
           subject: copy.subject,
           version: 1,
         });
-        expect(entry.inForce).toEqual({ contentDigest: copy.contentDigest, source: 'BUILT_IN_DEFAULT', version: 1 });
+        expect(entry.inForce).toEqual({ reason: 'template_no_active_revision', source: 'NONE' });
         expect(entry.revisions).toEqual([]);
       }
       expect([memory.state.types, memory.state.revisions, memory.state.activations]).toEqual([[], [], []]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('shows a replacement as the text in force and a stopped own text as nothing in force', () =>
+  it.effect('shows an administrator-activated revision as the text in force and agrees with resolution', () =>
     Effect.gen(function* replaced() {
       const memory = makeInMemoryTemplatePort();
       const t = domainFor(memory.port);
@@ -243,16 +192,13 @@ describe('The built-in template default review (#1398, #1406)', () => {
       yield* t.prepare(ownDraft('cs', companyScope(companyA)), { ...adminOne, legalEntityId: companyA });
       const entries = yield* reviewBuiltInTemplateDefaults(memory.port, tenantScope);
       expect(entryOf(entries, 'cs')).toMatchObject({
-        builtInDefault: { state: 'BUILT_IN_DEFAULT_REPLACED' },
         inForce: { revisionId: czech.revision.revisionId, source: 'TENANT_REVISION' },
         revisions: [{ isBuiltInDefaultText: false, lifecycleState: 'active', revisionId: czech.revision.revisionId }],
       });
       expect(entryOf(entries, 'en')).toMatchObject({
-        builtInDefault: { state: 'BUILT_IN_DEFAULT_REPLACED' },
         inForce: { reason: 'template_no_active_revision', source: 'NONE' },
         revisions: [{ lifecycleState: 'retired' }],
       });
-      // the review agrees with resolution
       expect((yield* t.resolve(identityOf('cs'))).revisionId).toBe(czech.revision.revisionId);
       expect(yield* Effect.flip(t.resolve(identityOf('en')))).toMatchObject({ code: 'template_no_active_revision' });
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -298,31 +244,34 @@ describe('The review Read through the Core Read runtime (#1398, #1406)', () => {
     expect(builtInTemplateDefaultsRead.descriptor.legalEntityScope).toBe('optional');
   });
 
-  it.effect('answers the six texts in force for the trusted Tenant; a denied caller reads nothing', () =>
-    Effect.scoped(
-      Effect.gen(function* throughRead() {
-        const allowed = yield* readHarness('allowed');
-        const result = yield* allowed.runtime.runRead({
-          input: {},
-          principal,
-          registration: builtInTemplateDefaultsRead,
-          transport: { correlationId: 'built-in-defaults-read' },
-        });
-        expect(result.scope).toEqual(tenantScope);
-        expect(result.entries).toHaveLength(6);
-        expect(result.entries.every((entry) => entry.inForce.source === 'BUILT_IN_DEFAULT')).toBe(true);
-        const denied = yield* readHarness('denied');
-        const failure = yield* Effect.flip(
-          denied.runtime.runRead({
+  it.effect(
+    'answers the six seed texts with nothing in force for the trusted Tenant; a denied caller reads nothing',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* throughRead() {
+          const allowed = yield* readHarness('allowed');
+          const result = yield* allowed.runtime.runRead({
             input: {},
             principal,
             registration: builtInTemplateDefaultsRead,
-            transport: { correlationId: 'built-in-defaults-read-denied' },
-          }),
-        );
-        expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-        expect(denied.snapshot().ownerQueries).toEqual([]);
-      }),
-    ).pipe(Effect.provide(NodeCrypto.layer)),
+            transport: { correlationId: 'built-in-defaults-read' },
+          });
+          expect(result.scope).toEqual(tenantScope);
+          expect(result.entries).toHaveLength(6);
+          expect(result.entries.every((entry) => entry.inForce.source === 'NONE')).toBe(true);
+          expect(result.entries.every((entry) => entry.builtInDefault.approval === 'PENDING-APPROVER')).toBe(true);
+          const denied = yield* readHarness('denied');
+          const failure = yield* Effect.flip(
+            denied.runtime.runRead({
+              input: {},
+              principal,
+              registration: builtInTemplateDefaultsRead,
+              transport: { correlationId: 'built-in-defaults-read-denied' },
+            }),
+          );
+          expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+          expect(denied.snapshot().ownerQueries).toEqual([]);
+        }),
+      ).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

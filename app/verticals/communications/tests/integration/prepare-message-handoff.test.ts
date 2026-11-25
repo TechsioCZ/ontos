@@ -36,8 +36,10 @@ import { FIXTURE_SECONDARY_ROLE, fixtureSlot, fixtureType } from '../unit/suppor
 import { privacyAllowed, privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
 import { ORIGINAL_ADDRESS, unusable } from '../unit/support/recipient-fixtures.ts';
 import { historyOf } from '../support/history-world.ts';
+import { companyA, domainFor, fictionalDraft, fixtureTemplateTypes } from '../support/template-fixtures.ts';
 import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
 import { decided, intakeWorld, requestFor, templateBase } from '../support/intake-world.ts';
+import { FIXTURE_SOURCE_MODULE_KEY } from '../support/intake-runner.ts';
 import { actorWith, makeRuntimeDatabase, nativeServices } from '../support/persistence.fixture.ts';
 
 /**
@@ -91,6 +93,31 @@ const step = (
   processIntentHandoff({ intentId, tenantId: world.tenantId }, scoped).pipe(
     Effect.provide(workerLayers(world, handoff, types)),
   );
+
+/** The one decided intent of a request submitted by an operation that runs in this Legal Entity. */
+const decidedIntentIn = Effect.fn('PrepareHandoffTest.decidedIntentIn')(function* decideIn(
+  world: World,
+  legalEntityId: string,
+) {
+  const run = yield* world.runner.submit(
+    world.tenantId,
+    communicationRequest({
+      bindings: [originalRecipient('customer-1')],
+      legalEntityId,
+      occurrenceId: 'fixture-occurrence-le',
+      tenantId: world.tenantId,
+    }),
+    '00000000-0000-4000-8000-0000000000a9',
+    FIXTURE_SOURCE_MODULE_KEY,
+    legalEntityId,
+  );
+  const result = decided(run);
+  const [intent] = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+  if (intent === undefined) {
+    return yield* Effect.die('the fixture request must decide one intent');
+  }
+  return intent.intentId;
+});
 
 const decidedIntent = Effect.fn('PrepareHandoffTest.decidedIntent')(function* decideOne(world: World) {
   const run = yield* world.runner.submit(world.tenantId, requestFor(world.tenantId));
@@ -331,6 +358,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
             templates,
             { reason: 'Fictional retirement', revisionId: czech.revisionId },
             actorWith('00000000-0000-4000-8000-0000000000a6'),
+            fixtureTemplateTypes,
           ),
         );
         yield* world.database.withPorts(world.tenantId, (_templates, policies) =>
@@ -361,6 +389,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
             templates,
             { reason: 'Fictional unsafe wording', revisionId: stored?.templateRevisionId ?? '' },
             actorWith('00000000-0000-4000-8000-0000000000a5'),
+            fixtureTemplateTypes,
           ),
         );
         const outcome = yield* step(world, handoff, intentId);
@@ -369,6 +398,60 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
           reasons: [{ category: 'TEMPLATE_PIN', cause: 'pinned_template_revision_invalidated_unsafe' }],
         });
         expect(handoff.calls).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[#1399 AC-06 R-D1] a revision that needs a value nobody published stops the handoff with its own cause; nothing leaves',
+    () =>
+      Effect.gen(function* missingValue() {
+        // the type publishes `purpose` as a required text value, the Tenant activated a revision that uses it, and no owner
+        // supplies a value to Communications: the message is stopped, never sent with half a sentence
+        const type = fixtureType({
+          placeholderContract: { placeholders: [{ kind: 'text', name: 'purpose', required: true }] },
+        });
+        const world = yield* makeRuntimeDatabase().pipe(
+          Effect.flatMap((database) => intakeWorld(database, { types: [type], withTemplates: false })),
+        );
+        yield* world.database.withPorts(world.tenantId, (templates) =>
+          Effect.gen(function* seed() {
+            const t = domainFor(templates);
+            const prepared = yield* t.prepare(
+              fictionalDraft({
+                ...templateBase,
+                body: '[FICTIONAL TEST COPY] {{purpose}}',
+                optionalPlaceholders: [],
+                requiredPlaceholders: ['purpose'],
+                subject: '[FICTIONAL TEST COPY] subject',
+              }),
+            );
+            yield* t.approve(prepared.revision.revisionId);
+          }),
+        );
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        const outcome = yield* step(world, handoff, intentId, scopedIn(world), world.types);
+        expect(outcome).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'TEMPLATE_CONTENT', cause: 'required_value_missing', proven: true }],
+        });
+        expect(handoff.calls).toEqual([]);
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[R-D7] a Legal Entity request without an own text is handed off with the Tenant-wide revision and records that scope',
+    () =>
+      Effect.gen(function* legalEntityFallback() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntentIn(world, companyA);
+        const [stored] = yield* rowsOf(world, (tx) => tx.select().from(messageIntents));
+        expect(stored).toMatchObject({ language: 'cs' });
+        expect(yield* step(world, handoff, intentId)).toMatchObject({ kind: 'HANDED_OFF' });
+        // the pin names the Tenant-wide scope it was taken from, not the Legal Entity the request ran in
+        expect(handoff.calls[0]?.template).toMatchObject({ scope: { kind: 'tenant' }, source: 'TENANT_REVISION' });
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

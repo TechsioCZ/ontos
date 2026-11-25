@@ -130,40 +130,20 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
   );
 
   it.live(
-    '[#1398 #1406] with no Tenant revision the verification is prepared and sent with exactly the approved built-in Czech text',
+    '[#1398 #1406 R-D1] with no Tenant revision nothing is sent: the seed text is not used until an administrator activates a revision',
     () =>
-      Effect.gen(function* builtInDefault() {
+      Effect.gen(function* noImplicitText() {
         const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message';
-        const approved = portalAuthDefaultCopy.find(
-          (copy) => copy.messageType === VERIFY_EMAIL && copy.language === 'cs',
-        );
-        // no revision at all: the built-in default is active by default, nothing is stored for it
-        const { create, realm, world } = yield* setup({ languages: [], mode: 'B' });
+        const seed = portalAuthDefaultCopy.find((copy) => copy.messageType === VERIFY_EMAIL && copy.language === 'cs');
+        // no revision at all: there is no built-in text to stand in, so tenant mode B stops the message (TPL-05)
+        const { create, world } = yield* setup({ languages: [], mode: 'B' });
         yield* create();
-        expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
-        const [mail] = world.mailbox;
-        expect(mail?.language).toBe('cs');
-        expect(mail?.subject).toBe(approved?.subject);
-        const text = textOf(mail);
-        // the approved wording around the secret slot, which Auth filled with its own verification link
-        const [greeting, intro, , closing] = approved?.body.split('\n\n') ?? [];
-        for (const paragraph of [greeting, intro, closing]) {
-          expect(text).toContain(paragraph);
-        }
-        expect(text).toContain('/verify-email?');
-        expect(text).not.toContain('{{verification_link}}');
-        expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        expect(world.mailbox).toHaveLength(0);
+        expect((yield* attemptsOf(world)).length).toBe(0);
         const page = yield* (yield* historyReads(world)).list();
-        expect(page.items[0]).toMatchObject({
-          headline: { providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
-          template: {
-            contentDigest: approved?.contentDigest,
-            language: 'cs',
-            mode: 'B',
-            revisionNumber: 1,
-            source: 'BUILT_IN_DEFAULT',
-          },
-        });
+        expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['CZECH_REVISION_UNAVAILABLE'] });
+        expect(JSON.stringify(page.items[0])).not.toContain(seed?.subject ?? 'unreachable');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

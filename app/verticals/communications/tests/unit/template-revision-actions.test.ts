@@ -16,6 +16,7 @@ import {
   companyB,
   companyScope,
   domainFor,
+  approvedDraft,
   fictionalDraft,
   identity,
   revisionIdOf,
@@ -54,7 +55,7 @@ describe('Template revision Actions through the Core Action runtime', () => {
       const { harness, memory } = yield* makeHarness('allowed');
       const { runtime } = harness;
       const prepared = yield* runtime.runAction({
-        payload: fictionalDraft(),
+        payload: approvedDraft(),
         principal,
         registration: prepareTemplateRevisionAction,
         transport: transport('prepare-1'),
@@ -208,7 +209,7 @@ describe('Template revision Actions through the Core Action runtime', () => {
         const inCompanyA = { ...principal, legalEntityId: companyA };
         const wrongCompany = yield* Effect.flip(
           runtime.runAction({
-            payload: fictionalDraft({ scope: companyScope(companyB) }),
+            payload: approvedDraft({ scope: companyScope(companyB) }),
             principal: inCompanyA,
             registration: prepareTemplateRevisionAction,
             transport: transport('prepare-wrong-company'),
@@ -216,7 +217,7 @@ describe('Template revision Actions through the Core Action runtime', () => {
         );
         const tenantWideFromCompany = yield* Effect.flip(
           runtime.runAction({
-            payload: fictionalDraft(),
+            payload: approvedDraft(),
             principal: inCompanyA,
             registration: prepareTemplateRevisionAction,
             transport: transport('prepare-tenant-wide-from-company'),
@@ -230,7 +231,7 @@ describe('Template revision Actions through the Core Action runtime', () => {
         expect(memory.state.revisions).toHaveLength(0);
         // the same operating company may prepare and activate its own Template
         const own = yield* runtime.runAction({
-          payload: fictionalDraft({ scope: companyScope(companyA) }),
+          payload: approvedDraft({ scope: companyScope(companyA) }),
           principal: inCompanyA,
           registration: prepareTemplateRevisionAction,
           transport: transport('prepare-own-company'),
