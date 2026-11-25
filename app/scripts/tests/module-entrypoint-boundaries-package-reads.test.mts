@@ -62,6 +62,10 @@ const FOREIGN_READ: CarriedRead = {
 const CARRIED = 'Carried';
 const SHARED_CONTRACTS_MANIFEST = 'packages/shared-contracts/package.json';
 const STARTUP_FILE = 'packages/shared-contracts/src/startup.ts';
+/** A CommonJS adapter of the shared contracts: its module lists no names. */
+const ADAPTER_FILE = 'packages/shared-contracts/src/adapter.cjs';
+/** The library file that passes on the whole of the adapter. */
+const STARTUP_ADAPTER = "export * as Startup from './adapter.cjs';\n";
 const ADDITIONS_START = '  // <generated-governed-http-api-additions>\n';
 const EXPORTS_OPEN = '"exports": {\n';
 const PASSES_ON_READ = 'passes on the package read';
@@ -1488,6 +1492,8 @@ const CARRY_FORMS: readonly CarryForm[] = [
 
 /** A consumer of `Carried` in the owner entries: the files it writes and the diagnostic of its rule. */
 interface CarryConsumer {
+  /** What no diagnostic of the cell may say: the rule's line must not stand for another one. */
+  readonly absent?: readonly string[];
   readonly diagnostics: readonly string[];
   readonly files: (
     sources: ReadonlyMap<string, string>,
@@ -1549,6 +1555,8 @@ const BUILDER_CONSUMERS: readonly CarryConsumer[] = [
 ];
 
 const MOUNT_CONSUMER: CarryConsumer = {
+  // The mount's line also stands for a carrier that cannot be followed, which no cell of the column is.
+  absent: ['cannot be followed'],
   diagnostics: [unknown(sharedApiFile, 'ExtraApi')],
   files: (sources, imported, value) => [
     [
@@ -1568,6 +1576,46 @@ const MOUNT_CONSUMER: CarryConsumer = {
   libraryValue: "{ ExternalIdentityApiGroup as Carried } from '@app/shared-contracts/external-identity'",
   read: FOREIGN_READ,
 };
+
+/**
+ * The consumer that holds a whole module of the carrier, taken through an owner barrel (`export * as Carriers`), in a
+ * new value an owner entry exports.
+ */
+const wholeModuleConsumer = (label: string, entryFile: string, barrel: string, held: string): CarryConsumer => ({
+  diagnostics: [`${entryFile}: export Wrapped reaches a package read of the module`],
+  files: (sources, imported) => {
+    const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.specifier ?? '';
+    return [
+      [`${owner}/shared/carriers.ts`, `export * as Carriers from '${from}';\n`],
+      [
+        entryFile,
+        `${required(sources, entryFile)}\nimport { Carriers } from '${barrel}';\nexport const Wrapped = ${held};\n`,
+      ],
+    ];
+  },
+  label,
+  libraryValue: PROBLEM_DETAILS_VALUE,
+  read: OWN_READ,
+});
+
+const CARRIERS_BARREL = './carriers.ts';
+
+const WHOLE_MODULE_CONSUMERS: readonly CarryConsumer[] = [
+  wholeModuleConsumer(
+    'a value holding a whole module of the carrier',
+    sharedApiFile,
+    CARRIERS_BARREL,
+    '{ carriers: Carriers }',
+  ),
+  wholeModuleConsumer(
+    'a value of the client aggregate holding a whole module of the carrier',
+    aggregateFile,
+    '../../shared/carriers.ts',
+    '{ carriers: Carriers }',
+  ),
+  wholeModuleConsumer('an array holding a whole module of the carrier', sharedApiFile, CARRIERS_BARREL, '[Carriers]'),
+  wholeModuleConsumer('a spread of a whole module of the carrier', sharedApiFile, CARRIERS_BARREL, '{ ...Carriers }'),
+];
 
 /** Payment Term Catalog's sources with the workspace libraries whose files a carrier may stand in. */
 const carrySources = Effect.fn(function* carrySources() {
@@ -1607,7 +1655,8 @@ const carriedVerdicts = (
     if (seen.valid) {
       return 'passes';
     }
-    return consumer.diagnostics.every((expected) => seen.diagnostics.includes(expected))
+    return consumer.diagnostics.every((expected) => seen.diagnostics.includes(expected)) &&
+      !(consumer.absent ?? []).some((other) => seen.diagnostics.includes(other))
       ? 'fails by its rule'
       : `fails otherwise: ${seen.diagnostics}`;
   };
@@ -1677,6 +1726,63 @@ it.live(
       const sources = yield* carrySources();
       const verdicts = carriedVerdicts(sources, MOUNT_CONSUMER);
       expect(verdicts).toEqual(expectedVerdicts(verdicts));
+      // A whole module a mounted declaration uses is judged as a file too: a CommonJS adapter lists no names.
+      const adapterMount = judged(sources, [
+        [
+          SHARED_CONTRACTS_MANIFEST,
+          replaced(
+            required(sources, SHARED_CONTRACTS_MANIFEST),
+            EXPORTS_OPEN,
+            `${EXPORTS_OPEN}    "./startup": "./src/startup.ts",\n`,
+          ),
+        ],
+        [STARTUP_FILE, STARTUP_ADAPTER],
+        [ADAPTER_FILE, `module.exports = require('${FOREIGN_READ.specifier}');\n`],
+        ...MOUNT_CONSUMER.files(
+          sources,
+          "import { Startup as Carried } from '@app/shared-contracts/startup';\n",
+          'HttpApi.make(String(Carried))',
+        ),
+      ]);
+      expect(adapterMount.diagnostics).toContain(
+        `cannot be followed: ${ADAPTER_FILE} loads a module it does not read statically at line 1`,
+      );
+    }),
+);
+
+it.live(
+  'fails every list 1 form whose whole module an owner entry holds in a new value, from an owner file or a held library',
+  () =>
+    Effect.gen(function* carriedInWholeModules() {
+      const sources = yield* carrySources();
+      const verdicts = WHOLE_MODULE_CONSUMERS.flatMap((consumer) => carriedVerdicts(sources, consumer));
+      expect(verdicts).toEqual(expectedVerdicts(verdicts));
+      // A load, an import type and what `export default` writes ask the same of a whole module.
+      const barrel = [
+        [`${owner}/shared/relay.ts`, `export { ${OWN_READ.name} } from '${OWN_READ.specifier}';\n`],
+        [`${owner}/shared/carriers.ts`, "export * as Carriers from './relay.ts';\n"],
+      ] as const;
+      const sites = [
+        [
+          "export const loadCarriers = () => import('./carriers.ts');\n",
+          `loads the package read ${owner}/shared/carriers.ts`,
+        ],
+        [
+          "export type Held = typeof import('./carriers.ts');\n",
+          `${sharedApiFile}: export Held reaches a package read`,
+        ],
+        [
+          "import { Carriers } from './carriers.ts';\nexport default { carriers: Carriers };\n",
+          `${sharedApiFile}: export default reaches a package read`,
+        ],
+      ].map(([appended, expected]) => [
+        appended,
+        judged(sources, [
+          ...barrel,
+          [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
+        ]).diagnostics.includes(expected),
+      ]);
+      expect(sites).toEqual(sites.map(([appended]) => [appended, true]));
     }),
 );
 
@@ -1717,24 +1823,53 @@ it.live('judges a library file an entry passes a name on from the same whether i
       EXPORTS_OPEN,
       `${EXPORTS_OPEN}    "./startup": "./src/startup.ts",\n`,
     );
-    const verdicts = [
-      ['an import exported again', "import { Startup } from '@app/shared-contracts/startup';\nexport { Startup };\n"],
-      ['export … from', "export { Startup } from '@app/shared-contracts/startup';\n"],
-    ].map(([label, appended]) => {
-      const seen = judged(sources, [
-        [SHARED_CONTRACTS_MANIFEST, startupManifest],
+    // The library file loads what it does not read itself, or passes on the whole of a CommonJS adapter that does, whose
+    // module lists no names.
+    const places = [
+      [
         [STARTUP_FILE, "const target = 'x';\nvoid import(target);\nexport const Startup = 1;\n"],
-        [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
-      ]);
-      return [
-        label,
-        seen.valid,
-        seen.diagnostics.includes(
-          `${sharedApiFile}: re-exports through ${STARTUP_FILE}, which loads a module it does not read statically at line 2`,
-        ),
-      ];
-    });
+        [STARTUP_FILE, 'line 2'],
+      ],
+      [
+        [STARTUP_FILE, STARTUP_ADAPTER],
+        [ADAPTER_FILE, 'line 1'],
+        [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
+      ],
+    ] as const;
+    const verdicts = places.flatMap(([carrier, [judgedFile, line], ...more]) =>
+      [
+        ['an import exported again', "import { Startup } from '@app/shared-contracts/startup';\nexport { Startup };\n"],
+        ['export … from', "export { Startup } from '@app/shared-contracts/startup';\n"],
+      ].map(([label, appended]) => {
+        const seen = judged(sources, [
+          [SHARED_CONTRACTS_MANIFEST, startupManifest],
+          carrier,
+          ...more,
+          [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
+        ]);
+        return [
+          `${label}, judged on ${judgedFile}`,
+          seen.valid,
+          seen.diagnostics.includes(
+            `${sharedApiFile}: re-exports through ${judgedFile}, which loads a module it does not read statically at ${line}`,
+          ),
+        ];
+      }),
+    );
     expect(verdicts).toEqual(verdicts.map(([label]) => [label, false, true]));
+    // A whole module the entry holds in a value is judged as a file the same way.
+    const held = judged(sources, [
+      [SHARED_CONTRACTS_MANIFEST, startupManifest],
+      [STARTUP_FILE, STARTUP_ADAPTER],
+      [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
+      [
+        sharedApiFile,
+        `${required(sources, sharedApiFile)}\nimport { Startup } from '@app/shared-contracts/startup';\nexport const Held = { Startup };\n`,
+      ],
+    ]);
+    expect(held.diagnostics).toContain(
+      `${sharedApiFile}: holds a whole module through ${ADAPTER_FILE}, which loads a module it does not read statically at line 1`,
+    );
   }),
 );
 
