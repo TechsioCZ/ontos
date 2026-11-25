@@ -685,6 +685,23 @@ for (const [label, read, vertical, contracts, slug, api] of [
 }
 
 it.live(
+  'keeps a re-export whose source is not retired, whatever names it shares with the retired read',
+  Effect.fn(function* keepUnrelatedReexport() {
+    const aggregate = `${paymentVertical}/src/api/payment-term-catalog-client.ts`;
+    const unrelated =
+      "export type { PaymentTermHistoryRequest as ArchivedHistoryRequest } from './archived-history.ts';";
+    const sources = yield* retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [
+      [`${paymentVertical}/src/api/archived-history.ts`, () => 'export type PaymentTermHistoryRequest = string;\n'],
+      [aggregate, (source) => `${source}${unrelated}\n`],
+    ]);
+    const retired = sources.get(aggregate) ?? '';
+    expect(retired).toContain(unrelated);
+    expect(retired).not.toContain("from './payment-term-history-client.ts'");
+    expect(retired).not.toContain('PaymentTermHistoryRequestSchema');
+  }),
+);
+
+it.live(
   'keeps a name an enum member or a var of a class static block declares, whatever import it shares a name with',
   Effect.fn(function* keepScopedNames() {
     const manifestFile = `${paymentVertical}/vertical.manifest.ts`;
