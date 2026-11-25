@@ -7,6 +7,7 @@ import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
 import { findMessageTypeByPurpose } from './registry.ts';
 import type { MessageTypeRegistry } from './registry.ts';
 import {
+  PRIVACY_STOP_OF_FACT,
   ResendRefusalSchema,
   resourceRefKey,
   SourceStopReasonSchema,
@@ -233,23 +234,23 @@ const admissionBlock = (
 
 /**
  * When duplicate facts for one recipient disagree, the strongest stop wins so a stop is never lost: Privacy
- * NOT_ALLOWED, then Privacy INDETERMINATE, then the recipient stops. Only an explicit ALLOWED with no other stop is
- * eligible.
+ * NOT_ALLOWED, then the Privacy uncertainties (each its own fact), then the recipient stops. Only an explicit ALLOWED
+ * with no other stop is eligible.
  */
 const STOP_PRECEDENCE: readonly CandidateStopReason[] = [
   'PRIVACY_NOT_ALLOWED',
+  'SOURCE_PROTECTED',
   'PRIVACY_INDETERMINATE',
+  'PRIVACY_CONTEXT_AMBIGUOUS',
+  'PRIVACY_ACCESS_DENIED',
+  'PRIVACY_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_NOT_ELIGIBLE',
   'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_BASIS_MISSING',
 ];
 
-const stopOf = (fact: RecipientFact): CandidateStopReason | undefined => {
-  if (fact.privacy === 'NOT_ALLOWED') {
-    return 'PRIVACY_NOT_ALLOWED';
-  }
-  return fact.privacy === 'INDETERMINATE' ? 'PRIVACY_INDETERMINATE' : fact.recipientStop;
-};
+const stopOf = (fact: RecipientFact): CandidateStopReason | undefined =>
+  fact.privacy === 'ALLOWED' ? fact.recipientStop : PRIVACY_STOP_OF_FACT[fact.privacy];
 
 /** One entry per distinct full recipient reference, sorted by it so the candidate order ignores the input order. */
 const distinctRecipients = (facts: readonly RecipientFact[]) =>

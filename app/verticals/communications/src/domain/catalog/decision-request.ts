@@ -6,7 +6,7 @@ import {
   CommunicationPurposeKeySchema,
   CommunicationResourceRefSchema,
   CommunicationTenantIdSchema,
-  PrivacyEvidenceSchema,
+  PrivacyFactSchema,
   RecipientRoleSchema,
   RecipientStopReasonSchema,
   RevisionSchema,
@@ -50,7 +50,7 @@ export type SourceOccurrenceFacts = typeof SourceOccurrenceFactsSchema.Type;
  */
 export const RecipientFactSchema = Schema.Struct({
   occurrenceId: CommunicationOccurrenceIdSchema,
-  privacy: PrivacyEvidenceSchema,
+  privacy: PrivacyFactSchema,
   recipientStop: Schema.optional(RecipientStopReasonSchema),
   ref: CommunicationResourceRefSchema,
   role: RecipientRoleSchema,

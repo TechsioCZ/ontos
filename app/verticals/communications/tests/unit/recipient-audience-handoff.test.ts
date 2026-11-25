@@ -1,7 +1,6 @@
 import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { requiredOutcomeOf } from '../../src/domain/catalog/required-outcome.ts';
 import { assessRecipients, recipientFactOf } from '../../src/domain/recipient/assess-recipients.ts';
 import type { RecipientEvaluationInput } from '../../src/domain/recipient/assess-recipients.ts';
 import { handoffPinOf, recheckBeforeHandoff } from '../../src/domain/recipient/recheck-before-handoff.ts';
@@ -35,7 +34,8 @@ import {
   usable,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
-import { outcomeSummary, requiredSummary, verdictSummaries } from './support/summaries.ts';
+import { feedOfDecision, feedSummary } from './support/required-feed.ts';
+import { outcomeSummary, verdictSummaries } from './support/summaries.ts';
 
 const indivisible = {
   approvalRuleKey: 'fixture.rule.indivisible',
@@ -90,10 +90,10 @@ describe('#1395 Rule: an indivisible audience group is an explicit per-type exce
           ],
         });
         // The source learns the group obstacle: nothing prepared, so the failure is not partial.
-        expect(requiredSummary(requiredOutcomeOf(decision))).toMatchObject({
-          kind: 'Failed',
+        expect(feedSummary(feedOfDecision(decision))).toMatchObject({
+          attentions: ['FAILURE', 'FAILURE'],
           partial: false,
-          preparedSlots: [],
+          requiredOutcome: 'FAILED',
         });
       }),
   );
@@ -109,7 +109,7 @@ describe('#1395 Rule: an indivisible audience group is an explicit per-type exce
           { kind: 'Suppressed', reason: 'RECIPIENT_NOT_ELIGIBLE', resourceId: 'recipient-b' },
         ],
       });
-      expect(requiredSummary(requiredOutcomeOf(decision))).toMatchObject({ kind: 'Failed', partial: true });
+      expect(feedSummary(feedOfDecision(decision))).toMatchObject({ partial: true, requiredOutcome: 'FAILED' });
     }),
   );
 
@@ -120,7 +120,7 @@ describe('#1395 Rule: an indivisible audience group is an explicit per-type exce
         'contact-b': usable('b@example.test'),
       });
 
-      expect(requiredSummary(requiredOutcomeOf(decision))).toMatchObject({ kind: 'Prepared' });
+      expect(feedSummary(feedOfDecision(decision))).toMatchObject({ partial: false, requiredOutcome: 'IN_PROGRESS' });
     }),
   );
 
@@ -536,13 +536,13 @@ describe('#1395 Rule: a handoff candidate is judged against the original binding
   );
 });
 
-describe('#1395 Rule: a catalog change between decision and handoff cannot drop the audience rule (BR-07, BR-09)', () => {
+describe('#1395 Rule: a change of the audience rule between decision and handoff cannot drop it (BR-07, BR-09)', () => {
   const revisedIndividual = requiredTwoSlotTypeWith({ revision: 2 });
   const decidedInput = evaluationInput(groupType, [forA, forB]);
   const currentInput = evaluationInput(revisedIndividual, [forA, forB]);
 
   it.effect(
-    'an intent decided under revision 1 is stopped, with no member handed off, when the type is now revision 2',
+    'an intent decided under an indivisible audience is stopped, with no member handed off and no owner asked, when revision 2 dissolved the group',
     () =>
       Effect.gen(function* revisionMoved() {
         const gate = gateFor({ 'contact-a': usable(), 'contact-b': unusable('PERMISSION_ABSENT') });
@@ -554,10 +554,8 @@ describe('#1395 Rule: a catalog change between decision and handoff cannot drop 
           ]),
         ).pipe(Effect.provide(gate.layer));
 
-        expect(verdictSummaries(verdicts)).toMatchObject([
-          { assessment: { reason: 'TYPE_REVISION_CHANGED' }, kind: 'Stopped' },
-          { assessment: { reason: 'TYPE_REVISION_CHANGED' }, kind: 'Stopped' },
-        ]);
+        // not a recipient fact: its own verdict, so it is never reported as an invalid recipient
+        expect(verdictSummaries(verdicts)).toEqual([{ kind: 'RuleChanged' }, { kind: 'RuleChanged' }]);
         expect(gate.queries).toEqual([]);
       }),
   );

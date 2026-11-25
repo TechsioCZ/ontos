@@ -62,6 +62,7 @@ const scopedRoutines = [
   'worker_finish_attempt',
   'worker_link_retry_attempt',
   'worker_pin_document',
+  'worker_read_handoff_context',
   'worker_read_intent',
   'worker_read_template_snapshot',
   'worker_record_privacy_measure_handoff',

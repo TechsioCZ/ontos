@@ -146,16 +146,16 @@ describe('#1396 Rule: Privacy ALLOWED, NOT_ALLOWED and INDETERMINATE are three d
 
 describe('#1396 Rule: no decision is not a Privacy decision (authorization, outage and ambiguous context)', () => {
   it.effect.each([
-    ['access to the Privacy Read was denied', 'AUTHORIZATION_DENIED', 'PRIVACY_ACCESS_DENIED'],
-    ['the owner is unavailable', 'OWNER_UNAVAILABLE', 'PRIVACY_AUTHORITY_UNAVAILABLE'],
-    ['the context is ambiguous', 'CONTEXT_AMBIGUOUS', 'PRIVACY_CONTEXT_AMBIGUOUS'],
-  ] as const)('Scenario: %s is its own reason and never a NOT_ALLOWED', ([, reason, category]) =>
+    ['access to the Privacy Read was denied', 'AUTHORIZATION_DENIED', 'ACCESS_DENIED', 'PRIVACY_ACCESS_DENIED'],
+    ['the owner is unavailable', 'OWNER_UNAVAILABLE', 'AUTHORITY_UNAVAILABLE', 'PRIVACY_AUTHORITY_UNAVAILABLE'],
+    ['the context is ambiguous', 'CONTEXT_AMBIGUOUS', 'CONTEXT_AMBIGUOUS', 'PRIVACY_CONTEXT_AMBIGUOUS'],
+  ] as const)('Scenario: %s is its own reason and never a NOT_ALLOWED', ([, reason, fact, category]) =>
     Effect.gen(function* notADecision() {
       const assessment = yield* assess({ 'recipient-a': privacyUnavailable(reason) }).run;
 
       expect(assessmentSummary(assessment)).toEqual({ kind: 'Unavailable', reason });
-      // The catalog still receives the three-valued evidence; the stop keeps its own distinct, unproven category.
-      expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+      // The catalog receives the same distinct fact the handoff reports, never Privacy uncertainty; the stop is unproven.
+      expect(privacyEvidenceOf(assessment)).toBe(fact);
       expect(privacySuppressionReasons(assessment)).toEqual([{ category, cause: reason, proven: false }]);
       expect(category).not.toBe('PRIVACY_NOT_ALLOWED');
     }),
@@ -512,7 +512,7 @@ describe('#1396 Rule: the Privacy owner public response maps to the three outcom
       cause: 'PROTECTED_MATERIAL',
       scopeKey: processingScopeKey(sentScope),
     });
-    expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+    expect(privacyEvidenceOf(assessment)).toBe('SOURCE_PROTECTED');
     expect(privacySuppressionReasons(assessment)).toEqual([
       { category: 'SOURCE_PROTECTED', cause: 'PROTECTED_MATERIAL', proven: false },
     ]);
@@ -640,9 +640,9 @@ describe('#1396 Rule: Privacy evidence feeds the Communication Decision without 
   it.effect.each([
     ['NOT_ALLOWED', privacyNotAllowed(), 'PRIVACY_NOT_ALLOWED'],
     ['INDETERMINATE', privacyIndeterminate, 'PRIVACY_INDETERMINATE'],
-    ['an authorization failure', privacyUnavailable('AUTHORIZATION_DENIED'), 'PRIVACY_INDETERMINATE'],
-    ['an owner outage', privacyUnavailable('OWNER_UNAVAILABLE'), 'PRIVACY_INDETERMINATE'],
-    ['an ambiguous context', privacyUnavailable('CONTEXT_AMBIGUOUS'), 'PRIVACY_INDETERMINATE'],
+    ['an authorization failure', privacyUnavailable('AUTHORIZATION_DENIED'), 'PRIVACY_ACCESS_DENIED'],
+    ['an owner outage', privacyUnavailable('OWNER_UNAVAILABLE'), 'PRIVACY_AUTHORITY_UNAVAILABLE'],
+    ['an ambiguous context', privacyUnavailable('CONTEXT_AMBIGUOUS'), 'PRIVACY_CONTEXT_AMBIGUOUS'],
   ] as const)(
     'Scenario: %s stops the candidate as %s and only a proven prohibition is NOT_ALLOWED',
     ([, answer, reason]) =>

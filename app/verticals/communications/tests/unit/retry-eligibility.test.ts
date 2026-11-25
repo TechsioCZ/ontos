@@ -119,19 +119,43 @@ describe('assessAttemptHistory: what the history and the approved rule allow bef
     });
   });
 
-  it('[R-10 AC-03] a permanent refusal stops for good, whatever the rule says, and any unreadable refusal reason is permanent', () => {
+  it('[R-10 AC-03 R-D10] a refusal that is not classified by an approved rule is INDETERMINATE: it halts, never a final PERMANENT stop', () => {
     for (const reason of ['provider_rejected', 'something_new', undefined]) {
+      expect(rejectionClassOf(reason)).toBe('INDETERMINATE');
       const facts = factsOf({ attempts: [attempt('REJECTED', reason === undefined ? {} : { reason })] });
-      for (const policy of [none, approved]) {
-        expect(assessAttemptHistory(facts, policy)).toMatchObject({
-          attemptId: ATTEMPT_1,
-          kind: 'STOP',
-          reasons: [{ category: 'PERMANENT_REJECTION', proven: true }],
-        });
-      }
+      // without a recovery rule nothing is automatic, so that is the reason; with one the unclassified refusal is
+      expect(assessAttemptHistory(facts, none)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'NO_RECOVERY_RULE',
+        kind: 'HALT',
+      });
+      expect(assessAttemptHistory(facts, approved)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'REFUSAL_UNCLASSIFIED',
+        kind: 'HALT',
+      });
     }
+    // the provider that names itself a rate limit is the only refusal read as temporary
     expect(rejectionClassOf('rate_limited')).toBe('TEMPORARY');
-    expect(rejectionClassOf('provider_rejected')).toBe('PERMANENT');
+  });
+
+  it('[R-10 AC-03] a refusal that an approved rule classifies as PERMANENT stops for good, whatever the type rule says', () => {
+    const facts = factsOf({ attempts: [attempt('REJECTED', { reason: 'approved_permanent' })] });
+    for (const policy of [none, approved]) {
+      expect(assessAttemptHistory(facts, policy, () => 'PERMANENT')).toMatchObject({
+        attemptId: ATTEMPT_1,
+        kind: 'STOP',
+        reasons: [{ category: 'PERMANENT_REJECTION', cause: 'PROVIDER_REJECTED', proven: true }],
+      });
+    }
+  });
+
+  it('[R-10 AC-03] an unclassified refusal says so even when the limit is also reached: the classification comes first', () => {
+    const facts = factsOf({ attempts: [attempt('REJECTED', { reason: 'provider_rejected' })] });
+    expect(assessAttemptHistory(facts, { ...approved, maxAttempts: 1 })).toMatchObject({
+      code: 'REFUSAL_UNCLASSIFIED',
+      kind: 'HALT',
+    });
   });
 
   it('[S04 AC-02 R-05] an unknown effect never leads to another attempt, whatever the rule says: reconcile first', () => {

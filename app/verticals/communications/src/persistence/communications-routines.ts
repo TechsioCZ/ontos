@@ -33,6 +33,20 @@ export const workerReadIntentRoutine = defineScopedRoutine({
   schema: ROUTINE_SCHEMA,
 });
 
+/**
+ * The facts that live BESIDE one Message Intent and that its last stoppable handoff needs (migration
+ * `worker-read-handoff-context`): every Message Intent of the same request and type, and the provider evidence about the
+ * original endpoint of each. It decides nothing.
+ */
+export const workerReadHandoffContextRoutine = defineScopedRoutine({
+  name: 'worker_read_handoff_context',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [tenant, input('uuid')] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-read-handoff-context',
+  schema: ROUTINE_SCHEMA,
+});
+
 export const workerReadTemplateSnapshotRoutine = defineScopedRoutine({
   name: 'worker_read_template_snapshot',
   ownerModuleKey: OWNER_MODULE_KEY,

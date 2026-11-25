@@ -10,7 +10,7 @@ import type { CommunicationDecisionContext, RecipientFact } from '../../../src/d
 import { TransactionalMessageTypeSchema } from '../../../src/domain/catalog/message-type.ts';
 import type { TransactionalMessageType } from '../../../src/domain/catalog/message-type.ts';
 import { buildMessageTypeRegistry } from '../../../src/domain/catalog/registry.ts';
-import type { CandidateStopReason } from '../../../src/domain/catalog/vocabulary.ts';
+import type { CandidateStopReason, PrivacyFact } from '../../../src/domain/catalog/vocabulary.ts';
 
 /**
  * TEST-ONLY fixtures. Every type, purpose, source module, state and recipient below is fictional (`fixture.*`).
@@ -59,6 +59,7 @@ interface TypeOverrides {
   readonly documents?: unknown;
   readonly eligibleSourceStates?: readonly string[];
   readonly ineligibleSourceStates?: readonly { readonly reason: string; readonly state: string }[];
+  readonly meaning?: string;
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
   readonly ownerRequiredLanguage?: 'cs' | 'en';
   readonly privacyPurposeRefs?: readonly string[];
@@ -162,7 +163,7 @@ export const fixtureRequest = (
 interface RecipientOverrides {
   readonly moduleId?: string;
   readonly occurrenceId?: string;
-  readonly privacy?: 'ALLOWED' | 'INDETERMINATE' | 'NOT_ALLOWED';
+  readonly privacy?: PrivacyFact;
   readonly resourceType?: string;
   readonly tenantId?: string;
 }

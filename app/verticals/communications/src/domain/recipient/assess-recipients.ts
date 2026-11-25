@@ -2,7 +2,7 @@ import { DateTime, Effect, Exit, identity, Option } from 'effect';
 
 import type { CommunicationDecisionRequest, RecipientFact } from '../catalog/decision-request.ts';
 import type { TransactionalMessageType } from '../catalog/message-type.ts';
-import type { PrivacyEvidence } from '../catalog/vocabulary.ts';
+import type { PrivacyFact } from '../catalog/vocabulary.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
 import { safeCauseSummaryOf } from '../intake/safe-cause.ts';
 import { bindOriginalRecipients } from './bind-original-recipients.ts';
@@ -160,7 +160,7 @@ export const assessRecipients = Effect.fn('Communications.assessRecipients')(fun
 export const recipientFactOf = (
   assessment: RecipientAssessmentCase,
   request: CommunicationDecisionRequest,
-  privacy: PrivacyEvidence,
+  privacy: PrivacyFact,
 ): RecipientFact => {
   const { binding } = assessment.subject;
   return {

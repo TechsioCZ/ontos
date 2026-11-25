@@ -28,7 +28,7 @@ import { SourceOccurrenceAuthority } from '../domain/intake/source-authority.ts'
 import { SelectedLanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { decideMessageHandoffs } from '../domain/privacy/handoff-decision.ts';
 import { ProcessingScopeSchema } from '../domain/privacy/processing-scope.ts';
-import { HandoffFact, MessageHandoffDecision, ProviderFact, SourceCurrentness } from '../domain/privacy/suppression.ts';
+import { HandoffFact, MessageHandoffDecision, SourceCurrentness } from '../domain/privacy/suppression.ts';
 import type { SourceCurrentnessCase, SuppressionReason } from '../domain/privacy/suppression.ts';
 import { OriginalRecipientBindingSchema } from '../domain/recipient/original-binding.ts';
 import { HandoffPinSchema } from '../domain/recipient/recheck-before-handoff.ts';
@@ -47,6 +47,8 @@ import {
   workerRecordRecoveryEvaluationRoutine,
   workerRecordStopRoutine,
 } from '../persistence/communications-routines.ts';
+import { readHandoffGroup } from './audience-group.ts';
+import type { HandoffGroup } from './audience-group.ts';
 import { discloseDocuments, documentStopOf } from './document-disclosure-step.ts';
 import type { DocumentVerdict } from './document-disclosure-step.ts';
 import { storeUnavailable } from './handoff-errors.ts';
@@ -412,7 +414,11 @@ const localGates = Effect.fn('Communications.localGates')(function* gates(
  * owner may wait for it. Nothing here is transactional: what must be (a second caller, a stop, an attempt) is decided
  * again by the routines of the next scoped transaction.
  */
-const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(document: IntentDocument, pins: OpenPins) {
+const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(
+  document: IntentDocument,
+  pins: OpenPins,
+  group: HandoffGroup,
+) {
   const { intent } = document;
   const { binding, language, request, scope, type } = pins;
   const input = yield* decodeIntakeInput(request);
@@ -430,6 +436,22 @@ const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(docume
     typeId: type.typeId,
   };
   const now = yield* DateTime.now;
+  // The WHOLE approved audience is decided together (#1395 BR-07, #1396 BR-09): the worker's own message first, then the members
+  // that are asked again with it. A member that can no longer proceed is not asked, but it keeps the group from completing.
+  const members = group.siblings.flatMap((sibling) =>
+    sibling.kind === 'MEMBER'
+      ? [
+          {
+            binding: sibling.binding,
+            handoff: sibling.handoff,
+            identity: { ...identity, recipient: sibling.binding.recipientRef, slotKey: sibling.slotKey },
+            pin: sibling.pin,
+            provider: sibling.provider,
+            scope: sibling.scope,
+          },
+        ]
+      : [],
+  );
   const [decision] = yield* decideMessageHandoffs(
     {
       recipient: { bindings: input.bindings, request: input.decisionRequest, scope: input.scope, type },
@@ -440,6 +462,7 @@ const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(docume
         Option.fromNullishOr(request.occurrence.validUntil),
         now,
       ),
+      withheld: group.siblings.flatMap((sibling) => (sibling.kind === 'WITHHELD' ? [sibling.slotKey] : [])),
     },
     [
       {
@@ -448,10 +471,11 @@ const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(docume
         handoff: HandoffFact.NotAttempted(),
         identity,
         pin: intent.handoffPin,
-        // Provider-side suppression facts are step 22's; no such fact is known to this owner yet.
-        provider: ProviderFact.Clear(),
+        // What the provider evidenced about the ORIGINAL endpoint (an earlier permanent bounce), read from the stored observations.
+        provider: group.provider,
         scope,
       },
+      ...members,
     ],
   );
   if (decision === undefined) {
@@ -561,6 +585,7 @@ type Loaded =
   | {
       readonly assessment: Extract<HistoryAssessment, { readonly kind: 'CONTINUE' | 'FIRST_ATTEMPT' }>;
       readonly document: IntentDocument;
+      readonly group: HandoffGroup;
       readonly kind: 'OPEN';
       readonly pins: OpenPins;
     }
@@ -610,9 +635,12 @@ const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
     return { document, kind: 'STOP', reasons: assessment.reasons } satisfies Loaded;
   }
   const gate = yield* localGates(invoker, document);
-  return 'reasons' in gate
-    ? ({ document, kind: 'STOP', reasons: gate.reasons } satisfies Loaded)
-    : ({ assessment, document, kind: 'OPEN', pins: gate.open } satisfies Loaded);
+  if ('reasons' in gate) {
+    return { document, kind: 'STOP', reasons: gate.reasons } satisfies Loaded;
+  }
+  // still inside this one scoped transaction: the audience group and the provider fact of the original endpoint
+  const group = yield* readHandoffGroup(invoker, intentId, gate.open.type, document.intent.slotKey);
+  return { assessment, document, group, kind: 'OPEN', pins: gate.open } satisfies Loaded;
 });
 
 /**
@@ -769,7 +797,7 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
     return (yield* scoped((invoker) => stopIntent(invoker, loaded.document, loaded.reasons))) satisfies Prepared;
   }
   const { assessment, document } = loaded;
-  const verdict = yield* ownerGates(document, loaded.pins);
+  const verdict = yield* ownerGates(document, loaded.pins, loaded.group);
   const continuation = confirmContinuation(
     timelineFactsOfStored(document),
     assessment,
