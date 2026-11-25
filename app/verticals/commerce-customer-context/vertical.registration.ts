@@ -91,6 +91,7 @@ import { organizationCustomerProfileIcoMigrationRead } from './src/api/organizat
 import { organizationCustomerProfileIcoRead } from './src/api/organization-customer-profile-ico.read.ts';
 import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
 import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
+import { portalAuthIssuanceSourceRead } from './src/api/portal-auth-issuance-source.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
 import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
@@ -288,6 +289,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
+      'portal-auth-issuance-source': () => import('./src/api/portal-auth-issuance-source-client.ts'),
       'pricing-purchase-context-verification': () =>
         import('./src/api/pricing-purchase-context-verification-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
@@ -395,6 +397,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     organizationCustomerProfileIcoRead,
     paymentTermAffectedUseAssessmentRead,
     paymentTermsResolutionRead,
+    portalAuthIssuanceSourceRead,
     pricingPurchaseContextVerificationRead,
     purchaseCurrencyResolutionRead,
     savedAddressSourceReceiptRead,

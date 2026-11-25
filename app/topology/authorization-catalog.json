@@ -9100,6 +9100,41 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.portal-auth-issuance-source.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "portal-auth-issuance-source",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.portal-auth-issuance-source",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "communications"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "communications.core.request-source"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.portal-enrollment-outcome.record",
             "kind": "action",
             "modes": [
