@@ -36,7 +36,9 @@ const uniqueInOrder = (codes: readonly string[]) => EffectArray.dedupe(codes.fil
 const reasonCodesOf = (intent: IntentHistoryRecord): readonly string[] => {
   const decided = intent.decisionReason === undefined ? [] : [intent.decisionReason];
   const stopped = intent.history.entries.flatMap((entry) =>
-    entry.kind === 'INTENT_SUPPRESSED' || entry.kind === 'HANDOFF_STOPPED' ? entry.reasonCodes : [],
+    entry.kind === 'INTENT_SUPPRESSED' || entry.kind === 'INTENT_NOT_SENT' || entry.kind === 'HANDOFF_STOPPED'
+      ? entry.reasonCodes
+      : [],
   );
   const recovery = intent.history.summary.recovery === undefined ? [] : [intent.history.summary.recovery.code];
   return uniqueInOrder([...decided, ...stopped, ...recovery]);

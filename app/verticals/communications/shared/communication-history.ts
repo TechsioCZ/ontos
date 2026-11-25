@@ -25,6 +25,8 @@ export type HistorySlotKey = typeof HistorySlotKeySchema.Type;
  * What a message is, as far as it can be PROVEN. Each value is its own fact and none implies the next:
  * - NO_MESSAGE: the catalog decided that no concrete message exists. There is no intent and never an attempt;
  * - SUPPRESSED: a concrete intended message was stopped by a PROVEN Current fact. Not a provider failure;
+ * - NOT_SENT: a concrete intended message could not be sent for want of a usable language or template (#1399, #1401 I-07). It
+ *   is neither suppressed nor a provider failure: nothing was proven against the recipient and no provider was asked;
  * - HELD_UNPROVEN: a concrete intended message was stopped only because a fact could not be established (an owner or an
  *   authority was unavailable, a mandatory input was not evidenced). Nothing is proven against the message: it is neither
  *   sent nor suppressed and must be re-evaluated, with the stop reason kept;
@@ -43,6 +45,7 @@ export type HistorySlotKey = typeof HistorySlotKeySchema.Type;
 export const HistoryStatusSchema = Schema.Literals([
   'NO_MESSAGE',
   'SUPPRESSED',
+  'NOT_SENT',
   'HELD_UNPROVEN',
   'PREPARED',
   'PROVIDER_SUBMITTED',

@@ -159,6 +159,7 @@ export type MessageHistoryItem = typeof MessageHistoryItemSchema.Type;
 export const TimelineEntryKindSchema = Schema.Literals([
   'ATTEMPT_PREPARED',
   'HANDOFF_STOPPED',
+  'INTENT_NOT_SENT',
   'INTENT_PREPARED',
   'INTENT_SUPPRESSED',
   'OBSERVATION_CONFLICTED',
