@@ -9,7 +9,6 @@ import { loadLayoutMetadata } from "../support/layout-metadata";
 import { CatalogProvider } from "@/ontos/catalog-provider";
 import { browserAt, serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
-import { fixtureSnapshot } from "../support/storefront";
 import { getBrand, toClientBrand } from "@/brand";
 import { BrandProvider } from "@/brand/brand-context";
 import { CartProvider } from "@/features/cart/cart-provider";
@@ -37,7 +36,36 @@ import ManufacturingPage, {
 } from "@/app/kategorie/akroscz-vyroba/page";
 import NotFoundPage from "@/app/not-found";
 import GlobalError from "@/app/global-error";
-import { fixtureCatalog, fixtureCategories, fixtureProducts } from "../support/catalog-fixture";
+
+// Owner-supplied labels are language-neutral so the entire rendered page, including cards, is checked.
+const categories = [
+  { id: "din", parentId: null, slug: "din", name: "DIN", position: 1, hasChildren: true },
+  {
+    id: "din-7997",
+    parentId: "din",
+    slug: "din-7997",
+    name: "DIN 7997",
+    position: 1,
+    hasChildren: false,
+  },
+];
+const snapshot = {
+  catalog: { products: [], homepageFeaturedProductIds: [] },
+  categories: { categories },
+};
+const featuredProduct = {
+  id: "m6",
+  slug: "m6",
+  name: "M6",
+  sku: "M6",
+  categoryId: "din-7997",
+  featuredPosition: 1,
+  grossPriceMinor: 1200,
+  currentPriceMinor: 1000,
+  stockOnHand: 10,
+  availability: "IN_STOCK",
+  unit: "mm",
+};
 
 // The proxy's locale header is real Next request input, not a replacement of next/headers.
 const request = { locale: "cs" };
@@ -94,16 +122,9 @@ beforeAll(async () => {
           currency: locale === "cs" ? "CZK" : "EUR",
           configured: true,
         },
-        categories: fixtureCategories,
+        categories,
         products: body.query.view.storefrontCatalog?.featured
-          ? fixtureCatalog.getHomepageFeaturedProducts().map((product) => ({
-              ...product,
-              grossPriceMinor: product.priceMinor,
-              currentPriceMinor: product.priceMinor,
-              currency: locale === "cs" ? "CZK" : "EUR",
-              stockOnHand: product.stockCount,
-              availability: "IN_STOCK",
-            }))
+          ? [{ ...featuredProduct, currency: locale === "cs" ? "CZK" : "EUR" }]
           : [],
         checkout: {
           shippingMethods: [{ id: "ppl", title: "PPL", priceMinor: 12_900 }],
@@ -144,28 +165,20 @@ const market = (locale: string): ClientMarket => ({
   live: [],
 });
 
-/**
- * Renders `page` inside the root layout's providers, as the browser receives it. `withoutOntosProducts` drops the
- * product cards (OntOS catalogue data, Czech in the test catalogue) before the markup is returned.
- */
-const html = (page: ReactElement, locale = "cs", { withoutOntosProducts = false } = {}) => {
+const html = (page: ReactElement, locale = "cs") => {
   const { container } = render(
     <NextRouter>
       <BrandProvider brand={toClientBrand(getBrand(), locale)}>
         <MarketProvider market={market(locale)}>
-          <CatalogProvider snapshot={fixtureSnapshot}>
+          <CatalogProvider snapshot={snapshot}>
             <CartProvider storage={null}>{page}</CartProvider>
           </CatalogProvider>
         </MarketProvider>
       </BrandProvider>
     </NextRouter>,
   );
-  if (withoutOntosProducts)
-    for (const card of container.querySelectorAll('[class*="product-card"]')) card.remove();
   return container.innerHTML;
 };
-
-const ontosProductPhoto = /https%3A%2F%2Fwww\.akros\.cz%2Fdata%2Fproduct%2F[\w.]+/g;
 
 /** Editorial pages of the storefront (the ones translated per language). */
 const contentPages: [string, () => Promise<ReactElement> | ReactElement][] = [
@@ -190,26 +203,8 @@ const pages: [string, () => Promise<ReactElement> | ReactElement][] = [
 
 /** Czech-only letters: a Slovak or English page never shows them (branch and address data excepted). */
 const czechOnlyLetters = /[ěřůĚŘŮ]/;
-const escapeHtml = (text: string) =>
-  text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#x27;");
-/** OntOS category and product names are catalogue data, not shop copy: they may keep their Czech spelling. */
-const ontosNames = [
-  ...fixtureCategories.map((category) => category.name),
-  ...fixtureProducts.map((product) => product.name),
-].filter(Boolean);
-const withoutOntosData = (markup: string) =>
-  ontosNames.reduce(
-    (text, name) => text.split(name).join("").split(escapeHtml(name)).join(""),
-    markup,
-  );
-/** The text around each Czech-only letter outside OntOS data, so a failure names the leftover. */
 const czechSnippets = (markup: string) =>
-  withoutOntosData(markup).match(new RegExp(`.{0,30}${czechOnlyLetters.source}.{0,20}`, "g")) ?? [];
+  markup.match(new RegExp(`.{0,30}${czechOnlyLetters.source}.{0,20}`, "g")) ?? [];
 
 beforeEach(() => {
   request.locale = "cs";
@@ -234,7 +229,7 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
       const markup = html(
         <>
           <SiteHeader />
-          <CatalogSidebar categories={fixtureCatalog.getSidebarCategories()} />
+          <CatalogSidebar categories={categories} />
           <SiteFooter />
         </>,
         locale,
@@ -246,8 +241,7 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
   );
 
   it.each(pages)("renders the %s page in the shop chrome without AKROS", async (_name, page) => {
-    // Product photos are OntOS data (the test catalog still links the original photos); lane P moves them.
-    const markup = html(await inRequest(page)).replaceAll(ontosProductPhoto, "ontos-product-photo");
+    const markup = html(await inRequest(page));
     expect(markup).toContain("ŠroubShop");
     expect(markup).not.toMatch(/akros/i);
   });
@@ -257,9 +251,7 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
     async (locale) => {
       request.locale = locale;
       for (const [name, page] of pages) {
-        const markup = html(await inRequest(page), locale, {
-          withoutOntosProducts: true,
-        }).replaceAll(ontosProductPhoto, "ontos-product-photo");
+        const markup = html(await inRequest(page), locale);
         expect({ name, akros: /akros/i.test(markup) }).toEqual({ name, akros: false });
         expect({ name, czech: czechSnippets(markup) }).toEqual({ name, czech: [] });
       }
@@ -306,7 +298,7 @@ describe("AKROS brand (default)", () => {
     const markup = html(
       <>
         <SiteHeader />
-        <CatalogSidebar categories={fixtureCatalog.getSidebarCategories()} />
+        <CatalogSidebar categories={categories} />
         <SiteFooter />
       </>,
     );
@@ -337,9 +329,9 @@ describe("AKROS brand (default)", () => {
     expect(html(await inRequest(() => TermsPage()))).toContain(
       "Zkrácené informace pro prezentační e-shop AKROS.",
     );
-    expect(html(await inRequest(() => HomePage()))).toContain(
-      "Vítejte v internetovém obchodě společnosti AKROS",
-    );
+    const home = html(await inRequest(() => HomePage()));
+    expect(home).toContain("Vítejte v internetovém obchodě společnosti AKROS");
+    expect(home).toContain('href="/cs/produkt/m6"');
   });
 
   it.each(["sk", "en"])(
@@ -352,9 +344,7 @@ describe("AKROS brand (default)", () => {
         /AKROS CZ (výroba|manufacturing)/,
       );
       for (const [name, page] of contentPages) {
-        const markup = html(await inRequest(page), locale, {
-          withoutOntosProducts: true,
-        }).replaceAll(ontosProductPhoto, "ontos-product-photo");
+        const markup = html(await inRequest(page), locale);
         expect({ name, czech: czechSnippets(markup) }).toEqual({ name, czech: [] });
       }
     },

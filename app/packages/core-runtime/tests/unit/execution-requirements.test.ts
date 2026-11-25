@@ -594,6 +594,7 @@ it.effect('resolves the requirement in the lease with its callers and refuses a 
     expect(hosted).toEqual({
       callers: person,
       compositionRevision: revision,
+      consumerAppId: 'consumer-alpha',
       provider: coreOperations.assetCurrent.provider,
       providerAppId: SHELL_HOST_APP_ID,
       requirementKey: hostedRequirementKey,

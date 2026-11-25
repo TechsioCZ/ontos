@@ -18,8 +18,9 @@ import type { AccessDecisionService } from '@app/core-runtime/access/enforcement
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import type { Scope } from 'effect';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
+import { Context, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import type { FileSystem, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import { DATABASE_IDENTITIES } from '../../../../database/identity-enrollment.ts';
@@ -113,28 +114,24 @@ const installAuth = Effect.fn('NativeHumanSessions.installAuth')(function* insta
   options: NativeHumanSessionProviderOptions,
   migrationsDirectory: URL,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const client = yield* PgClient.makeClient({ url: Redacted.make(options.connections.admin.connectionString) });
   const root = migrationsDirectory;
   if (root.protocol !== 'file:') {
     return yield* unavailable();
   }
-  const directories = (yield* fs.readDirectory(root.pathname)).toSorted();
-  let count = 0;
-  for (const directory of directories) {
-    const file = new URL(`${directory}/migration.sql`, root).pathname;
-    if (!(yield* fs.exists(file))) {
-      continue;
-    }
-    for (const sql of (yield* fs.readFileString(file)).split('--> statement-breakpoint')) {
+  const migrations = yield* Effect.try({
+    catch: unavailable,
+    try: () => readMigrationFiles({ migrationsFolder: root.pathname }),
+  });
+  if (migrations.length === 0) {
+    return yield* unavailable();
+  }
+  for (const migration of migrations) {
+    for (const sql of migration.sql) {
       if (sql.trim().length > 0) {
         yield* client.unsafe(sql).pipe(Effect.mapError(unavailable));
       }
     }
-    count += 1;
-  }
-  if (count !== 11) {
-    return yield* unavailable();
   }
   const passwords = new Map<string, Redacted.Redacted>();
   for (const identity of DATABASE_IDENTITIES) {

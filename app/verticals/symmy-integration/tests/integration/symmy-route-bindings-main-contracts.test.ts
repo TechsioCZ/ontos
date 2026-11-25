@@ -8,8 +8,12 @@ import type { deriveOntosModuleReadScopes } from '../../../../scripts/generate-o
 import { SymmyRouteContextRequestSchema } from '../../shared/apis/symmy-route-context.ts';
 import { deriveSymmyRouteBindings } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRouteContract } from '../../src/ops/symmy-route-bindings.ts';
-import { symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
-import type { SymmyEnrollmentRouteKey, SymmyRouteInventoryOperation } from '../../src/ops/symmy-route-enrollment.ts';
+import { symmyOperationName, symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
+import type {
+  SymmyEnrollmentRouteKey,
+  SymmyRouteAdmissionRead,
+  SymmyRouteInventoryOperation,
+} from '../../src/ops/symmy-route-enrollment.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const decodeContracts = Schema.decodeUnknownEffect(
@@ -72,6 +76,15 @@ const mainContracts = overMainTopology(
   'yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(OntosModuleDeploymentContractSchema)))(derived)',
 ).pipe(Effect.flatMap(decodeContracts));
 
+const mainReadScopes = overMainTopology(
+  `import { deriveOntosModuleReadScopes } from './scripts/generate-ontos-module-contract.mts';`,
+  'deriveOntosModuleReadScopes',
+  'JSON.stringify(derived)',
+).pipe(
+  Effect.flatMap(decodeReadScopes),
+  Effect.map((scopes) => scopes.flat()),
+);
+
 /**
  * The binding plan of a company route of this kind that enrolls the operations `enrolls` picks besides the ones every
  * enrollment of it enrolls; with none picked, any enrollment of the route reaches these calls and reads.
@@ -79,6 +92,7 @@ const mainContracts = overMainTopology(
 const requiredOnlyPlan = (
   routeKey: SymmyEnrollmentRouteKey,
   contracts: readonly SymmyRouteContract[],
+  companyScoped = true,
   enrolls: (operation: SymmyRouteInventoryOperation) => boolean = () => false,
 ) => {
   const found = symmyRouteInventoryOf(routeKey);
@@ -98,7 +112,7 @@ const requiredOnly = (
   routeKey: SymmyEnrollmentRouteKey,
   contracts: readonly SymmyRouteContract[],
   enrolls?: (operation: SymmyRouteInventoryOperation) => boolean,
-) => requiredOnlyPlan(routeKey, contracts, enrolls).refusals.map(({ code, detail }) => `${code}: ${detail}`);
+) => requiredOnlyPlan(routeKey, contracts, true, enrolls).refusals.map(({ code, detail }) => `${code}: ${detail}`);
 /** The customers route operations of these entrypoints. */
 const enrolling =
   (...entrypointKeys: readonly string[]) =>

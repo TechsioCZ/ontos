@@ -95,14 +95,19 @@ import type {
   SymmyInternalProductsProjectionSchema,
 } from './read-projection-contracts.ts';
 import {
+  SymmyDemoOrderIdSchema,
   SymmyDemoOrderNotFoundProblemSchema,
   SymmyDemoOrderResponseSchema,
+  SymmyDemoOrdersQuerySchema,
   SymmyDemoOrdersResponseSchema,
 } from './demo-orders-contract.ts';
 import { readSymmyDemoOrder, readSymmyDemoOrders } from './demo-orders.ts';
 import {
   SymmyDemoCatalogBatchResponseSchema,
   SymmyDemoCatalogRevisionResponseSchema,
+  SymmyDemoCategoriesBatchRequestSchema,
+  SymmyDemoMediaUploadRequestSchema,
+  SymmyDemoProductsBatchRequestSchema,
 } from './demo-catalog-contract.ts';
 import { readSymmyDemoCatalogRevision } from './demo-catalog-revision.ts';
 import {
@@ -503,6 +508,8 @@ const handle = <Request extends SymmyIngressRequest, Result, DispatchProblem>(
 const demoReadProblems = Schema.Union(symmyReadOptions.error);
 const demoOrderProblems = Schema.Union([...symmyReadOptions.error, SymmyDemoOrderNotFoundProblemSchema]);
 const demoCatalogProblems = Schema.Union([...symmyWriteOptions.error, ...importSourceCatalogActionErrors]);
+const demoRevisionPayload = Schema.Struct({});
+const demoOrderParams = Schema.Struct({ id: SymmyDemoOrderIdSchema });
 interface DemoExchangeContext {
   readonly admission: SymmyIngressAdmission;
   readonly newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>;
@@ -525,9 +532,10 @@ type DemoExchangeOperation<Result, Problem> =
 
 /** Demo exchanges retain the real enrolled source scope and the owner's own operation permission. */
 const handleDemoExchange = Effect.fn('SymmyTransport.demoExchange')(
-  function* demoExchange<Result, Problem, PublicProblem>(
+  function* demoExchange<Payload, Result, Problem, PublicProblem>(
     input: {
-      readonly payload: unknown;
+      readonly payload: Payload;
+      readonly payloadSchema: Schema.Codec<Payload, unknown>;
       readonly problems: Schema.Codec<PublicProblem, unknown>;
       readonly rawKey: string | undefined;
       readonly request: HttpServerRequest.HttpServerRequest;
@@ -539,7 +547,7 @@ const handleDemoExchange = Effect.fn('SymmyTransport.demoExchange')(
     if (key === undefined || key.length === 0) {
       return yield* requireAuthentication;
     }
-    const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(input.payload).pipe(
+    const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(input.payloadSchema))(input.payload).pipe(
       Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
     );
     if (serialized.includes(key) || input.request.url.includes(key)) {
@@ -747,6 +755,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       handleDemoExchange({
         mode: 'read',
         payload: {},
+        payloadSchema: demoRevisionPayload,
         problems: demoReadProblems,
         rawKey: headers['x-api-key'],
         request,
@@ -759,6 +768,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       handleDemoExchange({
         mode: 'read',
         payload: query,
+        payloadSchema: SymmyDemoOrdersQuerySchema,
         problems: demoReadProblems,
         rawKey: headers['x-api-key'],
         request,
@@ -772,6 +782,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       handleDemoExchange({
         mode: 'read',
         payload: params,
+        payloadSchema: demoOrderParams,
         problems: demoOrderProblems,
         rawKey: headers['x-api-key'],
         request,
@@ -786,6 +797,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
         idempotencyKey: headers['idempotency-key'],
         mode: 'write',
         payload,
+        payloadSchema: SymmyDemoCategoriesBatchRequestSchema,
         problems: demoCatalogProblems,
         rawKey: headers['x-api-key'],
         request,
@@ -799,6 +811,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
         idempotencyKey: headers['idempotency-key'],
         mode: 'write',
         payload,
+        payloadSchema: SymmyDemoProductsBatchRequestSchema,
         problems: demoCatalogProblems,
         rawKey: headers['x-api-key'],
         request,
@@ -812,6 +825,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
         idempotencyKey: headers['idempotency-key'],
         mode: 'write',
         payload,
+        payloadSchema: SymmyDemoMediaUploadRequestSchema,
         problems: demoCatalogProblems,
         rawKey: headers['x-api-key'],
         request,

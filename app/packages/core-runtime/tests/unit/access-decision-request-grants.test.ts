@@ -11,6 +11,8 @@ import { ACCESS_DECISION_REQUEST_GRANTS } from '../../src/db/database-identity-m
  *
  *   access/enforcement/currentness.ts     `core.access_scope_fences` (revision, scope_id, state, tenant_id)
  *   access/enforcement/actor.ts            `core.principals` (kind, principal_id, tenant_id)
+ *   access/workloads/system-enrollment.ts `core.principals` (also status and platform_role),
+ *                                          verifying an active executor and its internal-workload marker
  *   access/enforcement/legal-entities.ts   `core.legal_entities` (legal_entity_id, tenant_id)
  *   access/enforcement/decision-log.ts     `core.access_decision_logs` (insert)
  *   access/workloads/bindings.ts           `core.access_workload_bindings` (the actor's active keys)
@@ -37,7 +39,11 @@ const EXPECTED: readonly ExpectedGrant[] = [
     privilege: 'select',
     table: 'core.access_scope_fences',
   },
-  { columns: ['kind', 'principal_id', 'tenant_id'], privilege: 'select', table: 'core.principals' },
+  {
+    columns: ['kind', 'platform_role', 'principal_id', 'status', 'tenant_id'],
+    privilege: 'select',
+    table: 'core.principals',
+  },
   { columns: ['legal_entity_id', 'status', 'tenant_id'], privilege: 'select', table: 'core.legal_entities' },
   {
     columns: ['legal_entity_id', 'scope_id', 'tenant_context_id', 'tenant_id'],

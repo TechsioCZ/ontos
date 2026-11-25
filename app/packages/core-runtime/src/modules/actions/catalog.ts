@@ -1,4 +1,7 @@
 import type { AnyActionRegistration } from '../../actions/definition.ts';
+import { configureDemoCompaniesAction } from './configure-demo-companies.action.ts';
+import { invitePersonAction } from './invite-person.action.ts';
+import { requestPeopleSearchRebuildAction } from './request-people-search-rebuild.action.ts';
 // <generated-core-action-catalog-imports>
 import { activatePrincipalBindingAction } from './activate-principal-binding.action.ts';
 import { bindManagedApiKeyAction } from './bind-managed-api-key.action.ts';
@@ -43,6 +46,9 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   setSelfApiKeyBindingStatusAction.descriptor,
   uploadAssetAction.descriptor,
   // </generated-core-action-catalog-values>
+  configureDemoCompaniesAction.descriptor,
+  invitePersonAction.descriptor,
+  requestPeopleSearchRebuildAction.descriptor,
 ]);
 
 /** Core system Actions have native gateways, never business-module MCP dispatch endpoints. */

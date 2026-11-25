@@ -1,16 +1,21 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Cause, Context, Crypto, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
-import { makeDrizzleAccessDecisionLog } from '../../src/access/enforcement/decision-log.ts';
-import { makeDrizzleAccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
+import { AccessDecisionLog, makeDrizzleAccessDecisionLog } from '../../src/access/enforcement/decision-log.ts';
+import { AccessPrincipalKindSource, makeDrizzleAccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import type { AccessDecisionPorts, GateInput } from '../../src/access/enforcement/contract.ts';
+import {
+  LegalEntityCandidates,
+  makeDrizzleLegalEntityCandidates,
+} from '../../src/access/enforcement/legal-entities.ts';
+import { DecisionCheck } from '../../src/access/decision/engine.ts';
 import { AccessIntentLive, decisionAuthorityOf } from '../../src/access/enforcement/intent-reader.ts';
 import { AccessIntent } from '../../src/access/decision/authority.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
-import { makeDrizzleLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import {
   TenantIntentLoader,
@@ -21,7 +26,19 @@ import { makeDrizzleAccessWorkloadBindings } from '../../src/access/workloads/bi
 import { AccessScopeIdSchema } from '../../src/access/ids.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
-import { bindAccessGate, joinAccessEnforcementPorts } from '../../src/operations/access-gate.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import {
+  IoInsideDatabaseTransaction,
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../src/db/transaction-io-guard.ts';
+import {
+  bindAccessGate,
+  bindLiveAccessGate,
+  bindLiveActionAccessGate,
+  joinAccessEnforcementPorts,
+} from '../../src/operations/access-gate.ts';
 import type { AccessEnforcementPorts } from '../../src/operations/access-gate.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabase } from '../support/database.ts';
@@ -104,6 +121,153 @@ const scripted =
 
 const opensOwnTransaction = (statement: string): boolean =>
   /(?:^|\s)(?:begin|savepoint|set transaction)(?:\s|$)/iu.test(statement);
+
+const nativeActionBinding = () =>
+  Effect.gen(function* nativeActionBindingFixture() {
+    const grant = cell({ capability: CAPABILITY, deadline: at('2026-11-03T13:00:00Z') });
+    const request = makeAuthority({ cells: [grant] });
+    let joined = makeAuthority({ cells: [grant] });
+    let revision = 7;
+    let remoteCalls = 0;
+    const statements: string[] = [];
+    const executor = yield* makeTestDatabase((statement) => {
+      statements.push(statement);
+      if (statement.includes(SCOPE_INSTALL)) {
+        return Effect.succeed([
+          { legal_entity_id: scope.legalEntityId ?? '', role: 'ontos_runtime', tenant_id: scope.tenantId },
+        ]);
+      }
+      if (statement.includes('lock_access_scope_fence')) {
+        return Effect.succeed([{ state: 'Ready' }]);
+      }
+      if (statement.includes('"access_scope_fences"')) {
+        return Effect.succeed([{ revision, scope_id: decisionEntry.scopeId, state: 'Ready' }]);
+      }
+      if (statement.includes('"access_scopes"')) {
+        return Effect.succeed([{ scope_id: decisionEntry.scopeId }]);
+      }
+      return Effect.succeed([]);
+    });
+    const engine = makeCheck({ authority: { cells: [grant] } });
+    const check = {
+      checkBulk: (items: Parameters<typeof engine.port.checkBulk>[0]) =>
+        Effect.gen(function* guardedEngineCheck() {
+          yield* refuseInsideDatabaseTransaction('spicedb', 'CheckBulkPermissions');
+          remoteCalls += 1;
+          return yield* engine.port.checkBulk(items);
+        }),
+    };
+    const intent: AccessIntentSource = {
+      authorityFor: () => request.port,
+      joined: () => ({ authorityFor: () => joined.port }),
+    };
+    const decisionLog = { record: () => Effect.void };
+    const candidates = { listCandidateIds: () => Effect.succeed([]) };
+    const principalKinds = { readKind: () => Effect.succeed(Option.some('human' as const)) };
+    const gate = makeAccessDecisionService({
+      authorityFor: intent.authorityFor,
+      check,
+      decisionLog,
+      legalEntities: candidates,
+      principalKinds,
+    });
+    const context = Context.make(AccessDecisionGate, gate).pipe(
+      Context.add(AccessIntent, intent),
+      Context.add(DecisionCheck, check),
+      Context.add(AccessDecisionLog, decisionLog),
+      Context.add(LegalEntityCandidates, candidates),
+      Context.add(AccessPrincipalKindSource, principalKinds),
+      Context.add(CoreDatabase, { executor }),
+      Context.add(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
+    return {
+      actionGate: yield* bindLiveActionAccessGate.pipe(Effect.provideContext(context)),
+      advanceRevision: () => {
+        revision += 2;
+      },
+      executor,
+      expireAt: at('2026-11-03T13:00:00Z'),
+      readGate: yield* bindLiveAccessGate.pipe(Effect.provideContext(context)),
+      remoteCalls: () => remoteCalls,
+      request,
+      revoke: () => {
+        joined = makeAuthority({ cells: [] });
+      },
+      statements,
+    };
+  });
+
+it.effect('the live Action binding re-plans under the SQL fence without remote I/O or another connection', () =>
+  Effect.gen(function* preparedActionBoundary() {
+    const fixture = yield* nativeActionBinding();
+    // Negative control: the Read binding reproduces the Core Media fixture's original owner-phase failure.
+    const original = yield* fixture.executor
+      .transaction((transaction) =>
+        fixture.readGate.decide(gateInput, transaction).pipe(insideDatabaseTransaction(CAPABILITY)),
+      )
+      .pipe(Effect.exit);
+    if (!Exit.isFailure(original)) {
+      expect.unreachable('The Read binding must reproduce the forbidden remote check');
+    }
+    const defect = Cause.squash(original.cause);
+    expect(defect).toBeInstanceOf(IoInsideDatabaseTransaction);
+    expect(defect).toMatchObject({ io: 'spicedb', operationKey: CAPABILITY, target: 'CheckBulkPermissions' });
+    const { prepare } = fixture.actionGate;
+    if (prepare === undefined) {
+      return yield* Effect.die('The production Action binding must prepare persisted authority');
+    }
+    const prepared = yield* prepare(gateInput);
+    expect(prepared.decision.outcome).toBe('ALLOWED');
+    const calls = fixture.remoteCalls();
+    const requestReads = fixture.request.calls.readCells;
+    yield* fixture.executor.transaction((transaction) =>
+      Effect.gen(function* ownerRecheck() {
+        const before = fixture.statements.length;
+        const decision = yield* prepared.recheck(now, transaction);
+        expect(decision.outcome).toBe('ALLOWED');
+        const statements = fixture.statements.slice(before);
+        expect(statements.some((statement) => statement.includes('lock_access_scope_fence'))).toBe(true);
+        expect(statements.some(opensOwnTransaction)).toBe(false);
+      }).pipe(insideDatabaseTransaction(CAPABILITY)),
+    );
+    expect(fixture.remoteCalls()).toBe(calls);
+    expect(fixture.request.calls.readCells).toBe(requestReads);
+    return yield* Effect.void;
+  }),
+);
+
+for (const change of ['revision', 'revocation', 'expiry'] as const) {
+  it.effect(`prepared Action authority cannot outlive ${change}`, () =>
+    Effect.gen(function* preparedActionRefusal() {
+      const fixture = yield* nativeActionBinding();
+      const { prepare } = fixture.actionGate;
+      if (prepare === undefined) {
+        return yield* Effect.die('The production Action binding must prepare persisted authority');
+      }
+      const prepared = yield* prepare(gateInput);
+      expect(prepared.decision.outcome).toBe('ALLOWED');
+      const calls = fixture.remoteCalls();
+      if (change === 'revision') {
+        fixture.advanceRevision();
+      }
+      if (change === 'revocation') {
+        fixture.revoke();
+      }
+      const outcome = yield* fixture.executor.transaction((transaction) =>
+        prepared
+          .recheck(change === 'expiry' ? fixture.expireAt : now, transaction)
+          .pipe(insideDatabaseTransaction(CAPABILITY), Effect.result),
+      );
+      if (change === 'revision') {
+        expect(outcome).toMatchObject({ failure: { _tag: 'AccessDecisionUnavailable' } });
+      } else {
+        expect(outcome).toMatchObject({ success: { outcome: 'DENIED' } });
+      }
+      expect(fixture.remoteCalls()).toBe(calls);
+      return yield* Effect.void;
+    }),
+  );
+}
 
 it.effect('a bound decision reads the request authority until a transaction is named, then the joined one', () =>
   Effect.gen(function* explicitJoin() {

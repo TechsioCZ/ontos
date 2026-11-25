@@ -39,9 +39,9 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
   snapshot: ActiveApplicationCompositionSnapshot,
 ) {
   const admin = yield* PgClient.make({ url: Redacted.make(ownedDatabase.connections.admin.connectionString) });
-  const callingOwners = ['catalog', 'commerce-customer-context'] as const;
+  const callingOwners = ['catalog', 'commerce-customer-context', 'pricing'] as const;
   const shell = yield* makeApiKeyGatewayNativeFixture({
-    additionalRelaySources: [{ sourceAppId: groupAudience }, { sourceAppId: 'pricing' }],
+    additionalRelaySources: callingOwners.map((sourceAppId) => ({ sourceAppId })),
     ownedDatabase,
     productionGate: true,
     relaySource: { sourceAppId: 'symmy-integration' },
@@ -82,19 +82,15 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
   const ingressKey = yield* shell.issueFixtureProviderKey(integration);
   yield* bindCustomerFixtureProviderKey(admin, integration, ingressKey.providerKeyId);
   yield* ingressKey.acknowledgeBinding;
-  const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey(symmyModule);
-  yield* bindCustomerFixtureProviderKey(admin, symmyModule, symmyKey.providerKeyId);
-  yield* symmyKey.acknowledgeBinding;
-  const moduleCredentials = yield* Effect.all(
-    shell.additionalRelaySourceProviderUsers.map(
-      Effect.fn('InternalC14Sync.moduleCredential')(function* moduleCredential(provider) {
-        const issuer = yield* seedCustomerFixtureProviderPrincipal(admin, tenantId, 'service', provider.providerUserId);
-        const key = yield* shell.issueFixtureModuleProviderKey({ ...issuer, sourceAppId: provider.sourceAppId });
-        yield* bindCustomerFixtureProviderKey(admin, issuer, key.providerKeyId);
-        yield* key.acknowledgeBinding;
-        return [provider.sourceAppId, Redacted.value(key.secret)] as const;
-      }),
-    ),
+  const symmyKey = yield* shell.provisionRelaySource();
+  const moduleCredentials = yield* Effect.forEach(
+    callingOwners,
+    Effect.fn('InternalC14Sync.moduleCredential')(function* moduleCredential(
+      sourceAppId: (typeof callingOwners)[number],
+    ) {
+      const key = yield* shell.provisionModuleSource(sourceAppId);
+      return [sourceAppId, Redacted.value(key.secret)] as const;
+    }),
     { concurrency: 1 },
   );
   const setupKey = yield* shell.issueFixtureSetupActorKey();
@@ -121,7 +117,10 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     ingressKey,
     integration,
     legalEntityId,
-    moduleCredentials: new Map<string, string>(moduleCredentials),
+    moduleCredentials: new Map<string, string>([
+      ['symmy-integration', Redacted.value(symmyKey.secret)],
+      ...moduleCredentials,
+    ]),
     shell,
     systemPrincipalId,
     tenantId,

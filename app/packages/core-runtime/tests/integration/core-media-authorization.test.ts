@@ -92,7 +92,7 @@ import { recordAssetIntegrityFailureAction } from '../../src/modules/actions/rec
 import { renameDisplayFilenameAction } from '../../src/modules/actions/rename-display-filename.action.ts';
 import { uploadAssetAction } from '../../src/modules/actions/upload-asset.action.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { bindLiveAccessGate } from '../../src/operations/access-gate.ts';
+import { bindLiveAccessGate, bindLiveActionAccessGate } from '../../src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { loadSpiceDbConfig, parseSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
@@ -311,6 +311,8 @@ const buildRuntime = (input: {
     const enforcement = AccessDecisionLive.pipe(Layer.provideMerge(ports), Layer.provide(base));
     const context = yield* Layer.build(Layer.mergeAll(base, enforcement));
     const boundGate = yield* bindLiveAccessGate.pipe(Effect.provideContext(context));
+    // Actions prepare engine evidence before SQL and re-plan joined intent under the persisted writer fence.
+    const actionGate = yield* bindLiveActionAccessGate.pipe(Effect.provideContext(context));
     // Like the Shell host: no owner registration, so every Core Media operation must be a genuine Core one to run.
     const actions = makeActionRuntime(
       { executor: input.executor },
@@ -318,7 +320,7 @@ const buildRuntime = (input: {
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
       {
-        accessDecision: boundGate,
+        accessDecision: actionGate,
         databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         lockCompositionAuthority: () => Effect.succeed([]),
         moduleEntrypointGateway: openModuleEntrypointGateway,

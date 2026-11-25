@@ -199,6 +199,7 @@ it.effect('relays the requester to the Shell host for a Core operation it hosts,
       requirement: {
         callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         compositionRevision: revision,
+        consumerAppId: 'catalog',
         provider: coreOperations.assetCurrent.provider,
         providerAppId: SHELL_HOST_APP_ID,
         requirementKey: 'commerce.catalog.requirement.core-media-current',
@@ -230,7 +231,11 @@ it.effect('relays the requester to the Shell host for a Core operation it hosts,
     expect(isAnswered(answer)).toBe(true);
     // The audience is the Shell deployment, the subject is the requester's own verified scope, never a service's.
     expect(delegations).toHaveLength(1);
-    expect(delegations[0]).toMatchObject({ audience: SHELL_HOST_APP_ID, legalEntityScope: 'subject' });
+    expect(delegations[0]).toMatchObject({
+      audience: SHELL_HOST_APP_ID,
+      callingAppId: 'catalog',
+      legalEntityScope: 'subject',
+    });
     expect(assertedScopeOf(delegations[0])).toBe(principal);
     expect(sent[0]).toMatchObject({
       method: 'POST',

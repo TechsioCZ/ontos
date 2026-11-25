@@ -9,6 +9,7 @@ import {
 } from '@app/core-runtime';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { installOperationalScope, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
 import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/source-provisioning';
@@ -40,6 +41,8 @@ import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-executio
 import { SymmyJobStoreError, symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 import { makeTestOperationOwner } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { buildSymmyStockPlan, stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(

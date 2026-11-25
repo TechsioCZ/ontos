@@ -145,25 +145,27 @@ it.effect('the production repository executes both exact lookup predicates and k
         return Effect.succeed([]);
       }
       statements.push({ parameters, sql });
-      return Effect.succeed([
-        {
-          actionInvocationId: invocationId,
-          actionKey,
-          completedAt: null,
-          requestHash: 'a'.repeat(64),
-          status: 'received',
-        },
-      ]);
+      // Native values mode returns the SELECT columns in order, not an object with sorted property names.
+      return Effect.succeed([[invocationId, null, 'a'.repeat(64), 'received', actionKey]]);
     });
     const crypto = Context.get(yield* Layer.build(NodeCrypto.layer), Crypto.Crypto);
     const repository = makeActionRepository(crypto);
     expect(
-      (yield* repository.resolveInvocation(database, { expectedActionKey: actionKey, invocationId, principal }))
-        .actionKey,
-    ).toBe(actionKey);
-    expect((yield* repository.resolveInvocation(database, { actionKey, idempotencyKey, principal })).actionKey).toBe(
+      yield* repository.resolveInvocation(database, { expectedActionKey: actionKey, invocationId, principal }),
+    ).toEqual({
+      actionInvocationId: invocationId,
       actionKey,
-    );
+      completedAt: null,
+      requestHash: 'a'.repeat(64),
+      status: 'received',
+    });
+    expect(yield* repository.resolveInvocation(database, { actionKey, idempotencyKey, principal })).toEqual({
+      actionInvocationId: invocationId,
+      actionKey,
+      completedAt: null,
+      requestHash: 'a'.repeat(64),
+      status: 'received',
+    });
     expect(statements).toHaveLength(2);
     const [byInvocation, byKey] = statements;
     expect(byInvocation?.sql).toContain('"action_invocation_id" =');

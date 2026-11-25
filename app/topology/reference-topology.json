@@ -12479,6 +12479,11 @@
   ],
   "sharedPackages": [
     {
+      "id": "storefront-runtime",
+      "package": "@ontos/storefront-runtime",
+      "path": "packages/storefront-runtime"
+    },
+    {
       "id": "admin-ui",
       "package": "@app/admin-ui",
       "path": "packages/admin-ui"
