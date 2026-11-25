@@ -12,7 +12,7 @@ import {
   CurrentSupportedCurrenciesPolicyConflictProblemSchema,
   CurrentSupportedCurrenciesPolicyProblemSchema,
   CurrentSupportedCurrenciesUnavailableProblemSchema,
-} from '../shared/apis/current-supported-currencies.ts';
+} from '@app/pricing-contracts/current-supported-currencies';
 import { currentSupportedCurrenciesRead } from '../src/api/current-supported-currencies.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

@@ -2,7 +2,7 @@ import { paymentTermCatalogRegistration } from '../../vertical.registration.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { CurrentPaymentTermsRequestSchema } from '../../shared/apis/current-payment-terms.ts';
+import { CurrentPaymentTermsRequestSchema } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import {
   CreatePaymentTermPayloadSchema,
   createPaymentTermAction,

@@ -81,6 +81,7 @@
     "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
+    "@app/customer-market-retirement-contracts": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@cloudflare/workers-types": "5.20260923.1",
     "@effect/platform-node": "4.0.7",

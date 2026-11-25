@@ -5,7 +5,11 @@ import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microverti
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 
-import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  isNamedByPackageRead,
+  packageReadProblems,
+} from './generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
@@ -231,14 +235,21 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const sharedApiContent = (yield* exists(sharedApi)) ? yield* readText(sharedApi) : '';
       assertVerticalBaseline(verticalPath, sharedApi);
       if (
-        /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
-        !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
+        ((/\bHttpApiEndpoint\./u.test(sharedApiContent) &&
+          !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent)) ||
+          isNamedByPackageRead(sourceByFile, verticalPath, topologyVertical(verticalPath)?.id)) &&
         !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi)
       ) {
         fail(
           `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
         );
       }
+    }
+    const topologyOwners = new Map(
+      (topology.verticals ?? []).map((vertical) => [vertical.path ?? `verticals/${vertical.id}`, vertical.id] as const),
+    );
+    for (const problem of packageReadProblems(sourceByFile, topologyOwners)) {
+      fail(problem);
     }
   });
   yield* inspectApiSurfaces;

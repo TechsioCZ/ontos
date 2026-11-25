@@ -97,7 +97,7 @@ import type {
   RetailPrincipalResolutionRequest,
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
-import type { MarketSubjectRestrictionsCurrentRequest } from '../../shared/apis/market-subject-restrictions-current.ts';
+import type { MarketSubjectRestrictionsCurrentRequest } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import {
   CommerceCustomerProfileSubjectSchema,
   ReconciliationOwnerSchema,
@@ -1175,12 +1175,12 @@ export type CounterpartyRoleEligibility =
       readonly managedLegalEntityId: string;
       readonly observedAt?: string;
       readonly organizationProof?: typeof CurrentOrganizationCustomerRecordFactsSchema.Type;
-      readonly sourceSyncPermit?: SourceSyncProcessingPermit;
       readonly outcome: 'ELIGIBLE';
       readonly partyResourceId?: string;
       readonly partyResourceRevision?: string;
       readonly roleResourceId: string;
       readonly roleResourceRevision: string;
+      readonly sourceSyncPermit?: SourceSyncProcessingPermit;
       readonly validUntil?: string | null;
     }
   | { readonly outcome: 'INELIGIBLE' }

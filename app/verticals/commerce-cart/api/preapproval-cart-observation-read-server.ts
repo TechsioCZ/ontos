@@ -12,7 +12,7 @@ import {
   PreapprovalCartObservationPolicyConflictProblemSchema,
   PreapprovalCartObservationPolicyProblemSchema,
   PreapprovalCartObservationUnavailableProblemSchema,
-} from '../shared/apis/preapproval-cart-observation.ts';
+} from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { preapprovalCartObservationRead } from '../src/api/preapproval-cart-observation.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

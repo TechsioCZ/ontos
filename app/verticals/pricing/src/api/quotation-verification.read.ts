@@ -18,8 +18,8 @@ import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import {
   QuotationVerificationRequestSchema,
   QuotationVerificationResponseSchema,
-} from '../../shared/apis/quotation-verification.ts';
-import type { QuotationVerificationRequest } from '../../shared/apis/quotation-verification.ts';
+} from '@app/pricing-contracts/quotation-verification';
+import type { QuotationVerificationRequest } from '@app/pricing-contracts/quotation-verification';
 import {
   finishPreapprovalQuotationVerification,
   validatePreapprovalQuotationReader,

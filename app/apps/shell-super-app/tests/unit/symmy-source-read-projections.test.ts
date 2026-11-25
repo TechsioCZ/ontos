@@ -20,7 +20,7 @@ import {
   OrganizationBusinessNameExportUnavailableProblemSchema,
 } from '@app/party-registry/apis/organization-business-name-export';
 import type { OrganizationBusinessNameExportResponse } from '@app/party-registry/apis/organization-business-name-export';
-import { PriceGroupDefinitionResponseSchema } from '@app/price-group-catalog/api/client';
+import { PriceGroupDefinitionResponseSchema } from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupSourceAssociationsResponseSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { ConfigProvider, Effect, Match, Redacted, Schema } from 'effect';

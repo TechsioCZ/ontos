@@ -1,15 +1,5 @@
-import path from 'node:path';
-import { Effect } from 'effect';
-import { expect, it } from 'effect-rstest';
-import {
-  hasCompleteGeneratedModuleApiSeam,
-  hasValidGovernedHttpCompositionRoot,
-  hasOwnerLocalReadRequirementsStaged,
-  hasPublishedGeneratedContractShim,
-} from '../generated-governed-http-boundary.mts';
 import {
   FAKE_HTTP_SOURCE_IMPORT,
-  MODULE_API_HEADER,
   NATIVE_HTTP_SOURCE_IMPORT,
   NON_PROTECTED_READ_AUTHORIZATION,
   PRICING_HANDLER_PATH,
@@ -18,7 +8,16 @@ import {
   PROTECTED_READ_AUTHORIZATION,
   carrierBlock,
   readPricingSourceTree,
+  readWorkspaceManifests,
 } from './module-entrypoint-boundaries.fixture.mts';
+import path from 'node:path';
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  hasOwnerLocalReadRequirementsStaged,
+  hasValidGovernedHttpCompositionRoot,
+} from '../generated-governed-http-boundary.mts';
 
 it.live('counts the actual published Pricing read shim in exact owner inventory and rejects nearby escapes', () =>
   Effect.gen(function* actualPublishedPricingInventory() {
@@ -26,16 +25,15 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     const trees = yield* Effect.all(
       ['verticals/pricing', 'packages/pricing-contracts'].map((folder) => readPricingSourceTree(root, folder)),
     );
-    const sources = new Map(trees.flat());
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...trees.flat()]);
     const shared = PRICING_SHARED_API_PATH;
-    const shimFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
+    const ownerContractFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
     const manifestFile = 'verticals/pricing/vertical.manifest.ts';
     const registrationFile = 'verticals/pricing/vertical.registration.ts';
     const packageFile = 'packages/pricing-contracts/package.json';
     const targetFile = 'packages/pricing-contracts/src/apis/quotation-verification.ts';
-    const shim = sources.get(shimFile) ?? '';
-    expect(shim.startsWith(MODULE_API_HEADER)).toBe(false);
-    expect(hasPublishedGeneratedContractShim(sources, shimFile, shim)).toBe(true);
+    expect(sources.has(ownerContractFile)).toBe(false);
     const rootSource = sources.get(shared) ?? '';
     const handler = sources.get(PRICING_HANDLER_PATH) ?? '';
     const headerAnnotation = ".annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })";
@@ -208,8 +206,13 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       expect(acceptsFactory(new Map([...sources, [file, invalid]])), invalid).toBe(false);
     }
     const invalidSources: readonly (readonly [string, string])[] = [
-      [shimFile, `${shim}\nexport const runtime = true;`],
-      [shimFile, shim.replace('@app/pricing-contracts/quotation-verification', '@app/pricing/src/private')],
+      // The forwarder the owner kept before the read was published from its package alone, and its escapes.
+      [ownerContractFile, "export * from '@app/pricing-contracts/quotation-verification';"],
+      [
+        ownerContractFile,
+        "export * from '@app/pricing-contracts/quotation-verification';\nexport const runtime = true;",
+      ],
+      [ownerContractFile, "export * from '@app/pricing/src/private';"],
       [
         manifestFile,
         (sources.get(manifestFile) ?? '').replace("'quotation-verification': QuotationVerificationApi,", ''),
@@ -217,7 +220,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       [
         registrationFile,
         (sources.get(registrationFile) ?? '').replace(
-          "'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),",
+          "'quotation-verification': () => import('@app/pricing-contracts/quotation-verification/client'),",
           '',
         ),
       ],
@@ -249,7 +252,8 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
 it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const sources = new Map(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH));
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH))]);
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';

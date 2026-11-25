@@ -12,7 +12,7 @@ import {
   MarketAffectedUseAssessmentPolicyConflictProblemSchema,
   MarketAffectedUseAssessmentPolicyProblemSchema,
   MarketAffectedUseAssessmentUnavailableProblemSchema,
-} from '../shared/apis/market-affected-use-assessment.ts';
+} from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import { marketAffectedUseAssessmentRead } from '../src/api/market-affected-use-assessment.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

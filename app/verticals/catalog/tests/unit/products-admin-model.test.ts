@@ -1,4 +1,4 @@
-import { CatalogPagePricesResponseSchema } from '@app/pricing/apis/catalog-page-prices';
+import { CatalogPagePricesResponseSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

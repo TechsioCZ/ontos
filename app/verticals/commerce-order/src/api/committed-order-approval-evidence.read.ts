@@ -15,7 +15,7 @@ import { DateTime, Effect } from 'effect';
 import {
   CommittedOrderApprovalEvidenceRequestSchema,
   CommittedOrderApprovalEvidenceResponseSchema,
-} from '../../shared/apis/committed-order-approval-evidence.ts';
+} from '@app/commerce-order-contracts/committed-order-approval-evidence';
 
 const moduleKey = 'commerce.order' as const;
 

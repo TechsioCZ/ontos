@@ -1,7 +1,7 @@
+import { Cause, Effect, Exit } from 'effect';
 import { mkdir, readFile, realpath, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
-import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   APP_PACKAGE_LINK_DIRECTORY,
@@ -12,6 +12,7 @@ import {
   CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH,
   FOREIGN_PRIVATE_DIAGNOSTIC,
   INVENTORY_DEPLOYMENT_ID,
+  INVENTORY_PACKAGE_SPECIFIER,
   INVENTORY_VERTICAL_PATH,
   PARTY_API_CLIENT_SPECIFIER,
   PARTY_DEPLOYMENT_ID,
@@ -26,7 +27,6 @@ import {
   WORKSPACE_DEPENDENCY_VERSION,
   WORKSPACE_MANIFEST_PATH,
   checkModuleEntrypointBoundaries,
-  INVENTORY_PACKAGE_SPECIFIER,
   makeActualCatalogSelectionFixture,
   makeActualCustomerContextAggregateFixture,
   makeActualMarketClientFixture,
@@ -38,6 +38,12 @@ import {
   readPricingSourceTree,
   write,
 } from './module-entrypoint-boundaries.fixture.mts';
+
+const shellManifest = (dependencies: readonly string[]) =>
+  JSON.stringify({
+    dependencies: Object.fromEntries(dependencies.map((name) => [name, WORKSPACE_DEPENDENCY_VERSION])),
+    name: SHELL_PACKAGE_SPECIFIER,
+  });
 
 for (const [name, source, allowed] of [
   [
@@ -61,7 +67,7 @@ for (const [name, source, allowed] of [
       const root = yield* makeActualPartyClientFixture();
       const clientFile = `${PARTY_VERTICAL_PATH}/src/api/party-registry-client.ts`;
       const aggregate = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${aggregate}\nexport const privatePartyClientCallable = () => globalThis;\n`);
+      yield* write(root, clientFile, `${aggregate}\nexport const privatePartyClientCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/party-client-consumer.ts';
       yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
@@ -84,7 +90,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPartyClientFixture();
       const apiFile = `${PARTY_VERTICAL_PATH}/shared/api.ts`;
       const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
-      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => globalThis;\n`);
+      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/party-api-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/party-registry/api';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
@@ -297,7 +303,7 @@ for (const [name, source, allowed] of [
       const root = yield* makeActualMarketClientFixture();
       const file = 'verticals/commerce-market-catalog/src/api/commerce-market-catalog-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-      yield* write(root, file, `${original}\nexport const privateMarketClientCallable = () => globalThis;\n`);
+      yield* write(root, file, `${original}\nexport const privateMarketClientCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/market-client-consumer.ts';
       yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
@@ -320,7 +326,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPrivacyClientFixture();
       const clientFile = 'verticals/privacy/src/api/privacy-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/privacy-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/privacy/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
@@ -334,7 +340,7 @@ for (const [name, imported, allowed] of [
   );
 }
 
-it.live('binds actual published-package Read clients back to the enrolled owner aggregate', () =>
+it.live('binds actual package Read clients to their package and the owner aggregate to owner reads only', () =>
   Effect.gen(function* actualPublishedPackageClient() {
     const root = yield* makeFixture();
     const workspace = path.resolve(import.meta.dirname, '../..');
@@ -359,14 +365,8 @@ it.live('binds actual published-package Read clients back to the enrolled owner 
         yield* write(root, file, source);
       }
     }
-    yield* write(
-      root,
-      SHELL_PACKAGE_JSON_PATH,
-      JSON.stringify({
-        dependencies: { [packageName]: WORKSPACE_DEPENDENCY_VERSION },
-        name: SHELL_PACKAGE_SPECIFIER,
-      }),
-    );
+    const contractPackageName = '@app/price-group-catalog-contracts';
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName, contractPackageName]));
     yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
     for (const [name, folder] of [
       ['price-group-catalog', owner],
@@ -379,21 +379,42 @@ it.live('binds actual published-package Read clients back to the enrolled owner 
     }
     const aggregateFile = `${owner}/src/api/price-group-catalog-client.ts`;
     const aggregate = yield* Effect.promise(() => readFile(path.join(root, aggregateFile), 'utf-8'));
-    yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => globalThis;`);
+    yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => 'unclaimed';`);
     const consumer = 'apps/shell-super-app/src/published-package-client-consumer.ts';
-    for (const [binding, allowed] of [
-      ['executePriceGroupDefinitionWithAuthorization, executePriceGroupSourceAssociationsWithAuthorization', true],
-      ['unclaimedClientCallable', false],
+    const packageClient = `import { executePriceGroupDefinitionWithAuthorization } from '${contractPackageName}/price-group-definition/client';\n`;
+    for (const [source, allowed] of [
+      [`import { executePriceGroupSourceAssociationsWithAuthorization } from '${packageName}/api/client';\n`, true],
+      [packageClient, true],
+      // The owner aggregate holds owner reads only: a package read is not reachable through it.
+      [`import { executePriceGroupDefinitionWithAuthorization } from '${packageName}/api/client';\n`, false],
+      [`import { unclaimedClientCallable } from '${packageName}/api/client';\n`, false],
     ] as const) {
-      yield* write(root, consumer, `import { ${binding} } from '${packageName}/api/client';\n`);
+      yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : source).toBe(allowed);
     }
+    yield* write(root, consumer, packageClient);
+    // A production import of a package read needs its contract package declared, as an import through the owner does.
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName]));
+    const undeclared = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(undeclared)).toBe(true);
+    if (Exit.isFailure(undeclared)) {
+      expect(Cause.pretty(undeclared.cause)).toContain('is a package read: declare its contract package');
+    }
+    // So does one a CommonJS source makes.
+    const commonJsConsumer = 'apps/shell-super-app/src/published-package-client-consumer.cjs';
+    yield* write(root, consumer, '');
     yield* write(
       root,
-      consumer,
-      `import { executePriceGroupDefinitionWithAuthorization } from '${packageName}/api/client';\n`,
+      commonJsConsumer,
+      `module.exports = () => import('${contractPackageName}/price-group-definition/client');\n`,
     );
+    const undeclaredCommonJs = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(undeclaredCommonJs) ? Cause.pretty(undeclaredCommonJs.cause) : '').toContain(
+      `${commonJsConsumer}: ${contractPackageName}/price-group-definition/client is a package read`,
+    );
+    yield* write(root, consumer, packageClient);
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName, contractPackageName]));
     const packageFile = `${contractPackage}/package.json`;
     const metadata = yield* Effect.promise(() => readFile(path.join(root, packageFile), 'utf-8'));
     yield* write(root, packageFile, metadata.replace('pricing.price-group-catalog', 'foreign.owner'));
@@ -421,7 +442,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualTaxClientFixture();
       const clientFile = 'verticals/tax/src/api/tax-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/tax-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/tax/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

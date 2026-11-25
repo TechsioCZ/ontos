@@ -1,4 +1,4 @@
-import type { CatalogPagePrice, CatalogPagePricesResponse } from '@app/pricing/apis/catalog-page-prices';
+import type { CatalogPagePrice, CatalogPagePricesResponse } from '@app/pricing-contracts/catalog-page-prices';
 import { Match, Option } from 'effect';
 
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';

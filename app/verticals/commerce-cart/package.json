@@ -7,9 +7,7 @@
     "./api/client": "./shared/commerce-cart-client.ts",
     "./permissions/commerce.cart.read.open_selection_population": "./shared/permissions/commerce-cart-read-open-selection-population.ts",
     "./resources/cart": "./shared/resources/cart.ts",
-    "./resources/final-cart-candidate": "./shared/resources/final-cart-candidate.ts",
-    "./api/preapproval-cart-observation": "./shared/apis/preapproval-cart-observation.ts",
-    "./api/preapproval-cart-observation/client": "./src/api/preapproval-cart-observation-client.ts"
+    "./resources/final-cart-candidate": "./shared/resources/final-cart-candidate.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts commerce-cart && ultramodern dev",

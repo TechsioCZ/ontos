@@ -24,10 +24,10 @@ import {
   person,
   tenant,
 } from '../../../../packages/core-runtime/tests/unit/access-decision-support.ts';
-import { CatalogPagePricesRequestSchema } from '../../shared/apis/catalog-page-prices.ts';
+import { CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { makeCommerceResolutionPort } from '../../src/integrations/commerce-price-group-resolution.ts';
 import { makePriceGroupCompatibilityPort } from '../../src/integrations/price-group-compatibility.ts';
-import type { CatalogPagePrice, CatalogPagePriceItem } from '../../shared/apis/catalog-page-prices.ts';
+import type { CatalogPagePrice, CatalogPagePriceItem } from '@app/pricing-contracts/catalog-page-prices';
 import { catalogPagePricesRead } from '../../src/api/catalog-page-prices.read.ts';
 import {
   customerCatalogPageVariants,

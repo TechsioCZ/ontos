@@ -1,21 +1,19 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { Effect } from 'effect';
-import { expect, it } from 'effect-rstest';
-import {
-  hasCompleteGeneratedModuleApiSeam,
-  hasPublishedGeneratedContractShim,
-} from '../generated-governed-http-boundary.mts';
-import { hasGeneratedModuleApiReadContract } from '../generated-module-api-boundary.mts';
 import {
   CUSTOMER_CONTEXT_DEPLOYMENT_ID,
   CUSTOMER_CONTEXT_VERTICAL_PATH,
   MODULE_API_HEADER,
   SHARED_CONTRACTS_PACKAGE_JSON_PATH,
   readPricingSourceTree,
+  readWorkspaceManifests,
 } from './module-entrypoint-boundaries.fixture.mts';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { hasCompleteGeneratedModuleApiSeam } from '../generated-governed-http-boundary.mts';
+import { hasGeneratedModuleApiReadContract } from '../generated-module-api-boundary.mts';
 
-it.live('accepts actual CCC named recovery reexports and rejects provenance or executable escapes', () =>
+it.live('publishes the CCC recovery read from its package and rejects every owner forwarder that once named it', () =>
   Effect.gen(function* actualNamedCustomerContextRecovery() {
     const root = path.resolve(import.meta.dirname, '../..');
     const owner = CUSTOMER_CONTEXT_VERTICAL_PATH;
@@ -26,12 +24,10 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           `${owner}/api`,
           `${owner}/shared`,
           `${owner}/src`,
-          'packages/customer-market-retirement-contracts',
-          'packages/customer-payment-term-contracts',
-          // customer-price-group-resolution calls the Catalog's operation reference from this package.
-          'packages/price-group-catalog-contracts',
-          // Both payment-terms resolutions call the Payment Term Catalog's operation reference from this package.
-          'packages/payment-term-catalog-contracts',
+          'packages',
+          'verticals/commerce-market-catalog',
+          'verticals/party-registry',
+          'verticals/privacy',
         ].map((folder) => readPricingSourceTree(root, folder)),
       ),
       Effect.all(
@@ -50,20 +46,18 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         ),
       ),
     ]);
-    const sources = new Map([...trees.flat(), ...metadata]);
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...trees.flat(), ...metadata]);
     const shared = `${owner}/shared/api.ts`;
     const contractFile = `${owner}/shared/apis/market-retirement-reservation-recovery.ts`;
     const clientFile = `${owner}/src/api/market-retirement-reservation-recovery-client.ts`;
     const contractSpecifier = '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
-    const contract = sources.get(contractFile) ?? '';
-    const client = sources.get(clientFile) ?? '';
-    for (const shim of [contract, client]) {
-      expect(shim).toContain('export {');
-      expect(shim).toContain('export type {');
-    }
-    expect(hasPublishedGeneratedContractShim(sources, contractFile, contract)).toBe(true);
-    const inlineType = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\nexport { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
-    expect(hasPublishedGeneratedContractShim(sources, contractFile, inlineType)).toBe(true);
+    // The named forwarders the owner kept before the read was published from its package alone.
+    const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
+    const contract = `${marker}export { MarketRetirementReservationRecoveryApi, MarketRetirementReservationRecoveryRequestSchema } from '${contractSpecifier}';\nexport type { MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
+    const client = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}/client\nexport { executeMarketRetirementReservationRecovery } from '${contractSpecifier}/client';\n`;
+    expect(sources.has(contractFile)).toBe(false);
+    expect(sources.has(clientFile)).toBe(false);
     const diagnostics: string[] = [];
     expect(hasCompleteGeneratedModuleApiSeam(sources, shared, deployment, diagnostics), diagnostics.join('\n')).toBe(
       true,
@@ -135,8 +129,10 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         CUSTOMER_CONTEXT_DEPLOYMENT_ID,
       ),
     ).toBe(false);
-    const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
     for (const invalid of [
+      contract,
+      `${MODULE_API_HEADER}export * from '${contractSpecifier}';\n`,
+      `${marker}export { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`,
       contract.replaceAll(`from '${contractSpecifier}'`, "from '@app/wrong-contracts/recovery'"),
       contract.replaceAll(`from '${contractSpecifier}'`, "from '../../src/private.ts'"),
       `${contract}\nexport type { Other } from '@app/wrong-contracts/recovery';`,
@@ -150,17 +146,20 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
       `${marker}export { Injected } from \`${contractSpecifier}\`;`,
       contract.replace(`// @ontos-public-contract ${contractSpecifier}\n`, ''),
     ]) {
-      expect(invalid).not.toBe(contract);
-      expect(hasPublishedGeneratedContractShim(sources, contractFile, invalid)).toBe(false);
+      for (const file of [contractFile, clientFile]) {
+        expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [file, invalid]]), shared, deployment)).toBe(
+          false,
+        );
+      }
     }
-    // Full owner integration for both source paths; the shared classifier above covers each grammar escape.
-    for (const [file, invalid] of [
-      [contractFile, `${contract}\nexecutePrivateOperation();`],
-      [clientFile, client.replaceAll(`from '${contractSpecifier}/client'`, "from '@app/wrong-contracts/recovery'")],
+    for (const invalid of [
+      client,
+      `${MODULE_API_HEADER}export * from '${contractSpecifier}/client';\n`,
+      client.replaceAll(`from '${contractSpecifier}/client'`, "from '@app/wrong-contracts/recovery'"),
     ]) {
-      expect(invalid).not.toBe(sources.get(file));
-      const changed = new Map([...sources, [file, invalid]]);
-      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, deployment)).toBe(false);
+      expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [clientFile, invalid]]), shared, deployment)).toBe(
+        false,
+      );
     }
   }),
 );

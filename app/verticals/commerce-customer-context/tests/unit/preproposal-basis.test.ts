@@ -1,6 +1,6 @@
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { PreapprovalCartObservationResponseSchema } from '@app/commerce-cart/api/preapproval-cart-observation';
+import { PreapprovalCartObservationResponseSchema } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import {
   basisCurrentnessMatchesClaim,

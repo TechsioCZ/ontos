@@ -5,8 +5,8 @@ import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/qu
 import { executeOrderServiceApprovalEvidenceWithAuthorization } from '@app/commerce-customer-context/api/order-service-approval-evidence/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Config, Crypto, DateTime, Effect, Schema } from 'effect';
-import type { CartHeldSelection } from '../../shared/domain/cart-draft.ts';
-import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
+import type { CartHeldSelection } from '@app/commerce-cart-contracts/domain/cart-draft';
+import { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(

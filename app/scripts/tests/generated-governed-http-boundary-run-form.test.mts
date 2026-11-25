@@ -1,11 +1,19 @@
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { hasCompleteGeneratedModuleApiSeam, readSdkFormViolations } from '../generated-governed-http-boundary.mts';
-import { PRICING_SHARED_API_PATH, readPricingSourceTree } from './module-entrypoint-boundaries.fixture.mts';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  hasOwnerActionApprovalPublication,
+  inspectOwnerActionApprovalMount,
+  readSdkFormViolations,
+} from '../generated-governed-http-boundary.mts';
+import {
+  PRICING_SHARED_API_PATH,
+  readPricingSourceTree,
+  readWorkspaceManifests,
+} from './module-entrypoint-boundaries.fixture.mts';
 
 /* A synthetic owner: one read of `demo.module`, one provider contract package of `provider.module`. */
 
@@ -327,7 +335,7 @@ const seam = (candidate: ReadonlyMap<string, string>) => {
 
 describe('the read SDK form inside the generated module API seam', () => {
   const pricingRead = 'verticals/pricing/src/api/current-supported-currencies.read.ts';
-  const retirementPackage = 'packages/customer-market-retirement-contracts/package.json';
+  const retirementContracts = 'packages/customer-market-retirement-contracts';
   const requirementKey = 'commerce.pricing.requirement.quotation-verify-purchase-context';
   const loadHandler = '  { load: handleCurrentSupportedCurrencies },\n  currentSupportedCurrenciesPersistenceForScope,';
   const descriptorEnd = "    schemaVersion: '1',\n  },\n  { load: handleCurrentSupportedCurrencies },";
@@ -336,12 +344,16 @@ describe('the read SDK form inside the generated module API seam', () => {
     "import { marketSubjectRestrictionsCurrentOperation } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';",
   ].join('\n');
 
+  // The declared call's operation is read where its contract package declares it, so the package comes whole.
   const pricingSources = Effect.gen(function* loadPricingSources() {
     const root = path.resolve(import.meta.dirname, '../..');
     const trees = yield* Effect.all(
-      ['verticals/pricing', 'packages/pricing-contracts'].map((folder) => readPricingSourceTree(root, folder)),
+      ['verticals/pricing', 'packages/pricing-contracts', retirementContracts].map((folder) =>
+        readPricingSourceTree(root, folder),
+      ),
     );
-    return new Map([...trees.flat(), [retirementPackage, readFileSync(path.join(root, retirementPackage), 'utf-8')]]);
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    return new Map([...manifests, ...trees.flat()]);
   });
 
   const withRunForm = (
@@ -360,6 +372,70 @@ describe('the read SDK form inside the generated module API seam', () => {
         '  { run: handleCurrentSupportedCurrencies },\n  currentSupportedCurrenciesPersistenceForScope,',
       );
 
+  it.live('checks an approval-shaped unverified layer when the owner has no approval publication', () =>
+    Effect.gen(function* absentApprovalSeam() {
+      const sources = yield* pricingSources;
+      const owner = 'verticals/pricing';
+      const handlerFile = `${owner}/api/index.ts`;
+      const handler = sources.get(handlerFile) ?? '';
+      const approvalLayer = [
+        "  HttpApiBuilder.group(pricingApi, 'ownerActionApprovals', (handlers) =>",
+        '    handlers',
+        "      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))",
+        "      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),",
+        '  ).pipe(',
+        '    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),',
+        '    GovernedReadLayer.provide(governedActionRuntimeLive),',
+        '  ),\n',
+      ].join('\n');
+      expect(handler).toContain(approvalLayer);
+      const withoutApprovals = new Map(sources);
+      for (const file of [
+        PRICING_SHARED_API_PATH,
+        `${owner}/vertical.manifest.ts`,
+        `${owner}/vertical.registration.ts`,
+      ]) {
+        withoutApprovals.set(
+          file,
+          (sources.get(file) ?? '')
+            .split('\n')
+            .filter((line) => !line.includes('OwnerActionApprovalApi') && !line.includes("'owner-action-approvals'"))
+            .join('\n'),
+        );
+      }
+      const handlerImport = [
+        'import {',
+        '  OwnerActionApprovalSchemaErrorLive,',
+        '  makeOwnerActionApproveHandler,',
+        '  makeOwnerActionInspectHandler,',
+        "} from '@app/core-runtime/access/approvals/owner-http';\n",
+      ].join('\n');
+      expect(handler).toContain(handlerImport);
+      const absentHandler = handler.replace(handlerImport, '').replace(approvalLayer, '');
+      withoutApprovals.set(handlerFile, absentHandler);
+      const baseline = seam(withoutApprovals);
+      expect(baseline.valid, baseline.diagnostics).toBe(true);
+
+      const marker = '  // <generated-governed-http-handler-layers>';
+      expect(absentHandler).toContain(marker);
+      const foreignLayer =
+        "HttpApiBuilder.group(pricingApi, 'ownerActionApprovals', (handlers) => import(handlerModule).then((module) => module.foreignHandlers(handlers))).pipe(GovernedReadLayer.provide(governedActionRuntimeLive))";
+      const substituted = absentHandler.replace(marker, `  ${foreignLayer},\n${marker}`);
+      withoutApprovals.set(handlerFile, substituted);
+      expect(
+        inspectOwnerActionApprovalMount(withoutApprovals.get(PRICING_SHARED_API_PATH) ?? '', substituted, 'pricing', {
+          ownerPath: owner,
+          rootFile: handlerFile,
+          sources: withoutApprovals,
+        }).kind,
+      ).toBe('absent');
+      expect(hasOwnerActionApprovalPublication(withoutApprovals, PRICING_SHARED_API_PATH)).toBe(true);
+      const rejected = seam(withoutApprovals);
+      expect(rejected.valid, rejected.diagnostics).toBe(false);
+      expect(rejected.diagnostics).toContain(`${handlerFile}: ${foreignLayer} is no read, Action or own API`);
+    }),
+  );
+
   it.live('accepts a { run } read with a declared call and refuses its nearby controls', () =>
     Effect.gen(function* runFormSeam() {
       const sources = yield* pricingSources;
@@ -375,6 +451,16 @@ describe('the read SDK form inside the generated module API seam', () => {
       const accepted = seam(withRunForm(sources, runRead));
       expect(why(withRunForm(sources, runRead))).toBe('');
       expect(accepted.valid, accepted.diagnostics).toBe(true);
+      // Core's approval API and its executed sibling remain admitted only through their exact publication proof.
+      for (const [file, original, replacement] of [
+        [PRICING_SHARED_API_PATH, '@app/core-runtime/access/approvals/owner-api', '@app/foreign/owner-api'],
+        ['verticals/pricing/api/index.ts', "'ownerActionApprovals'", "'foreignApprovals'"],
+      ] as const) {
+        const source = sources.get(file) ?? '';
+        expect(source).toContain(original);
+        const changed = new Map([...withRunForm(sources, runRead), [file, source.replace(original, replacement)]]);
+        expect(seam(changed).valid).toBe(false);
+      }
       // `{ run }` is judged by the bare handler rule, exactly as `{ load }` is.
       const notAHandler = seam(
         withRunForm(sources, (source) =>

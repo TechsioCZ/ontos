@@ -14,8 +14,8 @@ import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   CatalogPagePricesRequestSchema,
   CatalogPagePricesResponseSchema,
-} from '../../shared/apis/catalog-page-prices.ts';
-import type { CatalogPageCustomer, CatalogPagePricesRequest } from '../../shared/apis/catalog-page-prices.ts';
+} from '@app/pricing-contracts/catalog-page-prices';
+import type { CatalogPageCustomer, CatalogPagePricesRequest } from '@app/pricing-contracts/catalog-page-prices';
 import { commercePriceGroupResolutionPortFromEnvironment } from '../integrations/commerce-price-group-resolution.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from '../integrations/price-group-compatibility.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';

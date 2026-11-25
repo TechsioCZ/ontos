@@ -9,8 +9,8 @@ import {
 import {
   CommitmentConfirmationVerificationRequestSchema,
   CommitmentConfirmationVerificationResponseSchema,
-} from '../../shared/apis/commitment-confirmation-verification.ts';
-import type { CommitmentConfirmationVerificationRequest } from '../../shared/apis/commitment-confirmation-verification.ts';
+} from '@app/pricing-contracts/commitment-confirmation-verification';
+import type { CommitmentConfirmationVerificationRequest } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { commitmentConfirmationVerificationForRetained } from '../integrations/commitment-confirmation-production.ts';
 import { commitmentConfirmationPersistenceForScope } from '../services/commitment-confirmation-persistence.service.ts';
 import type { CommitmentConfirmationPersistence } from '../services/commitment-confirmation-persistence.service.ts';

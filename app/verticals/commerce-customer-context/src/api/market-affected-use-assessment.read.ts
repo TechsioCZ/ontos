@@ -16,12 +16,12 @@ import {
   MarketRetainedHistoryReferenceSchema,
   MarketRetirementInstantSchema,
   MarketRevisionSchema,
-} from '../../shared/apis/market-affected-use-assessment.ts';
+} from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseAssessmentResponse,
   MarketAffectedUseSourceEvidence,
-} from '../../shared/apis/market-affected-use-assessment.ts';
+} from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Context, Effect, Option, Result, Schema } from 'effect';

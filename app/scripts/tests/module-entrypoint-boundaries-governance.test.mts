@@ -1,31 +1,11 @@
-import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
-import path from 'node:path';
-import { Array as EffectArray, Cause, Effect, Exit, Match, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
-import { validateGatewayIssuerEntrypoints } from '../check-module-entrypoint-boundaries.mts';
-import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-contracts/src/gateway-context.ts';
 import {
   hasGeneratedActionClientPublication,
-  hasOwnerLocalReadServiceFactory,
-  hasNativeHttpActionMount,
-  ownerActionClientPublication,
-  hasPublishedGeneratedContractShim,
   hasGeneratedGovernedServerContract,
+  hasNativeHttpActionMount,
+  hasOwnerLocalReadServiceFactory,
+  hasPublishedGeneratedActionContractShim,
+  ownerActionClientPublication,
 } from '../generated-governed-http-boundary.mts';
-import {
-  hasGeneratedGovernedClientContract,
-  hasGeneratedModuleApiReadContract,
-  hasGeneratedModuleApiContract,
-  generatedModuleApiEntrypointReference,
-  hasGeneratedSourceHeader,
-} from '../generated-module-api-boundary.mts';
-import {
-  assertPublishedOutboxContractSource,
-  assertPublishedOutboxDependencyUsage,
-  publishedOutboxContractExports,
-  publishedResourceRefContractExports,
-  resolvePublishedContractModuleId,
-} from '../published-outbox-contracts.mts';
 import {
   ACTION_FILE,
   ACTION_HEADER_FOR_TEST,
@@ -155,12 +135,33 @@ import {
   partyResourceSource,
   problemKinds,
   protectedAuthorizationSource,
+  readPricingSourceTree,
   validAction,
   violations,
   write,
   writeEngagementLifecycleFixture,
   writeGovernedModuleApi,
 } from './module-entrypoint-boundaries.fixture.mts';
+import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
+import path from 'node:path';
+import { Array as EffectArray, Cause, Effect, Exit, Match, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { validateGatewayIssuerEntrypoints } from '../check-module-entrypoint-boundaries.mts';
+import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-contracts/src/gateway-context.ts';
+import {
+  generatedModuleApiEntrypointReference,
+  hasGeneratedGovernedClientContract,
+  hasGeneratedModuleApiContract,
+  hasGeneratedModuleApiReadContract,
+  hasGeneratedSourceHeader,
+} from '../generated-module-api-boundary.mts';
+import {
+  assertPublishedOutboxContractSource,
+  assertPublishedOutboxDependencyUsage,
+  publishedOutboxContractExports,
+  publishedResourceRefContractExports,
+  resolvePublishedContractModuleId,
+} from '../published-outbox-contracts.mts';
 
 it('accepts a typed Codesmith Action binding but rejects spoofed or mismatched registration types', () => {
   const binding = `export const confirmGtinAction: ActionRegistration<
@@ -3023,17 +3024,23 @@ exampleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive), 
 });
 
 it.live(
-  'resolves an exact published contract shim with its unchanged owner-native client and rejects provenance or executable escapes',
+  'checks a read published from its contract package with no owner file and rejects every owner forwarder or broken claim',
   () =>
-    Effect.gen(function* publishedContractWithOwnerClient() {
+    Effect.gen(function* publishedPackageRead() {
       const root = yield* makeFixture();
       yield* writeGovernedModuleApi(root);
-      const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
-      const published = STOCK_LIST_PUBLISHED_SOURCE;
-      const packageFile = 'packages/inventory-public-contracts/package.json';
-      const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
+      const owner = INVENTORY_VERTICAL_PATH;
+      const contractPackage = 'packages/inventory-public-contracts';
+      const specifier = '@app/inventory-public-contracts/stock-list';
+      const ownerContract = `${owner}/shared/apis/stock-list.ts`;
+      const ownerClient = `${owner}/src/api/stock-list-client.ts`;
+      const packageFile = `${contractPackage}/package.json`;
+      const readText = (file: string) => Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
       const metadata = {
-        exports: { './stock-list': './src/stock-list.ts' },
+        exports: {
+          './stock-list': './src/apis/stock-list.ts',
+          './stock-list/client': './src/api/stock-list-client.ts',
+        },
         name: '@app/inventory-public-contracts',
         ontosContractOwner: {
           appId: INVENTORY_DEPLOYMENT_ID,
@@ -3042,29 +3049,56 @@ it.live(
           packageName: INVENTORY_PACKAGE_SPECIFIER,
         },
       };
-      const shim = `${MODULE_API_HEADER}// An ordinary ownership comment does not carry executable capabilities.\nexport * from '@app/inventory-public-contracts/stock-list';\n`;
-      yield* write(root, published, contract);
+      const contract = yield* readText(ownerContract);
+      const client = yield* readText(ownerClient);
+      yield* write(root, `${contractPackage}/src/apis/stock-list.ts`, contract);
+      yield* write(
+        root,
+        `${contractPackage}/src/api/stock-list-client.ts`,
+        client.replaceAll(STOCK_LIST_CLIENT_CONTRACT_IMPORT, '../apis/stock-list.ts'),
+      );
+      yield* write(
+        root,
+        `${contractPackage}/src/api/action-gateway.ts`,
+        yield* readText(`${owner}/src/api/action-gateway.ts`),
+      );
       yield* write(root, packageFile, JSON.stringify(metadata));
-      yield* write(root, contractFile, shim);
+      yield* Effect.promise(() => Promise.all([ownerContract, ownerClient].map((file) => rm(path.join(root, file)))));
+      for (const [file, from, to] of [
+        [`${owner}/shared/api.ts`, './apis/stock-list.ts', specifier],
+        [`${owner}/vertical.manifest.ts`, './shared/apis/stock-list.ts', specifier],
+        [`${owner}/vertical.registration.ts`, './src/api/stock-list-client.ts', `${specifier}/client`],
+        [`${owner}/api/stock-list-read-server.ts`, STOCK_LIST_SERVER_CONTRACT_IMPORT, specifier],
+      ] as const) {
+        const source = yield* readText(file);
+        expect(source, file).toContain(from);
+        yield* write(root, file, source.replaceAll(from, to));
+      }
+      yield* checkModuleEntrypointBoundaries(root);
+      const shim = `${MODULE_API_HEADER}// An ordinary ownership comment does not carry executable capabilities.\nexport * from '${specifier}';\n`;
+      for (const [file, invalid] of [
+        [ownerContract, shim],
+        [ownerContract, `${shim}export const mutable = true;`],
+        [ownerContract, shim.replace('export *', "import { runtime } from './private.ts'; export *")],
+        [ownerContract, shim.replace(specifier, '@app/private-implementation/stock-list')],
+        [
+          ownerContract,
+          shim.replace(
+            '// An ordinary ownership comment does not carry executable capabilities.',
+            '// @ontos-public-contract @app/other/stock-list',
+          ),
+        ],
+        [ownerClient, `${MODULE_API_HEADER}export * from '${specifier}/client';\n`],
+      ] as const) {
+        yield* write(root, file, invalid);
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+        expect(Exit.isFailure(result), invalid).toBe(true);
+        yield* Effect.promise(() => rm(path.join(root, file)));
+      }
       yield* checkModuleEntrypointBoundaries(root);
       for (const invalid of [
-        `${shim}export const mutable = true;`,
-        shim.replace('export *', 'export let capability; export *'),
-        shim.replace('export *', "import { runtime } from './private.ts'; export *"),
-        shim.replace('@app/inventory-public-contracts/stock-list', '@app/private-implementation/stock-list'),
-        shim.replace(
-          '// An ordinary ownership comment does not carry executable capabilities.',
-          '// @ontos-public-contract @app/other/stock-list',
-        ),
-      ]) {
-        yield* write(root, contractFile, invalid);
-        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-        expect(Exit.isFailure(result)).toBe(true);
-      }
-      yield* write(root, contractFile, shim);
-      for (const invalid of [
         { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleId: 'other.owner' } },
-        { ...metadata, exports: { './stock-list': '../outside.ts' } },
+        { ...metadata, exports: { ...metadata.exports, './stock-list': '../outside.ts' } },
         { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
       ]) {
         yield* write(root, packageFile, JSON.stringify(invalid));
@@ -3074,7 +3108,7 @@ it.live(
     }),
 );
 
-it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
+it('classifies only exact published Action HTTP contract shims and no read forwarder', () => {
   const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
@@ -3110,15 +3144,11 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(HttpApiGrou
     [STOCK_LIST_PUBLISHED_SOURCE, readTarget],
     [RESERVE_PUBLISHED_SOURCE, actionTarget],
   ]);
-  const acceptsRead = (source = readShim) => hasPublishedGeneratedContractShim(sources, readContractFile, source);
-  const acceptsAction = (source = actionShim) => hasPublishedGeneratedContractShim(sources, actionFile, source);
-  expect(acceptsRead()).toBe(true);
+  const acceptsRead = (source = readShim) => hasPublishedGeneratedActionContractShim(sources, readContractFile, source);
+  const acceptsAction = (source = actionShim) => hasPublishedGeneratedActionContractShim(sources, actionFile, source);
+  // A module read is published from its package with no owner file; an owner read forwarder is never accepted.
+  expect(acceptsRead()).toBe(false);
   expect(acceptsAction()).toBe(true);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT));
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, `${readTarget}\nconst HttpApiGroup = fakeGroup;`);
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget);
   const disconnected = `${actionTarget.replace(
     'export const ReserveActionApi =',
     UNUSED_NATIVE_API_DECLARATION,
@@ -3175,15 +3205,14 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActi
   sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
   for (const invalid of [
     { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, packageName: '@app/other' } },
-    { ...metadata, exports: { ...metadata.exports, './stock-list': '../private.ts' } },
-    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+    { ...metadata, exports: { ...metadata.exports, './reserve-action': '../private.ts' } },
   ]) {
     sources.set(packageFile, JSON.stringify(invalid));
-    expect(acceptsRead()).toBe(false);
+    expect(acceptsAction()).toBe(false);
   }
   sources.set(packageFile, JSON.stringify(metadata));
   sources.set('packages/ambiguous/package.json', JSON.stringify(metadata));
-  expect(acceptsRead()).toBe(false);
+  expect(acceptsAction()).toBe(false);
 });
 
 it.live('rejects disconnected Action API constructor decoys from the actual generated producer', () =>
@@ -3211,11 +3240,11 @@ it.live('rejects disconnected Action API constructor decoys from the actual gene
     const wrapper = paths[7] ?? '';
     const original = sources.get(target) ?? '';
     const bridge = sources.get(wrapper) ?? '';
-    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(true);
+    expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(true);
     const decoy = original.replace('export const ManageQuotationActionApi =', UNUSED_NATIVE_API_DECLARATION);
     expect(decoy).not.toBe(original);
     sources.set(target, `${decoy}\nexport const ManageQuotationActionApi = { unsafe: true };`);
-    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+    expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
     for (const [binding, field] of [
       ['ManageQuotationActionApi', 'groups'],
       ['manageQuotationActionGroupDefinition', 'endpoints'],
@@ -3227,9 +3256,9 @@ it.live('rejects disconnected Action API constructor decoys from the actual gene
       );
       expect(inside).not.toBe(original);
       sources.set(target, inside);
-      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+      expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
       sources.set(target, `${original}\n${capture};`);
-      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+      expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
     }
   }),
 );
@@ -4192,3 +4221,26 @@ for (const [binding, subpath, allowed] of [
     }),
   );
 }
+
+it.live('exempts from the barrel-file lint only the Pricing Action forwarders that still exist', () =>
+  Effect.gen(function* actionForwarderLintExemption() {
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const configModule: unknown = yield* Effect.promise(() => import(path.join(workspace, 'oxlint.config.ts')));
+    const forwarders = Schema.decodeUnknownSync(
+      Schema.Struct({
+        default: Schema.Struct({
+          overrides: Schema.Array(Schema.Struct({ files: Schema.Array(Schema.String) })),
+        }),
+      }),
+    )(configModule).default.overrides.filter(({ files }) =>
+      files.includes('verticals/pricing/shared/apis/manage-quotation-action.ts'),
+    );
+    expect(forwarders).toHaveLength(1);
+    const sources = new Map(yield* readPricingSourceTree(workspace, 'verticals/pricing'));
+    for (const file of forwarders[0]?.files ?? []) {
+      expect(sources.get(file) ?? '', file).toMatch(
+        /^export \* from '@app\/pricing-contracts\/[a-z-]+(?:\/api)?';\n$/u,
+      );
+    }
+  }),
+);

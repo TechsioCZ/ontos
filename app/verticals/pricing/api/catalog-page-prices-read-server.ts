@@ -12,7 +12,7 @@ import {
   CatalogPagePricesPolicyConflictProblemSchema,
   CatalogPagePricesPolicyProblemSchema,
   CatalogPagePricesUnavailableProblemSchema,
-} from '../shared/apis/catalog-page-prices.ts';
+} from '@app/pricing-contracts/catalog-page-prices';
 import { catalogPagePricesRead } from '../src/api/catalog-page-prices.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

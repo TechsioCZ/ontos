@@ -5,7 +5,7 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { CatalogPagePricesApi } from './shared/apis/catalog-page-prices.ts';
+import { CatalogPagePricesApi } from '@app/pricing-contracts/catalog-page-prices';
 import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
@@ -14,16 +14,16 @@ import { CommercialFeeResultLookupApi } from './shared/apis/commercial-fee-resul
 import { commercialFeeResultLookupRead } from './src/api/commercial-fee-result-lookup.read.ts';
 import { CommercialFeeScheduleApi } from './shared/apis/commercial-fee-schedule.ts';
 import { commercialFeeScheduleRead } from './src/api/commercial-fee-schedule.read.ts';
-import { CommitmentConfirmationVerificationApi } from './shared/apis/commitment-confirmation-verification.ts';
+import { CommitmentConfirmationVerificationApi } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { commitmentConfirmationVerificationRead } from './src/api/commitment-confirmation-verification.read.ts';
 import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
 import { ContractualDiscountResultLookupApi } from './shared/apis/contractual-discount-result-lookup.ts';
 import { contractualDiscountResultLookupRead } from './src/api/contractual-discount-result-lookup.read.ts';
 import { CurrencySupportResultLookupApi } from './shared/apis/currency-support-result-lookup.ts';
 import { currencySupportResultLookupRead } from './src/api/currency-support-result-lookup.read.ts';
-import { CurrentPricingDecisionApi } from './shared/apis/current-pricing-decision.ts';
+import { CurrentPricingDecisionApi } from '@app/pricing-contracts/current-pricing-decision';
 import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
-import { CurrentSupportedCurrenciesApi } from './shared/apis/current-supported-currencies.ts';
+import { CurrentSupportedCurrenciesApi } from '@app/pricing-contracts/current-supported-currencies';
 import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
@@ -39,7 +39,7 @@ import { manageProductPricesBulkAction } from './src/actions/manage-product-pric
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
-import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
+import { PriceDefinitionApi } from '@app/pricing-contracts/price-definition';
 import { priceDefinitionRead } from './src/api/price-definition.read.ts';
 import { PriceGroupSourcePricesApi } from './shared/apis/price-group-source-prices.ts';
 import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
@@ -52,7 +52,7 @@ import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lo
 import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
-import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
+import { QuotationVerificationApi } from '@app/pricing-contracts/quotation-verification';
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';

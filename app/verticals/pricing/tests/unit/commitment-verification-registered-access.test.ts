@@ -16,7 +16,7 @@ import { DateTime, Effect, Layer, Match } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { CommitmentConfirmationVerificationApi } from '../../shared/apis/commitment-confirmation-verification.ts';
+import { CommitmentConfirmationVerificationApi } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { commitmentConfirmationVerificationRead } from '../../src/api/commitment-confirmation-verification.read.ts';
 import { pricingCommitmentConfirmationVerificationFactoryLive } from '../../src/services/commitment-confirmation-verification.service.ts';
 import { makeIssue788Binding, makeIssue788CommercialTotal } from './support/issue-788-confirmation.fixture.ts';

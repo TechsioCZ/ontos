@@ -26,10 +26,8 @@ import { SourceProfileExportRequestSchema } from '@app/party-registry/apis/sourc
 import { executeSourceProfileExportWithAuthorization } from '@app/party-registry/apis/source-profile-export/client';
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
 import { executeOrganizationBusinessNameExportWithAuthorization } from '@app/party-registry/apis/organization-business-name-export/client';
-import {
-  executePriceGroupDefinitionWithAuthorization,
-  executePriceGroupSourceAssociationsWithAuthorization,
-} from '@app/price-group-catalog/api/client';
+import { executePriceGroupSourceAssociationsWithAuthorization } from '@app/price-group-catalog/api/client';
+import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';
 import type { PriceGroupSourceAssociationSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceGroupSourceAssociationsRequestSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceSourceSystemSchema } from '@app/pricing-contracts/domain/price-source-provenance';
@@ -474,7 +472,9 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
 });
 const customerUnsupportedFields = (scope: SymmySourceReadScope, customers: readonly CustomerRow[]) => {
   const unsupported: SymmyInternalCustomersProjection['unsupported_fields'][number][] =
-    customers.length > 0 && customers.every((row) => row.addresses !== undefined) ? ['groups'] : ['addresses', 'groups'];
+    customers.length > 0 && customers.every((row) => row.addresses !== undefined)
+      ? ['groups']
+      : ['addresses', 'groups'];
   if (
     (!routeAllows(scope, partyModule, partyProfileRead) && !routeAllows(scope, partyModule, organizationNameRead)) ||
     customers.some((row) => row.party === undefined && row.business_name === undefined)
@@ -595,10 +595,9 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
     query.q === undefined
       ? undefined
       : yield* readCustomerSearch(scope, authority, query.q, admission, newRequestIdentifier);
-  const pageRequest = {
-    ...authority, ...paging,
-    ...(query.fields?.includes('addresses') === true ? { includeSourceAddresses: true } : {}),
-  };
+  const pagingRequest = { ...authority, ...paging };
+  const pageRequest =
+    query.fields?.includes('addresses') === true ? { ...pagingRequest, includeSourceAddresses: true } : pagingRequest;
   const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageRequestSchema)(
     terms === undefined ? pageRequest : { ...pageRequest, search: { terms } },
   ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));

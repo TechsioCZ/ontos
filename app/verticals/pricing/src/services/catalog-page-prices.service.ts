@@ -15,7 +15,7 @@ import type {
   CatalogPagePrice,
   CatalogPagePriceItem,
   CatalogPagePricesRequest,
-} from '../../shared/apis/catalog-page-prices.ts';
+} from '@app/pricing-contracts/catalog-page-prices';
 import { resolveCurrentSupportedCurrencies } from '../api/current-supported-currencies.read.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
 import type {

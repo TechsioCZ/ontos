@@ -22,9 +22,14 @@ for (const owner of [CATALOG_VERTICAL_PATH]) {
     Effect.gen(function* nativeOwnerOperationInventory() {
       const root = path.resolve(import.meta.dirname, '../..');
       const trees = yield* Effect.all(
-        [`${owner}/api`, `${owner}/shared`, `${owner}/src`, 'packages'].map((folder) =>
-          readPricingSourceTree(root, folder),
-        ),
+        [
+          `${owner}/api`,
+          `${owner}/shared`,
+          `${owner}/src`,
+          'packages',
+          'verticals/commerce-market-catalog',
+          'verticals/party-registry',
+        ].map((folder) => readPricingSourceTree(root, folder)),
       );
       const runtimeDeclarationFile = `${owner}/vertical.runtime-declaration.ts`;
       const hasRuntimeDeclaration = yield* Effect.promise(() =>
@@ -38,9 +43,6 @@ for (const owner of [CATALOG_VERTICAL_PATH]) {
           `${owner}/vertical.manifest.ts`,
           `${owner}/vertical.registration.ts`,
           ...(hasRuntimeDeclaration ? [runtimeDeclarationFile] : []),
-          // The modules whose published module-api contracts this owner's reads call.
-          'verticals/commerce-market-catalog/package.json',
-          'verticals/party-registry/package.json',
         ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),

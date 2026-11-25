@@ -91,10 +91,10 @@ import {
 } from '@app/price-group-catalog/api/client';
 import {
   executeDefinePriceWithAuthorization,
-  executePriceDefinitionWithAuthorization,
   executeRevisePriceWithAuthorization,
   executePriceSourceResultLookupWithAuthorization,
 } from '@app/pricing/api/client';
+import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/price-definition/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
@@ -959,7 +959,7 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
   product: ProductCreatedReceipt,
   contract: AdapterContract,
   crypto: Crypto.Crypto,
-  pinnedNameBasis?: { readonly revision: number; readonly description?: string },
+  pinnedNameBasis?: { readonly description?: string; readonly revision: number },
 ) {
   const { originalTarget: target } = input.effect.ref;
   const { productRef } = product;
@@ -1100,13 +1100,14 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
         if (request.step === 'NAME') {
           const current =
             pinnedNameBasis ?? (yield* readinessNameText(input, product, request.locale, contract, crypto));
+          let facts: typeof SetProductLocalizedFactsPayloadSchema.Type.facts = { name: request.name };
+          if (current.description !== undefined) {
+            facts = { ...facts, description: current.description };
+          }
           const payload = yield* decodeReadinessInput(SetProductLocalizedFactsPayloadSchema, {
             evidenceRefs,
             expectedRevision: current.revision,
-            facts: {
-              name: request.name,
-              ...(current.description === undefined ? {} : { description: current.description }),
-            },
+            facts,
             locale: request.locale,
             productRef,
             reason,
@@ -1306,93 +1307,6 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
     Match.orElse(() => Effect.succeed(input)),
   );
 });
-
-/** A persisted provisioning command is evidence, not authority to choose a different SKU or Catalog selection. */
-const validateProvisioningResolution = Effect.fn('SymmyOwnerAdapters.validateProvisioningResolution')(
-  function* validate(input: SymmyEffectAdapterInput, contract: AdapterContract, crypto: Crypto.Crypto) {
-    const originals = input.acceptedPlan?.items.flatMap(({ effects }) =>
-      effects.filter(({ ref }) => ref.effectId === input.effect.ref.effectId),
-    );
-    const [original] = originals ?? [];
-    const resolvedProtected =
-      input.effect.effectKey === readinessActivateKey ||
-      Schema.is(Schema.Union([Schema.TaggedStruct('InventoryProvision', {}), readinessResolvedIntentSchema]))(
-        input.effect.intent,
-      );
-    if (originals?.length !== 1 || original === undefined) {
-      if (!resolvedProtected) {
-        return yield* Effect.void;
-      }
-      return yield* symmyJobWorkerInvalid();
-    }
-    const decoded = Schema.decodeUnknownOption(SymmyCatalogPricingInventoryIntentSchema.members[11])(original.intent);
-    if (Option.isNone(decoded)) {
-      if (!resolvedProtected) {
-        return yield* Effect.void;
-      }
-      return yield* symmyJobWorkerInvalid();
-    }
-    const admitted = decoded.value;
-    if (
-      !Schema.is(
-        Schema.Union([
-          Schema.TaggedStruct('ProvisionSourceStockItem', {}),
-          Schema.TaggedStruct('CatalogReadiness', {}),
-          Schema.TaggedStruct('AddProductCategoryAssignment', {}),
-        ]),
-      )(admitted.request)
-    ) {
-      if (!resolvedProtected) {
-        return yield* Effect.void;
-      }
-      return yield* symmyJobWorkerInvalid();
-    }
-    if (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[11])(input.effect.intent)) {
-      return yield* Effect.void;
-    }
-    const originalInput = { ...input, canExecuteNewEffects: true, effect: original };
-    const receipt = yield* requireCreatedProductParent(originalInput, admitted.parent);
-    // Rebuild admitted fields and parent proofs, not today's locale. The write's CAS and
-    // preserved description were pinned at resolution; recovery uses that exact request hash.
-    const pinned = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
-      input.effect.intent,
-    ).pipe(Effect.mapError(symmyJobWorkerInvalid));
-    const basis =
-      pinned._tag === 'CatalogReadinessName'
-        ? {
-            revision: pinned.payload.expectedRevision,
-            ...(pinned.payload.facts.description === undefined
-              ? {}
-              : { description: pinned.payload.facts.description }),
-          }
-        : undefined;
-    if (admitted.request._tag === 'CatalogReadiness' && admitted.request.step === 'NAME' && basis === undefined) {
-      return yield* symmyJobWorkerInvalid();
-    }
-    const expected = yield* productDependentIntent(originalInput, admitted, receipt, contract, crypto, basis);
-    const reconstructed = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
-      ...original,
-      intent: expected.intent,
-      ref: { ...original.ref, originalTarget: expected.target },
-    }).pipe(Effect.mapError(symmyJobWorkerInvalid));
-    if (computeCanonicalValueHash(reconstructed) !== computeCanonicalValueHash(input.effect)) {
-      return yield* symmyJobWorkerInvalid();
-    }
-    if (pinned._tag === 'CatalogReadinessName') {
-      if (
-        input.originalRequestHash !== undefined &&
-        (input.originalExecutorPrincipalId === undefined ||
-          input.originalRequestHash !==
-            (yield* prepareSymmyCatalogPricingInventoryRequestHash(pinned, {
-              principalId: input.originalExecutorPrincipalId,
-              tenantId: receipt.productRef.tenantId,
-            })))
-      )
-        return yield* symmyJobWorkerInvalid();
-      return receipt;
-    }
-  },
-);
 
 const recordCurrentNativeInvocation = Effect.fn('SymmyOwnerAdapters.recordCurrentNativeInvocation')(
   function* recordCurrent(input: SymmyEffectAdapterInput, contract: AdapterContract) {
@@ -2518,6 +2432,106 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
   );
 });
 
+/** A persisted provisioning command is evidence, not authority to choose a different SKU or Catalog selection. */
+const validateProvisioningResolution = Effect.fn('SymmyOwnerAdapters.validateProvisioningResolution')(
+  function* validate(input: SymmyEffectAdapterInput, contract: AdapterContract, crypto: Crypto.Crypto) {
+    const originals = input.acceptedPlan?.items.flatMap(({ effects }) =>
+      effects.filter(({ ref }) => ref.effectId === input.effect.ref.effectId),
+    );
+    const [original] = originals ?? [];
+    const resolvedProtected =
+      input.effect.effectKey === readinessActivateKey ||
+      Schema.is(Schema.Union([Schema.TaggedStruct('InventoryProvision', {}), readinessResolvedIntentSchema]))(
+        input.effect.intent,
+      );
+    if (originals?.length !== 1 || original === undefined) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    const decoded = Schema.decodeUnknownOption(SymmyCatalogPricingInventoryIntentSchema.members[11])(original.intent);
+    if (Option.isNone(decoded)) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    const admitted = decoded.value;
+    if (
+      !Schema.is(
+        Schema.Union([
+          Schema.TaggedStruct('ProvisionSourceStockItem', {}),
+          Schema.TaggedStruct('CatalogReadiness', {}),
+          Schema.TaggedStruct('AddProductCategoryAssignment', {}),
+        ]),
+      )(admitted.request)
+    ) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    if (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[11])(input.effect.intent)) {
+      return yield* Effect.void;
+    }
+    const originalInput = { ...input, canExecuteNewEffects: true, effect: original };
+    const receipt = yield* requireCreatedProductParent(originalInput, admitted.parent);
+    // Rebuild admitted fields and parent proofs, not today's locale. The write's CAS and
+    // preserved description were pinned at resolution; recovery uses that exact request hash.
+    const pinned = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
+      input.effect.intent,
+    ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    const basis = Match.value(pinned).pipe(
+      Match.tag('CatalogReadinessName', ({ payload }) => {
+        const revision = { revision: payload.expectedRevision };
+        return payload.facts.description === undefined
+          ? revision
+          : { ...revision, description: payload.facts.description };
+      }),
+      Match.option,
+      Option.getOrUndefined,
+    );
+    if (
+      Schema.is(Schema.TaggedStruct('CatalogReadiness', { step: Schema.Literal('NAME') }))(admitted.request) &&
+      basis === undefined
+    ) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    const expected = yield* productDependentIntent(originalInput, admitted, receipt, contract, crypto, basis);
+    const reconstructed = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+      ...original,
+      intent: expected.intent,
+      ref: { ...original.ref, originalTarget: expected.target },
+    }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    if (computeCanonicalValueHash(reconstructed) !== computeCanonicalValueHash(input.effect)) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    return yield* Match.value(pinned).pipe(
+      Match.tag(
+        'CatalogReadinessName',
+        Effect.fnUntraced(function* validateNameHash(
+          name: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'CatalogReadinessName' }>,
+        ) {
+          if (
+            input.originalRequestHash !== undefined &&
+            (input.originalExecutorPrincipalId === undefined ||
+              input.originalRequestHash !==
+                (yield* prepareSymmyCatalogPricingInventoryRequestHash(name, {
+                  principalId: input.originalExecutorPrincipalId,
+                  tenantId: receipt.productRef.tenantId,
+                })))
+          ) {
+            return yield* symmyJobWorkerInvalid();
+          }
+          return receipt;
+        }),
+      ),
+      Match.orElse(() => Effect.void),
+    );
+  },
+);
+
 const listPriceWriteTag = Schema.Literals(['PriceDefine', 'PriceRevise']);
 
 /** The price list a price of the batch route is written to. The body names it, the route enrollment never does. */
@@ -2902,6 +2916,18 @@ const nativeAbsentOrHeldStatus = (intent: SymmyCatalogPricingInventoryIntent, er
     Match.orElse(() => null),
   );
 
+const isInvalidReadinessRefusal = (
+  input: SymmyEffectAdapterInput,
+  intent: SymmyCatalogPricingInventoryIntent,
+  error: Effect.Error<ReturnType<typeof executeNative>>,
+) =>
+  Schema.is(problemStatus)(error) &&
+  (error.status === 400 || error.status === 422) &&
+  (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(intent) ||
+    (input.effect.effectKey === readinessActivateKey &&
+      Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[2])(intent)) ||
+    Schema.is(readinessResolvedIntentSchema)(intent));
+
 const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(function* commandFailure(
   input: SymmyEffectAdapterInput,
   intent: SymmyCatalogPricingInventoryIntent,
@@ -2917,14 +2943,7 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   if (Schema.is(problemStatus)(error) && (error.status === 401 || error.status === 403)) {
     return safeOutcome(input, 'denied');
   }
-  if (
-    Schema.is(problemStatus)(error) &&
-    (error.status === 400 || error.status === 422) &&
-    (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(intent) ||
-      (input.effect.effectKey === readinessActivateKey &&
-        Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[2])(intent)) ||
-      Schema.is(readinessResolvedIntentSchema)(intent))
-  ) {
+  if (isInvalidReadinessRefusal(input, intent, error)) {
     return safeOutcome(input, 'invalid');
   }
   if (Schema.is(problemStatus)(error) && error.status === 409) {
@@ -2956,6 +2975,7 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   return yield* symmyJobWorkerUnavailable(error);
 });
 
+const targetValidationStage = 'target-validation';
 const preDispatchStage = Schema.Literals([
   'product-dependency',
   'group-dependency',
@@ -2963,7 +2983,7 @@ const preDispatchStage = Schema.Literals([
   'intent-validation',
   'batch-price-group',
   'price-list-dependency',
-  'target-validation',
+  targetValidationStage,
   'fresh-gateway',
   'machine-context',
   'request-hash',
@@ -2973,8 +2993,9 @@ const preDispatchStage = Schema.Literals([
 
 // Readiness NAME and ordinary source text share an owner operation, not replay or receipt semantics.
 const acceptsResolvedIntent = (contract: AdapterContract, intent: SymmyCatalogPricingInventoryIntent) =>
-  contract.tag === intent._tag ||
-  (contract.tag === 'CatalogSetProductLocalizedFacts' && intent._tag === 'CatalogReadinessName');
+  Schema.is(Schema.Literal(contract.tag))(intent._tag) ||
+  (contract.tag === 'CatalogSetProductLocalizedFacts' &&
+    Schema.is(Schema.TaggedStruct('CatalogReadinessName', {}))(intent));
 
 const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEffectAdapter => ({
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
@@ -2994,11 +3015,16 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
       resolveProductDependency(originalInput, contract, crypto),
     );
     const input = yield* observe('group-dependency', resolveGroupDependency(productInput, contract, crypto));
-    const readinessProduct = yield* observe(
+    const { intent, readinessProduct } = yield* observe(
       'provisioning-validation',
       validateProvisioningResolution(input, contract, crypto),
+    ).pipe(
+      Effect.flatMap((product) =>
+        observe('intent-validation', checkedIntent(input)).pipe(
+          Effect.map((checked) => ({ intent: checked, readinessProduct: product })),
+        ),
+      ),
     );
-    const intent = yield* observe('intent-validation', checkedIntent(input));
     if (!acceptsResolvedIntent(contract, intent)) {
       return yield* symmyJobWorkerInvalid();
     }
@@ -3018,40 +3044,53 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
     ) {
       return safeOutcome(input, 'unresolved');
     }
-    if (intent._tag === 'CatalogReadinessName') {
-      if (readinessProduct === undefined) {
-        return yield* symmyJobWorkerInvalid();
-      }
-      const { locale, expectedRevision, facts } = intent.payload;
-      const localized = yield* observe(
-        'target-validation',
-        readinessNameText(input, readinessProduct, locale, contract, crypto),
-      );
-      const attempted =
-        input.originalExecutorPrincipalId !== undefined ||
-        input.originalRequestHash !== undefined ||
-        input.originalInvocationId !== undefined ||
-        input.originalAuthContextRef !== undefined ||
-        input.originalOwnerReceipt !== undefined;
-      if (localized.revision < expectedRevision) {
-        return yield* symmyJobWorkerInvalid();
-      }
-      if (localized.name !== undefined && !attempted) {
-        return safeOutcome(input, 'accepted_no_change');
-      }
-      if (localized.revision === expectedRevision) {
-        if (localized.name !== undefined || localized.description !== facts.description) {
-          return yield* symmyJobWorkerInvalid();
-        }
-      } else if (!attempted) {
-        return safeOutcome(input, 'stale');
-      } else if (input.originalRequestHash === undefined || input.originalAuthContextRef === undefined) {
-        return yield* symmyJobWorkerUnavailable();
-      }
-      // An attempted write must re-enter Core with its original key and hash, never a read-based receipt.
-      // At a newer locale revision even an uncommitted original request cannot overwrite the current text.
-    } else if (!(yield* observe('target-validation', verifyExistingCatalogTarget(input, intent, contract, crypto)))) {
-      return safeOutcome(input, 'unresolved');
+    const targetOutcome = yield* Match.value(intent).pipe(
+      Match.tag(
+        'CatalogReadinessName',
+        Effect.fnUntraced(function* validateNameTarget({
+          payload: { expectedRevision, facts, locale },
+        }: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'CatalogReadinessName' }>) {
+          if (readinessProduct === undefined) {
+            return yield* symmyJobWorkerInvalid();
+          }
+          const localized = yield* observe(
+            targetValidationStage,
+            readinessNameText(input, readinessProduct, locale, contract, crypto),
+          );
+          const attempted =
+            input.originalExecutorPrincipalId !== undefined ||
+            input.originalRequestHash !== undefined ||
+            input.originalInvocationId !== undefined ||
+            input.originalAuthContextRef !== undefined ||
+            input.originalOwnerReceipt !== undefined;
+          if (localized.revision < expectedRevision) {
+            return yield* symmyJobWorkerInvalid();
+          }
+          if (localized.name !== undefined && !attempted) {
+            return safeOutcome(input, 'accepted_no_change');
+          }
+          if (localized.revision === expectedRevision) {
+            if (localized.name !== undefined || localized.description !== facts.description) {
+              return yield* symmyJobWorkerInvalid();
+            }
+          } else if (!attempted) {
+            return safeOutcome(input, 'stale');
+          } else if (input.originalRequestHash === undefined || input.originalAuthContextRef === undefined) {
+            return yield* symmyJobWorkerUnavailable();
+          }
+          // An attempted write must re-enter Core with its original key and hash, never a read-based receipt.
+          // At a newer locale revision even an uncommitted original request cannot overwrite the current text.
+          return yield* Effect.void;
+        }),
+      ),
+      Match.orElse((targetIntent) =>
+        observe(targetValidationStage, verifyExistingCatalogTarget(input, targetIntent, contract, crypto)).pipe(
+          Effect.map((matches) => (matches ? undefined : safeOutcome(input, 'unresolved'))),
+        ),
+      ),
+    );
+    if (targetOutcome !== undefined) {
+      return targetOutcome;
     }
     if (yield* unchangedLocalizedText(input, intent, contract, crypto)) {
       return safeOutcome(input, 'accepted_no_change');

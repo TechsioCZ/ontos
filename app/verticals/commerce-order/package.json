@@ -7,8 +7,6 @@
     "./api/client": "./shared/commerce-order-client.ts",
     "./api/order-commitment-state": "./shared/apis/order-commitment-state.ts",
     "./api/order-commitment-state/client": "./src/api/order-commitment-state-client.ts",
-    "./api/verify-order-commitment-binding": "./shared/apis/verify-order-commitment-binding.ts",
-    "./api/verify-order-commitment-binding/client": "./src/api/verify-order-commitment-binding-client.ts",
     "./outbox/commerce-order-finalization-work": "./shared/outbox/commerce-order-finalization-work.ts",
     "./resources/acceptance-bundle": "./shared/resources/acceptance-bundle.ts",
     "./resources/commitment-attempt": "./shared/resources/commitment-attempt.ts",

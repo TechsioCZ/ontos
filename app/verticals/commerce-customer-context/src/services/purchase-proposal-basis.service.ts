@@ -13,8 +13,8 @@ import type {
   OperationalScope,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart/api/preapproval-cart-observation/client';
-import type { PreapprovalCartObservationResponseSchema } from '@app/commerce-cart/api/preapproval-cart-observation';
+import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart-contracts/preapproval-cart-observation/client';
+import type { PreapprovalCartObservationResponseSchema } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
 import { executeQuotationVerificationWithAuthorization } from '@app/pricing-contracts/quotation-verification/client';
 import { PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';

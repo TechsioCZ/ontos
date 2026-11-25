@@ -28,10 +28,6 @@ export {
 } from './revise-storefront-application-action-client.ts';
 export type { ReviseStorefrontApplicationActionClientOptions } from './revise-storefront-application-action-client.ts';
 // </generated-action-http-client-exports>
-export {
-  executeCurrentStorefrontApplication,
-  executeCurrentStorefrontApplicationWithAuthorization,
-} from './current-storefront-application-client.ts';
 
 type StorefrontRegistryApiGroups =
   typeof storefrontRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

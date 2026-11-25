@@ -22,8 +22,8 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { CatalogPagePricesRequestSchema } from '../../shared/apis/catalog-page-prices.ts';
-import type { CatalogPagePrice, CatalogPagePricesRequest } from '../../shared/apis/catalog-page-prices.ts';
+import { CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
+import type { CatalogPagePrice, CatalogPagePricesRequest } from '@app/pricing-contracts/catalog-page-prices';
 import { catalogPagePricesRead } from '../../src/api/catalog-page-prices.read.ts';
 import { resolveCurrentSupportedCurrencies } from '../../src/api/current-supported-currencies.read.ts';
 import { currencySupportPersistenceForScope } from '../../src/persistence/currency-support-persistence.ts';

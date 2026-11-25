@@ -3,6 +3,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { Effect, Redacted } from 'effect';
 import { PreparedOrderApprovalBindingApi } from '../apis/prepared-order-approval-binding.ts';
 import type { PreparedOrderApprovalBindingRequest } from '../apis/prepared-order-approval-binding.ts';
+import { operationGateway } from './action-gateway.ts';
 
 export interface PreparedOrderApprovalBindingClientOptions {
   readonly baseUrl?: string | URL;
@@ -11,6 +12,11 @@ export interface PreparedOrderApprovalBindingClientOptions {
 
 type PreparedOrderApprovalBindingAuthorizedInvocation = readonly [
   credential: string,
+  requestCorrelation: string,
+  options?: PreparedOrderApprovalBindingClientOptions,
+];
+
+type PreparedOrderApprovalBindingOperationInvocation = readonly [
   requestCorrelation: string,
   options?: PreparedOrderApprovalBindingClientOptions,
 ];
@@ -36,4 +42,16 @@ export const executePreparedOrderApprovalBindingWithAuthorization = (
 ) =>
   preparedOrderApprovalBindingClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) => client.preparedOrderApprovalBinding.execute({ payload })),
+  );
+
+export const executePreparedOrderApprovalBinding = (
+  payload: PreparedOrderApprovalBindingRequest,
+  ...[requestCorrelation, options = {}]: PreparedOrderApprovalBindingOperationInvocation
+) =>
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePreparedOrderApprovalBindingWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

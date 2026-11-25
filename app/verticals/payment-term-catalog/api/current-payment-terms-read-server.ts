@@ -12,7 +12,7 @@ import {
   CurrentPaymentTermsPolicyConflictProblemSchema,
   CurrentPaymentTermsPolicyProblemSchema,
   CurrentPaymentTermsUnavailableProblemSchema,
-} from '../shared/apis/current-payment-terms.ts';
+} from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { currentPaymentTermsRead } from '../src/api/current-payment-terms.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

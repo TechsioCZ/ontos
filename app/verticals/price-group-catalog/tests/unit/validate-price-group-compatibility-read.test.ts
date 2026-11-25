@@ -18,7 +18,7 @@ import {
   getReadServiceFactory,
 } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
-import { ValidatePriceGroupCompatibilityRequestSchema } from '../../shared/apis/validate-price-group-compatibility.ts';
+import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import {
   PriceGroupCurrentnessFailure,
   PriceGroupExpectedCurrentConflict,

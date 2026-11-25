@@ -147,7 +147,7 @@
     "@app/catalog-selection-contracts": "workspace:*",
     "@app/commerce-cart-contracts": "workspace:*",
     "@app/inventory": "workspace:*",
-    "@app/pricing": "workspace:*",
+    "@app/pricing-contracts": "workspace:*",
     "@techsio/ui-kit": "catalog:"
   },
   "devDependencies": {
