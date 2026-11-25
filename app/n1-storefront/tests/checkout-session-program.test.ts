@@ -515,9 +515,10 @@ describe("restoring a persisted checkout without placing an order", () => {
           isCurrent: () => current,
           locale: "cs",
           locks: locks(),
-          onConfirmed: (result) => {
-            accepted.push(result);
-          },
+          onConfirmed: (result) =>
+            Effect.sync(() => {
+              accepted.push(result);
+            }),
           onUnavailable: () => {
             unavailable += 1;
           },

@@ -230,19 +230,74 @@ afterEach(async () => {
   window.happyDOM.settings.fetch.interceptor = previousInterceptor;
 });
 
+const completeNextPurchase = async (cycle: number) => {
+  await eventually(() => {
+    expect(container.querySelector("h1")?.textContent).toBe(d.checkout.heading);
+    expect(button(d.checkout.verify).disabled).toBe(false);
+  });
+  const form = container.querySelector("form");
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (form === null || nativeValue?.set === undefined) {
+    throw new Error("Expected an editable checkout form");
+  }
+  await act(async () => {
+    for (const [name, value] of Object.entries({
+      city: "Praha",
+      email: "buyer@example.test",
+      firstName: "Jan",
+      lastName: "Novák",
+      postalCode: "11000",
+      street: "Test 1",
+    })) {
+      const input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+      nativeValue.set?.call(input, value);
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  quoteGate = Promise.resolve(
+    Response.json({
+      ...confirmed,
+      orderId: null,
+      orderNumber: null,
+      outcome: "VALID",
+      status: null,
+    }),
+  );
+  await act(async () => form.requestSubmit());
+  await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+  const result = {
+    ...confirmed,
+    orderId: `order-${cycle}`,
+    orderNumber: `N1-${cycle + 2}`,
+    outcome: "PLACED" as const,
+  };
+  quoteGate = Promise.resolve(Response.json(result));
+  recovery = { result, state: "confirmed" };
+  await act(async () => form.requestSubmit());
+  await eventually(() =>
+    expect(container.querySelector("h1")?.textContent).toBe(d.checkout.confirmed),
+  );
+  const guardValue = JSON.parse(
+    window.localStorage.getItem(checkoutGuardKey(options.scope)) ?? "{}",
+  );
+  const submittedId: string = guardValue.clientRequestId;
+  expect(window.localStorage.getItem(cartStorageKey(options.scope))).toBeNull();
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  seed({ guarded: false });
+  quoteGate = null;
+  await mount();
+  return submittedId;
+};
+
 describe("checkout through public session, cart and owner boundaries", () => {
   it.each([true, false])(
-    "preserves the current cart after restoring a previous order (edited: %s)",
+    "starts a new checkout after confirming a saved previous order (edited: %s)",
     async (edited) => {
       seed({ edited });
       recovery = { result: confirmed, state: "confirmed" };
       const editedCart = window.localStorage.getItem(cartStorageKey(options.scope));
       await mount();
-      await eventually(expectConfirmed);
-      expect(container.textContent).toContain(d.checkout.previousOrderDescription);
-      await act(async () => {
-        button(d.checkout.continueWithCart).click();
-      });
       await eventually(() => {
         expect(container.querySelector("h1")?.textContent).toBe(d.checkout.heading);
         expect(container.querySelector("form")).not.toBeNull();
@@ -254,6 +309,25 @@ describe("checkout through public session, cart and owner boundaries", () => {
       ).toHaveLength(0);
     },
   );
+
+  it("allows two further checkout submissions after a legacy receipt, including identical cart lines", async () => {
+    seed();
+    recovery = { result: confirmed, state: "confirmed" };
+    await mount();
+    const firstSubmission = await completeNextPurchase(0);
+    const secondSubmission = await completeNextPurchase(1);
+    const submittedIds = [firstSubmission, secondSubmission];
+    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    expect(new Set(submittedIds).size).toBe(2);
+    expect(submittedIds).not.toContain(guard.clientRequestId);
+    const writes = await Promise.all(
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/checkout")
+        .map((request) => request.json()),
+    );
+    expect(writes.map((payload) => payload.mode)).toEqual(["quote", "place", "quote", "place"]);
+    expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
+  });
 
   it("keeps an uncertain persisted order blocked until a recovery read confirms it", async () => {
     seed();
@@ -296,8 +370,10 @@ describe("checkout through public session, cart and owner boundaries", () => {
 
   it("preserves confirmed prices and an edited cart while receipt enrichment fails, then succeeds", async () => {
     seed({ edited: true });
-    recovery = { result: confirmed, state: "confirmed" };
     await mount();
+    await eventually(() => expect(button(d.checkout.checkResult).disabled).toBe(false));
+    recovery = { result: confirmed, state: "confirmed" };
+    await act(async () => button(d.checkout.checkResult).click());
     await eventually(expectConfirmed);
     expect(container.textContent).toContain(d.checkout.cartPreserved);
     expect(container.textContent).toContain("Saved owner item");
@@ -350,6 +426,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
 
   it("hides account navigation during real session revalidation and after admission is lost", async () => {
     seed();
+    window.localStorage.removeItem(cartStorageKey(options.scope));
     admission = { email: "owner@example.test", name: "Owner", state: "admitted" };
     recovery = { result: confirmed, state: "confirmed" };
     await mount();

@@ -160,7 +160,7 @@ const recoverCheckoutProgram = (
     locks,
   );
 
-/** Restore only the still-current persisted intent; this program never creates or dismisses an order. */
+/** Restore only the still-current persisted intent; only confirmed results can retire its local guard. */
 export const recoverStoredCheckoutProgram = ({
   guard,
   isCurrent,
@@ -174,7 +174,7 @@ export const recoverStoredCheckoutProgram = ({
   isCurrent: () => boolean;
   locale: string;
   locks?: CheckoutLockManager | undefined;
-  onConfirmed: (result: CheckoutResult) => void;
+  onConfirmed: (result: CheckoutResult) => Effect.Effect<void>;
   onUnavailable: () => void;
   storage?: CheckoutGuardStorage | undefined;
 }) =>
@@ -188,15 +188,16 @@ export const recoverStoredCheckoutProgram = ({
           Effect.map((stored) => ({ recovered, stored })),
         ),
       ),
-      Effect.match({
-        onFailure: () => {
-          if (isCurrent()) {
-            onUnavailable();
-          }
-        },
+      Effect.matchEffect({
+        onFailure: () =>
+          Effect.sync(() => {
+            if (isCurrent()) {
+              onUnavailable();
+            }
+          }),
         onSuccess: ({ recovered, stored }) => {
           if (!isCurrent()) {
-            return;
+            return Effect.void;
           }
           if (
             stored !== null &&
@@ -205,10 +206,9 @@ export const recoverStoredCheckoutProgram = ({
             recovered.state === "confirmed" &&
             checkoutGuardKey(recovered.result.scope) === checkoutGuardKey(guard.scope)
           ) {
-            onConfirmed(recovered.result);
-          } else {
-            onUnavailable();
+            return onConfirmed(recovered.result);
           }
+          return Effect.sync(onUnavailable);
         },
       }),
     );
@@ -374,7 +374,7 @@ const receiptForContext = (
     ? { currentReceipt: receipt, restoredReceipt: presentation.restored }
     : { currentReceipt: null, restoredReceipt: false };
 
-/** An intent survives reloads; only explicit receipt dismissal permits another order. */
+/** Unresolved intents survive reloads; confirmed recovery can release a newly filled cart. */
 export const useCheckout = (options: ReadyOptions, locale: string, locks?: CheckoutLockManager) => {
   const cart = useCart();
   const { currentSession, ready: sessionReady, sessionGeneration } = useCheckoutSession();
@@ -601,7 +601,18 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
           currentSession.current === requestSession && currentScope.current === contextKey,
         locale,
         locks,
-        onConfirmed: (result) => complete(result, guard, requestSession, true),
+        onConfirmed: (result) =>
+          observedGuard !== undefined && cart?.loaded === true && cart.entries.length > 0
+            ? dismissReceiptProgram(guard, locks).pipe(
+                Effect.match({
+                  onFailure: () => {
+                    setNotice("storage");
+                    restore();
+                  },
+                  onSuccess: restore,
+                }),
+              )
+            : Effect.sync(() => complete(result, guard, requestSession, true)),
         onUnavailable: () => {
           setNotice("uncertain");
           restore();
@@ -614,6 +625,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
       observeGuard(scope, observedContext, (observed) => {
         if (
           !sessionReady ||
+          cart?.loaded !== true ||
           currentSession.current !== sessionGeneration ||
           currentScope.current !== observedContext
         ) {
@@ -632,15 +644,17 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     );
   });
   useEffect(() => {
-    observeStoredIntent(options.scope, contextKey);
+    if (cart?.loaded === true) {
+      observeStoredIntent(options.scope, contextKey);
+    }
     const changed = (event: StorageEvent) => {
-      if (event.key === key || event.key === null) {
+      if (cart?.loaded === true && (event.key === key || event.key === null)) {
         observeStoredIntent(options.scope, contextKey);
       }
     };
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
-  }, [contextKey, key, options.scope]);
+  }, [cart?.loaded, contextKey, key, options.scope]);
   const dismiss = (onDone?: () => void) => {
     if (busy.current || currentReceipt === null || receiptGuard.current === null) {
       return;
