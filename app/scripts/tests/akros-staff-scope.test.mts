@@ -26,6 +26,9 @@ const SECRETS = { admin: 'admin-secret-1', [ESHOP]: 'eshop-secret-1', [EXPEDICE]
 const ESHOP_ROLE = id(901);
 const EXPEDICE_ROLE = id(902);
 const ROUTING_ROLE = id(903);
+const REGISTRY_ROLE = id(904);
+const REGISTRY_READ = 'commerce.storefront-registry.storefront-applications.read';
+const ADMINISTRATION_READ = 'commerce.market-catalog.market-administration.read';
 const at = '2026-11-19T12:00:00.000Z';
 const ORDER_PAGE = 'demo.merchandise.page-orders.read';
 const ORDER_RECORDS = 'demo.merchandise.api-records.read';
@@ -86,9 +89,10 @@ const companyRole = (roleId: string, keys: readonly string[]) => ({
 });
 const tenantRole = (roleId: string, keys: readonly string[]) => ({ ...roleBase(roleId, keys), scope: TENANT });
 const reviewedRoles = [
-  companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, TASK_READ]),
+  companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, TASK_READ, ADMINISTRATION_READ]),
   companyRole(EXPEDICE_ROLE, [ORDER_PAGE, ORDER_RECORDS, ORDER_STATUS]),
   tenantRole(ROUTING_ROLE, [ROUTING]),
+  tenantRole(REGISTRY_ROLE, [REGISTRY_READ]),
 ];
 const catalog = [
   entry(ORDER_PAGE),
@@ -96,6 +100,8 @@ const catalog = [
   entry(ORDER_STATUS, 'action'),
   entry(TASK_READ),
   entry(ROUTING),
+  entry(REGISTRY_READ, 'read', 'sensitive'),
+  entry(ADMINISTRATION_READ, 'read', 'sensitive'),
   entry('core.access.people.manage', 'admin', 'critical'),
 ];
 
@@ -486,6 +492,7 @@ const chosen: RoleChoice = {
   [ESHOP]: Option.some(ESHOP_ROLE),
   [EXPEDICE]: Option.some(EXPEDICE_ROLE),
   routing: Option.some(ROUTING_ROLE),
+  eshopRegistry: Option.some(REGISTRY_ROLE),
 };
 const options = (apply: boolean, overrides: Partial<RunOptions> = {}): RunOptions => ({
   adminEmail: ADMIN,
@@ -515,6 +522,7 @@ it.effect('apply drives the AKROS-only exact logins to AKROS seller access throu
       [ADMIT, id(11), 'company'].join(' '),
       [ASSIGN, id(11), 'company'].join(' '),
       [ASSIGN, id(11), 'tenant'].join(' '),
+      [ASSIGN, id(11), 'tenant'].join(' '),
       [MEMBERSHIP, id(12), ''].join(' '),
       [ADMIT, id(12), 'company'].join(' '),
       [ASSIGN, id(12), 'company'].join(' '),
@@ -527,7 +535,7 @@ it.effect('apply drives the AKROS-only exact logins to AKROS seller access throu
         .get(id(11))
         ?.assignments.map(({ roleId }) => roleId)
         .toSorted(),
-    ).toEqual([ESHOP_ROLE, ROUTING_ROLE].toSorted());
+    ).toEqual([ESHOP_ROLE, ROUTING_ROLE, REGISTRY_ROLE].toSorted());
     expect(
       shell.people
         .get(id(12))
@@ -543,7 +551,7 @@ it.effect('apply drives the AKROS-only exact logins to AKROS seller access throu
     expect(shell.paths.filter((path) => path === SIGN_IN)).toHaveLength(3);
     const again = yield* runWith(shell, true);
     expect(again.sent).toEqual([]);
-    expect(shell.writes).toHaveLength(8);
+    expect(shell.writes).toHaveLength(9);
   }),
 );
 
@@ -565,9 +573,9 @@ it.effect('without chosen roles the plan lists existing roles and plans no write
   Effect.gen(function* lists() {
     const shell = fakeShell();
     const result = yield* runWith(shell, false, {
-      roles: { [ESHOP]: Option.none(), [EXPEDICE]: Option.none(), routing: Option.none() },
+      roles: { [ESHOP]: Option.none(), [EXPEDICE]: Option.none(), routing: Option.none(), eshopRegistry: Option.none() },
     });
-    expect(result.roleCandidates).toHaveLength(3);
+    expect(result.roleCandidates).toHaveLength(4);
     expect(result.steps).toEqual([]);
     expect(shell.writes).toEqual([]);
   }),
@@ -600,15 +608,17 @@ it.effect(
           companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, 'core.access.people.manage']),
           companyRole(EXPEDICE_ROLE, [ORDER_PAGE, ORDER_RECORDS]),
           tenantRole(ROUTING_ROLE, [ROUTING]),
+          tenantRole(REGISTRY_ROLE, [REGISTRY_READ]),
         ],
       });
       expect((yield* failureOf(administrative, true)).code).toBe('unsafe_permissions');
       expect(administrative.writes).toEqual([]);
       const outOfLane = fakeShell({
         roles: [
-          companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS]),
+          companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, ADMINISTRATION_READ]),
           companyRole(EXPEDICE_ROLE, [ORDER_PAGE, ORDER_RECORDS, TASK_READ]),
           tenantRole(ROUTING_ROLE, [ROUTING]),
+          tenantRole(REGISTRY_ROLE, [REGISTRY_READ]),
         ],
       });
       const lane = yield* failureOf(outOfLane, true);
@@ -641,6 +651,29 @@ it.effect('foreign assignments or a refused sign-in stop without echoing secrets
   }),
 );
 
+it.effect('missing E-shopy reads or an expanded tenant registry role are refused before writes', () =>
+  Effect.gen(function* refusesIncompleteOrBroadRoles() {
+    const missingRead = fakeShell({
+      roles: reviewedRoles.map((role) =>
+        role.id === ESHOP_ROLE ? companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, TASK_READ]) : role,
+      ),
+    });
+    expect((yield* failureOf(missingRead, true)).code).toBe('unsafe_permissions');
+    expect(missingRead.writes).toEqual([]);
+    const broadRegistry = fakeShell({
+      roles: reviewedRoles.map((role) =>
+        role.id === REGISTRY_ROLE ? tenantRole(REGISTRY_ROLE, [REGISTRY_READ, ORDER_RECORDS]) : role,
+      ),
+    });
+    expect((yield* failureOf(broadRegistry, true)).code).toBe('unsafe_permissions');
+    expect(broadRegistry.writes).toEqual([]);
+    const wrongScope = yield* failureOf(fakeShell(), true, {
+      roles: { ...chosen, eshopRegistry: Option.some(ESHOP_ROLE) },
+    });
+    expect(wrongScope.code).toBe('unsafe_permissions');
+  }),
+);
+
 it.effect('a write that never shows up in the next read is waited for, then refused as no progress', () =>
   Effect.gen(function* stalls() {
     const shell = fakeShell({ lossyPath: MEMBERSHIP });
@@ -649,13 +682,14 @@ it.effect('a write that never shows up in the next read is waited for, then refu
   }),
 );
 
-it.effect('a reviewed role is judged by what it must not hold, not by holding Merchandise reads', () =>
+it.effect('the e-shop role needs its page dependency but never requires unrelated Merchandise reads', () =>
   Effect.gen(function* acceptsEngineeredOwnerRoles() {
     const shell = fakeShell({
       roles: [
-        companyRole(ESHOP_ROLE, [TASK_READ]),
+        companyRole(ESHOP_ROLE, [TASK_READ, ADMINISTRATION_READ]),
         companyRole(EXPEDICE_ROLE, [ORDER_STATUS]),
         tenantRole(ROUTING_ROLE, [ROUTING]),
+        tenantRole(REGISTRY_ROLE, [REGISTRY_READ]),
       ],
     });
     const result = yield* runWith(shell, true);
@@ -674,7 +708,7 @@ it.effect('a staff login must select the AKROS seller only, while the administra
     const administrator = fakeShell({ otherCompanyFor: 'admin' });
     const applied = yield* runWith(administrator, true);
     expect(applied.blockers).toEqual([]);
-    expect(administrator.writes).toHaveLength(8);
+    expect(administrator.writes).toHaveLength(9);
   }),
 );
 

@@ -16,7 +16,7 @@
  *   printf '%s' '{"admin":"…","eshop@akros.demo":"…","expedice@akros.demo":"…"}' | \
  *     node scripts/demo/akros-staff-scope.mts --shell-url https://ontos-stage.web-revolution.cz \
  *       --admin-email <AKROS administrator> --eshop-role <roleId> --expedice-role <roleId> \
- *       --routing-role <roleId> [--apply]
+ *       --routing-role <roleId> --eshop-registry-role <roleId> [--apply]
  *
  * Without --apply it only reads and prints what it would send. Passwords come from stdin only and are never
  * printed. Exits: 0 done, 1 refused or failed, 3 blocked (access held but the AKROS seller is not selectable yet).
@@ -339,8 +339,9 @@ export interface RoleChoice {
   readonly [ESHOP]: Option.Option<string>;
   readonly [EXPEDICE]: Option.Option<string>;
   readonly routing: Option.Option<string>;
+  readonly eshopRegistry: Option.Option<string>;
 }
-type Holder = Email | 'routing';
+type Holder = Email | 'routing' | 'eshop-registry';
 export const ScopeKindSchema = Schema.Literals(['company', 'tenant']);
 type ScopeKind = typeof ScopeKindSchema.Type;
 const sameScope = (scope: { readonly kind: string; readonly legalEntityId?: string }, kind: ScopeKind) =>
@@ -394,9 +395,11 @@ export const REVIEWED_ROLE_CONTENTS = {
   },
   /**
    * eshop@akros.demo: the operational capabilities of the modules the e-shop screens read, by module, never one that
-   * bootstraps, cleans up, seeds or administers.
+   * bootstraps, cleans up, seeds or administers. The administration-state read only answers which
+   * controls are available; it does not grant any of the market mutations it describes.
    */
   eshop: {
+    capabilities: ['commerce.market-catalog.market-administration.read'],
     modules: [
       'demo.merchandise',
       'demo.tagging',
@@ -410,16 +413,22 @@ export const REVIEWED_ROLE_CONTENTS = {
   },
   /** Both logins, tenant-wide: the Shell's module routing, nothing else. */
   routing: { capabilities: ['core.shell.tenant-module-target.resolve'] },
+  /** Tenant-owned registration metadata, held by the e-shop operator only, never the order desk. */
+  eshopRegistry: { capabilities: ['commerce.storefront-registry.storefront-applications.read'] },
 } as const;
 
 const cellAllowed = (holder: Holder, key: string) =>
   Match.value(holder).pipe(
     Match.when('routing', () => REVIEWED_ROLE_CONTENTS.routing.capabilities.some((allowed) => allowed === key)),
+    Match.when('eshop-registry', () =>
+      REVIEWED_ROLE_CONTENTS.eshopRegistry.capabilities.some((allowed) => allowed === key),
+    ),
     Match.when(EXPEDICE, () => REVIEWED_ROLE_CONTENTS.fulfilment.capabilities.some((allowed) => allowed === key)),
     Match.orElse(
       () =>
         REVIEWED_ROLE_CONTENTS.eshop.modules.some((module) => module === key.split('.').slice(0, 2).join('.')) &&
-        !/bootstrap|cleanup|seed|admin/u.test(key),
+        (!/bootstrap|cleanup|seed|admin/u.test(key) ||
+          REVIEWED_ROLE_CONTENTS.eshop.capabilities.some((allowed) => allowed === key)),
     ),
   );
 
@@ -455,7 +464,7 @@ export const reviewedRole = Effect.fn('AkrosStaffScope.reviewedRole')(function* 
     return yield* stop('reviewed_role_missing', `no existing AKROS role ${chosen} for ${holder}; choose one by id`);
   }
   const scopeOk =
-    holder === 'routing'
+    holder === 'routing' || holder === 'eshop-registry'
       ? role.scope === 'tenant'
       : role.scope === 'company' && role.legalEntityId === AKROS.legalEntityId;
   const slots = new Set(role.cells.map((cell) => `${cell.capabilityKey} ${cell.mode}`));
@@ -472,6 +481,12 @@ export const reviewedRole = Effect.fn('AkrosStaffScope.reviewedRole')(function* 
       `role ${role.id}: ${unsafe.capabilityKey} is outside what ${holder} may hold`,
     );
   }
+  if (
+    holder === ESHOP &&
+    !role.cells.some(({ capabilityKey }) => capabilityKey === REVIEWED_ROLE_CONTENTS.eshop.capabilities[0])
+  ) {
+    return yield* stop('unsafe_permissions', `role ${role.id} lacks the E-shopy administration-state read`);
+  }
   return role;
 });
 
@@ -483,7 +498,11 @@ const keyOf = (...parts: readonly (number | string)[]) =>
 interface StepFacts {
   readonly email: Email;
   readonly principalId: string;
-  readonly roles: { readonly company: Roles[number]; readonly routing: Roles[number] };
+  readonly roles: {
+    readonly company: Roles[number];
+    readonly routing: Roles[number];
+    readonly registry: Option.Option<Roles[number]>;
+  };
   readonly target: TargetObservation;
 }
 
@@ -554,7 +573,7 @@ const admissionStep = Effect.fn('AkrosStaffScope.admissionStep')(function* admis
   );
 });
 
-/** The reviewed company role and the tenant routing role, one assignment per call; nothing else is held. */
+/** The reviewed roles, one assignment per call; tenant registry reads belong only to the e-shop login. */
 const assignmentStep = Effect.fn('AkrosStaffScope.assignmentStep')(function* assignmentStep({
   email,
   principalId,
@@ -566,6 +585,7 @@ const assignmentStep = Effect.fn('AkrosStaffScope.assignmentStep')(function* ass
   const wanted = [
     { role: roles.company, scope: 'company' },
     { role: roles.routing, scope: 'tenant' },
+    ...Option.toArray(roles.registry).map((role) => ({ role, scope: 'tenant' as const })),
   ] as const;
   const matches = (assignment: (typeof assignments)[number], roleId: string, scope: ScopeKind) =>
     String(assignment.roleId) === roleId && sameScope(assignment.scope, scope);
@@ -635,6 +655,7 @@ export const planStaffScope = Effect.fn('AkrosStaffScope.planStaffScope')(functi
   choice: RoleChoice,
 ): Effect.fn.Return<AccountPlan, AkrosStaffScopeError> {
   const routing = yield* reviewedRole(target, choice.routing, 'routing');
+  const registry = yield* reviewedRole(target, choice.eshopRegistry, 'eshop-registry');
   const principals = accounts.map(({ principalId }) => principalId);
   if (new Set(principals).size !== principals.length) {
     return yield* stop('identity_conflict', 'both logins resolve the same AKROS Principal');
@@ -643,7 +664,13 @@ export const planStaffScope = Effect.fn('AkrosStaffScope.planStaffScope')(functi
     accounts,
     (account) =>
       reviewedRole(target, choice[account.email], account.email).pipe(
-        Effect.flatMap((company) => accountPlan(account, target, { company, routing })),
+        Effect.flatMap((company) =>
+          accountPlan(account, target, {
+            company,
+            routing,
+            registry: account.email === ESHOP ? Option.some(registry) : Option.none(),
+          }),
+        ),
       ),
     { concurrency: 1 },
   );
@@ -867,6 +894,7 @@ export const akrosStaffScopeCommand = Command.make(
     adminEmail: Flag.String('admin-email'),
     apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
     eshopRole: Flag.String('eshop-role').pipe(Flag.optional),
+    eshopRegistryRole: Flag.String('eshop-registry-role').pipe(Flag.optional),
     expediceRole: Flag.String('expedice-role').pipe(Flag.optional),
     routingRole: Flag.String('routing-role').pipe(Flag.optional),
     shellUrl: Flag.String('shell-url'),
@@ -884,6 +912,7 @@ export const akrosStaffScopeCommand = Command.make(
           'eshop@akros.demo': flags.eshopRole,
           'expedice@akros.demo': flags.expediceRole,
           routing: flags.routingRole,
+          eshopRegistry: flags.eshopRegistryRole,
         },
         settle: Duration.seconds(2),
       });
