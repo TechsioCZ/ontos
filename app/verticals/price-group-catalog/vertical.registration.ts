@@ -29,7 +29,8 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
       'price-group-definition': () => import('@app/price-group-catalog-contracts/price-group-definition/client'),
       'price-group-result-lookup': () => import('./src/api/price-group-result-lookup-client.ts'),
       'price-group-source-associations': () => import('./src/api/price-group-source-associations-client.ts'),
-      'validate-price-group-compatibility': () => import('@app/price-group-catalog-contracts/validate-price-group-compatibility/client'),
+      'validate-price-group-compatibility': () =>
+        import('@app/price-group-catalog-contracts/validate-price-group-compatibility/client'),
       // </generated-module-registration-apis>
     },
     components: {
