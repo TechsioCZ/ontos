@@ -1,6 +1,6 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
-import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Result, Schema } from 'effect';
 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
@@ -15,6 +15,7 @@ import {
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
 import { recoveryPolicyOf } from '../domain/catalog/message-type.ts';
+import { templateContractOf } from '../domain/catalog/template-contract.ts';
 import { DocumentPinSchema, pinnedDocumentOf, samePin } from '../domain/documents/document-pin.ts';
 import type { DocumentPin, PinnedDocument } from '../domain/documents/document-pin.ts';
 import type { DocumentReference } from '../domain/documents/document-reference.ts';
@@ -25,6 +26,7 @@ import { attemptIdOf } from '../domain/intake/identity.ts';
 import { decodeIntakeInput } from '../domain/intake/intake-input.ts';
 import { MessageTypeCatalog } from '../domain/intake/message-type-catalog.ts';
 import { SourceOccurrenceAuthority } from '../domain/intake/source-authority.ts';
+import { renderPinnedRevision } from '../domain/language/handoff-render.ts';
 import { SelectedLanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { decideMessageHandoffs } from '../domain/privacy/handoff-decision.ts';
 import { ProcessingScopeSchema } from '../domain/privacy/processing-scope.ts';
@@ -56,6 +58,8 @@ import type { HandoffStoreUnavailable } from './handoff-errors.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from './handoff-lease.ts';
 import { languagePolicyPortOverRoutines, readTemplatePortOverRoutines } from '../persistence/snapshot-ports.ts';
 import { verifyLanguageForHandoff } from '../services/language-selection.service.ts';
+import type { TemplateReadPortContract } from '../services/template-revision-port.service.ts';
+import { pinnedTemplateText } from '../services/template-revision-domain.service.ts';
 
 /**
  * The pre-handoff step of ONE Message Intent (#1401), run by the owner's Outbox worker. Core delivers it at least
@@ -333,10 +337,35 @@ interface Cleared {
 
 type GateVerdict = { readonly cleared: Cleared } | { readonly reasons: readonly StopReason[] };
 
-/** The language and template pin, verified over one consistent snapshot read in this scope. */
+/**
+ * The pinned revision rendered against the approved type's template contract (#1399): a missing required value, a value of
+ * the wrong kind, a link outside the owner's policy, a secret slot in the subject or a required secret slot that never
+ * reaches the message each stop the handoff with their own closed cause. Nothing is sent and nothing is stored here.
+ */
+const renderGate = Effect.fn('Communications.renderGate')(function* checkRender(
+  templates: TemplateReadPortContract,
+  type: TransactionalMessageType,
+  language: typeof SelectedLanguageDecisionSchema.Type,
+) {
+  const revision = yield* pinnedTemplateText(templates, language.pin);
+  if (Option.isNone(revision)) {
+    return Option.some(own('TEMPLATE_PIN', 'pinned_template_revision_unavailable', true));
+  }
+  const rendered = renderPinnedRevision({
+    contract: templateContractOf(type),
+    language: language.language,
+    revision: revision.value,
+  });
+  return Result.isFailure(rendered)
+    ? Option.some(own('TEMPLATE_CONTENT', rendered.failure.code, true))
+    : Option.none<StopReason>();
+});
+
+/** The language and template pin, verified over one consistent snapshot read in this scope, then rendered safely. */
 const languageGate = Effect.fn('Communications.languageGate')(function* checkLanguage(
   invoker: ScopedRoutineInvoker,
   language: typeof SelectedLanguageDecisionSchema.Type,
+  type: TransactionalMessageType,
 ) {
   const templates = yield* readTemplatePortOverRoutines(
     invoker,
@@ -344,10 +373,12 @@ const languageGate = Effect.fn('Communications.languageGate')(function* checkLan
     language.pin.revisionId,
   ).pipe(Effect.mapError((cause) => storeUnavailable('The approved template revisions could not be read', cause)));
   return yield* verifyLanguageForHandoff(templates, languagePolicyPortOverRoutines(invoker), language).pipe(
-    Effect.map((result) =>
+    Effect.flatMap((result) =>
       result.outcome === 'proceed'
-        ? Option.none<StopReason>()
-        : Option.some(own('LANGUAGE_GATE', result.reason, result.reason !== 'language_policy_unreadable')),
+        ? renderGate(templates, type, language)
+        : Effect.succeed(
+            Option.some(own('LANGUAGE_GATE', result.reason, result.reason !== 'language_policy_unreadable')),
+          ),
     ),
     Effect.catchTags({
       TemplatePinBlocked: (blocked) => Effect.succeed(Option.some(own('TEMPLATE_PIN', blocked.code, true))),
@@ -402,7 +433,7 @@ const localGates = Effect.fn('Communications.localGates')(function* gates(
   if (Option.isNone(pins)) {
     return { reasons: [own('PIN_UNREADABLE', 'STORED_PIN_INVALID', true)] } satisfies LocalGate;
   }
-  const languageStop = yield* languageGate(invoker, pins.value.language);
+  const languageStop = yield* languageGate(invoker, pins.value.language, type.value);
   return Option.isSome(languageStop)
     ? ({ reasons: [languageStop.value] } satisfies LocalGate)
     : ({ open: { ...pins.value, type: type.value } } satisfies LocalGate);

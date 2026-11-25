@@ -402,6 +402,45 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
   );
 
   it.live(
+    '[#1399 AC-06 R-D1] a revision that needs a value nobody published stops the handoff with its own cause; nothing leaves',
+    () =>
+      Effect.gen(function* missingValue() {
+        // the type publishes `purpose` as a required text value, the Tenant activated a revision that uses it, and no owner
+        // supplies a value to Communications: the message is stopped, never sent with half a sentence
+        const type = fixtureType({
+          placeholderContract: { placeholders: [{ kind: 'text', name: 'purpose', required: true }] },
+        });
+        const world = yield* makeRuntimeDatabase().pipe(
+          Effect.flatMap((database) => intakeWorld(database, { types: [type], withTemplates: false })),
+        );
+        yield* world.database.withPorts(world.tenantId, (templates) =>
+          Effect.gen(function* seed() {
+            const t = domainFor(templates);
+            const prepared = yield* t.prepare(
+              fictionalDraft({
+                ...templateBase,
+                body: '[FICTIONAL TEST COPY] {{purpose}}',
+                optionalPlaceholders: [],
+                requiredPlaceholders: ['purpose'],
+                subject: '[FICTIONAL TEST COPY] subject',
+              }),
+            );
+            yield* t.approve(prepared.revision.revisionId);
+          }),
+        );
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        const outcome = yield* step(world, handoff, intentId, scopedIn(world), world.types);
+        expect(outcome).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'TEMPLATE_CONTENT', cause: 'required_value_missing', proven: true }],
+        });
+        expect(handoff.calls).toEqual([]);
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
     '[R-D7] a Legal Entity request without an own text is handed off with the Tenant-wide revision and records that scope',
     () =>
       Effect.gen(function* legalEntityFallback() {
