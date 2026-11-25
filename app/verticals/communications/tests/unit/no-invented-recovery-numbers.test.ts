@@ -3,11 +3,15 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'effect-rstest';
 
+import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../../src/handoff/outbox-worker-defaults.ts';
+
 /**
  * [#1403 R-13 R-14 AC-07] A static guard: no retry count, interval, backoff or waiting time is hard-coded in this owner, and no
  * scheduler or retry framework is introduced. A per-flow limit may exist only as owner-approved catalog DATA (`maxAttempts` of an
- * approved type), and the only retry configuration in the source is the Core Outbox worker's own technical redrive, which is the
- * same authority and never a new send approval.
+ * approved type). The one thing Core itself requires on every Outbox Worker descriptor, a lease and a redelivery policy, has NO
+ * omittable default in Core: its values are exactly what the Codesmith worker generator writes, and this owner keeps them in ONE
+ * named constant (`OUTBOX_WORKER_GENERATED_DEFAULTS`). This guard exempts that single file and nothing else: every worker
+ * descriptor must take its numbers from it and carry none of its own.
  */
 const root = path.join(import.meta.dirname, '..', '..');
 const sourceFiles = (directory: string): string[] =>
@@ -27,21 +31,25 @@ const codeOf = (file: string) =>
     .join('\n');
 const relativeOf = (file: string) => path.relative(root, file);
 
-/** The only file that configures a retry: the Core Outbox worker definition requires its own technical redrive policy. */
-const CORE_REDRIVE_WORKER = 'src/workers/prepare-message-handoff.worker.ts';
-// The Privacy handoff worker is the one other Core worker definition: it governs redelivery of the same Privacy message to the
-// same idempotent record step (the generated defaults, no number of its own) and is never read by any recovery code.
-const CORE_HANDOFF_RECORD_WORKER = 'src/workers/receive-privacy-measure.worker.ts';
-// The Privacy continuation worker likewise only redelivers the same continuation message to the same idempotent report
-// (the generated defaults, no number of its own); it reports a recorded confirmation and never recovers a message.
-const CORE_CONTINUATION_WORKER = 'src/workers/report-privacy-owner-outcome.worker.ts';
-const CORE_WORKER_DEFINITIONS = [CORE_REDRIVE_WORKER, CORE_HANDOFF_RECORD_WORKER, CORE_CONTINUATION_WORKER];
+/** The only file with a Core-required number: the values the worker generator writes into every descriptor. */
+const GENERATED_DEFAULTS_FILE = 'src/handoff/outbox-worker-defaults.ts';
+const CORE_WORKER_DEFINITIONS = [
+  'src/workers/prepare-message-handoff.worker.ts',
+  'src/workers/receive-privacy-measure.worker.ts',
+  'src/workers/report-privacy-owner-outcome.worker.ts',
+];
+/** The Codesmith Outbox Worker generator's template: the authority for "generated defaults". */
+const GENERATOR_TEMPLATE = path.join(root, '..', '..', 'scripts', 'scaffolding', 'outbox-worker', 'scaffold.mts');
 
 const NUMERIC_LIMIT_AFTER =
   /\b(?:attempts?|retr(?:y|ies)|tries|submitted|attemptNumber|maxAttempts|limit)\w*(?:\.length)?\s*(?:>=|<=|===|!==|==|>|<)\s*\d/iu;
 const NUMERIC_LIMIT_BEFORE = /\b\d+\s*(?:>=|<=|===|!==|==|>|<)\s*\w*(?:attempt|retr(?:y|ies)|tries|submitted)\w*/iu;
 const NUMERIC_BOUND_CALL =
   /\b(?:attempts?|retr(?:y|ies)|tries)\w*\.(?:slice|splice|take)\(\s*\d|\b(?:times|repeats?|retries|maxTries)\s*[:=(]\s*\d/iu;
+
+/** The number a generator template writes after `key:`, e.g. `30_000` -> 30000. */
+const generatedNumber = (template: string, key: string) =>
+  Number((template.split(`${key}:`)[1] ?? 'NaN').trimStart().split(',')[0]?.replaceAll('_', ''));
 
 describe('no invented recovery numbers (#1403)', () => {
   it('the numeric-limit patterns really catch a limit written against an attempt or retry count, and spare the lease and plain arithmetic', () => {
@@ -71,7 +79,9 @@ describe('no invented recovery numbers (#1403)', () => {
 
   it('finds the sources it scans, so the guard cannot pass on an empty directory', () => {
     expect(scanned.length).toBeGreaterThan(50);
-    expect(scanned.map(relativeOf)).toContain(CORE_REDRIVE_WORKER);
+    expect(scanned.map(relativeOf)).toEqual(
+      expect.arrayContaining([GENERATED_DEFAULTS_FILE, ...CORE_WORKER_DEFINITIONS]),
+    );
   });
 
   it.each([
@@ -91,18 +101,51 @@ describe('no invented recovery numbers (#1403)', () => {
       'a retry framework import',
       /from\s+['"](?:p-retry|async-retry|retry|bull|bullmq|agenda|node-cron|cron|bee-queue)['"]/u,
     ],
+    [
+      'a lease, backoff or redelivery number written against its own descriptor key',
+      /\b(?:leaseDurationMs|maxDeferralMs|initialBackoffMs|maxBackoffMs|multiplier)\s*:\s*[\d_.]+/u,
+    ],
   ])('hard-codes %s nowhere in the sources', (_name, pattern) => {
     const offenders = scanned
-      .filter((file) => !CORE_WORKER_DEFINITIONS.includes(relativeOf(file)))
+      .filter((file) => relativeOf(file) !== GENERATED_DEFAULTS_FILE)
       .filter((file) => pattern.test(codeOf(file)))
       .map(relativeOf);
     expect(offenders).toEqual([]);
   });
 
-  it('keeps the Core Outbox redrive the only retry configuration, as a Core worker definition and never a send approval', () => {
-    expect(codeOf(path.join(root, CORE_REDRIVE_WORKER))).toMatch(/retryPolicy:\s*\{/u);
-    // it governs redelivery of the same message to the same idempotent step; it is not read by any recovery code
-    const readers = scanned.filter((file) => /\bretryPolicy\b/u.test(codeOf(file))).map(relativeOf);
+  it('keeps the Core-required lease and redelivery policy in ONE named constant, equal to what the worker generator writes', () => {
+    const template = readFileSync(GENERATOR_TEMPLATE, 'utf-8');
+    expect(OUTBOX_WORKER_GENERATED_DEFAULTS).toEqual({
+      leaseDurationMs: generatedNumber(template, 'leaseDurationMs'),
+      retryPolicy: {
+        initialBackoffMs: generatedNumber(template, 'initialBackoffMs'),
+        maxAttempts: generatedNumber(template, 'maxAttempts'),
+        maxBackoffMs: generatedNumber(template, 'maxBackoffMs'),
+        multiplier: generatedNumber(template, 'multiplier'),
+      },
+    });
+  });
+
+  it('lets every Outbox Worker descriptor take its lease and redelivery policy from that constant and carry no number of its own', () => {
+    for (const worker of CORE_WORKER_DEFINITIONS) {
+      const code = codeOf(path.join(root, worker));
+      expect(code, worker).toMatch(
+        /leaseDurationMs:\s*(?:PREPARE_MESSAGE_HANDOFF_LEASE_MS|OUTBOX_WORKER_GENERATED_DEFAULTS\.leaseDurationMs),/u,
+      );
+      expect(code, worker).toMatch(/retryPolicy:\s*OUTBOX_WORKER_GENERATED_DEFAULTS\.retryPolicy,/u);
+      expect(code, worker).not.toMatch(/\bmaxDeferralMs\b/u);
+    }
+    // the handoff lease the step bounds its provider call by is that same number, never a second one
+    expect(codeOf(path.join(root, 'src/handoff/handoff-lease.ts'))).toMatch(
+      /PREPARE_MESSAGE_HANDOFF_LEASE_MS\s*=\s*OUTBOX_WORKER_GENERATED_DEFAULTS\.leaseDurationMs;/u,
+    );
+  });
+
+  it('reads a redelivery policy nowhere else: only the Core worker descriptors, never a recovery code', () => {
+    const readers = scanned
+      .filter((file) => relativeOf(file) !== GENERATED_DEFAULTS_FILE)
+      .filter((file) => /\b(?:retryPolicy|maxDeferralMs)\b/u.test(codeOf(file)))
+      .map(relativeOf);
     expect(readers).toEqual(CORE_WORKER_DEFINITIONS);
   });
 
