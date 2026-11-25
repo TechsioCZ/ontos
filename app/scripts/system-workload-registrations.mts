@@ -205,3 +205,27 @@ export const systemWorkloadRegistrationIssues = (input: {
   }
   return issues;
 };
+
+/**
+ * Every system workload Core's own source registers is one Core declares (`core-system-workloads.ts`): core modules have
+ * no manifest, so that declaration is what an app's manifest is for its module. Unlike an app, Core is not required to
+ * register every key it declares: the declaration may name a key before the source that runs as it exists.
+ */
+export const coreSystemWorkloadRegistrationIssues = (input: {
+  readonly declared: readonly string[];
+  readonly files: readonly SystemWorkloadSourceFile[];
+}): readonly string[] => {
+  const declared = new Set(input.declared);
+  return input.files.flatMap((file) => {
+    const read = registeredSystemWorkloadKeys(file);
+    return [
+      ...read.issues.map((issue) => `core ${issue}`),
+      ...read.keys
+        .filter((key) => !declared.has(key))
+        .map(
+          (key) =>
+            `core ${file.path} registers system workload ${key}, which Core does not declare in core-system-workloads.ts`,
+        ),
+    ];
+  });
+};
