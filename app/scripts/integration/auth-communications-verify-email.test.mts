@@ -16,6 +16,7 @@ import {
   verification,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
 import { approvedMessageTypes, portalAuthDefaultCopy } from '@app/communications/testing/source-owner-world';
+import { testDatabaseClients } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -124,6 +125,42 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
           headline: { deliveryProven: false, providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
           template: { language: 'cs', mode: 'B', revisionNumber: 1 },
         });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1392 S3 uncommitted source] a Better Auth write that fails at commit creates no request, no decision and no send',
+    () =>
+      Effect.gen(function* uncommittedSource() {
+        const { create, realm, world } = yield* setup();
+        const { admin } = yield* testDatabaseClients;
+        // The account row is written by Better Auth in its own transaction. A deferred constraint trigger makes that transaction
+        // fail at COMMIT for this account only (a REAL database failure, not a scripted one). Observed sequencing of the real
+        // provider: the verification callback, which holds the issuance and its request, runs only AFTER that write committed, so
+        // an uncommitted source state never reaches Auth's outbox and therefore never reaches Communications.
+        const name = `r11_${randomUUID().replaceAll('-', '')}`;
+        yield* admin.unsafe(
+          `create function commerce_auth.${name}() returns trigger language plpgsql as $$ begin raise exception 'fictional: the Better Auth write failed at commit'; end $$`,
+        );
+        yield* admin.unsafe(
+          `create constraint trigger ${name} after insert on commerce_auth."user" deferrable initially deferred for each row when (new.email = '${realm.email}') execute function commerce_auth.${name}()`,
+        );
+        yield* Effect.addFinalizer(() =>
+          admin
+            .unsafe(`drop trigger if exists ${name} on commerce_auth."user"`)
+            .pipe(Effect.andThen(admin.unsafe(`drop function if exists commerce_auth.${name}()`)), Effect.ignore),
+        );
+        expect((yield* Effect.exit(create()))._tag).toBe('Failure');
+        // the account was never committed, and nothing of it was held by Auth either
+        expect(yield* realm.accountOf(realm.email)).toHaveLength(0);
+        expect(yield* world.outboxRows).toHaveLength(0);
+        // the relay has nothing to submit: Communications decides nothing, stores nothing and no message can be handed off
+        yield* world.relay;
+        expect(world.submissions).toHaveLength(0);
+        expect(yield* world.intentRows).toHaveLength(0);
+        expect(yield* world.attemptRows).toHaveLength(0);
+        expect(world.mailbox).toHaveLength(0);
+        expect((yield* (yield* historyReads(world)).list()).items).toHaveLength(0);
       }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
