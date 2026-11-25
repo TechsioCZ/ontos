@@ -4,6 +4,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
 import { builtInTemplateDefaultsOperation } from '../../shared/apis/built-in-template-defaults.ts';
+import { templateRevisionListOperation } from '../../shared/apis/template-revision-list.ts';
 import { communicationOutcomeFeedOperation } from '../../shared/apis/communication-outcome-feed.ts';
 import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
@@ -59,6 +60,7 @@ describe('Communications module contract', () => {
       'message-history-list',
       'privacy-owner-coverage',
       'privacy-owner-execution-outcome',
+      'template-revision-list',
     ]);
     expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
       'builtInTemplateDefaults.execute',
@@ -68,6 +70,7 @@ describe('Communications module contract', () => {
       'messageHistoryList.execute',
       'privacyOwnerCoverage.execute',
       'privacyOwnerExecutionOutcome.execute',
+      'templateRevisionList.execute',
     ]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
   });
@@ -81,6 +84,18 @@ describe('Communications module contract', () => {
         schemaVersion: '1',
       },
       route: { path: '/reads/built-in-template-defaults' },
+    });
+  });
+
+  it('publishes the template revision list Read as a typed Core SDK operation of exactly this owner', () => {
+    expect(templateRevisionListOperation).toMatchObject({
+      kind: 'read',
+      provider: {
+        entrypointKey: 'communications.core.api.template-revision-list',
+        moduleId: 'communications.core',
+        schemaVersion: '1',
+      },
+      route: { path: '/reads/template-revision-list' },
     });
   });
 

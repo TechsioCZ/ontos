@@ -27,6 +27,8 @@ import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execut
 import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
+import { TemplateRevisionListApi } from './shared/apis/template-revision-list.ts';
+import { templateRevisionListRead } from './src/api/template-revision-list.read.ts';
 // </generated-module-manifest-imports>
 
 /**
@@ -82,6 +84,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       'message-history-list': MessageHistoryListApi,
       'privacy-owner-coverage': PrivacyOwnerCoverageApi,
       'privacy-owner-execution-outcome': PrivacyOwnerExecutionOutcomeApi,
+      'template-revision-list': TemplateRevisionListApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -121,6 +124,11 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
         apiKey: 'privacy-owner-execution-outcome',
         operationKey: 'privacyOwnerExecutionOutcome.execute',
         registration: privacyOwnerExecutionOutcomeRead,
+      },
+      {
+        apiKey: 'template-revision-list',
+        operationKey: 'templateRevisionList.execute',
+        registration: templateRevisionListRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],

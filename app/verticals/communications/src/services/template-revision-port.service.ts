@@ -1,6 +1,7 @@
 import { Context } from 'effect';
 import type { Crypto, DateTime, Effect, Option } from 'effect';
-import type { TemplateIdentity } from '../../shared/template-revision.ts';
+import type { TemplateRevisionListCursor } from '../../shared/template-revision-read.ts';
+import type { TemplateIdentity, TemplateScope } from '../../shared/template-revision.ts';
 import type { TemplateStoreUnavailable as TemplateStoreUnavailableClass } from '../../shared/template-revision-errors.ts';
 
 type TemplateStoreUnavailable = InstanceType<typeof TemplateStoreUnavailableClass>;
@@ -53,6 +54,24 @@ export interface TemplateInvalidationRecord {
   readonly invalidatedByPrincipalId: string;
   readonly reason: string;
   readonly revisionId: string;
+}
+
+/** One revision with the Template Type it belongs to. */
+export interface TemplateRevisionWithType {
+  readonly revision: TemplateRevisionRecord;
+  readonly type: TemplateTypeRecord;
+}
+
+/**
+ * One page of the revisions of ONE exact scope, ordered by message type, then language, then newest revision first. The
+ * scope is exact: a Tenant-wide page holds no Legal Entity Template and a Legal Entity page no Tenant-wide one.
+ */
+export interface TemplateRevisionScopeQuery {
+  readonly after: TemplateRevisionListCursor | undefined;
+  readonly language: TemplateIdentity['language'] | undefined;
+  readonly limit: number;
+  readonly messageType: string | undefined;
+  readonly scope: TemplateScope;
 }
 
 /** Who acted, under which invocation and when: stamped on every write so who/what/when/why stays answerable. */
@@ -131,6 +150,10 @@ export interface TemplateRevisionPortContract {
   readonly openActivations: (
     templateTypeId: string,
   ) => Effect.Effect<readonly TemplateActivationRecord[], TemplateStoreUnavailable>;
+  /** One page of the revisions of one exact scope, with their Types: the Tenant administrator's list. */
+  readonly revisionsOfScope: (
+    query: TemplateRevisionScopeQuery,
+  ) => Effect.Effect<readonly TemplateRevisionWithType[], TemplateStoreUnavailable>;
   /** Every revision of one Type, oldest first: the review of a Type lists them all, drafts included. */
   readonly revisionsOfType: (
     templateTypeId: string,

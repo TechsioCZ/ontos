@@ -34,6 +34,9 @@ const builtInTemplateDefaultsEntrypoint = defineTenantModuleEntrypoint({
  */
 export const builtInTemplateDefaultsRead = defineRead(
   {
+    // This permission lists the SEED content (the code seed texts with their pending-approver state) for review, with the
+    // Tenant's own revisions of exactly those seed identities; it is NOT the list of the Tenant's revisions and their
+    // activation history, which is `communications.core.template-revision.read` (template-revision-list Read).
     accessDeclaration: {
       key: 'communications.core.template-revision.list',
       kind: 'read',

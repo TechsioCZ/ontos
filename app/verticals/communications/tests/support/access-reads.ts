@@ -10,8 +10,10 @@ import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 
 import type { MessageHistoryDetailRequest } from '../../shared/apis/message-history-detail.ts';
 import type { MessageHistoryListRequestSchema } from '../../shared/apis/message-history-list.ts';
+import type { TemplateRevisionListRequestSchema } from '../../shared/apis/template-revision-list.ts';
 import { messageHistoryDetailRead } from '../../src/api/message-history-detail.read.ts';
 import { messageHistoryListRead } from '../../src/api/message-history-list.read.ts';
+import { templateRevisionListRead } from '../../src/api/template-revision-list.read.ts';
 import { SourceScopeVisibility } from '../../src/domain/access/source-visibility.ts';
 import { SourceScopeVisibilityUnavailable } from '../../src/domain/access/source-visibility-errors.ts';
 import type { SourceVisibility, SourceVisibilityQuery } from '../../src/domain/access/source-visibility.ts';
@@ -160,5 +162,8 @@ export const accessReads = Effect.fn('CommunicationsAccessTest.reads')(function*
     /** The detail of a request-level decision that has no message (by its request), or of whatever the input names. */
     requestDetail: (input: MessageHistoryDetailRequest) =>
       harness.runtime.runRead({ input, principal, registration: messageHistoryDetailRead, transport }),
+    /** The Tenant administrator's list of Template Revisions of the exact scope of the principal. */
+    templateRevisions: (input: typeof TemplateRevisionListRequestSchema.Encoded = {}) =>
+      harness.runtime.runRead({ input, principal, registration: templateRevisionListRead, transport }),
   };
 });

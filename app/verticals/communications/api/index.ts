@@ -58,6 +58,7 @@ import { privacyOwnerExecutionOutcomeReadApiLive } from './privacy-owner-executi
 import { recordOwnerExecutionEvidenceActionApiLive } from './record-owner-execution-evidence-action-server.ts';
 import { setLanguagePolicyActionApiLive } from './set-language-policy-action-server.ts';
 import { submitCommunicationRequestActionApiLive } from './submit-communication-request-action-server.ts';
+import { templateRevisionListReadApiLive } from './template-revision-list-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
@@ -180,6 +181,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   recordOwnerExecutionEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  templateRevisionListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
