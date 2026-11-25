@@ -14306,6 +14306,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "communications.core.communication-outcome-feed.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "communication-outcome-feed",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.communication-outcome-feed",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.communication-request.submit",
             "kind": "action",
             "modes": [

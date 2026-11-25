@@ -10,6 +10,7 @@ import { identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { ActivateTemplateRevisionActionApi } from './apis/activate-template-revision-action.ts';
 import { BuiltInTemplateDefaultsApi } from './apis/built-in-template-defaults.ts';
+import { CommunicationOutcomeFeedApi } from './apis/communication-outcome-feed.ts';
 import { DeactivateTemplateRevisionActionApi } from './apis/deactivate-template-revision-action.ts';
 import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-revision-action.ts';
 import { LanguagePolicyApi } from './apis/language-policy.ts';
@@ -48,6 +49,7 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(ActivateTemplateRevisionActionApi)
   .addHttpApi(BuiltInTemplateDefaultsApi)
+  .addHttpApi(CommunicationOutcomeFeedApi)
   .addHttpApi(DeactivateTemplateRevisionActionApi)
   .addHttpApi(InvalidateTemplateRevisionActionApi)
   .addHttpApi(LanguagePolicyApi)

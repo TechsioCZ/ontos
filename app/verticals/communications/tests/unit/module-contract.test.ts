@@ -30,7 +30,7 @@ describe('Communications module contract', () => {
     expect(communicationsManifest.publicSurface.components).toEqual({});
   });
 
-  it('carries the template revision Actions, the language mode Action, the history Reads, the request intake and no later lane', () => {
+  it('carries the template revision Actions, the language mode Action, the history Reads, the source outcome feed, the request intake and no later lane', () => {
     expect(
       communicationsManifest.publicSurface.actions
         .map((action) => action.descriptor.actionKey)
@@ -46,6 +46,7 @@ describe('Communications module contract', () => {
     ]);
     expect(Object.keys(communicationsManifest.publicSurface.api)).toEqual([
       'built-in-template-defaults',
+      'communication-outcome-feed',
       'language-policy',
       'message-history-detail',
       'message-history-list',
@@ -54,6 +55,7 @@ describe('Communications module contract', () => {
     ]);
     expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
       'builtInTemplateDefaults.execute',
+      'communicationOutcomeFeed.execute',
       'languagePolicy.execute',
       'messageHistoryDetail.execute',
       'messageHistoryList.execute',

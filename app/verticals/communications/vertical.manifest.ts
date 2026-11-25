@@ -7,6 +7,8 @@ import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { BuiltInTemplateDefaultsApi } from './shared/apis/built-in-template-defaults.ts';
 import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
+import { CommunicationOutcomeFeedApi } from './shared/apis/communication-outcome-feed.ts';
+import { communicationOutcomeFeedRead } from './src/api/communication-outcome-feed.read.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
@@ -55,6 +57,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     api: {
       // <generated-module-manifest-apis>
       'built-in-template-defaults': BuiltInTemplateDefaultsApi,
+      'communication-outcome-feed': CommunicationOutcomeFeedApi,
       'language-policy': LanguagePolicyApi,
       'message-history-detail': MessageHistoryDetailApi,
       'message-history-list': MessageHistoryListApi,
@@ -73,6 +76,11 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
         apiKey: 'built-in-template-defaults',
         operationKey: 'builtInTemplateDefaults.execute',
         registration: builtInTemplateDefaultsRead,
+      },
+      {
+        apiKey: 'communication-outcome-feed',
+        operationKey: 'communicationOutcomeFeed.execute',
+        registration: communicationOutcomeFeedRead,
       },
       { apiKey: 'language-policy', operationKey: 'languagePolicy.execute', registration: languagePolicyRead },
       {
