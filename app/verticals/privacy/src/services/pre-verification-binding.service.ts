@@ -133,10 +133,11 @@ export const withdrawPreVerificationBinding = Effect.fn('PrivacyPreVerification.
     evidenceRef: payload.evidenceRef,
     withdrawnBy: scope.principalId,
   });
-  return yield* Option.match(withdrawn, {
-    onNone: () => Effect.fail(new PreVerificationBindingNotFound({ code: 'pre_verification_binding_not_found' })),
-    onSome: Effect.succeed,
-  });
+  return yield* Effect.fromOption(withdrawn).pipe(
+    Effect.catchTag('NoSuchElementError', () =>
+      Effect.fail(new PreVerificationBindingNotFound({ code: 'pre_verification_binding_not_found' })),
+    ),
+  );
 });
 
 /** Only the verified Communications module may ask, and only as itself. */
