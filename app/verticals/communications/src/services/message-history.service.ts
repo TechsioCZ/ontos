@@ -23,6 +23,7 @@ import {
   communicationDecisions,
   communicationRequests,
   deliveryAttempts,
+  intentDocumentPins,
   intentHandoffStops,
   intentRecoveryEvaluations,
   intentResendLinks,
@@ -44,7 +45,7 @@ import type {
 } from '../domain/history/timeline.ts';
 import { FailureClassSchema } from '../domain/history/vocabulary.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
-import type { TemplateTextSource } from '../../shared/template-revision.ts';
+import type { TemplatePin, TemplateTextSource } from '../../shared/template-revision.ts';
 import { LanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { HandoffStoreUnavailable } from '../handoff/process-intent-handoff.ts';
 
@@ -61,6 +62,13 @@ export interface IntentHistoryRecord {
   readonly decidedAt: DateTime.Utc;
   /** The safe closed reason of the original decision (a suppression or a pinned-not-sent reason), preserved as decided. */
   readonly decisionReason: string | undefined;
+  /** The documents the owner approved for disclosure with this message, in pinned order: references and forms only (#1409). */
+  readonly documents: readonly {
+    readonly document: CommunicationResourceRef;
+    readonly form: 'ATTACHMENT' | 'LINK';
+    readonly pinnedAt: DateTime.Utc;
+    readonly position: number;
+  }[];
   /** The append-only facts the history is projected from: the input of the guard the retry lane calls (`canAttemptAfterUnknownEffect`). */
   readonly facts: IntentTimelineFacts;
   readonly history: IntentHistory;
@@ -78,7 +86,7 @@ export interface IntentHistoryRecord {
     readonly resentAs: readonly { readonly intentId: string; readonly reasonCode: string }[];
     readonly retries: readonly {
       readonly attemptId: string;
-      readonly basisKind: string;
+      readonly basisKind: RetryRow['basisKind'];
       readonly previousAttemptId: string;
       readonly reasonCode: string;
     }[];
@@ -95,6 +103,8 @@ export interface IntentHistoryRecord {
     | {
         readonly contentDigest: string | undefined;
         readonly messageType: string;
+        /** The whole stored pin: owner-internal, it only feeds the template use audit and is never projected as is. */
+        readonly pin: TemplatePin;
         readonly revisionId: string;
         readonly revisionNumber: number;
         readonly source: TemplateTextSource;
@@ -158,12 +168,14 @@ type ResolutionRow = typeof providerObservationConflictResolutions.$inferSelect;
 type RecoveryRow = typeof intentRecoveryEvaluations.$inferSelect;
 type RetryRow = typeof attemptRetryLinks.$inferSelect;
 type ResendRow = typeof intentResendLinks.$inferSelect;
+type DocumentPinRow = typeof intentDocumentPins.$inferSelect;
 
 /** Every stored fact of one request of the installed Tenant, as rows. A request without intents (no-message) has none of the rest. */
 interface RequestRows {
   readonly attempts: readonly AttemptRow[];
   readonly conflicts: readonly ConflictRow[];
   readonly decision: DecisionRow;
+  readonly documents: readonly DocumentPinRow[];
   readonly intents: readonly IntentRow[];
   readonly observations: readonly ObservationRow[];
   readonly recoveries: readonly RecoveryRow[];
@@ -174,7 +186,7 @@ interface RequestRows {
   readonly stops: readonly StopRow[];
 }
 
-/** The eight append-only child tables of a set of intents: one statement each, whatever the number of intents. */
+/** The nine append-only child tables of a set of intents: one statement each, whatever the number of intents. */
 const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string, ids: readonly string[]) =>
   Effect.all(
     {
@@ -188,6 +200,11 @@ const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string,
         .where(
           and(eq(providerObservationConflicts.tenantId, tenantId), inArray(providerObservationConflicts.intentId, ids)),
         ),
+      documents: transaction
+        .select()
+        .from(intentDocumentPins)
+        .where(and(eq(intentDocumentPins.tenantId, tenantId), inArray(intentDocumentPins.intentId, ids)))
+        .orderBy(asc(intentDocumentPins.position)),
       observations: transaction
         .select()
         .from(providerObservations)
@@ -266,6 +283,7 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
       ? {
           attempts: [],
           conflicts: [],
+          documents: [],
           observations: [],
           recoveries: [],
           resends: [],
@@ -285,6 +303,7 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
       attempts: children.attempts.filter(({ intentId }) => owns.has(intentId)),
       conflicts: children.conflicts.filter(({ intentId }) => owns.has(intentId)),
       decision,
+      documents: children.documents.filter(({ intentId }) => owns.has(intentId)),
       intents: own,
       observations: children.observations.filter(({ intentId }) => owns.has(intentId)),
       recoveries: children.recoveries.filter(({ intentId }) => owns.has(intentId)),
@@ -401,6 +420,7 @@ const pinsOf = (intent: IntentRow): Pick<IntentHistoryRecord, 'language' | 'temp
         : {
             contentDigest: pin.contentDigest,
             messageType: pin.messageType,
+            pin,
             revisionId: pin.revisionId,
             revisionNumber: pin.revisionNumber,
             // a pin stored before #1406 Option A carries no source: it always named a Tenant revision
@@ -421,9 +441,28 @@ const intentRecordOf = Effect.fn('Communications.intentHistoryRecord')(function*
     resourceType: intent.recipientType,
   }).pipe(Effect.mapError(unavailable));
   const endpoint = Option.getOrUndefined(readEndpoint(intent.endpointPin));
+  const documents = yield* Effect.forEach(
+    rows.documents.filter(({ intentId }) => intentId === intent.intentId),
+    (pinned) =>
+      Schema.decodeUnknownEffect(CommunicationResourceRefSchema)({
+        moduleId: pinned.documentModule,
+        resourceId: pinned.documentId,
+        resourceType: pinned.documentType,
+      }).pipe(
+        Effect.map((document) => ({
+          document,
+          form: pinned.form,
+          pinnedAt: instant(pinned.pinnedAt),
+          position: pinned.position,
+        })),
+        Effect.mapError(unavailable),
+      ),
+    { concurrency: 1 },
+  );
   return {
     decidedAt: instant(intent.createdAt),
     decisionReason: intent.reason ?? undefined,
+    documents,
     facts,
     history: historyOfIntent(facts),
     intentId: MessageIntentIdSchema.make(intent.intentId),

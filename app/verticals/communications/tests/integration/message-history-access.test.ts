@@ -563,7 +563,10 @@ describe('The row filter of the list is never applied after the page was read (#
                   Effect.all(
                     {
                       detail: failureOf(
-                        service.detail(ids[0] ?? '', { ...options, listAccess: recordScopedFilter(intentId) }),
+                        service.detail(
+                          { intentId: ids[0] ?? NOT_AN_INTENT },
+                          { ...options, listAccess: recordScopedFilter(intentId) },
+                        ),
                       ),
                       list: failureOf(
                         service.list({ limit: 2 }, { ...options, listAccess: recordScopedFilter(intentId) }),

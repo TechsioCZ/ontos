@@ -119,6 +119,7 @@ export interface IntentTimelineFacts {
 export const HistoryEntryKindSchema = Schema.Literals([
   'ATTEMPT_PREPARED',
   'HANDOFF_STOPPED',
+  'INTENT_NOT_SENT',
   'INTENT_PREPARED',
   'INTENT_SUPPRESSED',
   'OBSERVATION_CONFLICTED',
@@ -180,6 +181,7 @@ export interface IntentHistory {
 const ENTRY_RANK = {
   ATTEMPT_PREPARED: 3,
   HANDOFF_STOPPED: 2,
+  INTENT_NOT_SENT: 1,
   INTENT_PREPARED: 0,
   INTENT_SUPPRESSED: 1,
   OBSERVATION_CONFLICTED: 6,
@@ -281,13 +283,24 @@ const conflictDrafts = (facts: IntentTimelineFacts): readonly Draft[] =>
     };
   });
 
+/** What the decision of an intent proves on its own: a concrete message prepared, stopped by a proven fact, or never sendable. */
+const decisionEntryKind = {
+  NOT_SENT: 'INTENT_NOT_SENT',
+  PENDING_HANDOFF: 'INTENT_PREPARED',
+  SUPPRESSED: 'INTENT_SUPPRESSED',
+} as const satisfies Record<IntentTimelineFacts['intent']['status'], HistoryEntryKind>;
+const decisionStatus = {
+  NOT_SENT: 'NOT_SENT',
+  PENDING_HANDOFF: 'PREPARED',
+  SUPPRESSED: 'SUPPRESSED',
+} as const satisfies Record<IntentTimelineFacts['intent']['status'], HistoryStatus>;
+
 const decisionDrafts = (facts: IntentTimelineFacts): readonly Draft[] => {
   const { intent } = facts;
-  const pending = intent.status === 'PENDING_HANDOFF';
   const decided: Draft = {
     attemptId: null,
     attemptNumber: null,
-    kind: pending ? 'INTENT_PREPARED' : 'INTENT_SUPPRESSED',
+    kind: decisionEntryKind[intent.status],
     observationId: null,
     observationKind: null,
     occurredAt: intent.createdAt,
@@ -295,7 +308,7 @@ const decisionDrafts = (facts: IntentTimelineFacts): readonly Draft[] => {
     reasonCodes: intent.reason === undefined ? [] : [intent.reason],
     recordedAt: intent.createdAt,
     sequence: 0,
-    status: pending ? 'PREPARED' : 'SUPPRESSED',
+    status: decisionStatus[intent.status],
     technical: null,
   };
   const stops = facts.stops.map((stop): Draft => ({
@@ -408,7 +421,7 @@ export const summarizeIntent = (facts: IntentTimelineFacts): IntentHistorySummar
       latestAttempt === undefined || DateTime.isGreaterThanOrEqualTo(recordedAt, latestAttempt.preparedAt),
   );
   if (facts.intent.status !== 'PENDING_HANDOFF') {
-    return withStatus('SUPPRESSED');
+    return withStatus(decisionStatus[facts.intent.status]);
   }
   if (currentStops.length > 0 && !mayHaveLeft) {
     // one proven stop is final; a stop that only could not establish a fact is held, with its reason, for re-evaluation

@@ -53,7 +53,8 @@ const statusAttention = (status: HistoryStatus): MessageAttention =>
     Match.when('PREPARED', () => 'IN_PROGRESS' as const),
     // a stop that proved nothing is not a failure of the message: it must be evaluated again
     Match.when('HELD_UNPROVEN', () => 'NEEDS_REEVALUATION' as const),
-    Match.whenOr('FAILED', 'NO_MESSAGE', 'SUPPRESSED', () => 'FAILURE' as const),
+    // not sent for want of a language or template is a final result for this message, like a proven suppression
+    Match.whenOr('FAILED', 'NO_MESSAGE', 'NOT_SENT', 'SUPPRESSED', () => 'FAILURE' as const),
     Match.exhaustive,
   );
 

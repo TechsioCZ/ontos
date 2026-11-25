@@ -21,6 +21,15 @@ describe('Truthful message history: request, decision, intent, attempt and obser
     expect(history.summary).toMatchObject({ deliveryProven: false, providerAccepted: false });
   });
 
+  it('[H-03 I-07] an intent with no language or template to send is NOT_SENT: its own state, never SUPPRESSED', () => {
+    const history = historyOfIntent(factsOf({ intentStatus: 'NOT_SENT', reason: 'TEMPLATE_UNAVAILABLE' }));
+    expect(history.summary.status).toBe('NOT_SENT');
+    expect(history.entries.map(({ kind, status }) => [kind, status])).toEqual([['INTENT_NOT_SENT', 'NOT_SENT']]);
+    expect(history.entries[0]?.reasonCodes).toEqual(['TEMPLATE_UNAVAILABLE']);
+    // like a suppression it never reached a provider
+    expect(history.summary).toMatchObject({ deliveryProven: false, providerAccepted: false });
+  });
+
   it('[H-03] a stop at the last handoff is SUPPRESSED too, with its reason categories, and is not a failure', () => {
     const history = historyOfIntent(
       factsOf({ stops: [stop({ reasonCodes: ['PRIVACY_NOT_ALLOWED', 'SOURCE_STALE'] })] }),

@@ -74,6 +74,16 @@ describe('Source outcome feed of a request', () => {
     });
   });
 
+  it('[H-03 I-07] reports a required message that could not be sent for want of a template as FAILED and NOT_SENT, not SUPPRESSED', () => {
+    const feed = feedFor('REQUIRED', [
+      intentOf(1, { intentStatus: 'NOT_SENT', reason: 'TEMPLATE_UNAVAILABLE' }, 'TEMPLATE_UNAVAILABLE'),
+    ]);
+    expect(feed).toMatchObject({
+      messages: [{ attention: 'FAILURE', reason: 'TEMPLATE_UNAVAILABLE', status: 'NOT_SENT' }],
+      requiredOutcome: 'FAILED',
+    });
+  });
+
   it('reports a proven provider failure after acceptance as FAILED and a timeout as UNKNOWN, never as a failure', () => {
     expect(
       feedFor('REQUIRED', [
