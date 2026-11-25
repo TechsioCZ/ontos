@@ -368,7 +368,7 @@ describe('Communication Request intake: one stored decision per source identity 
           yield* t.runner.submit(t.tenantId, requestFor(t.tenantId, ['customer-1'], 'o-undeclared')),
         );
         expect(undeclared.decision).toMatchObject({
-          intents: [{ reason: 'PRIVACY_INDETERMINATE', status: 'SUPPRESSED' }],
+          intents: [{ reason: 'PRIVACY_CONTEXT_AMBIGUOUS', status: 'SUPPRESSED' }],
         });
         // Privacy was never asked about a scope nobody declared
         expect(t.privacy.queries).toHaveLength(askedBefore);

@@ -32,7 +32,7 @@ import {
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
 import { SourceStopReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
 import { projectMessageHistoryItem } from '../../src/history/message-history-projection.ts';
-import { fixtureType } from '../unit/support/catalog-fixtures.ts';
+import { FIXTURE_SECONDARY_ROLE, fixtureSlot, fixtureType } from '../unit/support/catalog-fixtures.ts';
 import { privacyAllowed, privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
 import { ORIGINAL_ADDRESS, unusable } from '../unit/support/recipient-fixtures.ts';
 import { historyOf } from '../support/history-world.ts';
@@ -372,38 +372,61 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
+  it.live('[AC-08] a type that is no longer approved stops; a moved-on source is stale', () =>
+    Effect.gen(function* catalogAndSource() {
+      const world = yield* setup();
+      const handoff = handoffDouble();
+      const removed = yield* decidedIntent(world);
+      expect(yield* step(world, handoff, removed, scopedIn(world), [])).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'TYPE_UNAVAILABLE' }],
+      });
+      const third = yield* setup();
+      const stale = yield* decidedIntent(third);
+      third.source.state.latestRevision = 2;
+      expect(yield* step(third, handoff, stale)).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'SOURCE_STALE' }],
+      });
+      const fourth = yield* setup();
+      const unreachable = yield* decidedIntent(fourth);
+      fourth.source.state.available = false;
+      expect(yield* step(fourth, handoff, unreachable)).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'SOURCE_AUTHORITY_UNAVAILABLE', proven: false }],
+      });
+      expect(handoff.calls).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
   it.live(
-    '[AC-08] a type that is no longer approved, or approved under another revision, stops; a moved-on source is stale',
+    '[R-D15 T3-03] a new revision of the type keeps a pending message valid; only a change of its recipient rule stops it, and never as a recipient fact',
     () =>
-      Effect.gen(function* catalogAndSource() {
-        const world = yield* setup();
+      Effect.gen(function* catalogRevision() {
+        // a wording-only revision of the approved type: the pinned decision stays valid and the message leaves
+        const reworded = yield* setup();
+        const rewordedIntent = yield* decidedIntent(reworded);
         const handoff = handoffDouble();
-        const removed = yield* decidedIntent(world);
-        expect(yield* step(world, handoff, removed, scopedIn(world), [])).toMatchObject({
-          kind: 'STOPPED',
-          reasons: [{ category: 'TYPE_UNAVAILABLE' }],
+        expect(
+          yield* step(reworded, handoff, rewordedIntent, scopedIn(reworded), [
+            fixtureType({ meaning: 'A reworded fictional meaning.', revision: 2 }),
+          ]),
+        ).toMatchObject({ kind: 'HANDED_OFF' });
+        expect(handoff.calls).toHaveLength(1);
+
+        // the rule that governed the recipient decision changed: its own non-recipient reason, final, nothing is handed off
+        const changed = yield* setup();
+        const changedIntent = yield* decidedIntent(changed);
+        const stopped = handoffDouble();
+        const otherRole = fixtureType({
+          result: { kind: 'MESSAGE_INTENTS', slots: [fixtureSlot('primary', FIXTURE_SECONDARY_ROLE, 'EXACTLY_ONE')] },
+          revision: 2,
         });
-        const other = yield* setup();
-        const revised = yield* decidedIntent(other);
-        expect(yield* step(other, handoff, revised, scopedIn(other), [fixtureType({ revision: 2 })])).toMatchObject({
+        expect(yield* step(changed, stopped, changedIntent, scopedIn(changed), [otherRole])).toMatchObject({
           kind: 'STOPPED',
-          reasons: [{ cause: 'TYPE_REVISION_CHANGED' }],
+          reasons: [{ category: 'TYPE_RULE_CHANGED', cause: 'RECIPIENT_RULE_CHANGED', proven: true }],
         });
-        const third = yield* setup();
-        const stale = yield* decidedIntent(third);
-        third.source.state.latestRevision = 2;
-        expect(yield* step(third, handoff, stale)).toMatchObject({
-          kind: 'STOPPED',
-          reasons: [{ category: 'SOURCE_STALE' }],
-        });
-        const fourth = yield* setup();
-        const unreachable = yield* decidedIntent(fourth);
-        fourth.source.state.available = false;
-        expect(yield* step(fourth, handoff, unreachable)).toMatchObject({
-          kind: 'STOPPED',
-          reasons: [{ category: 'SOURCE_AUTHORITY_UNAVAILABLE', proven: false }],
-        });
-        expect(handoff.calls).toEqual([]);
+        expect(stopped.calls).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
