@@ -1,6 +1,6 @@
 import { hasRenderLifetime, renderOperation } from "./render-operation";
 import "server-only";
-import { Effect, Schedule, Schema } from "effect";
+import { Effect, Option, Schedule, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 import {
   createAdmission,
@@ -11,6 +11,7 @@ import {
   readBytes,
   recoverableReadAdmission,
   OperationError,
+  OperationFailureSchema,
 } from "@ontos/storefront-runtime";
 import type { Operation, OperationOptions } from "@ontos/storefront-runtime";
 import { getConfig } from "./config";
@@ -22,6 +23,37 @@ const GATEWAY_CONTEXT_PATH = "/shell-super-app-api/auth/api-key/gateway-context"
 const GATEWAY_READ_PATH = "/shell-super-app-api/auth/api-key/gateway-read";
 const admission = createAdmission();
 const workPool = createWorkPool();
+type GatewayPhase = "gateway-context" | "gateway-read" | "owner-request";
+const NativeFetchCode = Schema.Literals([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "ABORT_ERR",
+]);
+const FetchFailure = Schema.Union([
+  Schema.Struct({ cause: Schema.Struct({ code: NativeFetchCode }) }),
+  Schema.Struct({ code: NativeFetchCode }),
+]);
+const OperationAbort = Schema.Struct({
+  _tag: Schema.Literal("OperationError"),
+  kind: OperationFailureSchema,
+});
+const nativeFetchCode = (error: unknown) => {
+  try {
+    return Option.match(Schema.decodeUnknownOption(FetchFailure)(error), {
+      onNone: () => "unavailable",
+      onSome: (failure) => ("cause" in failure ? failure.cause.code : failure.code),
+    });
+  } catch {
+    // Even malformed external error properties must not replace the transport's API error.
+    return "unavailable";
+  }
+};
 
 export class OntosError extends Error {
   static is(value: unknown): value is OntosError {
@@ -77,17 +109,36 @@ const reach = (
   url: string,
   init: RequestInit,
   operation: Operation,
+  phase: GatewayPhase,
   onResponse?: (response: Response) => Effect.Effect<void>,
 ) =>
   operation.run(
     Effect.tryPromise({
       try: () => shellFetch(url, { ...init, signal: operation.signal }),
-      catch: () => new OntosError("OntOS is unreachable", 503, "backend_unreachable"),
-    }).pipe(Effect.tap((response) => onResponse?.(response) ?? Effect.void)),
+      catch: (error) => error,
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("AKROS gateway fetch failed").pipe(
+          Effect.annotateLogs({
+            gatewayPhase: phase,
+            signalAborted: operation.signal.aborted,
+            abortKind: Option.match(
+              Schema.decodeUnknownOption(OperationAbort)(operation.signal.reason),
+              { onNone: () => "unavailable", onSome: (reason) => reason.kind },
+            ),
+            nativeCauseCode: nativeFetchCode(error),
+          }),
+          Effect.andThen(
+            Effect.fail(new OntosError("OntOS is unreachable", 503, "backend_unreachable")),
+          ),
+        ),
+      ),
+      Effect.tap((response) => onResponse?.(response) ?? Effect.void),
+    ),
   );
 
 const credentialRequest = Effect.fn("akros.credentialRequest")(function* credentialRequest(
-  path: string,
+  path: typeof GATEWAY_CONTEXT_PATH | typeof GATEWAY_READ_PATH,
   body: unknown,
   operation: Operation,
 ) {
@@ -114,6 +165,7 @@ const credentialRequest = Effect.fn("akros.credentialRequest")(function* credent
       redirect: "manual",
     },
     operation,
+    path === GATEWAY_CONTEXT_PATH ? "gateway-context" : "gateway-read",
   );
 });
 const parseContext = (body: unknown): GatewayContext => {
@@ -293,6 +345,7 @@ export const ownerRequest = (
           },
         },
         operation,
+        "owner-request",
         options.onResponse,
       );
       const bytes = yield* readBytes(response, {
@@ -355,6 +408,7 @@ export const callAction = (
           },
         },
         operation,
+        "owner-request",
       );
       return yield* parseResponse(response, path, operation);
     }),
