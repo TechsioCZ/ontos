@@ -16,6 +16,7 @@
     "./privacy-owner/coverage": "./shared/privacy-owner/coverage.ts",
     "./privacy-owner/inventory": "./shared/privacy-owner/inventory.ts",
     "./privacy-owner/outcome": "./shared/privacy-owner/outcome.ts",
+    "./privacy-owner/retention-evaluation": "./shared/privacy-owner/retention-evaluation.ts",
     "./testing/source-owner-world": "./tests/support/source-owner-world.ts"
   },
   "scripts": {

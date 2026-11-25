@@ -5,6 +5,7 @@ import { Schema } from 'effect';
  * the Action only RECORDS what a human confirmed about an owner Action performed separately, it never performs anything.
  */
 export const OwnerExecutionEvidenceRefusalSchema = Schema.Literals([
+  'CONFIRMATION_REQUIRES_A_HUMAN_PRINCIPAL',
   'EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT',
   'HANDOFF_FINGERPRINT_DOES_NOT_MATCH_THE_RECORDED_HANDOFF',
   'NO_HANDOFF_RECORDED_FOR_THIS_MEASURE',

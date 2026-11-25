@@ -12,6 +12,7 @@ import {
   privacyOwnerExecutionReceiptForScope,
 } from '../services/privacy-owner-execution-receipt.service.ts';
 import type { PrivacyOwnerExecutionReceiptService } from '../services/privacy-owner-execution-receipt.service.ts';
+import { productionPrivacyOwnerInputSource } from '../services/privacy-owner-inputs.ts';
 import { requirePrivacyCaller } from './privacy-owner-caller.ts';
 
 const privacyOwnerExecutionOutcomeEntrypoint = defineTenantModuleEntrypoint({
@@ -86,6 +87,12 @@ export const privacyOwnerExecutionOutcomeRead = defineRead(
     schemaVersion: '1',
   },
   readPrivacyOwnerExecutionOutcome,
-  (transaction, scope) =>
-    Effect.succeed({ receipts: OwnerExecutionReceipt.of(privacyOwnerExecutionReceiptForScope(transaction, scope)) }),
+  (transaction, scope) => {
+    const inputs = productionPrivacyOwnerInputSource(scope);
+    return Effect.succeed({
+      receipts: OwnerExecutionReceipt.of(
+        privacyOwnerExecutionReceiptForScope(transaction, scope, inputs.coverage, inputs.execution),
+      ),
+    });
+  },
 );

@@ -7,6 +7,7 @@ import { notEstablishedRecipientLanguageLayer } from '../domain/intake/recipient
 import { undeclaredProcessingScopeLayer } from '../domain/intake/scope-declaration.ts';
 import { unavailableSourceOccurrenceAuthorityLayer } from '../domain/intake/source-authority.ts';
 import { unavailableRecipientCurrentGateLayer } from '../domain/recipient/current-gate.ts';
+import { unavailableAntiResurrectionProtectionsLayer } from '../domain/retention/anti-resurrection-protections.ts';
 import { privacyProcessingEligibilityGateLive } from '../integrations/privacy-eligibility-gate.ts';
 
 /**
@@ -24,7 +25,9 @@ const GATE_CHECK_TIMEOUT = '10 seconds';
  * - no producer declares a Privacy scope, so a recipient has no scope and is stopped as an unresolved Privacy context;
  * - no owner publishes a recipient authority, so every Current recipient check is an unavailable source owner;
  * - Privacy is the real public Read, asked again with fresh delegated authority on every check;
- * - Core Media V1 and the document owners publish no Read yet (#1443, #1446), so every document question is unavailable.
+ * - Core Media V1 and the document owners publish no Read yet (#1443, #1446), so every document question is unavailable;
+ * - Privacy publishes no protection store for Communications yet, so every Anti-Resurrection question is unavailable and the
+ *   guard refuses (a path that re-materializes removed content must ask it; none exists today).
  */
 export const communicationsProductionOwnerPortsLive = Layer.mergeAll(
   productionCatalogLayer,
@@ -34,6 +37,7 @@ export const communicationsProductionOwnerPortsLive = Layer.mergeAll(
   unavailableRecipientCurrentGateLayer({ checkTimeout: GATE_CHECK_TIMEOUT }),
   privacyProcessingEligibilityGateLive({ checkTimeout: GATE_CHECK_TIMEOUT }),
   unavailableDocumentLinkOwnerLayer,
+  unavailableAntiResurrectionProtectionsLayer,
 );
 
 /**

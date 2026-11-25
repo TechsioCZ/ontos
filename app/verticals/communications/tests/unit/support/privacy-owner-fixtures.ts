@@ -9,7 +9,7 @@ import { assessCommunicationsOwnerCoverage, communicationsContentRef } from '../
 import type { CategoryObservation } from '../../../shared/privacy-owner/coverage.ts';
 import { INVENTORY_CATEGORY_IDS, scopePartRefs } from '../../../shared/privacy-owner/inventory.ts';
 import type { InventoryCategoryId } from '../../../shared/privacy-owner/inventory.ts';
-import type { OwnerExecutionEvidenceRecord } from '../../../shared/privacy-owner/outcome.ts';
+import type { OwnerEnforcementSignal, OwnerExecutionEvidenceRecord } from '../../../shared/privacy-owner/outcome.ts';
 
 /** Every value below is a FICTIONAL test value. None is a legal basis, retention period, purpose id or controller. */
 export const tenantId = '00000000-0000-4000-8000-0000000000a1';
@@ -90,3 +90,12 @@ export const evidenceOf = (overrides: Partial<OwnerExecutionEvidenceRecord> = {}
 /** A complete coverage that FOUND the measure's targets, so a pending measure is judged on its own merits. */
 export const foundCoverage = () =>
   coverageOf(allComplete({ REQUEST_DECISION_INTENT: { foundContentRefs: [intentRef('a'), intentRef('b')] } }));
+
+/**
+ * A FICTIONAL real enforcement signal for every target of the measure. Production has none (R-D11): tests that are about
+ * something other than enforcement assume it, and `privacy-owner-enforcement.test.ts` proves its absence.
+ */
+export const enforcementOf = (measure: PrivacyMeasureEncoded = measureOf()): OwnerEnforcementSignal => ({
+  enforcedContentRefs: measure.targetContentRefs,
+  signalRef: 'FICTIONAL-enforcement-signal',
+});
