@@ -11,13 +11,18 @@ import { buildSync } from 'esbuild';
 import { RuntimeTelemetrySchema } from '../../packages/storefront-runtime/src/telemetry.ts';
 
 const revision = 'a'.repeat(40);
-const families = ['akros-storefront', 'n1-storefront'] as const;
+const akrosFamily = 'akros-storefront';
+const families = [akrosFamily, 'n1-storefront'] as const;
 const registered = 'instrumentation.registered';
 const observerStopped = 'Storefront observability stopped';
 const ShutdownSignalSchema = Schema.Literals(['SIGTERM', 'SIGINT']);
 const ShutdownOwnerSchema = Schema.Literals(['none', 'before', 'after']);
 const Registration = Schema.Struct({ event: Schema.Literal(registered), observers: Schema.Number });
-const HookEventJson = Schema.fromJsonString(Schema.Union([RuntimeTelemetrySchema, Registration]));
+const ConnectionDefaults = Schema.Struct({
+  event: Schema.Literal('storefront.connection.defaults'),
+  targetConfigured: Schema.Boolean,
+});
+const HookEventJson = Schema.fromJsonString(Schema.Union([RuntimeTelemetrySchema, Registration, ConnectionDefaults]));
 
 // Execute the real Next hook and sampler in a separate native Node process, not a mocked Effect.
 const runHook = (family: (typeof families)[number], runtime: 'nodejs' | 'edge', sourceRevision = revision) =>
@@ -31,8 +36,15 @@ const runHook = (family: (typeof families)[number], runtime: 'nodejs' | 'edge', 
           '--input-type=module',
           '--eval',
           `
+            const { hasSubscribers } = await import('node:diagnostics_channel');
+            const connectionChannel = 'undici:client:beforeConnect';
+            const baseline = hasSubscribers(connectionChannel);
             const { register } = await import(${JSON.stringify(hook)});
             await Promise.all([register(), register(), register()]);
+            if (${family === akrosFamily && runtime === 'nodejs' && sourceRevision === revision}) {
+              if (!hasSubscribers(connectionChannel)) throw Error('Missing Shell observer');
+              process.once('exit', () => { if (hasSubscribers(connectionChannel) !== baseline) process.exitCode = 1; });
+            }
             process.stdout.write(JSON.stringify({
               event: '${registered}',
               observers: process.listenerCount('ontos:storefront-observer')
@@ -42,6 +54,7 @@ const runHook = (family: (typeof families)[number], runtime: 'nodejs' | 'edge', 
         {
           env: {
             NEXT_RUNTIME: runtime,
+            ONTOS_SHELL_URL: 'https://fixture.invalid:3000',
             ONTOS_SOURCE_REVISION: sourceRevision,
             ONTOS_STOREFRONT_APP_ID: family,
           },
@@ -169,7 +182,7 @@ const runShutdownHook = (
 it.layer(NodeServices.layer)('native storefront instrumentation', (test) => {
   test.effect('the non-pinning Clock still wakes the sampler while a server is listening', () =>
     Effect.gen(function* recurringNativeObserver() {
-      const { exit, output } = yield* runShutdownHook('akros-storefront', 'SIGTERM', 'after', 2);
+      const { exit, output } = yield* runShutdownHook(akrosFamily, 'SIGTERM', 'after', 2);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(output.match(/"event":"storefront.runtime.summary"/gu)).toHaveLength(2);
       expect(output).toContain('"event":"owner.closed","listening":false');
@@ -220,6 +233,11 @@ it.layer(NodeServices.layer)('native storefront instrumentation', (test) => {
         const events = yield* Effect.forEach(output.trim().split('\n'), (line) =>
           Schema.decodeUnknownEffect(HookEventJson)(line),
         );
+        const connections = events.filter((event) => event.event === 'storefront.connection.defaults');
+        expect(connections).toHaveLength(family === akrosFamily ? 1 : 0);
+        if (family === akrosFamily) {
+          expect(connections[0]?.targetConfigured).toBe(true);
+        }
         const boots = events.filter((event) => event.event === 'storefront.runtime.boot');
         const summaries = events.filter((event) => event.event === 'storefront.runtime.summary');
         expect(boots).toHaveLength(1);
