@@ -1,4 +1,4 @@
-import { mkdir, readFile, symlink } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -1748,31 +1748,89 @@ it.live("fails a mount of another module's package read taken by its default exp
   }),
 );
 
-it.live('follows every name an owner entry passes on from an owner file to where it is declared', () =>
-  Effect.gen(function* packageReadReExportChains() {
-    const priceGroups = PRICE_GROUP_OWNER;
-    const sharedApi = `${priceGroups}/shared/api.ts`;
-    const aggregate = `${priceGroups}/src/api/price-group-catalog-client.ts`;
-    const read = '@app/price-group-catalog-contracts/price-group-definition';
-    const shellProbe = `${BOUNDARY_FIXTURE_SHELL_PATH}/src/price-group-probe.ts`;
-    const passesOnTheRead = 'passes on the package read';
-    const exportsPublicApi = 'export PublicApi';
-    const exportsPublicRequest = 'export PublicRequest';
-    /** The full check after appending a re-export to an owner entry and writing the files it passes on. */
-    const judgedChain = Effect.fn(function* judgedChain(
-      entry: string,
-      appended: string,
-      files: readonly (readonly [string, string])[],
-    ) {
-      const root = yield* makePackageReadWorkspace();
-      expect(yield* entrypointFailure(root)).toBeUndefined();
-      const source = yield* Effect.promise(() => readFile(path.join(root, entry), 'utf-8'));
-      yield* write(root, entry, `${source}${appended}`);
-      for (const [file, content] of files) {
-        yield* write(root, file, content);
+/** The names the chain tests share: Price Group Catalog's owner entries and the package read they must not pass on. */
+const chainNames = {
+  aggregate: `${PRICE_GROUP_OWNER}/src/api/price-group-catalog-client.ts`,
+  exportsPublicApi: 'export PublicApi',
+  exportsPublicRequest: 'export PublicRequest',
+  passesOnTheRead: 'passes on the package read',
+  priceGroups: PRICE_GROUP_OWNER,
+  read: '@app/price-group-catalog-contracts/price-group-definition',
+  sharedApi: `${PRICE_GROUP_OWNER}/shared/api.ts`,
+  shellProbe: `${BOUNDARY_FIXTURE_SHELL_PATH}/src/price-group-probe.ts`,
+} as const;
+
+/** Price Group Catalog's two owner entries, with the folder of each, the read leaf, a member of it and its file by a relative path. */
+const relativeEntries = [
+  [
+    chainNames.sharedApi,
+    'shared',
+    chainNames.read,
+    'PriceGroupDefinitionApi',
+    "'../../../packages/price-group-catalog-contracts/src/apis/price-group-definition.ts'",
+  ],
+  [
+    chainNames.aggregate,
+    'src/api',
+    `${chainNames.read}/client`,
+    'executePriceGroupDefinition',
+    "'../../../../packages/price-group-catalog-contracts/src/apis/price-group-definition.ts'",
+  ],
+] as const;
+
+/**
+ * The full check of one package-read workspace, made and found valid once: each change appends to an owner entry and
+ * writes the files it passes on, is judged, and is undone before the next.
+ */
+const chainJudge = Effect.fn(function* chainJudge() {
+  const root = yield* makePackageReadWorkspace();
+  expect(yield* entrypointFailure(root)).toBeUndefined();
+  /** A file's source, or nothing when the workspace has no such file. */
+  const held = (file: string) =>
+    Effect.promise(async (): Promise<readonly string[]> => {
+      try {
+        return [await readFile(path.join(root, file), 'utf-8')];
+      } catch {
+        return [];
       }
-      return yield* entrypointFailure(root);
     });
+  return Effect.fn(function* judgedChain(
+    entry: string,
+    appended: string,
+    files: readonly (readonly [string, string])[],
+  ) {
+    const touched = [...new Set([entry, ...files.map(([file]) => file)])];
+    const before: (readonly [string, readonly string[]])[] = [];
+    for (const file of touched) {
+      before.push([file, yield* held(file)]);
+    }
+    yield* write(root, entry, `${(yield* held(entry)).join('')}${appended}`);
+    for (const [file, content] of files) {
+      yield* write(root, file, content);
+    }
+    const failure = yield* entrypointFailure(root);
+    for (const [file, [content]] of before) {
+      yield* content === undefined
+        ? Effect.promise(async () => await rm(path.join(root, file), { force: true }))
+        : write(root, file, content);
+    }
+    return failure;
+  });
+});
+
+it.live('follows every re-export chain of an owner file to the package read it passes on', () =>
+  Effect.gen(function* packageReadReExportChains() {
+    const {
+      aggregate,
+      exportsPublicApi,
+      exportsPublicRequest,
+      passesOnTheRead,
+      priceGroups,
+      read,
+      sharedApi,
+      shellProbe,
+    } = chainNames;
+    const judgedChain = yield* chainJudge();
     // The layout this pull request removes, under other file names: each passes the read on, so each fails.
     for (const [form, entry, appended, files, exported, verdict] of [
       [
@@ -1836,6 +1894,19 @@ it.live('follows every name an owner entry passes on from an owner file to where
         exportsPublicRequest,
         passesOnTheRead,
       ],
+    ] as const) {
+      const failure = yield* judgedChain(entry, appended, files);
+      expect(failure, form).toContain(`${entry}: ${exported}`);
+      expect(failure, form).toContain(verdict);
+    }
+  }),
+);
+
+it.live('follows every alias, member and import exported again in an owner file to the package read', () =>
+  Effect.gen(function* packageReadAliasChains() {
+    const { exportsPublicApi, exportsPublicRequest, passesOnTheRead, priceGroups, read, sharedApi } = chainNames;
+    const judgedChain = yield* chainJudge();
+    for (const [form, entry, appended, files, exported, verdict] of [
       // Declarations that are only another name, followed transitively in owner files: an annotated alias, an alias that
       // only asserts its type, `import B = Read.A`, a destructured member of the whole read, and the read's file reached
       // by a relative path.
@@ -1865,24 +1936,7 @@ it.live('follows every name an owner entry passes on from an owner file to where
         exportsPublicApi,
         passesOnTheRead,
       ],
-      ...(
-        [
-          [
-            sharedApi,
-            'shared',
-            read,
-            'PriceGroupDefinitionApi',
-            "'../../../packages/price-group-catalog-contracts/src/apis/price-group-definition.ts'",
-          ],
-          [
-            aggregate,
-            'src/api',
-            `${read}/client`,
-            'executePriceGroupDefinition',
-            "'../../../../packages/price-group-catalog-contracts/src/apis/price-group-definition.ts'",
-          ],
-        ] as const
-      ).flatMap(([entryFile, folder, leaf, member, relative]) => [
+      ...relativeEntries.flatMap(([entryFile, folder, leaf, member, relative]) => [
         [
           `an import-equals of a member of the whole read, re-exported by ${entryFile}`,
           entryFile,
@@ -1934,15 +1988,6 @@ it.live('follows every name an owner entry passes on from an owner file to where
           ],
           'export PublicSchema',
           passesOnTheRead,
-        ] as const,
-        // In the entry itself reach is strict: a new object holding the read leaves with it.
-        [
-          `a new object holding the read's schema imported by a relative path in ${entryFile}`,
-          entryFile,
-          `import { PriceGroupDefinitionRequestSchema as RelSchema } from ${relative};\nexport const bundle = { RelSchema };\n`,
-          [],
-          'export bundle',
-          'reaches a package read of the module',
         ] as const,
       ]),
       // A parenthesized type, a member taken by a string, and an alias with type parameters of its own are only another
@@ -2071,6 +2116,62 @@ it.live('follows every name an owner entry passes on from an owner file to where
         exportsPublicApi,
         passesOnTheRead,
       ],
+    ] as const) {
+      const failure = yield* judgedChain(entry, appended, files);
+      expect(failure, form).toContain(`${entry}: ${exported}`);
+      expect(failure, form).toContain(verdict);
+    }
+  }),
+);
+
+it.live('judges strict reach in the entry and admits a declaration of an owner file of its own', () =>
+  Effect.gen(function* packageReadStrictReach() {
+    const { priceGroups, read, sharedApi } = chainNames;
+    const judgedChain = yield* chainJudge();
+    for (const [form, entry, appended, files, exported, verdict] of relativeEntries.flatMap(
+      ([entryFile, _folder, _leaf, _member, relative]) => [
+        // In the entry itself reach is strict: a new object holding the read leaves with it.
+        [
+          `a new object holding the read's schema imported by a relative path in ${entryFile}`,
+          entryFile,
+          `import { PriceGroupDefinitionRequestSchema as RelSchema } from ${relative};\nexport const bundle = { RelSchema };\n`,
+          [],
+          'export bundle',
+          'reaches a package read of the module',
+        ] as const,
+      ],
+    )) {
+      const failure = yield* judgedChain(entry, appended, files);
+      expect(failure, form).toContain(`${entry}: ${exported}`);
+      expect(failure, form).toContain(verdict);
+    }
+    // A declaration of an owner file that builds something new from the read's schema is the owner's own.
+    expect(
+      yield* judgedChain(
+        sharedApi,
+        "export { PriceGroupDefinitionEnvelopeSchema } from './price-group-envelope.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/price-group-envelope.ts`,
+            [
+              "import { Schema } from 'effect';",
+              `import { PriceGroupDefinitionRequestSchema } from '${read}';`,
+              '',
+              'export const PriceGroupDefinitionEnvelopeSchema = Schema.Struct({ request: PriceGroupDefinitionRequestSchema });',
+              '',
+            ].join('\n'),
+          ],
+        ],
+      ),
+    ).toBeUndefined();
+  }),
+);
+
+it.live('fails a chain of an owner entry that cannot be followed', () =>
+  Effect.gen(function* packageReadUnfollowedChains() {
+    const { exportsPublicRequest, priceGroups, sharedApi } = chainNames;
+    const judgedChain = yield* chainJudge();
+    for (const [form, entry, appended, files, exported, verdict] of [
       [
         'a re-export of a name the owner file does not export',
         sharedApi,
@@ -2115,6 +2216,19 @@ it.live('follows every name an owner entry passes on from an owner file to where
             `names ${specifier}, which is no file of the workspace`,
           ] as const,
       ),
+    ] as const) {
+      const failure = yield* judgedChain(entry, appended, files);
+      expect(failure, form).toContain(`${entry}: ${exported}`);
+      expect(failure, form).toContain(verdict);
+    }
+  }),
+);
+
+it.live('judges every file on a chain once and every load of the entry', () =>
+  Effect.gen(function* packageReadChainFilesAndLoads() {
+    const { priceGroups, read, sharedApi } = chainNames;
+    const judgedChain = yield* chainJudge();
+    for (const [form, entry, appended, files, exported, verdict] of [
       // Every file the entry's re-exports reach is judged once, as a file, whatever order the re-exports stand in.
       ...(
         [
@@ -2176,25 +2290,6 @@ it.live('follows every name an owner entry passes on from an owner file to where
       const failure = yield* judgedChain(sharedApi, appended, []);
       expect(failure, form).toMatch(new RegExp(`${sharedApi}:\\d+ ${verdict}`, 'u'));
     }
-    // A declaration of an owner file that builds something new from the read's schema is the owner's own.
-    expect(
-      yield* judgedChain(
-        sharedApi,
-        "export { PriceGroupDefinitionEnvelopeSchema } from './price-group-envelope.ts';\n",
-        [
-          [
-            `${priceGroups}/shared/price-group-envelope.ts`,
-            [
-              "import { Schema } from 'effect';",
-              `import { PriceGroupDefinitionRequestSchema } from '${read}';`,
-              '',
-              'export const PriceGroupDefinitionEnvelopeSchema = Schema.Struct({ request: PriceGroupDefinitionRequestSchema });',
-              '',
-            ].join('\n'),
-          ],
-        ],
-      ),
-    ).toBeUndefined();
   }),
 );
 
