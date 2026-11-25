@@ -67,6 +67,7 @@ import { rule as noUnbrandedIdentifierSchema } from './rules/no-unbranded-identi
 import { rule as noUnjustifiedFileWideLintSuppression } from './rules/no-unjustified-file-wide-lint-suppression.ts';
 import { rule as noUnmanagedMutableState } from './rules/no-unmanaged-mutable-state.ts';
 import { rule as noUnredactedSecretField } from './rules/no-unredacted-secret-field.ts';
+import { rule as noUnregisteredNativeTestImports } from './rules/no-unregistered-native-test-imports.ts';
 import { rule as noUnsignaledSpyPoll } from './rules/no-unsignaled-spy-poll.ts';
 import { rule as noWideFactorySignature } from './rules/no-wide-factory-signature.ts';
 import { rule as preferEffectFnForOperations } from './rules/prefer-effect-fn-for-operations.ts';
@@ -148,6 +149,7 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-unjustified-file-wide-lint-suppression': noUnjustifiedFileWideLintSuppression,
     'no-unmanaged-mutable-state': noUnmanagedMutableState,
     'no-unredacted-secret-field': noUnredactedSecretField,
+    'no-unregistered-native-test-imports': noUnregisteredNativeTestImports,
     'no-unsignaled-spy-poll': noUnsignaledSpyPoll,
     'no-wide-factory-signature': noWideFactorySignature,
     'prefer-effect-fn-for-operations': preferEffectFnForOperations,

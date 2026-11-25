@@ -37,6 +37,7 @@ export const nativeScriptTests = [
   'scripts/tests/inventory-on-hand-exports.test.mts',
   'scripts/zerops/demo-delivery-parallelism.test.mts',
   'scripts/zerops/production-declarations.test.mts',
+  'scripts/zerops/prove-storefront-artifact.test.mjs',
 ];
 
 export default defineConfig({

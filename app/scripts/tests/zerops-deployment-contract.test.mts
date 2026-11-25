@@ -12,6 +12,7 @@ import {
   SYMMY_INGRESS_VARIABLE,
   SYMMY_PRICE_READ_SOURCES_VARIABLE,
   SYMMY_RETENTION_POLICIES_VARIABLE,
+  SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
@@ -399,6 +400,7 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     let ingressCount = 0;
     let retentionCount = 0;
     let priceReadCount = 0;
+    let sourceSyncCount = 0;
     for (const [index] of zerops.entries()) {
       for (const phase of ['build', 'run']) {
         const environment = ['zerops', index, phase, 'envVariables'];
@@ -437,6 +439,13 @@ it.effect('materializes every Zerops setup with the deploying environment named 
           source.deleteIn(priceRead);
           priceReadCount += 1;
         }
+        const sourceSync = [...environment, SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE];
+        if (source.hasIn(sourceSync)) {
+          expect(source.getIn(sourceSync)).toBe('true');
+          expect(actual.hasIn(sourceSync)).toBe(false);
+          source.deleteIn(sourceSync);
+          sourceSyncCount += 1;
+        }
       }
     }
     expect(environmentCount).toBeGreaterThan(0);
@@ -444,6 +453,7 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     expect(ingressCount).toBeGreaterThan(0);
     expect(retentionCount).toBeGreaterThan(0);
     expect(priceReadCount).toBeGreaterThan(0);
+    expect(sourceSyncCount).toBeGreaterThan(0);
     expect(Schema.decodeUnknownSync(Schema.Unknown)(actual.toJS())).toEqual(
       Schema.decodeUnknownSync(Schema.Unknown)(source.toJS()),
     );

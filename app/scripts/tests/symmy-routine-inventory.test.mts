@@ -29,10 +29,10 @@ symmy_original_route_active symmy_source_selector_code
 `
   .trim()
   .split(/\s+/u)
-  .sort()
+  .toSorted()
   .map((name) => ({
-    name,
     definer: !invokerRoutines.has(name),
+    name,
     public_execute: false,
     runtime_execute: !privateRoutines.has(name),
     safe_settings: true,
@@ -70,15 +70,17 @@ it('still rejects missing routines, extra routines and duplicate overloads', () 
     symmyExecutionRoutineInventoryMatches([
       ...routines,
       {
-        name: 'unexpected',
         definer: true,
+        name: 'unexpected',
         public_execute: false,
         runtime_execute: false,
         safe_settings: true,
       },
     ]),
   ).toBe(false);
-  const first = routines[0];
-  if (first === undefined) throw new Error('missing catalog fixture');
+  const [first] = routines;
+  if (first === undefined) {
+    throw new Error('missing catalog fixture');
+  }
   expect(symmyExecutionRoutineInventoryMatches([...routines, first])).toBe(false);
 });

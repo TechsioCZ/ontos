@@ -444,6 +444,7 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
       return realIssuer.issue(input);
     },
     issueDocument: realIssuer.issueDocument,
+    issueSymmy: realIssuer.issueSymmy,
   };
   const providerIssuer = {
     issueAssertion: (input: Parameters<typeof issueShellSearchProviderAssertion>[0]) =>

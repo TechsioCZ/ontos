@@ -1,3 +1,4 @@
+import { nativeScriptTestGlob } from './tools/oxlint/effect-native/shared/native-script-test-filenames.ts';
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -290,10 +291,11 @@ export default defineConfig({
         'apps/**/tests/**',
         'verticals/**/tests/**',
         'packages/**/tests/**',
-        'scripts/**/*.test.mts',
+        nativeScriptTestGlob,
         'tools/**/tests/*.test.mts',
       ],
       rules: {
+        'effect-native/no-unregistered-native-test-imports': 'error',
         'eslint/no-restricted-imports': [
           'error',
           {

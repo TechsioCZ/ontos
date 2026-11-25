@@ -20,6 +20,13 @@ const constructorFactory = [
 ].join('\n');
 const constructorConsumer = "import { makeCustomerSchema } from './factory.ts';\n\nvoid makeCustomerSchema;\n";
 const nodeTestImport = "import { test } from 'node:test';\ntest('example', () => {});\n";
+const nativeApiCode = 'const runner = import(`node:test`); const assertion = require(`node:assert/strict`);\n';
+const nativeImportCode = 'effect-native(no-unregistered-native-test-imports)';
+const nativeToolingTest = 'scripts/native-api.test.mts';
+const nativeToolingSpec = 'scripts/example.spec.mts';
+const applicationRunner = 'apps/demo/tests/runner.test.ts';
+const e2eRunner = 'apps/demo/tests/e2e/runner.test.ts';
+const restrictedRunner = "import { test } from '@rstest/core';\n\nvoid test;\n";
 
 const source = 'apps/demo/src/check.ts';
 const serviceConsumer = 'apps/demo/src/services/consumer.ts';
@@ -79,6 +86,10 @@ const staged: readonly (readonly [string, string])[] = [
   [testingConsumer, constructorConsumer],
   [applicationTest, nodeTestImport],
   [e2eTest, nodeTestImport],
+  [nativeToolingTest, nativeApiCode],
+  [nativeToolingSpec, nativeApiCode],
+  [applicationRunner, restrictedRunner],
+  [e2eRunner, restrictedRunner],
   [handlers, domainVocabulary],
   [discardedAssignment, 'export const read = () => { let value = 1; value = 2; return value; };\n'],
   [
@@ -102,9 +113,20 @@ it('production configuration loads every repository plugin and scopes its overri
   // anti-slop-effect is enabled, and switched off for the guarded core-runtime testing entrypoint.
   expect(codesFor(serviceConsumer)).toContain('anti-slop-effect(no-service-constructor-imports)');
   expect(codesFor(testingConsumer)).not.toContain('anti-slop-effect(no-service-constructor-imports)');
-  // The test import policy applies to application tests, not to e2e adapters.
-  expect(codesFor(applicationTest)).toContain('eslint(no-restricted-imports)');
-  expect(codesFor(e2eTest)).not.toContain('eslint(no-restricted-imports)');
+  // The test import policy applies to application tests, not to e2e adapters: native runner APIs need a
+  // structural native registration, and the Rstest restriction keeps the same boundary.
+  expect(codesFor(applicationTest)).toContain(nativeImportCode);
+  expect(codesFor(e2eTest)).not.toContain(nativeImportCode);
+  expect(codesFor(applicationRunner)).toContain('eslint(no-restricted-imports)');
+  expect(codesFor(e2eRunner)).not.toContain('eslint(no-restricted-imports)');
+});
+
+it('production configuration rejects dynamic native test API access in an unregistered tooling test', () => {
+  expect(codesFor(nativeToolingTest).filter((code) => code === nativeImportCode)).toHaveLength(2);
+});
+
+it('production configuration rejects unregistered .spec.mts native imports', () => {
+  expect(codesFor(nativeToolingSpec).filter((code) => code === nativeImportCode)).toHaveLength(2);
 });
 
 it('production route filename override admits exact native splat filenames and keeps nearby rejections', () => {

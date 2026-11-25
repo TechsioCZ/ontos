@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Migration contract reads checked-in generated SQL; expires: 2027-03-31.
 import { expect, it } from 'effect-rstest';
-import { getTableConfig } from 'drizzle-orm/pg-core';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
 import { readdirSync, readFileSync } from 'node:fs';
 
@@ -13,6 +13,7 @@ import {
   antiResurrectionProtections,
   applicabilityDecisions,
   consentDecisions,
+  demoSourceProcessingPolicies,
   dsrDeliveryAccess,
   eligibilityEvidence,
   externalObligations,
@@ -133,12 +134,44 @@ it('enables tenant and legal-entity RLS on every governed Privacy table', () => 
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
     expect(config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull)).toBe(true);
-    expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
+    expect(
+      config.policies.map((policy) => policy.for),
+      config.name,
+    ).toEqual(table === demoSourceProcessingPolicies ? ['select'] : ['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
       expect(policy.to).toBe('ontos_runtime');
     }
   }
   /* jscpd:ignore-end */
+
+  const readOnlyPolicy = getTableConfig(demoSourceProcessingPolicies);
+  expect(
+    readOnlyPolicy.columns.map((column) => ({
+      name: column.name,
+      notNull: column.notNull,
+      type: column.getSQLType(),
+    })),
+  ).toEqual([
+    { name: 'legal_entity_id', notNull: true, type: 'uuid' },
+    { name: 'tenant_id', notNull: true, type: 'uuid' },
+    { name: 'policy_id', notNull: true, type: 'text' },
+    { name: 'policy_record', notNull: true, type: 'jsonb' },
+    { name: 'recorded_at', notNull: true, type: 'timestamp with time zone' },
+    { name: 'recorded_by', notNull: true, type: 'text' },
+  ]);
+  expect(readOnlyPolicy.primaryKeys.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['tenant_id', 'legal_entity_id', 'policy_id'],
+  ]);
+  const [select] = readOnlyPolicy.policies;
+  expect(select?.name).toBe('privacy_demo_source_processing_policies_select');
+  expect(select?.withCheck).toBeUndefined();
+  if (select?.using === undefined) {
+    expect.unreachable('The administrator-owned policy must restrict runtime reads to the installed scope');
+  }
+  expect(new PgDialect().sqlToQuery(select.using).sql.replaceAll(/\s+/gu, ' ')).toBe(
+    `"privacy"."demo_source_processing_policies"."tenant_id"=nullif(current_setting('ontos.tenant_id',true),'')::uuid ` +
+      `and "privacy"."demo_source_processing_policies"."legal_entity_id"=nullif(current_setting('ontos.legal_entity_id',true),'')::uuid`,
+  );
 });
 
 it('keeps pre-tenant redemption evidence separate from governed personal records', () => {
@@ -489,14 +522,300 @@ it('retains existing identities and Action idempotency constraints', () => {
   );
 });
 
+const privacyTablePattern = (table: string) => `(?:"privacy"|privacy)\\.(?:"${table}"|${table})(?=\\s|[,;])`;
+const sqlIdentifier = String.raw`(?:"(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)`;
+const sqlTableTarget = `${sqlIdentifier}(?:\\s*\\.\\s*${sqlIdentifier})?`;
+const unquoteIdentifier = (identifier: string) =>
+  identifier.startsWith('"') ? identifier.slice(1, -1).replaceAll('""', '"') : identifier.toLowerCase();
+const quotedSqlEnd = (
+  sql: string,
+  start: number,
+): { end: number; kind: 'closed' } | { kind: 'unterminated' } | undefined => {
+  const quote = sql[start];
+  if (quote === "'" || quote === '"') {
+    const backslashEscapes =
+      quote === "'" && /[eE]/u.test(sql[start - 1] ?? '') && !/[\p{L}\p{N}_$]/u.test(sql[start - 2] ?? '');
+    let index = start + 1;
+    while (index < sql.length) {
+      if (backslashEscapes && sql[index] === '\\') {
+        index += 2;
+      } else if (sql[index] !== quote) {
+        index += 1;
+      } else if (sql[index + 1] === quote) {
+        index += 2;
+      } else {
+        return { end: index + 1, kind: 'closed' };
+      }
+    }
+    return { kind: 'unterminated' };
+  }
+  return undefined;
+};
+interface ScannedSql {
+  quotedRanges: { end: number; start: number }[];
+  text: string;
+}
+const stripSqlComments = (sql: string): ScannedSql | null => {
+  let text = '';
+  const quotedRanges: { end: number; start: number }[] = [];
+  let index = 0;
+  while (index < sql.length) {
+    if (sql.startsWith('--', index)) {
+      const end = sql.slice(index + 2).search(/[\r\n]/u);
+      index = end === -1 ? sql.length : index + 2 + end;
+      text += ' ';
+    } else if (sql.startsWith('/*', index)) {
+      let depth = 1;
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql.startsWith('/*', index)) {
+          depth += 1;
+          index += 2;
+        } else if (sql.startsWith('*/', index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      if (depth > 0) {
+        return null;
+      }
+      text += ' ';
+    } else {
+      const dollarQuote =
+        sql[index] === '$' && !/[\p{L}\p{N}_$]/u.test(sql[index - 1] ?? '')
+          ? /^\$(?:[\p{L}_][\p{L}\p{N}_]*)?\$/u.exec(sql.slice(index))?.[0]
+          : undefined;
+      if (dollarQuote !== undefined) {
+        const bodyStart = index + dollarQuote.length;
+        const bodyEnd = sql.indexOf(dollarQuote, bodyStart);
+        if (bodyEnd === -1) {
+          return null;
+        }
+        const body = stripSqlComments(sql.slice(bodyStart, bodyEnd));
+        if (body === null) {
+          return null;
+        }
+        const offset = text.length + 1;
+        for (const { end, start } of body.quotedRanges) {
+          quotedRanges.push({ end: end + offset, start: start + offset });
+        }
+        text += ` ${body.text} `;
+        index = bodyEnd + dollarQuote.length;
+        continue;
+      }
+      const start = index;
+      const quotedEnd = quotedSqlEnd(sql, index);
+      if (quotedEnd === undefined) {
+        index += 1;
+      } else if (quotedEnd.kind === 'unterminated') {
+        return null;
+      } else {
+        index = quotedEnd.end;
+        quotedRanges.push({ end: text.length + index - start, start: text.length });
+      }
+      text += sql.slice(start, index);
+    }
+  }
+  return { quotedRanges, text };
+};
+const privacyTableDrops = (sql: string, table: string): readonly string[] => {
+  const { quotedRanges, text } = stripSqlComments(sql) ?? { quotedRanges: [], text: sql };
+  const dropStatement = new RegExp(
+    `\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?<targets>${sqlTableTarget}(?:\\s*,\\s*${sqlTableTarget})*)\\s*(?:CASCADE|RESTRICT)?\\s*(?:;|$)`,
+    'giu',
+  );
+  const targetPattern = new RegExp(`(?:(?<schema>${sqlIdentifier})\\s*\\.\\s*)?(?<table>${sqlIdentifier})`, 'giu');
+  return [...text.matchAll(dropStatement)]
+    .filter(({ index }) => !quotedRanges.some(({ end, start }) => index >= start && index < end))
+    .filter(({ groups }) =>
+      [...(groups?.targets ?? '').matchAll(targetPattern)].some(({ groups: target }) => {
+        const schemaName = target?.schema;
+        const tableName = target?.table;
+        return (
+          (schemaName === undefined || unquoteIdentifier(schemaName) === 'privacy') &&
+          tableName !== undefined &&
+          unquoteIdentifier(tableName) === table
+        );
+      }),
+    )
+    .map(([statement]) => statement);
+};
+
+// This guard deliberately fails closed: raw-text matches remain destructive even inside comments or literals.
+const headPrivacyTableDrop = (sql: string, table: string) => sql.includes(`DROP TABLE "privacy"."${table}"`);
+const isDestructiveMigration = (sql: string, table: string) =>
+  headPrivacyTableDrop(sql, table) ||
+  new RegExp(`\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${privacyTablePattern(table)}`, 'iu').test(sql) ||
+  privacyTableDrops(sql, table).length > 0;
+
+const targetListDrops = [
+  'DROP TABLE "privacy"."protected","privacy"."other";',
+  'DROP TABLE IF EXISTS privacy.protected, privacy.other;',
+  'DROP TABLE privacy.other, privacy.protected;',
+  'DROP TABLE privacy.other, privacy.protected, privacy.last CASCADE;',
+  'DROP TABLE IF EXISTS privacy.other, privacy.middle, privacy.protected RESTRICT;',
+  'DROP TABLE "privacy"."other","privacy"."protected";',
+  'DROP TABLE IF EXISTS "privacy"."other", "privacy"."protected", "privacy"."last" RESTRICT;',
+  'DROP TABLE "privacy"."other", "privacy"."middle", "privacy"."protected" CASCADE;',
+  'DROP TABLE other, protected, last;',
+  'DROP TABLE IF EXISTS "other", "middle", "protected";',
+  'DROP TABLE other_schema.other, "privacy" . protected, last;',
+  'DROP TABLE "privacy"."other,with,commas", "privacy"."protected";',
+  'DROP TABLE "privacy"."other;with;semicolons", "privacy"."protected";',
+  'DROP TABLE PRIVACY.OTHER, PRIVACY.PROTECTED;',
+];
+const commentedDrops = [
+  'DROP TABLE privacy.other, /* retiring both */ privacy.protected;',
+  'DROP TABLE privacy.other,\n-- retiring both\nprivacy.protected;',
+  'DROP TABLE privacy.other,\r-- retiring both\rprivacy.protected;',
+  'DROP TABLE privacy.other, /* retiring /* both */ tables */ privacy.protected;',
+  'DROP/* retiring tables */TABLE privacy.other, privacy.protected;',
+  'DROP TABLE "privacy"."other--table", "privacy"."protected";',
+  'DROP TABLE "privacy"."other/*table*/", "privacy"."protected";',
+  'DROP TABLE "privacy"."other""/*table*/", "privacy"."protected";',
+];
+const embeddedDrops = [
+  "SELECT 'DROP TABLE privacy.protected;';",
+  "SELECT 'it''s /* not a comment */; DROP TABLE privacy.protected;';",
+  String.raw`SELECT E'it\'s retired; DROP TABLE privacy.protected;';`,
+  String.raw`SELECT e'it''s retired; DROP TABLE privacy.protected;';`,
+  String.raw`SELECT U&'d\0061t\+000061; DROP TABLE privacy.protected;';`,
+  'SELECT $$/* not a comment */; DROP TABLE privacy.protected;$$;',
+  'SELECT $body$-- not a comment\nDROP TABLE privacy.protected;$body$;',
+  "SELECT $body$it's retired; DROP TABLE privacy.protected;$body$;",
+  'SELECT "DROP TABLE privacy.protected;";',
+  '-- DROP TABLE privacy.protected;',
+  '/* DROP TABLE privacy.protected; */',
+  '/* outer /* nested */ DROP TABLE privacy.protected; */',
+  `SELECT 'DROP TABLE "privacy"."protected";';`,
+  '-- DROP TABLE "privacy"."protected";',
+  '/* DROP TABLE "privacy"."protected"; */',
+];
+const stringPrefixes = [
+  String.raw`SELECT E'it\'s retired';`,
+  String.raw`SELECT e'a\\';`,
+  String.raw`SELECT U&'d\0061t\+000061';`,
+  "SELECT $body$it's retired$body$;",
+];
+const unterminatedPrefixes = [
+  "SELECT 'unterminated",
+  String.raw`SELECT E'it\'s unterminated`,
+  String.raw`SELECT e'a\\`,
+  String.raw`SELECT U&'d\0061t\+000061`,
+  'SELECT "unterminated',
+  'SELECT $$unterminated',
+  'SELECT $body$unterminated',
+  '/* unterminated',
+  '/* outer /* inner */ unterminated',
+];
+const directDrop = 'DROP TABLE privacy.protected;';
+const mixedDrops = `DROP TABLE privacy.unprotected;\n${targetListDrops[2]}\nDROP TABLE other_schema.protected;`;
+const prefixedDrops = [...embeddedDrops, ...stringPrefixes, ...unterminatedPrefixes].map(
+  (prefix) => `${prefix}\n${directDrop}`,
+);
+const unterminatedCommentDrops = unterminatedPrefixes.map((prefix) => `/* ${directDrop} */\n${prefix}`);
+const executableBodyDrops = [
+  { sql: 'DO $$ BEGIN DROP TABLE "privacy"."legal_holds"; END $$;', table: 'legal_holds' },
+  {
+    sql: 'CREATE FUNCTION retire() RETURNS void AS $body$ BEGIN DROP TABLE privacy.other, "privacy"."legal_holds"; END $body$ LANGUAGE plpgsql;',
+    table: 'legal_holds',
+  },
+  {
+    sql: 'DO $outer$ BEGIN DO $inner$ BEGIN DROP TABLE privacy.other, /* retiring */ "privacy"."legal_holds"; END $inner$; END $outer$;',
+    table: 'legal_holds',
+  },
+];
+const destructiveMigrationSamples = [
+  ...[
+    ...targetListDrops,
+    ...commentedDrops,
+    ...embeddedDrops,
+    ...prefixedDrops,
+    ...unterminatedCommentDrops,
+    mixedDrops,
+    directDrop,
+  ].map((sql) => ({ sql, table: 'protected' })),
+  ...executableBodyDrops,
+];
+
+it('rejects destructive migrations with comma-delimited protected targets', () => {
+  for (const statement of targetListDrops) {
+    expect(privacyTableDrops(statement, 'protected'), statement).toEqual([statement]);
+  }
+  for (const statement of [
+    'DROP TABLE "privacy"."protected_suffix";',
+    'DROP TABLE privacy.other, other_schema.protected;',
+    'DROP TABLE "privacy"."Protected";',
+    'DROP TABLE "Privacy"."protected";',
+    'DROP TABLE "privacy"."other, privacy.protected";',
+  ]) {
+    expect(privacyTableDrops(statement, 'protected'), statement).toEqual([]);
+  }
+  expect(privacyTableDrops(mixedDrops, 'protected')).toEqual([targetListDrops[2]]);
+});
+
+it('rejects destructive migrations with comments between protected targets', () => {
+  for (const statement of commentedDrops) {
+    expect(privacyTableDrops(statement, 'protected'), statement).toHaveLength(1);
+  }
+});
+
+it('fails closed for destructive SQL inside comments, literals, and quoted identifiers', () => {
+  for (const statement of embeddedDrops) {
+    expect(isDestructiveMigration(statement, 'protected'), statement).toBe(true);
+    expect(isDestructiveMigration(`${statement}\n${directDrop}`, 'protected'), statement).toBe(true);
+  }
+  const escapedString = String.raw`SELECT e'a\\';`;
+  expect(isDestructiveMigration(escapedString, 'protected')).toBe(false);
+  expect(privacyTableDrops(`${escapedString}\n${directDrop}`, 'protected')).toEqual([directDrop]);
+});
+
+it('rejects protected drops after PostgreSQL escaped and Unicode strings', () => {
+  for (const statement of stringPrefixes) {
+    expect(privacyTableDrops(`${statement}\n${directDrop}`, 'protected'), statement).toEqual([directDrop]);
+  }
+});
+
+it('checks the original migration text when SQL quoting or block comments are unterminated', () => {
+  for (const prefix of unterminatedPrefixes) {
+    expect(privacyTableDrops(`${prefix}\n${directDrop}`, 'protected'), prefix).toEqual([directDrop]);
+    expect(privacyTableDrops(`/* ${directDrop} */\n${prefix}`, 'protected'), prefix).toEqual([directDrop]);
+  }
+});
+
+it('scans executable dollar-quoted bodies recursively for protected drops', () => {
+  for (const { sql, table } of executableBodyDrops) {
+    expect(privacyTableDrops(sql, table), sql).toHaveLength(1);
+    expect(isDestructiveMigration(sql, table), sql).toBe(true);
+  }
+});
+
+it.each(destructiveMigrationSamples)('never weakens the HEAD matcher for $sql', ({ sql, table }) => {
+  expect(!headPrivacyTableDrop(sql, table) || isDestructiveMigration(sql, table)).toBe(true);
+  expect(isDestructiveMigration(sql, table)).toBe(true);
+});
+
 it('checks in non-destructive generated migrations with forced RLS and exact immutable guards', () => {
   const sql = migrationSql();
   for (const table of PRIVACY_TABLE_INVENTORY.filter(
     (name) => !new Set<string>(PRIVACY_INGRESS_TABLE_INVENTORY).has(name),
   )) {
-    expect(sql).toContain(`ALTER TABLE "privacy"."${table}" FORCE ROW LEVEL SECURITY`);
+    const qualifiedTable = privacyTablePattern(table);
+    expect(sql).toMatch(
+      new RegExp(`ALTER\\s+TABLE\\s+${qualifiedTable}\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY\\b`, 'iu'),
+    );
     expect(sql).not.toContain(`DROP TABLE "privacy"."${table}"`);
+    expect(isDestructiveMigration(sql, table)).toBe(false);
   }
+  const policyPrivileges = [...sql.matchAll(/^[ \t]*(?:GRANT|REVOKE)\b[^;]+;/gimu)]
+    .map(([statement]) => statement.replaceAll('"', '').replaceAll(/\s+/gu, ' ').trim())
+    .filter((statement) => /\bON (?:TABLE )?privacy\.demo_source_processing_policies\b/iu.test(statement));
+  expect(policyPrivileges).toEqual([
+    'REVOKE ALL ON privacy.demo_source_processing_policies FROM PUBLIC, ontos_runtime;',
+    'GRANT SELECT ON privacy.demo_source_processing_policies TO ontos_runtime;',
+  ]);
   const actualTriggers = EffectArray.sort(
     [...sql.matchAll(/CREATE TRIGGER "(?<name>privacy_[^"]+_immutable)"/gu)].map(({ groups }) => groups?.name ?? ''),
     Order.String,
