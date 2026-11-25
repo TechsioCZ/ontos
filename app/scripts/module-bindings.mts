@@ -1759,18 +1759,18 @@ export const memberChain = (bindings: ModuleBindings, node: Node): MemberChain =
 export const takenMembers = (bindings: ModuleBindings, identifier: Node): readonly string[] =>
   memberChain(bindings, identifier).members;
 
-/** What a module load of `file` gives, with the members taken of it where it stands, followed as `exportOrigins` does. */
+/**
+ * What a module load of `file` gives, with the members taken of it (those taken where it stands unless given), followed
+ * as `exportOrigins` does.
+ */
 export const loadOrigins = (
   graph: ModuleGraph,
   file: string,
   bindings: ModuleBindings,
   load: Node,
+  member: readonly string[] = memberChain(bindings, load).members,
 ): readonly ExportOrigin[] =>
-  followedOrigins(
-    graph,
-    rootLinks(graph, { bindings, file, trail: [file] }, load, { member: memberChain(bindings, load).members }),
-    file,
-  );
+  followedOrigins(graph, rootLinks(graph, { bindings, file, trail: [file] }, load, { member }), file);
 
 /**
  * Every name a file exports, and every `export *` whose names it cannot list: of a module the graph does not read, or

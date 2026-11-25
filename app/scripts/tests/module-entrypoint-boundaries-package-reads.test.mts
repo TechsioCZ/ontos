@@ -63,9 +63,9 @@ const CARRIED = 'Carried';
 const SHARED_CONTRACTS_MANIFEST = 'packages/shared-contracts/package.json';
 const STARTUP_FILE = 'packages/shared-contracts/src/startup.ts';
 /** A CommonJS adapter of the shared contracts: its module lists no names. */
-const ADAPTER_FILE = 'packages/shared-contracts/src/adapter.cjs';
+const ADAPTER_FILE = 'packages/shared-contracts/src/adapter.js';
 /** The library file that passes on the whole of the adapter. */
-const STARTUP_ADAPTER = "export * as Startup from './adapter.cjs';\n";
+const STARTUP_ADAPTER = "export * as Startup from './adapter.js';\n";
 const ADDITIONS_START = '  // <generated-governed-http-api-additions>\n';
 const EXPORTS_OPEN = '"exports": {\n';
 const PASSES_ON_READ = 'passes on the package read';
@@ -1852,28 +1852,39 @@ it.live('judges a library file an entry passes a name on from the same whether i
       EXPORTS_OPEN,
       `${EXPORTS_OPEN}    "./startup": "./src/startup.ts",\n`,
     );
-    // The library file loads what it does not read itself, or passes on the whole of a CommonJS adapter that does, whose
-    // module lists no names, whichever way it exports: `module.exports`, `exports.x`, `this.x`, `arguments[0].x`.
+    // The library file loads what it does not read itself, or passes on the whole of an adapter written the CommonJS way,
+    // whose module lists no names, whichever way it exports: `module.exports`, `exports.x`, `this.x`, `arguments[0].x`.
+    // A file with a CommonJS extension fails by what it is, even one that redeclares `exports` as its own binding.
+    const unread = 'loads a module it does not read statically at line 1';
     const adapted = (exported: string) =>
       [
         [STARTUP_FILE, STARTUP_ADAPTER],
-        [ADAPTER_FILE, 'line 1'],
+        [ADAPTER_FILE, unread],
         [
           ADAPTER_FILE,
           `${exported} = require('${contractSpecifier}')${exported.endsWith('.Api') ? '.CurrentPaymentTermsApi' : ''};\n`,
         ],
       ] as const;
+    const commonJsFile = 'packages/shared-contracts/src/adapter.cjs';
     const places = [
       [
         [STARTUP_FILE, "const target = 'x';\nvoid import(target);\nexport const Startup = 1;\n"],
-        [STARTUP_FILE, 'line 2'],
+        [STARTUP_FILE, 'loads a module it does not read statically at line 2'],
       ],
       adapted('module.exports'),
       adapted('exports.Api'),
       adapted('this.Api'),
       adapted('arguments[0].Api'),
+      [
+        [STARTUP_FILE, "export * as Startup from './adapter.cjs';\n"],
+        [commonJsFile, 'is a CommonJS file the read check does not read'],
+        [
+          commonJsFile,
+          `var exports = exports || {};\nexports.Api = require('${contractSpecifier}').CurrentPaymentTermsApi;\n`,
+        ],
+      ],
     ] as const;
-    const verdicts = places.flatMap(([carrier, [judgedFile, line], ...more]) =>
+    const verdicts = places.flatMap(([carrier, [judgedFile, reason], ...more]) =>
       [
         ['an import exported again', "import { Startup } from '@app/shared-contracts/startup';\nexport { Startup };\n"],
         ['export … from', "export { Startup } from '@app/shared-contracts/startup';\n"],
@@ -1887,38 +1898,78 @@ it.live('judges a library file an entry passes a name on from the same whether i
         return [
           [`${label}, judged on ${judgedFile}`, ...more.map(([, source]) => source.split(' =')[0])].join(', '),
           seen.valid,
-          seen.diagnostics.includes(
-            `${sharedApiFile}: re-exports through ${judgedFile}, which loads a module it does not read statically at ${line}`,
-          ),
+          seen.diagnostics.includes(`${sharedApiFile}: re-exports through ${judgedFile}, which ${reason}`),
         ];
       }),
     );
     expect(verdicts).toEqual(verdicts.map(([label]) => [label, false, true]));
-    // A whole module the entry holds in a value is judged as a file the same way, whether or not a member the entry
-    // takes of it resolves; one that does not cannot be followed.
-    const held = [
-      ['{ Startup }', undefined],
-      ['{ startup: Startup.default }', 'Startup.default cannot be followed'],
-      ['{ ...Startup.default }', 'Startup.default cannot be followed'],
-    ].map(([value, unfollowed]) => {
+    // A whole module the entry holds in a value, by a name or by a readable load, is judged as a file the same way,
+    // whether or not a member the entry takes of it resolves; one that does not cannot be followed, at its line.
+    const heldLine = required(sources, sharedApiFile).split('\n').length + 2;
+    const startupLoad = "require('@app/shared-contracts/startup')";
+    const startupImport = "import { Startup } from '@app/shared-contracts/startup';\n";
+    const exportedAdapter = `module.exports = require('${contractSpecifier}');\n`;
+    const holdsAdapter = `${sharedApiFile}: holds a whole module through ${ADAPTER_FILE}, which ${unread}`;
+    const unfollowedAt = (written: string) => `${sharedApiFile}:${heldLine} ${written} cannot be followed`;
+    const wholeStartup = '{ Startup }';
+    const startupDefault = `${startupLoad}.Startup.default`;
+    const startupMissing = `${startupLoad}.Missing`;
+    // `adapter: null` holds a plain ES startup module that exports one name.
+    const heldCells: readonly { adapter: string | null; lines: readonly string[]; value: string }[] = [
+      { adapter: exportedAdapter, lines: [holdsAdapter], value: wholeStartup },
+      {
+        adapter: exportedAdapter,
+        lines: [holdsAdapter, unfollowedAt('Startup.default')],
+        value: '{ startup: Startup.default }',
+      },
+      {
+        adapter: exportedAdapter,
+        lines: [holdsAdapter, unfollowedAt('Startup.default')],
+        value: '{ ...Startup.default }',
+      },
+      {
+        adapter: exportedAdapter,
+        lines: [holdsAdapter, unfollowedAt(startupDefault)],
+        value: `{ startup: ${startupDefault} }`,
+      },
+      {
+        adapter: exportedAdapter,
+        lines: [holdsAdapter, unfollowedAt(startupDefault)],
+        value: `{ ...${startupDefault} }`,
+      },
+      { adapter: null, lines: [unfollowedAt(startupMissing)], value: `{ startup: ${startupMissing} }` },
+      { adapter: null, lines: [unfollowedAt(startupMissing)], value: `{ ...${startupMissing} }` },
+      // `this` in a module-level arrow is the module's own, as at the top level; in a class or a function it is not.
+      {
+        adapter: `(() => { this.Api = require('${contractSpecifier}').CurrentPaymentTermsApi; })();\n`,
+        lines: [holdsAdapter],
+        value: wholeStartup,
+      },
+      {
+        adapter: 'export class Api { m() { return this; } }\nfunction f() { return arguments[0]; }\n',
+        lines: [],
+        value: wholeStartup,
+      },
+    ];
+    const held = heldCells.map(({ adapter, lines, value }) => {
+      const startup: readonly (readonly [string, string])[] =
+        adapter === null
+          ? [[STARTUP_FILE, 'export const Startup = 1;\n']]
+          : [
+              [STARTUP_FILE, STARTUP_ADAPTER],
+              [ADAPTER_FILE, adapter],
+            ];
       const seen = judged(sources, [
         [SHARED_CONTRACTS_MANIFEST, startupManifest],
-        [STARTUP_FILE, STARTUP_ADAPTER],
-        [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
-        [
-          sharedApiFile,
-          `${required(sources, sharedApiFile)}\nimport { Startup } from '@app/shared-contracts/startup';\nexport const Held = ${value};\n`,
-        ],
+        ...startup,
+        [sharedApiFile, `${required(sources, sharedApiFile)}\n${startupImport}export const Held = ${value};\n`],
       ]);
       return [
-        value,
-        seen.diagnostics.includes(
-          `${sharedApiFile}: holds a whole module through ${ADAPTER_FILE}, which loads a module it does not read statically at line 1`,
-        ) &&
-          (unfollowed === undefined || seen.diagnostics.includes(unfollowed)),
-      ];
+        `${value} over ${adapter ?? 'plain ES'}`,
+        seen.valid === (lines.length === 0) && lines.every((line) => seen.diagnostics.includes(line)),
+      ] as const;
     });
-    expect(held).toEqual(held.map(([value]) => [value, true]));
+    expect(held).toEqual(held.map(([cell]) => [cell, true]));
   }),
 );
 
