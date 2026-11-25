@@ -5009,11 +5009,31 @@ const readCarrier = (graph: ModuleGraph, reads: ModuleReadFiles): ((origin: Expo
   };
 };
 
+/** A file Node loads as CommonJS by its extension, whatever it holds. */
+const COMMONJS_FILE = /\.c[jt]s$/u;
+
+/**
+ * Why a file judged whole may pass on anything, if it may: a CommonJS file, which the read check does not read; one that
+ * does not parse; one that holds a load no static rule reads (`unreadableLoads`), unless its own loads are judged
+ * elsewhere.
+ */
+const unreadFile = (graph: ModuleGraph, file: string, loads: boolean): string | undefined => {
+  if (COMMONJS_FILE.test(file)) {
+    return 'is a CommonJS file the read check does not read';
+  }
+  const bindings = graph.parsed(file);
+  if (bindings === 'unparsable') {
+    return 'does not parse';
+  }
+  const line = bindings === undefined || !loads ? undefined : unreadableLoadLine(bindings);
+  return line === undefined ? undefined : `loads a module it does not read statically at ${line}`;
+};
+
 /**
  * Every file an owner entry passes bindings on from, each judged once whatever names or trails reach it: each file an
  * `export … from` or `export *` of the entry names, each file one of those names in turn, and every file an export of
- * the entry passes through, a workspace library's too. A file of them that does not parse, names no file of the
- * workspace, or holds a load no static rule reads (`unreadableLoads`) may pass on anything.
+ * the entry passes through, a workspace library's too. A file of them that `unreadFile` refuses or that names no file of
+ * the workspace may pass on anything.
  */
 const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly string[] => {
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
@@ -5024,23 +5044,35 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
   // entry takes of it resolves.
   const entryBindings = graph.parsed(entry.file);
   const parsedEntry = entryBindings === undefined || entryBindings === 'unparsable' ? undefined : entryBindings;
-  // What each reference of the entry resolves to with the members it takes, as written (`Startup.default`).
+  // What each reference and each readable load of the entry resolves to, the one judged as the other: with the members
+  // it takes, as written (`Startup.default`, `require('…').payments.default`), and as the whole it takes them of.
   const referred =
     parsedEntry === undefined
       ? []
-      : parsedEntry.references.map(({ identifier, name }) => ({
-          found: referenceTarget(graph, entry.file, parsedEntry, identifier),
-          line: lineOf(parsedEntry.source, identifier.start),
-          written: [name, ...takenMembers(parsedEntry, identifier)].join('.'),
-        }));
-  const held = [
-    ...referred.flatMap(({ found }) => found),
-    // The whole module a member is taken of, whether or not the member resolves.
-    ...(parsedEntry?.references ?? []).flatMap(({ identifier }) => referenceOrigins(graph, entry.file, identifier)),
-    ...(parsedEntry === undefined
-      ? []
-      : readableLoads(parsedEntry).flatMap((load) => loadOrigins(graph, entry.file, parsedEntry, load))),
-  ].flatMap((origin) => (origin.kind === 'namespace' ? [['', origin] as const] : []));
+      : [
+          ...parsedEntry.references.map(({ identifier, name }) => ({
+            node: identifier,
+            resolved: (member: readonly string[]) => referenceOrigins(graph, entry.file, identifier, member),
+            root: name,
+          })),
+          ...readableLoads(parsedEntry).map((load) => ({
+            node: load,
+            resolved: (member: readonly string[]) => loadOrigins(graph, entry.file, parsedEntry, load, member),
+            root: parsedEntry.source.slice(load.start, load.end),
+          })),
+        ].map(({ node, resolved, root }) => {
+          const { members } = memberChain(parsedEntry, node);
+          return {
+            found: resolved(members),
+            line: lineOf(parsedEntry.source, node.start),
+            whole: resolved([]),
+            written: [root, ...members].join('.'),
+          };
+        });
+  // The whole module a member is taken of is held whether or not the member resolves.
+  const held = referred
+    .flatMap(({ found, whole }) => [...found, ...whole])
+    .flatMap((origin) => (origin.kind === 'namespace' ? [['', origin] as const] : []));
   const heldFiles = new Set(
     expandedOrigins(graph, held)
       .flatMap(([, origin]) => origin.trail.slice(1))
@@ -5050,16 +5082,13 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
   const problems: string[] = [];
   const pending = [entry.file, ...files, ...heldFiles];
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+    // The entry's own loads are judged by `readTakingProblems`.
+    const unread = unreadFile(graph, file, file !== entry.file);
+    if (unread !== undefined) {
+      problems.push(`${entry.file}: ${how(file)} ${file}, which ${unread}${admitted}`);
+    }
     const bindings = graph.parsed(file);
-    if (bindings === 'unparsable') {
-      problems.push(`${entry.file}: ${how(file)} ${file}, which does not parse${admitted}`);
-    } else if (bindings !== undefined) {
-      const line = file === entry.file ? undefined : unreadableLoadLine(bindings);
-      if (line !== undefined) {
-        problems.push(
-          `${entry.file}: ${how(file)} ${file}, which loads a module it does not read statically at ${line}${admitted}`,
-        );
-      }
+    if (bindings !== undefined && bindings !== 'unparsable') {
       // Every static specifier is resolved, whether or not a binding is taken from it; re-exports are followed.
       for (const { node, specifier } of moduleSpecifiers(bindings)) {
         const target = graph.target(file, specifier);
@@ -6973,17 +7002,10 @@ const compositionStep = (context: CompositionContext, question: CompositionQuest
     return originParts(origin).map((node): CompositionQuestion => ({ kind: 'node', node, site }));
   }
   if (question.kind === 'namespace') {
-    // A whole module is judged as a file too, whatever names it lists: one that does not parse or holds a load no
-    // static rule reads may pass on anything.
-    const bindings = context.graph.parsed(question.file);
-    const line = bindings === undefined || bindings === 'unparsable' ? undefined : unreadableLoadLine(bindings);
-    if (bindings === 'unparsable' || line !== undefined) {
-      return {
-        file: question.file,
-        kind: 'unresolved',
-        reason: line === undefined ? 'does not parse' : `loads a module it does not read statically at ${line}`,
-        trail: [question.file],
-      };
+    // A whole module is judged as a file too, whatever names it lists (`unreadFile`).
+    const unread = unreadFile(context.graph, question.file, true);
+    if (unread !== undefined) {
+      return { file: question.file, kind: 'unresolved', reason: unread, trail: [question.file] };
     }
     const { names, opaque } = moduleExports(context.graph, question.file);
     return settledSteps(
