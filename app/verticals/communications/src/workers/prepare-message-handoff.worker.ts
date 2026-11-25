@@ -14,6 +14,7 @@ import {
 import { Effect } from 'effect';
 import { underOwnerCall, workerOwnerCall } from '../integrations/owner-call.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
+import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../handoff/outbox-worker-defaults.ts';
 import { processIntentHandoff, requireRedeliveryWhenRetryDue } from '../handoff/process-intent-handoff.ts';
 import { tenantScopedRunner } from '../handoff/tenant-scoped-runner.ts';
 
@@ -36,12 +37,15 @@ const handlePrepareMessageHandoff = Effect.fn('PrepareMessageHandoffWorker.handl
   );
   // WHO triggers a Technical Retry (#1403). Nothing here runs on a clock, and success would make Core complete the delivery, so a
   // retry that is due (the provider provably refused, the approved rule allows another attempt) ends the step with a typed
-  // failure instead: Core then redelivers the same message under this worker's own `retryPolicy`, and the redelivered step is a
+  // failure instead: Core then redelivers the same message under the generated default `retryPolicy` Core requires on every
+  // descriptor (`outbox-worker-defaults.ts`; Communications adds no count or wait of its own), and the redelivered step is a
   // fresh evaluation of every Current gate. Every other end is final for this delivery. Two cases are NOT redelivered by this
   // worker and are re-evaluated only when something else triggers the step again: an unknown effect (a Core operator redrive of
   // the dead delivery, or `reconcileAndEvaluate` once step 22's reconciliation evidence exists) and a deployment that made no
-  // request at all. Core's budget is the delivery's `maxAttempts`; if it is spent before the owner's approved limit, the
-  // delivery is `dead`, visible to operators, and only an operator redrive (never a send approval) gives it a fresh budget.
+  // request at all. The type's approved `maxAttempts` is the limit of a Technical Retry, counted by Communications over its own
+  // attempt history (`assessAttemptHistory`), never over Core deliveries. Core's budget is only the delivery's own
+  // `maxAttempts`; a type limit above it would be spent by Core first and the delivery would be `dead`, visible to operators, and
+  // only an operator redrive (never a send approval) gives it a fresh budget (open question for the Core owner).
   yield* requireRedeliveryWhenRetryDue(outcome);
 });
 
@@ -68,12 +72,7 @@ export const prepareMessageHandoffWorker = defineOutboxWorker(
     legalEntityScope: 'forbidden',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
+    retryPolicy: OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy,
     topic: outboxTopic,
     workerKey: 'communications.core.prepare-message-handoff',
   },

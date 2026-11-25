@@ -17,6 +17,7 @@ import {
 } from '@app/communications/outbox/communications-core-owner-execution-evidence-recorded-v1';
 import type { OutboxPayload } from '@app/communications/outbox/communications-core-owner-execution-evidence-recorded-v1';
 
+import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../handoff/outbox-worker-defaults.ts';
 import { PrivacyMeasureReportError } from '../services/privacy-measure-report-error.ts';
 import { PrivacyMeasureReporter } from '../services/privacy-measure-reporter.ts';
 
@@ -67,17 +68,12 @@ export const reportPrivacyOwnerOutcomeWorker = defineOutboxWorker(
       moduleKey: owner,
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
+    leaseDurationMs: OUTBOX_WORKER_GENERATED_DEFAULTS.leaseDurationMs,
     // Tenant-wide like the evidence it carries: the governance company comes from the durable original dispatch.
     legalEntityScope: 'forbidden',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
+    retryPolicy: OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy,
     topic: outboxTopic,
     workerKey,
   },

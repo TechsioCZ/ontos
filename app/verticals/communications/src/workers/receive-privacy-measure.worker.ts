@@ -18,6 +18,7 @@ import {
 import type { OutboxPayload } from '@app/privacy-contracts/outbox/privacy-measure-dispatched';
 import { Effect } from 'effect';
 
+import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../handoff/outbox-worker-defaults.ts';
 import { tenantScopedRunner } from '../handoff/tenant-scoped-runner.ts';
 import { storeUnavailable } from '../handoff/handoff-errors.ts';
 import { PrivacyMeasureReportError } from '../services/privacy-measure-report-error.ts';
@@ -109,12 +110,12 @@ export const receivePrivacyMeasureWorker = defineOutboxWorker(
       moduleKey: owner,
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
+    leaseDurationMs: OUTBOX_WORKER_GENERATED_DEFAULTS.leaseDurationMs,
     // Tenant-wide ledger: the governance company comes from the durable original dispatch, never from this worker.
     legalEntityScope: 'forbidden',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: { initialBackoffMs: 1000, maxAttempts: 5, maxBackoffMs: 60_000, multiplier: 2 },
+    retryPolicy: OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy,
     topic: outboxTopic,
     workerKey,
   },
