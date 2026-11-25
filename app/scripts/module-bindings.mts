@@ -2,7 +2,7 @@ import nodePath from 'node:path';
 
 import { Predicate, Schema } from 'effect';
 import { parseSync, Visitor, visitorKeys } from 'oxc-parser';
-import type { Node, Program, VisitorObject } from 'oxc-parser';
+import type { Node, Program } from 'oxc-parser';
 
 /**
  * Module-scope bindings of one TypeScript source and what each reference resolves to, by scope: a name declared in
@@ -468,6 +468,51 @@ export const parseProblem = (
   return error === undefined ? undefined : { message: error.message, start: error.labels[0]?.start ?? 0 };
 };
 
+/** The walk under way: what it calls on each node, if any, and the nodes it is inside, innermost last. */
+interface Walk {
+  enter: ((node: Node, parent: Node) => void) | null;
+  inside: Node[];
+}
+
+const walk: Walk = { enter: null, inside: [] };
+
+/**
+ * The one oxc-parser `Visitor` every walk goes through. Not one per walk: oxc-parser keeps every `Visitor` it builds in a
+ * module-level cache, and with it every tree that visitor's functions close over.
+ */
+const walker = new Visitor(
+  Object.fromEntries(
+    Object.keys(visitorKeys).flatMap((type): readonly (readonly [string, (node: Node) => void])[] => [
+      [
+        type,
+        (node) => {
+          const parent = walk.inside.at(-1);
+          if (parent !== undefined) {
+            walk.enter?.(node, parent);
+          }
+          walk.inside.push(node);
+        },
+      ],
+      [
+        `${type}:exit`,
+        () => {
+          walk.inside.pop();
+        },
+      ],
+    ]),
+  ),
+);
+
+/** Calls `enter` on every node below `program` with its parent, before its children, in the order of the parser's visitor keys. */
+export const forEachNode = (program: Program, enter: (node: Node, parent: Node) => void): void => {
+  const outer = { ...walk };
+  walk.enter = enter;
+  walk.inside = [];
+  walker.visit(program);
+  walk.enter = outer.enter;
+  walk.inside = outer.inside;
+};
+
 /** Parse source and resolve each of its references; undefined when it does not parse. */
 export const moduleBindings = (file: string, source: string): ModuleBindings | undefined => {
   const parsed = parseSync(file, source, {
@@ -481,31 +526,10 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
   const { program } = parsed;
   const parents = new Map<Node, Node>();
   const nodes: Node[] = [];
-  const stack: Node[] = [program];
-  const tracker: VisitorObject = Object.fromEntries(
-    Object.keys(visitorKeys).flatMap((type): readonly (readonly [string, (node: Node) => void])[] => [
-      [
-        type,
-        (node) => {
-          const parent = stack.at(-1);
-          if (parent !== undefined && node !== program) {
-            parents.set(node, parent);
-            nodes.push(node);
-            stack.push(node);
-          }
-        },
-      ],
-      [
-        `${type}:exit`,
-        (node) => {
-          if (node !== program) {
-            stack.pop();
-          }
-        },
-      ],
-    ]),
-  );
-  new Visitor(tracker).visit(program);
+  forEachNode(program, (node, parent) => {
+    parents.set(node, parent);
+    nodes.push(node);
+  });
   const scopes = new Map<Node, ScopedDeclaration[]>();
   const declared = new Set<Node>();
   for (const node of nodes) {
