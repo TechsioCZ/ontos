@@ -758,16 +758,26 @@ const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
 const documentGate = Effect.fn('Communications.documentGate')(function* gate(
   document: IntentDocument,
   pins: OpenPins,
+  group: HandoffGroup,
   cleared: Cleared,
 ) {
   if (cleared.documentRefs.length === 0) {
     return { existing: [], kind: 'CLEARED', toPin: [] } satisfies DocumentVerdict;
   }
+  const services = yield* Effect.context<Effect.Services<ReturnType<typeof ownerGates>>>();
   return yield* discloseDocuments({
     documents: cleared.documentRefs,
     legalEntityId: pins.request.scope.legalEntityId,
     pinned: document.documents,
     policy: pins.type.documents,
+    readGates: ownerGates(document, pins, group).pipe(
+      Effect.provideContext(services),
+      Effect.map((verdict) =>
+        'cleared' in verdict
+          ? ({ privacy: 'ALLOWED', recipient: 'CURRENT' } as const)
+          : ({ privacy: 'INDETERMINATE', recipient: 'UNKNOWN' } as const),
+      ),
+    ),
     recipient: { recipientRef: pins.binding.recipientRef, role: pins.binding.role },
     tenantId: pins.request.scope.tenantId,
     typeId: pins.type.typeId,
@@ -810,7 +820,7 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
     return skipped(input.intentId, 'RECONCILIATION_REQUIRED') satisfies Prepared;
   }
   // AFTER the recipient and Privacy gates cleared and BEFORE the handoff: a message that names no document never gets here
-  const disclosure = yield* documentGate(document, loaded.pins, verdict.cleared);
+  const disclosure = yield* documentGate(document, loaded.pins, loaded.group, verdict.cleared);
   if (disclosure.kind === 'STOPPED') {
     return (yield* scoped((invoker) => stopIntent(invoker, document, disclosure.reasons))) satisfies Prepared;
   }
