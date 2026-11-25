@@ -503,6 +503,8 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           `${owner}/src`,
           'packages/customer-market-retirement-contracts',
           'packages/customer-payment-term-contracts',
+          // the Portal Auth issuance source Read is published through its own contracts package
+          'packages/portal-auth-contracts',
           // customer-price-group-resolution calls the Catalog's operation reference from this package.
           'packages/price-group-catalog-contracts',
           // Both payment-terms resolutions call the Payment Term Catalog's operation reference from this package.

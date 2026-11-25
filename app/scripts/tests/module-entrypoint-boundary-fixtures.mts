@@ -1419,6 +1419,8 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
     'packages/customer-market-retirement-contracts',
     'packages/customer-payment-term-contracts',
     'packages/payment-term-catalog-contracts',
+    // the Portal Auth issuance source Read is published through its own contracts package
+    'packages/portal-auth-contracts',
     'packages/catalog-selection-contracts',
     // customer-price-group-resolution calls the Catalog's operation reference from this package.
     'packages/price-group-catalog-contracts',

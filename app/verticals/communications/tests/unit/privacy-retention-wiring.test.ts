@@ -11,9 +11,14 @@ import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import { ownerScope, requestRef, tenantId } from './support/privacy-owner-fixtures.ts';
 
 /**
- * [#1410 D.6, AC-03, AC-05, PRIV-COM-17; #1408 BDD "Retencni lhuta skoncila"; audit T2-12] The retention hook is reachable: Privacy
- * asks for it on the owner coverage Read, supplies the due instant ITS evaluation decided, and receives the owner's report. A
- * retention period ending yields an OPEN obligation for Privacy's decision and a human; nothing is deleted.
+ * [#1410 D.6, AC-03, AC-05, PRIV-COM-17; #1408 BDD "Retencni lhuta skoncila"; audit T2-12] The Communications side of the retention
+ * hook: the owner coverage Read accepts a retention request that carries the due instant PRIVACY's evaluation decided, and answers
+ * the owner's report. A retention period ending yields an OPEN obligation for Privacy's decision and a human; nothing is deleted.
+ *
+ * WHAT THIS PROVES, and what it does not: it decodes a hand-built request and runs the pure evaluation. It does NOT prove that
+ * Privacy sends this request: Privacy's integration (verticals/privacy/src/integrations/communications-owner-coverage.ts) does not
+ * set `retentionEvaluation` today, because no Privacy retention evaluation produces `privacyEvaluatedDue` yet. That is an OPEN OWNER
+ * GATE for Privacy, recorded in the PR text; it is not a Communications defect and Communications must not invent a due instant.
  */
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const encodeResponseRetention = Schema.encodeSync(PrivacyOwnerCoverageResponseSchema.fields.retention.schema);

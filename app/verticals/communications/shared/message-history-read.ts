@@ -126,9 +126,9 @@ export const MessageHistoryTemplateSchema = Schema.Struct({
   messageType: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(120))),
   mode: Schema.optionalKey(Schema.Literals(['A', 'B'])),
   notice: Schema.Literal(TEMPLATE_PREVIEW_MARKER),
-  /** The Tenant revision number, or the catalog version of the built-in default text. */
+  /** The Tenant revision number of the activated text. */
   revisionNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-  /** Which text the message used: the Tenant's own revision or the built-in default (#1398, #1406). */
+  /** Which text the message used: always a Tenant revision an administrator activated (no built-in fallback exists; #1398, #1406). */
   source: TemplateTextSourceSchema,
 });
 

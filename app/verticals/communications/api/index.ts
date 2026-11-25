@@ -179,12 +179,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   privacyOwnerExecutionOutcomeReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordOwnerExecutionEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  // The owner ports the intake decision composes (catalog, source facts, Privacy scope, recipient and Privacy gates) are
-  // services of the handler's own execution, so they are provided to the handler layer, like the history Reads' ports.
-  submitCommunicationRequestActionApiLive.pipe(
-    GovernedReadLayer.provide(governedActionRuntimeLive),
-    Layer.provide(communicationsProductionOwnerPortsLive),
-  ),
+  submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -220,6 +215,10 @@ export const makeCommunicationsApiRuntime = (configuration?: ConfigProvider.Conf
           GovernedReadLayer.provide(Reactivity.layer),
         ),
       ),
+      // The owner ports the intake decision composes (catalog, source facts, Privacy scope, recipient and Privacy gates) are
+      // services of the handler's own execution, so they are provided to the whole handler environment, not only to the
+      // construction of the Action runtime (which made the first real source request fail with 'Service not found').
+      GovernedReadLayer.provide(communicationsProductionOwnerPortsLive),
       GovernedReadLayer.provide(runtimeObservabilityLive),
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
