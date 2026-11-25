@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
 
-import { mediaAssets } from '../db/schema.ts';
+import { mediaAssets, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { mediaAssetNotFound, mediaUnavailable } from './errors.ts';
 import type { MediaUnavailable } from './errors.ts';
@@ -154,6 +154,19 @@ export const mediaAssetRepositoryFromTransaction = (transaction: ScopedTransacti
         .returning()
         .pipe(Effect.mapError(persistenceUnavailable));
       return row ?? (yield* mediaAssetNotFound());
+    }),
+    /**
+     * The kind Core identity records for a principal of this tenant (a fact of the identity rows, never a caller
+     * claim), or none when the row is absent.
+     */
+    principalKind: Effect.fn('MediaAssetRepository.principalKind')(function* principalKind(principalId: string) {
+      const [row] = yield* transaction
+        .select({ kind: principals.kind })
+        .from(principals)
+        .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
+        .limit(1)
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return Option.fromUndefinedOr(row?.kind);
     }),
     reserve: Effect.fn('MediaAssetRepository.reserve')(function* reserve(input: ReserveMediaAssetInput) {
       const [row] = yield* transaction

@@ -1,8 +1,9 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Cause, DateTime, Effect, Exit, Option, Schema, Stream } from 'effect';
+import { Cause, DateTime, Duration, Effect, Exit, Option, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
+import { DigestStepTimeout } from '../../src/media/content-digest.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
 import {
   ObjectStorage,
@@ -492,4 +493,46 @@ it.effect('refuses before the first byte when the provider cannot even open the 
     const failure = Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
     expect(failure?.read).toMatchObject({ outcome: 'unavailable', reason: 'provider_failure' });
   }),
+);
+
+/** A platform digest stream whose steps never answer: a stuck platform call. */
+class StuckPlatformDigestStream extends WritableStream<Uint8Array> {
+  readonly digest = Promise.withResolvers<ArrayBuffer>().promise;
+
+  constructor(_algorithm: 'SHA-256') {
+    const never = Promise.withResolvers<undefined>().promise;
+    super({
+      close: () => never,
+      write: () => never,
+    });
+  }
+}
+
+it.live('the digest step guard the stream was opened under still applies when the body is run elsewhere', () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      Object.defineProperty(globalThis.crypto, 'DigestStream', {
+        configurable: true,
+        value: StuckPlatformDigestStream,
+      });
+    }),
+    () =>
+      Effect.gen(function* guarded() {
+        const storage = yield* withStored(content);
+        // A host opens the stream inside its request and hands the body to the transport, which runs it in its own
+        // context: the guard configured for the request must travel with the body, as the object store does. A
+        // stuck step must end at that guard, not at the built-in five seconds.
+        const opened = yield* openVerifiedMediaStream(readyAsset()).pipe(
+          Effect.provideService(ObjectStorage, storage.service),
+          Effect.provideService(DigestStepTimeout, Duration.millis(40)),
+        );
+        const [elapsed, exit] = yield* Effect.timed(Effect.exit(Stream.runDrain(opened.body)));
+        expect(Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isDieReason)).toBe(true);
+        expect(Duration.toMillis(elapsed)).toBeLessThan(2000);
+      }),
+    () =>
+      Effect.sync(() => {
+        Reflect.deleteProperty(globalThis.crypto, 'DigestStream');
+      }),
+  ),
 );

@@ -239,11 +239,24 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   // @ontos-core-read asset-metadata
   .add(ShellBrowserApi.groups.coreReadAssetMetadata)
   // @ontos-codesmith-core-read-server-api-groups:end
+
+  // @ontos-codesmith-core-action-server-api-groups:start
+
+  // @ontos-core-action rename-display-filename
+  .add(ShellBrowserApi.groups.coreActionRenameDisplayFilename)
+
+  // @ontos-core-action confirm-asset
+  .add(ShellBrowserApi.groups.coreActionConfirmAsset)
+
+  // @ontos-core-action upload-asset
+  .add(ShellBrowserApi.groups.coreActionUploadAsset)
+  // @ontos-codesmith-core-action-server-api-groups:end
   .add(ShellBrowserApi.groups.coreMediaDownload)
   .add(ShellBrowserApi.groups.coreHostedOperations)
   .add(ShellBrowserApi.groups.agentPlatform)
   .add(ShellBrowserApi.groups.peopleAdministration)
   .add(ShellBrowserApi.groups.oauthConnectionsAdmin)
+  .add(ShellBrowserApi.groups.coreMediaUpload)
   .add(GatewayContextApiGroup)
   .add(ShellBrowserApi.groups.apiKeyGatewayRead)
   .add(ShellBrowserApi.groups.documentGateway)

@@ -59,6 +59,7 @@ import {
 } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
+import { asc, sql } from 'drizzle-orm';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -90,6 +91,7 @@ import {
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createDsrCaseAction, DsrIntakeReceiptAuthority } from '../../src/actions/create-dsr-case.action.ts';
 import { recordDsrDeadlineAction, DsrDeadlineAuthority } from '../../src/actions/record-dsr-deadline.action.ts';
+import { dsrCases, dsrDeadlines } from '../../src/database/schema.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
@@ -611,6 +613,174 @@ for (const reverse of [false, true]) {
     );
   }
 }
+
+it.live(
+  'reads a retained historical Deadline without obligationRef as LEGACY_UNRESOLVED, leaves it and its receipts byte-identical, and writes a later exact Deadline for O2 only',
+  () =>
+    Effect.gen(function* legacyHistoricalDeadline() {
+      // Two admissible obligations of ONE Controller with different receipt bases and times, so the
+      // legacy facts below could be mistaken for either one by a first-match or receipt-basis guess.
+      const native = yield* makeDsrNative(false, true);
+      const http = yield* makeDsrHttp(native);
+      yield* http.create();
+      const [first, second] = native.receipts;
+      expect(first.controllerRef).toBe(second.controllerRef);
+      expect(first.obligationRef).not.toBe(second.obligationRef);
+      expect(first.receivedAt).not.toBe(second.receivedAt);
+
+      // The retained row an older writer produced with the Controller-only first match (O1's receipt
+      // facts): no obligationRef and no version. No supported producer can create it any more, so it
+      // is seeded through the runtime role under the real Tenant/Legal Entity scope and forced RLS.
+      const legacyRecord = {
+        calendar: native.policy.calendar,
+        caseRef: native.caseRef,
+        controllerRef: testController,
+        deadlineAt: DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(first.receivedAt), { months: 1 })),
+        months: native.policy.months,
+        policyRef: native.policy.policyRef,
+        policyVersion: native.policy.policyVersion,
+        receiptBasisRef: first.receiptBasisRef,
+        receivedAt: first.receivedAt,
+      };
+      yield* native.fixture
+        .prepareOwner(
+          Effect.fn('DsrExactDeadline.seedRetainedLegacyDeadline')(function* seed(transaction, scope) {
+            return yield* transaction.insert(dsrDeadlines).values({
+              actionInvocationId: yield* nextId,
+              caseRef: native.caseRef,
+              controllerRef: testController,
+              deadlineAt: new Date(legacyRecord.deadlineAt),
+              deadlineRecord: legacyRecord,
+              legalEntityId: scope.legalEntityId ?? native.fixture.legalEntityId,
+              tenantId: scope.tenantId,
+            });
+          }),
+          'required',
+        )
+        .pipe(Effect.provideContext(native.context));
+
+      // Stored bytes: canonical jsonb text of every retained Deadline and the Case with its retained
+      // obligation receipts, read as the scoped runtime role (never the admin role).
+      const storedBytes = Effect.fn('DsrExactDeadline.storedBytes')(function* storedBytes() {
+        return yield* native.fixture
+          .prepareOwner(
+            (transaction) =>
+              Effect.all({
+                cases: transaction
+                  .select({
+                    caseRef: dsrCases.caseRef,
+                    caseStatus: dsrCases.caseStatus,
+                    record: sql<string>`${dsrCases.caseRecord}::text`,
+                    updatedAt: dsrCases.updatedAt,
+                  })
+                  .from(dsrCases)
+                  .orderBy(asc(dsrCases.caseRef)),
+                deadlines: transaction
+                  .select({
+                    actionInvocationId: dsrDeadlines.actionInvocationId,
+                    deadlineAt: dsrDeadlines.deadlineAt,
+                    deadlineId: dsrDeadlines.deadlineId,
+                    record: sql<string>`${dsrDeadlines.deadlineRecord}::text`,
+                    recordedAt: dsrDeadlines.recordedAt,
+                  })
+                  .from(dsrDeadlines)
+                  .orderBy(asc(dsrDeadlines.recordedAt), asc(dsrDeadlines.deadlineId)),
+              }),
+            'required',
+          )
+          .pipe(Effect.provideContext(native.context));
+      });
+      const coreEvidence = native.fixture.evidence(native.coreEvidenceExecutor);
+      const storedBefore = yield* storedBytes();
+      const evidenceBefore = yield* coreEvidence;
+      expect(storedBefore.deadlines).toHaveLength(1);
+      const seeded = JSON.parse(storedBefore.deadlines[0].record);
+      expect(seeded).toEqual(legacyRecord);
+      expect(seeded).not.toHaveProperty('obligationRef');
+      expect(seeded).not.toHaveProperty('version');
+
+      // Read through the mounted, registered public workflow route, twice: repeated reads are stable.
+      const legacyView = { ...legacyRecord, identityStatus: 'LEGACY_UNRESOLVED', version: 1 };
+      const calls = yield* Ref.get(native.deadlineAuthorityCalls);
+      const readLegacyOnly = Effect.fn('DsrExactDeadline.readRetainedLegacy')(function* readLegacyOnly() {
+        const [item] = (yield* http.read()).items;
+        expect(item.caseRecord.controllerObligations.map(({ obligationRef }) => obligationRef)).toEqual(
+          native.receipts.map(({ obligationRef }) => obligationRef),
+        );
+        expect(item.deadlines).toEqual([legacyView]);
+        // The unresolved identity is explicit: neither O1 nor O2 is chosen for it.
+        expect(item.deadlines[0]).not.toHaveProperty('obligationRef');
+        for (const receipt of native.receipts) {
+          expect(JSON.stringify(item.deadlines)).not.toContain(receipt.obligationRef);
+        }
+      });
+      yield* readLegacyOnly();
+      yield* readLegacyOnly();
+      expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(calls);
+      const storedAfterRead = yield* storedBytes();
+      const evidenceAfterRead = yield* coreEvidence;
+      expect(storedAfterRead).toEqual(storedBefore);
+      expect(evidenceAfterRead.invocations).toEqual(evidenceBefore.invocations);
+      expect(evidenceAfterRead.audits).toEqual(evidenceBefore.audits);
+      expect(evidenceAfterRead.events).toEqual(evidenceBefore.events);
+      expect(evidenceAfterRead.outbox).toEqual(evidenceBefore.outbox);
+
+      // The row is immutable history: the runtime role holds no UPDATE grant, so it cannot be rewritten
+      // into an exact identity (the native grant, not the handler, refuses).
+      const rewrite = yield* native.fixture
+        .prepareOwner(
+          (transaction) =>
+            transaction
+              .update(dsrDeadlines)
+              .set({ deadlineRecord: { ...legacyRecord, obligationRef: second.obligationRef, version: 2 } }),
+          'required',
+        )
+        .pipe(Effect.provideContext(native.context), Effect.flip);
+      expect(String(rewrite.cause)).toContain('permission denied for table dsr_deadlines');
+      expect(yield* storedBytes()).toEqual(storedBefore);
+
+      // A later exact write for O2 only.
+      const recordedSecond = yield* http.deadline(second.obligationRef, yield* nextId);
+      expect(recordedSecond).toMatchObject({
+        caseRef: native.caseRef,
+        controllerRef: testController,
+        obligationRef: second.obligationRef,
+        receiptBasisRef: second.receiptBasisRef,
+        receivedAt: second.receivedAt,
+        version: 2,
+      });
+      const afterWrite = yield* http.read();
+      const history = afterWrite.items[0].deadlines;
+      expect(history).toHaveLength(2);
+      expect(history.filter(({ identityStatus }) => identityStatus === 'LEGACY_UNRESOLVED')).toEqual([legacyView]);
+      expect(
+        history.flatMap((deadline) => (deadline.identityStatus === 'EXACT' ? [deadline.obligationRef] : [])),
+      ).toEqual([second.obligationRef]);
+      const storedAfterWrite = yield* storedBytes();
+      // Case, retained receipts and the legacy Deadline row are unchanged; the only addition is O2's row.
+      expect(storedAfterWrite.cases).toEqual(storedBefore.cases);
+      expect(storedAfterWrite.deadlines).toHaveLength(2);
+      expect(storedAfterWrite.deadlines).toContainEqual(storedBefore.deadlines[0]);
+      const added = storedAfterWrite.deadlines.filter(
+        ({ deadlineId }) => deadlineId !== storedBefore.deadlines[0].deadlineId,
+      );
+      expect(added.map(({ record }) => JSON.parse(record).obligationRef)).toEqual([second.obligationRef]);
+
+      // O1 is unaffected by the O2 write: it still has no exact Deadline, and its later exact write
+      // is its own row beside the untouched legacy history and O2.
+      yield* http.deadline(first.obligationRef, yield* nextId);
+      const final = (yield* http.read()).items[0].deadlines;
+      expect(final).toHaveLength(3);
+      expect(final.filter(({ identityStatus }) => identityStatus === 'LEGACY_UNRESOLVED')).toEqual([legacyView]);
+      expect(
+        new Set(final.flatMap((deadline) => (deadline.identityStatus === 'EXACT' ? [deadline.obligationRef] : []))),
+      ).toEqual(new Set(native.receipts.map(({ obligationRef }) => obligationRef)));
+      const storedFinal = yield* storedBytes();
+      expect(storedFinal.cases).toEqual(storedBefore.cases);
+      expect(storedFinal.deadlines).toContainEqual(storedBefore.deadlines[0]);
+    }).pipe(Effect.provide(nativeServices)),
+  180_000,
+);
 
 it.live(
   'preserves single-obligation replay and append-only history while rejecting foreign selectors and mismatched authorities',

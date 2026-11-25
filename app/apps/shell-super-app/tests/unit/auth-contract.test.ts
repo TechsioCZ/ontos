@@ -37,39 +37,40 @@ type TenantEndpoint =
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.availableTenants
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.switchTenant;
 
+const unused = () => Effect.die('The contract registration proof must not execute a request');
+
 it.effect('registers the served agent, people and connection handlers against the canonical server contract', () =>
   Effect.gen(function* registerServedGroups() {
-    const unused = () => Effect.die('The contract registration proof must not execute a request');
     yield* Layer.build(
       Layer.mergeAll(
         HttpApiBuilder.group(ShellServerApi, 'agentPlatform', (handlers) =>
           handlers.handleAll({
-            submitAgentProposals: unused,
-            listOwnAgentProposals: unused,
-            agentQueue: unused,
-            agentDecide: unused,
-            agentRevert: unused,
             agentActivity: unused,
+            agentDecide: unused,
+            agentQueue: unused,
+            agentRevert: unused,
+            listOwnAgentProposals: unused,
+            submitAgentProposals: unused,
           }),
         ),
         HttpApiBuilder.group(ShellServerApi, 'peopleAdministration', (handlers) =>
           handlers.handleAll({
-            requestPeopleSearchRebuild: unused,
             invitePerson: unused,
             listCompanyPeople: unused,
             listTenantPeople: unused,
+            requestPeopleSearchRebuild: unused,
             setPeopleCompanyMembership: unused,
           }),
         ),
         HttpApiBuilder.group(ShellServerApi, 'oauthConnectionsAdmin', (handlers) =>
           handlers.handleAll({
-            listMyConnections: unused,
-            listCompanyConnections: unused,
-            updateConnectionAccess: unused,
-            revokeConnection: unused,
             listAgentEntities: unused,
+            listCompanyConnections: unused,
+            listMyConnections: unused,
             manageAgentEntity: unused,
             replaceAgentOperators: unused,
+            revokeConnection: unused,
+            updateConnectionAccess: unused,
           }),
         ),
       ),
@@ -207,7 +208,10 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     endAccessMembership: '/shell/access/people/end-membership',
     executeAccessApproval: '/shell/access/approvals/execute',
     executeAssetMetadata: '/core/reads/asset-metadata',
+    executeConfirmAsset: '/core/actions/confirm-asset',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
+    executeRenameDisplayFilename: '/core/actions/rename-display-filename',
+    executeUploadAsset: '/core/actions/upload-asset',
     explainAccess: '/shell/access/explain',
     getAccessRole: '/shell/access/roles/detail',
     invitePerson: '/auth/identity/people/invite',
@@ -269,6 +273,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     switchToTenantContext: '/auth/context/tenant',
     transferAccessOwnership: '/shell/access/people/transfer-ownership',
     updateConnectionAccess: '/auth/oauth-connections/update',
+    uploadAssetBytes: '/core/media/assets/:mediaAssetId/bytes',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',

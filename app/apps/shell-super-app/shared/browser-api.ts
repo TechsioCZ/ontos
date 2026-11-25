@@ -74,6 +74,21 @@ import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from 
 import { AssetMetadataRequestSchema, AssetMetadataResponseSchema } from './core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-contract-imports:end
 
+// @ontos-codesmith-core-action-contract-imports:start
+
+// @ontos-core-action rename-display-filename
+import {
+  RenameDisplayFilenameRequestSchema,
+  RenameDisplayFilenameResultSchema,
+} from './core-actions/rename-display-filename.ts';
+
+// @ontos-core-action confirm-asset
+import { ConfirmAssetRequestSchema, ConfirmAssetResultSchema } from './core-actions/confirm-asset.ts';
+
+// @ontos-core-action upload-asset
+import { UploadAssetRequestSchema, UploadAssetResultSchema } from './core-actions/upload-asset.ts';
+// @ontos-codesmith-core-action-contract-imports:end
+
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
 export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
 export type LegalEntityChoice = typeof LegalEntityChoiceSchema.Type;
@@ -390,6 +405,7 @@ export type ShellInvalidRequestProblem = typeof ShellInvalidRequestProblemSchema
 export type ShellPreconditionRequiredProblem = typeof ShellPreconditionRequiredProblemSchema.Type;
 export type ShellCapabilityUnavailableProblem = typeof ShellCapabilityUnavailableProblemSchema.Type;
 export type ShellInternalProblem = typeof ShellInternalProblemSchema.Type;
+export type ShellLengthRequiredProblem = typeof ShellLengthRequiredProblemSchema.Type;
 export type ShellRateLimitedProblem = typeof ShellRateLimitedProblemSchema.Type;
 
 export type IdentityProblem =
@@ -403,6 +419,9 @@ export type IdentityProblem =
   | ShellRateLimitedProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem;
+
+/** Every failure of the byte-upload edge: the identity problems and the one that is its own, `411`. */
+export type MediaUploadProblem = IdentityProblem | ShellLengthRequiredProblem;
 
 const safeTenantIdentityFields = {
   displayName: Schema.String,
@@ -1071,6 +1090,8 @@ export const ShellDocumentContextSchema = Schema.Struct({
   tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
 });
 export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
+/** A byte upload that did not state its exact Content-Length: no body is read for it. */
+export const ShellLengthRequiredProblemSchema = makeProblemDetailsSchema('ShellLengthRequiredProblem', 411);
 export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema('ShellRateLimitedProblem', 429, {
   retryAfterSeconds: Schema.Finite,
 });
@@ -1141,6 +1162,27 @@ export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
     success: ShellDocumentContextSchema,
   }),
 );
+
+const mediaUploadErrors = [...identityErrors, ShellLengthRequiredProblemSchema] as const;
+
+/**
+ * What a client is told when its bytes are stored and sealed: the asset is `ready`, with the size and SHA-256 of
+ * the stored bytes. It is the only success of an upload and carries no storage value.
+ */
+const MediaAssetIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('MediaAssetId'));
+const MediaTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+
+export const MediaBytesUploadedResponseSchema = Schema.Struct({
+  byteSize: Schema.Int.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 })),
+  contentSha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+  mediaAssetRef: Schema.Struct({
+    moduleId: Schema.Literal('core.media'),
+    resourceId: Schema.toEncoded(MediaAssetIdSchema),
+    resourceType: Schema.Literal('core.media.asset'),
+    tenantId: Schema.toEncoded(MediaTenantIdSchema),
+  }),
+  processingStatus: Schema.Literal('ready'),
+});
 
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
@@ -1491,6 +1533,45 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   // @ontos-codesmith-core-read-api-groups:end
 
+  // @ontos-codesmith-core-action-api-groups:start
+
+  // @ontos-core-action rename-display-filename
+  .add(
+    HttpApiGroup.make('coreActionRenameDisplayFilename').add(
+      HttpApiEndpoint.post('executeRenameDisplayFilename', '/core/actions/rename-display-filename', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: RenameDisplayFilenameRequestSchema,
+        success: RenameDisplayFilenameResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action confirm-asset
+  .add(
+    HttpApiGroup.make('coreActionConfirmAsset').add(
+      HttpApiEndpoint.post('executeConfirmAsset', '/core/actions/confirm-asset', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: ConfirmAssetRequestSchema,
+        success: ConfirmAssetResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action upload-asset
+  .add(
+    HttpApiGroup.make('coreActionUploadAsset').add(
+      HttpApiEndpoint.post('executeUploadAsset', '/core/actions/upload-asset', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: UploadAssetRequestSchema,
+        success: UploadAssetResultSchema,
+      }),
+    ),
+  )
+  // @ontos-codesmith-core-action-api-groups:end
+
   // Core Media byte delivery (#1443, #1436): a hand-written streaming edge. Its success body is the exact verified
   // bytes of one asset; it carries no storage value, takes only the asset id and runs its own governed
   // `download` Core Read on every request.
@@ -1657,6 +1738,22 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           success: AgentOperatorsResponseSchema,
         }),
       ),
+  )
+
+  // Core Media byte ingress (#1433, #1430): the third leg-in of reserve, stream, confirm. The body is the raw bytes
+  // of the one file the asset was reserved for, streamed (never buffered here) with its exact Content-Length; the
+  // success is only `ready`. The reserving principal, the asset row and the confirm capability decide; there is no
+  // other permission, tenant or storage value in the request. It declares NO payload schema on purpose: the handler
+  // reads the request stream itself, so no framework buffering, size cap or content-type negotiation applies (the
+  // type of the file is the one recorded at reservation, never this request's).
+  .add(
+    HttpApiGroup.make('coreMediaUpload').add(
+      HttpApiEndpoint.put('uploadAssetBytes', '/core/media/assets/:mediaAssetId/bytes', {
+        error: mediaUploadErrors,
+        params: { mediaAssetId: Schema.String.check(Schema.isUUID()) },
+        success: MediaBytesUploadedResponseSchema,
+      }),
+    ),
   )
   .add(GatewayContextApiGroup)
   .add(ApiKeyGatewayReadApiGroup)

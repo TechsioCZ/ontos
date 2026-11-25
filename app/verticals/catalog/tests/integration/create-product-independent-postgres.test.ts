@@ -514,6 +514,97 @@ it.live(
       );
       const mismatch = yield* create({ ...successorInput, reason: 'Different action reason' }).pipe(Effect.flip);
       expect(Schema.is(CreateProductActionIneligibleProblemSchema)(mismatch)).toBe(true);
+      // The server decoder, not only the client encoder, refuses an incomplete explicit successor, and the
+      // omission never degrades into an ordinary independent create (#1196). The valid request below is
+      // issued by the real client; only its wire body is swapped for the incomplete one.
+      const predecessor = first.product.productRef;
+      const incompleteSuccessorBodies = [
+        // evidenceRefs absent, empty, classification reason absent, predecessor absent, Action reason absent.
+        {
+          classification: {
+            affectsOpenSelection: true,
+            kind: 'NEW_PRODUCT',
+            previousProductRef: predecessor,
+            reason: successorReason,
+          },
+          reason: successorReason,
+        },
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: [],
+            kind: 'NEW_PRODUCT',
+            previousProductRef: predecessor,
+            reason: successorReason,
+          },
+          reason: successorReason,
+        },
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: ['catalog:review'],
+            kind: 'NEW_PRODUCT',
+            previousProductRef: predecessor,
+          },
+          reason: successorReason,
+        },
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: ['catalog:review'],
+            kind: 'NEW_PRODUCT',
+            reason: successorReason,
+          },
+          reason: successorReason,
+        },
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: ['catalog:review'],
+            kind: 'NEW_PRODUCT',
+            previousProductRef: predecessor,
+            reason: successorReason,
+          },
+        },
+        { classification: { kind: 'NEW_PRODUCT' } },
+      ];
+      const beforeIncomplete = yield* observe();
+      const sendIncompleteSuccessor = Effect.fn('IndependentCreate.sendIncompleteSuccessor')(
+        function* sendIncompleteSuccessor(body: (typeof incompleteSuccessorBodies)[number]) {
+          const recordedStatuses: number[] = [];
+          const swapBody: typeof fetch = async (input, init) => {
+            const original = new Request(input, init);
+            const headers = new Headers(original.headers);
+            headers.delete('content-length');
+            const response = await nativeFetch(
+              new Request(original.url, { body: JSON.stringify(body), headers, method: original.method }),
+            );
+            recordedStatuses.push(response.status);
+            return response;
+          };
+          const outcome = yield* executeCreateProductWithAuthorization(
+            successorInput,
+            yield* authorization(),
+            yield* nextId,
+            {
+              baseUrl: 'https://catalog.ontos.test',
+              compositionRevision: composition.composition.revision,
+              idempotencyKey: yield* nextId,
+            },
+          ).pipe(Effect.provideService(FetchHttpClient.Fetch, swapBody), Effect.result);
+          expect(Result.isFailure(outcome)).toBe(true);
+          return recordedStatuses;
+        },
+      );
+      const incompleteStatuses = yield* Effect.forEach(
+        incompleteSuccessorBodies,
+        (body) => sendIncompleteSuccessor(body),
+        {
+          concurrency: 1,
+        },
+      );
+      expect(incompleteStatuses).toEqual(incompleteSuccessorBodies.map(() => [400]));
+      expect(yield* observe()).toEqual(beforeIncomplete);
       // v2: the one access gate decides this Action (O62); a principal from another Tenant with no
       // assignment is refused by the gate, named on the fixture's own per-request owner seam.
       deniedAccess.deny(ungranted.manager.principalId, 'commerce.catalog.product.create');

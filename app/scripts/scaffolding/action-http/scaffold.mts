@@ -60,7 +60,8 @@ const DomainProblemKindSchema = Schema.Literals([
   'timeout',
   'unavailable',
 ]);
-type DomainProblemKind = typeof DomainProblemKindSchema.Type;
+export type DomainProblemKind = typeof DomainProblemKindSchema.Type;
+export const isDomainProblemKind = Schema.is(DomainProblemKindSchema);
 const AnnotationMapSchema = Schema.Record(Schema.String, Schema.Unknown);
 type AnnotationMap = typeof AnnotationMapSchema.Type;
 
@@ -95,7 +96,7 @@ const groupCustomDomainProblems = (problems: readonly CustomDomainProblem[]) =>
       schemas: members.map(({ schema }) => schema).toSorted(),
     }));
 
-interface DomainErrorIdentity {
+export interface DomainErrorIdentity {
   readonly code: string;
   readonly discriminator: '_tag' | 'code' | 'reasonCode';
   readonly kind: DomainProblemKind;
@@ -103,12 +104,12 @@ interface DomainErrorIdentity {
   readonly value: string;
 }
 
-interface SchemaAstPropertyLike {
+export interface SchemaAstPropertyLike {
   readonly name?: unknown;
   readonly type?: (SchemaAstLike & { readonly literal?: unknown }) | undefined;
 }
 
-interface SchemaAstLike {
+export interface SchemaAstLike {
   readonly _tag?: string | undefined;
   readonly annotations?: AnnotationMap | undefined;
   readonly encoding?: readonly { readonly to?: SchemaAstLike | undefined }[] | undefined;
@@ -137,6 +138,7 @@ const ActionDescriptorSchema = Schema.Struct({
   idempotency: Schema.Literals(['optional', 'required']),
   owningModuleKey: OwningModuleKeySchema,
   payloadSchema: ActionPayloadSchema,
+  resultSchema: Schema.optionalKey(ActionPayloadSchema),
 });
 type ActionDescriptor = typeof ActionDescriptorSchema.Type;
 interface ActionModuleLike {
@@ -268,7 +270,7 @@ const domainErrorIdentitiesFromValues = (values: Map<string, Set<string>>): read
   return [domainErrorIdentity(tag, code, '_tag', tag)];
 };
 
-const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[] => {
+export const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[] => {
   const astTypes = ast.types;
   const nodes: readonly SchemaAstLike[] = Predicate.isTagged(ast, 'Union') ? (astTypes ?? []) : [ast];
   const errors = nodes.flatMap((node) => domainErrorIdentitiesFromValues(collectNodeDomainErrorValues(node)));

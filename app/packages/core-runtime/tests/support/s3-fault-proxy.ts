@@ -169,7 +169,7 @@ const handle = (script: FaultScript, upstream: URL) => (request: IncomingMessage
   }
 };
 
-const listen = (upstream: URL) =>
+const listen = (upstream: URL, port: number) =>
   Effect.callback<{ readonly proxy: S3FaultProxy; readonly server: Server }>((resume) => {
     const script = new FaultScript();
     const sockets = new Set<Socket>();
@@ -185,7 +185,7 @@ const listen = (upstream: URL) =>
         socket.destroy();
       }
     });
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       const address = server.address();
       const proxy: S3FaultProxy = {
         injected: () => [...script.injected],
@@ -207,6 +207,12 @@ const close = ({ server }: { readonly server: Server }) =>
     });
   });
 
-/** Starts the proxy in front of `upstream` for the lifetime of the surrounding scope. */
-export const startS3FaultProxy = (upstream: URL) =>
-  Effect.acquireRelease(listen(upstream), close).pipe(Effect.map(({ proxy }) => proxy));
+const PROXYABLE_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/** Starts the proxy in front of `upstream` for the lifetime of the surrounding scope (any free port unless one is named). */
+export const startS3FaultProxy = (upstream: URL, port = 0) =>
+  PROXYABLE_HOSTS.has(upstream.hostname)
+    ? Effect.acquireRelease(listen(upstream, port), close).pipe(Effect.map(({ proxy }) => proxy))
+    : Effect.die(
+        new Error('The fault proxy forwards in plain HTTP and only to a loopback upstream, never to a real endpoint'),
+      );

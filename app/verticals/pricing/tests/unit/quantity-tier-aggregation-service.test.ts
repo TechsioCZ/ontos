@@ -278,6 +278,47 @@ describe('Pricing Quantity Tier aggregation service', () => {
       }),
   );
 
+  it.effect(
+    'pools equal-valued participants whose persisted Price basis is fixed-scale and whose line basis is canonical',
+    () =>
+      Effect.gen(function* fixedScalePriceBasis() {
+        const source = request();
+        const input = decodeRequest({
+          ...source,
+          attempt: {
+            ...source.attempt,
+            participants: source.attempt.participants.map((participant) => ({
+              ...participant,
+              exactPrice: {
+                ...participant.exactPrice,
+                price: {
+                  ...participant.exactPrice.price,
+                  definition: {
+                    ...participant.exactPrice.price.definition,
+                    identityKey: {
+                      ...participant.exactPrice.price.definition.identityKey,
+                      unitBasis: {
+                        ...participant.exactPrice.price.definition.identityKey.unitBasis,
+                        quantity: '1.000000000',
+                      },
+                    },
+                  },
+                },
+              },
+            })),
+          },
+        });
+        // The owner stores "1.000000000"; the lines carry "1". Same basis, so the group still pools.
+        expect(
+          input.attempt.participants.map(
+            ({ normalizedQuantity }) => normalizedQuantity.quantityBasis.priceUnitBasis.quantity,
+          ),
+        ).toEqual(['1', '1']);
+        const result = yield* aggregateQuantityTierLines(input);
+        expect(result.outcome).toBe('QUANTITY_TIER_QUANTITY_AGGREGATED');
+      }),
+  );
+
   it.effect('keeps unavailable and unverifiable Catalog owner evidence as separate typed refusals', () =>
     Effect.gen(function* ownerEvidenceFailures() {
       const input = request();

@@ -478,9 +478,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
           { actor: world.system, origin: 'system' },
           { actor: world.integration, origin: 'integration' },
           { actor: world.integration, origin: 'import' },
-          // The origin is a label: any carrier may state any origin and nothing about the decision changes.
-          { actor: world.human, origin: 'system' },
-          { actor: world.system, origin: 'user' },
         ] as const;
         const outcomes = [];
         for (const [index, { actor, origin }] of cases.entries()) {
@@ -502,6 +499,40 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
         expect(
           new Set(outcomes.map(({ processingStatus, sealed, sha }) => `${processingStatus}/${sealed}/${sha}`)),
         ).toEqual(new Set([`ready/true/${digestOf(content)}`]));
+      }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'refuses a stated origin that contradicts the carrier before any row exists, and grants nothing by the label',
+    () =>
+      Effect.gen(function* contradictions() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        yield* harness.bind(world, world.system);
+        yield* harness.bind(world, world.integration);
+        const runtime = harness.runtimeFor('machine');
+        const contradictory = [
+          { actor: world.human, origin: 'system' },
+          { actor: world.human, origin: 'integration' },
+          { actor: world.human, origin: 'import' },
+          { actor: world.system, origin: 'user' },
+          { actor: world.integration, origin: 'user' },
+        ] as const;
+        for (const [index, { actor, origin }] of contradictory.entries()) {
+          const exit = yield* Effect.exit(
+            (actor === world.human ? harness.runtimeFor('human') : runtime)
+              .runAction({
+                payload: reservationPayload(content, { ingestionSource: origin }),
+                principal: principalOf(world, actor),
+                registration: uploadAssetAction,
+                transport: transportOf(`contradiction-${index}`),
+              })
+              .pipe(Effect.provideService(ObjectStorage, harness.storage.service)),
+          );
+          expect(failureTagOf(exit)).toBe('MediaForbidden');
+        }
+        expect(yield* harness.rowCount(world.tenantId)).toBe(0);
+        expect(yield* harness.storage.calls).toEqual([]);
       }).pipe(Effect.scoped),
   );
 

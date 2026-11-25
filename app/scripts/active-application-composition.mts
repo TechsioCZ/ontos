@@ -27,14 +27,13 @@ import { governedSharedSingletonPackages } from '../module-federation.shared.ts'
 
 /**
  * The one place that fixes how long an observed active Application Composition may be trusted and how
- * often the scheduled publisher re-observes it. Consumers stop trusting a snapshot at validUntil, so the
- * refresh cadence leaves three missed runs of headroom inside one validity window.
+ * often its publisher re-observes it. Consumers stop trusting a snapshot at validUntil, so the refresh
+ * interval leaves three missed renewals of headroom inside one validity window.
  */
 export const ACTIVE_APPLICATION_COMPOSITION_POLICY = Object.freeze({
   /** Native storage endpoint read afresh by Node consumers. */
   sourceUrlVariable: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
-  /** Cron of the scheduled re-observation; the refresh workflow's schedule must equal it. */
-  refreshCron: '17 */6 * * *',
+  /** How often the app host (`scripts/zerops/app-host.mts`) renews the composition it holds. */
   refreshInterval: Duration.hours(6),
   validity: Duration.hours(24),
 });

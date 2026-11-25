@@ -3,6 +3,7 @@ import { DateTime, Effect, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
+import { currentEntryOf } from '../../src/media/current-contract.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
 import {
   ObjectStorage,
@@ -13,6 +14,7 @@ import {
 } from '../../src/media/object-storage.ts';
 import type { ObjectStorageFailure, ObjectStorageService } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
+import { verifyStoredMediaObject } from '../../src/media/verification.ts';
 import { statReadyMediaAsset } from '../../src/media/verified-read.ts';
 import type { MediaVerifiableAsset } from '../../src/media/verified-read.ts';
 import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/testing/media-object-storage.ts';
@@ -155,5 +157,58 @@ it.effect('answers a provider other than the one that holds the asset as unavail
       reason: 'provider_mismatch',
     });
     expect((yield* storage.calls).map(({ operation }) => operation)).toEqual(['put']);
+  }),
+);
+
+/*
+ * The same-length substitution (#1434, #1443): the object under the key is written again with other bytes of the same
+ * size after its digest was verified, and nobody downloaded it. A stat cannot read bytes, so what it can compare is
+ * the provider's pin of the object (the double's `versionRefs` stand in for the ETag of an unversioned bucket such as
+ * R2), recorded at confirm from the very read that verified the digest.
+ */
+const substitute = content.map((byte, index) => (index === 3 ? (byte + 1) % 256 : byte));
+
+it.effect(
+  'answers an object written again with other bytes of the same size as CURRENT_UNVERIFIED, never AVAILABLE',
+  () =>
+    Effect.gen(function* sameLengthSubstitution() {
+      expect(substitute.byteLength).toBe(content.byteLength);
+      const storage = yield* withStored(content, { versionRefs: true });
+      // The confirm step's read-back: the digest of the stored bytes and the pin of that very object.
+      const evidence = yield* verifyStoredMediaObject({
+        expected: { byteSize: content.byteLength, contentSha256: digestOf(content) },
+        storageKey: key,
+        storageProvider: PROVIDER,
+      }).pipe(Effect.provideService(ObjectStorage, storage.service));
+      const recordedPin = evidence.outcome === 'verified' ? evidence.versionRef : undefined;
+      expect(recordedPin).toBeDefined();
+      const asset = readyAsset({ storageObjectVersionRef: recordedPin ?? null });
+      const ref = {
+        moduleId: 'core.media',
+        resourceId: assetId,
+        resourceType: 'core.media.asset',
+        tenantId,
+      } as const;
+      const kindOf = (found: Effect.Success<ReturnType<typeof stat>>) => currentEntryOf(ref, found).kind;
+
+      expect(kindOf(yield* stat(storage.service, asset))).toBe('AVAILABLE');
+      // Another write of the key, other bytes, same size.
+      yield* storage.service.put({ body: Stream.make(substitute), contentType: 'application/octet-stream', key });
+      expect(yield* stat(storage.service, asset)).toEqual({
+        outcome: 'inconsistent_metadata',
+        reason: 'object_replaced',
+      });
+      expect(kindOf(yield* stat(storage.service, asset))).toBe('CURRENT_UNVERIFIED');
+      // The stats read no byte: the one read of the whole test is the confirm step's.
+      expect((yield* storage.calls).filter(({ operation }) => operation === 'get')).toHaveLength(1);
+    }),
+);
+
+it.effect('cannot tell a same-length substitution when the recorded identity has no pin (the documented limit)', () =>
+  Effect.gen(function* noRecordedPin() {
+    // A row confirmed before pins were recorded, or on a provider that reports no ETag: size is all a stat compares.
+    const storage = yield* withStored(content);
+    yield* storage.service.put({ body: Stream.make(substitute), contentType: 'application/octet-stream', key });
+    expect(yield* stat(storage.service)).toEqual({ byteSize: content.byteLength, outcome: 'present' });
   }),
 );

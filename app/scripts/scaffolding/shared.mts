@@ -179,6 +179,37 @@ export interface ActionHttpScaffoldResult {
   readonly serverPath: string;
 }
 
+/**
+ * The Shell HTTP transport of one Core-owned Action (`--scope core`). The owner's schemas stay the single
+ * source of the wire shape (`contractModule` is a published Core runtime export that must carry exactly the
+ * registration's payload and result schemas), and a Core Action needs no vertical.
+ */
+export interface CoreActionHttpScaffoldConfig {
+  readonly action: string;
+  /** The published browser-safe Core runtime export that carries the Action's payload and result schemas. */
+  readonly contractModule: string;
+  /** `Tag=kind` overrides for a domain error whose status the name heuristic cannot decide. */
+  readonly domainErrorKinds?: readonly string[] | undefined;
+  /**
+   * A layer `apps/shell-super-app/api/index.ts` defines and the route's Action needs from the host at run time (for
+   * example the object store of a Core Media Action). The route's group is provided with it where it is composed.
+   */
+  readonly hostLayer?: string | undefined;
+  readonly module: string;
+  /**
+   * `./file.ts#exportName` under `apps/shell-super-app/api`: an owner-written provider of the request-scoped
+   * service the Action needs and no host layer can supply (for example verification evidence).
+   */
+  readonly requestServices?: string | undefined;
+  readonly scope: 'core';
+}
+
+export interface CoreActionHttpScaffoldResult {
+  readonly clientPath: string;
+  readonly contractPath: string;
+  readonly serverPath: string;
+}
+
 export interface ActionServiceScaffoldConfig {
   readonly service: string;
   readonly vertical: string;

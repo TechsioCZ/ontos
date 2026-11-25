@@ -244,4 +244,43 @@ describe('Pricing Discount/Fee allocation composition', () => {
       ).toBe(true);
     }),
   );
+
+  // Owner persistence returns fixed-scale decimals ("2.000000000"). The original contribution preserves that
+  // owner text exactly, while an allocation line is a canonical exact decimal; the composition must bridge the two
+  // instead of rejecting a valid persisted Fee or Discount as an invalid allocation request.
+  it.effect('allocates fixed-scale owner amounts as canonical lines while preserving the original contribution', () =>
+    Effect.gen(function* canonicalizesFixedScaleOwnerAmounts() {
+      const fixedScaleFee = feeResult('line-a', '10', '2.000000000');
+      const result = yield* composePricingDiscountFeeAllocations({
+        discountComposition: {
+          ...discountComposition,
+          lineContributions: discountComposition.lineContributions.map((contribution) => ({
+            ...contribution,
+            amount: money('-3.000000000'),
+          })),
+        },
+        feeResults: [fixedScaleFee, feeResult('line-b', '5', '1')],
+        precision,
+        recipientClassifications: [
+          { occurrenceId: 'line-a', recipientKind: 'MERCHANDISE' },
+          { occurrenceId: 'line-b', recipientKind: 'MERCHANDISE' },
+        ],
+      });
+
+      expect(result.outcome).toBe('ALLOCATION_COMPOSITION_READY');
+      const lineA = result.allocationResults.flatMap((allocationResult) =>
+        allocationResult.request.allocationKind === 'OWNER_EXACT' &&
+        allocationResult.request.ownerAllocations.some(({ occurrenceId }) => occurrenceId === 'line-a')
+          ? [allocationResult.request]
+          : [],
+      );
+      expect(lineA.map(({ originalContribution }) => originalContribution.amount).toSorted()).toEqual([
+        '-3.000000000',
+        '2.000000000',
+      ]);
+      expect(
+        lineA.flatMap(({ ownerAllocations }) => ownerAllocations.map(({ amount }) => amount.amount)).toSorted(),
+      ).toEqual(['-3', '2']);
+    }),
+  );
 });
