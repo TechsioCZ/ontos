@@ -1,22 +1,27 @@
-#!/usr/bin/env node
-/**
- * Live HTTP acceptance, not a seed. Importing this module does not perform I/O.
- * The parent supplies endpoint/env wiring and explicitly executes a runner to create scoped demo records.
- * No order placement, invoices, mail, database access, native services, or cleanup deletes are performed here.
- *
- * Public payload sources:
- * apps/shell-super-app/api/symmy/{products,customers,stock,price-lists-batch-upsert,
- * price-lists-prices-batch}-request-contract.ts and customer-groups-batch-request-contract.ts.
- * Receipt semantics: packages/shared-contracts/src/symmy/outcomes.ts and symmy/contract.ts.
- * Only the response fields used by this outside proof are decoded below. Importing the full server
- * schema graph would load unrelated server modules into this standalone operator command.
- */
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Option, Redacted, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  Clock,
+  Config,
+  ConfigProvider,
+  Console,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Match,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+  Stream,
+} from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Command, Flag } from 'effect/cli';
 import { SymmyProductsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/products-batch-request-contract.ts';
 import { SymmyCustomersBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/customers-batch-request-contract.ts';
 import { SymmyCustomerGroupsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/customer-groups-batch-request-contract.ts';
@@ -32,10 +37,11 @@ import {
   SymmyDemoCatalogRevisionResponseSchema,
 } from '../../apps/shell-super-app/api/symmy/demo-catalog-contract.ts';
 import { SkuLookupRequestSchema, SkuLookupResponseSchema } from '../../verticals/catalog/shared/apis/sku-lookup.ts';
-import { CatalogPagePricesRequestSchema, CatalogPagePricesResponseSchema } from '@app/pricing-contracts/catalog-page-prices';
 import {
-  SourceStockPositionResolutionRequestSchema,
-} from '../../verticals/inventory/shared/apis/source-stock-position-resolution.ts';
+  CatalogPagePricesRequestSchema,
+  CatalogPagePricesResponseSchema,
+} from '@app/pricing-contracts/catalog-page-prices';
+import { SourceStockPositionResolutionRequestSchema } from '../../verticals/inventory/shared/apis/source-stock-position-resolution.ts';
 import {
   CatalogVariantOnHandPageRequestSchema,
   CatalogVariantOnHandPageResponseSchema,
@@ -55,57 +61,157 @@ import {
 } from '../../verticals/commerce-customer-context/shared/apis/customer-group-detail.ts';
 import { RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { SymmyDemoOrderSchema } from '../../apps/shell-super-app/api/symmy/demo-orders-contract.ts';
-import { fullOrderTotals, lineGrossMinor, orderLineVatMinor, vatInGrossMinor } from '../../verticals/merchandise/shared/domain/order-totals.ts';
+import {
+  fullOrderTotals,
+  lineGrossMinor,
+  orderLineVatMinor,
+  vatInGrossMinor,
+} from '../../verticals/merchandise/shared/domain/order-totals.ts';
+
+const proofBoundaries = {
+  addressReadback: 'address-readback',
+  basePriceReadback: 'base-price-readback',
+  categoryImport: 'category-import',
+  categoryReadback: 'category-readback',
+  configuration: 'configuration',
+  customerImport: 'customer-import',
+  customerReadback: 'customer-readback',
+  customerReplay: 'customer-replay',
+  fullProof: 'full-proof',
+  groupAssignment: 'group-assignment',
+  groupImport: 'group-import',
+  groupReadback: 'group-readback',
+  groupReplay: 'group-replay',
+  imageImport: 'image-import',
+  imageReadback: 'image-readback',
+  listPriceImport: 'list-price-import',
+  listPriceReadback: 'list-price-readback',
+  orderExport: 'order-export',
+  priceListImport: 'price-list-import',
+  priceListReadback: 'price-list-readback',
+  productImport: 'product-import',
+  productReadback: 'product-readback',
+  productReplay: 'product-replay',
+  productUnseen: 'product-unseen',
+  skuReadback: 'sku-readback',
+  stockImport: 'stock-import',
+  stockReadback: 'stock-readback',
+} as const;
+const failureCodes = {
+  effectCount: 'effect-count',
+  effectOutcome: 'effect-outcome',
+  effectOwner: 'effect-owner',
+  httpStatus: 'http-status',
+  inputContract: 'input-contract',
+  itemCount: 'item-count',
+  jobIdentity: 'job-identity',
+  jobTerminal: 'job-terminal',
+  laneFailed: 'lane-failed',
+  missingWiring: 'missing-wiring',
+  network: 'network',
+  notUnseen: 'not-unseen',
+  readAuthExpired: 'read-auth-expired',
+  readAuthRequired: 'read-auth-required',
+  readAuthScope: 'read-auth-scope',
+  readback: 'readback',
+  readPermission: 'read-permission',
+  redirect: 'redirect',
+  replayIdentity: 'replay-identity',
+  responseTooLarge: 'response-too-large',
+  schema: 'schema',
+  timeout: 'timeout',
+  unexpected: 'unexpected',
+  unsafePath: 'unsafe-path',
+} as const;
+const UNRECOGNIZED_PROBLEM = 'unrecognized-problem';
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const uuid = Schema.String.check(Schema.isUUID());
+const moduleIdSchema = text.pipe(Schema.brand('ModuleKey'));
+const resourceIdSchema = uuid.pipe(Schema.brand('ResourceId'));
+const tenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
+const effectIdSchema = uuid.pipe(Schema.brand('SymmyEffectId'));
+const itemIdSchema = uuid.pipe(Schema.brand('SymmyItemId'));
+const jobIdSchema = uuid.pipe(Schema.brand('SymmyJobId'));
+const variantIdSchema = uuid.pipe(Schema.brand('CatalogVariantId'));
+const sourceRecordIdSchema = text.pipe(Schema.brand('SymmySourceRecordId'));
+const marketIdSchema = text.pipe(Schema.brand('MarketId'));
+const channelIdSchema = text.pipe(Schema.brand('ChannelId'));
+const locationKeySchema = text.pipe(Schema.brand('SymmyLocationKey'));
+const revisionIdSchema = uuid.pipe(Schema.brand('PriceRevisionId'));
+const itemKeySchema = text.pipe(Schema.brand('SymmyItemKey'));
+const productIdSchema = text.pipe(Schema.brand('NativeProductId'));
+const categoryIdSchema = text.pipe(Schema.brand('NativeCategoryId'));
+const legalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const RefSchema = Schema.Struct({
-  moduleId: text,
-  resourceId: uuid,
+  moduleId: moduleIdSchema,
+  resourceId: resourceIdSchema,
   resourceType: text,
-  tenantId: uuid,
+  tenantId: tenantIdSchema,
 });
-export type ProofRef = typeof RefSchema.Type;
+export type ProofRef = typeof RefSchema.Encoded;
 const accepted = Schema.Literals(['accepted_change', 'accepted_no_change']);
 const EffectSchema = Schema.Union([
-  Schema.Struct({ effectId: uuid, owner: text, status: accepted }),
-  Schema.Struct({ effectId: uuid, originalStatus: accepted, owner: text, status: Schema.Literal('duplicate') }),
+  Schema.Struct({ effectId: effectIdSchema, owner: text, status: accepted }),
   Schema.Struct({
-    effectId: Schema.optionalKey(uuid),
+    effectId: effectIdSchema,
+    originalStatus: accepted,
+    owner: text,
+    status: Schema.Literal('duplicate'),
+  }),
+  Schema.Struct({
+    effectId: Schema.optionalKey(effectIdSchema),
     owner: text,
     status: Schema.Literals([
-      'waiting', 'executing', 'indeterminate', 'unsupported', 'stale', 'unresolved',
-      'ambiguous', 'denied', 'conflict', 'unavailable', 'invalid',
+      'waiting',
+      'executing',
+      'indeterminate',
+      'unsupported',
+      'stale',
+      'unresolved',
+      'ambiguous',
+      'denied',
+      'conflict',
+      'unavailable',
+      'invalid',
     ]),
   }),
 ]);
 const ItemSchema = Schema.Struct({
   effects: Schema.NonEmptyArray(EffectSchema),
-  itemId: uuid,
+  itemId: itemIdSchema,
   outcome: Schema.Literals(['accepted', 'partial', 'not_accepted']),
 });
 const ItemsSchema = Schema.Struct({ items: Schema.NonEmptyArray(ItemSchema) });
 type Items = typeof ItemsSchema.Type;
-const AdmissionSchema = Schema.Struct({ jobId: uuid, status: Schema.Literal('queued') });
+const AdmissionSchema = Schema.Struct({ jobId: jobIdSchema, status: Schema.Literal('queued') });
 const JobSchema = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(ItemSchema)),
-  jobId: uuid,
+  jobId: jobIdSchema,
   status: Schema.Literals([
-    'queued', 'running', 'blocked', 'indeterminate', 'completed_all', 'completed_partial', 'completed_none',
+    'queued',
+    'running',
+    'blocked',
+    'indeterminate',
+    'completed_all',
+    'completed_partial',
+    'completed_none',
   ]),
 });
 const ProductPageSchema = Schema.Struct({
   count: Schema.Int,
-  products: Schema.Array(Schema.Struct({
-    id: text,
-    product: Schema.Struct({
-      name: Schema.optionalKey(text),
-      productRef: RefSchema,
-      variants: Schema.Array(Schema.Struct({ variantId: uuid, variantRef: RefSchema })),
+  products: Schema.Array(
+    Schema.Struct({
+      id: text,
+      product: Schema.Struct({
+        name: Schema.optionalKey(text),
+        productRef: RefSchema,
+        variants: Schema.Array(Schema.Struct({ variantId: variantIdSchema, variantRef: RefSchema })),
+      }),
+      sourceRecordId: sourceRecordIdSchema,
+      variantSources: Schema.Array(Schema.Struct({ sourceRecordId: sourceRecordIdSchema, variantId: variantIdSchema })),
     }),
-    sourceRecordId: text,
-    variantSources: Schema.Array(Schema.Struct({ sourceRecordId: text, variantId: uuid })),
-  })),
+  ),
 });
 const PREFIX = '/api/symmy/v1';
 const MAX_RESPONSE_BYTES = 2_000_000;
@@ -125,13 +231,13 @@ export const AKROS_STAGE_PROOF_INPUT = {
 export const SymmyProofInputSchema = Schema.Struct({
   commercialScope: Schema.Struct({
     channelId: Schema.Literals(['B2C', 'B2B']),
-    marketId: text,
+    marketId: marketIdSchema,
   }),
   currencyCode: Schema.String.check(Schema.isPattern(/^[A-Z]{3}$/u)),
-  locationKey: text,
+  locationKey: locationKeySchema,
   unitRef: RefSchema,
 });
-export type SymmyProofInput = typeof SymmyProofInputSchema.Type;
+export type SymmyProofInput = typeof SymmyProofInputSchema.Encoded;
 const stockSourceFields = SourceStockPositionResolutionRequestSchema.fields;
 export const SymmyProofStockSourceSchema = Schema.Struct({
   customerConfigurationId: stockSourceFields.customerConfigurationId,
@@ -147,223 +253,363 @@ export const AKROS_STAGE_STOCK_SOURCE = {
   namespace: 'akros-erp',
 };
 export interface SymmyProofConfig {
-  readonly origin: string;
-  readonly apiKey: Redacted.Redacted<string>;
+  readonly apiKey: Redacted.Redacted;
   readonly input: SymmyProofInput;
   readonly legalEntityId?: string;
+  readonly operatorCookie?: Redacted.Redacted;
+  readonly origin: string;
+  readonly pollMs?: number;
   readonly stockSource?: typeof SymmyProofStockSourceSchema.Type;
-  readonly operatorCookie?: Redacted.Redacted<string>;
   /** Whole-run budget; all fetches and polling share it. Defaults to ten minutes. */
   readonly timeoutMs?: number;
-  readonly pollMs?: number;
 }
-export type ProofBoundary =
-  | 'configuration' | 'product-unseen' | 'product-import' | 'product-readback' | 'product-replay'
-  | 'sku-readback' | 'base-price-readback' | 'stock-import' | 'stock-readback' | 'price-list-import'
-  | 'price-list-readback' | 'list-price-import' | 'list-price-readback'
-  | 'customer-import' | 'customer-readback' | 'customer-replay' | 'address-readback'
-  | 'group-import' | 'group-assignment' | 'group-replay' | 'group-readback'
-  | 'category-import' | 'category-readback' | 'image-import' | 'image-readback'
-  | 'order-export' | 'full-proof';
-type FailureCode =
-  | 'input-contract' | 'schema' | 'network' | 'timeout' | 'response-too-large' | 'redirect'
-  | 'http-status' | 'job-identity' | 'job-terminal' | 'item-count' | 'effect-count'
-  | 'effect-outcome' | 'effect-owner' | 'replay-identity' | 'readback' | 'not-unseen'
-  | 'missing-wiring' | 'unsafe-path' | 'unexpected'
-  | 'lane-failed'
-  | 'read-auth-required' | 'read-auth-scope' | 'read-permission' | 'read-auth-expired';
+export const ProofBoundarySchema = Schema.Literals(Object.values(proofBoundaries));
+export type ProofBoundary = typeof ProofBoundarySchema.Type;
+const FailureCodeSchema = Schema.Literals(Object.values(failureCodes));
+type FailureCode = typeof FailureCodeSchema.Type;
 const SAFE_PROBLEM_TAGS = new Set([
-  'GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', 'GatewayUnavailableProblem',
-  'GatewayAudienceInvalidProblem', 'GatewayReloadRequiredProblem', 'GatewayRateLimitedProblem', 'GatewayInternalProblem',
-  'SymmyInvalidProblem', 'SymmyUnavailableProblem', 'SymmyUnsupportedProblem', 'SymmyIdempotencyRequiredProblem',
-  'SymmyFixtureIntentConflictProblem', 'SymmyFixtureJobNotFoundProblem', 'SymmyStockInputProblem',
-  'SymmyStockDependencyNotReadyProblem', 'SymmyStockSourceUnavailableProblem', 'SymmyDemoOrderNotFoundProblem',
+  'GatewayAuthenticationRequiredProblem',
+  'GatewayForbiddenProblem',
+  'GatewayUnavailableProblem',
+  'GatewayAudienceInvalidProblem',
+  'GatewayReloadRequiredProblem',
+  'GatewayRateLimitedProblem',
+  'GatewayInternalProblem',
+  'SymmyInvalidProblem',
+  'SymmyUnavailableProblem',
+  'SymmyUnsupportedProblem',
+  'SymmyIdempotencyRequiredProblem',
+  'SymmyFixtureIntentConflictProblem',
+  'SymmyFixtureJobNotFoundProblem',
+  'SymmyStockInputProblem',
+  'SymmyStockDependencyNotReadyProblem',
+  'SymmyStockSourceUnavailableProblem',
+  'SymmyDemoOrderNotFoundProblem',
   ...[
-    'ImportSourceCatalogAction', 'SkuLookup', 'SourceStockPositionResolution', 'CurrentStockEvidenceForAvailability',
-    'SavedAddressList', 'EffectiveCustomerGroupMemberships', 'CustomerGroupDetail', 'CatalogPagePrices', 'Records',
-  ].flatMap((prefix) => [
-    'AuthenticationProblem', 'ForbiddenProblem', 'InvalidProblem', 'NotFoundProblem', 'ConflictProblem',
-    'PolicyProblem', 'PolicyConflictProblem', 'IneligibleProblem', 'PreconditionProblem', 'UnavailableProblem',
-    'InternalProblem', 'AlreadyCommittedProblem', 'CommitIndeterminateProblem',
-  ].map((suffix) => `${prefix}${suffix}`)),
+    'ImportSourceCatalogAction',
+    'SkuLookup',
+    'SourceStockPositionResolution',
+    'CurrentStockEvidenceForAvailability',
+    'SavedAddressList',
+    'EffectiveCustomerGroupMemberships',
+    'CustomerGroupDetail',
+    'CatalogPagePrices',
+    'Records',
+  ].flatMap((prefix) =>
+    [
+      'AuthenticationProblem',
+      'ForbiddenProblem',
+      'InvalidProblem',
+      'NotFoundProblem',
+      'ConflictProblem',
+      'PolicyProblem',
+      'PolicyConflictProblem',
+      'IneligibleProblem',
+      'PreconditionProblem',
+      'UnavailableProblem',
+      'InternalProblem',
+      'AlreadyCommittedProblem',
+      'CommitIndeterminateProblem',
+    ].map((suffix) => `${prefix}${suffix}`),
+  ),
 ]);
 // Only closed contract codes may leave the process. Never retain detail/title, response previews, IDs or arbitrary reasons.
 const SAFE_PROBLEM_CODES = new Set([
-  'LOCATION_NOT_ENROLLED', 'UNIT_NOT_ENROLLED', 'ITEM_NOT_PROVISIONED', 'POSITION_NOT_FOUND', 'POLICY_NOT_FOUND',
-  'LOCATION_NOT_ALLOWED', 'ITEM_CORRELATION_AMBIGUOUS', 'OWNER_RESOLUTION_MISMATCH', 'TENANT_SCOPE_MISMATCH',
-  'OWNER_UNAVAILABLE', 'projection_not_configured', 'filter_not_supported', 'owner_field_not_supported', 'search_too_broad',
-  'action_approval_required', 'action_permission_denied', 'module_state_denied', 'operation_context_denied',
-  'operation_context_invalid', 'merchandise_permission_denied', 'merchandise_scope_mismatch',
-  'action_invocation_not_found', 'merchandise_not_found', 'action_request_hash_conflict',
-  'action_invocation_state_invalid', 'merchandise_category_slug_taken', 'merchandise_lifecycle_conflict',
-  'merchandise_offered_price_changed', 'merchandise_stock_reconciliation_required', 'merchandise_tier_base_price_required',
-  'merchandise_variant_bulk_price_unsupported', 'merchandise_variant_sku_required', 'merchandise_revision_conflict',
-  'action_policy_denied', 'merchandise_reference_ineligible', 'action_invocation_persistence_failed',
-  'action_permission_check_failed', 'action_policy_evaluation_failed', 'action_transaction_failed',
-  'module_state_check_unavailable', 'operation_context_unavailable', 'merchandise_persistence_unavailable',
-  'action_already_committed', 'action_commit_indeterminate', 'action_invocation_already_committed',
-  'read_handler_unavailable', 'key_provider_unavailable', 'issuer_unavailable', 'gateway_dispatch_failed',
+  'LOCATION_NOT_ENROLLED',
+  'UNIT_NOT_ENROLLED',
+  'ITEM_NOT_PROVISIONED',
+  'POSITION_NOT_FOUND',
+  'POLICY_NOT_FOUND',
+  'LOCATION_NOT_ALLOWED',
+  'ITEM_CORRELATION_AMBIGUOUS',
+  'OWNER_RESOLUTION_MISMATCH',
+  'TENANT_SCOPE_MISMATCH',
+  'OWNER_UNAVAILABLE',
+  'projection_not_configured',
+  'filter_not_supported',
+  'owner_field_not_supported',
+  'search_too_broad',
+  'action_approval_required',
+  'action_permission_denied',
+  'module_state_denied',
+  'operation_context_denied',
+  'operation_context_invalid',
+  'merchandise_permission_denied',
+  'merchandise_scope_mismatch',
+  'action_invocation_not_found',
+  'merchandise_not_found',
+  'action_request_hash_conflict',
+  'action_invocation_state_invalid',
+  'merchandise_category_slug_taken',
+  'merchandise_lifecycle_conflict',
+  'merchandise_offered_price_changed',
+  'merchandise_stock_reconciliation_required',
+  'merchandise_tier_base_price_required',
+  'merchandise_variant_bulk_price_unsupported',
+  'merchandise_variant_sku_required',
+  'merchandise_revision_conflict',
+  'action_policy_denied',
+  'merchandise_reference_ineligible',
+  'action_invocation_persistence_failed',
+  'action_permission_check_failed',
+  'action_policy_evaluation_failed',
+  'action_transaction_failed',
+  'module_state_check_unavailable',
+  'operation_context_unavailable',
+  'merchandise_persistence_unavailable',
+  'action_already_committed',
+  'action_commit_indeterminate',
+  'action_invocation_already_committed',
+  'read_handler_unavailable',
+  'key_provider_unavailable',
+  'issuer_unavailable',
+  'gateway_dispatch_failed',
 ]);
+export const SymmyProofLaneNameSchema = Schema.Literals(['commerce', 'customers', 'native-catalog', 'orders']);
+export type SymmyProofLaneName = typeof SymmyProofLaneNameSchema.Type;
+
 type EffectStatus = typeof EffectSchema.Type.status;
-export type SymmySafeFailureBody =
-  | { readonly kind: 'lanes'; readonly failed: readonly SymmyProofLaneName[] }
-  | { readonly kind: 'non-json' | 'empty' | 'unrecognized-problem' }
-  | {
-      readonly kind: 'problem'; readonly tag?: string; readonly code?: string;
-      readonly reason?: string; readonly retryable?: boolean;
-    }
-  | {
-      readonly kind: 'effects' | 'job'; readonly status?: typeof JobSchema.Type.status;
-      readonly items: number; readonly effects: Partial<Record<EffectStatus, number>>;
-    };
+const EffectStatusSchema = Schema.Literals([
+  'accepted_change',
+  'accepted_no_change',
+  'duplicate',
+  'waiting',
+  'executing',
+  'indeterminate',
+  'unsupported',
+  'stale',
+  'unresolved',
+  'ambiguous',
+  'denied',
+  'conflict',
+  'unavailable',
+  'invalid',
+]);
+const EffectCountsSchema = Schema.Record(EffectStatusSchema, Schema.optionalKey(Schema.Int));
+export const SymmySafeFailureBodySchema = Schema.Union([
+  Schema.Struct({ failed: Schema.Array(SymmyProofLaneNameSchema), kind: Schema.Literal('lanes') }),
+  Schema.Struct({ kind: Schema.Literals(['non-json', 'empty', UNRECOGNIZED_PROBLEM]) }),
+  Schema.Struct({
+    code: Schema.optionalKey(Schema.String.check(Schema.makeFilter((value) => SAFE_PROBLEM_CODES.has(value)))),
+    kind: Schema.Literal('problem'),
+    reason: Schema.optionalKey(Schema.String.check(Schema.makeFilter((value) => SAFE_PROBLEM_CODES.has(value)))),
+    retryable: Schema.optionalKey(Schema.Boolean),
+    tag: Schema.optionalKey(Schema.String.check(Schema.makeFilter((value) => SAFE_PROBLEM_TAGS.has(value)))),
+  }),
+  Schema.Struct({
+    effects: EffectCountsSchema,
+    items: Schema.Int,
+    kind: Schema.Literals(['effects', 'job']),
+    status: Schema.optionalKey(JobSchema.fields.status),
+  }),
+]);
+export type SymmySafeFailureBody = typeof SymmySafeFailureBodySchema.Type;
+const SafeFailureJsonSchema = Schema.fromJsonString(SymmySafeFailureBodySchema);
+type SafeProblem = Extract<SymmySafeFailureBody, { readonly kind: 'problem' }>;
+type MutableSafeProblem = { -readonly [K in keyof SafeProblem]: SafeProblem[K] };
 const ProblemMetadataSchema = Schema.Struct({
-  _tag: Schema.optionalKey(Schema.Unknown), code: Schema.optionalKey(Schema.Unknown),
-  reason: Schema.optionalKey(Schema.Unknown), retryable: Schema.optionalKey(Schema.Unknown),
+  _tag: Schema.optionalKey(Schema.Unknown),
+  code: Schema.optionalKey(Schema.Unknown),
+  reason: Schema.optionalKey(Schema.Unknown),
+  retryable: Schema.optionalKey(Schema.Unknown),
 });
-export function sanitizeSymmyFailureBody(body: unknown, credential: Redacted.Redacted<string>): SymmySafeFailureBody {
+export const sanitizeSymmyFailureBody = <Input,>(body: Input, credential: Redacted.Redacted): SymmySafeFailureBody => {
   const metadata = Option.getOrUndefined(Schema.decodeUnknownOption(ProblemMetadataSchema)(body));
-  if (metadata === undefined) return { kind: 'unrecognized-problem' };
-  const allowed = (value: unknown, values: ReadonlySet<string>): value is string =>
-    typeof value === 'string' && values.has(value) && !value.includes(Redacted.value(credential));
-  const tag = allowed(metadata._tag, SAFE_PROBLEM_TAGS) ? metadata._tag : undefined;
-  const code = allowed(metadata.code, SAFE_PROBLEM_CODES) ? metadata.code : undefined;
-  const reason = allowed(metadata.reason, SAFE_PROBLEM_CODES) ? metadata.reason : undefined;
-  if (tag === undefined && code === undefined && reason === undefined) return { kind: 'unrecognized-problem' };
-  return {
-    kind: 'problem',
-    ...(tag === undefined ? {} : { tag }),
-    ...(code === undefined ? {} : { code }),
-    ...(reason === undefined ? {} : { reason }),
-    ...(typeof metadata.retryable === 'boolean' ? { retryable: metadata.retryable } : {}),
-  };
-}
-function effectDiagnostic(items: readonly typeof ItemSchema.Type[]): SymmySafeFailureBody {
+  if (metadata === undefined) {
+    return { kind: UNRECOGNIZED_PROBLEM };
+  }
+  const allowed = (values: ReadonlySet<string>) =>
+    Schema.String.check(Schema.makeFilter((value) => values.has(value) && !value.includes(Redacted.value(credential))));
+  const tag = Option.getOrUndefined(Schema.decodeUnknownOption(allowed(SAFE_PROBLEM_TAGS))(metadata._tag));
+  const code = Option.getOrUndefined(Schema.decodeUnknownOption(allowed(SAFE_PROBLEM_CODES))(metadata.code));
+  const reason = Option.getOrUndefined(Schema.decodeUnknownOption(allowed(SAFE_PROBLEM_CODES))(metadata.reason));
+  if (tag === undefined && code === undefined && reason === undefined) {
+    return { kind: UNRECOGNIZED_PROBLEM };
+  }
+  const safe: MutableSafeProblem = { kind: 'problem' };
+  if (tag !== undefined) {
+    safe.tag = tag;
+  }
+  if (code !== undefined) {
+    safe.code = code;
+  }
+  if (reason !== undefined) {
+    safe.reason = reason;
+  }
+  if (Schema.is(Schema.Boolean)(metadata.retryable)) {
+    safe.retryable = metadata.retryable;
+  }
+  return safe;
+};
+const effectDiagnostic = (items: readonly (typeof ItemSchema.Type)[]): SymmySafeFailureBody => {
   const counts: Partial<Record<EffectStatus, number>> = {};
-  for (const item of items) for (const effect of item.effects) counts[effect.status] = (counts[effect.status] ?? 0) + 1;
-  return { kind: 'effects', effects: counts, items: items.length };
+  for (const item of items) {
+    for (const effect of item.effects) {
+      counts[effect.status] = (counts[effect.status] ?? 0) + 1;
+    }
+  }
+  return { effects: counts, items: items.length, kind: 'effects' };
+};
+
+/** Public diagnostics are closed metadata; foreign causes are retained only as Redacted values. */
+export class SymmyProofFailure extends Schema.TaggedError<SymmyProofFailure>()('SymmyProofFailure', {
+  boundary: ProofBoundarySchema,
+  code: FailureCodeSchema,
+  privateCause: Schema.optional(Schema.Redacted(Schema.Unknown)),
+  safeBody: Schema.optional(SymmySafeFailureBodySchema),
+  status: Schema.optional(Schema.Int),
+}) {
+  constructor(
+    boundary: ProofBoundary,
+    code: FailureCode,
+    status?: number,
+    safeBody?: SymmySafeFailureBody,
+    privateCause?: Redacted.Redacted<unknown>,
+  ) {
+    super({ boundary, code, privateCause, safeBody, status });
+  }
+  override get message(): string {
+    const status = this.status === undefined ? '' : `:${this.status}`;
+    const body =
+      this.safeBody === undefined
+        ? ''
+        : ` body=${Result.getOrThrow(Schema.encodeResult(SafeFailureJsonSchema)(this.safeBody))}`;
+    return `FAIL ${this.boundary}:${this.code}${status}${body}`;
+  }
 }
 
-/** Contains only fixed boundary/code strings and an optional numeric HTTP status, never a body or cause. */
-export class SymmyProofFailure extends Error {
-  readonly boundary: ProofBoundary;
-  readonly code: FailureCode;
-  readonly status: number | undefined;
-  readonly safeBody: SymmySafeFailureBody | undefined;
-  constructor(boundary: ProofBoundary, code: FailureCode, status?: number, safeBody?: SymmySafeFailureBody) {
-    super(`FAIL ${boundary}:${code}${status === undefined ? '' : `:${status}`}` +
-      (safeBody === undefined ? '' : ` body=${JSON.stringify(safeBody)}`));
-    this.name = 'SymmyProofFailure';
-    this.boundary = boundary;
-    this.code = code;
-    this.status = status;
-    this.safeBody = safeBody;
-  }
-}
-function ensure(
-  condition: unknown, boundary: ProofBoundary, code: FailureCode, safeBody?: SymmySafeFailureBody,
-): asserts condition {
-  if (!condition) throw new SymmyProofFailure(boundary, code, undefined, safeBody);
-}
-function decode<A>(schema: Schema.ConstraintDecoder<A>, body: unknown, boundary: ProofBoundary): A {
-  try {
-    return Schema.decodeUnknownSync(schema)(body);
-  } catch {
-    throw new SymmyProofFailure(boundary, 'schema');
-  }
-}
-function validatePayload(schema: Schema.ConstraintDecoder<unknown>, body: unknown, boundary: ProofBoundary): void {
-  try {
-    Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(body);
-  } catch {
-    throw new SymmyProofFailure(boundary, 'input-contract');
-  }
-}
+const decode = <A, Input>(
+  schema: Schema.ConstraintDecoder<A>,
+  body: Input,
+  boundary: ProofBoundary,
+): Result.Result<A, SymmyProofFailure> =>
+  Schema.decodeUnknownResult(schema)(body).pipe(
+    Result.mapError(
+      (cause) => new SymmyProofFailure(boundary, failureCodes.schema, undefined, undefined, Redacted.make(cause)),
+    ),
+  );
+const validatePayload = <Input,>(schema: Schema.ConstraintDecoder<unknown>, body: Input, boundary: ProofBoundary) =>
+  Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(body).pipe(
+    Result.mapError(
+      (cause) =>
+        new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined, Redacted.make(cause)),
+    ),
+  );
 export interface EffectExpectation {
-  readonly itemsAtLeast: number;
   readonly effectsAtLeast: number;
+  readonly itemsAtLeast: number;
   readonly owners: Readonly<Record<string, number>>;
 }
-export function assertAcceptedEffects(
-  body: unknown,
-  expected: EffectExpectation,
-  boundary: ProofBoundary,
-): Items {
-  ensure(
-    Number.isInteger(expected.itemsAtLeast) && expected.itemsAtLeast > 0 &&
-    Number.isInteger(expected.effectsAtLeast) && expected.effectsAtLeast > 0 &&
-    Object.keys(expected.owners).length > 0 &&
-    Object.values(expected.owners).every((count) => Number.isInteger(count) && count > 0),
-    boundary, 'input-contract',
-  );
-  const result = decode(ItemsSchema, body, boundary);
-  const diagnostic = effectDiagnostic(result.items);
-  ensure(result.items.length >= expected.itemsAtLeast, boundary, 'item-count', diagnostic);
-  const effects = result.items.flatMap((item) => {
-    ensure(item.outcome === 'accepted', boundary, 'effect-outcome', diagnostic);
-    return item.effects;
+export const assertAcceptedEffects = <Input,>(body: Input, expected: EffectExpectation, boundary: ProofBoundary) =>
+  Result.gen(function* assertAcceptedEffectsProgram() {
+    if (
+      !(
+        Number.isInteger(expected.itemsAtLeast) &&
+        expected.itemsAtLeast > 0 &&
+        Number.isInteger(expected.effectsAtLeast) &&
+        expected.effectsAtLeast > 0 &&
+        Object.keys(expected.owners).length > 0 &&
+        Object.values(expected.owners).every((count) => Number.isInteger(count) && count > 0)
+      )
+    ) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined));
+    }
+    const result = yield* decode(ItemsSchema, body, boundary);
+    const diagnostic = effectDiagnostic(result.items);
+    if (result.items.length < expected.itemsAtLeast) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.itemCount, undefined, diagnostic));
+    }
+    if (!result.items.every((item) => item.outcome === 'accepted')) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.effectOutcome, undefined, diagnostic));
+    }
+    const effects = result.items.flatMap((item) => item.effects);
+    if (effects.length < expected.effectsAtLeast) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.effectCount, undefined, diagnostic));
+    }
+    for (const effect of effects) {
+      if (
+        !(
+          effect.status === 'accepted_change' ||
+          effect.status === 'accepted_no_change' ||
+          effect.status === 'duplicate'
+        )
+      ) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.effectOutcome, undefined, diagnostic));
+      }
+    }
+    for (const [owner, count] of Object.entries(expected.owners)) {
+      if (effects.filter((effect) => effect.owner === owner).length < count) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.effectOwner, undefined, diagnostic));
+      }
+    }
+    return result;
   });
-  ensure(effects.length >= expected.effectsAtLeast, boundary, 'effect-count', diagnostic);
-  for (const effect of effects) {
-    ensure(
-      effect.status === 'accepted_change' || effect.status === 'accepted_no_change' || effect.status === 'duplicate',
-      boundary, 'effect-outcome', diagnostic,
-    );
-  }
-  for (const [owner, count] of Object.entries(expected.owners)) {
-    ensure(effects.filter((effect) => effect.owner === owner).length >= count, boundary, 'effect-owner', diagnostic);
-  }
-  return result;
-}
-export function assertReplayIdentity(original: Items, replay: Items, boundary: ProofBoundary): void {
-  const identity = (result: Items) => result.items.map((item) => ({
-    effects: item.effects.map((effect) => ({
-      effectId: effect.effectId, owner: effect.owner,
-    })).toSorted((a, b) => (a.effectId ?? '').localeCompare(b.effectId ?? '')),
-    itemId: item.itemId,
-  })).toSorted((a, b) => a.itemId.localeCompare(b.itemId));
-  ensure(isDeepStrictEqual(identity(original), identity(replay)), boundary, 'replay-identity');
-}
-export function makeSymmyProofNames() {
+const receiptIdentity = (result: Items) =>
+  result.items
+    .map((item) => ({
+      effects: item.effects
+        .map((effect) => ({
+          effectId: effect.effectId,
+          owner: effect.owner,
+        }))
+        .toSorted((a, b) => (a.effectId ?? '').localeCompare(b.effectId ?? '')),
+      itemId: item.itemId,
+    }))
+    .toSorted((a, b) => a.itemId.localeCompare(b.itemId));
+
+export const assertReplayIdentity = (original: Items, replay: Items, boundary: ProofBoundary) =>
+  Result.gen(function* assertReplayIdentityProgram() {
+    if (!isDeepStrictEqual(receiptIdentity(original), receiptIdentity(replay))) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.replayIdentity, undefined, undefined));
+    }
+
+    return yield* Result.void;
+  });
+export const makeSymmyProofNames = () => {
   const prefix = `SP_${randomUUID().replaceAll('-', '').toUpperCase()}`;
   return {
+    category: `${prefix}_CATEGORY`,
+    group: `${prefix}_GROUP`,
+    image: `${prefix}_IMAGE`,
+    list: `${prefix}_LIST`,
+    organization: `${prefix}_ORG`,
+    person: `${prefix}_PERSON`,
     prefix,
     product: `${prefix}_PRODUCT`,
     variant: `${prefix}_VARIANT`,
-    organization: `${prefix}_ORG`,
-    person: `${prefix}_PERSON`,
-    group: `${prefix}_GROUP`,
-    list: `${prefix}_LIST`,
-    category: `${prefix}_CATEGORY`,
-    image: `${prefix}_IMAGE`,
   };
-}
+};
 export type SymmyProofNames = ReturnType<typeof makeSymmyProofNames>;
 export interface SymmyProductProof {
+  readonly baseAmount: string;
+  readonly effectiveFrom: string;
+  readonly listAmount: string;
   readonly names: SymmyProofNames;
   readonly productRef: ProofRef;
-  readonly variantRef: ProofRef;
-  readonly baseAmount: string;
   readonly stockAmount: string;
-  readonly listAmount: string;
-  readonly effectiveFrom: string;
+  readonly variantRef: ProofRef;
 }
 const PriceListsPageSchema = Schema.Struct({
   count: Schema.Int,
-  priceLists: Schema.Array(Schema.Struct({
-    code: text,
-    name: text,
-    priceGroupRef: RefSchema,
-    prices: Schema.optionalKey(Schema.Struct({
-      count: Schema.Int,
-      prices: Schema.Array(Schema.Struct({ price: Schema.Unknown })),
-    })),
-  })),
+  priceLists: Schema.Array(
+    Schema.Struct({
+      code: text,
+      name: text,
+      priceGroupRef: RefSchema,
+      prices: Schema.optionalKey(
+        Schema.Struct({
+          count: Schema.Int,
+          prices: Schema.Array(Schema.Struct({ price: Schema.Unknown })),
+        }),
+      ),
+    }),
+  ),
 });
 const CurrentPriceSchema = Schema.Struct({
   definition: Schema.Struct({
     identityKey: Schema.Struct({
       catalogSelection: Schema.Struct({ productRef: RefSchema, variantRef: RefSchema }),
-      commercialScope: Schema.Struct({ channelId: text, marketId: text }),
+      commercialScope: Schema.Struct({ channelId: channelIdSchema, marketId: marketIdSchema }),
       priceGroupSelector: Schema.Struct({ kind: Schema.Literal('PRICE_GROUP'), priceGroupRef: RefSchema }),
       unitBasis: Schema.Struct({ quantity: text, unitRef: RefSchema }),
     }),
@@ -372,7 +618,7 @@ const CurrentPriceSchema = Schema.Struct({
       effectiveFrom: text,
       monetaryAmount: Schema.Struct({ amount: text, currencyCode: text }),
       revision: Schema.Int,
-      revisionId: uuid,
+      revisionId: revisionIdSchema,
     }),
   }),
   outcome: Schema.Literal('PRICE_DEFINITION_CURRENT'),
@@ -380,138 +626,806 @@ const CurrentPriceSchema = Schema.Struct({
 export interface SymmyCommerceProof extends SymmyProductProof {
   readonly priceGroupRef: ProofRef;
 }
-export function assertCurrentListPrice(
-  value: unknown,
+
+const DecimalSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u));
+const canonicalDecimal = <Input,>(value: Input): string | undefined => {
+  const parsed = Option.getOrUndefined(Schema.decodeUnknownOption(DecimalSchema)(value));
+  if (parsed === undefined) {
+    return undefined;
+  }
+  return parsed.includes('.') ? parsed.replace(/0+$/u, '').replace(/\.$/u, '') : parsed;
+};
+/** Exact decimal comparison without binary floating point or accepting malformed decimal inputs. */
+export const decimalEqual = <Left, Right>(left: Left, right: Right): boolean => {
+  const canonical = canonicalDecimal(left);
+  return canonical !== undefined && canonical === canonicalDecimal(right);
+};
+export const assertCurrentListPrice = <Input,>(
+  value: Input,
   proof: SymmyProductProof,
   input: SymmyProofConfig['input'],
   priceGroupRef: ProofRef,
   startsAt: string,
-) {
-  const stored = decode(CurrentPriceSchema, value, 'list-price-readback');
-  const identity = stored.definition.identityKey;
-  ensure(
-    isDeepStrictEqual(identity.catalogSelection, { productRef: proof.productRef, variantRef: proof.variantRef }) &&
-    identity.priceGroupSelector.priceGroupRef.resourceId === priceGroupRef.resourceId &&
-    identity.commercialScope.channelId === input.commercialScope.channelId &&
-    identity.commercialScope.marketId === input.commercialScope.marketId &&
-    decimalEqual(identity.unitBasis.quantity, '1') &&
-    isDeepStrictEqual(identity.unitBasis.unitRef, input.unitRef) &&
-    decimalEqual(stored.definition.revision.monetaryAmount.amount, proof.listAmount) &&
-    stored.definition.revision.monetaryAmount.currencyCode === input.currencyCode &&
-    stored.definition.revision.effectiveFrom === startsAt,
-    'list-price-readback', 'readback',
-  );
-  return stored;
-}
-const PRICE_EFFECTS = {
-  effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.pricing': 1 },
-} satisfies EffectExpectation;
-export async function proveSymmyProductStockList(
-  config: SymmyProofConfig,
-  client: SymmyProofClient = createSymmyProofClient(config),
-): Promise<SymmyCommerceProof> {
-  const proof = await proveSymmyProduct(config, client);
-  const { input } = config;
-  const stockBody = {
-    stock: [{
-      businessObservedAt: new Date().toISOString(),
-      itemKey: proof.names.variant,
-      locationKey: input.locationKey,
-      quantity: { amount: proof.stockAmount, unitRef: input.unitRef },
-      revision: '1',
-      sourceReference: `${proof.names.prefix}:stock:1`,
-    }],
-  };
-  validatePayload(SymmyStockBatchRequestSchema, stockBody, 'stock-import');
-  const stockResult = await client.write(
-    `${PREFIX}/inventory/stock/batch`, stockBody, `${proof.names.prefix}.stock`, 'stock-import',
-  );
-  await client.settle(stockResult, {
-    effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.inventory': 1 },
-  }, 'stock-import');
-  const stockKeys = decode(Schema.Struct({
-    items: Schema.NonEmptyArray(Schema.Struct({ itemKey: text, locationKey: text })),
-  }), stockResult.body, 'stock-import');
-  ensure(
-    stockKeys.items.length === 1 && stockKeys.items[0]?.itemKey === proof.names.variant &&
-    stockKeys.items[0]?.locationKey === input.locationKey,
-    'stock-import', 'readback',
-  );
-  // The Price Group owner requires creation in the future; do not reuse the product timestamp after a slow job.
-  const startsAt = new Date(Date.now() + 120_000).toISOString();
-  const listBody = {
-    priceLists: [{
-      businessCode: proof.names.list, code: proof.names.list,
-      description: `${proof.names.prefix} acceptance price list`,
-      effectiveFrom: startsAt, name: proof.names.list,
-      purpose: `Scoped Symmy HTTP acceptance price list ${proof.names.prefix}`,
-    }],
-  };
-  validatePayload(SymmyPriceListsBatchRequestSchema, listBody, 'price-list-import');
-  await client.settle(await client.write(
-    `${PREFIX}/price-lists/batch-upsert`, listBody, `${proof.names.prefix}.list`, 'price-list-import',
-  ), { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'pricing.price-group-catalog': 1 } }, 'price-list-import');
-  await client.waitUntil(startsAt, 'price-list-readback');
-  const findList = async (boundary: 'price-list-readback' | 'list-price-readback') => {
-    // Public GET /price-lists has no code/q filter. Bound the scan; never dump existing price/customer data.
-    for (let offset = 0; offset < 2000; offset += 100) {
-      const page = decode(PriceListsPageSchema, await client.read(
-        `${PREFIX}/price-lists?limit=100&offset=${offset}&priceLimit=100`, boundary,
-      ), boundary);
-      const matches = page.priceLists.filter((list) => list.code === proof.names.list);
-      ensure(matches.length <= 1, boundary, 'readback');
-      if (matches[0] !== undefined) return matches[0];
-      if (offset + 100 >= page.count) break;
+) =>
+  Result.gen(function* assertCurrentListPriceProgram() {
+    const stored = yield* decode(CurrentPriceSchema, value, proofBoundaries.listPriceReadback);
+    const identity = stored.definition.identityKey;
+    if (
+      !(
+        isDeepStrictEqual(identity.catalogSelection, { productRef: proof.productRef, variantRef: proof.variantRef }) &&
+        identity.priceGroupSelector.priceGroupRef.resourceId === priceGroupRef.resourceId &&
+        identity.commercialScope.channelId === input.commercialScope.channelId &&
+        identity.commercialScope.marketId === input.commercialScope.marketId &&
+        decimalEqual(identity.unitBasis.quantity, '1') &&
+        isDeepStrictEqual(identity.unitBasis.unitRef, input.unitRef) &&
+        decimalEqual(stored.definition.revision.monetaryAmount.amount, proof.listAmount) &&
+        stored.definition.revision.monetaryAmount.currencyCode === input.currencyCode &&
+        stored.definition.revision.effectiveFrom === startsAt
+      )
+    ) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.listPriceReadback, failureCodes.readback, undefined, undefined),
+      );
     }
-    throw new SymmyProofFailure(boundary, 'readback');
-  };
-  const list = await findList('price-list-readback');
-  ensure(
-    list.name === proof.names.list && list.priceGroupRef.tenantId === proof.productRef.tenantId,
-    'price-list-readback', 'readback',
-  );
-  const priceBody = {
-    priceGroupRef: list.priceGroupRef,
-    prices: [{
-      amount: proof.listAmount, commercialScope: input.commercialScope, currencyCode: input.currencyCode,
-      effectiveFrom: startsAt, operation: 'DEFINE', productRef: proof.productRef,
-      unitBasis: { quantity: '1', unitRef: input.unitRef }, variantRef: proof.variantRef,
-    }],
-  };
-  validatePayload(SymmyPriceListPricesBatchRequestSchema, priceBody, 'list-price-import');
-  const key = `${proof.names.prefix}.list-price`;
-  const original = await client.settle(await client.write(
-    `${PREFIX}/price-lists/prices/batch`, priceBody, key, 'list-price-import',
-  ), PRICE_EFFECTS, 'list-price-import');
-  const readback = await findList('list-price-readback');
-  ensure(
-    readback.prices !== undefined && readback.prices.count === 1 && readback.prices.prices.length === 1,
-    'list-price-readback', 'readback',
-  );
-  const stored = assertCurrentListPrice(readback.prices.prices[0]?.price, proof, input, list.priceGroupRef, startsAt);
-  const replay = await client.settle(await client.write(
-    `${PREFIX}/price-lists/prices/batch`, priceBody, key, 'list-price-import',
-  ), PRICE_EFFECTS, 'list-price-import');
-  assertReplayIdentity(original, replay, 'list-price-import');
-  const after = await findList('list-price-readback');
-  ensure(
-    after.prices !== undefined && after.prices.count === 1 && after.prices.prices.length === 1 &&
-    isDeepStrictEqual(after.priceGroupRef, readback.priceGroupRef) &&
-    isDeepStrictEqual(decode(CurrentPriceSchema, after.prices.prices[0]?.price, 'list-price-readback'), stored),
-    'list-price-readback', 'readback',
-  );
-  return { ...proof, priceGroupRef: list.priceGroupRef };
-}
+    return stored;
+  });
+const PRICE_EFFECTS = {
+  effectsAtLeast: 1,
+  itemsAtLeast: 1,
+  owners: { 'commerce.pricing': 1 },
+} satisfies EffectExpectation;
+const checkedOrigin = (origin: string) =>
+  Result.gen(function* checkedOriginProgram() {
+    const url = URL.parse(origin);
+    if (
+      !(
+        url !== null &&
+        url.protocol === 'https:' &&
+        url.username === '' &&
+        url.password === '' &&
+        url.pathname === '/' &&
+        url.search === '' &&
+        url.hash === ''
+      )
+    ) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract, undefined, undefined),
+      );
+    }
+    return url;
+  });
+const checkedPath = (path: string, origin: URL, boundary: ProofBoundary) =>
+  Result.gen(function* checkedPathProgram() {
+    const url = URL.parse(path, origin);
+    if (
+      !(
+        url !== null &&
+        path.startsWith(`${PREFIX}/`) &&
+        url.origin === origin.origin &&
+        url.hash === '' &&
+        url.pathname.startsWith(`${PREFIX}/`) &&
+        !url.pathname.includes('//')
+      )
+    ) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.unsafePath, undefined, undefined));
+    }
+    return url;
+  });
 
-/** Exact decimal comparison without binary floating point or accepting malformed decimal inputs. */
-export function decimalEqual(left: unknown, right: unknown): boolean {
-  const canonical = (value: unknown) => {
-    if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(value)) return undefined;
-    return value.includes('.') ? value.replace(/0+$/u, '').replace(/\.$/u, '') : value;
-  };
-  const a = canonical(left);
-  return a !== undefined && a === canonical(right);
+const OPERATOR_SESSION_PATH = '/shell-super-app-api/auth/session';
+const OPERATOR_COMPOSITION_PATH = '/shell-super-app-api/shell/composition';
+const OPERATOR_GATEWAY_PATH = '/shell-super-app-api/auth/gateway-context';
+const STAGE_LEGAL_ENTITY = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
+const OWNER_READS = {
+  'catalog/sku-lookup': { audience: 'catalog', readName: 'sku-lookup', request: SkuLookupRequestSchema },
+  'commerce-customer-context/customer-group-detail': {
+    audience: 'commerce-customer-context',
+    readName: 'customer-group-detail',
+    request: CustomerGroupDetailRequestSchema,
+  },
+  'commerce-customer-context/effective-customer-group-memberships': {
+    audience: 'commerce-customer-context',
+    readName: 'effective-customer-group-memberships',
+    request: EffectiveCustomerGroupMembershipsRequestSchema,
+  },
+  'inventory/catalog-variant-on-hand-page': {
+    audience: 'inventory',
+    readName: 'catalog-variant-on-hand-page',
+    request: CatalogVariantOnHandPageRequestSchema,
+  },
+  'inventory/current-stock-evidence-for-availability': {
+    audience: 'inventory',
+    readName: 'current-stock-evidence-for-availability',
+    request: CurrentStockEvidenceForAvailabilityRequestSchema,
+  },
+  'merchandise/records': { audience: 'merchandise', readName: 'records', request: RecordsRequestSchema },
+  'pricing/catalog-page-prices': {
+    audience: 'pricing',
+    readName: 'catalog-page-prices',
+    request: CatalogPagePricesRequestSchema,
+  },
+};
+/** Pure plan for registered owner Reads. The operator gateway, not the proof, admits operation scope. */
+export const symmyOwnerReadEnvelope = (
+  operation: SymmyOwnerRead,
+  query: Schema.Json,
+  legalEntityId: string,
+  boundary: ProofBoundary,
+) =>
+  Result.gen(function* symmyOwnerReadEnvelopeProgram() {
+    if (!Object.hasOwn(OWNER_READS, operation)) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined));
+    }
+    const read = OWNER_READS[operation];
+    yield* validatePayload(read.request, query, boundary);
+    yield* decode(uuid, legalEntityId, proofBoundaries.configuration);
+    return {
+      audience: read.audience,
+      legalEntityId,
+      query,
+      readName: read.readName,
+    };
+  });
+/** Admit only the public Symmy prefix or the three operator endpoints and registered owner Reads. */
+const proofRequestUrl = (
+  path: string,
+  method: 'GET' | 'POST',
+  origin: URL,
+  authenticationKind: 'symmy' | 'operator' | 'owner',
+  boundary: ProofBoundary,
+) =>
+  Result.gen(function* proofRequestUrlProgram() {
+    let url: URL;
+    if (authenticationKind === 'symmy') {
+      url = yield* checkedPath(path, origin, boundary);
+    } else {
+      if (!(path.startsWith('/') && !path.startsWith('//') && !path.includes('?') && !path.includes('#'))) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.unsafePath, undefined, undefined));
+      }
+      url = new URL(path, origin);
+      if (!(url.origin === origin.origin && url.username === '' && url.password === '')) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.unsafePath, undefined, undefined));
+      }
+      if (authenticationKind === 'operator') {
+        if (
+          !(
+            (method === 'GET' && [OPERATOR_SESSION_PATH, OPERATOR_COMPOSITION_PATH].includes(path)) ||
+            (method === 'POST' && path === OPERATOR_GATEWAY_PATH)
+          )
+        ) {
+          return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.unsafePath, undefined, undefined));
+        }
+      } else if (
+        !(method === 'POST' && /^\/shell-super-app-api\/module-api\/[^?#]+\/reads\/[A-Za-z0-9._-]+$/u.test(path))
+      ) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.unsafePath, undefined, undefined));
+      }
+    }
+
+    return url;
+  });
+const SymmyTransportFailureSchema = Schema.TaggedStruct('SymmyTransportFailure', {
+  privateCause: Schema.Redacted(Schema.Unknown),
+});
+
+interface ProofResponseBytes {
+  readonly chunks: Uint8Array[];
+  readonly size: number;
 }
+const emptyProofResponseBytes = (): ProofResponseBytes => ({ chunks: [], size: 0 });
+/** One bounded response, no retries: classify status, decode JSON and redact every held credential. */
+const readProofHttpResponse = Effect.fn('SymmyProofHttpResponse')(function* readProofHttpResponseProgram(
+  response: Response,
+  authenticationKind: 'symmy' | 'operator' | 'owner',
+  boundary: ProofBoundary,
+  secrets: readonly [Redacted.Redacted, ...Redacted.Redacted[]],
+) {
+  const { body } = response;
+  if (response.status >= 300 && response.status < 400) {
+    if (body !== null) {
+      yield* Effect.tryPromise({
+        catch: (cause) => SymmyTransportFailureSchema.make({ privateCause: Redacted.make(cause) }),
+        try: async () => await body.cancel(),
+      });
+    }
+    return yield* new SymmyProofFailure(boundary, failureCodes.redirect);
+  }
+  const success = [200, 202].includes(response.status);
+  let failureCode: FailureCode = failureCodes.httpStatus;
+  if (authenticationKind !== 'symmy') {
+    if (response.status === 401) {
+      failureCode = failureCodes.readAuthExpired;
+    }
+    if (response.status === 403) {
+      failureCode = failureCodes.readPermission;
+    }
+  }
+  const failure = (safeBody: SymmySafeFailureBody, cause?: Redacted.Redacted<unknown>) =>
+    new SymmyProofFailure(boundary, failureCode, response.status, safeBody, cause);
+  if (body === null) {
+    return yield* success
+      ? new SymmyProofFailure(boundary, failureCodes.schema, response.status)
+      : failure({ kind: 'empty' });
+  }
+  const chunks = yield* Stream.fromReadableStream({
+    evaluate: () => body,
+    onError: (cause) => SymmyTransportFailureSchema.make({ privateCause: Redacted.make(cause) }),
+  }).pipe(
+    Stream.runFoldEffect(emptyProofResponseBytes, (acc, chunk) =>
+      Effect.gen(function* chunksProgram() {
+        const size = acc.size + chunk.byteLength;
+        if (size > MAX_RESPONSE_BYTES) {
+          return yield* new SymmyProofFailure(boundary, failureCodes.responseTooLarge);
+        }
+        acc.chunks.push(chunk);
+        return { chunks: acc.chunks, size };
+      }),
+    ),
+  );
+  const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+    Buffer.concat(chunks.chunks).toString('utf-8'),
+  ).pipe(
+    Effect.mapError((cause) =>
+      success
+        ? new SymmyProofFailure(boundary, failureCodes.schema, response.status, undefined, Redacted.make(cause))
+        : failure({ kind: 'non-json' }, Redacted.make(cause)),
+    ),
+  );
+  if (!success) {
+    let safe = sanitizeSymmyFailureBody(parsed, secrets[0]);
+    for (const secret of secrets) {
+      if (Result.getOrThrow(Schema.encodeResult(SafeFailureJsonSchema)(safe)).includes(Redacted.value(secret))) {
+        safe = { kind: UNRECOGNIZED_PROBLEM };
+      }
+    }
+    return yield* failure(safe);
+  }
+  return { body: parsed, status: response.status } satisfies HttpResult;
+});
+export const createSymmyProofClient = Effect.fn('SymmyProofClient')(function* createSymmyProofClientProgram(
+  config: SymmyProofConfig,
+) {
+  const origin = yield* Effect.fromResult(checkedOrigin(config.origin));
+  const budget = config.timeoutMs ?? 600_000;
+  const pollMs = config.pollMs ?? 1000;
+  if (
+    !(
+      Number.isInteger(budget) &&
+      budget >= 1000 &&
+      budget <= 900_000 &&
+      Number.isInteger(pollMs) &&
+      pollMs >= 10 &&
+      pollMs <= 10_000 &&
+      Redacted.isRedacted(config.apiKey) &&
+      Redacted.value(config.apiKey).trim().length > 0
+    )
+  ) {
+    return yield* new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract);
+  }
+  const deadline = (yield* Clock.currentTimeMillis) + budget;
+  const remaining = Effect.fn('SymmyProofBudget')(function* remainingProgram(boundary: ProofBoundary) {
+    const ms = deadline - (yield* Clock.currentTimeMillis);
+    if (ms <= 0) {
+      return yield* new SymmyProofFailure(boundary, failureCodes.timeout);
+    }
+    return ms;
+  });
+  type Authentication =
+    | { readonly kind: 'symmy' }
+    | { readonly kind: 'operator' }
+    | { readonly kind: 'owner'; readonly revision: string; readonly token: Redacted.Redacted };
+  const SYMMY_AUTHENTICATION = { kind: 'symmy' } satisfies Authentication;
+  const request = Effect.fn('SymmyProofRequest')(function* requestProgram<Input>(
+    path: string,
+    method: 'GET' | 'POST',
+    body: Input,
+    key: string | undefined,
+    boundary: ProofBoundary,
+    authentication: Authentication = SYMMY_AUTHENTICATION,
+  ) {
+    const url = yield* Effect.fromResult(proofRequestUrl(path, method, origin, authentication.kind, boundary));
+    const headers = new Headers();
+    const secrets: [Redacted.Redacted, ...Redacted.Redacted[]] = [config.apiKey];
+    if (config.operatorCookie !== undefined) {
+      secrets.push(config.operatorCookie);
+    }
+    if (authentication.kind === 'symmy') {
+      headers.set('x-api-key', Redacted.value(config.apiKey));
+    } else if (authentication.kind === 'operator') {
+      if (config.operatorCookie === undefined) {
+        return yield* new SymmyProofFailure(boundary, failureCodes.readAuthRequired);
+      }
+      headers.set('cookie', Redacted.value(config.operatorCookie));
+      headers.set('origin', origin.origin);
+    } else {
+      secrets.push(authentication.token);
+      headers.set('authorization', `Bearer ${Redacted.value(authentication.token)}`);
+      headers.set('x-correlation-id', randomUUID());
+      headers.set('x-ontos-composition-revision', authentication.revision);
+    }
+    const encoded =
+      method === 'POST'
+        ? yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))(body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined, Redacted.make(cause)),
+            ),
+          )
+        : undefined;
+    headers.set('accept', 'application/json');
+    if (method === 'POST') {
+      headers.set('content-type', 'application/json');
+    }
+    if (key !== undefined) {
+      headers.set('idempotency-key', key);
+    }
+    const timeout = Math.min(20_000, yield* remaining(boundary));
+    const init: RequestInit = { headers, method, redirect: 'manual', signal: AbortSignal.timeout(timeout) };
+    if (encoded !== undefined) {
+      init.body = encoded;
+    }
+    // The request stays abortable until its body is consumed: a failed or interrupted read aborts it.
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) =>
+        Effect.tryPromise({
+          catch: (cause) => SymmyTransportFailureSchema.make({ privateCause: Redacted.make(cause) }),
+          try: async (signal) =>
+            await fetch(url, { ...init, signal: AbortSignal.any([signal, controller.signal, init.signal ?? signal]) }),
+        }).pipe(Effect.flatMap((response) => readProofHttpResponse(response, authentication.kind, boundary, secrets))),
+      (controller, exit) => (Exit.isFailure(exit) ? Effect.sync(() => controller.abort()) : Effect.void),
+    ).pipe(
+      Effect.catchTag('SymmyTransportFailure', (failure) =>
+        Effect.gen(function* classifyTransportFailure() {
+          const cause = Redacted.value(failure.privateCause);
+          const expired = (yield* Clock.currentTimeMillis) >= deadline;
+          return yield* new SymmyProofFailure(
+            boundary,
+            expired || (Predicate.isError(cause) && ['TimeoutError', 'AbortError'].includes(cause.name))
+              ? failureCodes.timeout
+              : failureCodes.network,
+            undefined,
+            undefined,
+            failure.privateCause,
+          );
+        }),
+      ),
+    );
+  });
+  let operatorRevision: string | undefined;
+  const operatorState = Effect.fn('SymmyProofOperatorState')(function* operatorStateProgram(boundary: ProofBoundary) {
+    if (config.operatorCookie === undefined) {
+      return yield* new SymmyProofFailure(boundary, failureCodes.readAuthRequired);
+    }
+    if (operatorRevision !== undefined) {
+      return operatorRevision;
+    }
+    const sessionResponse = yield* request(OPERATOR_SESSION_PATH, 'GET', undefined, undefined, boundary, {
+      kind: 'operator',
+    });
+    const session = yield* Effect.fromResult(
+      decode(
+        Schema.Struct({
+          identity: Schema.Struct({ legalEntityId: legalEntityIdSchema, tenantId: tenantIdSchema }),
+          state: Schema.Literal('authenticated'),
+        }),
+        sessionResponse.body,
+        boundary,
+      ),
+    );
+    if (
+      !(
+        session.identity.tenantId === config.input.unitRef.tenantId &&
+        session.identity.legalEntityId === (config.legalEntityId ?? STAGE_LEGAL_ENTITY)
+      )
+    ) {
+      return yield* new SymmyProofFailure(boundary, failureCodes.readAuthScope);
+    }
+    const compositionResponse = yield* request(OPERATOR_COMPOSITION_PATH, 'GET', undefined, undefined, boundary, {
+      kind: 'operator',
+    });
+    const composition = yield* Effect.fromResult(
+      decode(
+        Schema.Struct({
+          compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+          state: Schema.Literal('available'),
+        }),
+        compositionResponse.body,
+        boundary,
+      ),
+    );
+    operatorRevision = composition.compositionRevision;
+    return operatorRevision;
+  });
+  const client: SymmyProofClient = {
+    ownerRead: Effect.fn('SymmyProofOwnerRead')(function* ownerReadProgram(operation, query, boundary) {
+      const envelope = yield* Effect.fromResult(
+        symmyOwnerReadEnvelope(operation, query, config.legalEntityId ?? STAGE_LEGAL_ENTITY, boundary),
+      );
+      const { query: ownerQuery, readName, ...scope } = envelope;
+      const compositionRevision = yield* operatorState(boundary);
+      const gatewayResponse = yield* request(
+        OPERATOR_GATEWAY_PATH,
+        'POST',
+        { ...scope, compositionRevision },
+        undefined,
+        boundary,
+        { kind: 'operator' },
+      );
+      const gateway = yield* Effect.fromResult(
+        decode(
+          Schema.Struct({
+            apiBaseUrl: Schema.String,
+            compositionRevision: Schema.String,
+            token: Schema.RedactedFromValue(Schema.NonEmptyString),
+          }),
+          gatewayResponse.body,
+          boundary,
+        ),
+      );
+      if (
+        !(
+          gateway.compositionRevision === compositionRevision &&
+          gateway.apiBaseUrl.startsWith('/shell-super-app-api/module-api/') &&
+          !/[?#\\]|\/\.\.?\/|%/u.test(gateway.apiBaseUrl)
+        )
+      ) {
+        return yield* new SymmyProofFailure(boundary, failureCodes.readAuthScope);
+      }
+      const result = yield* request(
+        `${gateway.apiBaseUrl}/reads/${readName}`,
+        'POST',
+        ownerQuery,
+        undefined,
+        boundary,
+        {
+          kind: 'owner',
+          revision: compositionRevision,
+          token: gateway.token,
+        },
+      );
+      if (result.status !== 200) {
+        return yield* new SymmyProofFailure(boundary, failureCodes.httpStatus);
+      }
+      return result.body;
+    }),
+    read: Effect.fn('SymmyProofRead')(function* readProgram(path, boundary) {
+      const result = yield* request(path, 'GET', undefined, undefined, boundary);
+      if (result.status !== 200) {
+        return yield* new SymmyProofFailure(boundary, failureCodes.httpStatus);
+      }
+      return result.body;
+    }),
+    settle: Effect.fn('SymmyProofSettle')(function* settleProgram(result, expected, boundary) {
+      if (result.status === 200) {
+        return yield* Effect.fromResult(assertAcceptedEffects(result.body, expected, boundary));
+      }
+      const admission = yield* Effect.fromResult(decode(AdmissionSchema, result.body, boundary));
+      let lastJob: SymmySafeFailureBody | undefined;
+      while (true) {
+        if ((yield* Clock.currentTimeMillis) >= deadline) {
+          return yield* new SymmyProofFailure(boundary, failureCodes.timeout, 200, lastJob);
+        }
+        const job = yield* Effect.fromResult(
+          decode(JobSchema, yield* client.read(`${PREFIX}/jobs/${admission.jobId}`, boundary), boundary),
+        );
+        if (job.jobId !== admission.jobId) {
+          return yield* new SymmyProofFailure(boundary, failureCodes.jobIdentity);
+        }
+        if (job.status === 'completed_all') {
+          return yield* Effect.fromResult(assertAcceptedEffects(job, expected, boundary));
+        }
+        const counts = effectDiagnostic(job.items ?? []);
+        if (counts.kind !== 'effects') {
+          return yield* new SymmyProofFailure(boundary, failureCodes.unexpected);
+        }
+        lastJob = { ...counts, kind: 'job', status: job.status };
+        if (job.status === 'completed_partial' || job.status === 'completed_none') {
+          return yield* new SymmyProofFailure(boundary, failureCodes.jobTerminal, 200, lastJob);
+        }
+        yield* Effect.sleep(Math.min(pollMs, yield* remaining(boundary)));
+      }
+    }),
+    waitUntil: Effect.fn('SymmyProofWaitUntil')(function* waitUntilProgram(instant, boundary) {
+      const target = DateTime.toEpochMillis(
+        yield* Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(instant).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined, Redacted.make(cause)),
+          ),
+        ),
+      );
+      while ((yield* Clock.currentTimeMillis) < target) {
+        yield* Effect.sleep(Math.min(target - (yield* Clock.currentTimeMillis), yield* remaining(boundary)));
+      }
+      yield* remaining(boundary);
+    }),
+    write: Effect.fn('SymmyProofWrite')(function* writeProgram<Input>(
+      path: string,
+      body: Input,
+      key: string,
+      boundary: ProofBoundary,
+    ) {
+      if (!/^[A-Za-z0-9._-]{1,200}$/u.test(key)) {
+        return yield* new SymmyProofFailure(boundary, failureCodes.inputContract);
+      }
+      return yield* request(path, 'POST', body, key, boundary);
+    }),
+  };
+  return client;
+});
+
+const PRODUCT_EFFECTS = {
+  effectsAtLeast: 3,
+  itemsAtLeast: 1,
+  owners: { 'commerce.catalog': 2, 'commerce.pricing': 1 },
+} satisfies EffectExpectation;
+export const proveSymmyProduct = Effect.fn('proveSymmyProduct')(function* proveSymmyProductProgram(
+  config: SymmyProofConfig,
+  suppliedClient?: SymmyProofClient,
+) {
+  const client = suppliedClient ?? (yield* createSymmyProofClient(config));
+  const names = makeSymmyProofNames();
+  const input = yield* Effect.fromResult(decode(SymmyProofInputSchema, config.input, proofBoundaries.configuration));
+  const path = `${PREFIX}/admin/products?q=${encodeURIComponent(names.prefix)}&limit=100`;
+  const before = yield* Effect.fromResult(
+    decode(ProductPageSchema, yield* client.read(path, proofBoundaries.productUnseen), proofBoundaries.productUnseen),
+  );
+  if (!(before.count === 0 && before.products.length === 0)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productUnseen, failureCodes.notUnseen, undefined, undefined);
+  }
+  const effectiveFrom = DateTime.formatIso(DateTime.add(yield* DateTime.now, { milliseconds: 120_000 }));
+  const baseAmount = '123.45';
+  const body = {
+    products: [
+      {
+        identifier: { type: 'erpId', value: names.product },
+        lifecycle: 'ACTIVE',
+        name: names.product,
+        variants: [
+          {
+            identifier: { type: 'variantId', value: names.variant },
+            prices: [{ amount: baseAmount, currencyCode: input.currencyCode, effectiveFrom }],
+            sku: names.variant,
+          },
+        ],
+      },
+    ],
+  };
+  yield* Effect.fromResult(validatePayload(SymmyProductsBatchRequestSchema, body, proofBoundaries.productImport));
+  const key = `${names.prefix}.product`;
+  const original = yield* client.settle(
+    yield* client.write(`${PREFIX}/products/batch`, body, key, proofBoundaries.productImport),
+    PRODUCT_EFFECTS,
+    proofBoundaries.productImport,
+  );
+  const page = yield* Effect.fromResult(
+    decode(
+      ProductPageSchema,
+      yield* client.read(path, proofBoundaries.productReadback),
+      proofBoundaries.productReadback,
+    ),
+  );
+  if (!(page.count === 1 && page.products.length === 1)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined);
+  }
+  const [product] = page.products;
+  if (product === undefined) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined);
+  }
+  if (!(product.sourceRecordId === `product:erpId:${names.product}` && product.product.name === names.product)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined);
+  }
+  const [source] = product.variantSources;
+  if (!(product.variantSources.length === 1 && source?.sourceRecordId === `variant:variantId:${names.variant}`)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined);
+  }
+  const variant = product.product.variants.find((item) => item.variantId === source.variantId);
+  if (!(variant !== undefined && product.product.variants.length === 1)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined);
+  }
+  const replay = yield* client.settle(
+    yield* client.write(`${PREFIX}/products/batch`, body, key, proofBoundaries.productReplay),
+    PRODUCT_EFFECTS,
+    proofBoundaries.productReplay,
+  );
+  yield* Effect.fromResult(assertReplayIdentity(original, replay, proofBoundaries.productReplay));
+  const afterReplay = yield* Effect.fromResult(
+    decode(ProductPageSchema, yield* client.read(path, proofBoundaries.productReplay), proofBoundaries.productReplay),
+  );
+  if (!isDeepStrictEqual(page, afterReplay)) {
+    return yield* new SymmyProofFailure(proofBoundaries.productReplay, failureCodes.readback, undefined, undefined);
+  }
+  return {
+    baseAmount,
+    effectiveFrom,
+    listAmount: '98.76',
+    names,
+    productRef: product.product.productRef,
+    stockAmount: '17',
+    variantRef: variant.variantRef,
+  };
+});
+export const proveSymmyProductStockList = Effect.fn('proveSymmyProductStockList')(
+  function* proveSymmyProductStockListProgram(config: SymmyProofConfig, suppliedClient?: SymmyProofClient) {
+    const client = suppliedClient ?? (yield* createSymmyProofClient(config));
+    const proof = yield* proveSymmyProduct(config, client);
+    const { input } = config;
+    const stockBody = {
+      stock: [
+        {
+          businessObservedAt: DateTime.formatIso(yield* DateTime.now),
+          itemKey: proof.names.variant,
+          locationKey: input.locationKey,
+          quantity: { amount: proof.stockAmount, unitRef: input.unitRef },
+          revision: '1',
+          sourceReference: `${proof.names.prefix}:stock:1`,
+        },
+      ],
+    };
+    yield* Effect.fromResult(validatePayload(SymmyStockBatchRequestSchema, stockBody, proofBoundaries.stockImport));
+    const stockResult = yield* client.write(
+      `${PREFIX}/inventory/stock/batch`,
+      stockBody,
+      `${proof.names.prefix}.stock`,
+      proofBoundaries.stockImport,
+    );
+    yield* client.settle(
+      stockResult,
+      {
+        effectsAtLeast: 1,
+        itemsAtLeast: 1,
+        owners: { 'commerce.inventory': 1 },
+      },
+      proofBoundaries.stockImport,
+    );
+    const stockKeys = yield* Effect.fromResult(
+      decode(
+        Schema.Struct({
+          items: Schema.NonEmptyArray(Schema.Struct({ itemKey: itemKeySchema, locationKey: locationKeySchema })),
+        }),
+        stockResult.body,
+        proofBoundaries.stockImport,
+      ),
+    );
+    if (
+      !(
+        stockKeys.items.length === 1 &&
+        stockKeys.items[0]?.itemKey === proof.names.variant &&
+        stockKeys.items[0]?.locationKey === input.locationKey
+      )
+    ) {
+      return yield* new SymmyProofFailure(proofBoundaries.stockImport, failureCodes.readback, undefined, undefined);
+    }
+    // The Price Group owner requires creation in the future; do not reuse the product timestamp after a slow job.
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { milliseconds: 120_000 }));
+    const listBody = {
+      priceLists: [
+        {
+          businessCode: proof.names.list,
+          code: proof.names.list,
+          description: `${proof.names.prefix} acceptance price list`,
+          effectiveFrom: startsAt,
+          name: proof.names.list,
+          purpose: `Scoped Symmy HTTP acceptance price list ${proof.names.prefix}`,
+        },
+      ],
+    };
+    yield* Effect.fromResult(
+      validatePayload(SymmyPriceListsBatchRequestSchema, listBody, proofBoundaries.priceListImport),
+    );
+    yield* client.settle(
+      yield* client.write(
+        `${PREFIX}/price-lists/batch-upsert`,
+        listBody,
+        `${proof.names.prefix}.list`,
+        proofBoundaries.priceListImport,
+      ),
+      { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'pricing.price-group-catalog': 1 } },
+      proofBoundaries.priceListImport,
+    );
+    yield* client.waitUntil(startsAt, proofBoundaries.priceListReadback);
+    const findList = Effect.fn('findList')(function* findListProgram(
+      boundary: typeof proofBoundaries.priceListReadback | typeof proofBoundaries.listPriceReadback,
+    ) {
+      // Public GET /price-lists has no code/q filter. Bound the scan; never dump existing price/customer data.
+      for (let offset = 0; offset < 2000; offset += 100) {
+        const page = yield* Effect.fromResult(
+          decode(
+            PriceListsPageSchema,
+            yield* client.read(`${PREFIX}/price-lists?limit=100&offset=${offset}&priceLimit=100`, boundary),
+            boundary,
+          ),
+        );
+        const matches = page.priceLists.filter((list) => list.code === proof.names.list);
+        if (matches.length > 1) {
+          return yield* new SymmyProofFailure(boundary, failureCodes.readback, undefined, undefined);
+        }
+        if (matches[0] !== undefined) {
+          return matches[0];
+        }
+        if (offset + 100 >= page.count) {
+          break;
+        }
+      }
+      return yield* new SymmyProofFailure(boundary, failureCodes.readback);
+    });
+    const list = yield* findList(proofBoundaries.priceListReadback);
+    if (!(list.name === proof.names.list && list.priceGroupRef.tenantId === proof.productRef.tenantId)) {
+      return yield* new SymmyProofFailure(
+        proofBoundaries.priceListReadback,
+        failureCodes.readback,
+        undefined,
+        undefined,
+      );
+    }
+    const priceBody = {
+      priceGroupRef: list.priceGroupRef,
+      prices: [
+        {
+          amount: proof.listAmount,
+          commercialScope: input.commercialScope,
+          currencyCode: input.currencyCode,
+          effectiveFrom: startsAt,
+          operation: 'DEFINE',
+          productRef: proof.productRef,
+          unitBasis: { quantity: '1', unitRef: input.unitRef },
+          variantRef: proof.variantRef,
+        },
+      ],
+    };
+    yield* Effect.fromResult(
+      validatePayload(SymmyPriceListPricesBatchRequestSchema, priceBody, proofBoundaries.listPriceImport),
+    );
+    const key = `${proof.names.prefix}.list-price`;
+    const original = yield* client.settle(
+      yield* client.write(`${PREFIX}/price-lists/prices/batch`, priceBody, key, proofBoundaries.listPriceImport),
+      PRICE_EFFECTS,
+      proofBoundaries.listPriceImport,
+    );
+    const readback = yield* findList(proofBoundaries.listPriceReadback);
+    if (!(readback.prices !== undefined && readback.prices.count === 1 && readback.prices.prices.length === 1)) {
+      return yield* new SymmyProofFailure(
+        proofBoundaries.listPriceReadback,
+        failureCodes.readback,
+        undefined,
+        undefined,
+      );
+    }
+    const stored = yield* Effect.fromResult(
+      assertCurrentListPrice(readback.prices.prices[0]?.price, proof, input, list.priceGroupRef, startsAt),
+    );
+    const replay = yield* client.settle(
+      yield* client.write(`${PREFIX}/price-lists/prices/batch`, priceBody, key, proofBoundaries.listPriceImport),
+      PRICE_EFFECTS,
+      proofBoundaries.listPriceImport,
+    );
+    yield* Effect.fromResult(assertReplayIdentity(original, replay, proofBoundaries.listPriceImport));
+    const after = yield* findList(proofBoundaries.listPriceReadback);
+    if (
+      !(
+        after.prices !== undefined &&
+        after.prices.count === 1 &&
+        after.prices.prices.length === 1 &&
+        isDeepStrictEqual(after.priceGroupRef, readback.priceGroupRef) &&
+        isDeepStrictEqual(
+          yield* Effect.fromResult(
+            decode(CurrentPriceSchema, after.prices.prices[0]?.price, proofBoundaries.listPriceReadback),
+          ),
+          stored,
+        )
+      )
+    ) {
+      return yield* new SymmyProofFailure(
+        proofBoundaries.listPriceReadback,
+        failureCodes.readback,
+        undefined,
+        undefined,
+      );
+    }
+    return { ...proof, priceGroupRef: list.priceGroupRef };
+  },
+);
 
 /**
  * Explicit adapter contract for worker endpoints not present in the original public Symmy surface.
@@ -520,92 +1434,127 @@ export function decimalEqual(left: unknown, right: unknown): boolean {
  * `recordsPointer: ''` accepts a single root object or root array.
  */
 export interface SymmyRecordRead<Field extends string> {
+  readonly fields: Readonly<Record<Field, string>>;
   readonly path: string;
   readonly recordsPointer: string;
-  readonly fields: Readonly<Record<Field, string>>;
 }
-function atPointer(value: unknown, pointer: string, boundary: ProofBoundary): unknown {
-  ensure(pointer === '' || /^\/(?:[^~]|~[01])*$/u.test(pointer), boundary, 'input-contract');
-  let current = value;
-  for (const part of pointer === '' ? [] : pointer.slice(1).split('/')) {
-    const key = part.replaceAll('~1', '/').replaceAll('~0', '~');
-    ensure(
-      typeof current === 'object' && current !== null && Object.hasOwn(current, key),
-      boundary, 'readback',
-    );
-    current = Reflect.get(current, key);
-  }
-  return current;
-}
+const atPointer = (value: Schema.Json, pointer: string, boundary: ProofBoundary) =>
+  Result.gen(function* atPointerProgram() {
+    if (!(pointer === '' || /^\/(?:[^~]|~[01])*$/u.test(pointer))) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined));
+    }
+    let current = value;
+    for (const part of pointer === '' ? [] : pointer.slice(1).split('/')) {
+      const key = part.replaceAll('~1', '/').replaceAll('~0', '~');
+      if (!(Predicate.isObjectKeyword(current) && Object.hasOwn(current, key))) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.readback, undefined, undefined));
+      }
+      // JSON arrays expose their own numeric elements and length; no prototype properties are followed.
+      let entry: Schema.Json | undefined;
+      if (EffectArray.isArray<Schema.Json>(current)) {
+        entry = key === 'length' ? current.length : current[Number(key)];
+      } else {
+        entry = current[key];
+      }
+      if (entry === undefined) {
+        return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.readback, undefined, undefined));
+      }
+      current = entry;
+    }
+    return current;
+  });
 /** Pure assertion helper. Never includes the failed value/pointer in an exception. */
-export function assertRecordReadback<Field extends string>(
-  response: unknown,
+export const assertRecordReadback = <Field extends string, Input>(
+  response: Input,
   read: Pick<SymmyRecordRead<Field>, 'recordsPointer' | 'fields'>,
-  expected: Readonly<Record<Field, unknown>>,
+  expected: Readonly<Record<Field, Schema.Json | undefined>>,
   boundary: ProofBoundary,
   decimalFields: readonly Field[] = [],
-): void {
-  const selected = atPointer(response, read.recordsPointer, boundary);
-  const rows: readonly unknown[] = Array.isArray(selected) ? selected : [selected];
-  const entries = Object.entries(expected);
-  ensure(entries.length > 0, boundary, 'input-contract');
-  const decimalNames = new Set<string>(decimalFields);
-  let matches = 0;
-  for (const row of rows) {
-    let match = true;
-    for (const [field, value] of entries) {
-      const pointer: unknown = Reflect.get(read.fields, field);
-      ensure(typeof pointer === 'string', boundary, 'input-contract');
-      const observed = atPointer(row, pointer, boundary);
-      if (!(decimalNames.has(field) ? decimalEqual(observed, value) : isDeepStrictEqual(observed, value))) match = false;
+) =>
+  Result.gen(function* assertRecordReadbackProgram() {
+    const selected = yield* atPointer(yield* decode(Schema.Json, response, boundary), read.recordsPointer, boundary);
+    const rows = EffectArray.isArray<Schema.Json>(selected) ? selected : [selected];
+    const entries = Object.entries(expected);
+    if (entries.length <= 0) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined));
     }
-    if (match) matches += 1;
-  }
-  ensure(matches === 1, boundary, 'readback');
-}
+    const decimalNames = new Set<string>(decimalFields);
+    let matches = 0;
+    for (const row of rows) {
+      let match = true;
+      for (const [field, value] of entries) {
+        const pointer = Object.entries(read.fields).find(([name]) => name === field)?.[1];
+        if (!Schema.is(Schema.String)(pointer)) {
+          return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.inputContract, undefined, undefined));
+        }
+        const observed = yield* atPointer(row, pointer, boundary);
+        if (!(decimalNames.has(field) ? decimalEqual(observed, value) : isDeepStrictEqual(observed, value))) {
+          match = false;
+        }
+      }
+      if (match) {
+        matches += 1;
+      }
+    }
+    if (matches !== 1) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.readback, undefined, undefined));
+    }
+
+    return yield* Result.void;
+  });
 const CustomerPageSchema = Schema.Struct({
   count: Schema.Int,
-  customers: Schema.Array(Schema.Struct({
-    sourceRecordId: text,
-    partyRef: RefSchema,
-    profile: Schema.Struct({ profileRef: Schema.Struct({
-      ...RefSchema.fields, kind: Schema.Literals(['RETAIL', 'COUNTERPARTY']),
-    }), subject: Schema.Union([
-      Schema.Struct({ kind: Schema.Literal('RETAIL'), partyRef: RefSchema, sellingLegalEntityRef: RefSchema }),
-      Schema.Struct({
-        kind: Schema.Literal('COUNTERPARTY'), counterpartyRef: RefSchema,
-        sellingLegalEntityRef: Schema.optionalKey(RefSchema),
+  customers: Schema.Array(
+    Schema.Struct({
+      party: Schema.Struct({
+        businessName: Schema.OptionFromNullOr(Schema.String),
+        contactPoints: Schema.Array(Schema.Struct({ normalizedValue: text, type: text })),
+        firstName: Schema.OptionFromNullOr(Schema.String),
+        lastName: Schema.OptionFromNullOr(Schema.String),
+        outcome: Schema.Literal('AVAILABLE'),
+        partyType: Schema.Literals(['PERSON', 'ORGANIZATION']),
       }),
-    ]) }),
-    party: Schema.Struct({
-      outcome: Schema.Literal('AVAILABLE'),
-      partyType: Schema.Literals(['PERSON', 'ORGANIZATION']),
-      businessName: Schema.NullOr(Schema.String),
-      firstName: Schema.NullOr(Schema.String),
-      lastName: Schema.NullOr(Schema.String),
-      contactPoints: Schema.Array(Schema.Struct({ type: text, normalizedValue: text })),
+      partyRef: RefSchema,
+      profile: Schema.Struct({
+        profileRef: Schema.Struct({
+          ...RefSchema.fields,
+          kind: Schema.Literals(['RETAIL', 'COUNTERPARTY']),
+        }),
+        subject: Schema.Union([
+          Schema.Struct({ kind: Schema.Literal('RETAIL'), partyRef: RefSchema, sellingLegalEntityRef: RefSchema }),
+          Schema.Struct({
+            counterpartyRef: RefSchema,
+            kind: Schema.Literal('COUNTERPARTY'),
+            sellingLegalEntityRef: Schema.optionalKey(RefSchema),
+          }),
+        ]),
+      }),
+      sourceRecordId: sourceRecordIdSchema,
     }),
-  })),
+  ),
 });
 export interface SymmyCustomerProof {
   readonly customerId: string;
+  readonly kind: 'PERSON' | 'ORGANIZATION';
   readonly partyRef: ProofRef;
   readonly profileId: string;
   readonly profileRef: ProofRef;
-  readonly subject: typeof CustomerPageSchema.Type.customers[number]['profile']['subject'];
-  readonly kind: 'PERSON' | 'ORGANIZATION';
+  readonly subject: (typeof CustomerPageSchema.Encoded.customers)[number]['profile']['subject'];
 }
 export interface SymmyCustomerFixture {
   readonly label: string;
   readonly postalAddress: {
-    readonly addressLine1: string; readonly city: string; readonly postalCode: string; readonly countryCode: string;
+    readonly addressLine1: string;
+    readonly city: string;
+    readonly countryCode: string;
+    readonly postalCode: string;
   };
   readonly purposes: readonly ['BILLING', 'DELIVERY'];
 }
 export interface SymmyFullProofContext {
-  readonly names: SymmyProofNames;
-  readonly customers: readonly [SymmyCustomerProof, SymmyCustomerProof];
   readonly address: SymmyCustomerFixture;
+  readonly customers: readonly [SymmyCustomerProof, SymmyCustomerProof];
+  readonly names: SymmyProofNames;
 }
 export interface SymmyOrderExportWiring {
   readonly collectionPath: string;
@@ -613,971 +1562,1354 @@ export interface SymmyOrderExportWiring {
   readonly expectedOrderIds: readonly [string, ...string[]];
 }
 const CUSTOMER_EFFECTS = {
-  effectsAtLeast: 11, owners: { 'party.registry': 7, 'commerce.customer-context': 4 },
+  effectsAtLeast: 11,
+  owners: { 'commerce.customer-context': 4, 'party.registry': 7 },
 };
-export async function proveCustomers(
-  config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
-): Promise<SymmyFullProofContext> {
+const proofContacts = (id: string) => [
+  { preferred: true, type: 'EMAIL', value: `${id.toLowerCase()}@example.invalid` },
+  // NANP 202-555-0100..0199 is reserved for fictional use; no message/call is sent.
+  { preferred: false, type: 'PHONE', value: '+12025550123' },
+];
+export const proveCustomers = Effect.fn('proveCustomers')(function* proveCustomersProgram(
+  config: SymmyProofConfig,
+  client: SymmyProofClient,
+  names: SymmyProofNames,
+) {
   const proof = { names };
   const address: SymmyCustomerFixture = {
     label: `${proof.names.prefix}_ADDRESS`,
     postalAddress: {
-      addressLine1: 'Acceptance fixture 1', city: 'Test City', postalCode: '11000', countryCode: 'CZ',
+      addressLine1: 'Acceptance fixture 1',
+      city: 'Test City',
+      countryCode: 'CZ',
+      postalCode: '11000',
     },
     purposes: ['BILLING', 'DELIVERY'],
   };
-  const contacts = (id: string) => [
-    { preferred: true, type: 'EMAIL', value: `${id.toLowerCase()}@example.invalid` },
-    // NANP 202-555-0100..0199 is reserved for fictional use; no message/call is sent.
-    { preferred: false, type: 'PHONE', value: '+12025550123' },
-  ];
-  const body = { customers: [
-    {
-      addresses: [address], businessName: proof.names.organization, contacts: contacts(proof.names.organization),
-      customerId: proof.names.organization, kind: 'ORGANIZATION',
-    },
-    {
-      addresses: [address], contacts: contacts(proof.names.person), customerId: proof.names.person,
-      firstName: proof.names.prefix, kind: 'PERSON', lastName: 'Acceptance',
-    },
-  ] };
-  const expected = { ...CUSTOMER_EFFECTS, itemsAtLeast: body.customers.length } satisfies EffectExpectation;
-  validatePayload(SymmyCustomersBatchRequestSchema, body, 'customer-import');
-  const key = `${proof.names.prefix}.customers`;
-  const original = await client.settle(await client.write(
-    `${PREFIX}/customers/batch`, body, key, 'customer-import',
-  ), expected, 'customer-import');
-  const read = async () => decode(CustomerPageSchema, await client.read(
-    `${PREFIX}/admin/customers?q=${encodeURIComponent(proof.names.prefix)}&limit=100`, 'customer-readback',
-  ), 'customer-readback');
-  const page = await read();
-  ensure(page.count === 2 && page.customers.length === 2, 'customer-readback', 'readback');
-  const customer = (id: string, kind: 'PERSON' | 'ORGANIZATION'): SymmyCustomerProof => {
-    const matches = page.customers.filter((item) => item.sourceRecordId === id);
-    const [item] = matches;
-    ensure(matches.length === 1 && item !== undefined, 'customer-readback', 'readback');
-    ensure(
-      item.party.partyType === kind && item.partyRef.tenantId === config.input.unitRef.tenantId &&
-      item.profile.profileRef.kind === (kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY') &&
-      (kind === 'ORGANIZATION'
-        ? item.party.businessName === proof.names.organization
-        : item.party.firstName === proof.names.prefix && item.party.lastName === 'Acceptance'),
-      'customer-readback', 'readback',
-    );
-    for (const contact of contacts(id)) {
-      ensure(item.party.contactPoints.filter(
-        (point) => point.type === contact.type && point.normalizedValue === contact.value,
-      ).length === 1, 'customer-readback', 'readback');
-    }
-    const { kind: _profileKind, ...profileRef } = item.profile.profileRef;
-    return {
-      customerId: id, kind, partyRef: item.partyRef, profileId: profileRef.resourceId,
-      profileRef, subject: item.profile.subject,
-    };
+
+  const body = {
+    customers: [
+      {
+        addresses: [address],
+        businessName: proof.names.organization,
+        contacts: proofContacts(proof.names.organization),
+        customerId: proof.names.organization,
+        kind: 'ORGANIZATION',
+      },
+      {
+        addresses: [address],
+        contacts: proofContacts(proof.names.person),
+        customerId: proof.names.person,
+        firstName: proof.names.prefix,
+        kind: 'PERSON',
+        lastName: 'Acceptance',
+      },
+    ],
   };
+  const expected = { ...CUSTOMER_EFFECTS, itemsAtLeast: body.customers.length } satisfies EffectExpectation;
+  yield* Effect.fromResult(validatePayload(SymmyCustomersBatchRequestSchema, body, proofBoundaries.customerImport));
+  const key = `${proof.names.prefix}.customers`;
+  const original = yield* client.settle(
+    yield* client.write(`${PREFIX}/customers/batch`, body, key, proofBoundaries.customerImport),
+    expected,
+    proofBoundaries.customerImport,
+  );
+  const read = Effect.fn('read')(function* readProgram() {
+    return yield* Effect.fromResult(
+      decode(
+        CustomerPageSchema,
+        yield* client.read(
+          `${PREFIX}/admin/customers?q=${encodeURIComponent(proof.names.prefix)}&limit=100`,
+          proofBoundaries.customerReadback,
+        ),
+        proofBoundaries.customerReadback,
+      ),
+    );
+  });
+  const page = yield* read();
+  if (!(page.count === 2 && page.customers.length === 2)) {
+    return yield* new SymmyProofFailure(proofBoundaries.customerReadback, failureCodes.readback, undefined, undefined);
+  }
+  const customer = (id: string, kind: 'PERSON' | 'ORGANIZATION') =>
+    Result.gen(function* customerProgram() {
+      const matches = page.customers.filter((item) => item.sourceRecordId === id);
+      const [item] = matches;
+      if (!(matches.length === 1 && item !== undefined)) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.customerReadback, failureCodes.readback, undefined, undefined),
+        );
+      }
+      if (
+        !(
+          item.party.partyType === kind &&
+          item.partyRef.tenantId === config.input.unitRef.tenantId &&
+          item.profile.profileRef.kind === (kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY') &&
+          (kind === 'ORGANIZATION'
+            ? Option.contains(item.party.businessName, proof.names.organization)
+            : Option.contains(item.party.firstName, proof.names.prefix) &&
+              Option.contains(item.party.lastName, 'Acceptance'))
+        )
+      ) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.customerReadback, failureCodes.readback, undefined, undefined),
+        );
+      }
+      for (const contact of proofContacts(id)) {
+        if (
+          item.party.contactPoints.filter(
+            (point) => point.type === contact.type && point.normalizedValue === contact.value,
+          ).length !== 1
+        ) {
+          return yield* Result.fail(
+            new SymmyProofFailure(proofBoundaries.customerReadback, failureCodes.readback, undefined, undefined),
+          );
+        }
+      }
+      const { kind: _profileKind, ...profileRef } = item.profile.profileRef;
+      return {
+        customerId: id,
+        kind,
+        partyRef: item.partyRef,
+        profileId: profileRef.resourceId,
+        profileRef,
+        subject: item.profile.subject,
+      };
+    });
   const customers: SymmyFullProofContext['customers'] = [
-    customer(proof.names.organization, 'ORGANIZATION'), customer(proof.names.person, 'PERSON'),
+    yield* Effect.fromResult(customer(proof.names.organization, 'ORGANIZATION')),
+    yield* Effect.fromResult(customer(proof.names.person, 'PERSON')),
   ];
-  const replay = await client.settle(await client.write(
-    `${PREFIX}/customers/batch`, body, key, 'customer-replay',
-  ), expected, 'customer-replay');
-  assertReplayIdentity(original, replay, 'customer-replay');
-  ensure(isDeepStrictEqual(page, await read()), 'customer-replay', 'readback');
-  return { names, address, customers };
-}
+  const replay = yield* client.settle(
+    yield* client.write(`${PREFIX}/customers/batch`, body, key, proofBoundaries.customerReplay),
+    expected,
+    proofBoundaries.customerReplay,
+  );
+  yield* Effect.fromResult(assertReplayIdentity(original, replay, proofBoundaries.customerReplay));
+  if (!isDeepStrictEqual(page, yield* read())) {
+    return yield* new SymmyProofFailure(proofBoundaries.customerReplay, failureCodes.readback, undefined, undefined);
+  }
+  return { address, customers, names };
+});
 const orderFields = SymmyDemoOrderSchema.fields;
 const lineFields = orderFields.lines.value.fields;
 const OrderSchema = Schema.Struct({
-  id: text, number: text, currencyCode: orderFields.currencyCode, pricesIncludeVat: orderFields.pricesIncludeVat,
-  shipping: orderFields.shipping, totalMinor: orderFields.totalMinor, totalVatMinor: orderFields.totalVatMinor,
+  currencyCode: orderFields.currencyCode,
+  id: text,
+  lines: Schema.NonEmptyArray(
+    Schema.Struct({
+      productId: productIdSchema,
+      quantity: lineFields.quantity,
+      sku: text,
+      totalMinor: lineFields.totalMinor,
+      totalVatMinor: lineFields.totalVatMinor,
+      unitPriceMinor: lineFields.unitPriceMinor,
+      vatRate: lineFields.vatRate,
+    }),
+  ),
+  number: text,
+  pricesIncludeVat: orderFields.pricesIncludeVat,
+  shipping: orderFields.shipping,
+  totalMinor: orderFields.totalMinor,
   totalNetMinor: orderFields.totalNetMinor,
-  lines: Schema.NonEmptyArray(Schema.Struct({
-    productId: text, sku: text, unitPriceMinor: lineFields.unitPriceMinor, vatRate: lineFields.vatRate,
-    quantity: lineFields.quantity, totalMinor: lineFields.totalMinor, totalVatMinor: lineFields.totalVatMinor,
-  })),
+  totalVatMinor: orderFields.totalVatMinor,
 });
 /** Pure check of persisted monetary snapshots; PII fields are deliberately not part of this decoder. */
-export function assertOrderSnapshots(body: unknown): readonly typeof OrderSchema.Type[] {
-  const orders = decode(Schema.Array(OrderSchema), body, 'order-export');
-  ensure(orders.length > 0 && new Set(orders.map((order) => order.id)).size === orders.length, 'order-export', 'readback');
-  for (const order of orders) {
-    const totals = fullOrderTotals(order);
-    ensure(
-      order.totalMinor === totals.totalMinor && order.totalVatMinor === totals.totalVatMinor &&
-      order.totalNetMinor === totals.totalMinor - totals.totalVatMinor &&
-      order.lines.every((line) => {
-        const gross = lineGrossMinor(line, order.pricesIncludeVat);
-        const vat = order.pricesIncludeVat ? vatInGrossMinor(gross, line.vatRate) : orderLineVatMinor(line);
-        return line.totalMinor === gross && line.totalVatMinor === vat;
-      }),
-      'order-export', 'readback',
-    );
+export const assertOrderSnapshots = <Input,>(body: Input) =>
+  Result.gen(function* assertOrderSnapshotsProgram() {
+    const orders = yield* decode(Schema.Array(OrderSchema), body, proofBoundaries.orderExport);
+    if (!(orders.length > 0 && new Set(orders.map((order) => order.id)).size === orders.length)) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.readback, undefined, undefined),
+      );
+    }
+    for (const order of orders) {
+      const totals = fullOrderTotals(order);
+      if (
+        !(
+          order.totalMinor === totals.totalMinor &&
+          order.totalVatMinor === totals.totalVatMinor &&
+          order.totalNetMinor === totals.totalMinor - totals.totalVatMinor &&
+          order.lines.every((line) => {
+            const gross = lineGrossMinor(line, order.pricesIncludeVat);
+            const vat = order.pricesIncludeVat ? vatInGrossMinor(gross, line.vatRate) : orderLineVatMinor(line);
+            return line.totalMinor === gross && line.totalVatMinor === vat;
+          })
+        )
+      ) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.readback, undefined, undefined),
+        );
+      }
+    }
+    return orders;
+  });
+export const proveSymmyOrderExport = Effect.fn('proveSymmyOrderExport')(function* proveSymmyOrderExportProgram(
+  client: SymmyProofClient,
+  wiring: SymmyOrderExportWiring,
+) {
+  if (!(wiring.expectedOrderIds.length > 0 && wiring.expectedOrderIds.every(Schema.is(text)))) {
+    return yield* new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.inputContract, undefined, undefined);
   }
-  return orders;
-}
-export async function proveSymmyOrderExport(
-  client: SymmyProofClient, wiring: SymmyOrderExportWiring,
-): Promise<void> {
-  ensure(
-    wiring.expectedOrderIds.length > 0 &&
-    wiring.expectedOrderIds.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 300),
-    'order-export', 'input-contract',
+  const page = yield* Effect.fromResult(
+    decode(
+      Schema.Struct({ orders: Schema.Array(Schema.Unknown) }),
+      yield* client.read(wiring.collectionPath, proofBoundaries.orderExport),
+      proofBoundaries.orderExport,
+    ),
   );
-  const page = decode(Schema.Struct({ orders: Schema.Array(Schema.Unknown) }),
-    await client.read(wiring.collectionPath, 'order-export'), 'order-export');
-  const orders = assertOrderSnapshots(page.orders);
+  const orders = yield* Effect.fromResult(assertOrderSnapshots(page.orders));
   for (const id of wiring.expectedOrderIds) {
     const matches = orders.filter((order) => order.id === id);
-    ensure(matches.length === 1, 'order-export', 'readback');
-    const detail = decode(Schema.Struct({ order: Schema.Unknown }),
-      await client.read(wiring.detailPath(id), 'order-export'), 'order-export');
-    const [order] = assertOrderSnapshots([detail.order]);
-    ensure(isDeepStrictEqual(matches[0], order), 'order-export', 'readback');
+    if (matches.length !== 1) {
+      return yield* new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.readback, undefined, undefined);
+    }
+    const detail = yield* Effect.fromResult(
+      decode(
+        Schema.Struct({ order: Schema.Unknown }),
+        yield* client.read(wiring.detailPath(id), proofBoundaries.orderExport),
+        proofBoundaries.orderExport,
+      ),
+    );
+    const [order] = yield* Effect.fromResult(assertOrderSnapshots([detail.order]));
+    if (!isDeepStrictEqual(matches[0], order)) {
+      return yield* new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.readback, undefined, undefined);
+    }
   }
-}
 
-const PNG_ONE_PIXEL =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
+  return yield* Effect.void;
+});
+
+const PNG_ONE_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
 const slugOf = (name: string) => name.toLowerCase().replaceAll('_', '-');
 /** The real public demo contracts use native IDs and a revision fence, never engineered Catalog refs. */
-export function symmyNativeCategoryPayload(names: SymmyProofNames, expectedRevision: number) {
-  return {
-    categories: [{ code: names.category, name: names.category, published: true, slug: slugOf(names.category) }],
-    expectedRevision,
-  };
-}
-export function symmyNativeProductPayload(names: SymmyProofNames, expectedRevision: number) {
-  return {
-    expectedRevision,
-    products: [{
-      active: true, category: names.category, categoryCode: names.category,
+export const symmyNativeCategoryPayload = (names: SymmyProofNames, expectedRevision: number) => ({
+  categories: [{ code: names.category, name: names.category, published: true, slug: slugOf(names.category) }],
+  expectedRevision,
+});
+export const symmyNativeProductPayload = (names: SymmyProofNames, expectedRevision: number) => ({
+  expectedRevision,
+  products: [
+    {
+      active: true,
+      category: names.category,
+      categoryCode: names.category,
       description: `${names.prefix} scoped HTTP acceptance product`,
-      lowStockThreshold: 0, name: names.product, priceMinor: 12345, published: true,
-      sku: names.variant, slug: slugOf(names.product), stockTracked: false,
-      taxClassificationCode: 'cz.vat.standard', unit: 'ks',
-    }],
-  };
-}
-export function symmyNativeMediaPayload(names: SymmyProofNames, productId: string, expectedRevision: number) {
-  return {
-    expectedRevision,
-    image: { filename: `${names.image}.png`, full: { contentBase64: PNG_ONE_PIXEL, height: 1, width: 1 } },
-    productId,
-  };
-}
-export function assertNativeApplied(
-  body: unknown,
-  expected: { readonly tenantId: string; readonly legalEntityId: string; readonly previousRevision: number },
+      lowStockThreshold: 0,
+      name: names.product,
+      priceMinor: 12_345,
+      published: true,
+      sku: names.variant,
+      slug: slugOf(names.product),
+      stockTracked: false,
+      taxClassificationCode: 'cz.vat.standard',
+      unit: 'ks',
+    },
+  ],
+});
+export const symmyNativeMediaPayload = (names: SymmyProofNames, productId: string, expectedRevision: number) => ({
+  expectedRevision,
+  image: { filename: `${names.image}.png`, full: { contentBase64: PNG_ONE_PIXEL, height: 1, width: 1 } },
+  productId,
+});
+export const assertNativeApplied = <Input,>(
+  body: Input,
+  expected: { readonly legalEntityId: string; readonly previousRevision: number; readonly tenantId: string },
   boundary: ProofBoundary,
-) {
-  const result = decode(SymmyDemoCatalogBatchResponseSchema, body, boundary);
-  const [item] = result.items;
-  ensure(
-    result.ownerModuleId === 'demo.merchandise' && result.tenantId === expected.tenantId &&
-    result.legalEntityId === expected.legalEntityId && result.items.length === 1 &&
-    item !== undefined && item.index === 0 && item.outcome === 'APPLIED' &&
-    item.revision === result.revision && result.revision > expected.previousRevision,
-    boundary, 'readback',
-  );
-  return { item, revision: result.revision };
-}
+) =>
+  Result.gen(function* assertNativeAppliedProgram() {
+    const result = yield* decode(SymmyDemoCatalogBatchResponseSchema, body, boundary);
+    const [item] = result.items;
+    if (
+      !(
+        result.ownerModuleId === 'demo.merchandise' &&
+        result.tenantId === expected.tenantId &&
+        result.legalEntityId === expected.legalEntityId &&
+        result.items.length === 1 &&
+        item !== undefined &&
+        item.index === 0 &&
+        item.outcome === 'APPLIED' &&
+        item.revision === result.revision &&
+        result.revision > expected.previousRevision
+      )
+    ) {
+      return yield* Result.fail(new SymmyProofFailure(boundary, failureCodes.readback, undefined, undefined));
+    }
+    return { item, revision: result.revision };
+  });
 const NativeCatalogReadSchema = Schema.Struct({
   categories: Schema.Array(Schema.Struct({ id: text, name: text, slug: text })),
-  products: Schema.Array(Schema.Struct({
-    active: Schema.Boolean, categoryId: text, currentPriceMinor: Schema.Int,
-    id: text, images: Schema.optionalKey(Schema.Array(text)), name: text,
-    published: Schema.Boolean, sku: text,
-  })),
+  products: Schema.Array(
+    Schema.Struct({
+      active: Schema.Boolean,
+      categoryId: categoryIdSchema,
+      currentPriceMinor: Schema.Int,
+      id: text,
+      images: Schema.optionalKey(Schema.Array(text)),
+      name: text,
+      published: Schema.Boolean,
+      sku: text,
+    }),
+  ),
   revision: Schema.Int,
 });
-export async function proveNativeCatalog(
-  config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
-): Promise<SymmyNativeProofResult> {
-  const tenantId = config.input.unitRef.tenantId;
+/** Validate the one persisted native projection, separately from revision-fenced HTTP writes. */
+const assertNativeCatalogProjection = (
+  state: typeof NativeCatalogReadSchema.Type,
+  names: SymmyProofNames,
+  categoryId: string,
+  productId: string,
+  image: string,
+  mediaRevision: number,
+) =>
+  Result.gen(function* nativeCatalogProjectionProgram() {
+    const [stored] = state.products;
+    if (!(state.products.length === 1 && stored !== undefined)) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined),
+      );
+    }
+    if (
+      !(
+        stored.id === productId &&
+        stored.name === names.product &&
+        stored.sku === names.variant &&
+        stored.currentPriceMinor === 12_345 &&
+        stored.active &&
+        stored.published &&
+        stored.categoryId === categoryId &&
+        state.revision >= mediaRevision
+      )
+    ) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.productReadback, failureCodes.readback, undefined, undefined),
+      );
+    }
+    if (
+      state.categories.filter(
+        (entry) => entry.id === categoryId && entry.name === names.category && entry.slug === slugOf(names.category),
+      ).length !== 1
+    ) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.categoryReadback, failureCodes.readback, undefined, undefined),
+      );
+    }
+    if (stored.images?.filter((storedImage) => storedImage === image).length !== 1) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.imageReadback, failureCodes.readback, undefined, undefined),
+      );
+    }
+    return {
+      categoryId,
+      categorySlug: slugOf(names.category),
+      imageId: image.slice('media:'.length),
+      productId: stored.id,
+      sku: names.variant,
+      slug: slugOf(names.product),
+    };
+  });
+export const proveNativeCatalog = Effect.fn('proveNativeCatalog')(function* proveNativeCatalogProgram(
+  config: SymmyProofConfig,
+  client: SymmyProofClient,
+  names: SymmyProofNames,
+) {
+  const { tenantId } = config.input.unitRef;
   const legalEntityId = config.legalEntityId ?? STAGE_LEGAL_ENTITY;
-  const initial = decode(SymmyDemoCatalogRevisionResponseSchema,
-    await client.read(`${PREFIX}/catalog/revision`, 'category-import'), 'category-import');
-  ensure(initial.tenantId === tenantId && initial.legalEntityId === legalEntityId, 'category-import', 'readback');
+  const initial = yield* Effect.fromResult(
+    decode(
+      SymmyDemoCatalogRevisionResponseSchema,
+      yield* client.read(`${PREFIX}/catalog/revision`, proofBoundaries.categoryImport),
+      proofBoundaries.categoryImport,
+    ),
+  );
+  if (!(initial.tenantId === tenantId && initial.legalEntityId === legalEntityId)) {
+    return yield* new SymmyProofFailure(proofBoundaries.categoryImport, failureCodes.readback, undefined, undefined);
+  }
   const categoryBody = symmyNativeCategoryPayload(names, initial.revision);
-  validatePayload(SymmyDemoCategoriesBatchRequestSchema, categoryBody, 'category-import');
-  const categoryResult = await client.write(
-    `${PREFIX}/categories/batch`, categoryBody, `${names.prefix}.native-category`, 'category-import',
+  yield* Effect.fromResult(
+    validatePayload(SymmyDemoCategoriesBatchRequestSchema, categoryBody, proofBoundaries.categoryImport),
   );
-  ensure(categoryResult.status === 200, 'category-import', 'http-status');
-  const category = assertNativeApplied(categoryResult.body, {
-    tenantId, legalEntityId, previousRevision: initial.revision,
-  }, 'category-import');
+  const categoryResult = yield* client.write(
+    `${PREFIX}/categories/batch`,
+    categoryBody,
+    `${names.prefix}.native-category`,
+    proofBoundaries.categoryImport,
+  );
+  if (categoryResult.status !== 200) {
+    return yield* new SymmyProofFailure(proofBoundaries.categoryImport, failureCodes.httpStatus, undefined, undefined);
+  }
+  const category = yield* Effect.fromResult(
+    assertNativeApplied(
+      categoryResult.body,
+      {
+        legalEntityId,
+        previousRevision: initial.revision,
+        tenantId,
+      },
+      proofBoundaries.categoryImport,
+    ),
+  );
   const productBody = symmyNativeProductPayload(names, category.revision);
-  validatePayload(SymmyDemoProductsBatchRequestSchema, productBody, 'product-import');
-  const productResult = await client.write(
-    `${PREFIX}/catalog/products/batch`, productBody, `${names.prefix}.native-product`, 'product-import',
+  yield* Effect.fromResult(
+    validatePayload(SymmyDemoProductsBatchRequestSchema, productBody, proofBoundaries.productImport),
   );
-  ensure(productResult.status === 200, 'product-import', 'http-status');
-  const product = assertNativeApplied(productResult.body, {
-    tenantId, legalEntityId, previousRevision: category.revision,
-  }, 'product-import');
+  const productResult = yield* client.write(
+    `${PREFIX}/catalog/products/batch`,
+    productBody,
+    `${names.prefix}.native-product`,
+    proofBoundaries.productImport,
+  );
+  if (productResult.status !== 200) {
+    return yield* new SymmyProofFailure(proofBoundaries.productImport, failureCodes.httpStatus, undefined, undefined);
+  }
+  const product = yield* Effect.fromResult(
+    assertNativeApplied(
+      productResult.body,
+      {
+        legalEntityId,
+        previousRevision: category.revision,
+        tenantId,
+      },
+      proofBoundaries.productImport,
+    ),
+  );
   const mediaBody = symmyNativeMediaPayload(names, product.item.entityId, product.revision);
-  validatePayload(SymmyDemoMediaUploadRequestSchema, mediaBody, 'image-import');
-  const mediaResult = await client.write(
-    `${PREFIX}/products/media`, mediaBody, `${names.prefix}.native-media`, 'image-import',
+  yield* Effect.fromResult(validatePayload(SymmyDemoMediaUploadRequestSchema, mediaBody, proofBoundaries.imageImport));
+  const mediaResult = yield* client.write(
+    `${PREFIX}/products/media`,
+    mediaBody,
+    `${names.prefix}.native-media`,
+    proofBoundaries.imageImport,
   );
-  ensure(mediaResult.status === 200, 'image-import', 'http-status');
-  const media = assertNativeApplied(mediaResult.body, {
-    tenantId, legalEntityId, previousRevision: product.revision,
-  }, 'image-import');
-  ensure(
-    media.item.entityId === product.item.entityId && media.item.image !== undefined &&
-    /^media:[0-9a-f-]{36}$/u.test(media.item.image),
-    'image-import', 'readback',
+  if (mediaResult.status !== 200) {
+    return yield* new SymmyProofFailure(proofBoundaries.imageImport, failureCodes.httpStatus, undefined, undefined);
+  }
+  const media = yield* Effect.fromResult(
+    assertNativeApplied(
+      mediaResult.body,
+      {
+        legalEntityId,
+        previousRevision: product.revision,
+        tenantId,
+      },
+      proofBoundaries.imageImport,
+    ),
   );
-  const state = decode(NativeCatalogReadSchema, await client.ownerRead('merchandise/records', {
-    view: { includeCategories: true, limit: 1, ordersLimit: 0, productIds: [product.item.entityId] },
-  }, 'image-readback'), 'image-readback');
-  const [stored] = state.products;
-  ensure(state.products.length === 1 && stored !== undefined, 'product-readback', 'readback');
-  ensure(
-    stored.id === product.item.entityId && stored.name === names.product && stored.sku === names.variant &&
-    stored.currentPriceMinor === 12345 && stored.active && stored.published &&
-    stored.categoryId === category.item.entityId && state.revision >= media.revision,
-    'product-readback', 'readback',
+  if (
+    !(
+      media.item.entityId === product.item.entityId &&
+      media.item.image !== undefined &&
+      /^media:[0-9a-f-]{36}$/u.test(media.item.image)
+    )
+  ) {
+    return yield* new SymmyProofFailure(proofBoundaries.imageImport, failureCodes.readback, undefined, undefined);
+  }
+  const state = yield* Effect.fromResult(
+    decode(
+      NativeCatalogReadSchema,
+      yield* client.ownerRead(
+        'merchandise/records',
+        {
+          view: { includeCategories: true, limit: 1, ordersLimit: 0, productIds: [product.item.entityId] },
+        },
+        proofBoundaries.imageReadback,
+      ),
+      proofBoundaries.imageReadback,
+    ),
   );
-  ensure(state.categories.filter((entry) =>
-    entry.id === category.item.entityId && entry.name === names.category && entry.slug === slugOf(names.category),
-  ).length === 1, 'category-readback', 'readback');
-  ensure(stored.images?.filter((image) => image === media.item.image).length === 1, 'image-readback', 'readback');
-  return {
-    sku: names.variant, productId: stored.id, slug: slugOf(names.product),
-    categoryId: category.item.entityId, categorySlug: slugOf(names.category),
-    imageId: media.item.image.slice('media:'.length),
-  };
-}
-export async function proveOwnerStock(
-  config: SymmyProofConfig, client: SymmyProofClient, context: SymmyCommerceProof,
-): Promise<void> {
-  const source = decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
-  const page = decode(CatalogVariantOnHandPageResponseSchema, await client.ownerRead(
-    'inventory/catalog-variant-on-hand-page',
-    { customerConfigurationId: source.customerConfigurationId, variantRefs: [context.variantRef] },
-    'stock-readback',
-  ), 'stock-readback');
+  return yield* Effect.fromResult(
+    assertNativeCatalogProjection(
+      state,
+      names,
+      category.item.entityId,
+      product.item.entityId,
+      media.item.image,
+      media.revision,
+    ),
+  );
+});
+export const proveOwnerStock = Effect.fn('proveOwnerStock')(function* proveOwnerStockProgram(
+  config: SymmyProofConfig,
+  client: SymmyProofClient,
+  context: SymmyCommerceProof,
+) {
+  const source = yield* Effect.fromResult(
+    decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, proofBoundaries.configuration),
+  );
+  const page = yield* Effect.fromResult(
+    decode(
+      CatalogVariantOnHandPageResponseSchema,
+      yield* client.ownerRead(
+        'inventory/catalog-variant-on-hand-page',
+        { customerConfigurationId: source.customerConfigurationId, variantRefs: [context.variantRef] },
+        proofBoundaries.stockReadback,
+      ),
+      proofBoundaries.stockReadback,
+    ),
+  );
   const [item] = page.items;
-  ensure(
-    page.items.length === 1 && item !== undefined && item.outcome === 'ON_HAND' &&
-    isDeepStrictEqual(item.variantRef, context.variantRef) &&
-    page.backend.backendId === source.issuer.backendId && page.backend.kind === source.issuer.backendKind &&
-    item.positions.length === 1 && decimalEqual(item.total.amount, context.stockAmount) &&
-    isDeepStrictEqual(item.stockItem.unitRef, config.input.unitRef),
-    'stock-readback', 'readback',
-  );
+  if (
+    !(
+      page.items.length === 1 &&
+      item !== undefined &&
+      item.outcome === 'ON_HAND' &&
+      isDeepStrictEqual(item.variantRef, context.variantRef) &&
+      page.backend.backendId === source.issuer.backendId &&
+      page.backend.kind === source.issuer.backendKind &&
+      item.positions.length === 1 &&
+      decimalEqual(item.total.amount, context.stockAmount) &&
+      isDeepStrictEqual(item.stockItem.unitRef, config.input.unitRef)
+    )
+  ) {
+    return yield* new SymmyProofFailure(proofBoundaries.stockReadback, failureCodes.readback, undefined, undefined);
+  }
   const [position] = item.positions;
-  ensure(position !== undefined, 'stock-readback', 'readback');
-  const { evidence } = decode(CurrentStockEvidenceForAvailabilityResponseSchema, await client.ownerRead(
-    'inventory/current-stock-evidence-for-availability', { positionRef: position.positionRef }, 'stock-readback',
-  ), 'stock-readback');
-  const sourceEvidence = evidence.sourceEvidence;
-  ensure(
-    evidence.position.lifecycle === 'CURRENT' &&
-    isDeepStrictEqual(evidence.position.ref, position.positionRef) &&
-    isDeepStrictEqual(evidence.binding.catalogSelection, {
-      productRef: context.productRef, variantRef: context.variantRef,
-    }) &&
-    isDeepStrictEqual(evidence.position.scope.stockLocationRef, position.stockLocation.ref) &&
-    isDeepStrictEqual(evidence.position.scope.stockItemRef, item.stockItem.stockItemRef) &&
-    sourceEvidence._tag === 'EXTERNAL_SOURCE_ASSERTION' && sourceEvidence.evaluation._tag === 'DETERMINATE' &&
-    !sourceEvidence.evaluation.reconciliationRequired &&
-    decimalEqual(sourceEvidence.evaluation.postEffectOnHand.amount, context.stockAmount) &&
-    isDeepStrictEqual(sourceEvidence.evaluation.postEffectOnHand.unitRef, config.input.unitRef) &&
-    isDeepStrictEqual(sourceEvidence.evaluation.assertion.positionRef, position.positionRef) &&
-    isDeepStrictEqual(sourceEvidence.evaluation.assertion.issuer, source.issuer) &&
-    sourceEvidence.evaluation.assertion.customerConfigurationId === source.customerConfigurationId &&
-    sourceEvidence.evaluation.assertion.itemExternalKey.externalValue === context.names.variant &&
-    sourceEvidence.evaluation.assertion.itemExternalKey.namespace === source.namespace &&
-    sourceEvidence.evaluation.assertion.itemExternalKey.externalScope === source.externalScope &&
-    sourceEvidence.evaluation.assertion.locationExternalKey.externalValue === config.input.locationKey &&
-    decimalEqual(sourceEvidence.evaluation.assertion.quantity.amount, context.stockAmount),
-    'stock-readback', 'readback',
+  if (position === undefined) {
+    return yield* new SymmyProofFailure(proofBoundaries.stockReadback, failureCodes.readback, undefined, undefined);
+  }
+  const { evidence } = yield* Effect.fromResult(
+    decode(
+      CurrentStockEvidenceForAvailabilityResponseSchema,
+      yield* client.ownerRead(
+        'inventory/current-stock-evidence-for-availability',
+        { positionRef: position.positionRef },
+        proofBoundaries.stockReadback,
+      ),
+      proofBoundaries.stockReadback,
+    ),
   );
-}
-export async function proveOwnerAddresses(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
-  const fields = CustomerPageSchema.fields.customers.value.fields;
-  const page = decode(Schema.Struct({
-    count: Schema.Int,
-    customers: Schema.Array(Schema.Struct({
-      sourceRecordId: fields.sourceRecordId,
-      profile: fields.profile,
-      addresses: Schema.Array(ActiveSavedAddressSchema),
-    })),
-  }), await client.read(
-    `${PREFIX}/admin/customers?q=${encodeURIComponent(context.names.prefix)}&limit=100&fields=sourceRecordId,profile,addresses`,
-    'address-readback',
-  ), 'address-readback');
-  ensure(page.count === 2 && page.customers.length === 2, 'address-readback', 'readback');
+  const { sourceEvidence } = evidence;
+  if (
+    !(
+      evidence.position.lifecycle === 'CURRENT' &&
+      isDeepStrictEqual(evidence.position.ref, position.positionRef) &&
+      isDeepStrictEqual(evidence.binding.catalogSelection, {
+        productRef: context.productRef,
+        variantRef: context.variantRef,
+      }) &&
+      isDeepStrictEqual(evidence.position.scope.stockLocationRef, position.stockLocation.ref) &&
+      isDeepStrictEqual(evidence.position.scope.stockItemRef, item.stockItem.stockItemRef)
+    )
+  ) {
+    return yield* new SymmyProofFailure(proofBoundaries.stockReadback, failureCodes.readback, undefined, undefined);
+  }
+  if (
+    !Match.value(sourceEvidence).pipe(
+      Match.tag('EXTERNAL_SOURCE_ASSERTION', (external) =>
+        Match.value(external.evaluation).pipe(
+          Match.tag(
+            'DETERMINATE',
+            (evaluation) =>
+              !evaluation.reconciliationRequired &&
+              decimalEqual(evaluation.postEffectOnHand.amount, context.stockAmount) &&
+              isDeepStrictEqual(evaluation.postEffectOnHand.unitRef, config.input.unitRef) &&
+              isDeepStrictEqual(evaluation.assertion.positionRef, position.positionRef) &&
+              isDeepStrictEqual(evaluation.assertion.issuer, source.issuer) &&
+              evaluation.assertion.customerConfigurationId === source.customerConfigurationId &&
+              evaluation.assertion.itemExternalKey.externalValue === context.names.variant &&
+              evaluation.assertion.itemExternalKey.namespace === source.namespace &&
+              evaluation.assertion.itemExternalKey.externalScope === source.externalScope &&
+              evaluation.assertion.locationExternalKey.externalValue === config.input.locationKey &&
+              decimalEqual(evaluation.assertion.quantity.amount, context.stockAmount),
+          ),
+          Match.orElse(() => false),
+        ),
+      ),
+      Match.orElse(() => false),
+    )
+  ) {
+    return yield* new SymmyProofFailure(proofBoundaries.stockReadback, failureCodes.readback, undefined, undefined);
+  }
+
+  return yield* Effect.void;
+});
+export const proveOwnerAddresses = Effect.fn('proveOwnerAddresses')(function* proveOwnerAddressesProgram(
+  client: SymmyProofClient,
+  context: SymmyFullProofContext,
+) {
+  const { fields } = CustomerPageSchema.fields.customers.value;
+  const page = yield* Effect.fromResult(
+    decode(
+      Schema.Struct({
+        count: Schema.Int,
+        customers: Schema.Array(
+          Schema.Struct({
+            addresses: Schema.Array(ActiveSavedAddressSchema),
+            profile: fields.profile,
+            sourceRecordId: fields.sourceRecordId,
+          }),
+        ),
+      }),
+      yield* client.read(
+        `${PREFIX}/admin/customers?q=${encodeURIComponent(context.names.prefix)}&limit=100&fields=sourceRecordId,profile,addresses`,
+        proofBoundaries.addressReadback,
+      ),
+      proofBoundaries.addressReadback,
+    ),
+  );
+  if (!(page.count === 2 && page.customers.length === 2)) {
+    return yield* new SymmyProofFailure(proofBoundaries.addressReadback, failureCodes.readback, undefined, undefined);
+  }
   for (const customer of context.customers) {
     const matches = page.customers.filter((item) => item.sourceRecordId === customer.customerId);
     const [current] = matches;
-    ensure(matches.length === 1 && current !== undefined, 'address-readback', 'readback');
+    if (!(matches.length === 1 && current !== undefined)) {
+      return yield* new SymmyProofFailure(proofBoundaries.addressReadback, failureCodes.readback, undefined, undefined);
+    }
     const { kind: _kind, ...profileRef } = current.profile.profileRef;
-    ensure(isDeepStrictEqual(profileRef, customer.profileRef), 'address-readback', 'readback');
+    if (!isDeepStrictEqual(profileRef, customer.profileRef)) {
+      return yield* new SymmyProofFailure(proofBoundaries.addressReadback, failureCodes.readback, undefined, undefined);
+    }
     const { addresses } = current;
     const [address] = addresses;
-    ensure(
-      addresses.length === 1 && address !== undefined && address.label === context.address.label &&
-      address.lifecycle === 'ACTIVE' && address.origin.kind === 'COMMERCE_ONLY' &&
-      isDeepStrictEqual(address.origin.postalAddress, context.address.postalAddress) &&
-      isDeepStrictEqual(address.purposes.toSorted(), [...context.address.purposes].toSorted()) &&
-      isDeepStrictEqual(address.profile.profileRef, customer.profileRef),
-      'address-readback', 'readback',
-    );
+    if (
+      !(
+        addresses.length === 1 &&
+        address !== undefined &&
+        address.label === context.address.label &&
+        address.lifecycle === 'ACTIVE' &&
+        address.origin.kind === 'COMMERCE_ONLY' &&
+        isDeepStrictEqual(address.origin.postalAddress, context.address.postalAddress) &&
+        isDeepStrictEqual(address.purposes.toSorted(), [...context.address.purposes].toSorted()) &&
+        isDeepStrictEqual(address.profile.profileRef, customer.profileRef)
+      )
+    ) {
+      return yield* new SymmyProofFailure(proofBoundaries.addressReadback, failureCodes.readback, undefined, undefined);
+    }
   }
-}
-export function symmyCustomerGroupPayload(names: SymmyProofNames) {
-  return { customerGroups: [{
-    businessCode: names.group, code: names.group, name: names.group,
-    description: `${names.prefix} acceptance group`, meaningKey: `${names.prefix.toLowerCase().replaceAll('_', '-')}.customers`,
-    membershipCriteria: 'Explicit ERP assignment of scoped acceptance customers',
-    purpose: `Scoped Symmy HTTP acceptance group ${names.prefix}`,
-  }] };
-}
-async function proveOwnerGroups(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
+
+  return yield* Effect.void;
+});
+export const symmyCustomerGroupPayload = (names: SymmyProofNames) => ({
+  customerGroups: [
+    {
+      businessCode: names.group,
+      code: names.group,
+      description: `${names.prefix} acceptance group`,
+      meaningKey: `${names.prefix.toLowerCase().replaceAll('_', '-')}.customers`,
+      membershipCriteria: 'Explicit ERP assignment of scoped acceptance customers',
+      name: names.group,
+      purpose: `Scoped Symmy HTTP acceptance group ${names.prefix}`,
+    },
+  ],
+});
+const proveOwnerGroups = Effect.fn('proveOwnerGroups')(function* proveOwnerGroupsProgram(
+  client: SymmyProofClient,
+  context: SymmyFullProofContext,
+) {
   const groupBody = symmyCustomerGroupPayload(context.names);
-  validatePayload(SymmyCustomerGroupsBatchRequestSchema, groupBody, 'group-import');
+  yield* Effect.fromResult(
+    validatePayload(SymmyCustomerGroupsBatchRequestSchema, groupBody, proofBoundaries.groupImport),
+  );
   const groupExpected = { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.customer-context': 1 } };
   const groupKey = `${context.names.prefix}.group`;
-  const group = await client.settle(await client.write(
-    `${PREFIX}/customer-groups/batch`, groupBody, groupKey, 'group-import',
-  ), groupExpected, 'group-import');
-  const groupReplay = await client.settle(await client.write(
-    `${PREFIX}/customer-groups/batch`, groupBody, groupKey, 'group-replay',
-  ), groupExpected, 'group-replay');
-  assertReplayIdentity(group, groupReplay, 'group-replay');
+  const group = yield* client.settle(
+    yield* client.write(`${PREFIX}/customer-groups/batch`, groupBody, groupKey, proofBoundaries.groupImport),
+    groupExpected,
+    proofBoundaries.groupImport,
+  );
+  const groupReplay = yield* client.settle(
+    yield* client.write(`${PREFIX}/customer-groups/batch`, groupBody, groupKey, proofBoundaries.groupReplay),
+    groupExpected,
+    proofBoundaries.groupReplay,
+  );
+  yield* Effect.fromResult(assertReplayIdentity(group, groupReplay, proofBoundaries.groupReplay));
   const path = `${PREFIX}/customer-groups/${encodeURIComponent(context.names.group)}/customers/batch`;
   const body = { customers: context.customers.map(({ customerId }) => ({ customerId })) };
-  validatePayload(SymmyGroupCustomersBatchRequestSchema, body, 'group-assignment');
+  yield* Effect.fromResult(
+    validatePayload(SymmyGroupCustomersBatchRequestSchema, body, proofBoundaries.groupAssignment),
+  );
   const expected = { effectsAtLeast: 2, itemsAtLeast: 2, owners: { 'commerce.customer-context': 2 } };
   const key = `${context.names.prefix}.assignment`;
-  const original = await client.settle(await client.write(path, body, key, 'group-assignment'), expected, 'group-assignment');
-  const readMemberships = async () => {
+  const original = yield* client.settle(
+    yield* client.write(path, body, key, proofBoundaries.groupAssignment),
+    expected,
+    proofBoundaries.groupAssignment,
+  );
+  const readMemberships = Effect.fn('readMemberships')(function* readMembershipsProgram() {
     const identities = [];
     for (const customer of context.customers) {
       const profile = {
-        profileKind: customer.kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY', profileRef: customer.profileRef,
+        profileKind: customer.kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY',
+        profileRef: customer.profileRef,
       };
-      const response = decode(EffectiveCustomerGroupMembershipsResponseSchema, await client.ownerRead(
-        'commerce-customer-context/effective-customer-group-memberships',
-        { asOf: new Date().toISOString(), profile }, 'group-readback',
-      ), 'group-readback');
+      const response = yield* Effect.fromResult(
+        decode(
+          EffectiveCustomerGroupMembershipsResponseSchema,
+          yield* client.ownerRead(
+            'commerce-customer-context/effective-customer-group-memberships',
+            { asOf: DateTime.formatIso(yield* DateTime.now), profile },
+            proofBoundaries.groupReadback,
+          ),
+          proofBoundaries.groupReadback,
+        ),
+      );
       const [membership] = response.items;
-      ensure(
-        response.items.length === 1 && membership !== undefined && membership.state === 'VALID' &&
-        isDeepStrictEqual(membership.profile.profileRef, customer.profileRef),
-        'group-readback', 'readback',
+      if (
+        !(
+          response.items.length === 1 &&
+          membership !== undefined &&
+          membership.state === 'VALID' &&
+          isDeepStrictEqual(membership.profile.profileRef, customer.profileRef)
+        )
+      ) {
+        return yield* new SymmyProofFailure(proofBoundaries.groupReadback, failureCodes.readback, undefined, undefined);
+      }
+      const { group: stored } = yield* Effect.fromResult(
+        decode(
+          CustomerGroupDetailResponseSchema,
+          yield* client.ownerRead(
+            'commerce-customer-context/customer-group-detail',
+            { groupRef: membership.groupRef },
+            proofBoundaries.groupReadback,
+          ),
+          proofBoundaries.groupReadback,
+        ),
       );
-      const { group: stored } = decode(CustomerGroupDetailResponseSchema, await client.ownerRead(
-        'commerce-customer-context/customer-group-detail', { groupRef: membership.groupRef }, 'group-readback',
-      ), 'group-readback');
-      ensure(
-        stored.businessCode === context.names.group && stored.currentDefinition.name === context.names.group &&
-        stored.currentState === 'ACTIVE',
-        'group-readback', 'readback',
-      );
-      identities.push({ membershipRef: membership.membershipRef, profileRef: customer.profileRef, groupRef: stored.groupRef });
+      if (
+        !(
+          stored.businessCode === context.names.group &&
+          stored.currentDefinition.name === context.names.group &&
+          stored.currentState === 'ACTIVE'
+        )
+      ) {
+        return yield* new SymmyProofFailure(proofBoundaries.groupReadback, failureCodes.readback, undefined, undefined);
+      }
+      identities.push({
+        groupRef: stored.groupRef,
+        membershipRef: membership.membershipRef,
+        profileRef: customer.profileRef,
+      });
     }
     return identities;
-  };
-  const before = await readMemberships();
-  const replay = await client.settle(await client.write(path, body, key, 'group-replay'), expected, 'group-replay');
-  assertReplayIdentity(original, replay, 'group-replay');
-  ensure(isDeepStrictEqual(before, await readMemberships()), 'group-replay', 'readback');
-  await client.settle(await client.write(path, body, `${key}.source-replay`, 'group-replay'), expected, 'group-replay');
-  ensure(isDeepStrictEqual(before, await readMemberships()), 'group-replay', 'readback');
-}
+  });
+  const before = yield* readMemberships();
+  const replay = yield* client.settle(
+    yield* client.write(path, body, key, proofBoundaries.groupReplay),
+    expected,
+    proofBoundaries.groupReplay,
+  );
+  yield* Effect.fromResult(assertReplayIdentity(original, replay, proofBoundaries.groupReplay));
+  if (!isDeepStrictEqual(before, yield* readMemberships())) {
+    return yield* new SymmyProofFailure(proofBoundaries.groupReplay, failureCodes.readback, undefined, undefined);
+  }
+  yield* client.settle(
+    yield* client.write(path, body, `${key}.source-replay`, proofBoundaries.groupReplay),
+    expected,
+    proofBoundaries.groupReplay,
+  );
+  if (!isDeepStrictEqual(before, yield* readMemberships())) {
+    return yield* new SymmyProofFailure(proofBoundaries.groupReplay, failureCodes.readback, undefined, undefined);
+  }
+
+  return yield* Effect.void;
+});
 export interface SymmyStageProofOptions {
   /** Optional known existing order IDs; otherwise prove up to three actual IDs returned by the public list. */
   readonly expectedOrderIds?: readonly string[];
 }
-export type SymmyProofLaneName = 'commerce' | 'customers' | 'native-catalog' | 'orders';
+
 export interface SymmyNativeProofResult {
-  readonly sku: string;
-  readonly productId: string;
-  readonly slug: string;
   readonly categoryId: string;
   readonly categorySlug: string;
   readonly imageId: string;
+  readonly productId: string;
+  readonly sku: string;
+  readonly slug: string;
 }
-export function symmyNativeResultLine(result: SymmyNativeProofResult): string {
-  const safe = {
-    sku: result.sku, productId: result.productId, slug: result.slug,
-    categoryId: result.categoryId, categorySlug: result.categorySlug, imageId: result.imageId,
-  };
-  ensure(Object.values(safe).every((value) => /^[A-Za-z0-9._:-]{1,300}$/u.test(value)),
-    'image-readback', 'readback');
-  return `RESULT native-catalog ${JSON.stringify(safe)}`;
-}
-/** Starts every disjoint lane, reports each settlement, and never rejects while another lane is still running. */
-export async function runSymmyProofLanes(
-  lanes: readonly { readonly name: SymmyProofLaneName; readonly run: () => Promise<void> }[],
-  report: (line: string) => void,
-): Promise<void> {
-  const settled = await Promise.allSettled(lanes.map(async (lane) => {
-    try {
-      await lane.run();
-      report(`PASS lane:${lane.name}`);
-    } catch (error) {
-      report(`FAIL lane:${lane.name} ${symmyProofFailureLine(error)}`);
-      throw error;
+const NativeResultSchema = Schema.Struct({
+  categoryId: categoryIdSchema,
+  categorySlug: text,
+  imageId: text.pipe(Schema.brand('NativeImageId')),
+  productId: productIdSchema,
+  sku: text,
+  slug: text,
+});
+export const symmyNativeResultLine = (result: SymmyNativeProofResult) =>
+  Result.gen(function* symmyNativeResultLineProgram() {
+    const safe = {
+      categoryId: result.categoryId,
+      categorySlug: result.categorySlug,
+      imageId: result.imageId,
+      productId: result.productId,
+      sku: result.sku,
+      slug: result.slug,
+    };
+    if (!Object.values(safe).every((value) => /^[A-Za-z0-9._:-]{1,300}$/u.test(value))) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.imageReadback, failureCodes.readback, undefined, undefined),
+      );
     }
-  }));
-  const failed = lanes.filter((_lane, index) => settled[index]?.status === 'rejected').map((lane) => lane.name);
-  if (failed.length > 0) throw new SymmyProofFailure('full-proof', 'lane-failed', undefined, { kind: 'lanes', failed });
-}
+    return `RESULT native-catalog ${Result.getOrThrow(Schema.encodeUnknownResult(Schema.fromJsonString(NativeResultSchema))(safe))}`;
+  });
+
+export const symmyProofFailureLine = <Input,>(error: Input): string =>
+  Schema.is(SymmyProofFailure)(error) ? error.message : 'FAIL full-proof:unexpected';
+/** Starts every disjoint lane, reports each settlement, and never rejects while another lane is still running. */
+export const runSymmyProofLanes = Effect.fn('SymmyProofLanes')(function* runSymmyProofLanesProgram(
+  lanes: readonly { readonly name: SymmyProofLaneName; readonly run: () => Effect.Effect<void, SymmyProofFailure> }[],
+  report: (line: string) => Effect.Effect<void>,
+) {
+  const settled = yield* Effect.forEach(
+    lanes,
+    (lane) =>
+      Effect.exit(
+        lane.run().pipe(
+          Effect.tap(() => report(`PASS lane:${lane.name}`)),
+          Effect.tapCause((cause) => report(`FAIL lane:${lane.name} ${symmyProofFailureLine(Cause.squash(cause))}`)),
+        ),
+      ),
+    { concurrency: 'unbounded' },
+  );
+  const failed = lanes
+    .filter((_lane, index) => {
+      const exit = settled[index];
+      return exit !== undefined && Exit.isFailure(exit);
+    })
+    .map((lane) => lane.name);
+  if (failed.length > 0) {
+    return yield* new SymmyProofFailure(
+      proofBoundaries.fullProof,
+      failureCodes.laneFailed,
+      undefined,
+      { failed, kind: 'lanes' },
+      Redacted.make(settled),
+    );
+  }
+
+  return yield* Effect.void;
+});
 /** Complete executable stage proof: all writes use public Symmy bodies, all extra owner calls are registered Reads. */
-export async function proveSymmyFullFunction(
+export const proveSymmyFullFunction = Effect.fn('proveSymmyFullFunction')(function* proveSymmyFullFunctionProgram(
   config: SymmyProofConfig,
   options: SymmyStageProofOptions = {},
-  pass: (boundary: ProofBoundary) => void = (boundary) => { process.stdout.write(`PASS ${boundary}\n`); },
-  report: (line: string) => void = (line) => { process.stdout.write(`${line}\n`); },
-): Promise<void> {
-  decode(SymmyProofInputSchema, config.input, 'configuration');
-  decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
-  const client = createSymmyProofClient(config);
-  ensure(Redacted.isRedacted(config.operatorCookie), 'configuration', 'read-auth-required');
+  pass: (boundary: ProofBoundary) => Effect.Effect<void> = (boundary) => Console.log(`PASS ${boundary}`),
+  report: (line: string) => Effect.Effect<void> = Console.log,
+) {
+  yield* Effect.fromResult(decode(SymmyProofInputSchema, config.input, proofBoundaries.configuration));
+  yield* Effect.fromResult(
+    decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, proofBoundaries.configuration),
+  );
+  const client = yield* createSymmyProofClient(config);
+  if (!Redacted.isRedacted(config.operatorCookie)) {
+    return yield* new SymmyProofFailure(
+      proofBoundaries.configuration,
+      failureCodes.readAuthRequired,
+      undefined,
+      undefined,
+    );
+  }
   // Verify the new endpoints, existing orders and staff read permission before the first test write.
-  decode(SymmyDemoCatalogRevisionResponseSchema,
-    await client.read(`${PREFIX}/catalog/revision`, 'category-import'), 'category-import');
-  const orderPage = decode(Schema.Struct({ orders: Schema.Array(Schema.Unknown) }),
-    await client.read(`${PREFIX}/orders?limit=100&offset=0`, 'order-export'), 'order-export');
-  const actualOrders = assertOrderSnapshots(orderPage.orders);
+  yield* Effect.fromResult(
+    decode(
+      SymmyDemoCatalogRevisionResponseSchema,
+      yield* client.read(`${PREFIX}/catalog/revision`, proofBoundaries.categoryImport),
+      proofBoundaries.categoryImport,
+    ),
+  );
+  const orderPage = yield* Effect.fromResult(
+    decode(
+      Schema.Struct({ orders: Schema.Array(Schema.Unknown) }),
+      yield* client.read(`${PREFIX}/orders?limit=100&offset=0`, proofBoundaries.orderExport),
+      proofBoundaries.orderExport,
+    ),
+  );
+  const actualOrders = yield* Effect.fromResult(assertOrderSnapshots(orderPage.orders));
   const ids = options.expectedOrderIds ?? actualOrders.slice(0, 3).map((order) => order.id);
   const [first, ...rest] = ids;
-  ensure(first !== undefined, 'order-export', 'readback');
+  if (first === undefined) {
+    return yield* new SymmyProofFailure(proofBoundaries.orderExport, failureCodes.readback, undefined, undefined);
+  }
   const orderWiring: SymmyOrderExportWiring = {
     collectionPath: `${PREFIX}/orders?limit=100&offset=0`,
-    detailPath: (id) => `${PREFIX}/orders/${encodeURIComponent(id)}`, expectedOrderIds: [first, ...rest],
+    detailPath: (id) => `${PREFIX}/orders/${encodeURIComponent(id)}`,
+    expectedOrderIds: [first, ...rest],
   };
-  await client.ownerRead('merchandise/records', {
-    view: { limit: 0, ordersLimit: 0, summary: true },
-  }, 'category-readback');
-  await runSymmyProofLanes([
-    { name: 'commerce', run: async () => {
-        const commerce = await proveSymmyProductStockList(config, client);
-        report(`RESULT commerce ${JSON.stringify({ sku: commerce.names.variant })}`);
-        pass('product-replay');
-        pass('list-price-readback');
-        const sku = decode(SkuLookupResponseSchema, await client.ownerRead(
-          'catalog/sku-lookup', { code: commerce.names.variant }, 'sku-readback',
-        ), 'sku-readback');
-        ensure(
-          sku._tag === 'found' && sku.state === 'CURRENT' && sku.displayCode === commerce.names.variant &&
-          sku.target.kind === 'VARIANT' && sku.target.variantId === commerce.variantRef.resourceId &&
-          sku.target.tenantId === commerce.variantRef.tenantId,
-          'sku-readback', 'readback',
-        );
-        pass('sku-readback');
-        await proveOwnerStock(config, client, commerce);
-        pass('stock-readback');
-        // Catalog page pricing evaluates the owner's current instant; do not mistake a scheduled future Price for absence.
-        await client.waitUntil(commerce.effectiveFrom, 'base-price-readback');
-        const prices = decode(CatalogPagePricesResponseSchema, await client.ownerRead('pricing/catalog-page-prices', {
-          ...config.input.commercialScope, currencyCode: config.input.currencyCode,
-          items: [{
-            catalogSelection: { productRef: commerce.productRef, variantRef: commerce.variantRef },
-            unitBasis: { quantity: '1', unitRef: config.input.unitRef },
-          }],
-        }, 'base-price-readback'), 'base-price-readback');
-        ensure(prices._tag === 'CATALOG_PAGE_PRICED' && prices.prices.length === 1, 'base-price-readback', 'readback');
-        const [price] = prices.prices;
-        ensure(
-          price?._tag === 'PRICE_FOUND' && price.priceGroupSelector.kind === 'NO_GROUP' &&
-          decimalEqual(price.priceRevision.monetaryAmount.amount, commerce.baseAmount) &&
-          price.priceRevision.monetaryAmount.currencyCode === config.input.currencyCode &&
-          isDeepStrictEqual(price.catalogSelection, { productRef: commerce.productRef, variantRef: commerce.variantRef }),
-          'base-price-readback', 'readback',
-        );
-        pass('base-price-readback');
-    } },
-    { name: 'customers', run: async () => {
-      const context = await proveCustomers(config, client, makeSymmyProofNames());
-      pass('customer-replay');
-      await proveOwnerAddresses(client, context);
-      pass('address-readback');
-      await proveOwnerGroups(client, context);
-      pass('group-replay');
-    } },
-    { name: 'native-catalog', run: async () => {
-      const result = await proveNativeCatalog(config, client, makeSymmyProofNames());
-      const line = symmyNativeResultLine(result);
-      ensure(!line.includes(Redacted.value(config.apiKey)) &&
-        (config.operatorCookie === undefined || !line.includes(Redacted.value(config.operatorCookie))),
-        'image-readback', 'readback');
-      report(line);
-      pass('category-readback');
-      pass('image-readback');
-    } },
-    { name: 'orders', run: async () => {
-      await proveSymmyOrderExport(client, orderWiring);
-      pass('order-export');
-    } },
-  ], report);
-  pass('full-proof');
-}
-
-const OPERATOR_SESSION_PATH = '/shell-super-app-api/auth/session';
-const OPERATOR_COMPOSITION_PATH = '/shell-super-app-api/shell/composition';
-const OPERATOR_GATEWAY_PATH = '/shell-super-app-api/auth/gateway-context';
-const STAGE_LEGAL_ENTITY = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
-const OWNER_READS = {
-  'catalog/sku-lookup': { audience: 'catalog', readName: 'sku-lookup', request: SkuLookupRequestSchema },
-  'pricing/catalog-page-prices': {
-    audience: 'pricing', readName: 'catalog-page-prices', request: CatalogPagePricesRequestSchema,
-  },
-  'inventory/catalog-variant-on-hand-page': {
-    audience: 'inventory', readName: 'catalog-variant-on-hand-page', request: CatalogVariantOnHandPageRequestSchema,
-  },
-  'inventory/current-stock-evidence-for-availability': {
-    audience: 'inventory', readName: 'current-stock-evidence-for-availability',
-    request: CurrentStockEvidenceForAvailabilityRequestSchema,
-  },
-  'commerce-customer-context/effective-customer-group-memberships': {
-    audience: 'commerce-customer-context', readName: 'effective-customer-group-memberships',
-    request: EffectiveCustomerGroupMembershipsRequestSchema,
-  },
-  'commerce-customer-context/customer-group-detail': {
-    audience: 'commerce-customer-context', readName: 'customer-group-detail', request: CustomerGroupDetailRequestSchema,
-  },
-  'merchandise/records': { audience: 'merchandise', readName: 'records', request: RecordsRequestSchema },
-};
-export type SymmyOwnerRead = keyof typeof OWNER_READS;
-/** Pure plan for registered owner Reads. The operator gateway, not the proof, admits operation scope. */
-export function symmyOwnerReadEnvelope(
-  operation: SymmyOwnerRead, query: unknown, legalEntityId: string, boundary: ProofBoundary,
-) {
-  ensure(Object.hasOwn(OWNER_READS, operation), boundary, 'input-contract');
-  const read = OWNER_READS[operation];
-  validatePayload(read.request, query, boundary);
-  decode(uuid, legalEntityId, 'configuration');
-  return {
-    audience: read.audience,
-    legalEntityId,
-    readName: read.readName,
-    query,
-  };
-}
-type HttpResult = { readonly status: number; readonly body: unknown };
-export interface SymmyProofClient {
-  read(path: string, boundary: ProofBoundary): Promise<unknown>;
-  ownerRead(operation: SymmyOwnerRead, query: unknown, boundary: ProofBoundary): Promise<unknown>;
-  waitUntil(instant: string, boundary: ProofBoundary): Promise<void>;
-  write(path: string, body: unknown, key: string, boundary: ProofBoundary): Promise<HttpResult>;
-  settle(result: HttpResult, expected: EffectExpectation, boundary: ProofBoundary): Promise<Items>;
-}
-function checkedOrigin(origin: string): URL {
-  try {
-    const url = new URL(origin);
-    ensure(
-      url.protocol === 'https:' && url.username === '' && url.password === '' &&
-      url.pathname === '/' && url.search === '' && url.hash === '',
-      'configuration', 'input-contract',
-    );
-    return url;
-  } catch {
-    throw new SymmyProofFailure('configuration', 'input-contract');
-  }
-}
-function checkedPath(path: string, origin: URL, boundary: ProofBoundary): URL {
-  try {
-    const url = new URL(path, origin);
-    ensure(
-      path.startsWith(`${PREFIX}/`) && url.origin === origin.origin && url.hash === '' &&
-      url.pathname.startsWith(`${PREFIX}/`) && !url.pathname.includes('//'),
-      boundary, 'unsafe-path',
-    );
-    return url;
-  } catch {
-    throw new SymmyProofFailure(boundary, 'unsafe-path');
-  }
-}
-export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClient {
-  const origin = checkedOrigin(config.origin);
-  const budget = config.timeoutMs ?? 600_000;
-  const pollMs = config.pollMs ?? 1000;
-  ensure(
-    Number.isInteger(budget) && budget >= 1000 && budget <= 900_000 &&
-    Number.isInteger(pollMs) && pollMs >= 10 && pollMs <= 10_000 &&
-    Redacted.isRedacted(config.apiKey) && Redacted.value(config.apiKey).trim().length > 0,
-    'configuration', 'input-contract',
-  );
-  const deadline = Date.now() + budget;
-  const remaining = (boundary: ProofBoundary) => {
-    const ms = deadline - Date.now();
-    ensure(ms > 0, boundary, 'timeout');
-    return ms;
-  };
-  type Authentication =
-    | { readonly kind: 'symmy' }
-    | { readonly kind: 'operator' }
-    | { readonly kind: 'owner'; readonly token: Redacted.Redacted<string>; readonly revision: string };
-  const request = async (
-    path: string, method: 'GET' | 'POST', body: unknown, key: string | undefined, boundary: ProofBoundary,
-    authentication: Authentication = { kind: 'symmy' },
-  ): Promise<HttpResult> => {
-    let url: URL;
-    if (authentication.kind === 'symmy') {
-      url = checkedPath(path, origin, boundary);
-    } else {
-      ensure(path.startsWith('/') && !path.startsWith('//') && !path.includes('?') && !path.includes('#'),
-        boundary, 'unsafe-path');
-      url = new URL(path, origin);
-      ensure(url.origin === origin.origin && !url.username && !url.password, boundary, 'unsafe-path');
-      if (authentication.kind === 'operator') {
-        ensure(
-          (method === 'GET' && [OPERATOR_SESSION_PATH, OPERATOR_COMPOSITION_PATH].includes(path)) ||
-          (method === 'POST' && path === OPERATOR_GATEWAY_PATH),
-          boundary, 'unsafe-path',
-        );
-      } else {
-        ensure(
-          method === 'POST' && /^\/shell-super-app-api\/module-api\/[^?#]+\/reads\/[A-Za-z0-9._-]+$/u.test(path),
-          boundary, 'unsafe-path',
-        );
-      }
-    }
-    let authenticationHeaders: Record<string, string>;
-    const secrets = [config.apiKey];
-    if (config.operatorCookie !== undefined) secrets.push(config.operatorCookie);
-    if (authentication.kind === 'symmy') {
-      authenticationHeaders = { 'x-api-key': Redacted.value(config.apiKey) };
-    } else if (authentication.kind === 'operator') {
-      ensure(config.operatorCookie !== undefined, boundary, 'read-auth-required');
-      authenticationHeaders = { cookie: Redacted.value(config.operatorCookie), origin: origin.origin };
-    } else {
-      secrets.push(authentication.token);
-      authenticationHeaders = {
-        authorization: `Bearer ${Redacted.value(authentication.token)}`,
-        'x-ontos-composition-revision': authentication.revision,
-        'x-correlation-id': randomUUID(),
-      };
-    }
-    try {
-      const encoded = method === 'POST' ? JSON.stringify(body) : undefined;
-      if (method === 'POST') ensure(encoded !== undefined, boundary, 'input-contract');
-      const response = await fetch(url, {
-        ...(encoded === undefined ? {} : { body: encoded }),
-        headers: {
-          accept: 'application/json',
-          ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
-          ...(key === undefined ? {} : { 'idempotency-key': key }),
-          ...authenticationHeaders,
-        },
-        method,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(Math.min(20_000, remaining(boundary))),
-      });
-      if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel();
-        throw new SymmyProofFailure(boundary, 'redirect');
-      }
-      const success = [200, 202].includes(response.status);
-      const failure = (safeBody: SymmySafeFailureBody) => new SymmyProofFailure(
-        boundary,
-        authentication.kind !== 'symmy' && response.status === 401 ? 'read-auth-expired' :
-          authentication.kind !== 'symmy' && response.status === 403 ? 'read-permission' : 'http-status',
-        response.status, safeBody,
-      );
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      if (response.body === null) {
-        if (!success) throw failure({ kind: 'empty' });
-        throw new SymmyProofFailure(boundary, 'schema', response.status);
-      }
-      for await (const chunk of response.body) {
-        size += chunk.byteLength;
-        ensure(size <= MAX_RESPONSE_BYTES, boundary, 'response-too-large');
-        chunks.push(chunk);
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch {
-        if (!success) throw failure({ kind: 'non-json' });
-        throw new SymmyProofFailure(boundary, 'schema', response.status);
-      }
-      if (!success) {
-        // Scrub against every credential held by this run, including temporary owner assertions.
-        let safe = sanitizeSymmyFailureBody(parsed, config.apiKey);
-        for (const secret of secrets) {
-          if (JSON.stringify(safe).includes(Redacted.value(secret))) safe = { kind: 'unrecognized-problem' };
-        }
-        throw failure(safe);
-      }
-      return { status: response.status, body: parsed };
-    } catch (error) {
-      if (error instanceof SymmyProofFailure) throw error;
-      throw new SymmyProofFailure(
-        boundary,
-        Date.now() >= deadline || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))
-          ? 'timeout' : 'network',
-      );
-    }
-  };
-  let operatorRevision: string | undefined;
-  const operatorState = async (boundary: ProofBoundary) => {
-    ensure(config.operatorCookie !== undefined, boundary, 'read-auth-required');
-    if (operatorRevision !== undefined) return operatorRevision;
-    const session = decode(Schema.Struct({
-      identity: Schema.Struct({ tenantId: uuid, legalEntityId: uuid }),
-      state: Schema.Literal('authenticated'),
-    }), (await request(OPERATOR_SESSION_PATH, 'GET', undefined, undefined, boundary, { kind: 'operator' })).body, boundary);
-    ensure(
-      session.identity.tenantId === config.input.unitRef.tenantId &&
-      session.identity.legalEntityId === (config.legalEntityId ?? STAGE_LEGAL_ENTITY),
-      boundary, 'read-auth-scope',
-    );
-    const composition = decode(Schema.Struct({
-      compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
-      state: Schema.Literal('available'),
-    }), (await request(OPERATOR_COMPOSITION_PATH, 'GET', undefined, undefined, boundary, { kind: 'operator' })).body, boundary);
-    operatorRevision = composition.compositionRevision;
-    return operatorRevision;
-  };
-  const client: SymmyProofClient = {
-    async read(path, boundary) {
-      const result = await request(path, 'GET', undefined, undefined, boundary);
-      ensure(result.status === 200, boundary, 'http-status');
-      return result.body;
+  yield* client.ownerRead(
+    'merchandise/records',
+    {
+      view: { limit: 0, ordersLimit: 0, summary: true },
     },
-    async ownerRead(operation, query, boundary) {
-      const envelope = symmyOwnerReadEnvelope(operation, query, config.legalEntityId ?? STAGE_LEGAL_ENTITY, boundary);
-      const { query: ownerQuery, readName, ...scope } = envelope;
-      const compositionRevision = await operatorState(boundary);
-      const gateway = decode(Schema.Struct({
-        apiBaseUrl: Schema.String,
-        compositionRevision: Schema.String,
-        token: Schema.RedactedFromValue(Schema.NonEmptyString),
-      }), (await request(OPERATOR_GATEWAY_PATH, 'POST', {
-        ...scope, compositionRevision,
-      }, undefined, boundary, { kind: 'operator' })).body, boundary);
-      ensure(
-        gateway.compositionRevision === compositionRevision &&
-        gateway.apiBaseUrl.startsWith('/shell-super-app-api/module-api/') &&
-        !/[?#\\]|\/\.\.?\/|%/u.test(gateway.apiBaseUrl),
-        boundary, 'read-auth-scope',
-      );
-      const result = await request(`${gateway.apiBaseUrl}/reads/${readName}`, 'POST', ownerQuery, undefined, boundary, {
-        kind: 'owner', token: gateway.token, revision: compositionRevision,
-      });
-      ensure(result.status === 200, boundary, 'http-status');
-      return result.body;
-    },
-    async waitUntil(instant, boundary) {
-      const target = Date.parse(instant);
-      ensure(Number.isFinite(target), boundary, 'input-contract');
-      while (Date.now() < target) await sleep(Math.min(target - Date.now(), remaining(boundary)));
-      remaining(boundary);
-    },
-    write: (path, body, key, boundary) => {
-      ensure(/^[A-Za-z0-9._-]{1,200}$/u.test(key), boundary, 'input-contract');
-      return request(path, 'POST', body, key, boundary);
-    },
-    async settle(result, expected, boundary) {
-      if (result.status === 200) return assertAcceptedEffects(result.body, expected, boundary);
-      const admission = decode(AdmissionSchema, result.body, boundary);
-      let lastJob: SymmySafeFailureBody | undefined;
-      while (true) {
-        if (Date.now() >= deadline) throw new SymmyProofFailure(boundary, 'timeout', 200, lastJob);
-        const job = decode(JobSchema, await client.read(`${PREFIX}/jobs/${admission.jobId}`, boundary), boundary);
-        ensure(job.jobId === admission.jobId, boundary, 'job-identity');
-        if (job.status === 'completed_all') return assertAcceptedEffects(job, expected, boundary);
-        const counts = effectDiagnostic(job.items ?? []);
-        ensure(counts.kind === 'effects', boundary, 'unexpected');
-        lastJob = { ...counts, kind: 'job', status: job.status };
-        if (job.status === 'completed_partial' || job.status === 'completed_none') {
-          throw new SymmyProofFailure(boundary, 'job-terminal', 200, lastJob);
-        }
-        await sleep(Math.min(pollMs, remaining(boundary)));
-      }
-    },
-  };
-  return client;
-}
-const PRODUCT_EFFECTS = {
-  effectsAtLeast: 3, itemsAtLeast: 1, owners: { 'commerce.catalog': 2, 'commerce.pricing': 1 },
-} satisfies EffectExpectation;
-export async function proveSymmyProduct(
-  config: SymmyProofConfig,
-  client: SymmyProofClient = createSymmyProofClient(config),
-): Promise<SymmyProductProof> {
-  const names = makeSymmyProofNames();
-  const input = decode(SymmyProofInputSchema, config.input, 'configuration');
-  const path = `${PREFIX}/admin/products?q=${encodeURIComponent(names.prefix)}&limit=100`;
-  const before = decode(ProductPageSchema, await client.read(path, 'product-unseen'), 'product-unseen');
-  ensure(before.count === 0 && before.products.length === 0, 'product-unseen', 'not-unseen');
-  const effectiveFrom = new Date(Date.now() + 120_000).toISOString();
-  const baseAmount = '123.45';
-  const body = {
-    products: [{
-      identifier: { type: 'erpId', value: names.product },
-      lifecycle: 'ACTIVE',
-      name: names.product,
-      variants: [{
-        identifier: { type: 'variantId', value: names.variant },
-        sku: names.variant,
-        prices: [{ amount: baseAmount, currencyCode: input.currencyCode, effectiveFrom }],
-      }],
-    }],
-  };
-  validatePayload(SymmyProductsBatchRequestSchema, body, 'product-import');
-  const key = `${names.prefix}.product`;
-  const original = await client.settle(
-    await client.write(`${PREFIX}/products/batch`, body, key, 'product-import'),
-    PRODUCT_EFFECTS, 'product-import',
+    proofBoundaries.categoryReadback,
   );
-  const page = decode(ProductPageSchema, await client.read(path, 'product-readback'), 'product-readback');
-  ensure(page.count === 1 && page.products.length === 1, 'product-readback', 'readback');
-  const [product] = page.products;
-  ensure(product !== undefined, 'product-readback', 'readback');
-  ensure(
-    product.sourceRecordId === `product:erpId:${names.product}` && product.product.name === names.product,
-    'product-readback', 'readback',
-  );
-  const [source] = product.variantSources;
-  ensure(
-    product.variantSources.length === 1 && source?.sourceRecordId === `variant:variantId:${names.variant}`,
-    'product-readback', 'readback',
-  );
-  const variant = product.product.variants.find((item) => item.variantId === source.variantId);
-  ensure(variant !== undefined && product.product.variants.length === 1, 'product-readback', 'readback');
-  const replay = await client.settle(
-    await client.write(`${PREFIX}/products/batch`, body, key, 'product-replay'),
-    PRODUCT_EFFECTS, 'product-replay',
-  );
-  assertReplayIdentity(original, replay, 'product-replay');
-  const afterReplay = decode(ProductPageSchema, await client.read(path, 'product-replay'), 'product-replay');
-  ensure(isDeepStrictEqual(page, afterReplay), 'product-replay', 'readback');
-  return {
-    baseAmount, effectiveFrom, names, productRef: product.product.productRef,
-    variantRef: variant.variantRef, stockAmount: '17', listAmount: '98.76',
-  };
-}
-
-/** Environment values are consumed once; callers must not print config, fixtures, responses, or thrown causes. */
-export function readSymmyProofConfig(env: NodeJS.ProcessEnv): SymmyProofConfig {
-  try {
-    const key = env['SYMMY_API_KEY'];
-    const origin = env['SYMMY_PROOF_ORIGIN'] ?? 'https://ontos-stage.web-revolution.cz';
-    const input: unknown = env['SYMMY_PROOF_INPUT_JSON'] === undefined
-      ? AKROS_STAGE_PROOF_INPUT : JSON.parse(env['SYMMY_PROOF_INPUT_JSON']);
-    const stockSource: unknown = env['SYMMY_PROOF_STOCK_SOURCE_JSON'] === undefined
-      ? AKROS_STAGE_STOCK_SOURCE : JSON.parse(env['SYMMY_PROOF_STOCK_SOURCE_JSON']);
-    ensure(key !== undefined && key.trim().length > 0 && origin !== undefined, 'configuration', 'input-contract');
-    checkedOrigin(origin);
-    return {
-      apiKey: Redacted.make(key), input: decode(SymmyProofInputSchema, input, 'configuration'), origin,
-      legalEntityId: decode(uuid, env['SYMMY_PROOF_LEGAL_ENTITY_ID'] ?? STAGE_LEGAL_ENTITY, 'configuration'),
-      stockSource: decode(SymmyProofStockSourceSchema, stockSource, 'configuration'),
-    };
-  } catch {
-    throw new SymmyProofFailure('configuration', 'input-contract');
-  }
-}
-
-/** Parses a curl Netscape jar without exposing it. Only live, secure, same-origin Shell-wide cookies are selected. */
-export function parseSymmyOperatorCookieJar(contents: string, origin: string, nowMs = Date.now()): Redacted.Redacted<string> {
-  const host = checkedOrigin(origin).hostname;
-  const selected: string[] = [];
-  for (let line of contents.split(/\r?\n/u)) {
-    if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
-    else if (line.startsWith('#') || line.trim().length === 0) continue;
-    const fields = line.split('\t');
-    ensure(fields.length === 7, 'configuration', 'input-contract');
-    const [domain, subdomains, path, secure, expires, name, value] = fields;
-    ensure(
-      domain !== undefined && subdomains !== undefined && path !== undefined && secure !== undefined &&
-      expires !== undefined && name !== undefined && value !== undefined,
-      'configuration', 'input-contract',
-    );
-    const normalizedDomain = domain.replace(/^\./u, '').toLowerCase();
-    const domainMatches = host === normalizedDomain || (subdomains === 'TRUE' && host.endsWith(`.${normalizedDomain}`));
-    const expiry = Number(expires);
-    ensure(Number.isFinite(expiry) && expiry >= 0, 'configuration', 'input-contract');
-    if (!domainMatches || (expiry !== 0 && expiry * 1000 <= nowMs)) continue;
-    // The same operator session is used for auth/session, shell/composition and auth/gateway-context.
-    if (!(path === '/' || path === '/shell-super-app-api' || path === '/shell-super-app-api/')) continue;
-    ensure(
-      (secure === 'TRUE' || secure === 'FALSE') &&
-      /^[!#$%&'*+.^_`|~\dA-Za-z-]+$/u.test(name) && value.length > 0 &&
-      !/[\u0000-\u0020;\u007f]/u.test(value),
-      'configuration', 'input-contract',
-    );
-    selected.push(`${name}=${value}`);
-  }
-  ensure(selected.length > 0, 'configuration', 'read-auth-required');
-  return Redacted.make(selected.join('; '));
-}
-
-/** The secret file is read only when the parent explicitly executes this loader/CLI. Never at module import. */
-export async function loadSymmyProofConfig(
-  env: NodeJS.ProcessEnv, options: { readonly operatorReadback: boolean } = { operatorReadback: false },
-): Promise<SymmyProofConfig> {
-  ensure(!(env['SYMMY_API_KEY'] && env['SYMMY_API_KEY_FILE']), 'configuration', 'input-contract');
-  let config: SymmyProofConfig;
-  try {
-    config = env['SYMMY_API_KEY_FILE'] === undefined ? readSymmyProofConfig(env) : readSymmyProofConfig({
-      ...env, SYMMY_API_KEY: (await readFile(env['SYMMY_API_KEY_FILE'], 'utf8')).trim(),
-    });
-  } catch {
-    throw new SymmyProofFailure('configuration', 'input-contract');
-  }
-  if (!options.operatorReadback) return config;
-  const file = env['SYMMY_PROOF_OPERATOR_COOKIE_FILE'];
-  ensure(file !== undefined && file.length > 0, 'configuration', 'read-auth-required');
-  try {
-    return { ...config, operatorCookie: parseSymmyOperatorCookieJar(await readFile(file, 'utf8'), config.origin) };
-  } catch (error) {
-    if (error instanceof SymmyProofFailure) throw error;
-    throw new SymmyProofFailure('configuration', 'read-auth-required');
-  }
-}
-
-export function symmyProofFailureLine(error: unknown): string {
-  return error instanceof SymmyProofFailure ? error.message : 'FAIL full-proof:unexpected';
-}
-
-// Explicit opt-in: `SYMMY_API_KEY_FILE=... node <this file> --full` (or --commerce for the first-stage helper).
-if (import.meta.main) {
-  try {
-    const mode = process.argv[2];
-    ensure(
-      process.argv.length === 3 && (mode === '--commerce' || mode === '--full' || mode === '--help'),
-      'configuration', 'input-contract',
-    );
-    if (mode === '--help') {
-      process.stdout.write(
-        'Usage: SYMMY_API_KEY_FILE=<private-key-file> node stage-symmy-full-function-proof.mts --full|--commerce\n' +
-        'Alternative credential: SYMMY_API_KEY. Never supply both.\n' +
-        '--full requires SYMMY_PROOF_OPERATOR_COOKIE_FILE for operator-only readbacks; no integration grants are broadened.\n' +
-        'Optional: SYMMY_PROOF_ORIGIN, SYMMY_PROOF_INPUT_JSON, SYMMY_PROOF_LEGAL_ENTITY_ID,\n' +
-        'SYMMY_PROOF_STOCK_SOURCE_JSON (current Inventory qualification), SYMMY_PROOF_ORDER_IDS_JSON.\n',
-      );
-    } else {
-      const config = await loadSymmyProofConfig(process.env, { operatorReadback: mode === '--full' });
-      if (mode === '--commerce') {
-        await proveSymmyProductStockList(config);
-        process.stdout.write('PASS product-stock-list:effects-and-list-readback\n');
-      } else {
-        let options: SymmyStageProofOptions = {};
-        if (process.env['SYMMY_PROOF_ORDER_IDS_JSON'] !== undefined) {
-          try {
-            const ids: unknown = JSON.parse(process.env['SYMMY_PROOF_ORDER_IDS_JSON']);
-            options = { expectedOrderIds: decode(Schema.NonEmptyArray(text), ids, 'configuration') };
-          } catch {
-            throw new SymmyProofFailure('configuration', 'input-contract');
+  yield* runSymmyProofLanes(
+    [
+      {
+        name: 'commerce',
+        run: Effect.fn('run')(function* runProgram() {
+          const commerce = yield* proveSymmyProductStockList(config, client);
+          yield* report(
+            `RESULT commerce ${Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Struct({ sku: text })))({ sku: commerce.names.variant }))}`,
+          );
+          yield* pass(proofBoundaries.productReplay);
+          yield* pass(proofBoundaries.listPriceReadback);
+          const sku = yield* Effect.fromResult(
+            decode(
+              SkuLookupResponseSchema,
+              yield* client.ownerRead(
+                'catalog/sku-lookup',
+                { code: commerce.names.variant },
+                proofBoundaries.skuReadback,
+              ),
+              proofBoundaries.skuReadback,
+            ),
+          );
+          if (
+            !Match.value(sku).pipe(
+              Match.tag(
+                'found',
+                (found) =>
+                  found.state === 'CURRENT' &&
+                  found.displayCode === commerce.names.variant &&
+                  found.target.kind === 'VARIANT' &&
+                  found.target.variantId === commerce.variantRef.resourceId &&
+                  found.target.tenantId === commerce.variantRef.tenantId,
+              ),
+              Match.orElse(() => false),
+            )
+          ) {
+            return yield* new SymmyProofFailure(
+              proofBoundaries.skuReadback,
+              failureCodes.readback,
+              undefined,
+              undefined,
+            );
           }
-        }
-        await proveSymmyFullFunction(config, options);
-      }
+          yield* pass(proofBoundaries.skuReadback);
+          yield* proveOwnerStock(config, client, commerce);
+          yield* pass(proofBoundaries.stockReadback);
+          // Catalog page pricing evaluates the owner's current instant; do not mistake a scheduled future Price for absence.
+          yield* client.waitUntil(commerce.effectiveFrom, proofBoundaries.basePriceReadback);
+          const prices = yield* Effect.fromResult(
+            decode(
+              CatalogPagePricesResponseSchema,
+              yield* client.ownerRead(
+                'pricing/catalog-page-prices',
+                {
+                  ...config.input.commercialScope,
+                  currencyCode: config.input.currencyCode,
+                  items: [
+                    {
+                      catalogSelection: { productRef: commerce.productRef, variantRef: commerce.variantRef },
+                      unitBasis: { quantity: '1', unitRef: config.input.unitRef },
+                    },
+                  ],
+                },
+                proofBoundaries.basePriceReadback,
+              ),
+              proofBoundaries.basePriceReadback,
+            ),
+          );
+          if (
+            !Match.value(prices).pipe(
+              Match.tag('CATALOG_PAGE_PRICED', (priced) => {
+                const [price] = priced.prices;
+                return (
+                  priced.prices.length === 1 &&
+                  price !== undefined &&
+                  Match.value(price).pipe(
+                    Match.tag(
+                      'PRICE_FOUND',
+                      (found) =>
+                        found.priceGroupSelector.kind === 'NO_GROUP' &&
+                        decimalEqual(found.priceRevision.monetaryAmount.amount, commerce.baseAmount) &&
+                        found.priceRevision.monetaryAmount.currencyCode === config.input.currencyCode &&
+                        isDeepStrictEqual(found.catalogSelection, {
+                          productRef: commerce.productRef,
+                          variantRef: commerce.variantRef,
+                        }),
+                    ),
+                    Match.orElse(() => false),
+                  )
+                );
+              }),
+              Match.orElse(() => false),
+            )
+          ) {
+            return yield* new SymmyProofFailure(
+              proofBoundaries.basePriceReadback,
+              failureCodes.readback,
+              undefined,
+              undefined,
+            );
+          }
+          yield* pass(proofBoundaries.basePriceReadback);
+
+          return yield* Effect.void;
+        }),
+      },
+      {
+        name: 'customers',
+        run: Effect.fn('run')(function* runProgram() {
+          const context = yield* proveCustomers(config, client, makeSymmyProofNames());
+          yield* pass(proofBoundaries.customerReplay);
+          yield* proveOwnerAddresses(client, context);
+          yield* pass(proofBoundaries.addressReadback);
+          yield* proveOwnerGroups(client, context);
+          yield* pass(proofBoundaries.groupReplay);
+
+          return yield* Effect.void;
+        }),
+      },
+      {
+        name: 'native-catalog',
+        run: Effect.fn('run')(function* runProgram() {
+          const result = yield* proveNativeCatalog(config, client, makeSymmyProofNames());
+          const line = yield* Effect.fromResult(symmyNativeResultLine(result));
+          if (
+            !(
+              !line.includes(Redacted.value(config.apiKey)) &&
+              (config.operatorCookie === undefined || !line.includes(Redacted.value(config.operatorCookie)))
+            )
+          ) {
+            return yield* new SymmyProofFailure(
+              proofBoundaries.imageReadback,
+              failureCodes.readback,
+              undefined,
+              undefined,
+            );
+          }
+          yield* report(line);
+          yield* pass(proofBoundaries.categoryReadback);
+          yield* pass(proofBoundaries.imageReadback);
+
+          return yield* Effect.void;
+        }),
+      },
+      {
+        name: 'orders',
+        run: Effect.fn('run')(function* runProgram() {
+          yield* proveSymmyOrderExport(client, orderWiring);
+          yield* pass(proofBoundaries.orderExport);
+
+          return yield* Effect.void;
+        }),
+      },
+    ],
+    report,
+  );
+  yield* pass(proofBoundaries.fullProof);
+
+  return yield* Effect.void;
+});
+export type SymmyOwnerRead = keyof typeof OWNER_READS;
+interface HttpResult {
+  readonly body: Schema.Json;
+  readonly status: number;
+}
+export interface SymmyProofClient {
+  readonly ownerRead: (
+    operation: SymmyOwnerRead,
+    query: Schema.Json,
+    boundary: ProofBoundary,
+  ) => Effect.Effect<Schema.Json, SymmyProofFailure>;
+  readonly read: (path: string, boundary: ProofBoundary) => Effect.Effect<Schema.Json, SymmyProofFailure>;
+  readonly settle: (
+    result: HttpResult,
+    expected: EffectExpectation,
+    boundary: ProofBoundary,
+  ) => Effect.Effect<Items, SymmyProofFailure>;
+  readonly waitUntil: (instant: string, boundary: ProofBoundary) => Effect.Effect<void, SymmyProofFailure>;
+  readonly write: <Input>(
+    path: string,
+    body: Input,
+    key: string,
+    boundary: ProofBoundary,
+  ) => Effect.Effect<HttpResult, SymmyProofFailure>;
+}
+
+const ProofEnvironmentSchema = Schema.Struct({
+  SYMMY_API_KEY: Schema.optionalKey(Schema.String),
+  SYMMY_API_KEY_FILE: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_INPUT_JSON: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_LEGAL_ENTITY_ID: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_OPERATOR_COOKIE_FILE: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_ORDER_IDS_JSON: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_ORIGIN: Schema.optionalKey(Schema.String),
+  SYMMY_PROOF_STOCK_SOURCE_JSON: Schema.optionalKey(Schema.String),
+});
+export type SymmyProofEnvironment = typeof ProofEnvironmentSchema.Type;
+/** Environment values are consumed once; callers must not print config, fixtures, responses, or thrown causes. */
+export const readSymmyProofConfig = (env: SymmyProofEnvironment): Result.Result<SymmyProofConfig, SymmyProofFailure> =>
+  Result.gen(function* readSymmyProofConfigProgram() {
+    const values = yield* decode(ProofEnvironmentSchema, env, proofBoundaries.configuration);
+    const key = values.SYMMY_API_KEY;
+    const origin = values.SYMMY_PROOF_ORIGIN ?? 'https://ontos-stage.web-revolution.cz';
+    const input =
+      values.SYMMY_PROOF_INPUT_JSON === undefined
+        ? yield* decode(SymmyProofInputSchema, AKROS_STAGE_PROOF_INPUT, proofBoundaries.configuration)
+        : yield* decode(
+            Schema.fromJsonString(SymmyProofInputSchema),
+            values.SYMMY_PROOF_INPUT_JSON,
+            proofBoundaries.configuration,
+          );
+    const stockSource =
+      values.SYMMY_PROOF_STOCK_SOURCE_JSON === undefined
+        ? yield* decode(SymmyProofStockSourceSchema, AKROS_STAGE_STOCK_SOURCE, proofBoundaries.configuration)
+        : yield* decode(
+            Schema.fromJsonString(SymmyProofStockSourceSchema),
+            values.SYMMY_PROOF_STOCK_SOURCE_JSON,
+            proofBoundaries.configuration,
+          );
+    if (!(key !== undefined && key.trim().length > 0)) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract, undefined, undefined),
+      );
     }
-  } catch (error) {
-    process.stderr.write(`${symmyProofFailureLine(error)}\n`);
-    process.exitCode = 1;
+    yield* checkedOrigin(origin);
+    return {
+      apiKey: Redacted.make(key),
+      input,
+      legalEntityId: yield* decode(
+        legalEntityIdSchema,
+        values.SYMMY_PROOF_LEGAL_ENTITY_ID ?? STAGE_LEGAL_ENTITY,
+        proofBoundaries.configuration,
+      ),
+      origin,
+      stockSource,
+    };
+  }).pipe(
+    Result.mapError(
+      (cause) =>
+        new SymmyProofFailure(
+          proofBoundaries.configuration,
+          failureCodes.inputContract,
+          undefined,
+          undefined,
+          Redacted.make(cause),
+        ),
+    ),
+  );
+
+const CookieJarRowSchema = Schema.Tuple([
+  Schema.String,
+  Schema.String,
+  Schema.String,
+  Schema.String,
+  Schema.String,
+  Schema.String,
+  Schema.String,
+]);
+/** Parses a curl Netscape jar without exposing it. Only live, same-origin Shell-wide cookies are selected. */
+export const parseSymmyOperatorCookieJar = (
+  contents: string,
+  origin: string,
+  nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe()),
+) =>
+  Result.gen(function* parseSymmyOperatorCookieJarProgram() {
+    const host = (yield* checkedOrigin(origin)).hostname;
+    const selected: string[] = [];
+    const lines = contents.split(/\r?\n/u).flatMap((line) => {
+      if (line.startsWith('#HttpOnly_')) {
+        return [line.slice('#HttpOnly_'.length)];
+      }
+      if (line.startsWith('#') || line.trim().length === 0) {
+        return [];
+      }
+      return [line];
+    });
+    for (const line of lines) {
+      const fields = line.split('\t');
+      if (fields.length !== 7) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract, undefined, undefined),
+        );
+      }
+      const [domain, subdomains, path, secure, expires, name, value] = yield* decode(
+        CookieJarRowSchema,
+        fields,
+        proofBoundaries.configuration,
+      );
+      const normalizedDomain = domain.replace(/^\./u, '').toLowerCase();
+      const domainMatches =
+        host === normalizedDomain || (subdomains === 'TRUE' && host.endsWith(`.${normalizedDomain}`));
+      const expiry = Number(expires);
+      if (!(Number.isFinite(expiry) && expiry >= 0)) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract, undefined, undefined),
+        );
+      }
+      // One Shell-wide cookie must cover session, composition and gateway-context.
+      if (
+        !domainMatches ||
+        (expiry !== 0 && expiry * 1000 <= nowMs) ||
+        !(path === '/' || path === '/shell-super-app-api' || path === '/shell-super-app-api/')
+      ) {
+        continue;
+      }
+      if (
+        !(
+          (secure === 'TRUE' || secure === 'FALSE') &&
+          /^[!#$%&'*+.^_`|~\dA-Za-z-]+$/u.test(name) &&
+          value.length > 0 &&
+          !value.includes(';') &&
+          value.split('').every((character) => character > ' ' && character !== '\u007F')
+        )
+      ) {
+        return yield* Result.fail(
+          new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract, undefined, undefined),
+        );
+      }
+      selected.push(`${name}=${value}`);
+    }
+    if (selected.length <= 0) {
+      return yield* Result.fail(
+        new SymmyProofFailure(proofBoundaries.configuration, failureCodes.readAuthRequired, undefined, undefined),
+      );
+    }
+    return Redacted.make(selected.join('; '));
+  });
+
+const DEFAULT_LOAD_OPTIONS = { operatorReadback: false };
+const ExclusiveCredentialEnvironmentSchema = ProofEnvironmentSchema.check(
+  Schema.makeFilter(
+    (values) =>
+      !(
+        values.SYMMY_API_KEY !== undefined &&
+        values.SYMMY_API_KEY !== '' &&
+        values.SYMMY_API_KEY_FILE !== undefined &&
+        values.SYMMY_API_KEY_FILE !== ''
+      ),
+  ),
+);
+/** The FileSystem service is obtained only when the parent executes this loader, never during import. */
+export const loadSymmyProofConfig = Effect.fn('SymmyProofConfiguration')(function* loadSymmyProofConfigProgram(
+  env: SymmyProofEnvironment,
+  options: { readonly operatorReadback: boolean } = DEFAULT_LOAD_OPTIONS,
+) {
+  const values = yield* Config.schema(ExclusiveCredentialEnvironmentSchema)
+    .parse(ConfigProvider.fromUnknown(env, { preserveEmptyStrings: true }))
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new SymmyProofFailure(
+            proofBoundaries.configuration,
+            failureCodes.inputContract,
+            undefined,
+            undefined,
+            Redacted.make(cause),
+          ),
+      ),
+    );
+  const fs = yield* FileSystem.FileSystem;
+  const config = yield* values.SYMMY_API_KEY_FILE === undefined
+    ? Effect.fromResult(readSymmyProofConfig(values))
+    : fs.readFileString(values.SYMMY_API_KEY_FILE).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SymmyProofFailure(
+              proofBoundaries.configuration,
+              failureCodes.inputContract,
+              undefined,
+              undefined,
+              Redacted.make(cause),
+            ),
+        ),
+        Effect.flatMap((key) => Effect.fromResult(readSymmyProofConfig({ ...values, SYMMY_API_KEY: key.trim() }))),
+      );
+  if (!options.operatorReadback) {
+    return config;
   }
+  const file = yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(values.SYMMY_PROOF_OPERATOR_COOKIE_FILE).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SymmyProofFailure(
+          proofBoundaries.configuration,
+          failureCodes.readAuthRequired,
+          undefined,
+          undefined,
+          Redacted.make(cause),
+        ),
+    ),
+  );
+  const contents = yield* fs
+    .readFileString(file)
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new SymmyProofFailure(
+            proofBoundaries.configuration,
+            failureCodes.readAuthRequired,
+            undefined,
+            undefined,
+            Redacted.make(cause),
+          ),
+      ),
+    );
+  const operatorCookie = yield* Effect.fromResult(parseSymmyOperatorCookieJar(contents, config.origin));
+  return { ...config, operatorCookie };
+});
+
+const command = Command.make(
+  'stage-symmy-full-function-proof',
+  {
+    commerce: Flag.Boolean('commerce'),
+    full: Flag.Boolean('full'),
+  },
+  Effect.fn('SymmyProofCommand')(function* commandProgram(flags) {
+    if (flags.commerce === flags.full) {
+      return yield* new SymmyProofFailure(proofBoundaries.configuration, failureCodes.inputContract);
+    }
+    const env = yield* Config.schema(ProofEnvironmentSchema).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SymmyProofFailure(
+            proofBoundaries.configuration,
+            failureCodes.inputContract,
+            undefined,
+            undefined,
+            Redacted.make(cause),
+          ),
+      ),
+    );
+    const config = yield* loadSymmyProofConfig(env, { operatorReadback: flags.full });
+    if (flags.commerce) {
+      yield* proveSymmyProductStockList(config);
+      yield* Console.log('PASS product-stock-list:effects-and-list-readback');
+    } else {
+      const options: SymmyStageProofOptions =
+        env.SYMMY_PROOF_ORDER_IDS_JSON === undefined
+          ? {}
+          : {
+              expectedOrderIds: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.NonEmptyArray(text)))(
+                env.SYMMY_PROOF_ORDER_IDS_JSON,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new SymmyProofFailure(
+                      proofBoundaries.configuration,
+                      failureCodes.inputContract,
+                      undefined,
+                      undefined,
+                      Redacted.make(cause),
+                    ),
+                ),
+              ),
+            };
+      yield* proveSymmyFullFunction(config, options);
+    }
+
+    return yield* Effect.void;
+  }),
+);
+// Explicit opt-in only. The command and its services remain inert when native tests import this file.
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    Command.run(command, { renderErrors: false, version: '1.0.0' }).pipe(
+      Effect.mapError((cause) =>
+        Schema.is(SymmyProofFailure)(cause)
+          ? cause
+          : new SymmyProofFailure(
+              proofBoundaries.configuration,
+              failureCodes.inputContract,
+              undefined,
+              undefined,
+              Redacted.make(cause),
+            ),
+      ),
+      Effect.tapCause((cause) => Console.error(symmyProofFailureLine(Cause.squash(cause)))),
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+    ),
+    { disableErrorReporting: true },
+  );
 }

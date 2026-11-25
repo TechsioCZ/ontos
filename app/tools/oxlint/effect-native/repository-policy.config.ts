@@ -22,6 +22,7 @@ export default defineConfig({
       files: ['tools/**/tests/**'],
       rules: {
         'effect-native/no-effect-run-in-tests': 'error',
+        'effect-native/no-unregistered-native-test-imports': 'error',
         'eslint/no-restricted-imports': [
           'error',
           {

@@ -1860,6 +1860,24 @@ const requireMatchingGuestScope = (input: MatchPartyInput) => {
     : Effect.fail(new PartyEvidenceInsufficient({ code: 'party_evidence_insufficient', reason }));
 };
 
+const confirmedSourceMatchPartyId = Effect.fn('PartyMatchingPersistenceService.confirmedSourceMatchPartyId')(
+  function* confirmedSourcePartyId(
+    transaction: Pick<PartyTransaction, 'select'>,
+    input: MatchPartyInput,
+    assertion: PartyClientSourceAssertion | undefined,
+  ) {
+    const source =
+      assertion === undefined
+        ? undefined
+        : yield* findPartySourceDecision(transaction, input.tenantId, assertion, false);
+    const confirmedPartyId = source?.partyId ?? undefined;
+    if (confirmedPartyId !== undefined) {
+      yield* requireCurrentSourceParty(transaction, input.tenantId, confirmedPartyId, input.candidate);
+    }
+    return confirmedPartyId;
+  },
+);
+
 /** Records an identity decision without creating or changing a canonical Party. */
 export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty')(function* recordMatchDecision(
   transaction: Pick<PartyTransaction, 'select' | 'insert'>,
@@ -1889,12 +1907,7 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
       reason: 'Future-effective evidence cannot establish a current identity decision',
     });
   }
-  const source =
-    assertion === undefined ? undefined : yield* findPartySourceDecision(transaction, input.tenantId, assertion, false);
-  const confirmedPartyId = source?.partyId ?? undefined;
-  if (confirmedPartyId !== undefined) {
-    yield* requireCurrentSourceParty(transaction, input.tenantId, confirmedPartyId, input.candidate);
-  }
+  const confirmedPartyId = yield* confirmedSourceMatchPartyId(transaction, input, assertion);
   const partyIds =
     confirmedPartyId === undefined
       ? yield* findWeakCandidatePartyIds(transaction, input.tenantId, input.candidate, now)

@@ -24,6 +24,9 @@ const SCRIPTS = [
   ['scripts/demo/symmy-demo-exchange-authority.mts'],
 ];
 const ADMIN_URL = 'postgres://admin:never-log-this@db/stage';
+const STAGE_BOOTSTRAP_FAILED = 'stage Symmy demo bootstrap failed; composition not published';
+const STAGE_BOOTSTRAP_STOP = '[app-host] stage Symmy demo bootstrap failed; composition not published';
+const UNRELATED_SECRET = 'never-inherit-this';
 const SQL_TEXT = 'select secret_value from private_table';
 const CUSTOMER_SETTINGS = {
   DATABASE_URL: 'postgres://ontos_runtime:never-log-runtime@db/stage',
@@ -34,15 +37,21 @@ const CUSTOMER_SETTINGS = {
 const STAGE = {
   ...CUSTOMER_SETTINGS,
   DATABASE_ADMIN_URL: ADMIN_URL,
-  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'http://not-published-yet/composition',
+  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://not-published-yet/composition',
   ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"unrelated":"never-inherit-this"}}',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
 };
 
 it('prints only allowlisted host-authored stop reasons, never dynamic reasons or raw causes', () => {
-  expect(formatAppHostStop(Cause.fail(new AppHostError({
-    reason: 'Unable to resolve the existing AKROS customer source writers',
-  })))).toBe('[app-host] stopped: Unable to resolve the existing AKROS customer source writers');
+  expect(
+    formatAppHostStop(
+      Cause.fail(
+        new AppHostError({
+          reason: 'Unable to resolve the existing AKROS customer source writers',
+        }),
+      ),
+    ),
+  ).toBe('[app-host] stopped: Unable to resolve the existing AKROS customer source writers');
   for (const cause of [
     Cause.fail(new AppHostError({ reason: `${ADMIN_URL}; ${SQL_TEXT}` })),
     Cause.fail(new Error(`${ADMIN_URL}; ${SQL_TEXT}`)),
@@ -56,7 +65,9 @@ it('prints only allowlisted host-authored stop reasons, never dynamic reasons or
 it('preserves only exact typed discovery phases and replaces every other source error', () => {
   for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader']) {
     const error = customerDiscoveryHostError(new SymmyDemoCustomerAuthorityError({ reason: phase }));
-    expect(formatAppHostStop(Cause.fail(error))).toBe(`[app-host] stopped: AKROS customer discovery failed phase=${phase}`);
+    expect(formatAppHostStop(Cause.fail(error))).toBe(
+      `[app-host] stopped: AKROS customer discovery failed phase=${phase}`,
+    );
   }
   for (const problem of [
     new SymmyDemoCustomerAuthorityError({ reason: `${ADMIN_URL}; ${SQL_TEXT}` }),
@@ -118,14 +129,21 @@ it.live('enrolls the native receiver before all source bootstraps with only supe
         stderr: 'ignore',
         stdout: 'ignore',
       });
-      expect(command.options.env).toEqual({
-        ...(command.args.length > 1 ? CUSTOMER_SETTINGS : {}),
-        ...(command.args[0] === SCRIPTS[0][0] ? { DATABASE_URL: CUSTOMER_SETTINGS.DATABASE_URL } : {}),
+      const compileCache = command.options.env?.NODE_COMPILE_CACHE;
+      expect(compileCache).toEqual(expect.any(String));
+      const expected: NonNullable<ChildProcess.CommandOptions['env']> = {
         DATABASE_ADMIN_URL: ADMIN_URL,
-        NODE_COMPILE_CACHE: expect.any(String),
+        NODE_COMPILE_CACHE: compileCache,
         ONTOS_DATABASE_POOL_SHARED: 'false',
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-      });
+      };
+      if (command.args.length > 1) {
+        Object.assign(expected, CUSTOMER_SETTINGS);
+      }
+      if (command.args[0] === SCRIPTS[0][0]) {
+        expected.DATABASE_URL = CUSTOMER_SETTINGS.DATABASE_URL;
+      }
+      expect(command.options.env).toEqual(expected);
     }
     const lines = (yield* output.logLines).map(String);
     for (const kind of ['inventory-authority', 'source-policies', 'customer-authority', 'exchange-authority']) {
@@ -170,14 +188,14 @@ for (const [failAt, kind] of [
       );
       expect(published).toBe(false);
       expect(calls).toHaveLength(failAt);
-      expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
+      expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
       const errors = yield* output.errorLines;
       expect(errors).toEqual([
         `[app-host] stage Symmy ${kind} bootstrap failed category=exit exitCode=${exitCode}`,
-        '[app-host] stage Symmy demo bootstrap failed; composition not published',
+        STAGE_BOOTSTRAP_STOP,
       ]);
       const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
-      for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
+      for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, UNRELATED_SECRET, SQL_TEXT]) {
         expect(logs).not.toContain(secret);
       }
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -188,11 +206,11 @@ it.live('fails stage configuration before starting any command and does not expo
   Effect.gen(function* missingAdmin() {
     const { calls, output, run } = yield* fixture();
     const problem = yield* run({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' }).pipe(Effect.flip);
-    expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
+    expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
     expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([
       '[app-host] stage Symmy source-policies bootstrap failed category=config',
-      '[app-host] stage Symmy demo bootstrap failed; composition not published',
+      STAGE_BOOTSTRAP_STOP,
     ]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -201,12 +219,14 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
   Effect.gen(function* failedSpawn() {
     const output = yield* TestConsole.make;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.fail(systemError({
-        _tag: 'PermissionDenied',
-        description: `${ADMIN_URL}; ${SQL_TEXT}`,
-        method: 'spawn',
-        module: 'ChildProcessSpawner',
-      })),
+      Effect.fail(
+        systemError({
+          _tag: 'PermissionDenied',
+          description: `${ADMIN_URL}; ${SQL_TEXT}`,
+          method: 'spawn',
+          module: 'ChildProcessSpawner',
+        }),
+      ),
     );
     const problem = yield* bootstrapStageSymmyDemo.pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(STAGE)),
@@ -214,14 +234,14 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
       Effect.provideService(Console.Console, output),
       Effect.flip,
     );
-    expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
+    expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
     const errors = yield* output.errorLines;
     expect(errors).toEqual([
       '[app-host] stage Symmy inventory-authority bootstrap failed category=spawn',
-      '[app-host] stage Symmy demo bootstrap failed; composition not published',
+      STAGE_BOOTSTRAP_STOP,
     ]);
     const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
-    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
+    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, UNRELATED_SECRET, SQL_TEXT]) {
       expect(logs).not.toContain(secret);
     }
   }),
@@ -234,14 +254,14 @@ it.live('identifies native receiver configuration failure before starting a chil
       DATABASE_ADMIN_URL: ADMIN_URL,
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
     }).pipe(Effect.flip);
-    expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
+    expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
     expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([
       '[app-host] stage Symmy inventory-authority bootstrap failed category=config',
-      '[app-host] stage Symmy demo bootstrap failed; composition not published',
+      STAGE_BOOTSTRAP_STOP,
     ]);
     const logs = JSON.stringify([...(yield* output.logLines), ...(yield* output.errorLines)]);
-    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
+    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, UNRELATED_SECRET, SQL_TEXT]) {
       expect(logs).not.toContain(secret);
     }
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -260,7 +280,7 @@ it('does not make the supervisor admin URL available to owners, even through the
 });
 
 it('runs the boot hook after migrations and the unchanged parallel access/key proofs, before publication', () => {
-  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf8');
+  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
   const startup = host.slice(host.indexOf('const startup = Effect.gen('));
   const hook = startup.indexOf('yield* bootstrapStageSymmyDemo.pipe(');
   expect(hook).toBeGreaterThan(startup.indexOf("runChild('migrator'"));

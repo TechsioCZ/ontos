@@ -118,6 +118,7 @@ import {
   Exit,
   Fiber,
   FileSystem,
+  flow,
   Layer,
   Option,
   Order,
@@ -200,32 +201,40 @@ const CUSTOMER_DISCOVERY_REASONS: ReadonlyMap<string, string> = new Map([
   ['party-reader', 'AKROS customer discovery failed phase=party-reader'],
 ]);
 
-export const customerDiscoveryHostError = (problem: unknown): AppHostError =>
-  failure(
-    (problem instanceof SymmyDemoCustomerAuthorityError ? CUSTOMER_DISCOVERY_REASONS.get(problem.reason) : undefined) ??
-      'Unable to resolve the existing AKROS customer source writers',
-  );
+const CUSTOMER_DISCOVERY_FAILED = 'Unable to resolve the existing AKROS customer source writers';
+const STAGE_BOOTSTRAP_FAILED = 'stage Symmy demo bootstrap failed; composition not published';
+const HOST_SUPERSEDED = 'this host was superseded and never writes the authority again';
 
-/** Only host-authored typed reasons are public diagnostics; never render a platform/database cause. */
-export const formatAppHostStop = (cause: Cause.Cause<unknown>): string => {
-  const error = Cause.findErrorOption(cause);
-  return Option.isSome(error) && error.value instanceof AppHostError && SAFE_HOST_STOP_REASONS.has(error.value.reason)
-    ? `[app-host] stopped: ${error.value.reason}`
-    : '[app-host] stopped: unclassified host failure';
-};
+export const customerDiscoveryHostError = flow(
+  Schema.decodeUnknownOption(Schema.instanceOf(SymmyDemoCustomerAuthorityError)),
+  Option.flatMap((problem) => Option.fromUndefinedOr(CUSTOMER_DISCOVERY_REASONS.get(problem.reason))),
+  Option.getOrElse(() => CUSTOMER_DISCOVERY_FAILED),
+  failure,
+);
 
 /** Dynamic host reasons can include configuration names or downstream details; only these literals may be logged. */
 const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
   ...CUSTOMER_DISCOVERY_REASONS.values(),
-  'Unable to resolve the existing AKROS customer source writers',
+  CUSTOMER_DISCOVERY_FAILED,
   'ONTOS_OWNER_SECRETS_JSON must be an owner record of string secrets',
   'Unable to verify the Core bootstrap catalog before owner migrations',
-  'stage Symmy demo bootstrap failed; composition not published',
+  STAGE_BOOTSTRAP_FAILED,
   'The Shell is not hosted',
   'the module credential provisioning output is malformed',
   'module credential provisioning exceeded its time budget',
-  'this host was superseded and never writes the authority again',
+  HOST_SUPERSEDED,
 ]);
+
+/** Only host-authored typed reasons are public diagnostics; never render a platform/database cause. */
+export const formatAppHostStop = (cause: Cause.Cause<unknown>): string => {
+  const error = Cause.findErrorOption(cause).pipe(
+    Option.flatMap(Schema.decodeUnknownOption(Schema.instanceOf(AppHostError))),
+    Option.filter((problem) => SAFE_HOST_STOP_REASONS.has(problem.reason)),
+  );
+  return Option.isSome(error)
+    ? `[app-host] stopped: ${error.value.reason}`
+    : '[app-host] stopped: unclassified host failure';
+};
 
 const OwnerSecretsSchema = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
@@ -647,15 +656,16 @@ const runChild = (
   );
 
 /** Stage supervisor commands, in dependency order; none runs inside an owner process. */
+const CUSTOMER_AUTHORITY = 'customer-authority';
 export const STAGE_SYMMY_DEMO_BOOTSTRAPS = [
-  { kind: 'inventory-authority', script: 'scripts/demo/symmy-demo-inventory-authority.mts', args: [] },
-  { kind: 'source-policies', script: 'scripts/demo/symmy-demo-source-policies.mts', args: [] },
+  { args: [], kind: 'inventory-authority', script: 'scripts/demo/symmy-demo-inventory-authority.mts' },
+  { args: [], kind: 'source-policies', script: 'scripts/demo/symmy-demo-source-policies.mts' },
   {
-    kind: 'customer-authority',
-    script: 'scripts/demo/symmy-demo-customer-authority.mts',
     args: ['--mode', 'apply'],
+    kind: CUSTOMER_AUTHORITY,
+    script: 'scripts/demo/symmy-demo-customer-authority.mts',
   },
-  { kind: 'exchange-authority', script: 'scripts/demo/symmy-demo-exchange-authority.mts', args: [] },
+  { args: [], kind: 'exchange-authority', script: 'scripts/demo/symmy-demo-exchange-authority.mts' },
 ] as const;
 
 /** Customer enrollment reads the existing owner configuration, never the owner's unrelated secrets. */
@@ -681,13 +691,13 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
     DATABASE_ADMIN_URL: Redacted.value(admin),
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
   };
-  for (const { kind, script, args } of STAGE_SYMMY_DEMO_BOOTSTRAPS) {
+  for (const { args, kind, script } of STAGE_SYMMY_DEMO_BOOTSTRAPS) {
     const childSettings = yield* Effect.gen(function* bootstrapSettings() {
-      const selected: Record<string, string> = { ...settings };
-      if (kind === 'customer-authority' || kind === 'inventory-authority') {
+      const selected: ChildEnvironment = { ...settings };
+      if (kind === CUSTOMER_AUTHORITY || kind === 'inventory-authority') {
         selected.DATABASE_URL = Redacted.value(yield* Config.Redacted('DATABASE_URL'));
       }
-      if (kind === 'customer-authority') {
+      if (kind === CUSTOMER_AUTHORITY) {
         for (const key of SYMMY_DEMO_CUSTOMER_SETTINGS) {
           const value = yield* Config.option(Config.String(key));
           if (Option.isSome(value)) {
@@ -715,7 +725,7 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
   }
   yield* Console.log('[app-host] stage Symmy demo bootstrap complete');
 }).pipe(
-  Effect.mapError(() => failure('stage Symmy demo bootstrap failed; composition not published')),
+  Effect.mapError(() => failure(STAGE_BOOTSTRAP_FAILED)),
   Effect.tapError(({ reason }) => Console.error(`[app-host] ${reason}`)),
 );
 
@@ -2059,7 +2069,9 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 /** A provisioning pass succeeded only when no caller was left without its key. */
 const provisionedEveryKey = (provisioned: ProvisioningOutput) => provisioned.failedAppIds.length === 0;
 
-export const runAppHost = Effect.gen(function* runAppHost() {
+export const runAppHost = Effect.fn(function* hostProgram<R>(
+  discoverCustomers: Effect.Effect<Effect.Success<typeof readSymmyDemoCustomerEnvironment>, AppHostError, R>,
+) {
   const hostStarted = yield* Clock.monotonicTimeNanos;
   yield* startProcessObservability('supervisor');
   // First thing: a restart inside this container must know when the container first booted (restartMayPublish).
@@ -2079,13 +2091,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const customerSourceEnvironment =
-    environment === 'stage'
-      ? (yield* readSymmyDemoCustomerEnvironment.pipe(
-          Effect.provide(SymmyDemoCustomerAuthorityLive),
-          Effect.mapError(customerDiscoveryHostError),
-        )).environment
-      : {};
+  const customerSourceEnvironment = environment === 'stage' ? (yield* discoverCustomers).environment : {};
   const derived = {
     ...derivedEnvironment(publicOrigin, storefrontOrigin, CONTROL_PORT, ports, shopStorefrontOrigin, environment),
     ...customerSourceEnvironment,
@@ -2275,7 +2281,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         superseded: drain.superseded,
       });
       if (!allowed) {
-        return yield* failure('this host was superseded and never writes the authority again');
+        return yield* failure(HOST_SUPERSEDED);
       }
       yield* writeAndHold(pointer, snapshot, (journal) =>
         publishApplicationCompositionAuthoritySnapshot(snapshot, journal, Effect.void),
@@ -2296,7 +2302,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
           superseded: drain.superseded,
         });
         if (!allowed) {
-          return yield* failure('this host was superseded and never writes the authority again');
+          return yield* failure(HOST_SUPERSEDED);
         }
         yield* writeAndHold(pointer, snapshot, (journal) =>
           renewApplicationCompositionAuthoritySnapshot(snapshot, journal),
@@ -2582,7 +2588,11 @@ export const stopSignal = Effect.callback<string>((resume) => {
 }).pipe(Effect.flatMap((signal) => Console.log(`[app-host] ${signal} received; stopping gracefully`)));
 
 if (import.meta.main) {
-  const program = runAppHost.pipe(
+  // Supply discovery lazily: the host runs it only on stage and keeps its database scope private.
+  const program = readSymmyDemoCustomerEnvironment.pipe(
+    Effect.provide(SymmyDemoCustomerAuthorityLive),
+    Effect.mapError(customerDiscoveryHostError),
+    runAppHost,
     Effect.scoped,
     Effect.raceFirst(stopSignal),
     Effect.provide(NodeHttpServer.layer(withKeepAlive(createServer), { host: '127.0.0.1', port: CONTROL_PORT })),

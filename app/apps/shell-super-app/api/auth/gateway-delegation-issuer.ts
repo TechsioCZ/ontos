@@ -362,8 +362,9 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
   // lasting, deliberate state: switched off (`inactive`) or retired with its tenant (`archived`). One that is only
   // stopped for now (`suspended`, `quarantined`) is a plain refusal: an outage to the caller, never an answer.
   const readableStates: ReadonlySet<string> = new Set(tenantStatesAllowingAccess('read'));
+  const statesByModule = new Map(states.toReversed().map(({ moduleKey, state }) => [moduleKey, state]));
   for (const moduleKey of destinationModules) {
-    const destinationState = states.find((state) => state.moduleKey === moduleKey)?.state;
+    const destinationState = statesByModule.get(moduleKey);
     if (destinationState === undefined || !readableStates.has(destinationState)) {
       return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
         ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
@@ -747,8 +748,8 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
       assertion: payload.subject.sourceAssertion,
       binding,
       currentDate,
-      now,
       nativeRouteRead: true,
+      now,
       requestedCompositionRevision: payload.compositionRevision,
     });
     const witness = yield* admitNativeRouteRead({
@@ -766,23 +767,29 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
       return yield* delegationForbidden('conditional_requirement_refused')();
     }
     yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
-    const states = yield* loadModuleStates(admitted.principal.tenantId, admitted.moduleAccess.map((item) => item.moduleKey));
+    const states = yield* loadModuleStates(
+      admitted.principal.tenantId,
+      admitted.moduleAccess.map((item) => item.moduleKey),
+    );
     yield* requireModuleStates(states, admitted.moduleAccess);
-    const requestFingerprint = yield* fingerprintOf({
-      actor: GatewayActorClaimSchema,
-      audience: Schema.String,
-      compositionRevision: Schema.String,
-      principal: GatewayTrustedPrincipalContextSchema,
-      routeScope: RegisteredGatewayRouteScopeSchema,
-      requirementKey: Schema.String,
-    }, {
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal: admitted.principal,
-      routeScope: admitted.routeScope,
-      requirementKey: payload.subject.operationRequirementKey,
-    });
+    const requestFingerprint = yield* fingerprintOf(
+      {
+        actor: GatewayActorClaimSchema,
+        audience: Schema.String,
+        compositionRevision: Schema.String,
+        principal: GatewayTrustedPrincipalContextSchema,
+        requirementKey: Schema.String,
+        routeScope: RegisteredGatewayRouteScopeSchema,
+      },
+      {
+        actor,
+        audience: payload.audience,
+        compositionRevision: payload.compositionRevision,
+        principal: admitted.principal,
+        requirementKey: payload.subject.operationRequirementKey,
+        routeScope: admitted.routeScope,
+      },
+    );
     yield* reserveExchange({
       exchangeId: payload.exchangeId,
       expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,

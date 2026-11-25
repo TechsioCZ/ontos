@@ -1,18 +1,23 @@
-import { Effect, Option, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { Effect, Layer, ManagedRuntime, Option, Result, Schema } from 'effect';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
-import { planAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
-import { ReleaseInternalWorkloadError } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import {
+  planAdditiveCompanyInternalWorkloads,
+  ReleaseInternalWorkloadError,
+} from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
 import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
-import { TenantIdSchema, PrincipalIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { LegalEntityIdSchema, TenantIdSchema, PrincipalIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 import { stageWorkloadBindingIds } from './register-stage-workloads.mts';
 
 import {
+  SymmyDemoPartyBindingSchema,
+  SymmyDemoSourceWriterCandidateSchema,
   buildSymmyDemoCustomerRoutes,
   buildSymmySourceSyncProcessingPolicy,
   SYMMY_DEMO_CUSTOMERS_READ_ROUTE,
@@ -40,108 +45,125 @@ import {
   symmyDemoCustomerWorkloadRequirements,
 } from './symmy-demo-customer-authority.mts';
 
+await using runtime = ManagedRuntime.make(Layer.empty);
+
+const partyReaderWorkload = 'party.registry.source-read';
+const createPurposePath = '/privacy/actions/create-processing-purpose';
+
 const identities = {
-  partyReaderId: '72000000-0000-4000-8000-000000000025',
-  privacyReceiverId: '72000000-0000-4000-8000-000000000026',
   commerceWriterId: '72000000-0000-4000-8000-000000000023',
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
+  partyReaderId: '72000000-0000-4000-8000-000000000025',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
+  privacyReceiverId: '72000000-0000-4000-8000-000000000026',
 };
 
-it.effect('external integrations keep admit/poll only and retire only exact bootstrap-owned receiver aliases', () =>
-  Effect.gen(function* test() {
-    expect(symmyDemoCustomerWorkloadRequirements.integration).toEqual([
-      'integration.symmy-admit',
-      'integration.symmy-poll',
-    ]);
-    const principalId = identities.integrationPrincipalId;
-    const workloadKey = 'party.registry.source-read';
-    const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
-    const owned = {
-      bindingId: ids.bindingId,
-      incarnation: ids.bindingIncarnation,
-      principalId,
-      tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
-      workloadKey,
-      kind: 'integration',
-      status: 'active',
-      foreignCompany: false,
-    };
-    expect(
-      yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
-        owned,
-        { ...owned, kind: 'service' },
-        { ...owned, kind: 'system' },
-        { ...owned, principalId: identities.partyWriterId },
-        { ...owned, tenantId: identities.partyWriterId },
-        { ...owned, workloadKey: 'integration.symmy-admit' },
-        { ...owned, bindingId: identities.partyReaderId },
-        { ...owned, incarnation: identities.partyReaderId },
-        { ...owned, status: 'revoked' },
-      ]),
-    ).toEqual([ids.bindingId]);
-    expect(
-      (yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [{ ...owned, foreignCompany: true }]).pipe(
-        Effect.result,
-      ))._tag,
-    ).toBe('Failure');
-  }),
-);
-
-it.effect('retires exact bootstrap-owned source-writer aliases without touching foreign writer registrations', () =>
-  Effect.gen(function* test() {
-    const principalId = identities.integrationPrincipalId;
-    for (const workloadKey of symmyDemoCustomerWorkloadRequirements.existingSystemWriters) {
+await test('external integrations keep admit/poll only and retire only exact bootstrap-owned receiver aliases', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      assert.deepStrictEqual(symmyDemoCustomerWorkloadRequirements.integration, [
+        'integration.symmy-admit',
+        'integration.symmy-poll',
+      ]);
+      const principalId = identities.integrationPrincipalId;
+      const workloadKey = partyReaderWorkload;
       const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
       const owned = {
         bindingId: ids.bindingId,
+        foreignCompany: false,
         incarnation: ids.bindingIncarnation,
+        kind: 'integration' as const,
         principalId,
+        status: 'active',
         tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
         workloadKey,
-        kind: 'integration',
-        status: 'active',
-        foreignCompany: false,
       };
-      expect(
+      assert.deepStrictEqual(
         yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
           owned,
-          { ...owned, bindingId: identities.commerceWriterId },
-          { ...owned, incarnation: identities.commerceWriterId },
-          { ...owned, kind: 'system' },
           { ...owned, kind: 'service' },
+          { ...owned, kind: 'system' },
+          { ...owned, principalId: identities.partyWriterId },
+          { ...owned, tenantId: identities.partyWriterId },
+          { ...owned, workloadKey: 'integration.symmy-admit' },
+          { ...owned, bindingId: identities.partyReaderId },
+          { ...owned, incarnation: identities.partyReaderId },
           { ...owned, status: 'revoked' },
         ]),
-      ).toEqual([ids.bindingId]);
-    }
-  }),
-);
+        [ids.bindingId],
+      );
+      assert.strictEqual(
+        Result.isFailure(
+          yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [{ ...owned, foreignCompany: true }]).pipe(
+            Effect.result,
+          ),
+        ),
+        true,
+      );
+    }),
+  ));
 
-it.effect(
-  'reuses a native active company epoch regardless of stage-derived ids and refuses foreign or ambiguous rows',
-  () =>
-    Effect.gen(function* test() {
-      expect(yield* symmyDemoCompanyBindingNeedsCreate([])).toBe(true);
-      expect(yield* symmyDemoCompanyBindingNeedsCreate([{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }])).toBe(false);
+await test('retires exact bootstrap-owned source-writer aliases without touching foreign writer registrations', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const principalId = identities.integrationPrincipalId;
+      for (const workloadKey of symmyDemoCustomerWorkloadRequirements.existingSystemWriters) {
+        const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
+        const owned = {
+          bindingId: ids.bindingId,
+          foreignCompany: false,
+          incarnation: ids.bindingIncarnation,
+          kind: 'integration' as const,
+          principalId,
+          status: 'active',
+          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+          workloadKey,
+        };
+        assert.deepStrictEqual(
+          yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
+            owned,
+            { ...owned, bindingId: identities.commerceWriterId },
+            { ...owned, incarnation: identities.commerceWriterId },
+            { ...owned, kind: 'system' },
+            { ...owned, kind: 'service' },
+            { ...owned, status: 'revoked' },
+          ]),
+          [ids.bindingId],
+        );
+      }
+    }),
+  ));
+
+await test('reuses a native active company epoch regardless of stage-derived ids and refuses foreign or ambiguous rows', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      assert.strictEqual(yield* symmyDemoCompanyBindingNeedsCreate([]), true);
+      assert.strictEqual(
+        yield* symmyDemoCompanyBindingNeedsCreate([{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }]),
+        false,
+      );
       for (const active of [
         [{ legalEntityId: '72000000-0000-4000-8000-000000000099' }],
         [{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }, { legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }],
-      ])
-        expect((yield* symmyDemoCompanyBindingNeedsCreate(active).pipe(Effect.result))._tag).toBe('Failure');
+      ]) {
+        assert.strictEqual(
+          Result.isFailure(yield* symmyDemoCompanyBindingNeedsCreate(active).pipe(Effect.result)),
+          true,
+        );
+      }
     }),
-);
+  ));
 
-it.effect(
-  'Core binding provisioning succeeds through the enrolled runtime connection and rejects admin scope authority',
-  () =>
-    Effect.gen(function* test() {
+await test('Core binding provisioning succeeds through the enrolled runtime connection and rejects admin scope authority', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
       const scope = {
         ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
-          principalId: identities.integrationPrincipalId,
-          authMethod: 'session',
           authBindingId: identities.partyReaderId,
           authContextRef: 'bootstrap-runtime-regression',
+          authMethod: 'session',
+          principalId: identities.integrationPrincipalId,
+          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
         }),
         correlationId: 'bootstrap-runtime-regression',
       };
@@ -149,16 +171,19 @@ it.effect(
         let inserted = false;
         const executor = yield* makeTestDatabase(
           (sql) => {
-            if (sql.includes("set_config('ontos.tenant_id'"))
+            if (sql.includes("set_config('ontos.tenant_id'")) {
               return Effect.succeed([
                 {
-                  role,
-                  tenant_id: scope.tenantId,
                   legal_entity_id: '',
                   operation_at: new Date('2026-11-23T00:00:00Z'),
+                  role,
+                  tenant_id: scope.tenantId,
                 },
               ]);
-            if (sql.startsWith('insert into')) inserted = true;
+            }
+            if (sql.startsWith('insert into')) {
+              inserted = true;
+            }
             return Effect.succeed([]);
           },
           { currentRole: role },
@@ -166,111 +191,116 @@ it.effect(
         const database = yield* symmyDemoCustomerBindingDatabase.pipe(
           Effect.provideService(CoreDatabase, { executor }),
         );
-        expect(database.executor).toBe(executor);
+        assert.strictEqual(database.executor, executor);
         const result = yield* writeWorkloadBindings(database, scope, {
           bindings: [
             {
               bindingId: AccessWorkloadBindingIdSchema.make(identities.partyReaderId),
+              createdAt: new Date('2026-11-23T00:00:00Z'),
               incarnation: AccessWorkloadBindingIdSchema.make(identities.partyWriterId),
               principalId: PrincipalIdSchema.make(identities.integrationPrincipalId),
               tenantId: TenantIdSchema.make(scope.tenantId),
-              createdAt: new Date('2026-11-23T00:00:00Z'),
-              workloadKey: WorkloadKeySchema.make('party.registry.source-read'),
+              workloadKey: WorkloadKeySchema.make(partyReaderWorkload),
             },
           ],
         }).pipe(Effect.result);
-        expect(result._tag).toBe(role === 'ontos_runtime' ? 'Success' : 'Failure');
-        expect(inserted).toBe(role === 'ontos_runtime');
+        assert.strictEqual(Result.isSuccess(result), role === 'ontos_runtime');
+        assert.strictEqual(inserted, role === 'ontos_runtime');
       }
     }),
-);
+  ));
 
-it('retains only typed fixed enrollment categories and strips arbitrary reasons and raw causes', () => {
+await test('retains only typed fixed enrollment categories and strips arbitrary reasons and raw causes', () => {
   for (const error of [
     new SymmyDemoCustomerAuthorityError({ reason: 'enrollment-database-config' }),
     new ReleaseInternalWorkloadError({ reason: 'additive-release-scope' }),
     new ReleaseInternalWorkloadError({ reason: 'additive-step-create-principal' }),
-  ])
-    expect(safeSymmyDemoEnrollmentFailure(error).reason.startsWith(error.reason)).toBe(true);
+  ]) {
+    assert.strictEqual(safeSymmyDemoEnrollmentFailure(error).reason.startsWith(error.reason), true);
+  }
   for (const error of [
     new Error('credential-bearing driver diagnostic'),
     new ReleaseInternalWorkloadError({ reason: 'raw private diagnostic' }),
     { reason: 'additive-release-scope' },
   ]) {
     const safe = safeSymmyDemoEnrollmentFailure(error);
-    expect(safe.reason).toBe('customer-workload-enrollment');
-    expect('cause' in safe).toBe(false);
+    assert.strictEqual(safe.reason, 'customer-workload-enrollment');
+    assert.strictEqual('cause' in safe, false);
   }
-  expect(
+  assert.strictEqual(
     safeSymmyDemoEnrollmentFailure(
       new ReleaseInternalWorkloadError({
+        databaseConstraint: 'core_principals_platform_role_ck',
         reason: 'additive-step-create-principal',
         sqlState: '23514',
-        databaseConstraint: 'core_principals_platform_role_ck',
       }),
     ).reason,
-  ).toBe('additive-step-create-principal:23514:core_principals_platform_role_ck');
+    'additive-step-create-principal:23514:core_principals_platform_role_ck',
+  );
 });
 
-it('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
+await test('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
   const tenantId = SYMMY_DEMO_CUSTOMER_TENANT;
   const legalEntityId = SYMMY_DEMO_CUSTOMER_COMPANY;
   const foreignCompany = '72000000-0000-4000-8000-000000000099';
   const plan = planAdditiveCompanyInternalWorkloads(
     {
-      tenantId,
       activeCompanies: new Set([legalEntityId, foreignCompany]),
       activeModuleKeys: new Set(symmyDemoCustomerInternalWorkloadDeclarations.map(({ moduleKey }) => moduleKey)),
       companyNames: new Map([[legalEntityId, 'AKROS']]),
       registrations: [
         {
-          principalId: identities.partyWriterId,
-          legalEntityId: foreignCompany,
-          workloadKey: 'demo.crm.party-intake',
-          principalStatus: 'active',
-          displayName: 'Existing CRM',
-          activeWorkloadBindingId: identities.partyWriterId,
           activeCompanyBindingId: identities.partyReaderId,
+          activeWorkloadBindingId: identities.partyWriterId,
           companyBindingCount: 1,
-          workloadBindingCount: 1,
+          displayName: 'Existing CRM',
           extraCompanyBindingIds: [],
+          legalEntityId: foreignCompany,
+          principalId: identities.partyWriterId,
+          principalStatus: 'active',
+          workloadBindingCount: 1,
+          workloadKey: 'demo.crm.party-intake',
         },
       ],
+      tenantId,
     },
     symmyDemoCustomerInternalWorkloadDeclarations,
     legalEntityId,
   );
-  expect(plan.registered).toBe(7);
-  expect(plan.retired).toBe(0);
+  assert.strictEqual(plan.registered, 7);
+  assert.strictEqual(plan.retired, 0);
   for (const unit of plan.units) {
     for (const step of unit.steps) {
-      expect(['create-principal', 'bind-workload', 'bind-company']).toContain(step.kind);
+      assert.ok(['create-principal', 'bind-workload', 'bind-company'].includes(step.kind));
       if (step.kind === 'create-principal') {
-        expect(step.legalEntityId).toBe(legalEntityId);
-        expect(step.principalId).toBe(
-          internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey: step.workloadKey }),
+        assert.strictEqual(step.legalEntityId, legalEntityId);
+        assert.strictEqual(
+          step.principalId,
+          internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: step.workloadKey }),
         );
       }
     }
   }
 });
 
-it('replaces all discovery causes with fixed phase codes and retains no raw cause', () => {
+await test('replaces all discovery causes with fixed phase codes and retains no raw cause', () => {
   for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader'] as const) {
     const failure = symmyDemoDiscoveryFailure(phase)();
-    expect(failure.reason).toBe(phase);
-    expect(failure._tag).toBe('SymmyDemoCustomerAuthorityError');
-    expect('cause' in failure).toBe(false);
+    assert.strictEqual(failure.reason, phase);
+    assert.strictEqual(Schema.is(SymmyDemoCustomerAuthorityError)(failure), true);
+    assert.strictEqual('cause' in failure, false);
   }
 });
 
-it('discovers only required receiver identities before owner startup, and the full chain after registration', () => {
-  expect(symmyDemoReceiverWorkloadsForPhase('pre-owner')).toEqual(['party.registry.source-read']);
+await test('discovers only required receiver identities before owner startup, and the full chain after registration', () => {
+  assert.deepStrictEqual(symmyDemoReceiverWorkloadsForPhase('pre-owner'), [partyReaderWorkload]);
   const registered = symmyDemoReceiverWorkloadsForPhase('post-registration');
-  expect(registered).toHaveLength(8);
-  for (const key of symmyDemoReceiverWorkloadsForPhase('pre-owner')) expect(registered).toContain(key);
-  expect(registered).toContain('privacy.core.organization-profile-ico-check');
-  expect(registered).toContain('pricing.price-group-catalog.source-read');
+  assert.strictEqual(registered.length, 8);
+  for (const key of symmyDemoReceiverWorkloadsForPhase('pre-owner')) {
+    assert.ok(registered.includes(key));
+  }
+  assert.ok(registered.includes('privacy.core.organization-profile-ico-check'));
+  assert.ok(registered.includes('pricing.price-group-catalog.source-read'));
 });
 const group = {
   code: 'B2B',
@@ -279,7 +309,7 @@ const group = {
 };
 const workloadKey = 'party.registry.source-write';
 const serviceWriter = {
-  kind: 'service',
+  kind: 'service' as const,
   legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY,
   platformRole: 'internal_workload',
   principalId: internalWorkloadPrincipalId({
@@ -290,104 +320,125 @@ const serviceWriter = {
   tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
   workloadKey,
 };
-const legacyWriter = { ...serviceWriter, kind: 'system', platformRole: null, principalId: identities.partyWriterId };
+const legacyWriter = {
+  ...serviceWriter,
+  kind: 'system' as const,
+  platformRole: null,
+  principalId: identities.partyWriterId,
+};
 
-it.effect('accepts the authentic release service writer without a legacy system identity', () =>
-  Effect.gen(function* test() {
-    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter])).toBe(serviceWriter.principalId);
-  }),
-);
+await test('accepts the authentic release service writer without a legacy system identity', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      assert.strictEqual(yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter]), serviceWriter.principalId);
+    }),
+  ));
 
-it.effect('preserves a uniquely bound legacy writer independently of candidate order', () =>
-  Effect.gen(function* test() {
-    for (const candidates of [
-      [legacyWriter, serviceWriter],
-      [serviceWriter, legacyWriter],
-    ]) {
-      expect(yield* selectSymmyDemoSourceWriter(workloadKey, candidates)).toBe(legacyWriter.principalId);
-    }
-  }),
-);
-
-it.effect('preserves the native tenant-wide SYSTEM writer before any company registration exists', () =>
-  Effect.gen(function* test() {
-    const nativeSystem = { ...legacyWriter, legalEntityId: null };
-    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [nativeSystem])).toBe(legacyWriter.principalId);
-    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter, nativeSystem])).toBe(
-      legacyWriter.principalId,
-    );
-    expect(
-      (yield* selectSymmyDemoSourceWriter(workloadKey, [
-        {
-          ...serviceWriter,
-          legalEntityId: null,
-        },
-      ]).pipe(Effect.result))._tag,
-    ).toBe('Failure');
-  }),
-);
-
-it.effect('rejects foreign company, unmarked or falsely identified service writers and ambiguous legacy bindings', () =>
-  Effect.gen(function* test() {
-    for (const candidates of [
-      [{ ...serviceWriter, legalEntityId: '71000000-0000-4000-8000-000000000024' }],
-      [{ ...serviceWriter, platformRole: null }],
-      [{ ...serviceWriter, principalId: identities.commerceWriterId }],
-      [legacyWriter, { ...legacyWriter, principalId: identities.commerceWriterId }, serviceWriter],
-      [],
-    ]) {
-      expect((yield* selectSymmyDemoSourceWriter(workloadKey, candidates).pipe(Effect.result))._tag).toBe('Failure');
-    }
-  }),
-);
-
-it.effect('enrolls a complete PERSON and ORGANIZATION plan with real contact/address/ICO operations', () =>
-  Effect.gen(function* test() {
-    const routes = yield* buildSymmyDemoCustomerRoutes(identities.integrationPrincipalId, [group]);
-    const { symmyRouteInventoryOf, symmyRouteRequestRefusals } = yield* Effect.promise(
-      () => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
-    );
-    expect(routes).toHaveLength(3);
-    const customer = routes.find(({ routeKey }) => routeKey === 'customersBatch');
-    expect(customer?.routeId).toBe(SYMMY_DEMO_CUSTOMERS_ROUTE);
-    expect(customer?.configuration.items[0].effects.map(({ operation }) => operation.entrypointKey)).toEqual([
-      'party.registry.create-party',
-      'party.registry.add-contact-point',
-      'party.registry.counterparty-customer-onboard',
-      'commerce.customer-context.ensure-retail-customer-profile',
-      'commerce.customer-context.create-counterparty-purchasing-profile',
-      'commerce.customer-context.add-saved-address',
-      'commerce.customer-context.change-organization-customer-profile-ico',
-    ]);
-    for (const route of routes) {
-      const inventory = symmyRouteInventoryOf(route.routeKey);
-      expect(Option.isSome(inventory)).toBe(true);
-      if (Option.isSome(inventory)) {
-        expect(symmyRouteRequestRefusals(route, inventory.value)).toEqual([]);
+await test('preserves a uniquely bound legacy writer independently of candidate order', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      for (const candidates of [
+        [legacyWriter, serviceWriter],
+        [serviceWriter, legacyWriter],
+      ]) {
+        assert.strictEqual(yield* selectSymmyDemoSourceWriter(workloadKey, candidates), legacyWriter.principalId);
       }
-      expect(route.tenantId).toBe(SYMMY_DEMO_CUSTOMER_TENANT);
-      expect(route.legalEntityId).toBe(SYMMY_DEMO_CUSTOMER_COMPANY);
-      expect(
-        route.configuration.items.every(({ effects }) => effects.every(({ intent }) => intent === undefined)),
-      ).toBe(true);
-    }
-    const read = routes.find(({ routeKey }) => routeKey === 'adminCustomers');
-    expect(read?.routeId).toBe(SYMMY_DEMO_CUSTOMERS_READ_ROUTE);
-    expect(read?.configuration.sourceRouteId).toBe(SYMMY_DEMO_CUSTOMERS_ROUTE);
-    expect(read?.lifecyclePolicy).toBeUndefined();
-    const membership = routes.find(({ routeKey }) => routeKey === 'customerGroupCustomersBatch');
-    expect(membership?.configuration.sourceRouteId).toBe(SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
-    expect(membership?.configuration.selector?.source.sourceRecordId).toBe(group.recordId);
-    expect(membership?.configuration.selector?.target?.resourceId).toBe(group.groupId);
-    expect(membership?.routeCode).toBe(group.code);
-  }),
-);
+    }),
+  ));
 
-it('replays deterministic selected routes without deriving a native group identity from its code', () => {
-  expect(symmyDemoMembershipRouteId(group.groupId)).toBe(symmyDemoMembershipRouteId(group.groupId));
-  expect(symmyDemoMembershipRouteId(group.groupId)).not.toBe(group.groupId);
-  expect(Schema.is(Schema.String.check(Schema.isUUID()))(symmyDemoMembershipRouteId(group.groupId))).toBe(true);
-  expect(symmyDemoCustomerRetentionRefs()).toEqual([
+await test('preserves the native tenant-wide SYSTEM writer before any company registration exists', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const nativeSystem = { ...legacyWriter, legalEntityId: null };
+      assert.strictEqual(yield* selectSymmyDemoSourceWriter(workloadKey, [nativeSystem]), legacyWriter.principalId);
+      assert.strictEqual(
+        yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter, nativeSystem]),
+        legacyWriter.principalId,
+      );
+      assert.strictEqual(
+        Result.isFailure(
+          yield* selectSymmyDemoSourceWriter(workloadKey, [
+            {
+              ...serviceWriter,
+              legalEntityId: null,
+            },
+          ]).pipe(Effect.result),
+        ),
+        true,
+      );
+    }),
+  ));
+
+await test('rejects foreign company, unmarked or falsely identified service writers and ambiguous legacy bindings', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      for (const candidates of [
+        [{ ...serviceWriter, legalEntityId: '71000000-0000-4000-8000-000000000024' }],
+        [{ ...serviceWriter, platformRole: null }],
+        [{ ...serviceWriter, principalId: identities.commerceWriterId }],
+        [legacyWriter, { ...legacyWriter, principalId: identities.commerceWriterId }, serviceWriter],
+        [],
+      ]) {
+        assert.strictEqual(
+          Result.isFailure(yield* selectSymmyDemoSourceWriter(workloadKey, candidates).pipe(Effect.result)),
+          true,
+        );
+      }
+    }),
+  ));
+
+await test('enrolls a complete PERSON and ORGANIZATION plan with real contact/address/ICO operations', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const routes = yield* buildSymmyDemoCustomerRoutes(identities.integrationPrincipalId, [group]);
+      const { symmyRouteInventoryOf, symmyRouteRequestRefusals } = yield* Effect.promise(
+        () => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
+      );
+      assert.strictEqual(routes.length, 3);
+      const customer = routes.find(({ routeKey }) => routeKey === 'customersBatch');
+      assert.strictEqual(customer?.routeId, SYMMY_DEMO_CUSTOMERS_ROUTE);
+      assert.deepStrictEqual(
+        customer?.configuration.items[0].effects.map(({ operation }) => operation.entrypointKey),
+        [
+          'party.registry.create-party',
+          'party.registry.add-contact-point',
+          'party.registry.counterparty-customer-onboard',
+          'commerce.customer-context.ensure-retail-customer-profile',
+          'commerce.customer-context.create-counterparty-purchasing-profile',
+          'commerce.customer-context.add-saved-address',
+          'commerce.customer-context.change-organization-customer-profile-ico',
+        ],
+      );
+      for (const route of routes) {
+        const inventory = symmyRouteInventoryOf(route.routeKey);
+        assert.strictEqual(Option.isSome(inventory), true);
+        if (Option.isSome(inventory)) {
+          assert.deepStrictEqual(symmyRouteRequestRefusals(route, inventory.value), []);
+        }
+        assert.strictEqual(route.tenantId, SYMMY_DEMO_CUSTOMER_TENANT);
+        assert.strictEqual(route.legalEntityId, SYMMY_DEMO_CUSTOMER_COMPANY);
+        assert.strictEqual(
+          route.configuration.items.every(({ effects }) => effects.every(({ intent }) => intent === undefined)),
+          true,
+        );
+      }
+      const read = routes.find(({ routeKey }) => routeKey === 'adminCustomers');
+      assert.strictEqual(read?.routeId, SYMMY_DEMO_CUSTOMERS_READ_ROUTE);
+      assert.strictEqual(read?.configuration.sourceRouteId, SYMMY_DEMO_CUSTOMERS_ROUTE);
+      assert.strictEqual(read?.lifecyclePolicy, undefined);
+      const membership = routes.find(({ routeKey }) => routeKey === 'customerGroupCustomersBatch');
+      assert.strictEqual(membership?.configuration.sourceRouteId, SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
+      assert.strictEqual(membership?.configuration.selector?.source.sourceRecordId, group.recordId);
+      assert.strictEqual(membership?.configuration.selector?.target?.resourceId, group.groupId);
+      assert.strictEqual(membership?.routeCode, group.code);
+    }),
+  ));
+
+await test('replays deterministic selected routes without deriving a native group identity from its code', () => {
+  assert.strictEqual(symmyDemoMembershipRouteId(group.groupId), symmyDemoMembershipRouteId(group.groupId));
+  assert.notStrictEqual(symmyDemoMembershipRouteId(group.groupId), group.groupId);
+  assert.strictEqual(Schema.is(Schema.String.check(Schema.isUUID()))(symmyDemoMembershipRouteId(group.groupId)), true);
+  assert.deepStrictEqual(symmyDemoCustomerRetentionRefs(), [
     { policyId: 'akros-symmy-customers', revision: 'v1', routeId: SYMMY_DEMO_CUSTOMERS_ROUTE },
     {
       policyId: SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
@@ -397,107 +448,149 @@ it('replays deterministic selected routes without deriving a native group identi
   ]);
 });
 
-it('merges only exact tenant-local Party source bindings and never fabricates Privacy authority', () => {
-  const first = symmyDemoCustomerEnvironment(identities);
-  const entries = JSON.parse(first.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS);
-  expect(entries).toHaveLength(4);
-  expect(symmyDemoCustomerEnvironment(identities, entries)).toEqual(first);
-  expect(Object.keys(first)).toEqual([
-    'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
-    'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED',
-  ]);
-  expect(entries.map((entry: { principalId: string }) => entry.principalId)).toEqual([
-    identities.integrationPrincipalId,
-    identities.partyWriterId,
-    identities.commerceWriterId,
-    identities.partyReaderId,
-  ]);
-  expect(
-    entries.every(
-      (entry: { tenantId: string; routeRef: string }) =>
-        entry.tenantId === SYMMY_DEMO_CUSTOMER_TENANT && entry.routeRef === SYMMY_DEMO_CUSTOMERS_ROUTE,
+await test('merges only exact tenant-local Party source bindings and never fabricates Privacy authority', () =>
+  runtime.runPromise(
+    Effect.gen(function* environmentScenario() {
+      const first = yield* symmyDemoCustomerEnvironment(identities);
+      const entries = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(SymmyDemoPartyBindingSchema)))(
+        first.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS,
+      );
+      assert.strictEqual(entries.length, 4);
+      assert.deepStrictEqual(yield* symmyDemoCustomerEnvironment(identities, entries), first);
+      assert.deepStrictEqual(Object.keys(first), [
+        'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
+        'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED',
+      ]);
+      assert.deepStrictEqual(
+        entries.map((entry: { principalId: string }) => entry.principalId),
+        [
+          identities.integrationPrincipalId,
+          identities.partyWriterId,
+          identities.commerceWriterId,
+          identities.partyReaderId,
+        ],
+      );
+      assert.strictEqual(
+        entries.every(
+          (entry: { routeRef: string; tenantId: string }) =>
+            entry.tenantId === SYMMY_DEMO_CUSTOMER_TENANT && entry.routeRef === SYMMY_DEMO_CUSTOMERS_ROUTE,
+        ),
+        true,
+      );
+    }),
+  ));
+
+await test('rejects invented integration identities before any deployment I/O', () =>
+  runtime.runPromise(
+    buildSymmyDemoCustomerRoutes('not-a-principal', []).pipe(
+      Effect.flip,
+      Effect.map((failure) => assert.strictEqual(Schema.isSchemaError(failure), true)),
     ),
-  ).toBe(true);
-});
+  ));
 
-it.effect('rejects invented integration identities before any deployment I/O', () =>
-  buildSymmyDemoCustomerRoutes('not-a-principal', []).pipe(
-    Effect.flip,
-    Effect.map((failure) => expect(failure._tag).toBe('SchemaError')),
-  ),
-);
+await test('reuses a native Action key after a lost response and separates changed approved commands', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const key = yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":1}');
+      assert.strictEqual(
+        key,
+        'akros-customer-authority:e8aa51479a0dca32d46456642b11f4137cff68faa4dbc07350edf0d1c38e6820',
+      );
+      assert.strictEqual(key, yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":1}'));
+      assert.notStrictEqual(key, yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":2}'));
+      assert.notStrictEqual(
+        key,
+        yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-privacy-subject', '{"a":1}'),
+      );
+      assert.ok(key.length <= 200);
+    }),
+  ));
 
-it.effect('reuses a native Action key after a lost response and separates changed approved commands', () =>
-  Effect.gen(function* test() {
-    const key = yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":1}');
-    expect(key).toBe(
-      yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":1}'),
-    );
-    expect(key).not.toBe(
-      yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":2}'),
-    );
-    expect(key).not.toBe(
-      yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-privacy-subject', '{"a":1}'),
-    );
-    expect(key.length).toBeLessThanOrEqual(200);
-  }),
-);
+await test('authorizes the actual switched Privacy receiver, not merely upstream source writers', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const policy = yield* buildSymmySourceSyncProcessingPolicy(identities);
+      assert.ok(
+        policy.callers.some(
+          (caller) =>
+            caller.authMethod === { authMethod: 'system', principalId: identities.privacyReceiverId }.authMethod &&
+            caller.principalId === { authMethod: 'system', principalId: identities.privacyReceiverId }.principalId,
+        ),
+      );
+      assert.strictEqual(policy.callers.length, 4);
+      assert.strictEqual(policy.groupRouteId, SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
+      assert.notStrictEqual(policy.groupRouteId, SYMMY_DEMO_GROUPS_ROUTE);
+      assert.strictEqual(policy.policyId, 'akros-symmy-source-sync-v2');
+      assert.strictEqual(policy.revision, 'v2');
+    }),
+  ));
 
-it.effect('authorizes the actual switched Privacy receiver, not merely upstream source writers', () =>
-  Effect.gen(function* test() {
-    const policy = yield* buildSymmySourceSyncProcessingPolicy(identities);
-    expect(policy.callers).toContainEqual({ authMethod: 'system', principalId: identities.privacyReceiverId });
-    expect(policy.callers).toHaveLength(4);
-    expect(policy.groupRouteId).toBe(SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
-    expect(policy.groupRouteId).not.toBe(SYMMY_DEMO_GROUPS_ROUTE);
-    expect(policy.policyId).toBe('akros-symmy-source-sync-v2');
-    expect(policy.revision).toBe('v2');
-  }),
-);
+await test('retires only explicitly identified duplicate aliases, preserving a unique legacy SYSTEM', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
+      const alias = { ...legacyWriter, bindingId: '72000000-0000-4000-8000-000000000031' };
+      const other = {
+        ...legacyWriter,
+        bindingId: '72000000-0000-4000-8000-000000000032',
+        principalId: identities.commerceWriterId,
+      };
+      assert.deepStrictEqual(yield* symmyDemoReceiverCandidates([alias, serviceWriter], [alias.bindingId]), [
+        alias,
+        serviceWriter,
+      ]);
+      assert.deepStrictEqual(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [alias.bindingId]), [
+        other,
+        serviceWriter,
+      ]);
+      assert.strictEqual((yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [])).length, 3);
+    }),
+  ));
 
-it.effect('retires only explicitly identified duplicate aliases, preserving a unique legacy SYSTEM', () =>
-  Effect.gen(function* test() {
-    const alias = { ...legacyWriter, bindingId: '72000000-0000-4000-8000-000000000031' };
-    const other = {
-      ...legacyWriter,
-      principalId: identities.commerceWriterId,
-      bindingId: '72000000-0000-4000-8000-000000000032',
-    };
-    expect(yield* symmyDemoReceiverCandidates([alias, serviceWriter], [alias.bindingId])).toEqual([
-      alias,
-      serviceWriter,
-    ]);
-    expect(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [alias.bindingId])).toEqual([
-      other,
-      serviceWriter,
-    ]);
-    expect(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [])).toHaveLength(3);
-  }),
-);
-
-it.effect(
-  'adds only the distinct Commerce reader, preserves existing readers, and never overrides a managed route',
-  () =>
-    Effect.gen(function* test() {
+await test('adds only the distinct Commerce reader, preserves existing readers, and never overrides a managed route', () =>
+  runtime.runPromise(
+    Effect.gen(function* scenario() {
       const external = identities.integrationPrincipalId;
       const reader = '72000000-0000-4000-8000-000000000027';
-      expect(
-        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external], managed: false }, external, reader),
-      ).toBe(true);
-      expect(
-        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external, reader], managed: true }, external, reader),
-      ).toBe(false);
-      expect(yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [reader], managed: true }, external, reader)).toBe(
+      assert.strictEqual(
+        yield* symmyDemoNativeReaderNeedsEnrollment({ managed: false, readers: [external] }, external, reader),
+        true,
+      );
+      assert.strictEqual(
+        yield* symmyDemoNativeReaderNeedsEnrollment({ managed: true, readers: [external, reader] }, external, reader),
+        false,
+      );
+      assert.strictEqual(
+        yield* symmyDemoNativeReaderNeedsEnrollment({ managed: true, readers: [reader] }, external, reader),
         false,
       );
       for (const [readers, managed, receiver] of [
         [[external], true, reader],
         [[], false, reader],
         [[external], false, external],
-      ] as const)
-        expect(
-          (yield* symmyDemoNativeReaderNeedsEnrollment({ readers, managed }, external, receiver).pipe(Effect.result))
-            ._tag,
-        ).toBe('Failure');
+      ] as const) {
+        assert.strictEqual(
+          Result.isFailure(
+            yield* symmyDemoNativeReaderNeedsEnrollment({ managed, readers }, external, receiver).pipe(Effect.result),
+          ),
+          true,
+        );
+      }
     }),
-);
+  ));
+
+await test('candidate codecs preserve SQL nulls and omitted binding ids without inventing company scope', () =>
+  runtime.runPromise(
+    Effect.gen(function* candidateCodecScenario() {
+      const wire = { ...legacyWriter, legalEntityId: null };
+      const candidate = yield* Schema.decodeUnknownEffect(SymmyDemoSourceWriterCandidateSchema)(wire);
+      assert.ok(Option.isNone(candidate.legalEntityId));
+      assert.ok(Option.isNone(candidate.platformRole));
+      const encoded = yield* Schema.encodeEffect(SymmyDemoSourceWriterCandidateSchema)(candidate);
+      assert.deepStrictEqual(encoded, wire);
+      assert.ok(!('bindingId' in encoded));
+      const service = yield* Schema.decodeUnknownEffect(SymmyDemoSourceWriterCandidateSchema)(serviceWriter);
+      assert.ok(Option.contains(service.legalEntityId, LegalEntityIdSchema.make(SYMMY_DEMO_CUSTOMER_COMPANY)));
+      assert.ok(Option.contains(service.platformRole, 'internal_workload'));
+      assert.deepStrictEqual(yield* Schema.encodeEffect(SymmyDemoSourceWriterCandidateSchema)(service), serviceWriter);
+    }),
+  ));

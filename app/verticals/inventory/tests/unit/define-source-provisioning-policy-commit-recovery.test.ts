@@ -7,6 +7,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { ActionInvocationIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
@@ -117,6 +118,7 @@ it.live('recovers only the operator’s exact policy invocation without executin
           }
         }
       },
+      resolveActionExecution: () => Effect.die('Commit resolution must not resolve execution'),
       runAction: () => Effect.die('Commit resolution must not run an Action'),
     });
     const compositionDocument = yield* Schema.encodeEffect(
@@ -126,6 +128,10 @@ it.live('recovers only the operator’s exact policy invocation without executin
       Layer.succeed(ReadRuntime, { runRead: () => Effect.die('Commit resolution must not run a Read') }),
       Layer.mergeAll(
         runtime,
+        Layer.succeed(OwnerActionApprovals, {
+          approve: () => Effect.die('Commit resolution must not approve an Action'),
+          inspect: () => Effect.die('Commit resolution must not inspect an approval'),
+        }),
         Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({

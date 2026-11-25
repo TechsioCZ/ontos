@@ -5,10 +5,11 @@ import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Context, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseNotFound } from '../../shared/errors/merchandise-not-found.ts';
 import { MerchandiseRevisionConflict } from '../../shared/errors/merchandise-revision-conflict.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
@@ -249,7 +250,11 @@ const uploadOnHead = (
         expectedRevision,
       });
       const services = yield* persistenceService(scoped, {
-        prepared: { actionInvocationId: resourceId, payload, tax: { fetched: undefined, refused: false } },
+        prepared: {
+          actionInvocationId: resourceId,
+          payload,
+          tax: { fetched: Option.getOrUndefined(Option.none()), refused: false },
+        },
         scope,
       });
       return yield* services.apply(payload.command, expectedRevision, resourceId);
@@ -279,7 +284,7 @@ for (const [authMethod, expectedRevision] of [
       const { db, statements } = yield* harness({ initial: { checkpoint: null, revision: 7 } });
       const failure = yield* uploadOnHead(db, authMethod, expectedRevision).pipe(Effect.flip);
       // The empty scripted catalog has no product: matching source revisions and stale staff uploads still reach it.
-      expect(failure._tag).toBe('MerchandiseNotFound');
+      expect(Schema.is(MerchandiseNotFound)(failure)).toBe(true);
       expect(lockedReads(statements)).toHaveLength(1);
       expect(statements.some((sql) => sql.includes('"demo_merchandise"."products"'))).toBe(true);
     }),

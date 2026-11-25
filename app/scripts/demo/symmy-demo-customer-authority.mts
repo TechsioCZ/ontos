@@ -19,7 +19,7 @@
  * cannot reconfigure an already running owner. This script does not claim an end-to-end owner smoke passed.
  */
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import {
   makeSystemPrincipalContextResolver,
@@ -30,15 +30,21 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Console, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, Console, DateTime, Effect, FileSystem, Layer, Match, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Reactivity } from 'effect/reactivity';
 import { v5 } from 'uuid';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
-import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
-import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
+import {
+  writeWorkloadBindings,
+  AccessWorkloadBindingStoreLive,
+} from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import {
+  writeWorkloadCompanyBindings,
+  AccessWorkloadCompanyBindingStoreLive,
+} from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
 import {
   AccessWorkloadBindingIdSchema,
@@ -46,9 +52,8 @@ import {
 } from '../../packages/core-runtime/src/access/workloads/store.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
-import { AccessWorkloadBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
-import { AccessWorkloadCompanyBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
-import { makeCoreDatabase, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   registerAdditiveCompanyInternalWorkloads,
@@ -98,10 +103,18 @@ const recordType = 'CUSTOMER';
 const sourceReader = 'commerce.customer-context.source-read';
 const sourceWriter = 'commerce.customer-context.source-write';
 const partyWriter = 'party.registry.source-write';
+const partyReaderWorkload = 'party.registry.source-read';
+const privacySourceCheck = 'privacy.core.source-processing-check';
+const partyApp = 'party-registry';
+const partyModule = 'party.registry';
+const privacyModule = 'privacy.core';
+const commerceModule = 'commerce.customer-context';
+const stageOnlyReason = 'Customer authority bootstrap is restricted to stage';
+const enrollmentDatabaseConfig = 'enrollment-database-config';
 const customerReceiverWorkloads = [
-  'party.registry.source-read',
+  partyReaderWorkload,
   'commerce.customer-context.source-read',
-  'privacy.core.source-processing-check',
+  privacySourceCheck,
   'privacy.core.organization-business-check',
   'privacy.core.organization-profile-ico-check',
   'commerce.customer-context.organization-ico-facts.read',
@@ -110,54 +123,54 @@ const customerReceiverWorkloads = [
 ] as const;
 const obsoleteExternalExecutorWorkloads = [...customerReceiverWorkloads, partyWriter, sourceWriter] as const;
 export const symmyDemoReceiverWorkloadsForPhase = (phase: 'pre-owner' | 'post-registration'): readonly string[] =>
-  phase === 'pre-owner' ? ['party.registry.source-read'] : customerReceiverWorkloads;
+  phase === 'pre-owner' ? [partyReaderWorkload] : customerReceiverWorkloads;
 const integrationWorkloads = ['integration.symmy-admit', 'integration.symmy-poll'] as const;
 export const symmyDemoCustomerWorkloadRequirements = {
-  integration: integrationWorkloads,
   existingSystemWriters: [partyWriter, sourceWriter],
+  integration: integrationWorkloads,
 } as const;
 export const symmyDemoCustomerInternalWorkloadDeclarations = [
   {
-    appId: 'party-registry',
-    moduleKey: 'party.registry',
-    workloadKey: 'party.registry.source-write',
+    appId: partyApp,
     label: 'Party source write',
+    moduleKey: partyModule,
+    workloadKey: 'party.registry.source-write',
   },
   {
-    appId: 'party-registry',
-    moduleKey: 'party.registry',
-    workloadKey: 'party.registry.source-read',
+    appId: partyApp,
     label: 'Party source read',
+    moduleKey: partyModule,
+    workloadKey: partyReaderWorkload,
   },
   {
     appId: 'privacy',
-    moduleKey: 'privacy.core',
-    workloadKey: 'privacy.core.source-processing-check',
     label: 'Privacy source processing',
+    moduleKey: privacyModule,
+    workloadKey: privacySourceCheck,
   },
   {
     appId: 'privacy',
-    moduleKey: 'privacy.core',
-    workloadKey: 'privacy.core.organization-business-check',
     label: 'Privacy organization business',
+    moduleKey: privacyModule,
+    workloadKey: 'privacy.core.organization-business-check',
   },
   {
     appId: 'privacy',
-    moduleKey: 'privacy.core',
-    workloadKey: 'privacy.core.organization-profile-ico-check',
     label: 'Privacy organization ICO',
+    moduleKey: privacyModule,
+    workloadKey: 'privacy.core.organization-profile-ico-check',
   },
   {
     appId: 'commerce-customer-context',
-    moduleKey: 'commerce.customer-context',
-    workloadKey: 'commerce.customer-context.organization-ico-facts.read',
     label: 'Commerce organization ICO facts',
+    moduleKey: commerceModule,
+    workloadKey: 'commerce.customer-context.organization-ico-facts.read',
   },
   {
     appId: 'symmy-integration',
+    label: 'Symmy organization facts',
     moduleKey: 'integration.symmy',
     workloadKey: 'integration.symmy.source-organization-facts.read',
-    label: 'Symmy organization facts',
   },
 ] as const;
 
@@ -172,33 +185,47 @@ export const symmyDemoDiscoveryFailure =
 const tenantId = TenantIdSchema.make(SYMMY_DEMO_CUSTOMER_TENANT);
 const legalEntityId = LegalEntityIdSchema.make(SYMMY_DEMO_CUSTOMER_COMPANY);
 const Uuid = Schema.String.check(Schema.isUUID());
+const DemoRouteIdSchema = Uuid.pipe(Schema.brand('SymmyDemoRouteId'));
+const DemoGroupIdSchema = Uuid.pipe(Schema.brand('SymmyDemoGroupId'));
+const DemoRecordIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('SymmyDemoRecordId'),
+);
 const IdentitySchema = Schema.Struct({
-  commerceWriterId: Uuid,
-  integrationPrincipalId: Uuid,
-  partyWriterId: Uuid,
-  partyReaderId: Uuid,
-  privacyReceiverId: Uuid,
+  commerceWriterId: PrincipalIdSchema,
+  integrationPrincipalId: PrincipalIdSchema,
+  partyReaderId: PrincipalIdSchema,
+  partyWriterId: PrincipalIdSchema,
+  privacyReceiverId: PrincipalIdSchema,
 });
-type Identities = typeof IdentitySchema.Type;
+type Identities = typeof IdentitySchema.Encoded;
 type EnvironmentIdentities = Pick<
   Identities,
   'integrationPrincipalId' | 'partyWriterId' | 'commerceWriterId' | 'partyReaderId'
 >;
-const SourceWriterCandidateSchema = Schema.Struct({
-  bindingId: Schema.optional(Uuid),
+export const SymmyDemoSourceWriterCandidateSchema = Schema.Struct({
+  bindingId: Schema.optional(AccessWorkloadBindingIdSchema),
   kind: Schema.Literals(['service', 'system']),
-  legalEntityId: Schema.NullOr(Uuid),
-  platformRole: Schema.NullOr(Schema.String),
+  legalEntityId: Schema.OptionFromNullOr(LegalEntityIdSchema),
+  platformRole: Schema.OptionFromNullOr(Schema.String),
   principalId: PrincipalIdSchema,
-  tenantId: Uuid,
-  workloadKey: Schema.String,
+  tenantId: TenantIdSchema,
+  workloadKey: WorkloadKeySchema,
 });
 
-export const symmyDemoReceiverCandidates = (input: unknown, excludedBindingIds: readonly string[]) =>
+const SymmyDemoSourceWriterCandidatesSchema = Schema.Array(SymmyDemoSourceWriterCandidateSchema);
+
+export const symmyDemoReceiverCandidates = (
+  input: typeof SymmyDemoSourceWriterCandidatesSchema.Encoded,
+  excludedBindingIds: readonly string[],
+) =>
   Effect.gen(function* receiverCandidates() {
-    const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(input);
-    if (candidates.filter(({ kind }) => kind === 'system').length <= 1) return candidates;
-    return candidates.filter(({ bindingId }) => bindingId === undefined || !excludedBindingIds.includes(bindingId));
+    const candidates = yield* Schema.decodeUnknownEffect(SymmyDemoSourceWriterCandidatesSchema)(input);
+    if (candidates.filter(({ kind }) => kind === 'system').length <= 1) {
+      return yield* Schema.encodeEffect(SymmyDemoSourceWriterCandidatesSchema)(candidates);
+    }
+    return yield* Schema.encodeEffect(SymmyDemoSourceWriterCandidatesSchema)(
+      candidates.filter(({ bindingId }) => bindingId === undefined || !excludedBindingIds.includes(bindingId)),
+    );
   });
 
 /**
@@ -206,9 +233,12 @@ export const symmyDemoReceiverCandidates = (input: unknown, excludedBindingIds: 
  * only Core's actual platform-marked, canonically identified service registration of this workload and company.
  * Never use a tenant-wide first match: other companies have separate platform source-writer principals.
  */
-export const selectSymmyDemoSourceWriter = (workloadKey: string, input: unknown) =>
+export const selectSymmyDemoSourceWriter = (
+  workloadKey: string,
+  input: typeof SymmyDemoSourceWriterCandidatesSchema.Encoded,
+) =>
   Effect.gen(function* selectWriter() {
-    const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(input);
+    const candidates = yield* Schema.decodeUnknownEffect(SymmyDemoSourceWriterCandidatesSchema)(input);
     const scoped = candidates.filter(
       (candidate) => candidate.tenantId === tenantId && candidate.workloadKey === workloadKey,
     );
@@ -219,9 +249,9 @@ export const selectSymmyDemoSourceWriter = (workloadKey: string, input: unknown)
         : scoped.filter(
             (candidate) =>
               candidate.kind === 'service' &&
-              candidate.legalEntityId === legalEntityId &&
-              candidate.platformRole === 'internal_workload' &&
-              candidate.principalId === internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey }),
+              Option.contains(candidate.legalEntityId, legalEntityId) &&
+              Option.contains(candidate.platformRole, 'internal_workload') &&
+              candidate.principalId === internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey }),
           );
     const principals = [...new Set(eligible.map(({ principalId }) => principalId))];
     const [principalId] = principals;
@@ -249,7 +279,8 @@ const readSymmyDemoSourceWriterCandidates = (workloadKey: string) =>
       where b.tenant_id=${tenantId} and b.workload_key=${workloadKey}
         and b.status='active' and p.status='active'
         and p.kind in ('system','service') and t.status='active' and l.status='active'`;
-    return yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(candidates);
+    const parsed = yield* Schema.decodeUnknownEffect(SymmyDemoSourceWriterCandidatesSchema)(candidates);
+    return yield* Schema.encodeEffect(SymmyDemoSourceWriterCandidatesSchema)(parsed);
   });
 
 /** Active native bindings establish the candidate set; Core revalidates the selected identity as a trusted worker. */
@@ -286,11 +317,12 @@ const resolveSymmyDemoCustomerReceivers = (
       );
       resolved.push({ key, principalId: principal.principalId });
     }
-    const partyReader = resolved.find(({ key }) => key === 'party.registry.source-read');
+    const partyReader = resolved.find(({ key }) => key === partyReaderWorkload);
     const commerceReader = resolved.find(({ key }) => key === sourceReader);
-    const privacyReceiver = resolved.find(({ key }) => key === 'privacy.core.source-processing-check');
-    if (partyReader === undefined || commerceReader === undefined || privacyReceiver === undefined)
+    const privacyReceiver = resolved.find(({ key }) => key === privacySourceCheck);
+    if (partyReader === undefined || commerceReader === undefined || privacyReceiver === undefined) {
       return yield* fail('Native customer receiver enrollment is absent');
+    }
     return {
       commerceReaderId: commerceReader.principalId,
       partyReaderId: partyReader.principalId,
@@ -301,25 +333,31 @@ const resolveSymmyDemoCustomerReceivers = (
 
 /** An existing native reader is never replaced. An operator-managed route must be changed by its own Action. */
 export const symmyDemoNativeReaderNeedsEnrollment = (
-  route: { readonly readers: readonly string[]; readonly managed: boolean },
+  route: { readonly managed: boolean; readonly readers: readonly string[] },
   integration: string,
   nativeReader: string,
 ) =>
   Effect.gen(function* needsEnrollment() {
-    if (integration === nativeReader) return yield* fail('The external integration cannot be the native source reader');
-    if (route.readers.includes(nativeReader)) return false;
-    if (!route.readers.includes(integration))
+    if (integration === nativeReader) {
+      return yield* fail('The external integration cannot be the native source reader');
+    }
+    if (route.readers.includes(nativeReader)) {
+      return false;
+    }
+    if (!route.readers.includes(integration)) {
       return yield* fail('The exact legacy integration reader is not enrolled on this owner route');
-    if (route.managed) return yield* fail('Name the canonical Commerce reader through the managed source route Action');
+    }
+    if (route.managed) {
+      return yield* fail('Name the canonical Commerce reader through the managed source route Action');
+    }
     return true;
   });
 
 const GroupSchema = Schema.Struct({
   code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,80}$/u)),
-  groupId: Uuid,
-  recordId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  groupId: DemoGroupIdSchema,
+  recordId: DemoRecordIdSchema,
 });
-type Group = typeof GroupSchema.Type;
 
 export const buildSymmySourceSyncProcessingPolicy = (identities: Identities) =>
   Schema.decodeUnknownEffect(SourceSyncProcessingPolicySchema)({
@@ -349,11 +387,12 @@ export const buildSymmySourceSyncProcessingPolicy = (identities: Identities) =>
  * Use as connectSeedClient's checkpoint callback. Native Action replay recovers generated owner IDs after a lost
  * reply; a new approved command has a different key. No receipt file, random ID or automatic HTTP retry is used.
  */
+const CustomerWriteKeySchema = Schema.fromJsonString(
+  Schema.Tuple([TenantIdSchema, LegalEntityIdSchema, Schema.String, Schema.String, Schema.String]),
+);
 export const symmyDemoCustomerWriteKey = (audience: string, path: string, encodedPayload: string) =>
-  Effect.succeed(
-    `akros-customer-authority:${createHash('sha256')
-      .update(JSON.stringify([tenantId, legalEntityId, audience, path, encodedPayload]))
-      .digest('hex')}`,
+  Schema.encodeEffect(CustomerWriteKeySchema)([tenantId, legalEntityId, audience, path, encodedPayload]).pipe(
+    Effect.map((encoded) => `akros-customer-authority:${createHash('sha256').update(encoded).digest('hex')}`),
   );
 
 const PrivacyStepSchema = Schema.Union([
@@ -374,84 +413,83 @@ export { PrivacyStepSchema as SymmyDemoCustomerPrivacyStepSchema };
  */
 export const applySymmyDemoCustomerPrivacy = (
   client: Pick<SeedClient, 'call'>,
-  target: { readonly tenantId: string; readonly legalEntityId: string },
-  input: unknown,
+  target: { readonly legalEntityId: string; readonly tenantId: string },
+  input: typeof PrivacyStepSchema.Encoded,
 ) =>
   Effect.gen(function* privacyStep() {
     if (target.tenantId !== tenantId || target.legalEntityId !== legalEntityId) {
       return yield* fail('Privacy provisioning is restricted to the declared AKROS tenant and company');
     }
     const step = yield* Schema.decodeUnknownEffect(PrivacyStepSchema, { onExcessProperty: 'error' })(input);
-    switch (step._tag) {
-      case 'CREATE_PURPOSE':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/create-processing-purpose',
-          CreateProcessingPurposePayloadSchema,
-          step.payload,
-          CreateProcessingPurposeResultSchema,
-          true,
-        );
-      case 'CREATE_SUBJECT':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/create-privacy-subject',
-          CreatePrivacySubjectPayloadSchema,
-          step.payload,
-          CreatePrivacySubjectResultSchema,
-          true,
-          ['party-registry'],
-        );
-      case 'ASSIGN_RESPONSIBILITY':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/assign-privacy-responsibility',
-          AssignPrivacyResponsibilityPayloadSchema,
-          step.payload,
-          AssignPrivacyResponsibilityResultSchema,
-          true,
-        );
-      case 'RECORD_POLICY':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/record-applicability-policy',
-          RecordApplicabilityPolicyPayloadSchema,
-          step.payload,
-          RecordApplicabilityPolicyResultSchema,
-          true,
-        );
-      case 'RECORD_APPLICABILITY':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/record-privacy-applicability',
-          RecordPrivacyApplicabilityPayloadSchema,
-          step.payload,
-          RecordPrivacyApplicabilityResultSchema,
-          true,
-        );
-      case 'ASSIGN_BASIS':
-        return yield* client.call(
-          'privacy',
-          '/privacy/actions/assign-legal-basis',
-          AssignLegalBasisPayloadSchema,
-          step.payload,
-          AssignLegalBasisResultSchema,
-          true,
-        );
-      default: {
-        const exhaustive: never = step;
-        return exhaustive;
-      }
-    }
+    return yield* Match.value(step).pipe(
+      Match.tags({
+        ASSIGN_BASIS: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/assign-legal-basis',
+            AssignLegalBasisPayloadSchema,
+            command.payload,
+            AssignLegalBasisResultSchema,
+            true,
+          ),
+        ASSIGN_RESPONSIBILITY: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/assign-privacy-responsibility',
+            AssignPrivacyResponsibilityPayloadSchema,
+            command.payload,
+            AssignPrivacyResponsibilityResultSchema,
+            true,
+          ),
+        CREATE_PURPOSE: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/create-processing-purpose',
+            CreateProcessingPurposePayloadSchema,
+            command.payload,
+            CreateProcessingPurposeResultSchema,
+            true,
+          ),
+        CREATE_SUBJECT: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/create-privacy-subject',
+            CreatePrivacySubjectPayloadSchema,
+            command.payload,
+            CreatePrivacySubjectResultSchema,
+            true,
+            [partyApp],
+          ),
+        RECORD_APPLICABILITY: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/record-privacy-applicability',
+            RecordPrivacyApplicabilityPayloadSchema,
+            command.payload,
+            RecordPrivacyApplicabilityResultSchema,
+            true,
+          ),
+        RECORD_POLICY: (command) =>
+          client.call(
+            'privacy',
+            '/privacy/actions/record-applicability-policy',
+            RecordApplicabilityPolicyPayloadSchema,
+            command.payload,
+            RecordApplicabilityPolicyResultSchema,
+            true,
+          ),
+      }),
+      Match.exhaustive,
+    );
   });
 
 /** Run with the real caller's Privacy gateway credential after publishing the approved owner context. */
 export const verifySymmyDemoCustomerSourceProcessing = (
   context: typeof SourceProcessingContextSchema.Type,
   authorization: {
-    readonly credential: Redacted.Redacted<string>;
-    readonly requestCorrelation: string;
+    readonly credential: Redacted.Redacted;
     readonly options: NonNullable<Parameters<typeof executeSourceProcessingEligibilityWithAuthorization>[3]>;
+    readonly requestCorrelation: string;
   },
 ) =>
   Effect.gen(function* verifySourceProcessing() {
@@ -481,21 +519,21 @@ export const symmyDemoMembershipRouteId = (groupId: string) => v5(groupId, SYMMY
 
 const operation = (moduleId: string, entrypointKey: string) => ({ entrypointKey, moduleId, schemaVersion: '1' });
 export const symmyDemoCustomerOperations = [
-  operation('party.registry', 'party.registry.create-party'),
-  operation('party.registry', 'party.registry.add-contact-point'),
-  operation('party.registry', 'party.registry.counterparty-customer-onboard'),
-  operation('commerce.customer-context', 'commerce.customer-context.ensure-retail-customer-profile'),
-  operation('commerce.customer-context', 'commerce.customer-context.create-counterparty-purchasing-profile'),
-  operation('commerce.customer-context', 'commerce.customer-context.add-saved-address'),
-  operation('commerce.customer-context', 'commerce.customer-context.change-organization-customer-profile-ico'),
+  operation(partyModule, 'party.registry.create-party'),
+  operation(partyModule, 'party.registry.add-contact-point'),
+  operation(partyModule, 'party.registry.counterparty-customer-onboard'),
+  operation(commerceModule, 'commerce.customer-context.ensure-retail-customer-profile'),
+  operation(commerceModule, 'commerce.customer-context.create-counterparty-purchasing-profile'),
+  operation(commerceModule, 'commerce.customer-context.add-saved-address'),
+  operation(commerceModule, 'commerce.customer-context.change-organization-customer-profile-ico'),
 ];
 const customerReadOperations = [
-  operation('commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page'),
-  operation('commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-parties'),
-  operation('commerce.customer-context', 'commerce.customer-context.api.organization-customer-profile-ico'),
-  operation('party.registry', 'party.registry.api.source-profile-export'),
-  operation('party.registry', 'party.registry.api.organization-business-name-export'),
-  operation('party.registry', 'party.registry.api.source-party-search'),
+  operation(commerceModule, 'commerce.customer-context.api.customer-profile-source-page'),
+  operation(commerceModule, 'commerce.customer-context.api.customer-profile-source-parties'),
+  operation(commerceModule, 'commerce.customer-context.api.organization-customer-profile-ico'),
+  operation(partyModule, 'party.registry.api.source-profile-export'),
+  operation(partyModule, 'party.registry.api.organization-business-name-export'),
+  operation(partyModule, 'party.registry.api.source-party-search'),
 ];
 const configuration = (
   logicalRouteId: string,
@@ -529,12 +567,12 @@ export const symmyDemoCustomerRetentionRefs = () => [
   },
 ];
 
-export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readonly Group[]) =>
+export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readonly (typeof GroupSchema.Encoded)[]) =>
   Effect.gen(function* buildRoutes() {
     yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(principalId);
     const { SymmyRouteEnrollmentRequestSchema } = yield* Effect.tryPromise({
       catch: () => fail('The production Symmy enrollment contract could not be loaded'),
-      try: () => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
+      try: async () => await import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
     });
     return yield* Schema.decodeUnknownEffect(Schema.Array(SymmyRouteEnrollmentRequestSchema))([
       {
@@ -561,7 +599,7 @@ export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readon
       ...groups.map(({ code, groupId, recordId }) => ({
         configuration: {
           ...configuration(SYMMY_DEMO_GROUPS_SOURCE_ROUTE, 'CUSTOMER_GROUP', [
-            operation('commerce.customer-context', 'commerce.customer-context.apply-customer-group-membership-source'),
+            operation(commerceModule, 'commerce.customer-context.apply-customer-group-membership-source'),
           ]),
           selector: {
             kind: 'CUSTOMER_GROUP',
@@ -573,7 +611,7 @@ export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readon
               sourceRecordId: recordId,
             },
             target: {
-              moduleId: 'commerce.customer-context',
+              moduleId: commerceModule,
               resourceId: groupId,
               resourceType: 'commerce.customer-context.customer-group',
               tenantId,
@@ -593,37 +631,54 @@ export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readon
     ]);
   });
 
-const PartyBindingSchema = Schema.Struct({
+export const SymmyDemoPartyBindingSchema = Schema.Struct({
   authMethod: Schema.Literals(['api_key', 'system']),
   issuer: Schema.String,
   namespace: Schema.String,
-  principalId: Uuid,
+  principalId: PrincipalIdSchema,
   recordType: Schema.String,
-  routeRef: Uuid,
-  tenantId: Uuid,
+  routeRef: DemoRouteIdSchema,
+  tenantId: TenantIdSchema,
 });
 
 /** Additive owner configuration. The parent publishes this to Party, never to another Tenant's owner scope. */
+const PartyBindingKeySchema = Schema.fromJsonString(
+  Schema.Tuple([
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+  ]),
+);
+const PartyBindingsJsonSchema = Schema.fromJsonString(Schema.Array(SymmyDemoPartyBindingSchema));
 export const symmyDemoCustomerEnvironment = (
   identities: EnvironmentIdentities,
-  existing: readonly (typeof PartyBindingSchema.Type)[] = [],
-) => {
-  const additions = [
-    { authMethod: 'api_key' as const, principalId: identities.integrationPrincipalId },
-    { authMethod: 'system' as const, principalId: identities.partyWriterId },
-    { authMethod: 'system' as const, principalId: identities.commerceWriterId },
-    { authMethod: 'system' as const, principalId: identities.partyReaderId },
-  ].map((identity) => ({
-    ...identity,
-    issuer,
-    namespace,
-    recordType,
-    routeRef: SYMMY_DEMO_CUSTOMERS_ROUTE,
-    tenantId,
-  }));
-  const entries = new Map(
-    [...existing, ...additions].map((entry) => [
-      JSON.stringify([
+  existing: readonly (typeof SymmyDemoPartyBindingSchema.Encoded)[] = [],
+) =>
+  Effect.gen(function* customerEnvironment() {
+    const additions = [
+      { authMethod: 'api_key' as const, principalId: identities.integrationPrincipalId },
+      { authMethod: 'system' as const, principalId: identities.partyWriterId },
+      { authMethod: 'system' as const, principalId: identities.commerceWriterId },
+      { authMethod: 'system' as const, principalId: identities.partyReaderId },
+    ].map((identity) => ({
+      ...identity,
+      issuer,
+      namespace,
+      recordType,
+      routeRef: SYMMY_DEMO_CUSTOMERS_ROUTE,
+      tenantId,
+    }));
+    const entries = new Map<string, typeof SymmyDemoPartyBindingSchema.Type>();
+    const bindings = yield* Schema.decodeUnknownEffect(Schema.Array(SymmyDemoPartyBindingSchema))([
+      ...existing,
+      ...additions,
+    ]);
+    for (const entry of bindings) {
+      const key = yield* Schema.encodeEffect(PartyBindingKeySchema)([
         entry.tenantId,
         entry.principalId,
         entry.authMethod,
@@ -631,21 +686,20 @@ export const symmyDemoCustomerEnvironment = (
         entry.namespace,
         entry.recordType,
         entry.routeRef,
-      ]),
-      entry,
-    ]),
-  );
-  return {
-    ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: JSON.stringify([...entries.values()]),
-    ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true',
-  };
-};
+      ]);
+      entries.set(key, entry);
+    }
+    return {
+      ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* Schema.encodeEffect(PartyBindingsJsonSchema)([...entries.values()]),
+      ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true' as const,
+    };
+  });
 
 const AdminLive = Layer.unwrap(
   Effect.gen(function* adminLayer() {
     const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
     if (environment !== 'stage') {
-      return yield* fail('Customer authority bootstrap is restricted to stage');
+      return yield* fail(stageOnlyReason);
     }
     const [runtime, admin] = yield* Effect.all([
       Config.Redacted('DATABASE_URL'),
@@ -655,28 +709,26 @@ const AdminLive = Layer.unwrap(
       DATABASE_ADMIN_URL: Redacted.value(admin),
       DATABASE_URL: Redacted.value(runtime),
     });
-    return PgClient.layer({ url: Redacted.make(connections.admin.connectionString), maxConnections: 1 });
+    return PgClient.layer({ maxConnections: 1, url: Redacted.make(connections.admin.connectionString) });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
-export const SymmyDemoCustomerAuthorityLive = AdminLive;
 
 const EnrollmentLive = Layer.unwrap(
   Effect.gen(function* enrollmentLayer() {
-    const runtime = yield* Config.Redacted('DATABASE_URL').pipe(
-      Effect.mapError(() => fail('enrollment-database-config')),
-    );
+    const runtime = yield* Config.Redacted('DATABASE_URL').pipe(Effect.mapError(() => fail(enrollmentDatabaseConfig)));
     const admin = yield* Config.Redacted('DATABASE_ADMIN_URL').pipe(
-      Effect.mapError(() => fail('enrollment-database-config')),
+      Effect.mapError(() => fail(enrollmentDatabaseConfig)),
     );
     const connections = yield* parseDatabaseConnectionPair({
-      DATABASE_URL: Redacted.value(runtime),
       DATABASE_ADMIN_URL: Redacted.value(admin),
-    }).pipe(Effect.mapError(() => fail('enrollment-database-config')));
+      DATABASE_URL: Redacted.value(runtime),
+    }).pipe(Effect.mapError(() => fail(enrollmentDatabaseConfig)));
     const database = Layer.mergeAll(
-      Layer.effect(
-        CoreDatabase,
-        // Core's real writers install an enrolled operation scope; the admin login deliberately has no such authority.
-        makeCoreDatabase(connections.runtime).pipe(Effect.mapError(() => fail('enrollment-core-client'))),
+      CoreDatabaseLive.pipe(
+        Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+        Layer.catchTag('DatabaseConnectionError', () =>
+          Layer.effect(CoreDatabase, Effect.fail(fail('enrollment-core-client'))),
+        ),
       ),
       Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
@@ -690,8 +742,9 @@ const EnrollmentLive = Layer.unwrap(
     );
   }),
 );
+export const SymmyDemoCustomerAuthorityLive = Layer.mergeAll(AdminLive, EnrollmentLive);
 const safeEnrollmentCodes: ReadonlySet<string> = new Set([
-  'enrollment-database-config',
+  enrollmentDatabaseConfig,
   'enrollment-core-client',
   'enrollment-catalog-read',
   'enrollment-catalog-declaration',
@@ -710,49 +763,57 @@ const safeEnrollmentCodes: ReadonlySet<string> = new Set([
   'additive-step-revoke-workload',
   'additive-step-disable-principal',
 ]);
-export const safeSymmyDemoEnrollmentFailure = (error: unknown) => {
+export const safeSymmyDemoEnrollmentFailure = (cause: unknown) => {
   if (
-    !(Schema.is(SymmyDemoCustomerAuthorityError)(error) || Schema.is(ReleaseInternalWorkloadError)(error)) ||
-    !safeEnrollmentCodes.has(error.reason)
-  )
+    !(Schema.is(SymmyDemoCustomerAuthorityError)(cause) || Schema.is(ReleaseInternalWorkloadError)(cause)) ||
+    !safeEnrollmentCodes.has(cause.reason)
+  ) {
     return fail('customer-workload-enrollment');
-  const detail = Schema.is(ReleaseInternalWorkloadError)(error)
-    ? `:${error.sqlState ?? 'no-sqlstate'}:${error.databaseConstraint ?? 'unclassified-constraint'}`
+  }
+  const detail = Schema.is(ReleaseInternalWorkloadError)(cause)
+    ? `:${cause.sqlState ?? 'no-sqlstate'}:${cause.databaseConstraint ?? 'unclassified-constraint'}`
     : '';
-  return fail(`${error.reason}${detail}`);
+  return fail(`${cause.reason}${detail}`);
 };
 
 /** Explicit additive administrative operation, restricted to the standing-approved AKROS stage source. */
 export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ensureWorkloads() {
-  if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage')
+  if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
     return yield* fail('Customer workload enrollment is restricted to stage');
-  const catalog = yield* Effect.tryPromise(() =>
-    readFile(new URL('../../topology/authorization-catalog.json', import.meta.url), 'utf8'),
-  ).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.fromJsonString(Schema.Struct({ declaredWorkloadKeys: Schema.Array(Schema.String) })),
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const catalog = yield* fs
+    .readFileString(fileURLToPath(new URL('../../topology/authorization-catalog.json', import.meta.url)))
+    .pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Struct({ declaredWorkloadKeys: Schema.Array(WorkloadKeySchema) })),
+        ),
       ),
-    ),
-    Effect.mapError(() => fail('enrollment-catalog-read')),
-  );
+      Effect.mapError(() => fail('enrollment-catalog-read')),
+    );
   const declarations = [];
   for (const declaration of symmyDemoCustomerInternalWorkloadDeclarations) {
-    if (!catalog.declaredWorkloadKeys.includes(declaration.workloadKey))
+    if (!catalog.declaredWorkloadKeys.some((key) => key === declaration.workloadKey)) {
       return yield* fail('enrollment-catalog-declaration');
+    }
     const candidates = yield* readSymmyDemoSourceWriterCandidates(declaration.workloadKey).pipe(
       Effect.mapError(() => fail('enrollment-source-read')),
     );
     const systems = candidates.filter(({ kind }) => kind === 'system');
-    if (systems.length > 1) return yield* fail('enrollment-legacy-ambiguity');
-    if (systems.length === 0) declarations.push(declaration);
+    if (systems.length > 1) {
+      return yield* fail('enrollment-legacy-ambiguity');
+    }
+    if (systems.length === 0) {
+      declarations.push(declaration);
+    }
   }
   const { executor } = yield* CoreDatabase;
   return yield* registerAdditiveCompanyInternalWorkloads(
     { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor },
-    { tenantId, legalEntityId, declarations, runReference: 'akros-stage-customer-enrollment' },
+    { declarations, legalEntityId, runReference: 'akros-stage-customer-enrollment', tenantId },
   );
-}).pipe(Effect.provide(EnrollmentLive), Effect.mapError(safeSymmyDemoEnrollmentFailure));
+}).pipe(Effect.mapError(safeSymmyDemoEnrollmentFailure));
 
 /** Core scoped writers use the enrolled runtime connection; raw administrator SQL is a separate capability. */
 export const symmyDemoCustomerBindingDatabase = CoreDatabase.pipe(
@@ -766,17 +827,21 @@ export const symmyDemoCompanyBindingNeedsCreate = (active: readonly { readonly l
     : Effect.succeed(active.length === 0);
 
 const ExternalReceiverAliasSchema = Schema.Struct({
-  bindingId: Uuid,
-  incarnation: Uuid,
-  principalId: Uuid,
-  tenantId: Uuid,
-  workloadKey: Schema.String,
-  kind: Schema.String,
-  status: Schema.String,
+  bindingId: AccessWorkloadBindingIdSchema,
   foreignCompany: Schema.Boolean,
+  incarnation: AccessWorkloadBindingIdSchema,
+  kind: Schema.String,
+  principalId: PrincipalIdSchema,
+  status: Schema.String,
+  tenantId: TenantIdSchema,
+  workloadKey: WorkloadKeySchema,
 });
-export const symmyDemoExternalReceiverBindingsToRevoke = (integrationPrincipalId: string, input: unknown) =>
-  Schema.decodeUnknownEffect(Schema.Array(ExternalReceiverAliasSchema))(input).pipe(
+const ExternalReceiverAliasesSchema = Schema.Array(ExternalReceiverAliasSchema);
+export const symmyDemoExternalReceiverBindingsToRevoke = (
+  integrationPrincipalId: string,
+  input: typeof ExternalReceiverAliasesSchema.Encoded,
+) =>
+  Schema.decodeUnknownEffect(ExternalReceiverAliasesSchema)(input).pipe(
     Effect.flatMap((rows) => {
       const owned = rows.filter((row) => {
         const ids = stageWorkloadBindingIds(tenantId, integrationPrincipalId, row.workloadKey);
@@ -801,7 +866,7 @@ export const symmyDemoExternalReceiverBindingsToRevoke = (integrationPrincipalId
 /** Read this before starting Party. No composition, operator session, new identity or write is needed. */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {
   if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
-    return yield* fail('Customer authority bootstrap is restricted to stage');
+    return yield* fail(stageOnlyReason);
   }
   yield* ensureSymmyDemoCustomerInternalWorkloads;
   const sql = yield* PgClient.PgClient;
@@ -818,49 +883,97 @@ export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnviron
     Effect.mapError(symmyDemoDiscoveryFailure('commerce-writer')),
   );
   const reader = yield* resolveSymmyDemoSourceWriter(
-    'party.registry.source-read',
-    symmyDemoObsoleteReceiverBindingIds(party.principalId, commerce.principalId, 'party.registry.source-read'),
+    partyReaderWorkload,
+    symmyDemoObsoleteReceiverBindingIds(party.principalId, commerce.principalId, partyReaderWorkload),
   ).pipe(Effect.mapError(symmyDemoDiscoveryFailure('party-reader')));
   const identities = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
-      commerceWriterId: Uuid,
-      integrationPrincipalId: Uuid,
-      partyWriterId: Uuid,
-      partyReaderId: Uuid,
+      commerceWriterId: PrincipalIdSchema,
+      integrationPrincipalId: PrincipalIdSchema,
+      partyReaderId: PrincipalIdSchema,
+      partyWriterId: PrincipalIdSchema,
     }),
   )({
-    partyReaderId: reader.principalId,
     commerceWriterId: commerce.principalId,
     integrationPrincipalId: integration.principalId,
+    partyReaderId: reader.principalId,
     partyWriterId: party.principalId,
   });
   const configuredBindings = yield* Config.schema(
-    Schema.fromJsonString(Schema.Array(PartyBindingSchema)),
+    Schema.fromJsonString(Schema.Array(SymmyDemoPartyBindingSchema)),
     'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
   ).pipe(Config.withDefault([]));
-  return { environment: symmyDemoCustomerEnvironment(identities, configuredBindings), identities };
+  return { environment: yield* symmyDemoCustomerEnvironment(identities, configuredBindings), identities };
 });
+
+const retireSymmyDemoBootstrapAliases = Effect.fn('SymmyDemoCustomerAuthority.retireBootstrapAliases')(
+  function* retireAliases(
+    mode: 'apply' | 'verify',
+    integrationPrincipalId: string,
+    partyId: string,
+    commerceId: string,
+    scope: Parameters<ReturnType<typeof AccessWorkloadBindingStore.of>['revokeBinding']>[0],
+    externalAliases: typeof ExternalReceiverAliasesSchema.Encoded,
+  ) {
+    const sql = yield* PgClient.PgClient;
+    const bindingStore = yield* AccessWorkloadBindingStore;
+    const obsoleteExternalBindings = yield* symmyDemoExternalReceiverBindingsToRevoke(
+      integrationPrincipalId,
+      externalAliases,
+    );
+    if (mode === 'verify' && obsoleteExternalBindings.length > 0) {
+      yield* fail('Bootstrap-owned receiver aliases remain on the external integration; run apply');
+    }
+    for (const bindingId of obsoleteExternalBindings) {
+      yield* bindingStore.revokeBinding(scope, { bindingId, revokedAt: yield* DateTime.nowAsDate });
+    }
+    // Remove only duplicate executor aliases this bootstrap previously created. Unique legacy SYSTEM stays.
+    for (const key of customerReceiverWorkloads) {
+      const systems = yield* sql`select b.binding_id as "bindingId" from core.access_workload_bindings b
+        join core.principals p on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
+        where b.tenant_id=${tenantId} and b.workload_key=${key} and b.status='active'
+          and p.kind='system' and p.status='active'`;
+      if (systems.length <= 1) {
+        continue;
+      }
+      for (const principalId of [partyId, commerceId]) {
+        const ids = stageWorkloadBindingIds(tenantId, principalId, key);
+        if (!systems.some((row) => row.bindingId === ids.bindingId)) {
+          continue;
+        }
+        yield* mode === 'apply'
+          ? bindingStore.revokeBinding(scope, {
+              bindingId: AccessWorkloadBindingIdSchema.make(ids.bindingId),
+              revokedAt: yield* DateTime.nowAsDate,
+            })
+          : fail(`Duplicate obsolete bootstrap receiver binding remains for ${key}; run apply`);
+      }
+    }
+  },
+);
 
 /** Admin bootstrap only; authentic principal IDs come from Core's actual enrolled system workloads. */
 export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerAuthority.bootstrap')(
   function* bootstrap(mode: 'apply' | 'verify') {
     if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
-      return yield* fail('Customer authority bootstrap is restricted to stage');
+      return yield* fail(stageOnlyReason);
     }
-    if (mode === 'apply') yield* ensureSymmyDemoCustomerInternalWorkloads;
-    const { SymmyRouteExecutionConfigurationSchema, SymmyJobRetentionPolicySchema } = yield* Effect.tryPromise({
+    if (mode === 'apply') {
+      yield* ensureSymmyDemoCustomerInternalWorkloads;
+    }
+    const { SymmyJobRetentionPolicySchema, SymmyRouteExecutionConfigurationSchema } = yield* Effect.tryPromise({
       catch: () => fail('The production Symmy source contracts could not be loaded'),
-      try: () => import('@app/symmy-integration/symmy-internal-contracts'),
+      try: async () => await import('@app/symmy-integration/symmy-internal-contracts'),
     });
     const {
       symmyPlannedRouteRow,
       symmyRetentionRefusals,
+      symmyRouteEnrollmentLockKey,
       symmyRouteInventoryOf,
       symmyRouteRequestRefusals,
-      symmyRouteEnrollmentLockKey,
     } = yield* Effect.tryPromise({
       catch: () => fail('The production Symmy enrollment contract could not be loaded'),
-      try: () => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
+      try: async () => await import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
     });
     const sql = yield* PgClient.PgClient;
     const executor = yield* makeWithDefaults({ relations: coreRelations });
@@ -906,7 +1019,6 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     )(owners);
     const scope = yield* stageScopeOf({ principalId: owner.principalId, tenantId });
     const database = yield* symmyDemoCustomerBindingDatabase;
-    const bindingStore = yield* AccessWorkloadBindingStore;
     const externalAliases = yield* sql`select b.binding_id as "bindingId", b.incarnation,
       b.principal_id as "principalId", b.tenant_id as "tenantId", b.workload_key as "workloadKey",
       p.kind, b.status, exists(
@@ -916,35 +1028,16 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       from core.access_workload_bindings b join core.principals p
         on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
       where b.tenant_id=${tenantId} and b.principal_id=${existing.principalId} and b.status='active'`;
-    const obsoleteExternalBindings = yield* symmyDemoExternalReceiverBindingsToRevoke(
+    yield* retireSymmyDemoBootstrapAliases(
+      mode,
       existing.principalId,
-      externalAliases,
+      party.principalId,
+      commerce.principalId,
+      scope,
+      yield* Schema.encodeEffect(ExternalReceiverAliasesSchema)(
+        yield* Schema.decodeUnknownEffect(ExternalReceiverAliasesSchema)(externalAliases),
+      ),
     );
-    if (mode === 'verify' && obsoleteExternalBindings.length > 0)
-      return yield* fail('Bootstrap-owned receiver aliases remain on the external integration; run apply');
-    for (const bindingId of obsoleteExternalBindings) {
-      yield* bindingStore.revokeBinding(scope, { bindingId, revokedAt: new Date() });
-    }
-    // Remove only duplicate executor aliases this bootstrap previously created. Unique legacy SYSTEM stays.
-    for (const key of customerReceiverWorkloads) {
-      const systems = yield* sql`select b.binding_id as "bindingId" from core.access_workload_bindings b
-        join core.principals p on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
-        where b.tenant_id=${tenantId} and b.workload_key=${key} and b.status='active'
-          and p.kind='system' and p.status='active'`;
-      if (systems.length <= 1) continue;
-      for (const principalId of [party.principalId, commerce.principalId]) {
-        const ids = stageWorkloadBindingIds(tenantId, principalId, key);
-        if (!systems.some((row) => row.bindingId === ids.bindingId)) continue;
-        if (mode === 'apply') {
-          yield* bindingStore.revokeBinding(scope, {
-            bindingId: AccessWorkloadBindingIdSchema.make(ids.bindingId),
-            revokedAt: new Date(),
-          });
-        } else {
-          return yield* fail(`Duplicate obsolete bootstrap receiver binding remains for ${key}; run apply`);
-        }
-      }
-    }
     const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(
       party.principalId,
       commerce.principalId,
@@ -995,21 +1088,21 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
             bindings: [
               {
                 bindingId,
-                createdAt: new Date(),
+                createdAt: yield* DateTime.nowAsDate,
                 incarnation: AccessWorkloadBindingIdSchema.make(ids.bindingIncarnation),
-                principalId,
+                principalId: yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(principalId),
                 tenantId,
                 workloadKey,
               },
             ],
           });
         }
-        if (createCompanyBinding)
+        if (createCompanyBinding) {
           yield* writeWorkloadCompanyBindings(database, scope, {
             bindings: [
               {
                 companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyBindingId),
-                createdAt: new Date(),
+                createdAt: yield* DateTime.nowAsDate,
                 incarnation: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyIncarnation),
                 legalEntityId,
                 tenantId,
@@ -1017,6 +1110,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
               },
             ],
           });
+        }
       }
       const bindings = yield* executor
         .select()
@@ -1041,13 +1135,15 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
         return yield* fail(`No active AKROS company registration for ${key}; revoked policy is never revived`);
       }
     }
+    const sourceSyncPolicyLock = `${tenantId}:${legalEntityId}:source-sync-processing-policy`;
+    const ownerSourcesLock = `${tenantId}:symmy-demo-customer-authority`;
     const sourceSyncPolicy = yield* buildSymmySourceSyncProcessingPolicy(identities);
     const encodedSourceSyncPolicy = yield* Schema.encodeEffect(SourceSyncProcessingPolicySchema)(sourceSyncPolicy);
     if (mode === 'apply') {
       yield* sql.withTransaction(
         Effect.gen(function* installSourceSyncPolicy() {
           yield* sql`select pg_advisory_xact_lock(hashtextextended(
-            ${`${tenantId}:${legalEntityId}:source-sync-processing-policy`},0))`;
+            ${sourceSyncPolicyLock},0))`;
           yield* sql`insert into privacy.demo_source_processing_policies
           (tenant_id,legal_entity_id,policy_id,policy_record)
           values(${tenantId},${legalEntityId},${sourceSyncPolicy.policyId},${sql.json(encodedSourceSyncPolicy)})
@@ -1069,7 +1165,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     // Only the exact bootstrap-owned read grant can grow. Never overwrite an operator-managed route.
     yield* sql.withTransaction(
       Effect.gen(function* ownerSources() {
-        yield* sql`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}:symmy-demo-customer-authority`},0))`;
+        yield* sql`select pg_advisory_xact_lock(hashtextextended(${ownerSourcesLock},0))`;
         if (mode === 'apply') {
           yield* sql`insert into commerce_customer_context.customer_profile_source_routes
           (tenant_id,legal_entity_id,route_id,route_revision,mapping_revision,issuer,namespace,record_type,
@@ -1111,7 +1207,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
             from ${table} where ${where} for update`.pipe(
             Effect.flatMap(
               Schema.decodeUnknownEffect(
-                Schema.Tuple([Schema.Struct({ readers: Schema.Array(Uuid), managed: Schema.Boolean })]),
+                Schema.Tuple([Schema.Struct({ managed: Schema.Boolean, readers: Schema.Array(Uuid) })]),
               ),
             ),
             Effect.mapError(() => fail(`Exact active AKROS ${kind} source route is absent`)),
@@ -1123,7 +1219,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
               receiverIdentities.commerceReaderId,
             )
           ) {
-            if (mode !== 'apply') return yield* fail(`Native Commerce reader not enrolled on ${kind}`);
+            if (mode !== 'apply') {
+              yield* fail(`Native Commerce reader not enrolled on ${kind}`);
+            }
             yield* sql`update ${table} set source_reader_principal_ids=array_append(source_reader_principal_ids,
               ${receiverIdentities.commerceReaderId}::uuid), generation=generation+1 where ${where}
               returning ${receiverIdentities.commerceReaderId}::uuid=any(source_reader_principal_ids) as enrolled`.pipe(
@@ -1200,7 +1298,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
             and route_key=${request.routeKey} and route_code is not distinct from ${planned.routeCode}::text
             and route_id<>${request.routeId} and active=true`;
           if (peers.length > 0) {
-            return yield* fail(
+            yield* fail(
               `An existing ${request.routeKey} already holds this source selector; no second company route was created`,
             );
           }
@@ -1219,7 +1317,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           and route_revision=${revision} and mapping_version=${revision} and active=true
           and fixture_ids=${planned.fixtureIds}::text[] and fixture_plan=${sql.json(encoded)}::jsonb
           and lifecycle_policy is not distinct from ${policy === null ? null : sql.json(policy)}::jsonb`;
-          yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ routeId: Uuid })]))(observed).pipe(
+          yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ routeId: DemoRouteIdSchema })]))(
+            observed,
+          ).pipe(
             Effect.mapError(() =>
               fail(`Existing ${request.routeKey} enrollment differs; no route or epoch was replaced`),
             ),
@@ -1229,10 +1329,10 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       receipts.push({ outcome: 'verified', routeId: request.routeId, routeKey: request.routeKey });
     }
     const configuredBindings = yield* Config.schema(
-      Schema.fromJsonString(Schema.Array(PartyBindingSchema)),
+      Schema.fromJsonString(Schema.Array(SymmyDemoPartyBindingSchema)),
       'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
     ).pipe(Config.withDefault([]));
-    const environment = symmyDemoCustomerEnvironment(identities, configuredBindings);
+    const environment = yield* symmyDemoCustomerEnvironment(identities, configuredBindings);
     const contexts = yield* Config.schema(
       Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
       'ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS',
@@ -1245,43 +1345,60 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     );
     return {
       environment,
-      identities,
-      sourceProcessingAuthority: 'SOURCE_SYNC_PROCESSING_POLICY' as const,
       exactPersonalDataContexts: personalContexts.length,
+      identities,
       readyForSourceSync: true,
       receipts,
       retention: symmyDemoCustomerRetentionRefs(),
+      sourceProcessingAuthority: 'SOURCE_SYNC_PROCESSING_POLICY' as const,
     };
   },
-  Effect.provide(EnrollmentLive),
 );
 
+const EnrollmentOutputSchema = Schema.fromJsonString(
+  Schema.Struct({
+    mode: Schema.Literal('enroll'),
+    registered: Schema.Number,
+    unchanged: Schema.Number,
+  }),
+);
+const EnvironmentOutputSchema = Schema.fromJsonString(
+  Schema.Struct({
+    ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: Schema.String,
+    ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: Schema.Literal('true'),
+  }),
+);
 const command = Command.make(
   'symmy-demo-customer-authority',
   { mode: Flag.Literals('mode', ['apply', 'verify', 'environment', 'enroll']).pipe(Flag.withDefault('verify')) },
-  ({ mode }) =>
-    mode === 'enroll'
-      ? ensureSymmyDemoCustomerInternalWorkloads.pipe(
-          Effect.flatMap((counts) => Console.log(JSON.stringify({ mode: 'enroll', ...counts }))),
-        )
-      : mode === 'environment'
-        ? readSymmyDemoCustomerEnvironment.pipe(
-            Effect.flatMap(({ environment }) => Console.log(JSON.stringify(environment))),
-          )
-        : bootstrapSymmyDemoCustomerAuthority(mode).pipe(
-            Effect.flatMap((result) =>
-              Console.log({
-                mode,
-                sourceProcessingAuthority: result.sourceProcessingAuthority,
-                routes: result.receipts.map(({ outcome, routeId, routeKey }) => ({ outcome, routeId, routeKey })),
-              }),
-            ),
-            Effect.mapError(() =>
-              fail(
-                'AKROS customer authority bootstrap did not converge; inspect retention, workloads and existing owner policy',
-              ),
-            ),
-          ),
+  ({ mode }) => {
+    if (mode === 'enroll') {
+      return ensureSymmyDemoCustomerInternalWorkloads.pipe(
+        Effect.flatMap((counts) => Schema.encodeEffect(EnrollmentOutputSchema)({ mode: 'enroll', ...counts })),
+        Effect.flatMap(Console.log),
+      );
+    }
+    if (mode === 'environment') {
+      return readSymmyDemoCustomerEnvironment.pipe(
+        Effect.flatMap(({ environment }) => Schema.encodeEffect(EnvironmentOutputSchema)(environment)),
+        Effect.flatMap(Console.log),
+      );
+    }
+    return bootstrapSymmyDemoCustomerAuthority(mode).pipe(
+      Effect.flatMap((result) =>
+        Console.log({
+          mode,
+          routes: result.receipts.map(({ outcome, routeId, routeKey }) => ({ outcome, routeId, routeKey })),
+          sourceProcessingAuthority: result.sourceProcessingAuthority,
+        }),
+      ),
+      Effect.mapError(() =>
+        fail(
+          'AKROS customer authority bootstrap did not converge; inspect retention, workloads and existing owner policy',
+        ),
+      ),
+    );
+  },
 );
 
 if (import.meta.main) {
@@ -1289,9 +1406,9 @@ if (import.meta.main) {
     Command.run(command, { version: '1.0.0' }).pipe(
       Effect.provide(SymmyDemoCustomerAuthorityLive),
       Effect.provide(NodeServices.layer),
-      Effect.tapError((error) =>
+      Effect.tapError((failure) =>
         Console.error(
-          Schema.is(SymmyDemoCustomerAuthorityError)(error) ? error.reason : 'AKROS customer authority unavailable',
+          Schema.is(SymmyDemoCustomerAuthorityError)(failure) ? failure.reason : 'AKROS customer authority unavailable',
         ),
       ),
     ),

@@ -55,6 +55,8 @@
  *
  * Report-only: no fixer, no suggestion.
  */
+import { isBuiltin } from 'node:module';
+
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
@@ -347,8 +349,7 @@ const nativeTryPromiseCall = (context: Context, options: ESTree.Node): boolean =
   );
 };
 
-const deferredArtifactLoader = (context: Context, decoded: ESTree.CallExpression): boolean => {
-  const result = decoded.parent?.type === 'AwaitExpression' ? decoded.parent : decoded;
+const deferredTryPromiseOptions = (context: Context, result: ESTree.Node): ESTree.ObjectExpression | null => {
   const loader = result.parent;
   if (
     loader?.type !== 'ArrowFunctionExpression' ||
@@ -356,12 +357,11 @@ const deferredArtifactLoader = (context: Context, decoded: ESTree.CallExpression
     loader.params.length !== 0 ||
     loader.body !== result
   ) {
-    return false;
+    return null;
   }
   const field = loader.parent;
   const options = field?.parent;
-  return (
-    field?.type === 'Property' &&
+  return field?.type === 'Property' &&
     !field.computed &&
     field.kind === 'init' &&
     !field.method &&
@@ -369,12 +369,102 @@ const deferredArtifactLoader = (context: Context, decoded: ESTree.CallExpression
     field.key.name === 'try' &&
     options?.type === 'ObjectExpression' &&
     nativeTryPromiseCall(context, options)
-  );
+    ? options
+    : null;
 };
 
 const independentArtifactImport = (context: Context, node: ESTree.ImportExpression): boolean => {
   const decoded = artifactDecodeCall(context, node);
-  return decoded !== null && fileArtifactAddress(context, node) && deferredArtifactLoader(context, decoded);
+  if (decoded === null || !fileArtifactAddress(context, node)) return false;
+  const result = decoded.parent?.type === 'AwaitExpression' ? decoded.parent : decoded;
+  return deferredTryPromiseOptions(context, result) !== null;
+};
+
+const isContractModuleAddress = (source: string): boolean => {
+  if (
+    isBuiltin(source) ||
+    // Include bare spellings of prefix-only builtins such as node:test.
+    isBuiltin(`node:${source}`) ||
+    ['@effect/platform-node', 'effect'].includes(source) ||
+    source.startsWith('@effect/platform-node/') ||
+    source.startsWith('effect/')
+  )
+    return false;
+  // Only ordinary relative files and package/subpath literals: no URL schemes, absolute paths,
+  // package-import aliases, percent escapes or queries with resolver-dependent origins.
+  return (
+    /^(?:\.{1,2}\/)+[a-z\d_.-]+(?:\/[a-z\d_.-]+)*$/iu.test(source) ||
+    /^(?:@[a-z\d][a-z\d._-]*\/)?[a-z\d][a-z\d._-]*(?:\/[a-z\d_.-]+)*$/iu.test(source)
+  );
+};
+
+/**
+ * A literal contract namespace is consumed by a const named destructure, not retained as a
+ * second runtime origin. The loader only returns the import; no callbacks, namespace aliases,
+ * runtime/default slots or import options can smuggle another process adapter through it.
+ * Like static imports, this proves local binding provenance, not dependency side effects.
+ */
+const independentLiteralContractImport = (context: Context, node: ESTree.ImportExpression): boolean => {
+  const source = node.source;
+  if (
+    source.type !== 'Literal' ||
+    typeof source.value !== 'string' ||
+    !isContractModuleAddress(source.value) ||
+    node.options != null
+  )
+    return false;
+  const awaited = node.parent;
+  if (awaited?.type !== 'AwaitExpression') return false;
+  const options = deferredTryPromiseOptions(context, awaited);
+  if (options === null || options.properties.length !== 2) return false;
+  const catcher = options.properties.find(
+    (property) =>
+      property.type === 'Property' &&
+      !property.computed &&
+      !property.method &&
+      property.kind === 'init' &&
+      property.key.type === 'Identifier' &&
+      property.key.name === 'catch',
+  );
+  if (catcher?.type !== 'Property') return false;
+  const handler = catcher.value;
+  if (
+    handler.type !== 'ArrowFunctionExpression' ||
+    handler.async ||
+    handler.params.length !== 0 ||
+    handler.body.type !== 'CallExpression' ||
+    handler.body.optional ||
+    handler.body.callee.type !== 'Identifier' ||
+    handler.body.arguments.length !== 1 ||
+    handler.body.arguments[0]?.type !== 'Literal' ||
+    typeof handler.body.arguments[0].value !== 'string'
+  )
+    return false;
+  const invocation = options.parent;
+  const yielded = invocation?.parent;
+  const declaration = yielded?.parent;
+  if (
+    yielded?.type !== 'YieldExpression' ||
+    !yielded.delegate ||
+    declaration?.type !== 'VariableDeclarator' ||
+    declaration.init !== yielded ||
+    declaration.parent?.type !== 'VariableDeclaration' ||
+    declaration.parent.kind !== 'const' ||
+    declaration.id.type !== 'ObjectPattern' ||
+    declaration.id.properties.length === 0
+  )
+    return false;
+  return declaration.id.properties.every(
+    (property) =>
+      property.type === 'Property' &&
+      !property.computed &&
+      !property.method &&
+      property.kind === 'init' &&
+      property.key.type === 'Identifier' &&
+      property.value.type === 'Identifier' &&
+      !['NodeRuntime', 'runMain', 'default'].includes(property.key.name) &&
+      !['NodeRuntime', 'runMain', 'default'].includes(property.value.name),
+  );
 };
 
 const closedNodeRuntimeOrigins = (context: Context): boolean => {
@@ -395,7 +485,11 @@ const closedNodeRuntimeOrigins = (context: Context): boolean => {
   if (imports !== 1) return false;
   let closed = true;
   walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (value) => {
-    if (value.type === 'ImportExpression' && !independentArtifactImport(context, value)) {
+    if (
+      value.type === 'ImportExpression' &&
+      !independentArtifactImport(context, value) &&
+      !independentLiteralContractImport(context, value)
+    ) {
       closed = false;
     }
     if (

@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
-import { templateDatabaseLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
+import { accessAdminTemplateLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
@@ -93,7 +93,7 @@ const request = (handler: Effect.Success<ReturnType<typeof shellHandlerFor>>, he
     },
   });
 
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '180 seconds' })(
+it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
   'the Shell hosts Core Media Current V1 for a module',
   (suite) => {
     suite.effect(

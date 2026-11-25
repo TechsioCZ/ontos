@@ -8,11 +8,15 @@ import {
 } from '../../shared/apis/demo-catalog-revision.ts';
 import { loadHead } from '../services/merchandise-store.ts';
 
-const unavailable = () =>
-  new ReadHandlerUnavailable({
-    code: 'read_handler_unavailable',
-    reason: 'The company catalog revision is temporarily unavailable',
-  });
+const unavailable = (cause?: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The company catalog revision is temporarily unavailable',
+    }),
+    'cause',
+    { configurable: false, enumerable: false, value: cause, writable: false },
+  );
 
 interface RevisionServices {
   readonly read: Effect.Effect<typeof DemoCatalogRevisionResponseSchema.Type, ReadHandlerUnavailable>;

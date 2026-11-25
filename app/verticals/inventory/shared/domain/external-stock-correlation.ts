@@ -1,5 +1,5 @@
 import type { Effect as EffectType } from 'effect';
-import { Effect, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { ExternalStockCorrelationPersistenceUnavailable } from './external-stock-correlation-persistence-unavailable.ts';
 import { ExternalStockCorrelationRejected } from './external-stock-correlation-rejected.ts';
@@ -372,3 +372,14 @@ export const makeExternalStockCorrelationLifecycle = (
         ),
       ),
 });
+
+/** Invocation-local owner lifecycle; the caller's persistence and ID source keep their existing scope. */
+export class ExternalStockCorrelationLifecycle extends Context.Service<
+  ExternalStockCorrelationLifecycle,
+  ReturnType<typeof makeExternalStockCorrelationLifecycle>
+>()('@app/inventory/shared/domain/external-stock-correlation/ExternalStockCorrelationLifecycle') {
+  static readonly layer = (
+    persistence: ExternalStockCorrelationPersistence,
+    options: Parameters<typeof makeExternalStockCorrelationLifecycle>[1],
+  ) => Layer.succeed(ExternalStockCorrelationLifecycle, makeExternalStockCorrelationLifecycle(persistence, options));
+}
