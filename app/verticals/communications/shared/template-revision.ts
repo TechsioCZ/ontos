@@ -125,7 +125,8 @@ export type TemplatePin = typeof TemplatePinSchema.Type;
 export const TemplateLifecycleStateSchema = Schema.Literals(['draft', 'active', 'retired', 'invalidated-unsafe']);
 export type TemplateLifecycleState = typeof TemplateLifecycleStateSchema.Type;
 
-const AuditActivationSchema = Schema.Struct({
+/** One activation period of a revision: who activated it, when, in which scope and why, and how and by whom it ended. */
+export const AuditActivationSchema = Schema.Struct({
   activatedAt: timestamp,
   activatedByPrincipalId: TemplatePrincipalIdSchema,
   activationId: TemplateActivationIdSchema,

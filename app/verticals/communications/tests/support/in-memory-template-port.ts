@@ -8,6 +8,8 @@ import type {
   TemplateInvalidationRecord,
   TemplateRevisionPortContract,
   TemplateRevisionRecord,
+  TemplateRevisionScopeQuery,
+  TemplateRevisionWithType,
   TemplateTypeRecord,
 } from '../../src/services/template-revision-port.service.ts';
 
@@ -32,6 +34,40 @@ interface InMemoryState {
   revisions: TemplateRevisionRecord[];
   types: TemplateTypeRecord[];
 }
+
+/**
+ * The PostgreSQL form orders and pages in SQL: message type, language, then the newest revision first, after the cursor.
+ */
+const revisionsOfScope = (state: InMemoryState, query: TemplateRevisionScopeQuery) => {
+  const { after } = query;
+  const isAfterCursor = ({ revision, type }: TemplateRevisionWithType) => {
+    if (after === undefined) {
+      return true;
+    }
+    const byType =
+      type.identity.messageType.localeCompare(after.messageType) ||
+      type.identity.language.localeCompare(after.language);
+    return byType > 0 || (byType === 0 && revision.revisionNumber < after.revisionNumber);
+  };
+  const inQuery = ({ type }: TemplateRevisionWithType) =>
+    templateScopeKey(type.identity.scope) === templateScopeKey(query.scope) &&
+    (query.messageType === undefined || type.identity.messageType === query.messageType) &&
+    (query.language === undefined || type.identity.language === query.language);
+  const rows = state.revisions.flatMap((revision) => {
+    const type = state.types.find((found) => found.templateTypeId === revision.templateTypeId);
+    return type === undefined ? [] : [{ revision, type }];
+  });
+  return rows
+    .filter(inQuery)
+    .toSorted(
+      (left, right) =>
+        left.type.identity.messageType.localeCompare(right.type.identity.messageType) ||
+        left.type.identity.language.localeCompare(right.type.identity.language) ||
+        right.revision.revisionNumber - left.revision.revisionNumber,
+    )
+    .filter(isAfterCursor)
+    .slice(0, query.limit);
+};
 
 /** Same port contract as the PostgreSQL form, in memory: lets the rule tests run without a database. */
 export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
@@ -151,6 +187,7 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
       Effect.succeed(
         state.activations.filter((activation) => activation.templateTypeId === templateTypeId && isOpen(activation)),
       ),
+    revisionsOfScope: (query) => Effect.sync(() => revisionsOfScope(state, query)),
     revisionsOfType: (templateTypeId) =>
       Effect.succeed(state.revisions.filter((revision) => revision.templateTypeId === templateTypeId)),
   };

@@ -23,6 +23,7 @@ import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-e
 import { reportPrivacyOwnerOutcomeWorker } from './src/workers/report-privacy-owner-outcome.worker.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
+import { templateRevisionListRead } from './src/api/template-revision-list.read.ts';
 // </generated-module-registration-imports>
 
 export const communicationsRegistration = defineVerticalRuntimeRegistration({
@@ -48,6 +49,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
       'message-history-list': () => import('./src/api/message-history-list-client.ts'),
       'privacy-owner-coverage': () => import('./src/api/privacy-owner-coverage-client.ts'),
       'privacy-owner-execution-outcome': () => import('./src/api/privacy-owner-execution-outcome-client.ts'),
+      'template-revision-list': () => import('./src/api/template-revision-list-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -85,6 +87,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     messageHistoryListRead,
     privacyOwnerCoverageRead,
     privacyOwnerExecutionOutcomeRead,
+    templateRevisionListRead,
     // </generated-module-registration-reads>
   ],
 });

@@ -538,7 +538,7 @@ export const verifyTemplatePinForHandoff = Effect.fn('TemplateRevision.verifyPin
   return pin;
 });
 
-const activationAudit = (activation: TemplateActivationRecord) => {
+export const activationAudit = (activation: TemplateActivationRecord) => {
   const base = {
     activatedAt: iso(activation.activatedAt),
     activatedByPrincipalId: activation.activatedByPrincipalId,

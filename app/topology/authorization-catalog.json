@@ -14781,6 +14781,32 @@
             "role": "action",
             "scope": "tenant"
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.template-revision-list",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
         }
       ],
       "moduleId": "communications.core"

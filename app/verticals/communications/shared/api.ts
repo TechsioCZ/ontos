@@ -23,6 +23,7 @@ import { PrivacyOwnerExecutionOutcomeApi } from './apis/privacy-owner-execution-
 import { RecordOwnerExecutionEvidenceActionApi } from './apis/record-owner-execution-evidence-action.ts';
 import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
 import { SubmitCommunicationRequestActionApi } from './apis/submit-communication-request-action.ts';
+import { TemplateRevisionListApi } from './apis/template-revision-list.ts';
 // </generated-governed-http-api-imports>
 
 export type OperationContext = MicroVerticalOperationContext;
@@ -63,6 +64,7 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(RecordOwnerExecutionEvidenceActionApi)
   .addHttpApi(SetLanguagePolicyActionApi)
   .addHttpApi(SubmitCommunicationRequestActionApi)
+  .addHttpApi(TemplateRevisionListApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
