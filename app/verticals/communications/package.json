@@ -40,11 +40,11 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
-    "@app/commerce-customer-context": "workspace:*",
     "@app/communications-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/portal-auth-contracts": "workspace:*",
     "@app/privacy-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",

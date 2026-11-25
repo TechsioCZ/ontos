@@ -112,8 +112,8 @@ import { makeRuntimeDatabase, nativeServices } from '../support/persistence.fixt
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { communicationRequests, messageIntents } from '../../src/database/schema.ts';
 import type { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
-import { PortalAuthIssuanceRefSchema } from '@app/commerce-customer-context/portal-auth-communications';
-import { portalAuthCommunicationRequest } from '@app/commerce-customer-context/portal-auth-communications/request';
+import { PortalAuthIssuanceRefSchema } from '@app/portal-auth-contracts/portal-auth-issuance';
+import { portalAuthVerificationRequest } from '../support/portal-auth-request.fixture.ts';
 
 /*
  * Q-AUTHZ (#1408, E01/E10/E12/E17): Communications Actions and Reads through the PRODUCTION HTTP assembly of the module
@@ -1919,10 +1919,9 @@ const submitHarness = Effect.fnUntraced(function* submitHarness() {
   // fixed instants: the request states Auth's own issuance window, far from any clock this suite runs on
   const issuedAt = DateTime.makeUnsafe('2026-11-25T08:00:00.000Z');
   const requestOf = (tenantId: string) =>
-    portalAuthCommunicationRequest(
+    portalAuthVerificationRequest(
       {
         expiresAt: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'),
-        flow: 'verify-email',
         issuanceRef: PortalAuthIssuanceRefSchema.make(`pae-${randomUUID().replaceAll('-', '')}`),
         issuedAt,
         providerSubjectId: randomUUID(),
