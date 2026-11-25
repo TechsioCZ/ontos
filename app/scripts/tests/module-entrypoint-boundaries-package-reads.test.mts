@@ -1599,6 +1599,15 @@ const wholeModuleConsumer = (label: string, entryFile: string, barrel: string, h
 });
 
 const CARRIERS_BARREL = './carriers.ts';
+/** What follows `head` on the diagnostic line that starts with it. */
+const reasonAfter = (diagnostics: string, head: string): string | undefined =>
+  diagnostics
+    .split('\n')
+    .find((line) => line.startsWith(head))
+    ?.slice(head.length);
+
+/** An owner barrel that passes on the whole of its relay. */
+const CARRIERS_RELAY = "export * as Carriers from './relay.ts';\n";
 
 const WHOLE_MODULE_CONSUMERS: readonly CarryConsumer[] = [
   wholeModuleConsumer(
@@ -1752,7 +1761,7 @@ it.live(
         ['a library file', "export * as Carriers from '@app/shared-contracts/external-identity';\n", []],
         [
           "an owner relay of the module's own read",
-          "export * as Carriers from './relay.ts';\n",
+          CARRIERS_RELAY,
           [[`${owner}/shared/relay.ts`, `export { ${OWN_READ.name} } from '${OWN_READ.specifier}';\n`]],
         ],
       ] as const;
@@ -1789,7 +1798,7 @@ it.live(
       // A load, an import type and what `export default` writes ask the same of a whole module.
       const barrel = [
         [`${owner}/shared/relay.ts`, `export { ${OWN_READ.name} } from '${OWN_READ.specifier}';\n`],
-        [`${owner}/shared/carriers.ts`, "export * as Carriers from './relay.ts';\n"],
+        [`${owner}/shared/carriers.ts`, CARRIERS_RELAY],
       ] as const;
       const sites = [
         [
@@ -1812,6 +1821,30 @@ it.live(
         ]).diagnostics.includes(expected),
       ]);
       expect(sites).toEqual(sites.map(([appended]) => [appended, true]));
+      // A name of a held whole module that cannot be followed fails as it does when the module is exported, with the
+      // same reason; held as a `const`, the same name reaches the read.
+      const relayed = (binding: string, appended: string) =>
+        judged(sources, [
+          [
+            `${owner}/shared/relay.ts`,
+            `import { ${OWN_READ.name} } from '${OWN_READ.specifier}';\nexport ${binding} execute = ${OWN_READ.name};\n`,
+          ],
+          [`${owner}/shared/carriers.ts`, CARRIERS_RELAY],
+          [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
+        ]).diagnostics;
+      const heldModule = "import { Carriers } from './carriers.ts';\nexport const clients = { payments: Carriers };\n";
+      const unfollowedExecute = ` Carriers.execute cannot be followed: ${owner}/shared/relay.ts `;
+      const heldLet = reasonAfter(
+        relayed('let', heldModule),
+        `${sharedApiFile}:${required(sources, sharedApiFile).split('\n').length + 2}${unfollowedExecute}`,
+      );
+      const exportedLet = reasonAfter(
+        relayed('let', "export { Carriers } from './carriers.ts';\n"),
+        `${sharedApiFile}: export${unfollowedExecute}`,
+      );
+      expect(heldLet).toBeDefined();
+      expect(heldLet).toBe(exportedLet);
+      expect(relayed('const', heldModule)).toContain(`${sharedApiFile}: export clients reaches a package read`);
     }),
 );
 
@@ -1946,7 +1979,7 @@ it.live('judges a library file an entry passes a name on from the same whether i
         value: wholeStartup,
       },
       {
-        adapter: 'export class Api { m() { return this; } }\nfunction f() { return arguments[0]; }\n',
+        adapter: 'export class Api { x = this; m() { return this; } }\nfunction f() { return arguments[0]; }\n',
         lines: [],
         value: wholeStartup,
       },

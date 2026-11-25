@@ -5062,19 +5062,29 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
           })),
         ].map(({ node, resolved, root }) => {
           const { members } = memberChain(parsedEntry, node);
+          const found = resolved(members);
+          const written = [root, ...members].join('.');
+          // The whole module a member is taken of is held whether or not the member resolves, and judged by every
+          // name it exports as an exported one is (`expandedOrigins`); the name written is judged as it resolves.
+          const held = expandedOrigins(
+            graph,
+            [
+              ...found.map((origin) => [written, origin] as const),
+              ...resolved([]).map((origin) => [root, origin] as const),
+            ].filter(([, origin]) => origin.kind === 'namespace'),
+          );
           return {
-            found: resolved(members),
+            held,
+            judged: [
+              ...found.map((origin) => [written, origin] as const),
+              ...held.filter(([name]) => name !== written),
+            ],
             line: lineOf(parsedEntry.source, node.start),
-            whole: resolved([]),
-            written: [root, ...members].join('.'),
           };
         });
-  // The whole module a member is taken of is held whether or not the member resolves.
-  const held = referred
-    .flatMap(({ found, whole }) => [...found, ...whole])
-    .flatMap((origin) => (origin.kind === 'namespace' ? [['', origin] as const] : []));
   const heldFiles = new Set(
-    expandedOrigins(graph, held)
+    referred
+      .flatMap(({ held }) => held)
       .flatMap(([, origin]) => origin.trail.slice(1))
       .filter((file) => !files.has(file)),
   );
@@ -5108,22 +5118,21 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
       }
     }
   }
-  // A name the entry exports, or a reference it holds, that cannot be followed (a name a file does not export, a member
-  // a whole module does not export) fails, reads or none.
-  const unfollowedReferences = referred.flatMap(({ found, line, written }) =>
-    found.flatMap((origin) =>
-      origin.kind === 'unresolved'
-        ? [`${entry.file}:${line} ${written} cannot be followed: ${origin.file} ${origin.reason}${admitted}`]
-        : [],
-    ),
-  );
-  const unfollowed = origins.flatMap(([name, origin]) => {
-    const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
-    return name !== '*' && origin.kind === 'unresolved'
-      ? [`${entry.file}: export ${name} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`]
-      : [];
-  });
-  return [...problems, ...unfollowed, ...unfollowedReferences];
+  // A name the entry exports or holds that cannot be followed (a name a file does not export, a member a whole module
+  // does not export, a name of a whole module that is `let`, `var` or has no origin) fails, reads or none: one
+  // judgement for both, which says where the entry exports or holds it.
+  const unfollowed = (named: readonly (readonly [string, ExportOrigin])[], where: string): readonly string[] =>
+    named.flatMap(([name, origin]) => {
+      const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
+      return name !== '*' && origin.kind === 'unresolved'
+        ? [`${where} ${name} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`]
+        : [];
+    });
+  return [
+    ...problems,
+    ...unfollowed(origins, `${entry.file}: export`),
+    ...referred.flatMap(({ judged, line }) => unfollowed(judged, `${entry.file}:${line}`)),
+  ];
 };
 
 /** Whether a declaration of the entry reaches a read: a binding `readReach` found, or an expression referring to one. */
