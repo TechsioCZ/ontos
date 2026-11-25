@@ -15,6 +15,7 @@ import {
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-portal-auth-communication-requested-v1';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
+import { OUTBOX_WORKER_GENERATED_DEFAULTS } from '../portal-auth/communications/outbox-worker-defaults.ts';
 import type { PortalAuthSubmission } from '../portal-auth/communications/communication-request-submitter.ts';
 import { CommercePortalAuthCommunicationDecisionReporter } from '../portal-auth/communications/decision-report.ts';
 import type { PortalAuthCommunicationUnavailable } from '../portal-auth/communications/communication-unavailable.ts';
@@ -25,12 +26,8 @@ import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-au
 
 const OWNER = 'commerce.customer-context';
 const WORKER_KEY = 'commerce.customer-context.submit-portal-auth-communication-request';
-const RETRY_POLICY = {
-  initialBackoffMs: 1000,
-  maxAttempts: 5,
-  maxBackoffMs: 60_000,
-  multiplier: 2,
-} as const;
+/** Core requires a redelivery policy on every descriptor and offers no default: this is the generated one, never a number of Auth's own. */
+const RETRY_POLICY = OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy;
 
 /**
  * The delivery must be exactly this worker's, of this module's own topic, in the Tenant the request claims. A Portal Auth
@@ -163,7 +160,7 @@ export const submitPortalAuthCommunicationRequestWorker = defineOutboxWorker(
       moduleKey: OWNER,
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
+    leaseDurationMs: OUTBOX_WORKER_GENERATED_DEFAULTS.leaseDurationMs,
     legalEntityScope: 'forbidden',
     // a usable issuance's request waits out an outage at the backoff ceiling instead of dead-lettering (`deferWhileUsable`)
     maxDeferralMs: RETRY_POLICY.maxBackoffMs,

@@ -11,6 +11,12 @@ import type { PortalAuthTransportAnswer } from './communication-request-submitte
 import type { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
 import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
 import type { ClaimedCommunicationRequest } from './communication-store.ts';
+import {
+  OUTBOX_WORKER_GENERATED_DEFAULTS,
+  RELAY_BACKOFF_EXPONENT_CAP,
+  RELAY_CLAIM_LIMIT,
+  RELAY_POLL_INTERVAL_MS,
+} from './outbox-worker-defaults.ts';
 import { relayCredential } from './relay-configuration.ts';
 import { requestOfStored } from './request.ts';
 import { CommercePortalAuthTrustedScope } from './trusted-scope.ts';
@@ -125,7 +131,12 @@ const stateOf = (submission: PortalAuthTransportAnswer) => {
 };
 
 const retryDelayMillis = (options: RelayOptions, attempts: number) =>
-  Math.min(options.maxRetryMillis, options.retryMillis * 2 ** Math.max(0, Math.min(attempts - 1, 20)));
+  Math.min(
+    options.maxRetryMillis,
+    options.retryMillis *
+      OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy.multiplier **
+        Math.max(0, Math.min(attempts - 1, RELAY_BACKOFF_EXPONENT_CAP)),
+  );
 
 const relayRow = Effect.fn('PortalAuthCommunicationRelay.relayRow')(function* relayRow(
   options: RelayOptions,
@@ -231,12 +242,12 @@ export const sweepExpiredProtectedValues = Effect.gen(function* sweepExpiredProt
   }
 });
 
-const RELAY_INTERVAL = Duration.seconds(1);
+const RELAY_INTERVAL = Duration.millis(RELAY_POLL_INTERVAL_MS);
 const RELAY_DEFAULTS = {
-  leaseMillis: 30_000,
-  limit: 32,
-  maxRetryMillis: 300_000,
-  retryMillis: 1000,
+  leaseMillis: OUTBOX_WORKER_GENERATED_DEFAULTS.leaseDurationMs,
+  limit: RELAY_CLAIM_LIMIT,
+  maxRetryMillis: OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy.maxBackoffMs,
+  retryMillis: OUTBOX_WORKER_GENERATED_DEFAULTS.retryPolicy.initialBackoffMs,
 } as const;
 
 const RELAY_MODULE_ID = 'commerce.customer-context';
