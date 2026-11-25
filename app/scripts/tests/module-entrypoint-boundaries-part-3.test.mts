@@ -1010,6 +1010,19 @@ it.live('binds actual package Read clients to their package and the owner aggreg
     if (Exit.isFailure(undeclared)) {
       expect(Cause.pretty(undeclared.cause)).toContain('is a package read: declare its contract package');
     }
+    // So does one a CommonJS source makes.
+    const commonJsConsumer = 'apps/shell-super-app/src/published-package-client-consumer.cjs';
+    yield* write(root, consumer, '');
+    yield* write(
+      root,
+      commonJsConsumer,
+      `module.exports = () => import('${contractPackageName}/price-group-definition/client');\n`,
+    );
+    const undeclaredCommonJs = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(undeclaredCommonJs) ? Cause.pretty(undeclaredCommonJs.cause) : '').toContain(
+      `${commonJsConsumer}: ${contractPackageName}/price-group-definition/client is a package read`,
+    );
+    yield* write(root, consumer, packageClient);
     yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName, contractPackageName]));
     const packageFile = `${contractPackage}/package.json`;
     const metadata = yield* Effect.promise(() => readFile(path.join(root, packageFile), 'utf-8'));
