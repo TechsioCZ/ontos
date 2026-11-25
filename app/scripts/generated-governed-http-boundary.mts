@@ -5020,17 +5020,27 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
   const origins = entryExportOrigins(graph, entry.file);
   const files = new Set(origins.flatMap(([, origin]) => origin.trail.slice(1)));
   // A whole module the entry holds in a value, by a reference or a readable load, is judged as a file too, with the
-  // files that lead to it and those it passes names on from, whatever names it lists.
+  // files that lead to it and those it passes names on from, whatever names it lists and whether or not a member the
+  // entry takes of it resolves.
   const entryBindings = graph.parsed(entry.file);
-  const held =
-    entryBindings === undefined || entryBindings === 'unparsable'
+  const parsedEntry = entryBindings === undefined || entryBindings === 'unparsable' ? undefined : entryBindings;
+  // What each reference of the entry resolves to with the members it takes, as written (`Startup.default`).
+  const referred =
+    parsedEntry === undefined
       ? []
-      : [
-          ...entryBindings.references.flatMap(({ identifier }) =>
-            referenceTarget(graph, entry.file, entryBindings, identifier),
-          ),
-          ...readableLoads(entryBindings).flatMap((load) => loadOrigins(graph, entry.file, entryBindings, load)),
-        ].flatMap((origin) => (origin.kind === 'namespace' ? [['', origin] as const] : []));
+      : parsedEntry.references.map(({ identifier, name }) => ({
+          found: referenceTarget(graph, entry.file, parsedEntry, identifier),
+          line: lineOf(parsedEntry.source, identifier.start),
+          written: [name, ...takenMembers(parsedEntry, identifier)].join('.'),
+        }));
+  const held = [
+    ...referred.flatMap(({ found }) => found),
+    // The whole module a member is taken of, whether or not the member resolves.
+    ...(parsedEntry?.references ?? []).flatMap(({ identifier }) => referenceOrigins(graph, entry.file, identifier)),
+    ...(parsedEntry === undefined
+      ? []
+      : readableLoads(parsedEntry).flatMap((load) => loadOrigins(graph, entry.file, parsedEntry, load))),
+  ].flatMap((origin) => (origin.kind === 'namespace' ? [['', origin] as const] : []));
   const heldFiles = new Set(
     expandedOrigins(graph, held)
       .flatMap(([, origin]) => origin.trail.slice(1))
@@ -5069,14 +5079,22 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
       }
     }
   }
-  // A name the entry exports that cannot be followed (one a file does not export, say) fails, reads or none.
+  // A name the entry exports, or a reference it holds, that cannot be followed (a name a file does not export, a member
+  // a whole module does not export) fails, reads or none.
+  const unfollowedReferences = referred.flatMap(({ found, line, written }) =>
+    found.flatMap((origin) =>
+      origin.kind === 'unresolved'
+        ? [`${entry.file}:${line} ${written} cannot be followed: ${origin.file} ${origin.reason}${admitted}`]
+        : [],
+    ),
+  );
   const unfollowed = origins.flatMap(([name, origin]) => {
     const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
     return name !== '*' && origin.kind === 'unresolved'
       ? [`${entry.file}: export ${name} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`]
       : [];
   });
-  return [...problems, ...unfollowed];
+  return [...problems, ...unfollowed, ...unfollowedReferences];
 };
 
 /** Whether a declaration of the entry reaches a read: a binding `readReach` found, or an expression referring to one. */

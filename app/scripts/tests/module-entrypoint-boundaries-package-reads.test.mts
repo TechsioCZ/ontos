@@ -1747,6 +1747,35 @@ it.live(
       expect(adapterMount.diagnostics).toContain(
         `cannot be followed: ${ADAPTER_FILE} loads a module it does not read statically at line 1`,
       );
+      // A whole module is never mounted: of a library file, or of an owner relay of the module's own read.
+      const mountedWholeModules = [
+        ['a library file', "export * as Carriers from '@app/shared-contracts/external-identity';\n", []],
+        [
+          "an owner relay of the module's own read",
+          "export * as Carriers from './relay.ts';\n",
+          [[`${owner}/shared/relay.ts`, `export { ${OWN_READ.name} } from '${OWN_READ.specifier}';\n`]],
+        ],
+      ] as const;
+      const mountedVerdicts = mountedWholeModules.map(([label, barrel, more]) => {
+        const seen = judged(sources, [
+          ...more,
+          [`${owner}/shared/carriers.ts`, barrel],
+          [
+            sharedApiFile,
+            replaced(
+              `import { Carriers } from './carriers.ts';\n${required(sources, sharedApiFile)}`,
+              ADDITIONS_START,
+              `  .addHttpApi(Carriers)\n${ADDITIONS_START}`,
+            ),
+          ],
+        ]);
+        return [
+          `a mount of a whole module of ${label}`,
+          seen.diagnostics.includes(unknown(sharedApiFile, 'Carriers')) &&
+            !seen.diagnostics.includes('cannot be followed'),
+        ];
+      });
+      expect(mountedVerdicts).toEqual(mountedVerdicts.map(([label]) => [label, true]));
     }),
 );
 
@@ -1824,17 +1853,25 @@ it.live('judges a library file an entry passes a name on from the same whether i
       `${EXPORTS_OPEN}    "./startup": "./src/startup.ts",\n`,
     );
     // The library file loads what it does not read itself, or passes on the whole of a CommonJS adapter that does, whose
-    // module lists no names.
+    // module lists no names, whichever way it exports: `module.exports`, `exports.x`, `this.x`, `arguments[0].x`.
+    const adapted = (exported: string) =>
+      [
+        [STARTUP_FILE, STARTUP_ADAPTER],
+        [ADAPTER_FILE, 'line 1'],
+        [
+          ADAPTER_FILE,
+          `${exported} = require('${contractSpecifier}')${exported.endsWith('.Api') ? '.CurrentPaymentTermsApi' : ''};\n`,
+        ],
+      ] as const;
     const places = [
       [
         [STARTUP_FILE, "const target = 'x';\nvoid import(target);\nexport const Startup = 1;\n"],
         [STARTUP_FILE, 'line 2'],
       ],
-      [
-        [STARTUP_FILE, STARTUP_ADAPTER],
-        [ADAPTER_FILE, 'line 1'],
-        [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
-      ],
+      adapted('module.exports'),
+      adapted('exports.Api'),
+      adapted('this.Api'),
+      adapted('arguments[0].Api'),
     ] as const;
     const verdicts = places.flatMap(([carrier, [judgedFile, line], ...more]) =>
       [
@@ -1848,7 +1885,7 @@ it.live('judges a library file an entry passes a name on from the same whether i
           [sharedApiFile, `${required(sources, sharedApiFile)}\n${appended}`],
         ]);
         return [
-          `${label}, judged on ${judgedFile}`,
+          [`${label}, judged on ${judgedFile}`, ...more.map(([, source]) => source.split(' =')[0])].join(', '),
           seen.valid,
           seen.diagnostics.includes(
             `${sharedApiFile}: re-exports through ${judgedFile}, which loads a module it does not read statically at ${line}`,
@@ -1857,19 +1894,31 @@ it.live('judges a library file an entry passes a name on from the same whether i
       }),
     );
     expect(verdicts).toEqual(verdicts.map(([label]) => [label, false, true]));
-    // A whole module the entry holds in a value is judged as a file the same way.
-    const held = judged(sources, [
-      [SHARED_CONTRACTS_MANIFEST, startupManifest],
-      [STARTUP_FILE, STARTUP_ADAPTER],
-      [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
-      [
-        sharedApiFile,
-        `${required(sources, sharedApiFile)}\nimport { Startup } from '@app/shared-contracts/startup';\nexport const Held = { Startup };\n`,
-      ],
-    ]);
-    expect(held.diagnostics).toContain(
-      `${sharedApiFile}: holds a whole module through ${ADAPTER_FILE}, which loads a module it does not read statically at line 1`,
-    );
+    // A whole module the entry holds in a value is judged as a file the same way, whether or not a member the entry
+    // takes of it resolves; one that does not cannot be followed.
+    const held = [
+      ['{ Startup }', undefined],
+      ['{ startup: Startup.default }', 'Startup.default cannot be followed'],
+      ['{ ...Startup.default }', 'Startup.default cannot be followed'],
+    ].map(([value, unfollowed]) => {
+      const seen = judged(sources, [
+        [SHARED_CONTRACTS_MANIFEST, startupManifest],
+        [STARTUP_FILE, STARTUP_ADAPTER],
+        [ADAPTER_FILE, `module.exports = require('${contractSpecifier}');\n`],
+        [
+          sharedApiFile,
+          `${required(sources, sharedApiFile)}\nimport { Startup } from '@app/shared-contracts/startup';\nexport const Held = ${value};\n`,
+        ],
+      ]);
+      return [
+        value,
+        seen.diagnostics.includes(
+          `${sharedApiFile}: holds a whole module through ${ADAPTER_FILE}, which loads a module it does not read statically at line 1`,
+        ) &&
+          (unfollowed === undefined || seen.diagnostics.includes(unfollowed)),
+      ];
+    });
+    expect(held).toEqual(held.map(([value]) => [value, true]));
   }),
 );
 

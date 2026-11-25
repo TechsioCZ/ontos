@@ -1038,10 +1038,35 @@ const loadSpecifier = (load: Node): string | undefined => {
 /**
  * The globals that hold loaders: Node's `require`, `module` (`module.require`, `module.parent`) and `process`
  * (`process.getBuiltinModule`, `process.mainModule`), the global objects they are reached through, and
- * `import.meta` (`import.meta.resolve`, a bundler's `import.meta.webpackContext`). Each is judged where it appears,
+ * `import.meta` (`import.meta.resolve`, a bundler's `import.meta.webpackContext`); and `exports`, through which a
+ * CommonJS file passes values on (`exports.x = …`, as `module.exports = …` does). Each is judged where it appears,
  * never by what it is taken for.
  */
-const LOADER_GLOBALS = new Set(['global', 'globalThis', 'module', 'process', 'require']);
+const LOADER_GLOBALS = new Set(['exports', 'global', 'globalThis', 'module', 'process', 'require']);
+
+/** What gives `this` and `arguments` a value of their own: a function that is no arrow, a class, a TS namespace. */
+const OWN_RECEIVER = new Set([
+  'ClassBody',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'StaticBlock',
+  'TSDeclareFunction',
+  'TSEmptyBodyFunctionExpression',
+  'TSModuleBlock',
+]);
+
+/**
+ * Whether a node stands where nothing but the module gives `this` and `arguments` a value: in a CommonJS module, its
+ * `exports` and the arguments of its wrapper (`arguments[0]` is `exports`).
+ */
+const isAtModuleScope = (bindings: ModuleBindings, node: Node): boolean => {
+  for (let parent = bindings.parents.get(node); parent !== undefined; parent = bindings.parents.get(parent)) {
+    if (OWN_RECEIVER.has(parent.type)) {
+      return false;
+    }
+  }
+  return true;
+};
 
 /**
  * The members of a loader global a source may take directly, by name, none of them a loader: the ones code these
@@ -1100,6 +1125,10 @@ const isUnreadableLoad = (bindings: ModuleBindings, node: Node): boolean => {
   if (global !== undefined) {
     return !isReadLoaderGlobal(bindings, node, global);
   }
+  // A CommonJS module's own objects, `exports` under another name, read nowhere.
+  if ((node.type === 'ThisExpression' || isGlobal(bindings, node, 'arguments')) && isAtModuleScope(bindings, node)) {
+    return true;
+  }
   return (
     (node.type === 'ImportDeclaration' ||
       node.type === 'ExportAllDeclaration' ||
@@ -1117,8 +1146,9 @@ const unreadable = new WeakMap<ModuleBindings, readonly Node[]>();
  * planner use: a load that is not readable (`loadSpecifier`: no literal, a literal that is no string, a second
  * argument, Node's module loader); any appearance of a loader global (`LOADER_GLOBALS`, `import.meta`) other than
  * one `isReadLoaderGlobal` reads (`const load = require`, `require.resolve`, `const { require: load } = module`,
- * `module.parent.require`, `process.mainModule`, `import.meta.resolve`); and any import, re-export, import type or
- * load of Node's module loader (`createRequire`).
+ * `module.parent.require`, `process.mainModule`, `import.meta.resolve`, `exports.x = …`); `this` and `arguments`
+ * where no function or class gives them a value (`isAtModuleScope`); and any import, re-export, import type or load of
+ * Node's module loader (`createRequire`).
  */
 export const unreadableLoads = (bindings: ModuleBindings): readonly Node[] => {
   const known = unreadable.get(bindings);
