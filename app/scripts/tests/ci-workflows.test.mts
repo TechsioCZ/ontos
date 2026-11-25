@@ -21,11 +21,7 @@ import { parse } from 'yaml';
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import { taskDirectory } from '../ci/ci-matrices-rules.mts';
 import { parseCiMatrices } from '../ci/ci-matrices.mts';
-import {
-  allowsNativeScriptImport,
-  importsNativeScriptTestRunner,
-  validateNativeScriptRegistration,
-} from '../../tools/oxlint/effect-native/shared/native-script-test-registration.ts';
+import rstestConfig, { nativeScriptTests } from '../../rstest.config.ts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
@@ -1039,18 +1035,80 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
+const nativeRegistrationViolations = ({
+  commands,
+  exclude,
+  files,
+  include,
+}: {
+  readonly commands: readonly string[];
+  readonly exclude: readonly string[];
+  readonly files: readonly string[];
+  readonly include: readonly string[];
+}) => {
+  const scheduled = commands
+    .flatMap((command) => command.trim().split('\n'))
+    .filter((command) => command.startsWith('node --test '))
+    .flatMap((command) =>
+      command
+        .trim()
+        .split(/\s+/u)
+        .slice(2)
+        .filter((argument) => !argument.startsWith('--')),
+    );
+  return files.flatMap((file) => {
+    const rstestCollects =
+      include.some((pattern) => !pattern.startsWith('!') && path.matchesGlob(file, pattern)) &&
+      !include.some((pattern) => pattern.startsWith('!') && path.matchesGlob(file, pattern.slice(1))) &&
+      !exclude.some((pattern) => path.matchesGlob(file, pattern));
+    const runs = scheduled.filter((scheduledFile) => scheduledFile === file).length;
+    return [
+      ...(rstestCollects ? [`${file}: also collected by Rstest`] : []),
+      ...(runs === 1 ? [] : [`${file}: ${runs} native CI registrations`]),
+    ];
+  });
+};
+
 it('executes every native Node tooling test once in CI and never collects it as an empty Rstest suite', () => {
   const workspace = fileURLToPath(new URL('../../', import.meta.url));
-  const files = [...globSync('scripts/**/*.test.{mts,mjs}', { cwd: workspace })].filter((file) =>
-    importsNativeScriptTestRunner(file, readFileSync(path.join(workspace, file), 'utf-8')),
+  const files = [...globSync('scripts/**/*.test.mts', { cwd: workspace })].filter((file) =>
+    /from\s*['"]node:test['"]/u.test(readFileSync(path.join(workspace, file), 'utf-8')),
   );
-  const registration = validateNativeScriptRegistration(workspace);
-  expect(registration.errors).toEqual([]);
-  expect(sorted(registration.files)).toEqual(sorted(files));
-  for (const file of files) {
-    expect(allowsNativeScriptImport(registration, path.join(workspace, file), 'node:test'), file).toBe(true);
-    expect(allowsNativeScriptImport(registration, path.join(workspace, file), 'node:assert/strict'), file).toBe(true);
-  }
+  expect(sorted(nativeScriptTests)).toEqual(sorted(files));
+  const config = Schema.decodeUnknownSync(
+    Schema.Struct({
+      projects: Schema.Array(
+        Schema.Struct({
+          exclude: Schema.optional(Schema.Array(Schema.String)),
+          include: Schema.Array(Schema.String),
+          name: Schema.String,
+        }),
+      ),
+    }),
+  )(rstestConfig);
+  const project = config.projects.find(({ name }) => name === 'scripts');
+  expect(project).toBeDefined();
+  const registration = {
+    commands: MATRICES.source.map(({ commands }) => commands),
+    exclude: project?.exclude ?? [],
+    files,
+    include: project?.include ?? [],
+  };
+  expect(nativeRegistrationViolations(registration)).toEqual([]);
+  // Removing native execution, scheduling it twice, or returning a native file to Rstest must fail the census.
+  expect(nativeRegistrationViolations({ ...registration, commands: [] })).toHaveLength(files.length);
+  expect(
+    nativeRegistrationViolations({
+      ...registration,
+      commands: [...registration.commands, ...registration.commands],
+    }),
+  ).toHaveLength(files.length);
+  expect(
+    nativeRegistrationViolations({
+      ...registration,
+      include: registration.include.filter((pattern) => !pattern.startsWith('!')),
+    }),
+  ).toHaveLength(files.length);
   for (const scope of MATRICES.scopes) {
     for (const file of files) {
       expect(

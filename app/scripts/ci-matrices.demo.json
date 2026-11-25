@@ -149,7 +149,7 @@
   "source": [
     {
       "name": "Storefront Artifact Native Tests",
-      "commands": "node --test scripts/zerops/prove-storefront-artifact.test.mjs\nnode --test --test-concurrency=1 scripts/demo/symmy-demo-customer-authority.test.mts scripts/demo/symmy-demo-source-policies.test.mts scripts/ops/stage-symmy-full-function-proof.test.mts scripts/ops/stage-symmy-negative-proof.test.mts scripts/ops/stage-symmy-storefront-proof.test.mts scripts/tests/inventory-on-hand-exports.test.mts scripts/zerops/demo-delivery-parallelism.test.mts scripts/zerops/production-declarations.test.mts\n"
+      "commands": "node --test scripts/zerops/prove-storefront-artifact.test.mjs\nnode --test --test-concurrency=1 scripts/demo/symmy-demo-source-policies.test.mts scripts/ops/stage-symmy-full-function-proof.test.mts scripts/ops/stage-symmy-negative-proof.test.mts scripts/ops/stage-symmy-storefront-proof.test.mts scripts/tests/inventory-on-hand-exports.test.mts scripts/zerops/demo-delivery-parallelism.test.mts scripts/zerops/production-declarations.test.mts\n"
     }
   ],
   "unit": [

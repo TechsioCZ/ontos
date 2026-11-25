@@ -1,7 +1,6 @@
 import { apiKey } from '@better-auth/api-key';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { workloadCredentialProviderName } from '../../api/auth/module-credential-provisioning.service.ts';
@@ -14,59 +13,44 @@ const workloads = [
   'privacy.core.organization-profile-ico-check',
 ];
 
-it.effect(
-  'reproduces the actual native provider rejection and issues the same workload with its bounded display name',
-  () =>
-    Effect.gen(function* workloadProviderNames() {
-      const now = yield* DateTime.nowAsDate;
-      const auth = betterAuth({
-        baseURL: 'http://localhost:3000',
-        database: memoryAdapter({
-          account: [],
-          apikey: [],
-          session: [],
-          user: [
-            {
-              createdAt: now,
-              email: 'fixture@example.invalid',
-              emailVerified: false,
-              id: 'fixture-platform-owner',
-              name: 'Fixture',
-              updatedAt: now,
-            },
-          ],
-          verification: [],
-        }),
-        logger: { disabled: true },
-        plugins: [apiKey({ enableMetadata: true, references: 'user' })],
-        secret: 'fixture-only-native-provider-validation-123456789',
-      });
-      yield* Effect.forEach(
-        workloads,
-        (workloadKey) =>
-          Effect.gen(function* workloadProviderName() {
-            const rejection = yield* Effect.tryPromise({
-              catch: (cause) => cause,
-              try: () =>
-                auth.api.createApiKey({
-                  body: { expiresIn: 86_400, name: `workload:${workloadKey}`, userId: 'fixture-platform-owner' },
-                }),
-            }).pipe(Effect.flip);
-            expect(rejection).toMatchObject({ body: { code: 'INVALID_NAME_LENGTH' } });
-            const name = workloadCredentialProviderName(workloadKey);
-            const created = yield* Effect.promise(() =>
-              auth.api.createApiKey({
-                body: { expiresIn: 86_400, metadata: { workloadKey }, name, userId: 'fixture-platform-owner' },
-              }),
-            );
-            expect(created.name).toBe(name);
-            expect(created.metadata).toEqual({ workloadKey });
-            expect(name.length).toBeLessThanOrEqual(32);
-          }),
-        { concurrency: 1 },
-      );
+it('reproduces the actual native provider rejection and issues the same workload with its bounded display name', async () => {
+  const auth = betterAuth({
+    baseURL: 'http://localhost:3000',
+    secret: 'fixture-only-native-provider-validation-123456789',
+    logger: { disabled: true },
+    database: memoryAdapter({
+      user: [
+        {
+          id: 'fixture-platform-owner',
+          email: 'fixture@example.invalid',
+          name: 'Fixture',
+          emailVerified: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      apikey: [],
+      session: [],
+      account: [],
+      verification: [],
     }),
-);
+    plugins: [apiKey({ enableMetadata: true, references: 'user' })],
+  });
+  for (const workloadKey of workloads) {
+    await expect(
+      auth.api.createApiKey({
+        body: { userId: 'fixture-platform-owner', name: `workload:${workloadKey}`, expiresIn: 86400 },
+      }),
+    ).rejects.toMatchObject({ body: { code: 'INVALID_NAME_LENGTH' } });
+    const name = workloadCredentialProviderName(workloadKey);
+    const created = await auth.api.createApiKey({
+      body: { userId: 'fixture-platform-owner', name, expiresIn: 86400, metadata: { workloadKey } },
+    });
+    expect(created.name).toBe(name);
+    expect(created.metadata).toEqual({ workloadKey });
+    expect(name.length).toBeLessThanOrEqual(32);
+  }
+});
 
 it('preserves short existing names and distinguishes long workloads without changing their identity', () => {
   expect(workloadCredentialProviderName('demo.crm.party-intake')).toBe('workload:demo.crm.party-intake');

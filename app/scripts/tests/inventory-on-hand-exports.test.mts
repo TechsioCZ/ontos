@@ -5,16 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { Schema } from 'effect';
 
-const manifest = Schema.decodeUnknownSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      exports: Schema.Record(Schema.String, Schema.Unknown),
-    }),
-  ),
-)(readFileSync(new URL('../../verticals/inventory/package.json', import.meta.url), 'utf-8'));
+const manifest = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+  exports: Schema.Record(Schema.String, Schema.Unknown),
+})))(readFileSync(new URL('../../verticals/inventory/package.json', import.meta.url), 'utf8'));
 const catalog = createRequire(new URL('../../verticals/catalog/src/products-admin/page-data.ts', import.meta.url));
 
-void test('Catalog resolves both on-hand imports directly to the existing Inventory owner files', () => {
+test('Catalog resolves both on-hand imports directly to the existing Inventory owner files', () => {
   for (const [subpath, target] of [
     ['./api/catalog-variant-on-hand-page', './shared/apis/catalog-variant-on-hand-page.ts'],
     ['./api/catalog-variant-on-hand-page-client', './src/api/catalog-variant-on-hand-page-client.ts'],
@@ -26,7 +22,7 @@ void test('Catalog resolves both on-hand imports directly to the existing Invent
   }
 });
 
-void test('the source-provisioning exports remain present beside the restored on-hand API', () => {
+test('the source-provisioning exports remain present beside the restored on-hand API', () => {
   for (const subpath of [
     './actions/define-source-provisioning-policy',
     './api/source-stock-position-resolution',

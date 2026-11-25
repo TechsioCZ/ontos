@@ -69,17 +69,16 @@
  */
 import { defineRule } from '@oxlint/plugins';
 import type { Comment, Context } from '@oxlint/plugins';
-import { Predicate } from 'effect';
 
-import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, booleanOption as boolean } from '../shared/options.ts';
 import { scopePath, matchesGlobs } from '../shared/paths.ts';
 
 /** A8 names `scripts/` and `tools/oxlint` explicitly; the seam suppressions live across all roots. */
 const DEFAULT_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**', 'tools/**'];
 
 /** This rule's own fixtures deliberately contain ungoverned suppressions. */
-// Production config excludes fixtures; synthetic paths stay testable.
-const DEFAULT_IGNORE_PATHS: readonly string[] = [];
+const DEFAULT_IGNORE_PATHS: readonly string[] = []; // Production config excludes fixtures; synthetic paths stay testable.
 
 /**
  * Diagnostics that fire exactly where Promise code meets Effect code. Silencing one of these for a
@@ -102,7 +101,8 @@ const DEFAULT_EFFECT_SEAM_RULES: readonly string[] = [
 
 const DEFAULT_MIN_JUSTIFICATION_LENGTH = 20;
 
-const DEFAULT_EXPIRY_PATTERN = String.raw`\b(?:expires?|until|remove(?:d|-when)?|removal|tracked(?: in)?|ticket|issue)\s*[:#]\s*\S+`;
+const DEFAULT_EXPIRY_PATTERN =
+  '\\b(?:expires?|until|remove(?:d|-when)?|removal|tracked(?: in)?|ticket|issue)\\s*[:#]\\s*\\S+';
 
 /** `eslint-disable` / `oxlint-disable` at the very start of the comment body. */
 const DIRECTIVE = /^(?:es|ox)lint-disable(?=$|\s)(?<rest>[\s\S]*)$/u;
@@ -130,26 +130,26 @@ interface RuleOptions {
   readonly paths: readonly string[];
 }
 
-const readOptions = (context: Context): RuleOptions => {
+function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
   const minimum = record.minJustificationLength;
   const pattern = record.expiryPattern;
   return {
     effectSeamRules: stringArray(record.effectSeamRules, DEFAULT_EFFECT_SEAM_RULES),
     effectSeamRulesAlwaysReport: boolean(record.effectSeamRulesAlwaysReport, true),
-    expiryPattern: Predicate.isString(pattern) ? pattern : DEFAULT_EXPIRY_PATTERN,
+    expiryPattern: typeof pattern === 'string' ? pattern : DEFAULT_EXPIRY_PATTERN,
     ignorePaths: stringArray(record.ignorePaths, DEFAULT_IGNORE_PATHS),
     includeEffectDiagnosticsDirectives: boolean(record.includeEffectDiagnosticsDirectives, true),
     includeTsNocheck: boolean(record.includeTsNocheck, true),
     minJustificationLength:
-      Predicate.isNumber(minimum) && Number.isFinite(minimum) && minimum >= 0
+      typeof minimum === 'number' && Number.isFinite(minimum) && minimum >= 0
         ? minimum
         : DEFAULT_MIN_JUSTIFICATION_LENGTH,
     paths: stringArray(record.paths, DEFAULT_PATHS),
   };
-};
+}
 
-const compileExpiry = (pattern: string): RegExp | null => {
+function compileExpiry(pattern: string): RegExp | null {
   try {
     return new RegExp(pattern, 'iu');
   } catch {
@@ -159,28 +159,29 @@ const compileExpiry = (pattern: string): RegExp | null => {
       return null;
     }
   }
-};
+}
 
 /**
  * `@typescript-eslint/no-explicit-any`, `typescript/no-explicit-any` and `@typescript/no-explicit-any`
  * all name the same diagnostic; oxlint and ESLint configs in this workspace use both spellings.
  */
-const normaliseRuleName = (name: string): string => {
+function normaliseRuleName(name: string): string {
   const lower = name.trim().toLowerCase().replace(/^@/u, '');
-  if (lower.startsWith('eslint/')) {
-    return lower.slice('eslint/'.length);
-  }
+  if (lower.startsWith('eslint/')) return lower.slice('eslint/'.length);
   return lower.startsWith('typescript-eslint/') ? `typescript/${lower.slice('typescript-eslint/'.length)}` : lower;
-};
+}
 
 /** Rule names in a directive are comma- and/or whitespace-separated. */
-const parseRuleList = (text: string): readonly string[] =>
-  text
+function parseRuleList(text: string): readonly string[] {
+  return text
     .split(/[\s,]+/u)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
 
-const quoteList = (names: readonly string[]): string => names.map((name) => `\`${name}\``).join(', ');
+function quoteList(names: readonly string[]): string {
+  return names.map((name) => `\`${name}\``).join(', ');
+}
 
 interface Directive {
   readonly justification: string | null;
@@ -188,45 +189,40 @@ interface Directive {
 }
 
 /** Split a directive body at ESLint's ` -- ` description separator. */
-const splitDescription = (body: string) => {
+function splitDescription(body: string): {
+  readonly description: string | null;
+  readonly head: string;
+} {
   const separator = DESCRIPTION_SEPARATOR.exec(body);
-  if (separator === null) {
-    return { description: null, head: body };
-  }
+  if (separator === null) return { description: null, head: body };
   return {
     description: body.slice(separator.index + separator[0].length).trim(),
     head: body.slice(0, separator.index),
   };
-};
+}
 
 /** Parse a file-wide disable directive, or `null` when the comment is not one. */
-const parseDirective = (value: string): Directive | null => {
+function parseDirective(value: string): Directive | null {
   const trimmed = value.trim();
   const match = DIRECTIVE.exec(trimmed);
-  if (match === null) {
-    return null;
-  }
+  if (match === null) return null;
   const rest = match.groups?.rest ?? '';
   // `-disable-next-line`, `-disable-line` and any other `-disable-…` suffix are not file-wide.
-  if (rest.startsWith('-')) {
-    return null;
-  }
+  if (rest.startsWith('-')) return null;
   const parsed = splitDescription(rest);
   return {
     justification: parsed.description,
     rules: parseRuleList(parsed.head),
   };
-};
+}
 
 /** The justification and expiry criteria, shared by every kind of file-wide waiver. */
-const justificationReasons = (
+function justificationReasons(
   justification: string | null,
   options: RuleOptions,
   expiry: RegExp | null,
-): readonly string[] => {
-  if (justification === null) {
-    return ['it carries no `-- <why>` justification'];
-  }
+): readonly string[] {
+  if (justification === null) return ['it carries no `-- <why>` justification'];
   if (justification.length < options.minJustificationLength) {
     return [
       `its justification is ${justification.length} characters, under the ${options.minJustificationLength} required`,
@@ -236,72 +232,118 @@ const justificationReasons = (
     return ['its justification states no expiry or removal criterion'];
   }
   return [];
-};
+}
 
 /** Returns null when a later enable fully bounds this disable region. */
-const unboundedRules = (directive: Directive, laterComments: readonly Comment[]): readonly string[] | null => {
+function unboundedRules(directive: Directive, laterComments: readonly Comment[]): readonly string[] | null {
   const remaining = new Set(directive.rules.map(normaliseRuleName));
   for (const later of laterComments) {
     const enable = ENABLE.exec(later.value.trim());
-    if (enable === null) {
-      continue;
-    }
+    if (enable === null) continue;
     const rules = parseRuleList(splitDescription(enable.groups?.rest ?? '').head);
-    if (rules.length === 0) {
-      return null;
-    }
-    for (const name of rules) {
-      remaining.delete(normaliseRuleName(name));
-    }
-    if (directive.rules.length > 0 && remaining.size === 0) {
-      return null;
-    }
+    if (rules.length === 0) return null;
+    for (const name of rules) remaining.delete(normaliseRuleName(name));
+    if (directive.rules.length > 0 && remaining.size === 0) return null;
   }
   return [...remaining];
-};
+}
 
 export const rule = defineRule({
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Audit A8 (with A9/A2/A5): require file-wide `eslint-disable` / `oxlint-disable` blocks to name ' +
+        'exact non-seam rules, carry a justification after `--`, and state an expiry or removal criterion. ' +
+        'Effect/Promise seam waivers must be line- or region-scoped, and `@ts-nocheck` is never allowed.',
+    },
+    messages: {
+      ungovernedSuppression:
+        'File-wide lint suppression is not governed ({{reason}}). Scope it to the one line that needs it ' +
+        '(`// oxlint-disable-next-line {{rule}} -- <why>`), list the exact rules, justify it after `--`, and ' +
+        'state an expiry or removal criterion (e.g. `remove-when: A9 browser runtime lands`, ' +
+        '`expires: 2026-12-31`, `tracked in: #1234`). Audit A8: an unexpiring file-wide waiver keeps the ' +
+        'whole file exempt forever, so new code lands under an old decision.',
+      ungovernedSeamSuppression:
+        'File-wide lint suppression is not governed ({{reason}}). {{rules}} marks an Effect/Promise seam the ' +
+        'audit is removing (A9 typed Effects through the frontend, A2 typed failures, A5 Effect-native ' +
+        'scripts), so it must never be silenced for a whole file: pin it to the single adapter line ' +
+        '(`// oxlint-disable-next-line {{rule}} -- <why>`) or delete the seam by moving the Promise boundary ' +
+        'into one `ManagedRuntime` / `Effect.tryPromise` adapter. Add a justification after `--` and an ' +
+        'expiry or removal criterion (e.g. `remove-when: A9 browser runtime lands`).',
+      ungovernedEffectDiagnostics:
+        'File-wide Effect diagnostic suppression is not governed ({{reason}}). Turning {{rules}} off for a ' +
+        'whole file is exactly what audit A8 says to govern: it silences the Effect language service at the ' +
+        'seam it is meant to guard (`asyncFunction`/`newPromise` — A9 typed Effects; `processEnv` — A5 ' +
+        '`Config`/`ConfigProvider`; `globalDate`/`globalDateInEffect` — A6 `Clock`/`DateTime`; ' +
+        '`anyUnknownInErrorContext` — A2 typed failure channels). Fix the seam, or narrow the waiver: add ' +
+        'a `--` justification and an expiry or removal criterion (e.g. ' +
+        '`-- Rspack externals use a callback API. remove-when: A9 browser runtime lands`).',
+      tsNocheck:
+        '`@ts-nocheck` disables the type checker for this entire file, which is the strongest possible ' +
+        'ungoverned suppression and cannot carry a rule list or an expiry. Audit A8 requires generated and ' +
+        'script code to be brought *under* explicit TypeScript gates, not exempted from them: fix or ' +
+        'regenerate the file, or narrow the escape hatch to a single justified `@ts-expect-error` line.',
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          effectSeamRules: { type: 'array', items: { type: 'string' } },
+          effectSeamRulesAlwaysReport: { type: 'boolean' },
+          expiryPattern: { type: 'string' },
+          ignorePaths: { type: 'array', items: { type: 'string' } },
+          includeEffectDiagnosticsDirectives: { type: 'boolean' },
+          includeTsNocheck: { type: 'boolean' },
+          minJustificationLength: { type: 'number', minimum: 0 },
+          paths: { type: 'array', items: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    defaultOptions: [
+      {
+        effectSeamRules: [...DEFAULT_EFFECT_SEAM_RULES],
+        effectSeamRulesAlwaysReport: true,
+        expiryPattern: DEFAULT_EXPIRY_PATTERN,
+        ignorePaths: [...DEFAULT_IGNORE_PATHS],
+        includeEffectDiagnosticsDirectives: true,
+        includeTsNocheck: true,
+        minJustificationLength: DEFAULT_MIN_JUSTIFICATION_LENGTH,
+        paths: [...DEFAULT_PATHS],
+      },
+    ],
+  },
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (!matchesGlobs(path, options.paths)) {
-      return {};
-    }
-    if (matchesGlobs(path, options.ignorePaths)) {
-      return {};
-    }
+    if (!matchesGlobs(path, options.paths)) return {};
+    if (matchesGlobs(path, options.ignorePaths)) return {};
 
     const seamRules = new Set(options.effectSeamRules.map(normaliseRuleName));
     const expiry = compileExpiry(options.expiryPattern);
 
     const inspectEffectDiagnostics = (comment: Comment, effectDiagnostics: RegExpExecArray): void => {
-      if (!options.includeEffectDiagnosticsDirectives) {
-        return;
-      }
+      if (!options.includeEffectDiagnosticsDirectives) return;
       const body = effectDiagnostics.groups?.rest ?? '';
       const parsed = splitDescription(body);
       const silenced = parseRuleList(parsed.head).filter((token) =>
         SILENCED_SEVERITY.has((token.split(':')[1] ?? '').toLowerCase()),
       );
-      if (silenced.length === 0) {
-        return;
-      }
+      if (silenced.length === 0) return;
       const reasons = [...justificationReasons(parsed.description, options, expiry)];
-      if (silenced.some((token) => token.split(':')[0] === '*')) {
+      if (silenced.some((token) => token.split(':')[0] === '*'))
         reasons.push('a wildcard suppresses every diagnostic rather than naming exact rules');
-      }
       // A file-wide Effect diagnostic waiver is never line-scoped and never narrow, so an
       // ungoverned one is always reported; a justified, expiring one is accepted.
-      if (reasons.length === 0) {
-        return;
-      }
+      if (reasons.length === 0) return;
       context.report({
+        node: comment,
+        messageId: 'ungovernedEffectDiagnostics',
         data: {
           reason: reasons.join('; '),
           rules: quoteList(silenced.map((token) => token.split(':')[0] ?? token)),
         },
-        messageId: 'ungovernedEffectDiagnostics',
-        node: comment,
       });
     };
 
@@ -319,13 +361,13 @@ export const rule = defineRule({
       }
       reasons.push(...justificationReasons(directive.justification, options, expiry));
 
-      if (reasons.length === 0) {
-        return;
-      }
+      if (reasons.length === 0) return;
 
       const messageId = seamHits.length > 0 ? 'ungovernedSeamSuppression' : 'ungovernedSuppression';
       const named = seamHits.length > 0 ? seamHits : directive.rules;
       context.report({
+        node: comment,
+        messageId,
         // `rule` is bare so it reads as code inside the `oxlint-disable-next-line` example;
         // `rules` is back-ticked for the prose sentence.
         data: {
@@ -333,18 +375,14 @@ export const rule = defineRule({
           rule: named.length > 0 ? named.join(', ') : '<rule>',
           rules: named.length > 0 ? quoteList(named) : 'This blanket waiver',
         },
-        messageId,
-        node: comment,
       });
     };
 
-    const inspect = (comment: Comment, remainingRules?: readonly string[]): void => {
-      if (comment.type === 'Shebang') {
-        return;
-      }
+    const inspect = (comment: Comment, unboundedRules?: readonly string[]): void => {
+      if (comment.type === 'Shebang') return;
 
       if (options.includeTsNocheck && TS_NOCHECK.test(comment.value.trim())) {
-        context.report({ messageId: 'tsNocheck', node: comment });
+        context.report({ node: comment, messageId: 'tsNocheck' });
         return;
       }
 
@@ -355,10 +393,8 @@ export const rule = defineRule({
       }
 
       const parsedDirective = parseDirective(comment.value);
-      if (parsedDirective === null) {
-        return;
-      }
-      const directive = remainingRules === undefined ? parsedDirective : { ...parsedDirective, rules: remainingRules };
+      if (parsedDirective === null) return;
+      const directive = unboundedRules === undefined ? parsedDirective : { ...parsedDirective, rules: unboundedRules };
 
       inspectDirective(comment, directive);
     };
@@ -372,79 +408,12 @@ export const rule = defineRule({
           const directive = parseDirective(comment.value);
           if (directive !== null) {
             const remaining = unboundedRules(directive, comments.slice(index + 1));
-            if (remaining !== null) {
-              inspect(comment, remaining);
-            }
+            if (remaining !== null) inspect(comment, remaining);
             continue;
           }
           inspect(comment);
         }
       },
     };
-  },
-  meta: {
-    defaultOptions: [
-      {
-        effectSeamRules: [...DEFAULT_EFFECT_SEAM_RULES],
-        effectSeamRulesAlwaysReport: true,
-        expiryPattern: DEFAULT_EXPIRY_PATTERN,
-        ignorePaths: [...DEFAULT_IGNORE_PATHS],
-        includeEffectDiagnosticsDirectives: true,
-        includeTsNocheck: true,
-        minJustificationLength: DEFAULT_MIN_JUSTIFICATION_LENGTH,
-        paths: [...DEFAULT_PATHS],
-      },
-    ],
-    docs: {
-      description:
-        'Audit A8 (with A9/A2/A5): require file-wide `eslint-disable` / `oxlint-disable` blocks to name ' +
-        'exact non-seam rules, carry a justification after `--`, and state an expiry or removal criterion. ' +
-        'Effect/Promise seam waivers must be line- or region-scoped, and `@ts-nocheck` is never allowed.',
-    },
-    messages: {
-      tsNocheck:
-        '`@ts-nocheck` disables the type checker for this entire file, which is the strongest possible ' +
-        'ungoverned suppression and cannot carry a rule list or an expiry. Audit A8 requires generated and ' +
-        'script code to be brought *under* explicit TypeScript gates, not exempted from them: fix or ' +
-        'regenerate the file, or narrow the escape hatch to a single justified `@ts-expect-error` line.',
-      ungovernedEffectDiagnostics:
-        'File-wide Effect diagnostic suppression is not governed ({{reason}}). Turning {{rules}} off for a ' +
-        'whole file is exactly what audit A8 says to govern: it silences the Effect language service at the ' +
-        'seam it is meant to guard (`asyncFunction`/`newPromise` — A9 typed Effects; `processEnv` — A5 ' +
-        '`Config`/`ConfigProvider`; `globalDate`/`globalDateInEffect` — A6 `Clock`/`DateTime`; ' +
-        '`anyUnknownInErrorContext` — A2 typed failure channels). Fix the seam, or narrow the waiver: add ' +
-        'a `--` justification and an expiry or removal criterion (e.g. ' +
-        '`-- Rspack externals use a callback API. remove-when: A9 browser runtime lands`).',
-      ungovernedSeamSuppression:
-        'File-wide lint suppression is not governed ({{reason}}). {{rules}} marks an Effect/Promise seam the ' +
-        'audit is removing (A9 typed Effects through the frontend, A2 typed failures, A5 Effect-native ' +
-        'scripts), so it must never be silenced for a whole file: pin it to the single adapter line ' +
-        '(`// oxlint-disable-next-line {{rule}} -- <why>`) or delete the seam by moving the Promise boundary ' +
-        'into one `ManagedRuntime` / `Effect.tryPromise` adapter. Add a justification after `--` and an ' +
-        'expiry or removal criterion (e.g. `remove-when: A9 browser runtime lands`).',
-      ungovernedSuppression:
-        'File-wide lint suppression is not governed ({{reason}}). Scope it to the one line that needs it ' +
-        '(`// oxlint-disable-next-line {{rule}} -- <why>`), list the exact rules, justify it after `--`, and ' +
-        'state an expiry or removal criterion (e.g. `remove-when: A9 browser runtime lands`, ' +
-        '`expires: 2026-12-31`, `tracked in: #1234`). Audit A8: an unexpiring file-wide waiver keeps the ' +
-        'whole file exempt forever, so new code lands under an old decision.',
-    },
-    schema: [
-      {
-        additionalProperties: false,
-        properties: {
-          effectSeamRules: { items: { type: 'string' }, type: 'array' },
-          effectSeamRulesAlwaysReport: { type: 'boolean' },
-          expiryPattern: { type: 'string' },
-          ignorePaths: { items: { type: 'string' }, type: 'array' },
-          includeEffectDiagnosticsDirectives: { type: 'boolean' },
-          includeTsNocheck: { type: 'boolean' },
-          minJustificationLength: { minimum: 0, type: 'number' },
-          paths: { items: { type: 'string' }, type: 'array' },
-        },
-        type: 'object',
-      },
-    ],
-    type: 'problem',
   },
 });

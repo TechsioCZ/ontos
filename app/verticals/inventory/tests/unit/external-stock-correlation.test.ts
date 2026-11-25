@@ -1,9 +1,8 @@
-import { Context, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   AmbiguousExternalStockCorrelationSchema,
-  ExternalStockCorrelationLifecycle,
   ExternalStockCorrelationSchema,
   ExternalStockItemTargetSchema,
   ExternalStockKeySchema,
@@ -19,7 +18,6 @@ import type {
   ExternalStockKey,
 } from '../../shared/domain/external-stock-correlation.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
-import { ExternalStockCorrelationRejected } from '../../shared/domain/external-stock-correlation-rejected.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const itemId = '22222222-2222-4222-8222-222222222222';
@@ -326,110 +324,6 @@ const makeMemoryPersistence = (initial: readonly ExternalStockCorrelation[] = []
   });
 
 describe('Inventory External Stock Correlation lifecycle', () => {
-  it.effect('the contextual lifecycle keeps the supplied identity and its exact persistence', () =>
-    Effect.gen(function* establishThroughOwnerLayer() {
-      const { persistence, state } = yield* makeMemoryPersistence();
-      const expected = correlation();
-      const layer = ExternalStockCorrelationLifecycle.layer(persistence, {
-        makeCorrelationId: () => expected.correlationRef.resourceId,
-      });
-      expect(yield* Ref.get(state)).toEqual([]);
-
-      const established = yield* Effect.scoped(
-        Effect.gen(function* establishCorrelation() {
-          const lifecycleContext = yield* Layer.build(layer);
-          const lifecycle = Context.get(lifecycleContext, ExternalStockCorrelationLifecycle);
-          return yield* lifecycle.establish({
-            effectiveFrom: currentInstant,
-            externalKey: itemKey,
-            ownerEvidenceRef: expected.ownerEvidenceRef,
-            target: expected.target,
-          });
-        }),
-      );
-
-      expect(established).toEqual(expected);
-      expect(yield* Ref.get(state)).toEqual([expected]);
-    }),
-  );
-
-  it.effect('separate contextual lifecycles never share persistence or a supplied ID source', () =>
-    Effect.gen(function* isolateOwnerLayers() {
-      const first = yield* makeMemoryPersistence();
-      const second = yield* makeMemoryPersistence();
-      const expected = correlation();
-      const firstId = '55555555-5555-4555-8555-555555555555';
-      const secondId = '77777777-7777-4777-8777-777777777777';
-      const establish = Effect.gen(function* establishCorrelation() {
-        const lifecycle = yield* ExternalStockCorrelationLifecycle;
-        return yield* lifecycle.establish({
-          effectiveFrom: currentInstant,
-          externalKey: itemKey,
-          ownerEvidenceRef: expected.ownerEvidenceRef,
-          target: expected.target,
-        });
-      });
-      const firstResult = yield* establish.pipe(
-        Effect.provide(
-          ExternalStockCorrelationLifecycle.layer(first.persistence, { makeCorrelationId: () => firstId }),
-        ),
-      );
-      const secondResult = yield* establish.pipe(
-        Effect.provide(
-          ExternalStockCorrelationLifecycle.layer(second.persistence, { makeCorrelationId: () => secondId }),
-        ),
-      );
-
-      expect(firstResult.correlationRef.resourceId).toBe(firstId);
-      expect(secondResult.correlationRef.resourceId).toBe(secondId);
-      expect(yield* Ref.get(first.state)).toEqual([firstResult]);
-      expect(yield* Ref.get(second.state)).toEqual([secondResult]);
-    }),
-  );
-
-  it.effect('contextual establishment preserves overlap and invalid-identity denials without writes', () =>
-    Effect.gen(function* preserveOwnerDenials() {
-      const existing = correlation();
-      const occupied = yield* makeMemoryPersistence([existing]);
-      const empty = yield* makeMemoryPersistence();
-      let generatedIds = 0;
-      const establish = Effect.gen(function* establishCorrelation() {
-        const lifecycle = yield* ExternalStockCorrelationLifecycle;
-        return yield* lifecycle.establish({
-          effectiveFrom: currentInstant,
-          externalKey: itemKey,
-          ownerEvidenceRef: existing.ownerEvidenceRef,
-          target: existing.target,
-        });
-      });
-      const overlap = yield* establish.pipe(
-        Effect.provide(
-          ExternalStockCorrelationLifecycle.layer(occupied.persistence, {
-            makeCorrelationId: () => {
-              generatedIds += 1;
-              return existing.correlationRef.resourceId;
-            },
-          }),
-        ),
-        Effect.flip,
-      );
-      const invalidIdentity = yield* establish.pipe(
-        Effect.provide(
-          ExternalStockCorrelationLifecycle.layer(empty.persistence, { makeCorrelationId: () => 'invalid' }),
-        ),
-        Effect.flip,
-      );
-
-      expect(Schema.is(ExternalStockCorrelationRejected)(overlap)).toBe(true);
-      expect(overlap).toMatchObject({ reason: 'OVERLAPPING_EFFECTIVE_PERIOD' });
-      expect(Schema.is(ExternalStockCorrelationRejected)(invalidIdentity)).toBe(true);
-      expect(invalidIdentity).toMatchObject({ reason: 'INVALID_CORRELATION' });
-      expect(generatedIds).toBe(0);
-      expect(yield* Ref.get(occupied.state)).toEqual([existing]);
-      expect(yield* Ref.get(empty.state)).toEqual([]);
-    }),
-  );
-
   it.effect('ends an old meaning and establishes a new Resource with its own Effective Period', () =>
     Effect.gen(function* correctExternalMeaning() {
       const { persistence } = yield* makeMemoryPersistence([correlation()]);

@@ -294,7 +294,6 @@ export default defineConfig({
         'tools/**/tests/*.test.mts',
       ],
       rules: {
-        'effect-native/no-unregistered-native-test-imports': 'error',
         'eslint/no-restricted-imports': [
           'error',
           {

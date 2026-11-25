@@ -1,6 +1,8 @@
 import {
+  loadDatabaseConfig,
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
@@ -24,7 +26,6 @@ import type {
   LiveOperationFixtureBootstrapRequest,
 } from '@app/core-runtime/testing/actions';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 // Root-owned TEST supervisor. Only published owner contracts/clients are imported.
 // Owner programs execute in their own processes; module discovery allocates nothing.
 import { createHash } from 'node:crypto';
@@ -234,7 +235,7 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
   );
   const urls: Record<string, string> = {};
   for (const identity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-    const { runtime: canonical } = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity }).pipe(
+    const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity }).pipe(
       Effect.mapError(() => failure('Canonical fixture identity configuration was unavailable')),
     );
     const address = new URL(canonical.connectionString);

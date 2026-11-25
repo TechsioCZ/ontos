@@ -189,7 +189,7 @@ it.effect('keeps the demo policy runtime-read-only after initial and repeated sh
     for (const _repeat of [false, true]) {
       catalog.statements.length = 0;
       yield* grantSharedRuntimeRole(client, legacy);
-      const { statements } = catalog;
+      const statements = catalog.statements;
       const restricted = statements.filter((statement) =>
         /^(?:grant|revoke) .* on table privacy\.demo_source_processing_policies /u.test(statement),
       );
@@ -201,7 +201,6 @@ it.effect('keeps the demo policy runtime-read-only after initial and repeated sh
         statements.indexOf('grant select, insert, update, delete on all tables in schema privacy to ontos_runtime'),
       );
     }
-    return yield* Effect.void;
   }),
 );
 

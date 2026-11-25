@@ -181,10 +181,10 @@ it.effect('retains both pricing source authority capabilities from their actual 
       'verticals/pricing/src/actions/grant-external-price-source-authority.action.ts',
       'verticals/pricing/src/actions/manage-external-price-source-policy.action.ts',
     ];
-    const sources = yield* Effect.all(
-      files.map((file) => fs.readFileString(path.join(root, file)).pipe(Effect.map((source) => ({ file, source })))),
+    const sources = yield* Effect.forEach(files, (file) =>
+      fs.readFileString(path.join(root, file)).pipe(Effect.map((source) => ({ file, source }))),
     );
-    const [expected] = sortAccessCatalogModules(yield* modulesOf(sources));
+    const expected = sortAccessCatalogModules(yield* modulesOf(sources))[0];
     expect(expected?.descriptors).toHaveLength(2);
     const artifact = yield* readAccessCatalogArtifact(root);
     const pricing = artifact.find(({ moduleId }) => moduleId === 'commerce.pricing');

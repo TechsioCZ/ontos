@@ -88,6 +88,12 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.customer-context.organization-ico-facts.read',
   'integration.symmy.source-organization-facts.read',
 ]);
+const StageWorkloadKeySchema = WorkloadKeySchema.check(
+  Schema.makeFilter((key) =>
+    STAGE_DECLARED_WORKLOAD_KEYS.has(key) ? undefined : 'names no workload a carrier declares',
+  ),
+);
+
 const StageTenantSchema = Schema.Struct({
   accounts: Schema.NonEmptyArray(StageAccountSchema),
   defaultLocale: TrimmedNonEmptyString,

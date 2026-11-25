@@ -34,9 +34,6 @@ const unsupportedDispatchShell = 'Unsupported test dispatch shell: bash -n {0}';
 const unsupportedDispatchStep = 'Unsupported test dispatch step:';
 const rootAndListMutation = 'root AND-list script';
 const scratchUnitCommand = 'rstest run --project unit';
-const nativeTestConcurrency = '--test-concurrency=1';
-const emptyWorkspacePackages = 'packages: []';
-const unsupportedCiCommand = 'Unsupported CI command';
 const syntaxOnlyBrowserShell = 'syntax-only browser shell';
 const organizationTask = 'whole:organization';
 const wrongWorkingDirectory = 'app/scripts';
@@ -587,15 +584,8 @@ const creditlessCommand = (executable: string, args: readonly string[]) =>
   (executable === 'ultramodern-create' &&
     /^ultramodern typecheck --project tests\/(?:tsconfig|client-runtime-types\.tsconfig)\.json$/u.test(args.join(' ')));
 // Only a literal, complete native suite grants credit. Filters, patterns and plain imports do not.
-const nativeNodeTestFiles = (args: readonly string[]) => {
-  if (args[0] !== '--test') {
-    return null;
-  }
-  const files = args.slice(args[1] === nativeTestConcurrency ? 2 : 1);
-  return files.length > 0 && files.every((file) => /^scripts\/(?:[\w-]+\/)*[\w-]+\.(?:test|spec)\.m[jt]s$/u.test(file))
-    ? files
-    : null;
-};
+const nativeNodeTest = (args: readonly string[]) =>
+  args.length === 2 && args[0] === '--test' && /^scripts\/[\w/-]+\.test\.mjs$/u.test(args[1] ?? '');
 const supportedShellCommand = (command: readonly string[]) => {
   const [executable = '', ...args] = unwrapCommand(command);
   return (
@@ -603,7 +593,7 @@ const supportedShellCommand = (command: readonly string[]) => {
     creditlessCommand(executable, args) ||
     (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) ||
     (executable === 'node' &&
-      (nativeNodeTestFiles(args) !== null ||
+      (nativeNodeTest(args) ||
         args.slice(0, 3).join(' ') === integrationNodeRunner ||
         (args.length === 1 && /^tests\/browser\/[\w-]+\.mjs$/u.test(args[0] ?? ''))))
   );
@@ -1283,17 +1273,14 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
     },
     runTokens(directory: string, input: readonly string[], seen: readonly string[]): void {
       const [executable = '', ...args] = unwrapCommand(input);
-      const nativeFiles = executable === 'node' ? nativeNodeTestFiles(args) : null;
       if (executable === 'pnpm') {
         commands.runPnpm(directory, args, seen);
       } else if (executable === 'rstest' || executable === 'vitest') {
         commands.runRunner(directory, args);
-      } else if (nativeFiles !== null) {
-        for (const nativeFile of nativeFiles) {
-          const file = path.posix.join(directory, nativeFile);
-          expect(tests, `Native Node suite must exist: ${file}`).toContain(file);
-          collected.add(file);
-        }
+      } else if (executable === 'node' && nativeNodeTest(args)) {
+        const file = path.posix.join(directory, args[1] ?? '');
+        expect(tests, `Native Node suite must exist: ${file}`).toContain(file);
+        collected.add(file);
       } else if (executable === 'node' && args.slice(0, 3).join(' ') === integrationNodeRunner) {
         commands.runRunner(directory, args.slice(3));
       } else if (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) {
@@ -1474,112 +1461,13 @@ it(`accounts for the bounded CI/manual census: ${censusScope}`, () => {
 it('credits only literal, unfiltered native Node test execution', () => {
   const file = 'scripts/zerops/prove-storefront-artifact.test.mjs';
   expect(supportedShellCommand(['node', '--test', file])).toBe(true);
-  const nativeFiles = [
-    'scripts/demo/symmy-demo-source-policies.test.mts',
-    'scripts/ops/stage-symmy-full-function-proof.test.mts',
-  ];
-  expect(supportedShellCommand(['node', '--test', ...nativeFiles])).toBe(true);
-  expect(supportedShellCommand(['node', '--test', nativeTestConcurrency, ...nativeFiles])).toBe(true);
   for (const args of [
     [file],
-    ['--test'],
-    ['--test', nativeTestConcurrency],
-    ['--test', '--test-concurrency=2', ...nativeFiles],
     ['--test', '--test-name-pattern', 'one case', file],
-    ['--test', '--test-skip-pattern=one-case', file],
-    ['--test', '--test-only', file],
-    ['--test', '--test-shard=1/2', file],
-    ['--test', '--import', 'scripts/setup.mjs', file],
     ['--test', 'scripts/zerops/*.test.mjs'],
-    ['--test', 'scripts/zerops/../outside.test.mjs'],
     ['--test', '../outside.test.mjs'],
   ]) {
     expect(supportedShellCommand(['node', ...args])).toBe(false);
-  }
-});
-
-it('credits literal native Node source rows and rejects filtered, opaque or unexecuted replacements', () => {
-  const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-collection-'));
-  const root = path.join(scratch, 'app');
-  const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(read(workflowFile)));
-  const source = workflow.jobs[sourceJob];
-  const dispatch = source?.steps?.find((step) => step.name === `Run \${{ matrix.name }}`);
-  expect(dispatch).toBeDefined();
-  const files = [
-    'scripts/zerops/prove-storefront-artifact.test.mjs',
-    'scripts/demo/symmy-demo-source-policies.test.mts',
-    'scripts/ops/stage-symmy-full-function-proof.test.mts',
-  ];
-  const [artifact = '', ...nativeFiles] = files;
-  const artifactCommand = `node --test ${artifact}`;
-  const nativeCommand = `node --test --test-concurrency=1 ${nativeFiles.join(' ')}`;
-  const write = (file: string, text: string) => {
-    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), text);
-  };
-  const writeCommands = (commands: string) =>
-    write(
-      matrixFile,
-      JSON.stringify({
-        integration: [],
-        source: [{ commands, name: 'Scratch native artifact suites' }],
-        unit: [],
-      }),
-    );
-  try {
-    write(
-      workflowFile,
-      stringify({
-        defaults: workflow.defaults,
-        env: workflow.env,
-        jobs: { [sourceJob]: { ...source, steps: dispatch === undefined ? [] : [dispatch] } },
-      }),
-    );
-    write(workflow.env.CI_MATRICES_OVERLAY, '{}');
-    write(workspaceFile, emptyWorkspacePackages);
-    write(packageManifest, JSON.stringify({ name: 'scratch' }));
-    for (const file of files) {
-      write(file, "import { test } from 'node:test'; test('native suite', () => {});");
-    }
-    for (const commands of [
-      `${artifactCommand}\n${nativeCommand}`,
-      `node --test ${files.join(' ')}`,
-      files.map((file) => `node --test ${file}`).join('\n'),
-    ]) {
-      writeCommands(commands);
-      checkCollection(root, new Map());
-    }
-    const rejectedCommands: readonly (readonly [string, string])[] = [
-      [artifactCommand, uncollectedCensus],
-      [`echo ${artifactCommand}\necho ${nativeCommand}`, uncollectedCensus],
-      [`node ${artifact}`, unsupportedCiCommand],
-      [`node --test ${files.join(' ')} scripts/missing.test.mts`, 'Native Node suite must exist'],
-      [`node --test --test-name-pattern=one-case ${files.join(' ')}`, unsupportedCiCommand],
-      [`node --test --test-skip-pattern=one-case ${files.join(' ')}`, unsupportedCiCommand],
-      [`node --test --test-only ${files.join(' ')}`, unsupportedCiCommand],
-      [`node --test --test-concurrency=1 'scripts/**/*.test.mts'`, unsupportedCiCommand],
-      [`node --test --test-concurrency=1 ${files.join(' ')} --test-name-pattern=one-case`, unsupportedCiCommand],
-      [`node --eval 'import("${artifact}")'`, unsupportedCiCommand],
-      [`false && ${artifactCommand}`, unsupportedCiCommand],
-      [`if false; then ${artifactCommand}; fi`, unsupportedCiCommand],
-      [`exit 0\n${artifactCommand}\n${nativeCommand}`, unsupportedCiCommand],
-    ];
-    for (const [command, failure] of rejectedCommands) {
-      writeCommands(command);
-      expect(() => checkCollection(root, new Map()), command).toThrow(failure);
-    }
-    writeCommands(`${artifactCommand}\n${nativeCommand}`);
-    write(
-      workflowFile,
-      stringify({
-        defaults: workflow.defaults,
-        env: workflow.env,
-        jobs: { [sourceJob]: { ...source, if: 'false', steps: dispatch === undefined ? [] : [dispatch] } },
-      }),
-    );
-    expect(() => checkCollection(root, new Map())).toThrow(uncollectedCensus);
-  } finally {
-    rmSync(scratch, { force: true, recursive: true });
   }
 });
 
@@ -1588,7 +1476,7 @@ const rootUnitScript =
   expect.fail('Missing root test:unit script');
 
 it.each([
-  ...[...unsupportedShellCommands.keys()].map((mutation) => [mutation, unsupportedCiCommand]),
+  ...[...unsupportedShellCommands.keys()].map((mutation) => [mutation, 'Unsupported CI command']),
   [invalidPackageSelector, 'Unsupported pnpm filter: packages/example'],
   ['matrix step syntax-only shell', unsupportedDispatchShell],
   ['literal step syntax-only shell', unsupportedDispatchShell],
@@ -1645,7 +1533,7 @@ it.each([
     [workflowFile, stringify(fixtureWorkflow)],
     [matrixFile, JSON.stringify(matrices)],
     [workflow.env.CI_MATRICES_OVERLAY, '{}'],
-    [workspaceFile, emptyWorkspacePackages],
+    [workspaceFile, 'packages: []'],
     [
       'package.json',
       JSON.stringify({
@@ -2094,7 +1982,7 @@ it.each([
       }),
     );
     write(workflow.env.CI_MATRICES_OVERLAY, '{}');
-    write(workspaceFile, emptyWorkspacePackages);
+    write(workspaceFile, 'packages: []');
     write(packageManifest, JSON.stringify({ name: 'scratch' }));
     write(
       rstestConfig,

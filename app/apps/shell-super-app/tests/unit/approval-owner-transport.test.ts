@@ -108,7 +108,6 @@ const fixture = Effect.fn('OwnerApprovalTransportTest.fixture')(function* ownerA
         });
       },
       issueDocument: () => Effect.die('Approval issues one assertion, not document assertions'),
-      issueSymmy: () => Effect.die('Approval must not issue a Symmy route assertion'),
     }),
     Effect.provideService(ShellInstalledModuleCatalog, {
       load: makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)),

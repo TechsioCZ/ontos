@@ -30,7 +30,6 @@ const elsewhere = [...operatorTests, ...ownedClusterTests].map((file) => `!${fil
 
 // These use Node's test context (including t.mock), and run through the demo matrix's native CI row.
 export const nativeScriptTests = [
-  'scripts/demo/symmy-demo-customer-authority.test.mts',
   'scripts/demo/symmy-demo-source-policies.test.mts',
   'scripts/ops/stage-symmy-full-function-proof.test.mts',
   'scripts/ops/stage-symmy-negative-proof.test.mts',
@@ -38,7 +37,6 @@ export const nativeScriptTests = [
   'scripts/tests/inventory-on-hand-exports.test.mts',
   'scripts/zerops/demo-delivery-parallelism.test.mts',
   'scripts/zerops/production-declarations.test.mts',
-  'scripts/zerops/prove-storefront-artifact.test.mjs',
 ];
 
 export default defineConfig({

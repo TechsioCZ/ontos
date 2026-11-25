@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { Effect, Option, Order, Result, Schema, Stream } from 'effect';
+import { Effect, Option, Order, Schema, Stream } from 'effect';
 import { sort as sortArray } from 'effect/Array';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -16,12 +16,10 @@ const DigestInputsSchema = Schema.Struct({
   inputs: Schema.Array(Schema.Struct({ identity: Schema.String, path: Schema.String })),
   version: Schema.Literal(3),
 });
-const encodeManifestMappings = Schema.encodeResult(Schema.fromJsonString(Schema.Tuple([Schema.Json, Schema.Json])));
-const encodeManifestPath = Schema.encodeResult(Schema.fromJsonString(Schema.String));
 const BuildManifestSchema = Schema.fromJsonString(
   Schema.Struct({
-    exports: Schema.optionalKey(Schema.Json),
-    imports: Schema.optionalKey(Schema.Json),
+    exports: Schema.optionalKey(Schema.Unknown),
+    imports: Schema.optionalKey(Schema.Unknown),
     scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   }),
 );
@@ -115,13 +113,12 @@ export const runtimeClosure = (directory: string, packages: readonly WorkspacePa
  */
 
 /** Why a tracked path is not part of a unit's identity. */
-const UNUSED_SCRIPT = 'unused-script';
 const UnitInputExclusionSchema = Schema.Literals([
   'documentation',
   'non-build',
   'other-package',
   'test',
-  UNUSED_SCRIPT,
+  'unused-script',
 ]);
 type UnitInputExclusion = typeof UnitInputExclusionSchema.Type;
 export interface ExcludedInput {
@@ -340,12 +337,10 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
                 inside(filepath, directory) &&
                 tracked.has(filepath) &&
                 // Exported or #import-mapped checks can be bundled through a bare package reference.
-                !Result.getOrThrow(
-                  encodeManifestMappings([manifest.value.exports ?? null, manifest.value.imports ?? null]),
-                ).includes('*') &&
-                !Result.getOrThrow(
-                  encodeManifestMappings([manifest.value.exports ?? null, manifest.value.imports ?? null]),
-                ).includes(Result.getOrThrow(encodeManifestPath(`./${path.posix.relative(directory, filepath)}`))),
+                !JSON.stringify([manifest.value.exports, manifest.value.imports]).includes('*') &&
+                !JSON.stringify([manifest.value.exports, manifest.value.imports]).includes(
+                  JSON.stringify(`./${path.posix.relative(directory, filepath)}`),
+                ),
             );
     }),
   );
@@ -415,9 +410,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
       return owner === undefined ? NOTHING : { ...NOTHING, packages: [owner] };
     }
     const named = byName.find((entry) => specifier === entry.name || specifier.startsWith(`${entry.name}/`));
-    if (named === undefined) {
-      return NOTHING;
-    }
+    if (named === undefined) return NOTHING;
     const subpath = specifier.slice(named.name.length + 1);
     return {
       ...NOTHING,
@@ -542,7 +535,7 @@ const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: 
     return 'documentation' as const;
   }
   if (graph.schemaVerificationEntries.has(filepath)) {
-    return UNUSED_SCRIPT;
+    return 'unused-script' as const;
   }
   if (inClosure) {
     return 'input' as const;
@@ -551,7 +544,7 @@ const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: 
     return 'other-package' as const;
   }
   if (filepath.startsWith('app/scripts/')) {
-    return UNUSED_SCRIPT;
+    return 'unused-script' as const;
   }
   return NON_BUILD_PATHS.some((entry) => entry.pattern.test(filepath)) ? ('non-build' as const) : ('input' as const);
 };

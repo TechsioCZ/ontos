@@ -1,4 +1,5 @@
-import { expect, it } from 'effect-rstest';
+import { deepStrictEqual, equal, ok } from 'node:assert/strict';
+import { it } from 'effect-rstest';
 import { extractVerticalRuntimeSafeDescriptors } from '@app/core-runtime';
 
 import { catalogRegistration } from '../../verticals/catalog/vertical.registration.ts';
@@ -6,24 +7,23 @@ import { catalogRuntimeDeclaration } from '../../verticals/catalog/vertical.runt
 
 it('the actual Catalog registration imports and extracts every distinct runtime operation once', () => {
   const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
-  expect(safe.moduleId).toBe('commerce.catalog');
+  equal(safe.moduleId, 'commerce.catalog');
   const entrypoints = safe.operationContracts.map(({ entrypoint }) => entrypoint.entrypointKey);
-  expect(new Set(entrypoints).size).toBe(entrypoints.length);
+  equal(new Set(entrypoints).size, entrypoints.length);
   for (const entrypoint of [
     'commerce.catalog.set-product-localized-facts',
     'commerce.catalog.api.set-product-localized-facts-recovery',
     'commerce.catalog.set-variant-localized-facts',
     'commerce.catalog.api.set-variant-localized-facts-recovery',
   ]) {
-    expect(entrypoints.filter((key) => key === entrypoint)).toHaveLength(1);
+    equal(entrypoints.filter((key) => key === entrypoint).length, 1);
   }
-  expect(safe.actions.map(({ actionKey }) => actionKey).toSorted()).toStrictEqual(
+  deepStrictEqual(
+    safe.actions.map(({ actionKey }) => actionKey).toSorted(),
     catalogRuntimeDeclaration.actions.map(({ descriptor }) => descriptor.actionKey).toSorted(),
   );
-  const localizedFacts = safe.actions.find(
-    ({ actionKey }) => actionKey === 'commerce.catalog.set-product-localized-facts',
-  );
-  expect(
-    localizedFacts?.accessWorkload?.workloads.some((workload) => workload === 'commerce.catalog.symmy-product-import'),
-  ).toBe(true);
+  const localizedFacts = safe.actions.find(({ actionKey }) =>
+    actionKey === 'commerce.catalog.set-product-localized-facts');
+  ok(localizedFacts);
+  ok(localizedFacts.accessWorkload?.workloads.includes('commerce.catalog.symmy-product-import'));
 });

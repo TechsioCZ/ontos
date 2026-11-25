@@ -1,10 +1,10 @@
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
-import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityResponse } from '@app/privacy/api/source-processing-eligibility';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { checkPartyClientSourcePrivacy } from './party-client-source-privacy.service.ts';
 import { and, eq, isNotNull, ne, or, sql } from 'drizzle-orm';
-import { Config, Context, DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { Config, Context, DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   PartyClientSourceIdentitySchema,
@@ -39,17 +39,15 @@ export interface PartyClientSourceScope {
 }
 
 export type PartyClientSourceReference = Pick<PartyClientSourceAssertion, 'source' | 'recordId' | 'occurrenceId'>;
-const [, allowedSourceProcessingSchema] = SourceProcessingEligibilityResponseSchema.members;
-const [, sourceSyncProcessingEvidenceSchema] = allowedSourceProcessingSchema.fields.evidence.members;
-type SourceSyncProcessingEvidence = typeof sourceSyncProcessingEvidenceSchema.Type;
-const sourceSyncProcessingAllowedSchema = Schema.TaggedStruct('SOURCE_SYNC_PROCESSING_ALLOWED', {
-  evidence: sourceSyncProcessingEvidenceSchema,
-});
+type SourceSyncProcessingEvidence = Extract<
+  Extract<SourceProcessingEligibilityResponse, { readonly outcome: 'ALLOWED' }>['evidence'],
+  { readonly _tag: 'SOURCE_SYNC_PROCESSING_POLICY' }
+>;
 export type PartyClientSourcePrivacyDecision =
   | 'ALLOWED'
   | 'DENIED'
   | 'ORGANIZATION_BUSINESS_ALLOWED'
-  | typeof sourceSyncProcessingAllowedSchema.Type;
+  | { readonly _tag: 'SOURCE_SYNC_PROCESSING_ALLOWED'; readonly evidence: SourceSyncProcessingEvidence };
 export type PartySourceProjectionAuthority =
   | { readonly kind: 'ordinary' }
   | { readonly kind: 'organization_business' }
@@ -155,7 +153,7 @@ export const authorizePartyClientSourceReferenceWithProjection = Effect.fn(
   const outcome = yield* Option.isSome(privacy)
     ? privacy.value.checkImport({ assertion, scope, intent })
     : checkPartyClientSourcePrivacy({ assertion, scope, intent });
-  if (Predicate.isTagged(outcome, 'SOURCE_SYNC_PROCESSING_ALLOWED')) {
+  if (typeof outcome === 'object') {
     return { kind: 'source_sync', evidence: outcome.evidence } satisfies PartySourceProjectionAuthority;
   }
   if (outcome === 'ORGANIZATION_BUSINESS_ALLOWED') {

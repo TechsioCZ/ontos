@@ -1,7 +1,4 @@
-import {
-  readVerifiedGatewayRouteScope,
-  readVerifiedGatewayWorkload,
-} from '../../auth/system-principal-context-provenance.ts';
+import { readVerifiedGatewayRouteScope, readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
 import type { RegisteredGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
 import { internalWorkloadPrincipalId } from '../../auth/module-credentials.ts';
 import { and, eq, sql } from 'drizzle-orm';
@@ -57,8 +54,8 @@ export const registeredGatewayExecutorEligibility = (
     workload.legalEntityId === undefined
       ? sql`true`
       : sql`s.principal_id = ${internalWorkloadPrincipalId({
-          legalEntityId: workload.legalEntityId,
           tenantId: query.tenantId,
+          legalEntityId: workload.legalEntityId,
           workloadKey: workload.workloadKey,
         })}::uuid`;
   return sql`exists (
@@ -82,13 +79,8 @@ export const registeredGatewayExecutorEligibility = (
 /** Original admission stays live; owner authority is the exact signed native receiver binding, not an alias. */
 export const registeredGatewayOriginalAdmission = (
   query: Pick<WorkloadBindingQuery, 'tenantId' | 'principalId'>,
-  workload: Pick<
-    RegisteredGatewayWorkload,
-    | 'originalPrincipalId'
-    | 'originalWorkloadKey'
-    | 'originalWorkloadBindingIncarnation'
-    | 'originalOwnerBindingIncarnation'
-  >,
+  workload: Pick<RegisteredGatewayWorkload,
+    'originalPrincipalId' | 'originalWorkloadKey' | 'originalWorkloadBindingIncarnation' | 'originalOwnerBindingIncarnation'>,
 ) =>
   sql`exists (
     select 1 from core.principals p
@@ -145,15 +137,12 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                     : [
                         eq(accessWorkloadBindings.incarnation, nativeRead.bindingIncarnation),
                         eq(accessWorkloadBindings.workloadKey, nativeRead.workloadKey),
-                        registeredGatewayExecutorEligibility(
-                          query,
-                          nativeRead.enrollmentLegalEntityId === undefined
-                            ? { workloadKey: nativeRead.workloadKey }
-                            : {
-                                legalEntityId: nativeRead.enrollmentLegalEntityId,
-                                workloadKey: nativeRead.workloadKey,
-                              },
-                        ),
+                        registeredGatewayExecutorEligibility(query, {
+                          workloadKey: nativeRead.workloadKey,
+                          ...(nativeRead.enrollmentLegalEntityId === undefined
+                            ? {}
+                            : { legalEntityId: nativeRead.enrollmentLegalEntityId }),
+                        }),
                         registeredGatewayOriginalAdmission(query, {
                           ...nativeRead,
                           originalOwnerBindingIncarnation: nativeRead.bindingIncarnation,

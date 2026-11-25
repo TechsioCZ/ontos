@@ -58,9 +58,9 @@
  */
 import { defineRule } from '@oxlint/plugins';
 import type { Context } from '@oxlint/plugins';
-import { Predicate } from 'effect';
 
-import { booleanOption, compilePatterns, optionRecord, stringArray } from '../shared/options.ts';
+import { optionRecord } from '../shared/options.ts';
+import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
 import { driverText, emittedText, maskText, reportNode } from '../shared/scaffold-text.ts';
@@ -105,142 +105,79 @@ const DEFAULT_PATTERNS: readonly string[] = [
 const SNIPPET_LIMIT = 60;
 
 interface RuleOptions {
+  readonly templatePaths: readonly string[];
+  readonly patterns: readonly string[];
   readonly exclude: readonly string[];
   readonly ignoreTestFiles: boolean;
-  readonly patterns: readonly string[];
-  readonly templatePaths: readonly string[];
 }
 
-const readOptions = (context: Context): RuleOptions => {
+function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
   return {
+    templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
+    patterns: stringArray(record.patterns, DEFAULT_PATTERNS),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
     ignoreTestFiles: booleanOption(record.ignoreTestFiles, true),
-    patterns: stringArray(record.patterns, DEFAULT_PATTERNS),
-    templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
   };
-};
+}
 
 interface Match {
-  readonly end: number;
   readonly start: number;
+  readonly end: number;
   readonly text: string;
 }
 
 interface TemplateSource {
   readonly code: string;
-  readonly config: boolean;
   readonly syntax: string;
+  readonly config: boolean;
 }
 
-const templateSource = (text: string): TemplateSource => {
+function templateSource(text: string): TemplateSource {
   const syntax = maskText(text, true);
   // Audit D preserves ordinary URL construction and recursive JSON normalization.
   const config =
     /\b(?:ONTOS_[A-Z_]+|process\s*\.\s*env|import\s*\.\s*meta\s*\.\s*env|\w*[Jj][Ww][Kk]\w*|\w*[Cc]onfig\w*|issuer|environment)\b/u.test(
       syntax,
     );
-  return { code: maskText(text), config, syntax };
-};
+  return { code: maskText(text), syntax, config };
+}
 
-const isConfigurationMatch = (match: RegExpExecArray, source: TemplateSource): boolean => {
-  const [text] = match;
+function isConfigurationMatch(match: RegExpExecArray, source: TemplateSource): boolean {
+  const text = match[0];
   // Matches starting inside emitted strings are data, not executable syntax.
-  if (source.syntax[match.index] === ' ') {
-    return false;
-  }
-  if (!source.config && /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(text)) {
-    return false;
-  }
-  if (!/^new\s+URL/u.test(text)) {
-    return true;
-  }
+  if (source.syntax[match.index] === ' ') return false;
+  if (!source.config && /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(text)) return false;
+  if (!/^new\s+URL/u.test(text)) return true;
   return /^(?:issuer|endpoint|process\s*\.|environment\s*[.[])/iu.test(
     source.code.slice(match.index + text.length).trimStart(),
   );
-};
+}
 
-const collectMatches = (patterns: readonly RegExp[], source: TemplateSource): Match[] => {
+function collectMatches(patterns: readonly RegExp[], source: TemplateSource): Match[] {
   const found: Match[] = [];
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(source.code)) !== null) {
       if (match[0].length === 0) {
-        pattern.lastIndex += 1;
+        pattern.lastIndex++;
         continue;
       }
-      if (isConfigurationMatch(match, source)) {
+      if (isConfigurationMatch(match, source))
         found.push({
-          end: match.index + match[0].length,
           start: match.index,
+          end: match.index + match[0].length,
           text: match[0],
         });
-      }
     }
   }
-  return found.toSorted((a, b) => a.start - b.start || b.end - a.end);
-};
+  return found.sort((a, b) => a.start - b.start || b.end - a.end);
+}
 
 export const rule = defineRule({
-  create(context) {
-    const options = readOptions(context);
-    const path = scopePath(context.filename);
-    if (!matchesGlobs(path, options.templatePaths)) {
-      return {};
-    }
-    if (matchesGlobs(path, options.exclude)) {
-      return {};
-    }
-    if (options.ignoreTestFiles && isTestFile(path)) {
-      return {};
-    }
-
-    const patterns = compilePatterns(options.patterns);
-    if (patterns.length === 0) {
-      return {};
-    }
-
-    const inspect = (node: StringNode): void => {
-      if (driverText(node)) {
-        return;
-      }
-      const text = emittedText(node);
-      if (text.length === 0) {
-        return;
-      }
-      const found = collectMatches(patterns, templateSource(text));
-      let end = -1;
-      for (const match of found) {
-        if (match.start < end) {
-          continue;
-        }
-        ({ end } = match);
-        context.report({
-          data: { snippet: snippet(match.text, SNIPPET_LIMIT) },
-          messageId: 'manualConfigInTemplate',
-          node: reportNode(node, match.start, match.end),
-        });
-      }
-    };
-    return {
-      Literal(node) {
-        if (Predicate.isString(node.value)) {
-          inspect(node);
-        }
-      },
-      TemplateLiteral: inspect,
-    };
-  },
   meta: {
-    defaultOptions: [
-      {
-        exclude: [...DEFAULT_EXCLUDE],
-        ignoreTestFiles: true,
-        patterns: [...DEFAULT_PATTERNS],
-        templatePaths: [...DEFAULT_TEMPLATE_PATHS],
-      },
-    ],
+    type: 'problem',
     docs: {
       description:
         'Audit A8 + A3: scaffold and generator templates must not emit hand-written configuration or JWK ' +
@@ -261,16 +198,56 @@ export const rule = defineRule({
     },
     schema: [
       {
-        additionalProperties: false,
-        properties: {
-          exclude: { items: { type: 'string' }, type: 'array' },
-          ignoreTestFiles: { type: 'boolean' },
-          patterns: { items: { type: 'string' }, type: 'array' },
-          templatePaths: { items: { type: 'string' }, type: 'array' },
-        },
         type: 'object',
+        properties: {
+          templatePaths: { type: 'array', items: { type: 'string' } },
+          patterns: { type: 'array', items: { type: 'string' } },
+          exclude: { type: 'array', items: { type: 'string' } },
+          ignoreTestFiles: { type: 'boolean' },
+        },
+        additionalProperties: false,
       },
     ],
-    type: 'problem',
+    defaultOptions: [
+      {
+        templatePaths: [...DEFAULT_TEMPLATE_PATHS],
+        patterns: [...DEFAULT_PATTERNS],
+        exclude: [...DEFAULT_EXCLUDE],
+        ignoreTestFiles: true,
+      },
+    ],
+  },
+  create(context) {
+    const options = readOptions(context);
+    const path = scopePath(context.filename);
+    if (!matchesGlobs(path, options.templatePaths)) return {};
+    if (matchesGlobs(path, options.exclude)) return {};
+    if (options.ignoreTestFiles && isTestFile(path)) return {};
+
+    const patterns = compilePatterns(options.patterns);
+    if (patterns.length === 0) return {};
+
+    function inspect(node: StringNode): void {
+      if (driverText(node)) return;
+      const text = emittedText(node);
+      if (text.length === 0) return;
+      const found = collectMatches(patterns, templateSource(text));
+      let end = -1;
+      for (const match of found) {
+        if (match.start < end) continue;
+        end = match.end;
+        context.report({
+          node: reportNode(node, match.start, match.end),
+          messageId: 'manualConfigInTemplate',
+          data: { snippet: snippet(match.text, SNIPPET_LIMIT) },
+        });
+      }
+    }
+    return {
+      TemplateLiteral: inspect,
+      Literal(node) {
+        if (typeof node.value === 'string') inspect(node);
+      },
+    };
   },
 });

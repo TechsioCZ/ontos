@@ -58,7 +58,6 @@ export const AKROS = {
 } as const;
 const ESHOP = 'eshop@akros.demo';
 const EXPEDICE = 'expedice@akros.demo';
-const ESHOP_REGISTRY = 'eshop-registry';
 export const EmailSchema = Schema.Literals([ESHOP, EXPEDICE]);
 export type Email = typeof EmailSchema.Type;
 export const EMAILS = EmailSchema.literals;
@@ -338,11 +337,11 @@ export const observeTarget = Effect.fn('AkrosStaffScope.observeTarget')(function
 
 export interface RoleChoice {
   readonly [ESHOP]: Option.Option<string>;
-  readonly eshopRegistry: Option.Option<string>;
   readonly [EXPEDICE]: Option.Option<string>;
   readonly routing: Option.Option<string>;
+  readonly eshopRegistry: Option.Option<string>;
 }
-type Holder = Email | 'routing' | typeof ESHOP_REGISTRY;
+type Holder = Email | 'routing' | 'eshop-registry';
 export const ScopeKindSchema = Schema.Literals(['company', 'tenant']);
 type ScopeKind = typeof ScopeKindSchema.Type;
 const sameScope = (scope: { readonly kind: string; readonly legalEntityId?: string }, kind: ScopeKind) =>
@@ -421,7 +420,7 @@ export const REVIEWED_ROLE_CONTENTS = {
 const cellAllowed = (holder: Holder, key: string) =>
   Match.value(holder).pipe(
     Match.when('routing', () => REVIEWED_ROLE_CONTENTS.routing.capabilities.some((allowed) => allowed === key)),
-    Match.when(ESHOP_REGISTRY, () =>
+    Match.when('eshop-registry', () =>
       REVIEWED_ROLE_CONTENTS.eshopRegistry.capabilities.some((allowed) => allowed === key),
     ),
     Match.when(EXPEDICE, () => REVIEWED_ROLE_CONTENTS.fulfilment.capabilities.some((allowed) => allowed === key)),
@@ -465,7 +464,7 @@ export const reviewedRole = Effect.fn('AkrosStaffScope.reviewedRole')(function* 
     return yield* stop('reviewed_role_missing', `no existing AKROS role ${chosen} for ${holder}; choose one by id`);
   }
   const scopeOk =
-    holder === 'routing' || holder === ESHOP_REGISTRY
+    holder === 'routing' || holder === 'eshop-registry'
       ? role.scope === 'tenant'
       : role.scope === 'company' && role.legalEntityId === AKROS.legalEntityId;
   const slots = new Set(role.cells.map((cell) => `${cell.capabilityKey} ${cell.mode}`));
@@ -501,8 +500,8 @@ interface StepFacts {
   readonly principalId: string;
   readonly roles: {
     readonly company: Roles[number];
-    readonly registry: Option.Option<Roles[number]>;
     readonly routing: Roles[number];
+    readonly registry: Option.Option<Roles[number]>;
   };
   readonly target: TargetObservation;
 }
@@ -656,7 +655,7 @@ export const planStaffScope = Effect.fn('AkrosStaffScope.planStaffScope')(functi
   choice: RoleChoice,
 ): Effect.fn.Return<AccountPlan, AkrosStaffScopeError> {
   const routing = yield* reviewedRole(target, choice.routing, 'routing');
-  const registry = yield* reviewedRole(target, choice.eshopRegistry, ESHOP_REGISTRY);
+  const registry = yield* reviewedRole(target, choice.eshopRegistry, 'eshop-registry');
   const principals = accounts.map(({ principalId }) => principalId);
   if (new Set(principals).size !== principals.length) {
     return yield* stop('identity_conflict', 'both logins resolve the same AKROS Principal');
@@ -668,8 +667,8 @@ export const planStaffScope = Effect.fn('AkrosStaffScope.planStaffScope')(functi
         Effect.flatMap((company) =>
           accountPlan(account, target, {
             company,
-            registry: account.email === ESHOP ? Option.some(registry) : Option.none(),
             routing,
+            registry: account.email === ESHOP ? Option.some(registry) : Option.none(),
           }),
         ),
       ),
@@ -894,8 +893,8 @@ export const akrosStaffScopeCommand = Command.make(
   {
     adminEmail: Flag.String('admin-email'),
     apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
-    eshopRegistryRole: Flag.String('eshop-registry-role').pipe(Flag.optional),
     eshopRole: Flag.String('eshop-role').pipe(Flag.optional),
+    eshopRegistryRole: Flag.String('eshop-registry-role').pipe(Flag.optional),
     expediceRole: Flag.String('expedice-role').pipe(Flag.optional),
     routingRole: Flag.String('routing-role').pipe(Flag.optional),
     shellUrl: Flag.String('shell-url'),
@@ -911,9 +910,9 @@ export const akrosStaffScopeCommand = Command.make(
         passwords,
         roles: {
           'eshop@akros.demo': flags.eshopRole,
-          eshopRegistry: flags.eshopRegistryRole,
           'expedice@akros.demo': flags.expediceRole,
           routing: flags.routingRole,
+          eshopRegistry: flags.eshopRegistryRole,
         },
         settle: Duration.seconds(2),
       });

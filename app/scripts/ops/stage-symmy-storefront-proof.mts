@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 /** Public, read-only acceptance. Importing this module performs no I/O; it never creates records or accepts secrets. */
 import { createRequire } from 'node:module';
-import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, Effect, Option, Predicate, Ref, Result, Schema } from 'effect';
-import { CliConfig, Command, Flag, GlobalFlag } from 'effect/cli';
+import { parseArgs } from 'node:util';
+import { Effect, Result, Schema } from 'effect';
 
 const slug = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(200));
-const id = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u)).pipe(
-  Schema.brand('productId'),
-);
+const id = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u));
 const originSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
@@ -22,74 +19,62 @@ const originSchema = Schema.String.check(
   }),
 );
 export const SymmyStorefrontProofInputSchema = Schema.Struct({
-  categorySlug: slug,
-  galleryUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-  locale: Schema.String.check(Schema.isPattern(/^[a-z]{2,3}$/u)),
   origin: originSchema,
-  productId: id,
-  productSlug: Schema.optionalKey(slug),
+  locale: Schema.String.check(Schema.isPattern(/^[a-z]{2,3}$/u)),
   sku: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u)),
-  timeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 120_000, minimum: 1 }))),
+  categorySlug: slug,
+  productId: id,
+  galleryUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  productSlug: Schema.optionalKey(slug),
+  timeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120_000 }))),
 });
 export type SymmyStorefrontProofInput = typeof SymmyStorefrontProofInputSchema.Type;
 const searchSchema = Schema.Struct({
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   items: Schema.Array(
     Schema.Struct({
-      imageSrc: Schema.NonEmptyString,
-      name: Schema.NonEmptyString,
       productId: id,
-      sku: Schema.optionalKey(Schema.String),
       slug,
+      name: Schema.NonEmptyString,
+      imageSrc: Schema.NonEmptyString,
+      sku: Schema.optionalKey(Schema.String),
     }),
   ),
-  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });
 
 export class SymmyStorefrontProofFailure extends Schema.TaggedError<SymmyStorefrontProofFailure>()(
   'SymmyStorefrontProofFailure',
-  { reason: Schema.String, stage: Schema.String },
+  { stage: Schema.String, reason: Schema.String },
 ) {}
-const fail = (stage: string, reason: string) => new SymmyStorefrontProofFailure({ reason, stage });
-const invalidContract = 'invalid-contract';
-const contentType = 'content-type';
-const mimeOrSignature = 'mime-or-signature';
-const redirectedIdentity = 'redirected-identity';
-const decoded = <A,>(result: Result.Result<A, Schema.SchemaError>, stage: string, reason = invalidContract): A =>
-  Result.getOrThrowWith(result, () => fail(stage, reason));
-const ensure = (condition: boolean, stage: string, reason: string): void => {
-  decoded(Schema.decodeUnknownResult(Schema.Literal(true))(condition), stage, reason);
+const fail = (stage: string, reason: string) => new SymmyStorefrontProofFailure({ stage, reason });
+const ensure: (condition: unknown, stage: string, reason: string) => asserts condition = (condition, stage, reason) => {
+  if (!condition) throw fail(stage, reason);
 };
-const required = <A,>(value: A | null | undefined, stage: string, reason: string): A =>
-  Option.getOrThrowWith(Option.fromNullishOr(value), () => fail(stage, reason));
-const FragmentSchema = Schema.declare<(source: string) => DocumentFragment>(
-  (value): value is (source: string) => DocumentFragment => Predicate.isFunction(value),
-);
-const JsdomConstructorSchema = Schema.instanceOf(Function).check(
-  Schema.makeFilter((value) => Predicate.hasProperty(value, 'fragment') && Schema.is(FragmentSchema)(value.fragment)),
-);
-const JsdomSchema = Schema.Struct({
-  JSDOM: Schema.declare<{ readonly fragment: (source: string) => DocumentFragment }>(
-    (value): value is { readonly fragment: (source: string) => DocumentFragment } =>
-      Schema.is(JsdomConstructorSchema)(value),
-  ),
-});
+
+const decode = <S extends Schema.Top>(schema: S, value: unknown, stage: string): S['Type'] => {
+  try {
+    return Schema.decodeUnknownSync(schema)(value);
+  } catch {
+    throw fail(stage, 'invalid-contract');
+  }
+};
 // Resolve the parser shipped with the storefront workspace. Fragments do not execute scripts or load resources.
 const storefrontRequire = createRequire(new URL('../../akros-storefront/package.json', import.meta.url));
 const visiblePage = (html: string): DocumentFragment => {
-  const { JSDOM } = decoded(Schema.decodeUnknownResult(JsdomSchema)(storefrontRequire('jsdom')), 'pages');
+  const { JSDOM }: { JSDOM: { fragment(source: string): DocumentFragment } } = storefrontRequire('jsdom');
   const page = JSDOM.fragment(html);
-  for (const node of page.querySelectorAll(
-    'script, style, template, noscript, [hidden], aside, nav, [aria-labelledby="recommendations-title"]',
-  )) {
-    node.remove();
-  }
+  for (const node of page.querySelectorAll('script, style, template, noscript, [hidden], aside, nav, [aria-labelledby="recommendations-title"]')) node.remove();
   return page;
 };
-const textOf = (element: Element | null) => (element?.textContent ?? '').replaceAll(/\s+/gu, ' ').trim();
+const textOf = (element: Element | null) => (element?.textContent ?? '').replace(/\s+/gu, ' ').trim();
 
 const canonicalPath = (value: string, input: SymmyStorefrontProofInput): string => {
-  const url = required(URL.parse(value, input.origin), 'configuration', 'foreign-url');
-  ensure(url.origin === input.origin && url.username === '' && url.password === '', 'configuration', 'foreign-url');
+  const url = URL.parse(value, input.origin);
+  ensure(
+    url !== null && url.origin === input.origin && url.username === '' && url.password === '',
+    'configuration',
+    'foreign-url',
+  );
   return url.pathname.replace(new RegExp(`^/${input.locale}(?=/)`, 'u'), '');
 };
 const galleryPath = (input: SymmyStorefrontProofInput) => {
@@ -106,20 +91,18 @@ const galleryPath = (input: SymmyStorefrontProofInput) => {
   return path;
 };
 const includesImage = (container: Element, expected: string, input: SymmyStorefrontProofInput) =>
-  [...container.querySelectorAll('img')].some((img) => {
+  Array.from(container.querySelectorAll('img')).some((img) => {
     const sources = [
       img.getAttribute('src') ?? '',
-      ...(img.getAttribute('srcset') ?? '').split(',').map((entry) => entry.trim().split(/\s+/u)[0] ?? ''),
+      ...(img.getAttribute('srcset') ?? '')
+        .split(',')
+        .map((entry) => entry.trim().split(/\s+/u)[0] ?? ''),
     ];
     return sources.filter(Boolean).some((source) => {
       const url = URL.parse(source, input.origin);
-      if (url === null || url.origin !== input.origin) {
-        return false;
-      }
+      if (url === null || url.origin !== input.origin) return false;
       const actual = url.pathname === '/_next/image' ? url.searchParams.get('url') : source;
-      if (actual === null) {
-        return false;
-      }
+      if (actual === null) return false;
       try {
         return canonicalPath(actual, input) === expected;
       } catch {
@@ -131,42 +114,35 @@ const includesImage = (container: Element, expected: string, input: SymmyStorefr
 /** Requires the product inside the category's actual listing, not a recommendation, sidebar, script or soft-404. */
 export const assertSymmyStorefrontPages = (
   input: SymmyStorefrontProofInput,
-  product: { readonly name: string; readonly slug: string },
+  product: { readonly slug: string; readonly name: string },
   productHtml: string,
   categoryHtml: string,
 ) => {
   const detail = visiblePage(productHtml);
   const productTitle = detail.querySelector('h1#product-title');
-  const overview = required(productTitle?.closest('section[aria-labelledby="product-title"]'), 'product', 'identity');
-  ensure(textOf(productTitle) === product.name, 'product', 'identity');
-  ensure(
-    [...overview.querySelectorAll('dd')].some((dd) => textOf(dd) === input.sku),
-    'product',
-    'sku',
-  );
+  const overview = productTitle?.closest('section[aria-labelledby="product-title"]');
+  ensure(overview && textOf(productTitle) === product.name, 'product', 'identity');
+  ensure(Array.from(overview.querySelectorAll('dd')).some((dd) => textOf(dd) === input.sku), 'product', 'sku');
   const expected = galleryPath(input);
-  const gallery = required(overview.querySelector('.sf-product-detail__gallery'), 'product', 'gallery');
-  ensure(includesImage(gallery, expected, input), 'product', 'gallery');
+  const gallery = overview.querySelector('.sf-product-detail__gallery');
+  ensure(gallery && includesImage(gallery, expected, input), 'product', 'gallery');
 
   const category = visiblePage(categoryHtml);
   const title = textOf(category.querySelector('h1#category-title'));
   ensure(title.length > 0, 'category', 'missing-category');
-  const listing = required(
-    [...category.querySelectorAll('section[aria-label]')].find(
-      (section) => section.getAttribute('aria-label') === `Produkty: ${title}`,
-    ),
-    'category',
-    'missing-product-listing',
+  const listing = Array.from(category.querySelectorAll('section[aria-label]')).find(
+    (section) => section.getAttribute('aria-label') === `Produkty: ${title}`,
   );
-  const links = [...listing.querySelectorAll('article a.sf-catalog-product-card__image-link[href]')].filter((link) => {
+  ensure(listing, 'category', 'missing-product-listing');
+  const links = Array.from(listing.querySelectorAll('article a.sf-catalog-product-card__image-link[href]')).filter((link) => {
     try {
       return canonicalPath(link.getAttribute('href') ?? '', input) === `/produkt/${product.slug}`;
     } catch {
       return false;
     }
   });
-  ensure(links.length === 1, 'category', 'product-not-in-category');
-  const link = required(links[0], 'category', 'product-not-in-category');
+  const [link] = links;
+  ensure(links.length === 1 && link, 'category', 'product-not-in-category');
   ensure(includesImage(link, expected, input), 'category', 'gallery');
 };
 
@@ -177,7 +153,7 @@ export const assertSymmyStorefrontImage = (mime: string, bytes: Uint8Array) => {
     (mime === 'image/png' && bytes.length >= 33 && starts([137, 80, 78, 71, 13, 10, 26, 10])) ||
     (mime === 'image/jpeg' && bytes.length >= 4 && starts([255, 216, 255])) ||
     (mime === 'image/webp' && bytes.length >= 20 && starts([82, 73, 70, 70]) && starts([87, 69, 66, 80], 8));
-  ensure(correct, 'image', mimeOrSignature);
+  ensure(correct, 'image', 'mime-or-signature');
 };
 
 const request = (
@@ -186,34 +162,27 @@ const request = (
   path: string,
   stage: string,
   limit: number,
-  init: Omit<RequestInit, 'headers'> & { readonly headers?: Readonly<Record<string, string>> } = {},
+  init: RequestInit = {},
 ) =>
   Effect.tryPromise({
-    catch: (error) =>
-      Schema.is(Schema.instanceOf(SymmyStorefrontProofFailure))(error) ? error : fail(stage, 'request-failed'),
     try: async () => {
+      let url = new URL(path, input.origin);
       const method = init.method ?? 'GET';
-      interface Reply {
-        bytes: Uint8Array;
-        mime: string;
-        url: string;
-      }
-      const follow = async (url: URL, redirects: number): Promise<Reply> => {
+      for (let redirects = 0; redirects <= 3; redirects += 1) {
         ensure(url.origin === input.origin && url.username === '' && url.password === '', stage, 'foreign-redirect');
         const response = await fetcher(url, {
           ...init,
-          headers: { 'x-akros-market-locale': input.locale, ...init.headers },
           method,
           redirect: 'manual',
           signal: AbortSignal.timeout(input.timeoutMs ?? 30_000),
+          headers: { 'x-akros-market-locale': input.locale, ...init.headers },
         });
         if ([301, 302, 303, 307, 308].includes(response.status)) {
           const location = response.headers.get('location');
           await response.body?.cancel();
-          ensure(method === 'GET' && location !== null, stage, 'unexpected-redirect');
-          const nextUrl = new URL(required(location, stage, 'unexpected-redirect'), url);
-          ensure(redirects < 3, stage, 'too-many-redirects');
-          return await follow(nextUrl, redirects + 1);
+          ensure(location !== null && method === 'GET', stage, 'unexpected-redirect');
+          url = new URL(location, url);
+          continue;
         }
         ensure(response.status === 200, stage, `http-${response.status}`);
         ensure(Number(response.headers.get('content-length') ?? 0) <= limit, stage, 'body-too-large');
@@ -221,18 +190,14 @@ const request = (
         let length = 0;
         if (response.body !== null) {
           const reader = response.body.getReader();
-          const read = async (): Promise<void> => {
-            const next = await reader.read();
-            if (next.done) {
-              return;
-            }
-            length += next.value.length;
-            ensure(length <= limit, stage, 'body-too-large');
-            chunks.push(next.value);
-            await read();
-          };
           try {
-            await read();
+            for (;;) {
+              const next = await reader.read();
+              if (next.done) break;
+              length += next.value.length;
+              ensure(length <= limit, stage, 'body-too-large');
+              chunks.push(next.value);
+            }
           } finally {
             await reader.cancel();
             reader.releaseLock();
@@ -246,50 +211,46 @@ const request = (
         }
         return {
           bytes,
-          mime: (response.headers.get(contentType) ?? '').split(';')[0]?.trim().toLowerCase() ?? '',
+          mime: (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '',
           url: url.toString(),
         };
-      };
-      return await follow(new URL(path, input.origin), 0);
+      }
+      throw fail(stage, 'too-many-redirects');
     },
+    catch: (error) => (error instanceof SymmyStorefrontProofFailure ? error : fail(stage, 'request-failed')),
   });
 
 export const proveSymmyStorefront = Effect.fn('SymmyStorefrontProof')(function* proof(
-  raw: typeof SymmyStorefrontProofInputSchema.Encoded,
+  raw: SymmyStorefrontProofInput,
   options: { readonly fetch?: typeof fetch } = {},
 ) {
-  const input = yield* Schema.decodeUnknownEffect(SymmyStorefrontProofInputSchema)(raw).pipe(
-    Effect.mapError(() => fail('configuration', invalidContract)),
-  );
+  const input = yield* Effect.try({
+    try: () => decode(SymmyStorefrontProofInputSchema, raw, 'configuration'),
+    catch: () => fail('configuration', 'invalid-contract'),
+  });
   const imagePath = yield* Effect.try({
-    catch: () => fail('configuration', 'not-native-product-media'),
     try: () => galleryPath(input),
+    catch: () => fail('configuration', 'not-native-product-media'),
   });
   const fetcher = options.fetch ?? globalThis.fetch;
   const search = yield* request(input, fetcher, '/api/ontos/search', 'search', 1_048_576, {
-    body: Result.getOrThrow(
-      Schema.encodeResult(Schema.fromJsonString(Schema.Struct({ q: Schema.String })))({ q: input.sku }),
-    ),
-    headers: { [contentType]: 'application/json' },
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ q: input.sku }),
   });
   const product = yield* Effect.try({
-    catch: (error) =>
-      Schema.is(Schema.instanceOf(SymmyStorefrontProofFailure))(error) ? error : fail('search', invalidContract),
     try: () => {
-      ensure(search.mime === 'application/json', 'search', contentType);
-      const body = decoded(
-        Schema.decodeUnknownResult(Schema.fromJsonString(searchSchema))(new TextDecoder().decode(search.bytes)),
-        'search',
-      );
+      ensure(search.mime === 'application/json', 'search', 'content-type');
+      const body = decode(searchSchema, JSON.parse(new TextDecoder().decode(search.bytes)), 'search');
       const matches = body.items.filter((item) => item.productId === input.productId);
       ensure(matches.length === 1, 'search', 'missing-or-ambiguous-product');
-      const item = required(matches[0], 'search', 'sku');
-      ensure(item.sku === undefined || item.sku === input.sku, 'search', 'sku');
+      const [item] = matches;
+      ensure(item !== undefined && (item.sku === undefined || item.sku === input.sku), 'search', 'sku');
       ensure(input.productSlug === undefined || item.slug === input.productSlug, 'search', 'slug');
       ensure(canonicalPath(item.imageSrc, input) === imagePath, 'search', 'gallery');
       return item;
     },
+    catch: (error) => (error instanceof SymmyStorefrontProofFailure ? error : fail('search', 'invalid-contract')),
   });
   const detail = yield* request(input, fetcher, `/${input.locale}/produkt/${product.slug}`, 'product', 8_388_608);
   const category = yield* request(
@@ -300,12 +261,14 @@ export const proveSymmyStorefront = Effect.fn('SymmyStorefrontProof')(function* 
     8_388_608,
   );
   yield* Effect.try({
-    catch: (error) =>
-      Schema.is(Schema.instanceOf(SymmyStorefrontProofFailure))(error) ? error : fail('pages', 'invalid-content'),
     try: () => {
-      ensure(detail.mime === 'text/html' && category.mime === 'text/html', 'pages', contentType);
-      ensure(canonicalPath(detail.url, input) === `/produkt/${product.slug}`, 'product', redirectedIdentity);
-      ensure(canonicalPath(category.url, input) === `/kategorie/${input.categorySlug}`, 'category', redirectedIdentity);
+      ensure(detail.mime === 'text/html' && category.mime === 'text/html', 'pages', 'content-type');
+      ensure(canonicalPath(detail.url, input) === `/produkt/${product.slug}`, 'product', 'redirected-identity');
+      ensure(
+        canonicalPath(category.url, input) === `/kategorie/${input.categorySlug}`,
+        'category',
+        'redirected-identity',
+      );
       assertSymmyStorefrontPages(
         input,
         product,
@@ -313,145 +276,81 @@ export const proveSymmyStorefront = Effect.fn('SymmyStorefrontProof')(function* 
         new TextDecoder().decode(category.bytes),
       );
     },
+    catch: (error) => (error instanceof SymmyStorefrontProofFailure ? error : fail('pages', 'invalid-content')),
   });
   const image = yield* request(input, fetcher, new URL(input.galleryUrl, input.origin).toString(), 'image', 5_242_880);
   yield* Effect.try({
-    catch: (error) =>
-      Schema.is(Schema.instanceOf(SymmyStorefrontProofFailure))(error) ? error : fail('image', mimeOrSignature),
     try: () => {
-      ensure(canonicalPath(image.url, input) === imagePath, 'image', redirectedIdentity);
+      ensure(canonicalPath(image.url, input) === imagePath, 'image', 'redirected-identity');
       assertSymmyStorefrontImage(image.mime, image.bytes);
     },
+    catch: (error) => (error instanceof SymmyStorefrontProofFailure ? error : fail('image', 'mime-or-signature')),
   });
   return {
-    categorySlug: input.categorySlug,
-    categoryUrl: category.url,
-    imageBytes: image.bytes.length,
-    imageMime: image.mime,
-    imageUrl: image.url,
     outcome: 'PASS' as const,
+    sku: input.sku,
     productId: input.productId,
     productSlug: product.slug,
+    categorySlug: input.categorySlug,
     productUrl: detail.url,
-    sku: input.sku,
+    categoryUrl: category.url,
+    imageUrl: image.url,
+    imageBytes: image.bytes.length,
+    imageMime: image.mime,
   };
 });
 
-const EnvironmentSchema = Schema.Struct({
-  SYMMY_STOREFRONT_CATEGORY_SLUG: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_GALLERY_URL: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_LOCALE: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_ORIGIN: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_PRODUCT_ID: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_PRODUCT_SLUG: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_SKU: Schema.optionalKey(Schema.String),
-  SYMMY_STOREFRONT_TIMEOUT_MS: Schema.optionalKey(Schema.String),
-});
-const proofFlags = {
-  categorySlug: Flag.String('category-slug').pipe(Flag.optional),
-  galleryUrl: Flag.String('gallery-url').pipe(Flag.optional),
-  locale: Flag.String('locale').pipe(Flag.optional),
-  origin: Flag.String('origin').pipe(Flag.optional),
-  productId: Flag.String('product-id').pipe(Flag.optional),
-  productSlug: Flag.String('product-slug').pipe(Flag.optional),
-  sku: Flag.String('sku').pipe(Flag.optional),
-  timeoutMs: Flag.String('timeout-ms').pipe(Flag.optional),
-};
-const command = Command.make('stage-symmy-storefront-proof', proofFlags);
-// Keep only the original public help switch; do not add wizard, logging, version or completion options.
-export const SymmyStorefrontProofCliLayer = CliConfig.layer({
-  builtIns: [
-    GlobalFlag.Action({
-      flag: Flag.Boolean('help'),
-      run: () =>
-        Console.log(
-          'Usage: node stage-symmy-storefront-proof.mts --sku <actual SKU> --category-slug <actual slug> --product-id <native ID> --gallery-url </obrazky/ID/asset> [--origin <HTTPS origin>] [--locale cs] [--product-slug <expected slug>] [--timeout-ms 30000]\nEnvironment alternatives: SYMMY_STOREFRONT_{ORIGIN,LOCALE,SKU,CATEGORY_SLUG,PRODUCT_ID,GALLERY_URL,PRODUCT_SLUG,TIMEOUT_MS}. No credentials; public reads only.',
-        ),
-    }),
-  ],
-});
-const resolveInput = Effect.fn('SymmyStorefrontProofInput')(function* resolveInput(
-  flags: Command.Command.Config.Infer<typeof proofFlags>,
-) {
-  const env = yield* Config.schema(EnvironmentSchema);
-  const productSlug = Option.getOrUndefined(flags.productSlug) ?? env.SYMMY_STOREFRONT_PRODUCT_SLUG;
-  const timeoutMs = yield* Schema.decodeUnknownEffect(Schema.NumberFromString)(
-    Option.getOrUndefined(flags.timeoutMs) ?? env.SYMMY_STOREFRONT_TIMEOUT_MS ?? '30000',
-  ).pipe(Effect.mapError(() => fail('configuration', invalidContract)));
-  const raw = {
-    categorySlug: Option.getOrUndefined(flags.categorySlug) ?? env.SYMMY_STOREFRONT_CATEGORY_SLUG,
-    galleryUrl: Option.getOrUndefined(flags.galleryUrl) ?? env.SYMMY_STOREFRONT_GALLERY_URL,
-    locale: Option.getOrUndefined(flags.locale) ?? env.SYMMY_STOREFRONT_LOCALE ?? 'cs',
-    origin:
-      Option.getOrUndefined(flags.origin) ??
-      env.SYMMY_STOREFRONT_ORIGIN ??
-      'https://ontos-stage-akros.web-revolution.cz',
-    productId: Option.getOrUndefined(flags.productId) ?? env.SYMMY_STOREFRONT_PRODUCT_ID,
-    sku: Option.getOrUndefined(flags.sku) ?? env.SYMMY_STOREFRONT_SKU,
-    timeoutMs,
-  };
-  return yield* Schema.decodeUnknownEffect(SymmyStorefrontProofInputSchema)(
-    productSlug === undefined ? raw : { ...raw, productSlug },
-  ).pipe(Effect.mapError(() => fail('configuration', invalidContract)));
-});
-
-/** Flags override the closed, public-only environment contract. Parsing never performs proof traffic. */
-export const readSymmyStorefrontProofInput = (args: readonly string[]) =>
-  Effect.gen(function* readInput() {
-    const captured = yield* Ref.make(Option.none<SymmyStorefrontProofInput>());
-    yield* Command.runWith(
-      command.pipe(
-        Command.withHandler((flags) =>
-          resolveInput(flags).pipe(Effect.flatMap((input) => Ref.set(captured, Option.some(input)))),
-        ),
+/** Flags override these non-secret environment values. No key, cookie, credential file or live-write option exists. */
+export const readSymmyStorefrontProofInput = (
+  args: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+) => {
+  const { values, positionals } = parseArgs({
+    args: [...args],
+    strict: true,
+    allowPositionals: false,
+    options: Object.fromEntries(
+      ['origin', 'locale', 'sku', 'category-slug', 'product-id', 'gallery-url', 'product-slug', 'timeout-ms'].map(
+        (key) => [key, { type: 'string' as const }],
       ),
-      { renderErrors: false, version: '1.0.0' },
-    )(args);
-    return yield* Option.match(yield* Ref.get(captured), {
-      onNone: () => Effect.fail(fail('configuration', invalidContract)),
-      onSome: Effect.succeed,
-    });
+    ),
   });
-
-const ReportSchema = Schema.Struct({
-  categorySlug: slug,
-  categoryUrl: Schema.String,
-  imageBytes: Schema.Int,
-  imageMime: Schema.String,
-  imageUrl: Schema.String,
-  outcome: Schema.Literal('PASS'),
-  productId: id,
-  productSlug: slug,
-  productUrl: Schema.String,
-  sku: SymmyStorefrontProofInputSchema.fields.sku,
-});
-const proofCommand = command.pipe(
-  Command.withHandler((flags) =>
-    resolveInput(flags).pipe(
-      Effect.flatMap((input) => proveSymmyStorefront(input)),
-      Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ReportSchema))),
-      Effect.flatMap((report) => Console.log(report)),
-    ),
-  ),
-);
-if (import.meta.main) {
-  const successful = await Effect.runPromise(
-    Command.run(proofCommand, { renderErrors: false, version: '1.0.0' }).pipe(
-      Effect.matchEffect({
-        onFailure: (error) => {
-          const message = Schema.is(Schema.instanceOf(SymmyStorefrontProofFailure))(error)
-            ? `${error.stage}:${error.reason}`
-            : 'configuration:invalid-input';
-          return Console.error(`FAIL storefront-proof:${message}`).pipe(Effect.as(false));
-        },
-        onSuccess: () => Effect.succeed(true),
-      }),
-      Effect.provide(NodeServices.layer),
-      Effect.provide(SymmyStorefrontProofCliLayer),
-      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
-    ),
+  ensure(positionals.length === 0, 'configuration', 'unexpected-argument');
+  const pick = (flag: string, variable: string) => values[flag] ?? env[variable];
+  const productSlug = pick('product-slug', 'SYMMY_STOREFRONT_PRODUCT_SLUG');
+  return decode(
+    SymmyStorefrontProofInputSchema,
+    {
+      origin: pick('origin', 'SYMMY_STOREFRONT_ORIGIN') ?? 'https://ontos-stage-akros.web-revolution.cz',
+      locale: pick('locale', 'SYMMY_STOREFRONT_LOCALE') ?? 'cs',
+      sku: pick('sku', 'SYMMY_STOREFRONT_SKU'),
+      categorySlug: pick('category-slug', 'SYMMY_STOREFRONT_CATEGORY_SLUG'),
+      productId: pick('product-id', 'SYMMY_STOREFRONT_PRODUCT_ID'),
+      galleryUrl: pick('gallery-url', 'SYMMY_STOREFRONT_GALLERY_URL'),
+      ...(productSlug === undefined ? {} : { productSlug }),
+      timeoutMs: Number(pick('timeout-ms', 'SYMMY_STOREFRONT_TIMEOUT_MS') ?? 30_000),
+    },
+    'configuration',
   );
-  if (!successful) {
+};
+
+if (import.meta.main) {
+  try {
+    if (process.argv.length === 3 && process.argv[2] === '--help') {
+      process.stdout.write(
+        'Usage: node stage-symmy-storefront-proof.mts --sku <actual SKU> --category-slug <actual slug> --product-id <native ID> --gallery-url </obrazky/ID/asset> [--origin <HTTPS origin>] [--locale cs] [--product-slug <expected slug>] [--timeout-ms 30000]\nEnvironment alternatives: SYMMY_STOREFRONT_{ORIGIN,LOCALE,SKU,CATEGORY_SLUG,PRODUCT_ID,GALLERY_URL,PRODUCT_SLUG,TIMEOUT_MS}. No credentials; public reads only.\n',
+      );
+    } else {
+      const result = await Effect.runPromise(
+        proveSymmyStorefront(readSymmyStorefrontProofInput(process.argv.slice(2), process.env)).pipe(Effect.result),
+      );
+      if (Result.isFailure(result)) throw result.failure;
+      process.stdout.write(`${JSON.stringify(result.success)}\n`);
+    }
+  } catch (error) {
+    const message =
+      error instanceof SymmyStorefrontProofFailure ? `${error.stage}:${error.reason}` : 'configuration:invalid-input';
+    process.stderr.write(`FAIL storefront-proof:${message}\n`);
     process.exitCode = 1;
   }
 }
