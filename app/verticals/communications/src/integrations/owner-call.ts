@@ -8,6 +8,9 @@ import {
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Effect, Option } from 'effect';
 
+import { OWNER_ASK_CONSUMERS, ownerAskRequirementKey } from '../handoff/requirement-keys.ts';
+import type { OwnerAsk, OwnerAskConsumer } from '../handoff/requirement-keys.ts';
+
 /**
  * The authority under which Communications asks ANOTHER owner something Now. An owner is always asked under the
  * authority of the operation that needs the answer, never under a credential of its own: an intake Action asks as the
@@ -17,9 +20,10 @@ import { Context, Effect, Option } from 'effect';
 export interface OwnerCall {
   readonly correlation: () => string;
   readonly subjectFor: (question: {
+    /** Which published owner Read is asked; the call names the requirement of ITS consuming entrypoint for it. */
+    readonly ask: OwnerAsk;
     readonly declarationKey: string;
     readonly decodedRequest: unknown;
-    readonly operationRequirementKey: string;
   }) => GatewayDelegationSubject;
 }
 
@@ -39,7 +43,8 @@ export const underOwnerCall = (call: OwnerCall) => Effect.updateService(CurrentO
 /** An Action runs as a human principal (delegated as itself) or as a registered workload / recovery (its requirement). */
 export const actionOwnerCall = (scope: OperationalScope): OwnerCall => ({
   correlation: () => scope.correlationId,
-  subjectFor: ({ declarationKey, decodedRequest, operationRequirementKey }) => {
+  subjectFor: ({ ask, declarationKey, decodedRequest }) => {
+    const operationRequirementKey = ownerAskRequirementKey(OWNER_ASK_CONSUMERS.SUBMIT, ask);
     const recovery = readVerifiedGatewayRecovery(scope);
     if (scope.authMethod !== 'system' && readVerifiedGatewayWorkload(scope) === undefined && recovery === undefined) {
       return { _tag: 'Assertion', scope };
@@ -56,13 +61,19 @@ export const actionOwnerCall = (scope: OperationalScope): OwnerCall => ({
   },
 });
 
-/** The worker asks as its own verified, claimed delivery; the issuer re-proves the claim and the live lease. */
-export const workerOwnerCall = (context: OutboxWorkerHandlerContext): OwnerCall => ({
+/**
+ * The worker asks as its own verified, claimed delivery; the issuer re-proves the claim and the live lease. `consumer` is the
+ * entrypoint of the worker itself: the manifest binds each requirement to exactly one consuming entrypoint.
+ */
+export const workerOwnerCall = (
+  context: OutboxWorkerHandlerContext,
+  consumer: Exclude<OwnerAskConsumer, typeof OWNER_ASK_CONSUMERS.SUBMIT>,
+): OwnerCall => ({
   correlation: () => context.correlationId ?? context.deliveryId,
-  subjectFor: ({ declarationKey, operationRequirementKey }) => ({
+  subjectFor: ({ ask, declarationKey }) => ({
     _tag: 'RegisteredWorkload',
     context,
     declarationKey,
-    operationRequirementKey,
+    operationRequirementKey: ownerAskRequirementKey(consumer, ask),
   }),
 });

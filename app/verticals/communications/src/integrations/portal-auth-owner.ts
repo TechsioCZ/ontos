@@ -47,8 +47,6 @@ export const PORTAL_AUTH_ISSUANCE_STATE_CURRENT = 'commerce.customer-context.por
 /** The topology app of the owner and the declaration of its Read (the published Read's own key). */
 const PORTAL_AUTH_AUDIENCE = 'commerce-customer-context';
 const PORTAL_AUTH_DECLARATION_KEY = 'commerce.customer-context.portal-auth-issuance-source.read';
-/** PROPOSED (R-D9): the operation requirement the Communications manifest declares for asking the Auth issuance Read. */
-export const PORTAL_AUTH_SOURCE_REQUIREMENT_KEY = 'communications.core.condition.current-source-occurrence';
 
 /** A failed owner call: a published problem with its status, or any other failure to answer. */
 type OwnerCallFailure = Error | { readonly status: number };
@@ -244,9 +242,9 @@ export const portalAuthOwnerTransportLive =
         legalEntityScope: 'subject',
         requestCorrelation: call.correlation(),
         subject: call.subjectFor({
+          ask: 'AUTH_ISSUANCE_SOURCE',
           declarationKey: PORTAL_AUTH_DECLARATION_KEY,
           decodedRequest: request,
-          operationRequirementKey: PORTAL_AUTH_SOURCE_REQUIREMENT_KEY,
         }),
       },
       crypto,
