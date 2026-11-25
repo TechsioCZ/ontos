@@ -4,7 +4,11 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { registeredSystemWorkloadKeys, systemWorkloadRegistrationIssues } from '../system-workload-registrations.mts';
+import {
+  coreSystemWorkloadRegistrationIssues,
+  registeredSystemWorkloadKeys,
+  systemWorkloadRegistrationIssues,
+} from '../system-workload-registrations.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const symmyIdentity = 'src/services/symmy-worker-identity.service.ts';
@@ -90,4 +94,27 @@ it('fails closed on every use whose key it cannot read', () => {
   expect(
     reports(issuesOf([], `${importsNamespace}core['registerSystemWorkload']({ jobKey: "${otherJob}" });`), notACall),
   ).toBe(true);
+});
+
+it('holds a core registration to the core declaration: an undeclared key and an unreadable use are issues, a declared key is not', () => {
+  const declared = ['core.media.integrity'];
+  const issues = (...contents: readonly string[]) =>
+    coreSystemWorkloadRegistrationIssues({
+      declared,
+      files: contents.map((content, index) => ({ content, path: `api/file-${String(index)}.ts` })),
+    });
+  const registers = (key: string) =>
+    `${importsRegistration}export const registration = registerSystemWorkload({ jobKey: '${key}' });`;
+  expect(issues(registers('core.media.integrity'))).toEqual([]);
+  // A core module's key is a core registration; it needs no manifest and is not required to be registered here.
+  expect(issues()).toEqual([]);
+  expect(issues(registers('core.media.other'))).toEqual([
+    'core api/file-0.ts registers system workload core.media.other, which Core does not declare in core-system-workloads.ts',
+  ]);
+  // An app module's key is no core key: it is held to its manifest, not registered from core source.
+  expect(issues(registers(jobKey))).toEqual([
+    `core api/file-0.ts registers system workload ${jobKey}, which Core does not declare in core-system-workloads.ts`,
+  ]);
+  expect(reports(issues(`${importsRegistration}registerSystemWorkload(options);`), unreadKey)).toBe(true);
+  expect(reports(issues('export { registerSystemWorkload };'), notACall)).toBe(true);
 });

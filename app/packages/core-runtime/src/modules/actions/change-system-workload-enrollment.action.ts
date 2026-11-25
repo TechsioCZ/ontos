@@ -23,6 +23,7 @@ import {
 import type {
   SystemWorkloadBinding,
   SystemWorkloadEnrollmentHolder,
+  SystemWorkloadIdentity,
 } from '../../access/workloads/system-workload-enrollment.ts';
 import { EntrypointKeySchema } from '../../auth/registered-gateway-workload-keys.ts';
 import { PrincipalIdSchema } from '../../access/ids.ts';
@@ -31,6 +32,7 @@ import { IdentityTargetInvalidError, PrincipalManagementErrorSchema } from '../.
 import { systemWorkloadKeyIssue } from '../../auth/system-workload-registration.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
+import { coreSystemWorkloadTargetOf, isCoreSystemModule } from '../core-system-workloads.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
@@ -45,8 +47,8 @@ const ownWorkload = Schema.makeFilter((input: { readonly moduleKey: string; read
 );
 
 /**
- * ENROLL creates the Tenant's system Principal for one system workload its active module declares, with the module's
- * whole declared worker identity (`systemWorkloadIdentity`); END revokes everything the enrollment holds and archives
+ * ENROLL creates the Tenant's system Principal for one system workload its active module declares (or that Core
+ * declares for a core system module), with the module's whole declared worker identity (`systemWorkloadIdentity`); END revokes everything the enrollment holds and archives
  * the Principal. Neither takes a Principal id, a kind or a workload list from the caller.
  */
 const ChangeSystemWorkloadEnrollmentPayloadSchema = Schema.Union([
@@ -150,21 +152,32 @@ const loadCatalog = (context: ChangeContext) =>
     Effect.mapError(enrollmentUnavailable),
   );
 
+const refusedUndeclared = () => targetInvalid('The workload is not a system workload the module declares');
+
 /**
- * The ENROLL prerequisites, END needs none of them: the module is installed in the current composition, declares the
- * workload and is active for the Tenant. Returns the identity the worker needs in this Tenant.
+ * The ENROLL prerequisites, END needs none of them. A core module (`core-system-workloads.ts`) is declared by Core and
+ * always active: it needs no installed contract and no Tenant module state, and its worker identity is its workload key
+ * alone. Any other module is installed in the current composition, declares the workload and is active for the Tenant.
+ * Returns the identity the worker needs in this Tenant.
  */
 const enrollableIdentity = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enrollableIdentity')(function* identity(
   payload: ChangeSystemWorkloadEnrollmentPayload,
   context: ChangeContext,
 ) {
+  const coreTarget = coreSystemWorkloadTargetOf(payload.moduleKey, payload.workloadKey);
+  if (coreTarget === 'undeclared') {
+    return yield* refusedUndeclared();
+  }
+  if (coreTarget === 'declared') {
+    return { bindable: [], pending: [] } satisfies SystemWorkloadIdentity;
+  }
   const catalog = yield* loadCatalog(context);
   const contract = catalog.getByModuleId(payload.moduleKey);
   if (contract === undefined) {
     return yield* targetInvalid('The module is not installed in the current composition');
   }
   if (!declaresSystemWorkload(contract, payload.workloadKey)) {
-    return yield* targetInvalid('The workload is not a system workload the module declares');
+    return yield* refusedUndeclared();
   }
   const activeModuleKeys = yield* readActiveTenantModuleKeys(context.services.transaction);
   if (!activeModuleKeys.has(payload.moduleKey)) {
@@ -236,8 +249,11 @@ const end = Effect.fn('ChangeSystemWorkloadEnrollmentAction.end')(function* endS
   const principalId = PrincipalIdSchema.make(holder.principalId);
   const revoked = yield* revokeSystemWorkloadPrincipalBindings(transaction, holder.principalId);
   yield* archiveSystemWorkloadPrincipal(transaction, holder.principalId);
-  // The module may since have been removed or renamed: the end never needs it, only lists what it still declares.
-  const contract = (yield* loadCatalog(context)).getByModuleId(payload.moduleKey);
+  // The module may since have been removed or renamed: the end never needs it, only lists what it still declares. A core
+  // module declares no calls and is never read from the catalog.
+  const contract = isCoreSystemModule(payload.moduleKey)
+    ? undefined
+    : (yield* loadCatalog(context)).getByModuleId(payload.moduleKey);
   yield* context.recordAuditEvidence({
     bindingIncarnation: holder.bindingIncarnation,
     change: 'ENDED',
