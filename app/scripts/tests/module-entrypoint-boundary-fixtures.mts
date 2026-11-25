@@ -32,7 +32,7 @@ export const CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH =
   'verticals/commerce-customer-context/src/handlers/private-contract.ts';
 
 export const PRIVACY_VERTICAL_PATH = 'verticals/privacy';
-export const COMMUNICATIONS_MANIFEST_PATH = 'verticals/communications/package.json';
+const PUBLISHED_CONTRACT_PACKAGE_PATHS = ['packages/communications-contracts', 'packages/privacy-contracts'] as const;
 
 export const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 
@@ -871,14 +871,17 @@ export const readPricingSourceTree = (root: string, folder: string) => {
 };
 
 /**
- * The Communications manifest that publishes its Owner Coverage module-api contract. Privacy's owner inventory declares
- * its governed call against that published subpath, so a fixture that judges Privacy's seam needs this one file.
+ * The schema-only contracts packages Privacy reaches Communications' Owner Coverage and its own eligibility and
+ * owner-outcome contracts through. Privacy's shims re-export them and its owner inventory declares its governed call
+ * against them, so a fixture that judges Privacy's seam needs their manifests and sources.
  */
-export const readCommunicationsPublishedManifest = (root: string) =>
-  Effect.promise(
-    async () =>
-      [[COMMUNICATIONS_MANIFEST_PATH, await readFile(path.join(root, COMMUNICATIONS_MANIFEST_PATH), 'utf-8')]] as const,
-  );
+export const readPublishedContractPackages = Effect.fn(function* publishedContractPackages(root: string) {
+  const sources: (readonly [string, string])[] = [];
+  for (const folder of PUBLISHED_CONTRACT_PACKAGE_PATHS) {
+    sources.push(...(yield* readPricingSourceTree(root, folder)));
+  }
+  return sources;
+});
 
 export const PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'protected' },";
 
@@ -1312,7 +1315,7 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
   );
   const sources = [
     ...(yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH)),
-    ...(yield* readCommunicationsPublishedManifest(workspace)),
+    ...(yield* readPublishedContractPackages(workspace)),
   ];
   for (const [file, source] of sources) {
     yield* write(root, file, source);

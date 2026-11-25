@@ -26,7 +26,7 @@ import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositio
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { ConfigProvider, Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
@@ -77,7 +77,7 @@ const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
   GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(nodeCryptoLayer),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
@@ -103,7 +103,7 @@ const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDelive
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
   GovernedReadLayer.provide(
     GovernedModuleCallRouteLive.pipe(
-      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(NodeCrypto.layer, governedModuleCallHttpClientLive)),
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, governedModuleCallHttpClientLive)),
     ),
   ),
 );
@@ -215,7 +215,7 @@ export const makeCommunicationsApiRuntime = (configuration?: ConfigProvider.Conf
       ),
       GovernedReadLayer.provide(runtimeObservabilityLive),
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
       GovernedReadLayer.provide(configuration === undefined ? Layer.empty : ConfigProvider.layer(configuration)),
       GovernedReadLayer.orDie,
     ),
