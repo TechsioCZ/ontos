@@ -1,5 +1,5 @@
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
-import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import { Effect, Result, Schema } from 'effect';
 
 import {

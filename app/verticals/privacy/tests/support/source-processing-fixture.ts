@@ -6,7 +6,7 @@ import {
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
 import { ProcessingPurposeSchema } from '../../shared/domain/processing-purpose.ts';
-import { SourceProcessingContextSchema } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 
 /** Explicit internal source contract fixture; no statement about Symmy or production lawfulness. */
 export const makeSourceProcessingFixture = (ids: {

@@ -2,10 +2,8 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import {
-  SourceProcessingContextSchema,
-  SourceProcessingEligibilityRequestSchema,
-} from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityRequestSchema } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import {
   PrivacyApplicabilityPolicySchema,
   resolvePrivacyApplicability,

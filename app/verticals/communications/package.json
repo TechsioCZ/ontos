@@ -42,7 +42,7 @@
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
-    "@app/privacy": "workspace:*",
+    "@app/privacy-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",

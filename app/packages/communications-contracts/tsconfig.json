@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["src", "tests"],
-  "references": [{ "path": "../core-runtime" }]
+  "references": [{ "path": "../core-runtime" }, { "path": "../privacy-contracts" }, { "path": "../shared-contracts" }]
 }

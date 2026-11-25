@@ -1,7 +1,7 @@
 import type {
   PrivacyOwnerCoverageRequest,
   PrivacyOwnerCoverageResponse,
-} from '@app/communications/api/privacy-owner-coverage';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import type { CallOutcome } from '@app/core-runtime/sdk';
 import { DateTime, Effect, Option, Schema } from 'effect';
 

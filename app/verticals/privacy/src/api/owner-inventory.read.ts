@@ -9,11 +9,11 @@ import { declaredCall } from '@app/core-runtime/sdk';
 import type { CallOutcome, TransactionCapability } from '@app/core-runtime/sdk';
 import { readAnswer } from '@app/core-runtime/sdk/read';
 import type { NoAccessQuestions, ReadRunContext } from '@app/core-runtime/sdk/read';
-import { privacyOwnerCoverageOperation } from '@app/communications/api/privacy-owner-coverage';
+import { privacyOwnerCoverageOperation } from '@app/communications-contracts/privacy-owner-coverage';
 import type {
   PrivacyOwnerCoverageRequest,
   PrivacyOwnerCoverageResponse,
-} from '@app/communications/api/privacy-owner-coverage';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import { DateTime, Effect, Option } from 'effect';
 import { OwnerInventoryRequestSchema, OwnerInventoryResponseSchema } from '../../shared/apis/owner-inventory.ts';
 import { lookupPrivacyOwnerInventory } from '../../shared/domain/owner-inventory.ts';

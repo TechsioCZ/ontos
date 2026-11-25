@@ -2,10 +2,20 @@
   "name": "@app/communications-contracts",
   "version": "0.1.0",
   "private": true,
-  "description": "Communications-owned, schema-only Communication Request contract that source MicroVerticals import.",
+  "description": "Communications-owned public contracts: the Communication Request, its intake Action and the Privacy owner coverage and receipt that consumers import.",
   "type": "module",
   "exports": {
-    "./communication-request": "./src/communication-request.ts"
+    "./communication-intake": "./src/communication-intake.ts",
+    "./communication-request": "./src/communication-request.ts",
+    "./privacy-owner-coverage": "./src/apis/privacy-owner-coverage.ts",
+    "./privacy-owner-execution-outcome": "./src/apis/privacy-owner-execution-outcome.ts",
+    "./privacy-owner-execution-outcome/client": "./src/api/privacy-owner-execution-outcome-client.ts",
+    "./privacy-owner/contribution": "./src/privacy-owner/contribution.ts",
+    "./privacy-owner/coverage": "./src/privacy-owner/coverage.ts",
+    "./privacy-owner/inventory": "./src/privacy-owner/inventory.ts",
+    "./privacy-owner/outcome": "./src/privacy-owner/outcome.ts",
+    "./submit-communication-request": "./src/apis/submit-communication-request.ts",
+    "./submit-communication-request/client": "./src/api/submit-communication-request-client.ts"
   },
   "scripts": {
     "test:unit": "rstest --project unit",
@@ -13,6 +23,8 @@
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
+    "@app/privacy-contracts": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
     "effect": "4.0.7"
   },
   "devDependencies": {
@@ -22,7 +34,11 @@
   },
   "ontosContractOwner": {
     "appId": "communications",
-    "moduleApis": [],
+    "moduleApis": [
+      "submit-communication-request",
+      "privacy-owner-coverage",
+      "privacy-owner-execution-outcome"
+    ],
     "moduleId": "communications.core",
     "packageName": "@app/communications"
   }

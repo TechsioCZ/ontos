@@ -1,8 +1,8 @@
-import { privacyOwnerCoverageOperation } from '@app/communications/api/privacy-owner-coverage';
+import { privacyOwnerCoverageOperation } from '@app/communications-contracts/privacy-owner-coverage';
 import type {
   PrivacyOwnerCoverageRequest,
   PrivacyOwnerCoverageResponse,
-} from '@app/communications/api/privacy-owner-coverage';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import type { CallOutcome } from '@app/core-runtime/sdk';
 import { Effect, Match, Schema } from 'effect';
 

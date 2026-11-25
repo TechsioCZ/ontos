@@ -1,9 +1,9 @@
 import { isVerifiedOutboxWorkerHandlerContext, requireModuleOperation } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/client';
-import { RecordOwnerExecutionOutcomeActionAlreadyCommittedProblemSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
-import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy-contracts/record-owner-execution-outcome/client';
+import { RecordOwnerExecutionOutcomeActionAlreadyCommittedProblemSchema } from '@app/privacy-contracts/record-owner-execution-outcome';
+import { OwnerExecutionOutcomeSchema } from '@app/privacy-contracts/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';

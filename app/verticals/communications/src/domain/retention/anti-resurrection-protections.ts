@@ -1,4 +1,4 @@
-import type { AntiResurrectionProtection } from '@app/privacy/domain/anti-resurrection';
+import type { AntiResurrectionProtection } from '@app/privacy-contracts/domain/anti-resurrection';
 import { Context, Effect, Layer } from 'effect';
 
 import { ProtectionLookupUnavailable } from './protection-lookup-unavailable.ts';

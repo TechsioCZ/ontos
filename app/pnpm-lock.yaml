@@ -754,6 +754,12 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../core-runtime
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:../privacy-contracts
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
       effect:
         specifier: 4.0.7
         version: 4.0.7
@@ -983,6 +989,22 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+
+  packages/privacy-contracts:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
 
   packages/shared-contracts:
     dependencies:
@@ -1534,9 +1556,6 @@ importers:
       '@app/commerce-order-contracts':
         specifier: workspace:*
         version: link:../../packages/commerce-order-contracts
-      '@app/communications':
-        specifier: workspace:*
-        version: link:../communications
       '@app/communications-contracts':
         specifier: workspace:*
         version: link:../../packages/communications-contracts
@@ -1573,6 +1592,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:../privacy
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:../../packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -1927,9 +1949,9 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
-      '@app/privacy':
+      '@app/privacy-contracts':
         specifier: workspace:*
-        version: link:../privacy
+        version: link:../../packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -2678,9 +2700,9 @@ importers:
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
-      '@app/communications':
+      '@app/communications-contracts':
         specifier: workspace:*
-        version: link:../communications
+        version: link:../../packages/communications-contracts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -2693,6 +2715,9 @@ importers:
       '@app/party-registry-contracts':
         specifier: workspace:*
         version: link:../../packages/party-registry-contracts
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:../../packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

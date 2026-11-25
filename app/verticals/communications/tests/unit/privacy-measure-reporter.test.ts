@@ -1,6 +1,6 @@
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import { PrivacyMeasureHandoffSchema } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import { PrivacyDispatchContinuationPayloadSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { FetchHttpClient } from 'effect/http';

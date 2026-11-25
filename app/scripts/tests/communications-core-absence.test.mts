@@ -91,49 +91,51 @@ it('never imports Communications source from lean Core, staff Auth or the Shell'
 });
 
 /**
- * The one reviewed relationship that reaches Communications through a package dependency: Privacy's owner inventory asks
- * Communications for owner coverage through the Communications-owned, published Owner Coverage contract (#1410). Privacy
- * owns the governed call; its package never imports Communications source, the Communication Request contract package or the
- * email provider, and its production code reaches Communications only through the published descriptors: the Owner Coverage
- * contract and the owner execution receipt Read it asks for a dispatched Privacy Measure (#1410).
+ * No workspace package other than the Communications deployment itself depends on the private deployment package
+ * `@app/communications`: a module reaches Communications only through the schema-only, Communications-owned contracts package
+ * (`@app/communications-contracts`), never through another module package. Two relationships are reviewed, and each may name
+ * only its own published subpaths of that contracts package:
+ *
+ * - Privacy's owner inventory asks Communications for owner coverage through the published Owner Coverage contract and its
+ *   owner execution receipt Read for a dispatched Privacy Measure (#1410);
+ * - Commerce Customer Context's own Portal Auth source worker submits each committed request to the public
+ *   `submit-communication-request` Action through its published client, and only the worker's gateway names that client
+ *   (#1406 D1): Communications admits a request only from the source module's own Outbox Worker.
+ *
+ * Neither names the deployment package, the email provider, or any Communications source.
  */
-const REVIEWED_COMMUNICATIONS_DEPENDENT = 'verticals/privacy';
-const PUBLISHED_OWNER_COVERAGE_DESCRIPTOR = '/api/privacy-owner-coverage';
-const PUBLISHED_OWNER_RECEIPT_CLIENT = '/api/privacy-owner-execution-outcome/client';
-const PUBLISHED_PRODUCTION_SUBPATHS = [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR, PUBLISHED_OWNER_RECEIPT_CLIENT] as const;
-const PUBLISHED_OWNER_COVERAGE_SUBPATHS = [
-  ...PUBLISHED_PRODUCTION_SUBPATHS,
+const REVIEWED_PRIVACY_DEPENDENT = 'verticals/privacy';
+const PUBLISHED_OWNER_COVERAGE_DESCRIPTOR = '/privacy-owner-coverage';
+const PUBLISHED_OWNER_RECEIPT_CLIENT = '/privacy-owner-execution-outcome/client';
+const PUBLISHED_PRIVACY_PRODUCTION_SUBPATHS = [
+  PUBLISHED_OWNER_COVERAGE_DESCRIPTOR,
+  PUBLISHED_OWNER_RECEIPT_CLIENT,
+] as const;
+const PUBLISHED_PRIVACY_TEST_SUBPATHS = [
+  ...PUBLISHED_PRIVACY_PRODUCTION_SUBPATHS,
   '/privacy-owner/coverage',
   '/privacy-owner/inventory',
   '/privacy-owner/outcome',
 ] as const;
-const COMMUNICATIONS_SPECIFIER = /['"`]@app\/communications(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)['"`]/gu;
-
-/**
- * The second reviewed relationship (#1406 D1, pending owner review): Commerce Customer Context's own Portal Auth source worker
- * submits each committed Portal Auth request to the public `submit-communication-request` Action through its published,
- * generated client. That client is the only Communications subpath the package names, and only the source worker's gateway
- * names it: Communications admits a request only from the source module's own Outbox Worker.
- */
 const REVIEWED_SOURCE_WORKER_DEPENDENT = 'verticals/commerce-customer-context';
-const PUBLISHED_SUBMIT_REQUEST_CLIENT = '/api/submit-communication-request-action/client';
+const PUBLISHED_REQUEST_CONTRACT = '/communication-request';
+const PUBLISHED_SUBMIT_REQUEST_CLIENT = '/submit-communication-request/client';
 const SOURCE_WORKER_GATEWAY = `${REVIEWED_SOURCE_WORKER_DEPENDENT}/src/workers/portal-auth-communication-source-gateway.ts`;
-const REVIEWED_COMMUNICATIONS_DEPENDENTS = [
-  REVIEWED_COMMUNICATIONS_DEPENDENT,
-  REVIEWED_SOURCE_WORKER_DEPENDENT,
-] as const;
+const SPECIFIER_SUBPATH = String.raw`(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)`;
+const COMMUNICATIONS_SPECIFIER = /['"`]@app\/communications(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)['"`]/gu;
+const COMMUNICATIONS_CONTRACTS_SPECIFIER = new RegExp(
+  `['"\`]@app\\/communications-contracts${SPECIFIER_SUBPATH}['"\`]`,
+  'gu',
+);
 
-/** Workspace packages that depend on the private deployment package without being a reviewed relationship. */
-const unreviewedCommunicationsDependents = (dependents: readonly string[]) =>
-  dependents.filter((directory) => !REVIEWED_COMMUNICATIONS_DEPENDENTS.some((reviewed) => reviewed === directory));
-/** Subpaths of `@app/communications` a source names (empty for the bare package) that are not in the allowed set. */
-const unpublishedCommunicationsSubpaths = (source: string, allowed: readonly string[]) =>
-  [...source.matchAll(COMMUNICATIONS_SPECIFIER)]
+/** Subpaths of a package a source names (empty for the bare package) that are not in the allowed set. */
+const unpublishedSubpaths = (specifier: RegExp, source: string, allowed: readonly string[]) =>
+  [...source.matchAll(specifier)]
     .map((match) => match.groups?.subpath ?? '')
     .filter((subpath) => !allowed.includes(subpath));
-const unpublishedCommunicationsUses = (directory: string, allowed: readonly string[]) =>
+const unpublishedUses = (specifier: RegExp, directory: string, allowed: readonly string[]) =>
   sourceFiles(directory).filter(
-    (file) => unpublishedCommunicationsSubpaths(readFileSync(path.join(appRoot, file), 'utf-8'), allowed).length > 0,
+    (file) => unpublishedSubpaths(specifier, readFileSync(path.join(appRoot, file), 'utf-8'), allowed).length > 0,
   );
 
 it('lets no other workspace package depend on the private Communications deployment package', () => {
@@ -142,101 +144,111 @@ it('lets no other workspace package depend on the private Communications deploym
     (directory) =>
       directory !== 'verticals/communications' && declaredDependencies(directory).has(COMMUNICATIONS_PACKAGE),
   );
-  // The deployment package is private to its owner. Source owners import only the schema-only contract package; the
-  // reviewed exceptions are Privacy's published Owner Coverage descriptors and the Portal Auth source worker's published
-  // submit client.
-  expect(unreviewedCommunicationsDependents(dependents)).toEqual([]);
+  // The deployment package is private to its owner: every other package reaches Communications through its contracts package.
+  expect(dependents).toEqual([]);
+  for (const directory of workspace.filter((candidate) => candidate !== 'verticals/communications')) {
+    const nonTestSources = importsOf(directory, COMMUNICATIONS_PACKAGE).filter((file) => !file.includes('/tests/'));
+    expect([directory, nonTestSources]).toEqual([directory, []]);
+  }
 });
 
 it('limits the reviewed Privacy dependency to the published Owner Coverage contract', () => {
-  const dependencies = declaredDependencies(REVIEWED_COMMUNICATIONS_DEPENDENT);
-  expect(dependencies.has(COMMUNICATIONS_CONTRACTS_PACKAGE)).toBe(false);
+  const dependencies = declaredDependencies(REVIEWED_PRIVACY_DEPENDENT);
+  expect(dependencies.has(COMMUNICATIONS_PACKAGE)).toBe(false);
+  expect(dependencies.has(COMMUNICATIONS_CONTRACTS_PACKAGE)).toBe(true);
   expect(dependencies.has(EMAIL_DELIVERY_PACKAGE)).toBe(false);
-  expect(importsOf(REVIEWED_COMMUNICATIONS_DEPENDENT, COMMUNICATIONS_CONTRACTS_PACKAGE)).toEqual([]);
-  expect(importsOf(REVIEWED_COMMUNICATIONS_DEPENDENT, EMAIL_DELIVERY_PACKAGE)).toEqual([]);
-  // Production code reaches Communications only through the published descriptor; test doubles may also use the
-  // published Owner Coverage assessment, inventory and outcome vocabulary.
+  expect(importsOf(REVIEWED_PRIVACY_DEPENDENT, COMMUNICATIONS_PACKAGE)).toEqual([]);
+  expect(importsOf(REVIEWED_PRIVACY_DEPENDENT, EMAIL_DELIVERY_PACKAGE)).toEqual([]);
+  // Production code reaches Communications only through the published descriptor and receipt client; test doubles may also
+  // use the published Owner Coverage assessment, inventory and outcome vocabulary.
+  for (const directory of ['src', 'shared']) {
+    expect(
+      unpublishedUses(
+        COMMUNICATIONS_CONTRACTS_SPECIFIER,
+        `${REVIEWED_PRIVACY_DEPENDENT}/${directory}`,
+        PUBLISHED_PRIVACY_PRODUCTION_SUBPATHS,
+      ),
+    ).toEqual([]);
+  }
   expect(
-    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/src`, PUBLISHED_PRODUCTION_SUBPATHS),
-  ).toEqual([]);
-  expect(
-    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/shared`, PUBLISHED_PRODUCTION_SUBPATHS),
-  ).toEqual([]);
-  expect(
-    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/tests`, PUBLISHED_OWNER_COVERAGE_SUBPATHS),
+    unpublishedUses(
+      COMMUNICATIONS_CONTRACTS_SPECIFIER,
+      `${REVIEWED_PRIVACY_DEPENDENT}/tests`,
+      PUBLISHED_PRIVACY_TEST_SUBPATHS,
+    ),
   ).toEqual([]);
 });
 
-it('limits the reviewed Portal Auth source worker dependency to the published submit client', () => {
-  // Every Communications subpath the package names, in production code and tests alike, is the published submit client.
-  expect(unpublishedCommunicationsUses(REVIEWED_SOURCE_WORKER_DEPENDENT, [PUBLISHED_SUBMIT_REQUEST_CLIENT])).toEqual(
-    [],
-  );
-  // Only the source worker's gateway names it; no API, page, Action or relay code of the package reaches Communications.
-  expect(importsOf(REVIEWED_SOURCE_WORKER_DEPENDENT, COMMUNICATIONS_PACKAGE)).toEqual([SOURCE_WORKER_GATEWAY]);
-});
-
-it('still rejects any other dependent and any import beyond the reviewed published subpaths', () => {
-  expect(unreviewedCommunicationsDependents(REVIEWED_COMMUNICATIONS_DEPENDENTS)).toEqual([]);
+it('limits the reviewed Portal Auth source worker dependency to the published request contract and submit client', () => {
+  const dependencies = declaredDependencies(REVIEWED_SOURCE_WORKER_DEPENDENT);
+  expect(dependencies.has(COMMUNICATIONS_PACKAGE)).toBe(false);
+  expect(importsOf(REVIEWED_SOURCE_WORKER_DEPENDENT, COMMUNICATIONS_PACKAGE)).toEqual([]);
+  // Every contracts subpath the package names, in production code and tests alike, is a published one.
   expect(
-    unreviewedCommunicationsDependents([
-      'verticals/commerce-order',
-      REVIEWED_SOURCE_WORKER_DEPENDENT,
-      REVIEWED_COMMUNICATIONS_DEPENDENT,
-      'verticals/commerce-cart',
-      SHELL_DIRECTORY,
+    unpublishedUses(COMMUNICATIONS_CONTRACTS_SPECIFIER, REVIEWED_SOURCE_WORKER_DEPENDENT, [
+      PUBLISHED_REQUEST_CONTRACT,
+      PUBLISHED_SUBMIT_REQUEST_CLIENT,
     ]),
-  ).toEqual(['verticals/commerce-order', 'verticals/commerce-cart', SHELL_DIRECTORY]);
-  const sourceWorkerAllowed = [PUBLISHED_SUBMIT_REQUEST_CLIENT];
+  ).toEqual([]);
+  // Only the source worker's gateway names the submit client; no API, page, Action or relay code of the package reaches Communications.
   expect(
-    unpublishedCommunicationsSubpaths(
-      "import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications/api/submit-communication-request-action/client';",
-      sourceWorkerAllowed,
+    sourceFiles(REVIEWED_SOURCE_WORKER_DEPENDENT).filter((file) =>
+      mentionsSpecifier(
+        readFileSync(path.join(appRoot, file), 'utf-8'),
+        `${COMMUNICATIONS_CONTRACTS_PACKAGE}${PUBLISHED_SUBMIT_REQUEST_CLIENT}`,
+      ),
+    ),
+  ).toEqual([SOURCE_WORKER_GATEWAY]);
+});
+
+it('still rejects any import beyond the reviewed published subpaths', () => {
+  const workerAllowed = [PUBLISHED_REQUEST_CONTRACT, PUBLISHED_SUBMIT_REQUEST_CLIENT];
+  expect(
+    unpublishedSubpaths(
+      COMMUNICATIONS_CONTRACTS_SPECIFIER,
+      "import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications-contracts/submit-communication-request/client';",
+      workerAllowed,
     ),
   ).toEqual([]);
   expect(
-    unpublishedCommunicationsSubpaths(
+    unpublishedSubpaths(
+      COMMUNICATIONS_CONTRACTS_SPECIFIER,
       [
-        "import { Api } from '@app/communications/api/submit-communication-request-action';",
-        "import { client } from '@app/communications/api/client';",
-        "import { receipt } from '@app/communications/api/privacy-owner-execution-outcome/client';",
-        "import { entry } from '@app/communications/outbox-worker-host';",
-        'await import("@app/communications")',
+        "import { Api } from '@app/communications-contracts/submit-communication-request';",
+        "import { receipt } from '@app/communications-contracts/privacy-owner-execution-outcome/client';",
+        "import { x } from '@app/communications-contracts/src/communication-request';",
+        'await import("@app/communications-contracts")',
       ].join('\n'),
-      sourceWorkerAllowed,
+      workerAllowed,
     ),
   ).toEqual([
-    '/api/submit-communication-request-action',
-    '/api/client',
-    '/api/privacy-owner-execution-outcome/client',
-    '/outbox-worker-host',
+    '/submit-communication-request',
+    '/privacy-owner-execution-outcome/client',
+    '/src/communication-request',
     '',
   ]);
-  const allowed = [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR];
+  // The private deployment package is a different package and is rejected on any subpath, even a published contracts one.
   expect(
-    unpublishedCommunicationsSubpaths(
-      "import { operation } from '@app/communications/api/privacy-owner-coverage';",
-      allowed,
+    unpublishedSubpaths(
+      COMMUNICATIONS_SPECIFIER,
+      [
+        "import { client } from '@app/communications/api/client';",
+        "import { entry } from '@app/communications/outbox-worker-host';",
+        'await import("@app/communications")',
+        "import type { Request } from '@app/communications-contracts';",
+      ].join('\n'),
+      [],
     ),
-  ).toEqual([]);
-  expect(
-    unpublishedCommunicationsSubpaths("import { client } from '@app/communications/api/client';", allowed),
-  ).toEqual(['/api/client']);
-  expect(
-    unpublishedCommunicationsSubpaths("import { x } from '@app/communications/src/domain/policy';", allowed),
-  ).toEqual(['/src/domain/policy']);
-  expect(unpublishedCommunicationsSubpaths('await import("@app/communications")', allowed)).toEqual(['']);
-  // The schema-only contract package is a different package and is not mistaken for the deployment package.
-  expect(
-    unpublishedCommunicationsSubpaths("import type { Request } from '@app/communications-contracts';", allowed),
-  ).toEqual([]);
+  ).toEqual(['/api/client', '/outbox-worker-host', '']);
 });
 
-it('keeps the Communication Request contract schema-only and independent of the deployment and its provider', () => {
+it('keeps the Communications contracts schema-only and independent of the deployment, its provider and the Privacy deployment', () => {
   const dependencies = declaredDependencies('packages/communications-contracts');
   expect(dependencies.has(COMMUNICATIONS_PACKAGE)).toBe(false);
   expect(dependencies.has(EMAIL_DELIVERY_PACKAGE)).toBe(false);
+  expect(dependencies.has('@app/privacy')).toBe(false);
   expect(importsOf('packages/communications-contracts/src', COMMUNICATIONS_PACKAGE)).toEqual([]);
+  expect(importsOf('packages/communications-contracts/src', '@app/privacy')).toEqual([]);
 });
 
 const ReviewedTopologySchema = Schema.Struct({

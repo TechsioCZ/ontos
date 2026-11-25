@@ -11,11 +11,9 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, Crypto, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
-import {
-  SourceProcessingContextSchema,
-  SourceProcessingEligibilityRequestSchema,
-} from '../../shared/apis/source-processing-eligibility.ts';
-import type { SourceProcessingContext } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityRequestSchema } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
+import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import {
   PrivacyApplicabilityAuthoritySchema,
   PrivacyApplicabilityDecisionSchema,

@@ -1,4 +1,4 @@
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { NodeCrypto } from '@effect/platform-node';
 import { Array as EffectArray, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';

@@ -1,9 +1,9 @@
-import { PreVerificationEligibilityRequestSchema } from '@app/privacy/api/pre-verification-eligibility';
-import type { PreVerificationEligibilityRequest } from '@app/privacy/api/pre-verification-eligibility';
-import { executePreVerificationEligibilityWithAuthorization } from '@app/privacy/api/pre-verification-eligibility/client';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
+import { PreVerificationEligibilityRequestSchema } from '@app/privacy-contracts/pre-verification-eligibility';
+import type { PreVerificationEligibilityRequest } from '@app/privacy-contracts/pre-verification-eligibility';
+import { executePreVerificationEligibilityWithAuthorization } from '@app/privacy-contracts/pre-verification-eligibility/client';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 import type { Duration } from 'effect';

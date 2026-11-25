@@ -46,6 +46,12 @@
       "path": "../../packages/customer-market-retirement-contracts"
     },
     {
+      "path": "../../packages/communications-contracts"
+    },
+    {
+      "path": "../../packages/privacy-contracts"
+    },
+    {
       "path": "../../packages/payment-term-catalog-contracts"
     },
     {

@@ -14,8 +14,8 @@ import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
-} from '@app/privacy/outbox/privacy-measure-dispatched';
-import type { OutboxPayload } from '@app/privacy/outbox/privacy-measure-dispatched';
+} from '@app/privacy-contracts/outbox/privacy-measure-dispatched';
+import type { OutboxPayload } from '@app/privacy-contracts/outbox/privacy-measure-dispatched';
 import { Effect } from 'effect';
 
 import { tenantScopedRunner } from '../handoff/tenant-scoped-runner.ts';

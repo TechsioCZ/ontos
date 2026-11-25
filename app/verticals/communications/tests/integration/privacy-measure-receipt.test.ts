@@ -1,8 +1,8 @@
 import {
   PrivacyMeasureHandoffSchema,
   validateOwnerExecutionAuthorityResult,
-} from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+} from '@app/privacy-contracts/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import type { OperationalScope } from '@app/core-runtime';
 import { getTableName } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';

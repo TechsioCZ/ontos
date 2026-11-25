@@ -1,9 +1,9 @@
 import type {
   PrivacyOwnerCoverageRequest,
   PrivacyOwnerCoverageResponse,
-} from '@app/communications/api/privacy-owner-coverage';
-import { assessCommunicationsOwnerCoverage } from '@app/communications/privacy-owner/coverage';
-import { INVENTORY_CATEGORY_IDS, scopePartRefs } from '@app/communications/privacy-owner/inventory';
+} from '@app/communications-contracts/privacy-owner-coverage';
+import { assessCommunicationsOwnerCoverage } from '@app/communications-contracts/privacy-owner/coverage';
+import { INVENTORY_CATEGORY_IDS, scopePartRefs } from '@app/communications-contracts/privacy-owner/inventory';
 import type { CallOutcome } from '@app/core-runtime/sdk';
 import { Cause, DateTime, Effect, Exit, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';

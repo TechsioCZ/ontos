@@ -2,8 +2,8 @@ import { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import { PrivacyMeasureHandoffSchema } from '@app/privacy-contracts/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

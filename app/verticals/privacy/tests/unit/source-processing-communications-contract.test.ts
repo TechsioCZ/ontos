@@ -5,10 +5,10 @@ import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
-  SourceProcessingContextSchema,
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
 } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import {
   runSourceProcessingEligibility,
   sourceProcessingCallerAdmitted,

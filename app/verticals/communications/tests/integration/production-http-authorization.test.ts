@@ -43,12 +43,12 @@ import {
   prepareOwnerActionRequest,
   recordOwnerExecutionOutcome,
   validateOwnerExecutionAuthorityResult,
-} from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+} from '@app/privacy-contracts/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import {
   OutboxPayloadSchema as PrivacyMeasureDispatchedSchema,
   outboxTopic as privacyMeasureDispatchedTopic,
-} from '@app/privacy/outbox/privacy-measure-dispatched';
+} from '@app/privacy-contracts/outbox/privacy-measure-dispatched';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {

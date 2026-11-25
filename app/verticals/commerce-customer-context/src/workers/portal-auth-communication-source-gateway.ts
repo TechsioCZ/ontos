@@ -1,6 +1,6 @@
 import type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
-import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications/api/submit-communication-request-action/client';
+import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications-contracts/submit-communication-request/client';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Config, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';

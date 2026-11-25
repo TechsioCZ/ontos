@@ -346,16 +346,16 @@ export const privacyApiContract = {
 } as const;
 
 export {
-  SourceProcessingContextSchema,
   SourceProcessingIdentitySchema,
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
 } from './apis/source-processing-eligibility.ts';
 export type {
-  SourceProcessingContext,
   SourceProcessingEligibilityRequest,
   SourceProcessingEligibilityResponse,
 } from './apis/source-processing-eligibility.ts';
+export { SourceProcessingContextSchema } from './domain/source-processing-context.ts';
+export type { SourceProcessingContext } from './domain/source-processing-context.ts';
 
 export {
   MeasureExecutionEligibilityRequestSchema,

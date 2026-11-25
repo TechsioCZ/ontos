@@ -1,4 +1,4 @@
-import type { AntiResurrectionAttempt } from '@app/privacy/domain/anti-resurrection';
+import type { AntiResurrectionAttempt } from '@app/privacy-contracts/domain/anti-resurrection';
 import { Data } from 'effect';
 
 /** The guard refused. `blockedResourceRefs` names exactly what may not be re-exposed; nothing was changed. */

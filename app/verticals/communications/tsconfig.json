@@ -37,7 +37,7 @@
       "path": "../../packages/gateway-principal-verifier"
     },
     {
-      "path": "../privacy"
+      "path": "../../packages/privacy-contracts"
     },
     {
       "path": "../../packages/shared-contracts"

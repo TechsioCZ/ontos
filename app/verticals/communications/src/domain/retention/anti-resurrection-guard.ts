@@ -1,5 +1,8 @@
-import { assessAntiResurrection } from '@app/privacy/domain/anti-resurrection';
-import type { AntiResurrectionAttempt, AntiResurrectionNewSourceEvidence } from '@app/privacy/domain/anti-resurrection';
+import { assessAntiResurrection } from '@app/privacy-contracts/domain/anti-resurrection';
+import type {
+  AntiResurrectionAttempt,
+  AntiResurrectionNewSourceEvidence,
+} from '@app/privacy-contracts/domain/anti-resurrection';
 import { Effect } from 'effect';
 
 import { CommunicationsAntiResurrectionProtections } from './anti-resurrection-protections.ts';

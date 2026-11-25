@@ -2,7 +2,7 @@ import type {
   AntiResurrectionAttempt,
   AntiResurrectionNewSourceEvidence,
   AntiResurrectionProtection,
-} from '@app/privacy/domain/anti-resurrection';
+} from '@app/privacy-contracts/domain/anti-resurrection';
 import { Effect, Layer, Match } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

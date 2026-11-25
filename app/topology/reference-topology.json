@@ -7455,6 +7455,12 @@
       "package": "@app/communications-contracts",
       "path": "packages/communications-contracts",
       "description": "Communications-owned, schema-only Communication Request contract that source MicroVerticals import."
+    },
+    {
+      "id": "privacy-contracts",
+      "package": "@app/privacy-contracts",
+      "path": "packages/privacy-contracts",
+      "description": "Privacy-owned eligibility, Privacy Measure handoff and owner-outcome contracts that Communications and other consumers import."
     }
   ],
   "validation": {

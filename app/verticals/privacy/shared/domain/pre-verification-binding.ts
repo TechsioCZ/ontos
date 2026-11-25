@@ -1,5 +1,6 @@
 import { Option, Schema } from 'effect';
 
+import { PreVerificationBindingRefSchema } from '@app/privacy-contracts/domain/pre-verification-binding-ref';
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 import type { PrivacySubjectRef } from '../resources/privacy-subject.ts';
 import {
@@ -65,8 +66,7 @@ export type PreVerificationSourceSubject = typeof PreVerificationSourceSubjectSc
 export const preVerificationSourceSubjectKey = (subject: PreVerificationSourceSubject): string =>
   [subject.moduleId, subject.resourceType, subject.resourceId].map((part) => `${part.length}:${part}`).join('|');
 
-/** The opaque Privacy identity of one bound subject. It is the resource id of the subject's Privacy reference. */
-export const PreVerificationBindingRefSchema = Uuid.pipe(Schema.brand('PrivacyPreVerificationBindingRef'));
+export { PreVerificationBindingRefSchema } from '@app/privacy-contracts/domain/pre-verification-binding-ref';
 
 /** The scope a policy allows, without the subject: Privacy adds its own subject reference to it at evaluation. */
 const PreVerificationPolicyScopeSchema = Schema.Struct({

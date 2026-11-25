@@ -193,8 +193,8 @@ export const DispatchPrivacyMeasurePayloadSchema = Schema.Struct({ handoff: Priv
 export type DispatchPrivacyMeasurePayload = typeof DispatchPrivacyMeasurePayloadSchema.Type;
 export { PrivacyMeasureHandoffSchema as DispatchPrivacyMeasureResultSchema } from '../domain/privacy-measure-handoff.ts';
 
-export const RecordOwnerExecutionOutcomePayloadSchema = Schema.Struct({ request: OwnerExecutionOutcomeRequestSchema });
-export type RecordOwnerExecutionOutcomePayload = typeof RecordOwnerExecutionOutcomePayloadSchema.Type;
+export { RecordOwnerExecutionOutcomePayloadSchema } from '@app/privacy-contracts/record-owner-execution-outcome';
+export type { RecordOwnerExecutionOutcomePayload } from '@app/privacy-contracts/record-owner-execution-outcome';
 export { OwnerExecutionOutcomeSchema as RecordOwnerExecutionOutcomeResultSchema } from '../domain/privacy-measure-handoff.ts';
 
 export const IssueDsrDeliveryAccessPayloadSchema = Schema.Struct({ requestRef: Ref });

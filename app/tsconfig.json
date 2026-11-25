@@ -98,6 +98,9 @@
       "path": "packages/communications-contracts"
     },
     {
+      "path": "packages/privacy-contracts"
+    },
+    {
       "path": "verticals/commerce-order"
     },
     {

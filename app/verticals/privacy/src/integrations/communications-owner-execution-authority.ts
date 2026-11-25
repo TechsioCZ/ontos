@@ -1,6 +1,6 @@
 import { requireModuleOperation } from '@app/core-runtime';
 import { readVerifiedGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { executePrivacyOwnerExecutionOutcomeWithAuthorization } from '@app/communications/api/privacy-owner-execution-outcome/client';
+import { executePrivacyOwnerExecutionOutcomeWithAuthorization } from '@app/communications-contracts/privacy-owner-execution-outcome/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';

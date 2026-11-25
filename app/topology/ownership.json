@@ -634,6 +634,24 @@
       }
     },
     {
+      "id": "privacy-contracts",
+      "package": "@app/privacy-contracts",
+      "path": "packages/privacy-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/privacy.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#privacy",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#privacy"
+          ]
+        }
+      }
+    },
+    {
       "id": "payment",
       "package": "@app/payment",
       "path": "verticals/payment",

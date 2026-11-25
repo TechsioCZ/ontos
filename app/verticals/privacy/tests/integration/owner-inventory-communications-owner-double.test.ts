@@ -1,4 +1,4 @@
-import { scopePartRefs } from '@app/communications/privacy-owner/inventory';
+import { scopePartRefs } from '@app/communications-contracts/privacy-owner/inventory';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Effect, Layer } from 'effect';
 import { Reactivity } from 'effect/reactivity';

@@ -67,7 +67,8 @@
     "./testing/organization-business-profile-native": "./tests/support/organization-business-profile-native.ts",
     "./testing/organization-business-party-native": "./tests/support/organization-business-party-native.ts",
     "./testing/measure-execution-native": "./tests/support/measure-execution-native.ts",
-    "./testing/pre-verification-binding-native": "./tests/support/pre-verification-binding-native.ts"
+    "./testing/pre-verification-binding-native": "./tests/support/pre-verification-binding-native.ts",
+    "./domain/source-processing-context": "./shared/domain/source-processing-context.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
@@ -90,10 +91,11 @@
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
-    "@app/communications": "workspace:*",
+    "@app/communications-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/party-registry-contracts": "workspace:*",
+    "@app/privacy-contracts": "workspace:*",
     "@app/symmy-integration": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",

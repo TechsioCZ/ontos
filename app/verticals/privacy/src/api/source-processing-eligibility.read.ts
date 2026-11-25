@@ -13,16 +13,16 @@ import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-  SourceProcessingContextSchema,
   CommunicationsSourceProcessingConsumerModule,
   SymmyCustomerSourceIntakeConsumerModule,
 } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import type {
   SourceProcessingEligibilityRequest,
   SourceProcessingNotEvaluatedCause,
   SourceProcessingEligibilityResponse,
-  SourceProcessingContext,
 } from '../../shared/apis/source-processing-eligibility.ts';
+import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import { AntiResurrectionProtectionSchema, assessAntiResurrection } from '../../shared/domain/anti-resurrection.ts';
 import type { AntiResurrectionProtection } from '../../shared/domain/anti-resurrection.ts';
 import {

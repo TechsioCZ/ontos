@@ -1,8 +1,11 @@
 import {
   normalizePrivacyMeasureHandoff,
   PrivacyMeasureHandoffSchema,
-} from '@app/privacy/domain/privacy-measure-handoff';
-import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+} from '@app/privacy-contracts/domain/privacy-measure-handoff';
+import type {
+  OwnerExecutionOutcome,
+  PrivacyMeasureHandoff,
+} from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import { PrivacyMeasureSchema } from '@app/shared-contracts';
 import type { PrivacyMeasureEncoded, PrivacyOwnerExecutionOutcomeEncoded } from '@app/shared-contracts';
 import { Crypto, DateTime, Effect, Match, Result, Schema } from 'effect';
