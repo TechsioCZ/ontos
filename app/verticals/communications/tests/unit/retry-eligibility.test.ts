@@ -16,6 +16,14 @@ const approved = { kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE', maxAttempts: 3 } as c
 const none = { kind: 'NONE' } as const;
 const temporary = { reason: 'rate_limited' } as const;
 const cleared: CurrentGates = { kind: 'CLEARED' };
+const attemptIdOf = (number: number) => `22222222-2222-4222-8222-22222222222${String(number)}`;
+const refused = (number: number, prepared: number) =>
+  attempt('REJECTED', { ...temporary, id: attemptIdOf(number), number, prepared });
+const notAttempted = (number: number, prepared: number) =>
+  attempt('NOT_ATTEMPTED', { id: attemptIdOf(number), number, prepared });
+/** The history of a worker that was refused `count` times, each attempt five minutes after the last. */
+const refusedTimes = (count: number) =>
+  factsOf({ attempts: Array.from({ length: count }, (_unused, index) => refused(index + 1, index * 5 + 1)) });
 
 describe('assessAttemptHistory: what the history and the approved rule allow before any gate is asked', () => {
   it('[S02] an intent with no attempt yet is the first handoff: no recovery rule is involved', () => {
@@ -69,6 +77,45 @@ describe('assessAttemptHistory: what the history and the approved rule allow bef
     });
     expect(assessAttemptHistory(withNothingSubmitted, { ...approved, maxAttempts: 2 })).toMatchObject({
       kind: 'CONTINUE',
+    });
+  });
+
+  it("[R-13 AC-07] the type's own limit ends a worker that keeps failing: with maxAttempts 2 the third delivery begins nothing, whatever Core still allows", () => {
+    const limit2 = { ...approved, maxAttempts: 2 } as const;
+    // delivery 1: no attempt yet; delivery 2: one refusal, one more attempt is within the limit; delivery 3: the limit is reached
+    expect(assessAttemptHistory(refusedTimes(0), limit2)).toEqual({ kind: 'FIRST_ATTEMPT' });
+    expect(assessAttemptHistory(refusedTimes(1), limit2)).toMatchObject({
+      basis: { kind: 'PRIOR_REJECTED' },
+      kind: 'CONTINUE',
+    });
+    expect(assessAttemptHistory(refusedTimes(2), limit2)).toMatchObject({
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+    // the evaluation counts attempts in the owner's history, never deliveries: a history longer than the limit still halts
+    expect(assessAttemptHistory(refusedTimes(3), limit2)).toMatchObject({
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+  });
+
+  it("[R-13 AC-07] an attempt that submitted nothing opens the intent only while nothing was submitted: after a refusal it never skips the type's limit or its missing rule", () => {
+    const twiceRefusedThenNothingSent = factsOf({ attempts: [refused(1, 1), refused(2, 5), notAttempted(3, 9)] });
+    expect(assessAttemptHistory(twiceRefusedThenNothingSent, { ...approved, maxAttempts: 2 })).toMatchObject({
+      attemptId: attemptIdOf(3),
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+    expect(assessAttemptHistory(twiceRefusedThenNothingSent, { ...approved, maxAttempts: 3 })).toMatchObject({
+      basis: { kind: 'PRIOR_NOT_ATTEMPTED' },
+      kind: 'CONTINUE',
+    });
+    // a refusal was submitted, so a type without a rule has nothing automatic to continue with
+    const refusedThenNothingSent = factsOf({ attempts: [refused(1, 1), notAttempted(2, 5)] });
+    expect(assessAttemptHistory(refusedThenNothingSent, none)).toMatchObject({
+      attemptId: attemptIdOf(2),
+      code: 'NO_RECOVERY_RULE',
+      kind: 'HALT',
     });
   });
 

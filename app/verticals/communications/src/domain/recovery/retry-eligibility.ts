@@ -67,9 +67,20 @@ export const assessAttemptHistory = (facts: RecoveryFactsInput, policy: Recovery
   if (latest === undefined) {
     return { kind: 'FIRST_ATTEMPT' };
   }
+  // the owner's own count: attempts of THIS intent that may have left, never Core deliveries (those are Core's redelivery budget)
+  const submitted = facts.attempts.filter(attemptMayHaveLeft).length;
   const answer = submissionFactOfAttempt(latest.state, latest.reason);
   if (answer.technical === 'NOT_ATTEMPTED') {
-    // no request left the process (no adapter, or no usable configuration): the intent was never in doubt, no rule is needed
+    // no request left the process (no adapter, or no usable configuration): the intent was never in doubt, so nothing submitted
+    // needs no rule. Once any earlier attempt was submitted, the approved rule and its limit still bind this continuation.
+    if (facts.attempts.some(attemptMayHaveLeft)) {
+      if (policy.kind === 'NONE') {
+        return { attemptId: latest.attemptId, code: 'NO_RECOVERY_RULE', kind: 'HALT' };
+      }
+      if (submitted >= policy.maxAttempts) {
+        return { attemptId: latest.attemptId, code: 'RECOVERY_LIMIT_REACHED', kind: 'HALT' };
+      }
+    }
     return { basis: { kind: 'PRIOR_NOT_ATTEMPTED' }, kind: 'CONTINUE', previousAttemptId: latest.attemptId };
   }
   const rejected = latest.state === 'REJECTED';
@@ -89,7 +100,6 @@ export const assessAttemptHistory = (facts: RecoveryFactsInput, policy: Recovery
   if (policy.kind === 'NONE') {
     return { attemptId: latest.attemptId, code: 'NO_RECOVERY_RULE', kind: 'HALT' };
   }
-  const submitted = facts.attempts.filter(attemptMayHaveLeft).length;
   if (submitted >= policy.maxAttempts) {
     return { attemptId: latest.attemptId, code: 'RECOVERY_LIMIT_REACHED', kind: 'HALT' };
   }
