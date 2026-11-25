@@ -12,6 +12,7 @@ import { AccessKeySchema, WorkloadKeySchema } from '../../src/authorization/acce
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
 import {
+  NativeRouteReadReceiverSchema,
   RegisteredGatewayRouteScopeSchema,
   RegisteredGatewayWorkloadSchema,
   isTrustedSystemPrincipalContext,
@@ -27,6 +28,22 @@ const principalId = PrincipalIdSchema.make(internalWorkloadPrincipalId({ legalEn
 const originalPrincipalId = '20000000-0000-4000-8000-000000000001';
 const bindingIncarnation = '30000000-0000-4000-8000-000000000001';
 const originalWorkloadBindingIncarnation = '30000000-0000-4000-8000-000000000002';
+
+it('validates native receiver workload structure without owning an integration admission vocabulary', () => {
+  const receiver = {
+    bindingIncarnation,
+    originalPrincipalId,
+    originalWorkloadBindingIncarnation,
+    originalWorkloadKey: 'integration.customer-import-admit',
+    workloadKey,
+  };
+  const decodeReceiver = Schema.decodeUnknownOption(NativeRouteReadReceiverSchema);
+  expect(Option.isSome(decodeReceiver(receiver))).toBe(true);
+  for (const originalWorkloadKey of ['', null, 42]) {
+    expect(Option.isNone(decodeReceiver({ ...receiver, originalWorkloadKey }))).toBe(true);
+  }
+});
+
 const workload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
   admissionInvocationId: '40000000-0000-4000-8000-000000000001',
   bindingIncarnation,

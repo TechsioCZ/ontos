@@ -145,7 +145,7 @@ export const NativeRouteReadReceiverSchema = Schema.Struct({
   enrollmentLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   originalPrincipalId: PrincipalIdSchema,
   originalWorkloadBindingIncarnation: uuid,
-  originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+  originalWorkloadKey: WorkloadKeySchema,
   requestHash: Schema.optionalKey(RequestHashSchema),
   workloadKey: WorkloadKeySchema,
 });
@@ -455,6 +455,20 @@ const freezeFiniteGatewayMetadata = <
   return Object.freeze(snapshot);
 };
 
+const freezeRegisteredGatewayRouteScope = (routeScope: RegisteredGatewayRouteScope | undefined) => {
+  if (routeScope === undefined) {
+    return routeScope;
+  }
+  const snapshot = {
+    ...routeScope,
+    operations: Object.freeze(routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
+  };
+  if (routeScope.nativeReadReceiver !== undefined) {
+    snapshot.nativeReadReceiver = Object.freeze({ ...routeScope.nativeReadReceiver });
+  }
+  return Object.freeze(snapshot);
+};
+
 /**
  * Marks a context only after an audience-bound gateway assertion has been verified and redeemed. The
  * optional scope assertion is the redeemed token a trusted database scope is established from.
@@ -487,7 +501,9 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
     return failProvenanceInvariant('A workload gateway context requires a registered system workload');
   }
   if (routeScope !== undefined && !routeScopeMatchesPrincipal(routeScope, context, actor, workload)) {
-    return failProvenanceInvariant('A registered route scope requires its exact authenticated principal and receiver scope');
+    return failProvenanceInvariant(
+      'A registered route scope requires its exact authenticated principal and receiver scope',
+    );
   }
   if (
     privacyDispatch !== undefined &&
@@ -518,16 +534,7 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
     compositionRevision,
     organizationGovernanceRead: freezeFiniteGatewayMetadata(organizationGovernanceRead),
     privacyDispatch: freezeFiniteGatewayMetadata(privacyDispatch),
-    routeScope:
-      routeScope === undefined
-        ? undefined
-        : Object.freeze({
-            ...routeScope,
-            ...(routeScope.nativeReadReceiver === undefined
-              ? {}
-              : { nativeReadReceiver: Object.freeze({ ...routeScope.nativeReadReceiver }) }),
-            operations: Object.freeze(routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
-          }),
+    routeScope: freezeRegisteredGatewayRouteScope(routeScope),
     scopeAssertion:
       scopeAssertion === undefined
         ? undefined

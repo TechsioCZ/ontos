@@ -11,6 +11,7 @@ import {
   ownerActionClientPublication,
   hasPublishedGeneratedContractShim,
   hasGeneratedGovernedServerContract,
+  hasCompleteGeneratedModuleApiSeam,
 } from '../generated-governed-http-boundary.mts';
 import {
   hasGeneratedGovernedClientContract,
@@ -155,12 +156,161 @@ import {
   partyResourceSource,
   problemKinds,
   protectedAuthorizationSource,
+  readPricingSourceTree,
   validAction,
   violations,
   write,
   writeEngagementLifecycleFixture,
   writeGovernedModuleApi,
 } from './module-entrypoint-boundaries.fixture.mts';
+
+const merchandiseOwnerPath = 'verticals/merchandise';
+const merchandiseNativeReads = [
+  ['demo-order-export', 'demoOrderExport', 'DemoOrderExport'],
+  ['demo-catalog-revision', 'demoCatalogRevision', 'DemoCatalogRevision'],
+] as const;
+const merchandiseRuntimeFile = `${merchandiseOwnerPath}/vertical.runtime-declaration.ts`;
+const merchandiseRegistrationFile = `${merchandiseOwnerPath}/vertical.registration.ts`;
+const merchandiseOwnerSources = readPricingSourceTree(
+  path.resolve(import.meta.dirname, '../..'),
+  merchandiseOwnerPath,
+).pipe(Effect.map((entries) => new Map(entries)));
+const merchandiseModuleApiSeam = (sources: ReadonlyMap<string, string>) => {
+  const diagnostics: string[] = [];
+  const valid = hasCompleteGeneratedModuleApiSeam(
+    sources,
+    `${merchandiseOwnerPath}/shared/api.ts`,
+    'merchandise',
+    diagnostics,
+  );
+  return { diagnostics, valid };
+};
+
+it.effect('proves the actual Merchandise generated seam alongside its original owner-authored native Reads', () =>
+  Effect.gen(function* nativeOwnerInventory() {
+    const sources = yield* merchandiseOwnerSources;
+    for (const [key] of merchandiseNativeReads) {
+      expect(sources.get(`${merchandiseOwnerPath}/shared/apis/${key}.ts`)).not.toContain(MODULE_API_HEADER);
+      expect(sources.get(`${merchandiseOwnerPath}/src/api/${key}.read.ts`)).not.toContain(MODULE_API_HEADER);
+    }
+    expect(merchandiseModuleApiSeam(sources)).toEqual({ diagnostics: [], valid: true });
+  }),
+);
+
+it.effect('rejects missing, foreign, mutated or substituted native owner Read inventory and loaders', () =>
+  Effect.gen(function* refusedNativeOwnerInventory() {
+    const sources = yield* merchandiseOwnerSources;
+    for (const [key, camel, pascal] of merchandiseNativeReads) {
+      const apiFile = `${merchandiseOwnerPath}/shared/apis/${key}.ts`;
+      const nativeReadFile = `${merchandiseOwnerPath}/src/api/${key}.read.ts`;
+      const loader = `'${key}': () => import('./src/api/${key}-client.ts'),`;
+      const sourceOf = (file: string) => sources.get(file) ?? '';
+      const changes: readonly (readonly [string, string, string])[] = [
+        ['missing Read', nativeReadFile, ''],
+        [
+          'foreign Core factory',
+          nativeReadFile,
+          sourceOf(nativeReadFile).replaceAll("'@app/core-runtime'", "'@app/foreign'"),
+        ],
+        ['mutated Read', nativeReadFile, `${sourceOf(nativeReadFile)}\n${camel}Read = foreign;\n`],
+        ['mutated Read schema', nativeReadFile, `${sourceOf(nativeReadFile)}\n${pascal}RequestSchema = foreign;\n`],
+        [
+          'wrong Read schema',
+          nativeReadFile,
+          sourceOf(nativeReadFile).replace(
+            `inputSchema: ${pascal}RequestSchema`,
+            `inputSchema: ${pascal}ResponseSchema`,
+          ),
+        ],
+        [
+          'duplicate descriptor identity',
+          nativeReadFile,
+          sourceOf(nativeReadFile).replace(
+            "owningModuleKey: 'demo.merchandise',",
+            "owningModuleKey: 'demo.merchandise', owningModuleKey: 'foreign.owner',",
+          ),
+        ],
+        [
+          'duplicate entrypoint identity',
+          nativeReadFile,
+          sourceOf(nativeReadFile).replace(
+            `entrypointKey: 'demo.merchandise.api.${key}',`,
+            `entrypointKey: 'demo.merchandise.api.${key}', entrypointKey: 'foreign.owner.read',`,
+          ),
+        ],
+        ['foreign API factory', apiFile, sourceOf(apiFile).replaceAll("'effect/http-api'", "'./foreign-http.ts'")],
+        ['mutated API', apiFile, `${sourceOf(apiFile)}\n${pascal}Api = foreign;\n`],
+        [
+          'foreign manifest API',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(`'${key}': ${pascal}Api`, `'${key}': RecordsApi`),
+        ],
+        [
+          'different operation registration',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(`registration: ${camel}Read`, 'registration: recordsRead'),
+        ],
+        [
+          'different operation identity',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(
+            `operationKey: '${camel}.execute'`,
+            "operationKey: 'records.execute'",
+          ),
+        ],
+        [
+          'duplicate operation claim',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(
+            'operationContracts: [',
+            `operationContracts: [{ apiKey: '${key}', operationKey: '${camel}.execute', registration: ${camel}Read },`,
+          ),
+        ],
+        [
+          'missing operation registration',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(`registration: ${camel}Read,`, ''),
+        ],
+        [
+          'foreign registration import',
+          merchandiseRuntimeFile,
+          sourceOf(merchandiseRuntimeFile).replace(`./src/api/${key}.read.ts`, `../foreign/src/api/${key}.read.ts`),
+        ],
+        ['missing loader', merchandiseRegistrationFile, sourceOf(merchandiseRegistrationFile).replace(loader, '')],
+        [
+          'foreign loader',
+          merchandiseRegistrationFile,
+          sourceOf(merchandiseRegistrationFile).replace(loader, loader.replace('./src/', '../foreign/src/')),
+        ],
+        [
+          'different loader',
+          merchandiseRegistrationFile,
+          sourceOf(merchandiseRegistrationFile).replace(loader, loader.replace(`${key}-client`, 'records-client')),
+        ],
+        [
+          'duplicate loader',
+          merchandiseRegistrationFile,
+          sourceOf(merchandiseRegistrationFile).replace(loader, `${loader}\n${loader}`),
+        ],
+      ];
+      for (const [reason, file, altered] of changes) {
+        expect(altered, `${key}: ${reason}`).not.toBe(sourceOf(file));
+        expect(merchandiseModuleApiSeam(new Map([...sources, [file, altered]])).valid, `${key}: ${reason}`).toBe(false);
+      }
+    }
+    for (const key of ['agent-review', 'media', 'records']) {
+      const file = `${merchandiseOwnerPath}/shared/apis/${key}.ts`;
+      const original = sources.get(file) ?? '';
+      const altered = original.replace(MODULE_API_HEADER, '');
+      expect(altered).not.toBe(original);
+      expect(merchandiseModuleApiSeam(new Map([...sources, [file, altered]])).valid, key).toBe(false);
+    }
+    const runtime = sources.get(merchandiseRuntimeFile) ?? '';
+    const outsideSlot = runtime.replace('    api: {', '    api: { unreviewed: RecordsApi,');
+    expect(outsideSlot).not.toBe(runtime);
+    expect(merchandiseModuleApiSeam(new Map([...sources, [merchandiseRuntimeFile, outsideSlot]])).valid).toBe(false);
+  }),
+);
 
 it('accepts a typed Codesmith Action binding but rejects spoofed or mismatched registration types', () => {
   const binding = `export const confirmGtinAction: ActionRegistration<

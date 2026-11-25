@@ -10,12 +10,16 @@ import { changePrincipalBindingStatusAction } from './change-principal-binding-s
 import { changePrincipalStatusAction } from './change-principal-status.action.ts';
 import { changeSystemWorkloadEnrollmentAction } from './change-system-workload-enrollment.action.ts';
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
+import { configureAgentAction } from './configure-agent.action.ts';
 import { confirmAssetAction } from './confirm-asset.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
+import { manageAgentStatusAction } from './manage-agent-status.action.ts';
+import { manageDemoAccountAction } from './manage-demo-account.action.ts';
 import { mutateAgentProposalsAction } from './mutate-agent-proposals.action.ts';
 import { recordAssetIntegrityFailureAction } from './record-asset-integrity-failure.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
 import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
+import { replaceAgentOperatorsAction } from './replace-agent-operators.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
 import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
@@ -34,12 +38,16 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   changePrincipalStatusAction.descriptor,
   changeSystemWorkloadEnrollmentAction.descriptor,
   changeTenantModuleStateAction.descriptor,
+  configureAgentAction.descriptor,
   confirmAssetAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
+  manageAgentStatusAction.descriptor,
+  manageDemoAccountAction.descriptor,
   mutateAgentProposalsAction.descriptor,
   recordAssetIntegrityFailureAction.descriptor,
   recordSupportImpersonationAction.descriptor,
   renameDisplayFilenameAction.descriptor,
+  replaceAgentOperatorsAction.descriptor,
   reservePrincipalBindingAction.descriptor,
   setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,

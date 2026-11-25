@@ -1,7 +1,7 @@
-import { Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { getActionHandler, getActionServiceFactory } from '../../src/actions/definition.ts';
+import { defineAction, getActionHandler, getActionServiceFactory } from '../../src/actions/definition.ts';
 import {
   InvitePersonAuditEvidenceSchema,
   InvitePersonPayloadSchema,
@@ -9,6 +9,7 @@ import {
 } from '../../src/auth/person-invitation.ts';
 import { PrincipalManagementErrorSchema } from '../../src/auth/principal-management-errors.ts';
 import { coreActionCatalog } from '../../src/modules/actions/catalog.ts';
+import { configureAgentAction } from '../../src/modules/actions/configure-agent.action.ts';
 import { invitePersonAction } from '../../src/modules/actions/invite-person.action.ts';
 import {
   ManageAgentStatusAuditEvidenceSchema,
@@ -16,13 +17,42 @@ import {
   ManageAgentStatusResultSchema,
   manageAgentStatusAction,
 } from '../../src/modules/actions/manage-agent-status.action.ts';
+import { manageDemoAccountAction } from '../../src/modules/actions/manage-demo-account.action.ts';
 import { principalLifecycleDomainEvents } from '../../src/modules/actions/principal-lifecycle-event.ts';
+import { replaceAgentOperatorsAction } from '../../src/modules/actions/replace-agent-operators.action.ts';
 import { setCompanyMembershipAction } from '../../src/modules/actions/set-company-membership.action.ts';
+import { isGenuineCoreAction } from '../../src/modules/module-operation-execution.ts';
 import { CompanyMembershipSchema } from '../../src/permissions/company-membership.ts';
 
 const principalId = '11111111-1111-4111-8111-111111111111';
 const tenantId = '22222222-2222-4222-8222-222222222222';
 const principalRef = { principalId, tenantId };
+
+for (const { action, recreated } of [
+  {
+    action: configureAgentAction,
+    recreated: defineAction({ ...configureAgentAction.descriptor }, () => Effect.die('must not execute')),
+  },
+  {
+    action: manageAgentStatusAction,
+    recreated: defineAction({ ...manageAgentStatusAction.descriptor }, () => Effect.die('must not execute')),
+  },
+  {
+    action: replaceAgentOperatorsAction,
+    recreated: defineAction({ ...replaceAgentOperatorsAction.descriptor }, () => Effect.die('must not execute')),
+  },
+  {
+    action: manageDemoAccountAction,
+    recreated: defineAction({ ...manageDemoAccountAction.descriptor }, () => Effect.die('must not execute')),
+  },
+]) {
+  it(`${action.descriptor.actionKey} is native only by its original descriptor identity`, () => {
+    expect(coreActionCatalog.filter((descriptor) => descriptor === action.descriptor)).toHaveLength(1);
+    expect(isGenuineCoreAction(action)).toBe(true);
+    expect(recreated.descriptor).not.toBe(action.descriptor);
+    expect(isGenuineCoreAction(recreated)).toBe(false);
+  });
+}
 
 for (const { action, legalEntityScope, slug } of [
   { action: invitePersonAction, legalEntityScope: 'required', slug: 'invite-person' },

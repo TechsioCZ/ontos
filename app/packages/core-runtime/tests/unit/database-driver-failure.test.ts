@@ -3,6 +3,7 @@ import { Cause, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 
+import { PostgresDiagnosticSqlStateSchema } from '../../src/database/postgres-failure.ts';
 import { isDatabaseGuardRefusal, isDatabaseIntegrityRefusal } from '../../src/database/driver-failure.ts';
 import {
   DatabaseDriverFailureSchema,
@@ -314,4 +315,14 @@ it('finds a commit-time refusal through the cause chain it arrives in', () => {
   const guard = new Error('outer', { cause: { cause: { code: '55000' } } });
   expect(isDatabaseIntegrityRefusal(guard)).toBe(true);
   expect(isDatabaseGuardRefusal(guard)).toBe(true);
+});
+
+it('limits reported PostgreSQL states to the reviewed technical vocabulary without accepting driver objects', () => {
+  const reportable = Schema.is(PostgresDiagnosticSqlStateSchema);
+  expect(['23505', '23514', '42501', '42703', '42P01', '23503', '23502', 'P0001', '22P02'].every(reportable)).toBe(
+    true,
+  );
+  for (const unreviewed of ['08006', 'secret SQL', '', null, { code: '23505', detail: 'private SQL' }]) {
+    expect(reportable(unreviewed)).toBe(false);
+  }
 });

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Migration contract reads checked-in generated SQL; expires: 2027-03-31.
 import { expect, it } from 'effect-rstest';
-import { getTableConfig } from 'drizzle-orm/pg-core';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
 import { readdirSync, readFileSync } from 'node:fs';
 
@@ -13,6 +13,7 @@ import {
   antiResurrectionProtections,
   applicabilityDecisions,
   consentDecisions,
+  demoSourceProcessingPolicies,
   dsrDeliveryAccess,
   eligibilityEvidence,
   externalObligations,
@@ -133,12 +134,44 @@ it('enables tenant and legal-entity RLS on every governed Privacy table', () => 
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
     expect(config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull)).toBe(true);
-    expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
+    expect(
+      config.policies.map((policy) => policy.for),
+      config.name,
+    ).toEqual(table === demoSourceProcessingPolicies ? ['select'] : ['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
       expect(policy.to).toBe('ontos_runtime');
     }
   }
   /* jscpd:ignore-end */
+
+  const readOnlyPolicy = getTableConfig(demoSourceProcessingPolicies);
+  expect(
+    readOnlyPolicy.columns.map((column) => ({
+      name: column.name,
+      notNull: column.notNull,
+      type: column.getSQLType(),
+    })),
+  ).toEqual([
+    { name: 'legal_entity_id', notNull: true, type: 'uuid' },
+    { name: 'tenant_id', notNull: true, type: 'uuid' },
+    { name: 'policy_id', notNull: true, type: 'text' },
+    { name: 'policy_record', notNull: true, type: 'jsonb' },
+    { name: 'recorded_at', notNull: true, type: 'timestamp with time zone' },
+    { name: 'recorded_by', notNull: true, type: 'text' },
+  ]);
+  expect(readOnlyPolicy.primaryKeys.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['tenant_id', 'legal_entity_id', 'policy_id'],
+  ]);
+  const [select] = readOnlyPolicy.policies;
+  expect(select?.name).toBe('privacy_demo_source_processing_policies_select');
+  expect(select?.withCheck).toBeUndefined();
+  if (select?.using === undefined) {
+    expect.unreachable('The administrator-owned policy must restrict runtime reads to the installed scope');
+  }
+  expect(new PgDialect().sqlToQuery(select.using).sql.replaceAll(/\s+/gu, ' ')).toBe(
+    `"privacy"."demo_source_processing_policies"."tenant_id"=nullif(current_setting('ontos.tenant_id',true),'')::uuid ` +
+      `and "privacy"."demo_source_processing_policies"."legal_entity_id"=nullif(current_setting('ontos.legal_entity_id',true),'')::uuid`,
+  );
 });
 
 it('keeps pre-tenant redemption evidence separate from governed personal records', () => {
@@ -494,9 +527,19 @@ it('checks in non-destructive generated migrations with forced RLS and exact imm
   for (const table of PRIVACY_TABLE_INVENTORY.filter(
     (name) => !new Set<string>(PRIVACY_INGRESS_TABLE_INVENTORY).has(name),
   )) {
-    expect(sql).toContain(`ALTER TABLE "privacy"."${table}" FORCE ROW LEVEL SECURITY`);
-    expect(sql).not.toContain(`DROP TABLE "privacy"."${table}"`);
+    const qualifiedTable = `(?:"privacy"|privacy)\\.(?:"${table}"|${table})(?=\\s|;)`;
+    expect(sql).toMatch(
+      new RegExp(`ALTER\\s+TABLE\\s+${qualifiedTable}\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY\\b`, 'iu'),
+    );
+    expect(sql).not.toMatch(new RegExp(`DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${qualifiedTable}`, 'iu'));
   }
+  const policyPrivileges = [...sql.matchAll(/^[ \t]*(?:GRANT|REVOKE)\b[^;]+;/gimu)]
+    .map(([statement]) => statement.replaceAll('"', '').replaceAll(/\s+/gu, ' ').trim())
+    .filter((statement) => /\bON (?:TABLE )?privacy\.demo_source_processing_policies\b/iu.test(statement));
+  expect(policyPrivileges).toEqual([
+    'REVOKE ALL ON privacy.demo_source_processing_policies FROM PUBLIC, ontos_runtime;',
+    'GRANT SELECT ON privacy.demo_source_processing_policies TO ontos_runtime;',
+  ]);
   const actualTriggers = EffectArray.sort(
     [...sql.matchAll(/CREATE TRIGGER "(?<name>privacy_[^"]+_immutable)"/gu)].map(({ groups }) => groups?.name ?? ''),
     Order.String,

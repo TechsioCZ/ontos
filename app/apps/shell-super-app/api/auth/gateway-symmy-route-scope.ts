@@ -4,7 +4,8 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { SymmyGatewayRouteScopeSchema } from '@app/shared-contracts';
+import type { SymmyGatewayRouteScope } from '@app/shared-contracts';
 import type {
   SymmyRouteContextRequestSchema,
   SymmyRouteContextResponseSchema,
@@ -77,7 +78,7 @@ interface NativeReadEvidence {
   readonly audience: string;
   readonly compositionRevision: string;
   readonly principal: TrustedPrincipalContext;
-  readonly routeScope: RegisteredGatewayRouteScope;
+  readonly routeScope: SymmyGatewayRouteScope;
 }
 const nativeReadMintKey = Object.freeze({ kind: 'symmy_native_route_read' });
 class AdmittedSymmyNativeReadValue {
@@ -373,7 +374,7 @@ export const prepareSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.prepar
         originalWorkloadKey: receiver.originalWorkloadKey,
         workloadKey,
       };
-      const nativeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
+      const nativeScope = yield* Schema.decodeUnknownEffect(SymmyGatewayRouteScopeSchema)({
         ...routeScopeInput,
         nativeReadReceiver:
           route.legalEntityId === undefined

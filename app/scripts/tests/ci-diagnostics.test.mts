@@ -270,8 +270,21 @@ it.effect('captures live Shell diagnostics before killing even a TERM-resistant 
       directory,
       'docker',
       `kill -0 "$(cat "$RUNNER_TEMP/task.pid")"
+      /bin/ps -p "$(cat "$RUNNER_TEMP/task.pid")" -o pid=,ppid=,pgid=,stat=,comm=
       echo 'database snapshot while task alive'
       cat`,
+    );
+    const exitObserver = path.join(directory, 'supervisor-exit.sh');
+    writeFileSync(
+      exitObserver,
+      `exit() {
+        if [[ "\${1:-}" == 124 && -f "$RUNNER_TEMP/task.pid" ]]; then
+          printf '%s' "$$" >"$RUNNER_TEMP/supervisor.pid"
+          /bin/ps -p "$(cat "$RUNNER_TEMP/task.pid")" -o pid=,ppid=,pgid=,stat=,comm= >"$RUNNER_TEMP/task-at-supervisor-exit" || true
+        fi
+        builtin exit "$@"
+      }
+      `,
     );
     try {
       const task = `require('fs').writeFileSync(process.env.RUNNER_TEMP+'/task.pid',String(process.pid));
@@ -296,6 +309,7 @@ it.effect('captures live Shell diagnostics before killing even a TERM-resistant 
           encoding: 'utf-8',
           env: {
             ...inherited,
+            BASH_ENV: exitObserver,
             ONTOS_CI_ISOLATED_WORKERS: '2',
             ONTOS_CI_WORKER_SLOT: '1',
             PATH: `${directory}:${inherited.PATH}`,
@@ -314,8 +328,19 @@ it.effect('captures live Shell diagnostics before killing even a TERM-resistant 
       expect(trace).toContain('database snapshot while task alive');
       expect(trace).toContain('pg_stat_activity');
       expect(trace).toContain('pg_locks');
+      expect(readFileSync(path.join(directory, 'task-at-supervisor-exit'), 'utf-8')).toBe('');
       const pid = Number(readFileSync(path.join(directory, 'task.pid'), 'utf-8'));
-      expect(() => process.kill(pid, 0)).toThrow();
+      const supervisor = readFileSync(path.join(directory, 'supervisor.pid'), 'utf-8');
+      const observed = trace
+        .split('\n')
+        .map((line) => line.trim().split(/\s+/u))
+        .find(([observedPid]) => observedPid === String(pid));
+      expect(observed?.slice(0, 3)).toEqual([String(pid), supervisor, String(pid)]);
+      expect(observed?.[3]).not.toMatch(/^Z/u);
+      const remaining = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,pgid=,stat=,comm='], {
+        encoding: 'utf-8',
+      });
+      expect(() => process.kill(pid, 0), `Remaining owned task PID/PPID/PGID/STAT: ${remaining.stdout}`).toThrow();
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

@@ -1,9 +1,6 @@
 import { Effect, Redacted, Schema } from 'effect';
 
-import {
-  DemoOrderExportRequestSchema,
-  demoOrderExportOperation,
-} from '@app/merchandise/apis/demo-order-export';
+import { DemoOrderExportRequestSchema, demoOrderExportOperation } from '@app/merchandise/apis/demo-order-export';
 import type { DemoOrderExportResponse } from '@app/merchandise/apis/demo-order-export';
 import { executeDemoOrderExportWithAuthorization } from '@app/merchandise/apis/demo-order-export/client';
 import { symmyInvalidProblem, symmyUnavailableProblem } from './contract.ts';
@@ -24,7 +21,14 @@ import {
 } from './demo-orders-contract.ts';
 import type { SymmyDemoOrdersQuery } from './demo-orders-contract.ts';
 
-export { demoOrderExportOperation };
+export { demoOrderExportOperation } from '@app/merchandise/apis/demo-order-export';
+
+/** Treat an owner response for another tenant/company or selector as an unavailable read, never as empty data. */
+export const validateSymmyDemoOrdersResult = (
+  result: DemoOrderExportResponse,
+  expected: Parameters<typeof symmyDemoOrdersResultMatches>[1],
+): Effect.Effect<void, SymmyIngressProblem> =>
+  symmyDemoOrdersResultMatches(result, expected) ? Effect.void : Effect.fail(symmyUnavailableProblem);
 
 /** Both list and detail use the same request-local authenticated, route-enrolled company scope. */
 export const readSymmyDemoOrders = Effect.fn('SymmyDemoOrders.read')(function* read(
@@ -37,12 +41,12 @@ export const readSymmyDemoOrders = Effect.fn('SymmyDemoOrders.read')(function* r
   yield* requireRouteRead(scope, demoOrderExportOperation.moduleId, demoOrderExportOperation.entrypointKey);
   const legalEntityId = yield* requireRouteCompany(scope);
   const parsed = yield* Schema.decodeUnknownEffect(SymmyDemoOrdersQuerySchema)(query).pipe(
-    Effect.mapError(() => symmyInvalidProblem),
+    Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
   );
   const paging = { limit: parsed.limit ?? 50, offset: parsed.offset ?? 0 };
   const raw = orderId === undefined ? paging : { limit: 1, offset: 0, orderId };
   const payload = yield* Schema.decodeUnknownEffect(DemoOrderExportRequestSchema)(raw).pipe(
-    Effect.mapError(() => symmyInvalidProblem),
+    Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
   );
   const credential = yield* acquireSymmyReadAssertion(admission, demoOrderExportOperation.audience, legalEntityId);
   const result = yield* executeDemoOrderExportWithAuthorization(
@@ -59,13 +63,6 @@ export const readSymmyDemoOrders = Effect.fn('SymmyDemoOrders.read')(function* r
     orders: result.orders.map(mapSymmyDemoOrder),
   };
 });
-
-/** Treat an owner response for another tenant/company or selector as an unavailable read, never as empty data. */
-export const validateSymmyDemoOrdersResult = (
-  result: DemoOrderExportResponse,
-  expected: Parameters<typeof symmyDemoOrdersResultMatches>[1],
-): Effect.Effect<void, SymmyIngressProblem> =>
-  symmyDemoOrdersResultMatches(result, expected) ? Effect.void : Effect.fail(symmyUnavailableProblem);
 
 export const readSymmyDemoOrder = Effect.fn('SymmyDemoOrders.detail')(function* read(
   scope: SymmySourceReadScope,

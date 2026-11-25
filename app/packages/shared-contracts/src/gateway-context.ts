@@ -3,6 +3,7 @@ import type {
   PrivacyDispatchOperation,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
+  NativeRouteReadReceiverSchema,
   RegisteredGatewayRecoverySchema,
   RegisteredGatewayRouteScopeSchema,
   RegisteredGatewayWorkloadSchema,
@@ -436,6 +437,18 @@ const GatewayContextV8ClaimsSchema = organizationGovernanceClaims(
 );
 export type GatewayContextV6Claims = typeof GatewayContextV6ClaimsSchema.Type;
 
+/** Symmy signed route authority refines Core's structural receiver to its exact admission workloads. */
+export const SymmyGatewayRouteScopeSchema = Schema.Struct({
+  ...RegisteredGatewayRouteScopeSchema.fields,
+  nativeReadReceiver: Schema.optionalKey(
+    Schema.Struct({
+      ...NativeRouteReadReceiverSchema.fields,
+      originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+    }),
+  ),
+});
+export type SymmyGatewayRouteScope = typeof SymmyGatewayRouteScopeSchema.Type;
+
 /** A synchronous source Read executes as its native receiver without inventing an Action invocation. */
 export const GatewayContextV9ClaimsSchema = Schema.Struct({
   aud: GatewayAudienceSchema,
@@ -445,7 +458,7 @@ export const GatewayContextV9ClaimsSchema = Schema.Struct({
   iss: nonEmptyString,
   jti: uuid,
   principal: GatewayTrustedPrincipalContextSchema,
-  routeScope: RegisteredGatewayRouteScopeSchema,
+  routeScope: SymmyGatewayRouteScopeSchema,
   sub: uuid,
   targetBuildMarker,
   ver: Schema.Literal(NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION),
@@ -463,7 +476,12 @@ export const GatewayContextV9ClaimsSchema = Schema.Struct({
     claims.principal.tenantId === claims.routeScope.tenantId &&
     claims.principal.legalEntityId === undefined
       ? []
-      : [{ issue: 'A native route Read requires its exact system receiver and original integration evidence', path: ['routeScope'] }]),
+      : [
+          {
+            issue: 'A native route Read requires its exact system receiver and original integration evidence',
+            path: ['routeScope'],
+          },
+        ]),
   ]),
 );
 
@@ -473,18 +491,31 @@ export const GatewayContextV10ClaimsSchema = Schema.Struct({
   act: GatewayActorClaimSchema,
   ver: Schema.Literal(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION),
 }).check(
-  Schema.makeFilter(({ act, ver: _version, ...claims }) => [
-    ...(Schema.is(GatewayContextV9ClaimsSchema)({ ...claims, ver: NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION })
-      ? []
-      : [{ issue: 'A delegated native Read retains the exact native receiver and original integration evidence', path: ['routeScope'] }]),
-    ...(act.principalId !== claims.sub &&
-      act.principalId !== claims.routeScope.nativeReadReceiver?.originalPrincipalId
-      ? []
-      : [{ issue: 'The module actor differs from both the native receiver and original integration', path: ['act'] }]),
-    ...(claims.routeScope.nativeReadReceiver?.requestHash !== undefined
-      ? []
-      : [{ issue: 'A delegated native Read requires its exact decoded request hash', path: ['routeScope'] }]),
-  ]),
+  Schema.makeFilter(({ act, ver: _version, ...claims }) => {
+    const issues: Schema.FilterIssue[] = [];
+    if (!Schema.is(GatewayContextV9ClaimsSchema)({ ...claims, ver: NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION })) {
+      issues.push({
+        issue: 'A delegated native Read retains the exact native receiver and original integration evidence',
+        path: ['routeScope'],
+      });
+    }
+    if (
+      act.principalId === claims.sub ||
+      act.principalId === claims.routeScope.nativeReadReceiver?.originalPrincipalId
+    ) {
+      issues.push({
+        issue: 'The module actor differs from both the native receiver and original integration',
+        path: ['act'],
+      });
+    }
+    if (claims.routeScope.nativeReadReceiver?.requestHash === undefined) {
+      issues.push({
+        issue: 'A delegated native Read requires its exact decoded request hash',
+        path: ['routeScope'],
+      });
+    }
+    return issues;
+  }),
 );
 
 export const SupportedGatewayContextClaimsSchema = Schema.Union([
