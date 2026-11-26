@@ -103,7 +103,7 @@ const ownedType = (type: Option.Option<TransactionalMessageType>, request: Commu
 const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit(
   request: DecisionStoresRequest,
   type: Option.Option<TransactionalMessageType>,
-  stores: DecisionStores,
+  stores: Pick<DecisionStores, 'resend'>,
 ) {
   if (request.resendOf === undefined || Option.isNone(type)) {
     return Option.none<ResendRefusal>();
@@ -346,12 +346,27 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
 const eligibleCandidatesOf = (candidates: readonly MessageIntentCandidate[]) =>
   candidates.filter(({ recipient }) => RecipientDecision.$is('Eligible')(recipient));
 
+/** Read resend admission before asking remote owners; the committing transaction reads it again. */
+export const prepareResendAdmission = Effect.fn('Communications.prepareResendAdmission')(function* prepareAdmission(
+  request: CommunicationRequest,
+  resend: ResendOriginalPortContract,
+) {
+  const input = yield* decodeIntakeInput(request);
+  const catalog = yield* MessageTypeCatalog;
+  return yield* resendRefusalFor(
+    request,
+    ownedType(catalog.byPurpose(input.decisionRequest.purpose), input.decisionRequest),
+    { resend },
+  );
+});
+
 /**
- * Gather source, recipient, Privacy and language authority before SQL. Resend eligibility and owner-local settings
- * are decided later from the committing transaction; these facts contain no transaction-bound service.
+ * Gather source, recipient, Privacy and language authority outside SQL after the resend admission snapshot.
+ * Resend eligibility is rechecked alongside owner-local settings in the committing transaction; these facts contain no transaction-bound service.
  */
 export const prepareRequest = Effect.fn('Communications.prepareRequest')(function* prepareRequestOf(
   request: CommunicationRequest,
+  resendRefusal: Option.Option<ResendRefusal>,
 ) {
   const [input, requestId] = yield* Effect.all([decodeIntakeInput(request), requestIdOf(request)], {
     concurrency: 2,
@@ -367,6 +382,7 @@ export const prepareRequest = Effect.fn('Communications.prepareRequest')(functio
       .decide(input.decisionRequest, {
         recipients,
         source,
+        ...Option.match(resendRefusal, { onNone: () => ({}), onSome: (refusal) => ({ resendRefusal: refusal }) }),
         ...Option.match(reading.unresolved, {
           onNone: () => ({}),
           onSome: (sourceUnresolved) => ({ sourceUnresolved }),
@@ -382,7 +398,7 @@ export const prepareRequest = Effect.fn('Communications.prepareRequest')(functio
   const needsRecipients =
     CommunicationOutcome.$is('NoMessage')(probe.outcome) && probe.outcome.reason === 'RECIPIENT_AUTHORITY_MISSING';
   if (!needsRecipients || Option.isNone(type)) {
-    return { asked: [], decisionId, input, languages: [], reading, requestId, typeOption };
+    return { asked: [], decisionId, input, languages: [], reading, requestId, resendRefusal, typeOption };
   }
   const evaluatedRecipients = yield* assessRecipients({
     bindings: input.bindings,
@@ -426,7 +442,7 @@ export const prepareRequest = Effect.fn('Communications.prepareRequest')(functio
     }),
     { concurrency: OWNER_CALL_CONCURRENCY },
   );
-  return { asked, decisionId, input, languages, reading, requestId, typeOption };
+  return { asked, decisionId, input, languages, reading, requestId, resendRefusal, typeOption };
 });
 
 export type PreparedRequest = Effect.Success<ReturnType<typeof prepareRequest>>;
@@ -470,6 +486,9 @@ export const decidePreparedRequest = Effect.fn('Communications.decidePreparedReq
       requestId,
     } satisfies DecisionPlan;
   }
+  if (Option.isSome(prepared.resendRefusal) && Option.isNone(resendRefusal)) {
+    return yield* unavailable('Resend admission changed; retry preparation to obtain recipient and Privacy facts');
+  }
   const decision = yield* evaluate(
     asked.map(({ evaluated, privacy }) =>
       recipientFactOf(evaluated.assessment, input.decisionRequest, privacyEvidenceOf(privacy)),
@@ -508,5 +527,8 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
   request: CommunicationRequest,
   stores: DecisionStores,
 ) {
-  return yield* decidePreparedRequest(yield* prepareRequest(request), stores);
+  return yield* decidePreparedRequest(
+    yield* prepareRequest(request, yield* prepareResendAdmission(request, stores.resend)),
+    stores,
+  );
 });

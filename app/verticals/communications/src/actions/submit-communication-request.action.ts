@@ -3,7 +3,7 @@
 // @ontos-action-slug submit-communication-request
 import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreparationContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 
 import {
   CommunicationDecisionUnavailable,
@@ -18,14 +18,14 @@ import type {
   SubmitCommunicationRequestPayload,
   SubmitCommunicationRequestResult,
 } from '../../shared/communication-intake.ts';
-import { decidePreparedRequest, prepareRequest } from '../domain/intake/decide-request.ts';
+import { decidePreparedRequest, prepareRequest, prepareResendAdmission } from '../domain/intake/decide-request.ts';
 import type { PreparedRequest } from '../domain/intake/decide-request.ts';
 import { requestFingerprintOf, requestIdentityKeyOf } from '../domain/intake/identity.ts';
 import { scopeKey } from '../domain/recipient/original-binding.ts';
 import { actionOwnerCall, underOwnerCall } from '../integrations/owner-call.ts';
 import { sourceCallerOf } from '../integrations/source-caller.ts';
 import type { StoredCommunicationDecision } from '../services/communication-intake-port.service.ts';
-import { communicationIntakeService } from '../services/communication-intake.service.ts';
+import { communicationDecisionExists, communicationIntakeService } from '../services/communication-intake.service.ts';
 import { OutboxPayloadSchema as MessageIntentPreparedPayloadSchema } from '../../shared/outbox/communications-core-message-intent-prepared-v1.ts';
 import { createSubmitCommunicationRequestCommunicationsCoreMessageIntentPreparedV1OutboxMessage } from './submit-communication-request-communications-core-message-intent-prepared-v1.outbox-message.ts';
 
@@ -39,7 +39,9 @@ const ErrorSchema = Schema.Union([
   CommunicationDecisionUnavailable,
 ]);
 type Services = Effect.Success<ReturnType<typeof communicationIntakeService>> & {
-  readonly prepared: Option.Option<PreparedRequest>;
+  readonly prepared: Option.Option<
+    Result.Result<PreparedRequest, InstanceType<typeof CommunicationDecisionUnavailable>>
+  >;
 };
 
 const unpreparedServices: ActionServiceFactory<Services> = () =>
@@ -143,7 +145,11 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
         reason: 'The previously stored Communication Request disappeared during preparation',
       });
     }
-    const plan = yield* decidePreparedRequest(context.services.prepared.value, { policies, resend, templates });
+    const preparation = context.services.prepared.value;
+    if (Result.isFailure(preparation)) {
+      return yield* preparation.failure;
+    }
+    const plan = yield* decidePreparedRequest(preparation.success, { policies, resend, templates });
     const stored = yield* intake.insertDecision({
       actionInvocationId: context.actionInvocationId,
       fingerprint,
@@ -168,7 +174,12 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
   },
 );
 
-/** Owner calls finish before SQL; an existing decision needs no current owner authority to replay. */
+/**
+ * Preparation snapshots hold the source execution fence and read decision existence only. Remote facts were never
+ * atomic with SQL on main either: reading them earlier widens the window during an identity-lock wait. This can at
+ * most store PENDING_HANDOFF instead of a refusal; delivery still requires the handoff worker's own source state,
+ * revision, expiry, recipient and Privacy rechecks. Do not repeat remote reads in the committing transaction.
+ */
 export const prepareSubmitCommunicationRequestServices = Effect.fn('SubmitCommunicationRequestAction.prepare')(
   function* prepare(payload: SubmitCommunicationRequestPayload, context: ActionServicePreparationContext) {
     if (!sourceCallerOf(context.scope).isClaimedSource(payload.source.moduleKey)) {
@@ -183,14 +194,26 @@ export const prepareSubmitCommunicationRequestServices = Effect.fn('SubmitCommun
         reason: 'The scope claimed by the request is not the trusted scope of this operation',
       });
     }
-    const existing = yield* context.transaction((transaction) =>
-      communicationIntakeService(transaction, context.scope).pipe(
-        Effect.flatMap(({ intake }) => intake.findDecision(requestIdentityKeyOf(payload))),
-      ),
+    const snapshot = yield* context.transaction(
+      Effect.fn('SubmitCommunicationRequestAction.snapshot')(function* preparationSnapshot(transaction) {
+        const exists = yield* communicationDecisionExists(transaction, context.scope, requestIdentityKeyOf(payload));
+        if (exists) {
+          return { kind: 'stored' } as const;
+        }
+        const { resend } = yield* communicationIntakeService(transaction, context.scope);
+        const refusal = yield* prepareResendAdmission(payload, resend);
+        return { kind: 'new', refusal } as const;
+      }),
     );
-    const prepared = Option.isSome(existing)
-      ? Option.none<PreparedRequest>()
-      : Option.some(yield* prepareRequest(payload).pipe(underOwnerCall(actionOwnerCall(context.scope))));
+    const prepared =
+      snapshot.kind === 'stored'
+        ? Option.none<Result.Result<PreparedRequest, InstanceType<typeof CommunicationDecisionUnavailable>>>()
+        : Option.some(
+            yield* prepareRequest(payload, snapshot.refusal).pipe(
+              underOwnerCall(actionOwnerCall(context.scope)),
+              Effect.result,
+            ),
+          );
     const factory: ActionServiceFactory<Services> = (transaction, scope) =>
       communicationIntakeService(transaction, scope).pipe(Effect.map((services) => ({ ...services, prepared })));
     return factory;

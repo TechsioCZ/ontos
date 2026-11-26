@@ -3,9 +3,10 @@ import {
   refuseInsideDatabaseTransaction,
 } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { scopeKey } from '../../src/domain/recipient/original-binding.ts';
 import { CommunicationOutcome } from '../../src/domain/catalog/decision.ts';
 import { IntentStopReasonSchema, SourceUnresolvedReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
 import { decideRequest, prepareRequest, decidePreparedRequest } from '../../src/domain/intake/decide-request.ts';
@@ -42,9 +43,12 @@ const RECIPIENT = 'customer-1';
 
 interface Setup {
   readonly languages?: readonly ('cs' | 'en')[];
+  readonly originalAdmitted?: boolean;
+  readonly prepareRefusedResend?: boolean;
   /** The trusted recipient language of the recipient authority; none is established by default. */
   readonly recipientLanguage?: RecipientLanguageContext;
   readonly recipients?: readonly string[];
+  readonly resendOf?: Parameters<typeof communicationRequest>[0]['resendOf'];
   /** Whether a producer declares the Privacy scope of each recipient; default yes. */
   readonly scopeDeclared?: boolean;
   readonly sourceAuthority?: Layer.Layer<SourceOccurrenceAuthority>;
@@ -68,19 +72,34 @@ const run = (setup: Setup = {}) =>
     const privacy = privacyOwnerDouble(Object.fromEntries(recipients.map((id) => [id, privacyAllowed])));
     const scope = scopeDeclarationDouble();
     scope.state.declared = setup.scopeDeclared ?? true;
-    const request = communicationRequest({
-      bindings: recipients.map((id) => originalRecipient(id)),
-      purpose: type.purpose,
-    });
+    const ordinary = { bindings: recipients.map((id) => originalRecipient(id)), purpose: type.purpose };
+    const request = communicationRequest(
+      setup.resendOf === undefined ? ordinary : { ...ordinary, resendOf: setup.resendOf },
+    );
     const stores = {
       policies: makeInMemoryLanguagePolicyPort().port,
-      resend: makeInMemoryResendPort().port,
+      resend: makeInMemoryResendPort(
+        setup.originalAdmitted === true && request.resendOf !== undefined
+          ? {
+              [request.resendOf.originalIntentId]: {
+                effectBlock: Option.none(),
+                pendingWithoutOutcome: false,
+                scopeKey: scopeKey(request.scope),
+                sourceModule: request.source.moduleKey,
+                typeId: type.typeId,
+              },
+            }
+          : {},
+      ).port,
       templates: templates.port,
     };
     const decide = (
-      setup.transactionGuard === true
+      setup.transactionGuard === true || setup.prepareRefusedResend === true
         ? Effect.gen(function* stagedDecision() {
-            const prepared = yield* prepareRequest(request);
+            const prepared = yield* prepareRequest(
+              request,
+              setup.prepareRefusedResend === true ? Option.some('RESEND_ORIGINAL_NOT_FOUND') : Option.none(),
+            );
             return yield* decidePreparedRequest(prepared, stores).pipe(
               insideDatabaseTransaction('communications.core.submit-communication-request'),
             );
@@ -114,6 +133,50 @@ const reasonOf = (plan: DecisionPlan) =>
 
 const unresolvedSource = (reason: SourceOccurrenceUnavailable['reason']) =>
   Layer.succeed(SourceOccurrenceAuthority, { read: () => Effect.fail(new SourceOccurrenceUnavailable({ reason })) });
+
+describe('Refused resends do not disclose recipient facts', () => {
+  it.effect(
+    'retries preparation when a refused original becomes admitted instead of deciding with skipped recipient facts',
+    () =>
+      Effect.gen(function* admissionChanged() {
+        const setup = {
+          originalAdmitted: true,
+          resendOf: { originalIntentId: '33333333-3333-4333-8333-333333333333', reason: 'RECIPIENT_NOT_RECEIVED' },
+          type: fixtureType({ resend: 'SOURCE_APPROVED' }),
+        };
+        const result = yield* Effect.result(run({ ...setup, prepareRefusedResend: true }));
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          expect(result.failure).toMatchObject({
+            code: 'communication_decision_unavailable',
+            reason: expect.stringContaining('retry preparation'),
+          });
+        }
+        const { owner, plan, privacy } = yield* run(setup);
+        expect(plan.intents[0]?.status).toBe('PENDING_HANDOFF');
+        expect(owner.queries).toHaveLength(1);
+        expect(privacy.queries).toHaveLength(1);
+      }),
+  );
+
+  for (const [resend, reason] of [
+    ['NOT_APPROVED', 'RESEND_NOT_APPROVED'],
+    ['SOURCE_APPROVED', 'RESEND_ORIGINAL_NOT_FOUND'],
+  ] as const) {
+    it.effect(`asks neither recipient nor Privacy when ${reason}`, () =>
+      Effect.gen(function* refusedResend() {
+        const { owner, plan, privacy } = yield* run({
+          resendOf: { originalIntentId: '33333333-3333-4333-8333-333333333333', reason: 'RECIPIENT_NOT_RECEIVED' },
+          type: fixtureType(resend === 'SOURCE_APPROVED' ? { resend } : {}),
+        });
+        expect(noMessageReason(plan)).toBe(reason);
+        expect(plan.intents).toEqual([]);
+        expect(owner.queries).toEqual([]);
+        expect(privacy.queries).toEqual([]);
+      }),
+    );
+  }
+});
 
 describe('A source owner that states nothing is a durable not-sent outcome (#1401 I-07, #1400 LC-05)', () => {
   it.effect('prepares owner facts before the guarded SQL decision and queues an eligible intent', () => {

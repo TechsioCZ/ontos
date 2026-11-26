@@ -2,6 +2,9 @@ import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
+import { and, eq, sql } from 'drizzle-orm';
+import { QueryBuilder } from 'drizzle-orm/pg-core';
+import { communicationRequests, communicationDecisions } from '../../src/database/schema.ts';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -10,9 +13,11 @@ import {
   CommunicationRequestSourceMismatch,
 } from '../../shared/communication-intake-errors.ts';
 import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
+import { requestIdentityKeyOf } from '../../src/domain/intake/identity.ts';
 import { scopeKey } from '../../src/domain/recipient/original-binding.ts';
 import type { ResendOriginalFacts } from '../../src/domain/recovery/resend-admission.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
+import { resendPreparationReads } from '../support/resend-preparation-reads.ts';
 import { asSourceWorker } from '../support/source-worker-principal.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
@@ -62,8 +67,22 @@ const requestLookupSql = [
   'where (("communications"."communication_requests"."tenant_id" = $1) and ("communications"."communication_requests"."identity_key" = $2))',
 ].join(' ');
 
+const decisionExistsSql = new QueryBuilder()
+  .select({ exists: sql<boolean>`true` })
+  .from(communicationRequests)
+  .innerJoin(
+    communicationDecisions,
+    and(
+      eq(communicationDecisions.tenantId, communicationRequests.tenantId),
+      eq(communicationDecisions.requestId, communicationRequests.requestId),
+    ),
+  )
+  .where(and(eq(communicationRequests.tenantId, tenantId), eq(communicationRequests.identityKey, 'identity')))
+  .limit(1)
+  .toSQL().sql;
+
 /**
- * The real preparation reads an exactly scripted empty request snapshot and gathers owner facts. The service binding
+ * The real preparation reads an exactly scripted existence snapshot and resend history, then gathers owner facts. The service binding
  * keeps those prepared facts and replaces only the committing stores. Workload provenance is sealed by the source
  * fixture, not cryptographically issued by a live Shell; that boundary is covered by the native HTTP suite.
  */
@@ -72,6 +91,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   callerModule = 'fixture.source',
   originals: Parameters<typeof makeInMemoryResendPort>[0] = {},
   sourceExecutionAdmitted = true,
+  revokeBeforeLookup = false,
 ) {
   const templates = makeInMemoryTemplatePort();
   yield* seedLanguages(templates.port, ['cs', 'en'], {
@@ -82,11 +102,35 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   const policies = makeInMemoryLanguagePolicyPort();
   const resend = makeInMemoryResendPort(originals);
   const owner = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: communicationsRegistration });
+  const source = sourceAuthorityDouble();
+  const sourceExecutionInvocations =
+    sourceExecutionAdmitted === true ? [{ invocationId: '60000000-0000-4000-8000-000000000002', tenantId }] : [];
+  const fenceChecks: boolean[] = [];
+  const lookup = { after: () => {} };
   const harness = yield* makeActionTestHarness({
     ...owner,
     access: 'allowed',
     ownerRegistration: communicationsRegistration,
-    preparationReads: [{ execute: () => Effect.succeed([]), sql: requestLookupSql }],
+    preparationReads: [
+      ...resendPreparationReads(tenantId, originals),
+      {
+        execute: () =>
+          Effect.sync(() => {
+            lookup.after();
+            return [];
+          }),
+        sql: requestLookupSql,
+      },
+      {
+        execute: ({ params }) =>
+          Effect.sync(() => {
+            const exists = intake.stored.has(String(params[1]));
+            lookup.after();
+            return exists ? [{ exists: true }] : [];
+          }),
+        sql: decisionExistsSql,
+      },
+    ],
     services: [
       bindActionTestServices(submitCommunicationRequestAction, (prepared) => ({
         ...prepared,
@@ -97,8 +141,11 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
         templates: templates.port,
       })),
     ],
-    sourceExecutionInvocations:
-      sourceExecutionAdmitted === true ? [{ invocationId: '60000000-0000-4000-8000-000000000002', tenantId }] : [],
+    get sourceExecutionInvocations() {
+      const admitted = revokeBeforeLookup === false || fenceChecks.length === 0;
+      fenceChecks.push(admitted && sourceExecutionInvocations.length > 0);
+      return admitted ? sourceExecutionInvocations : [];
+    },
   });
   const privacy = privacyOwnerDouble({
     'approver-1': privacyAllowed,
@@ -113,7 +160,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   const ports = Layer.mergeAll(
     catalogOf(...types),
     recipientLanguageDouble().layer,
-    sourceAuthorityDouble().layer,
+    source.layer,
     scopeDeclarationDouble().layer,
     recipients.layer,
     privacy.layer,
@@ -139,7 +186,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
         transport: { correlationId: key, idempotencyKey: key },
       })
       .pipe(Effect.provide(ports));
-  return { harness, intake, issue, issueRaw, resend };
+  return { fenceChecks, harness, intake, issue, issueRaw, lookup, privacy, recipients, resend, source };
 });
 
 const ORIGINAL_INTENT_ID = '33333333-3333-4333-8333-333333333333';
@@ -176,6 +223,8 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
           outcome: 'DECIDED',
         });
         expect(t.resend.reads).toEqual([]);
+        expect(t.recipients.queries).toEqual([]);
+        expect(t.privacy.queries).toEqual([]);
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -195,6 +244,8 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
         expect(yield* missing.issue(request('o-resend-3'), 'k-resend-3')).toMatchObject({
           decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' },
         });
+        expect(missing.recipients.queries).toEqual([]);
+        expect(missing.privacy.queries).toEqual([]);
         // an original that exists but was requested in ANOTHER Legal Entity answers exactly like one that is not there
         const otherEntity = '55555555-5555-4555-8555-555555555555';
         const crossEntity = yield* world([type], 'fixture.source', {
@@ -211,6 +262,55 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
 });
 
 describe('Communication Request intake over the public Action boundary (#1401, AC-01)', () => {
+  it.effect('a concurrent winner is replayed even when source preparation fails after the empty lookup', () =>
+    Effect.gen(function* concurrentWinner() {
+      const t = yield* world();
+      const request = communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId });
+      const first = yield* t.issue(request, 'winner');
+      const identity = requestIdentityKeyOf(request);
+      const winner = Option.getOrThrow(Option.fromNullishOr(t.intake.stored.get(identity)));
+      t.intake.stored.delete(identity);
+      t.lookup.after = () => {
+        t.intake.stored.set(identity, winner);
+        t.source.state.available = false;
+      };
+      expect(yield* t.issue(request, 'contender')).toEqual({ ...first, replayed: true });
+      expect(t.source.state.reads).toBe(2);
+      expect(t.intake.decisions).toHaveLength(1);
+      expect(t.harness.snapshot().committed.at(-1)?.evidence.outboxMessages).toEqual([]);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('source preparation failure with no concurrent decision stays retryable and stores nothing', () =>
+    Effect.gen(function* noWinner() {
+      const t = yield* world();
+      t.source.state.available = false;
+      expect(
+        yield* Effect.flip(
+          t.issue(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }), 'no-winner'),
+        ),
+      ).toMatchObject({ code: 'communication_decision_unavailable' });
+      expect(t.intake.stored.size).toBe(0);
+      expect(t.harness.snapshot().committed).toEqual([]);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+  it.effect('revocation after admission but before the preparation lookup reads no Communications data', () =>
+    Effect.gen(function* revokeAfterAdmission() {
+      const request = communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId });
+      const admitted = yield* world();
+      yield* admitted.issue(request, 'seed-stored-decision');
+      const t = yield* world([fixtureType()], 'fixture.source', {}, true, true);
+      for (const [identity, decision] of admitted.intake.stored) {
+        t.intake.stored.set(identity, decision);
+      }
+      yield* Effect.flip(t.issue(request, 'revoked-between-admission-and-lookup'));
+      expect(t.harness.snapshot().stages).toContain('invocation_prepared');
+      expect(t.fenceChecks.slice(0, 2)).toEqual([true, false]);
+      expect(t.harness.snapshot().preparationQueries).toEqual([]);
+      expect(t.source.state.reads).toBe(0);
+      expect(t.harness.snapshot().committed).toEqual([]);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
   it.effect('a revoked source execution cannot prepare a decision or queue an intent', () =>
     Effect.gen(function* revokedSourceExecution() {
       const t = yield* world([fixtureType()], 'fixture.source', {}, false);
@@ -308,7 +408,14 @@ describe('Communication Request intake over the public Action boundary (#1401, A
         const first = yield* t.issue(request, 'k-1');
         // the transport key is Core's own replay guard: it is never the business identity
         expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(t.issue(request, 'k-1')))).toBe(true);
+        t.source.state.available = false;
+        const lookups = t.harness.snapshot().preparationQueries.length;
+        const { reads } = t.source.state;
         expect(yield* t.issue(request, 'k-1-retry')).toEqual({ ...first, replayed: true });
+        expect(t.source.state.reads).toBe(reads);
+        expect(t.harness.snapshot().preparationQueries.slice(lookups)).toMatchObject([
+          { params: [tenantId, requestIdentityKeyOf(request), 1], sql: decisionExistsSql },
+        ]);
         const otherRecipient = communicationRequest({
           bindings: [originalRecipient('customer-2', 'contact-customer-2')],
           tenantId,

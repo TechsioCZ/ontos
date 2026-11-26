@@ -154,6 +154,29 @@ const intentRow = Effect.fn('CommunicationIntake.intentRow')(function* row(
   } satisfies typeof messageIntents.$inferInsert;
 });
 
+/** Preparation needs existence only; request, decision and intent contents stay in the fenced, locked handler. */
+export const communicationDecisionExists = (
+  transaction: ScopedTransactionExecutor,
+  scope: Pick<OperationalScope, 'tenantId'>,
+  identityKey: string,
+) =>
+  transaction
+    .select({ exists: sql<boolean>`true` })
+    .from(communicationRequests)
+    .innerJoin(
+      communicationDecisions,
+      and(
+        eq(communicationDecisions.tenantId, communicationRequests.tenantId),
+        eq(communicationDecisions.requestId, communicationRequests.requestId),
+      ),
+    )
+    .where(and(eq(communicationRequests.tenantId, scope.tenantId), eq(communicationRequests.identityKey, identityKey)))
+    .limit(1)
+    .pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(unavailable),
+    );
+
 /** The PostgreSQL form of the intake port, bound to one scoped Core transaction and its installed Tenant. */
 export const postgresCommunicationIntakePort = (
   transaction: ScopedTransactionExecutor,
