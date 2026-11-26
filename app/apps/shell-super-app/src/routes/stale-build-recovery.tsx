@@ -1,6 +1,8 @@
 import { ErrorComponent, useRouter } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { Clock, Option, Ref, Schema, flow } from 'effect';
+import { browserRuntime } from '../runtime/browser-effect-runtime';
 
 // A deploy replaces every hashed chunk, so a document opened before it asks for files that no longer exist.
 // The fix is a fresh document of the same URL; one automatic reload per 30 s keeps a real outage from looping.
@@ -10,34 +12,36 @@ const reloadGuardMs = 30_000;
 const chunkFailurePattern =
   /ChunkLoadError|Loading (?:CSS )?chunk [^ ]+ failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Unable to preload CSS|Federation Runtime|RUNTIME-00[0-9]/iu;
 
-export const isChunkLoadFailure = (error: unknown): boolean => {
-  if (error === null || error === undefined) {
-    return false;
-  }
-  const candidate = error as { readonly message?: unknown; readonly name?: unknown };
-  const text = `${String(candidate.name ?? '')} ${String(candidate.message ?? (typeof error === 'string' ? error : ''))}`;
-  return chunkFailurePattern.test(text);
-};
+const ChunkFailureSchema = Schema.Union([
+  Schema.String,
+  Schema.Struct({ message: Schema.optionalKey(Schema.String), name: Schema.optionalKey(Schema.String) }),
+]);
 
-let staleBuild = false;
+/** Parse the error value at the router/browser boundary before inspecting its text. */
+export const isChunkLoadFailure = flow(
+  Schema.decodeUnknownOption(ChunkFailureSchema),
+  Option.match({
+    onNone: () => false,
+    onSome: (description) =>
+      chunkFailurePattern.test(
+        Schema.is(Schema.String)(description) ? description : `${description.name ?? ''} ${description.message ?? ''}`,
+      ),
+  }),
+);
+
+const recoveryState = browserRuntime.runSync(Ref.make({ installed: false, staleBuild: false }));
 
 const editingNow = (): boolean => {
   const active = globalThis.document?.activeElement;
-  return active instanceof HTMLElement && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(active.tagName));
-};
-
-/** Reloads now, or on the next navigation while the person is typing, so a background preload never drops a form. */
-export const recoverFromStaleBuild = (): void => {
-  if (editingNow()) {
-    staleBuild = true;
-    return;
-  }
-  reloadOnceForStaleBuild();
+  return (
+    Schema.is(Schema.instanceOf(HTMLElement))(active) &&
+    (active.isContentEditable || active.matches('input, textarea, select'))
+  );
 };
 
 /** Loads `href` (default: the current URL) as a fresh document unless this tab already did so within the guard window. True when it started. */
 export const reloadOnceForStaleBuild = (href?: string): boolean => {
-  const now = Date.now();
+  const now = browserRuntime.runSync(Clock.currentTimeMillis);
   try {
     const last = Number(globalThis.sessionStorage.getItem(reloadGuardKey) ?? '0');
     if (Number.isFinite(last) && now - last < reloadGuardMs) {
@@ -55,6 +59,15 @@ export const reloadOnceForStaleBuild = (href?: string): boolean => {
   return true;
 };
 
+/** Reloads now, or on the next navigation while the person is typing, so a background preload never drops a form. */
+export const recoverFromStaleBuild = (): void => {
+  if (editingNow()) {
+    browserRuntime.runSync(Ref.update(recoveryState, (state) => ({ ...state, staleBuild: true })));
+    return;
+  }
+  reloadOnceForStaleBuild();
+};
+
 const reloadNow = () => {
   globalThis.location.reload();
 };
@@ -62,15 +75,11 @@ const reloadNow = () => {
 /** The route error screen: a stale chunk reloads the page once, anything else keeps the router's error screen. */
 export const StaleBuildAwareErrorComponent = (props: ErrorComponentProps) => {
   const chunkFailure = isChunkLoadFailure(props.error);
-  const [reloading, setReloading] = useState(chunkFailure);
   useEffect(() => {
     if (chunkFailure) {
-      setReloading(reloadOnceForStaleBuild());
+      reloadOnceForStaleBuild();
     }
   }, [chunkFailure]);
-  if (reloading) {
-    return null;
-  }
   return (
     <div style={{ display: 'grid', gap: '0.75rem', justifyItems: 'start', padding: '1rem' }}>
       <ErrorComponent {...props} />
@@ -93,29 +102,23 @@ export const StaleBuildAwareErrorComponent = (props: ErrorComponentProps) => {
 /** Makes every route without its own error component use the stale-build aware one. */
 export const useStaleBuildErrorRecovery = (): void => {
   const router = useRouter();
-  if (router.options.defaultErrorComponent !== StaleBuildAwareErrorComponent) {
-    router.options.defaultErrorComponent = StaleBuildAwareErrorComponent;
-  }
   // A chunk failed earlier while the person was typing: the next navigation loads its target as a fresh document.
-  useEffect(
-    () =>
-      router.subscribe('onBeforeNavigate', (event) => {
-        if (staleBuild) {
-          reloadOnceForStaleBuild(event.toLocation.href);
-        }
-      }),
-    [router],
-  );
+  useEffect(() => {
+    router.update({ defaultErrorComponent: StaleBuildAwareErrorComponent });
+    return router.subscribe('onBeforeNavigate', (event) => {
+      if (browserRuntime.runSync(Ref.get(recoveryState)).staleBuild) {
+        reloadOnceForStaleBuild(event.toLocation.href);
+      }
+    });
+  }, [router]);
 };
-
-let installed = false;
 
 /** Chunk or remote loads that fail outside a route boundary (lazy imports, preloads) also recover once. */
 export const installStaleBuildRecovery = (): void => {
-  if (installed) {
+  const previous = browserRuntime.runSync(Ref.getAndUpdate(recoveryState, (state) => ({ ...state, installed: true })));
+  if (previous.installed) {
     return;
   }
-  installed = true;
   globalThis.addEventListener('unhandledrejection', (event) => {
     if (isChunkLoadFailure(event.reason)) {
       recoverFromStaleBuild();
