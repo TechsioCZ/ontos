@@ -78,21 +78,26 @@ A Symmy write route's retention policy and a `priceLists` read route's price rea
 ### Build
 
 - Node builds and runtimes use Zerops' `alpine/nodejs@26` image and its `node` executable. Builds install the workspace's pinned pnpm version; no Node archive is downloaded or included in the deployment. The local and CI Node patch pin remains in `.mise.toml`, while Zerops manages its image's Node 26 patch version.
-- GitHub Actions builds the units, in eight parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time, and the shards are dealt so the slowest of those two-wide lanes is as short as the measured unit costs allow.
+- The `plan` job first tries earlier unit artifacts by identity. If the missing units exceed the Zerops build budget, GitHub Actions builds the units in eight parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time, and the shards are dealt so the slowest of those two-wide lanes is as short as the measured unit costs allow.
 - Units build in the gates' mode (`build-app.sh` sets `ONTOS_CI_TYPECHECK_SEPARATE=1`): no bundler or server typecheck, which the gates run, and no JavaScript source maps, which nothing on stage reads.
 - Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
 - A unit whose committed inputs are unchanged keeps its previous `dist/`. The digest is in `dist/.zerops-build-digest`. Each shard keeps its builds in the Actions cache, outside the checkout: any untracked file in the tree turns every release identity into `workspace`.
-- The deploy job packs every shard's `dist/` (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout.
+- The delivery job packs the selected earlier artifacts or this run's shard builds (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout. The front delivery job re-takes the earlier artifacts and refuses to upload if its missing-unit list differs from the plan's.
 - The Zerops `app` build (`zerops.yaml`) unpacks that archive, installs the workspace, keeps every unit whose digest matches, builds the Outbox Worker host bundle under the hosted owners' revisions, and ships `app/`. It can still build any unit itself, two at a time, in its 5 vCPU / 8 GB build container.
 - `.deployignore` keeps `.output`, source maps, caches and tests out of the deployed package.
 
 ### Deploy
 
-`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
+`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm`, except pushes confined to `docs/**`, `app/docs/**`, or the workflow's named documentation files. It also runs on manual dispatch. Stage deliveries are serialized in the `zerops-stage` concurrency group. Candidate lint dispatches use a separate group and cannot deploy.
 
-1. **Build units**: eight shards, as above.
-2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
-3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The declared-read warm-up is blocking as well: it fails when its budget expires before every declared persona and destination has been read.
+1. **Select lint and plan**: `lint-plan` reads the last verified delivery once. The `lint` and `plan` jobs consume that same snapshot in parallel. `plan` writes the unit identities, takes earlier unit builds, and decides whether the missing units fit the Zerops build budget.
+2. **Build units when needed**: eight shards, as above. Builds need the plan, not lint, so they can finish while lint runs.
+3. **Deliver after lint succeeds** (environment `stage-edge`): `deliver` handles plans without runner builds; `deliver_app` also requires the build shards to succeed. Both require lint success before any secret sync or push. The shared delivery action syncs the selected secrets, uploads the app, then builds and pushes the selected storefronts while Zerops builds the app. `scripts/zerops/push-service.sh` uses the commit SHA as the version name and uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
+4. **Verify in the delivering job**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The declared-read warm-up is blocking as well: it fails when its budget expires before every declared persona and destination has been read.
+
+For a complete comparison against a verified ancestor, lint runs the pre-commit jobs on the changed files. Changes to tool configuration or dependencies that can affect unchanged files require all three whole-tree shards. Missing, divergent, or possibly truncated history also requires whole-tree lint. A dispatch of the exact already verified commit uses one `proof` row, which still runs the global pre-commit check.
+
+Red lint means this run cannot change stage, even if its planning or builds succeeded. It cannot advance the verified base, including when the plan selects no service. Fix the findings and push again; the next comparison still includes the refused commit's changes. A recovery dispatch still delivers every service. Only the exact verified SHA earns the cheaper lint proof.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 
@@ -139,7 +144,7 @@ Codesmith or another approved generator must update these surfaces atomically. U
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
 
-Stage deploys from `demo/sales-crm` through `.github/workflows/zerops-stage.yml`, which builds and pushes the `app` and `storefront` services on Zerops. It has no deploy plan and no release ledger. A unit whose committed inputs are unchanged keeps its cached build (see [Stage on Zerops](#stage-on-zerops)), and there is no force-full input. Run it manually with `gh workflow run zerops-stage.yml --ref demo/sales-crm`.
+Stage deploys from `demo/sales-crm` through `.github/workflows/zerops-stage.yml`, which builds and pushes the `app` and storefront services on Zerops. The `plan` job compares with the last verified delivery and retains its decision before either delivering job can change stage. A unit whose committed inputs are unchanged keeps its cached build (see [Stage on Zerops](#stage-on-zerops)). A manual dispatch delivers every service; `rebuild_units` also forces every app unit to rebuild. Run it manually with `gh workflow run zerops-stage.yml --ref demo/sales-crm`.
 
 ### Change-impact rules
 
