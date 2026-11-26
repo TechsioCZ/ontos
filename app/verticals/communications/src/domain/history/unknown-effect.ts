@@ -35,7 +35,14 @@ export interface FreshEligibility {
 }
 
 /** What the effect guard reads: the attempts, their provider observations and the conflicts (with their resolutions). */
-export type EffectFacts = Pick<IntentTimelineFacts, 'attempts' | 'conflicts' | 'observations'>;
+export interface EffectFacts {
+  readonly attempts: readonly Pick<IntentTimelineFacts['attempts'][number], 'attemptId' | 'state' | 'reason'>[];
+  readonly conflicts: readonly Pick<IntentTimelineFacts['conflicts'][number], 'resolvedAt'>[];
+  readonly observations: readonly Pick<
+    IntentTimelineFacts['observations'][number],
+    'attemptId' | 'kind' | 'recordedAt'
+  >[];
+}
 
 /** The blocks the APPEND-ONLY history alone causes, whatever any Current eligibility says. */
 export type EffectBlock = Exclude<UnknownEffectBlock, 'ELIGIBILITY_NOT_ELIGIBLE' | 'ELIGIBILITY_NOT_FRESH'>;

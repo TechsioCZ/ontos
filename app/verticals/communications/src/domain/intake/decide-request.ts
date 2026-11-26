@@ -110,7 +110,11 @@ const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit
   }
   const original =
     resendPolicyOf(type.value) === 'SOURCE_APPROVED'
-      ? yield* stores.resend.findOriginal(request.resendOf.originalIntentId)
+      ? yield* stores.resend.findOriginal(request.resendOf.originalIntentId, {
+          scopeKey: scopeKey(request.scope),
+          sourceModule: request.source.moduleKey,
+          typeId: type.value.typeId,
+        })
       : Option.none();
   return resendRefusalOf(type.value, request.source.moduleKey, scopeKey(request.scope), original);
 });

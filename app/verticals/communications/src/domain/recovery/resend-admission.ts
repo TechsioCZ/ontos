@@ -78,6 +78,7 @@ export const resendRefusalOf = (
 export interface ResendOriginalPortContract {
   readonly findOriginal: (
     originalIntentId: string,
+    admission: Pick<ResendOriginalFacts, 'scopeKey' | 'sourceModule' | 'typeId'>,
   ) => Effect.Effect<Option.Option<ResendOriginalFacts>, InstanceType<typeof CommunicationDecisionUnavailable>>;
 }
 

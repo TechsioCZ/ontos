@@ -194,26 +194,36 @@ export const prepareSubmitCommunicationRequestServices = Effect.fn('SubmitCommun
         reason: 'The scope claimed by the request is not the trusted scope of this operation',
       });
     }
-    const snapshot = yield* context.transaction(
-      Effect.fn('SubmitCommunicationRequestAction.snapshot')(function* preparationSnapshot(transaction) {
-        const exists = yield* communicationDecisionExists(transaction, context.scope, requestIdentityKeyOf(payload));
-        if (exists) {
-          return { kind: 'stored' } as const;
-        }
-        const { resend } = yield* communicationIntakeService(transaction, context.scope);
-        const refusal = yield* prepareResendAdmission(payload, resend);
-        return { kind: 'new', refusal } as const;
-      }),
-    );
-    const prepared =
-      snapshot.kind === 'stored'
-        ? Option.none<Result.Result<PreparedRequest, InstanceType<typeof CommunicationDecisionUnavailable>>>()
-        : Option.some(
-            yield* prepareRequest(payload, snapshot.refusal).pipe(
-              underOwnerCall(actionOwnerCall(context.scope)),
-              Effect.result,
-            ),
-          );
+    const snapshot = yield* context
+      .transaction(
+        Effect.fn('SubmitCommunicationRequestAction.snapshot')(function* preparationSnapshot(transaction) {
+          const exists = yield* communicationDecisionExists(transaction, context.scope, requestIdentityKeyOf(payload));
+          if (exists) {
+            return { kind: 'stored' } as const;
+          }
+          const { resend } = yield* communicationIntakeService(transaction, context.scope);
+          const refusal = yield* prepareResendAdmission(payload, resend);
+          return { kind: 'new', refusal } as const;
+        }),
+      )
+      .pipe(
+        Effect.catchTag('CommunicationDecisionUnavailable', (failure) =>
+          Effect.succeed({ failure, kind: 'failed' } as const),
+        ),
+      );
+    let prepared: Services['prepared'];
+    if (snapshot.kind === 'failed') {
+      prepared = Option.some(Result.fail(snapshot.failure));
+    } else if (snapshot.kind === 'stored') {
+      prepared = Option.none();
+    } else {
+      prepared = Option.some(
+        yield* prepareRequest(payload, snapshot.refusal).pipe(
+          underOwnerCall(actionOwnerCall(context.scope)),
+          Effect.result,
+        ),
+      );
+    }
     const factory: ActionServiceFactory<Services> = (transaction, scope) =>
       communicationIntakeService(transaction, scope).pipe(Effect.map((services) => ({ ...services, prepared })));
     return factory;

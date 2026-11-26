@@ -1,5 +1,6 @@
 import { attemptMayHaveLeft, effectAfterObservations, submissionFactOfAttempt } from './delivery-result.ts';
 import type { IntentTimelineFacts } from './timeline.ts';
+import type { EffectFacts } from './unknown-effect.ts';
 
 /**
  * Whether ONE Message Intent is still waiting for any outcome (#1403 review): it is pending its handoff and nothing about it is
@@ -8,7 +9,15 @@ import type { IntentTimelineFacts } from './timeline.ts';
  * no attempt, with only attempts that made no request, or whose attempts are all unknown is not final: the ordinary pre-handoff
  * step can still deliver it, so a deliberate copy of it must wait (the source can issue a new occurrence later).
  */
-export const awaitsFirstOutcome = (facts: IntentTimelineFacts): boolean => {
+export const awaitsFirstOutcome = (
+  facts: EffectFacts & {
+    readonly intent: Pick<IntentTimelineFacts['intent'], 'status'>;
+    readonly recoveries?:
+      | readonly Pick<NonNullable<IntentTimelineFacts['recoveries']>[number], 'outcome' | 'proven'>[]
+      | undefined;
+    readonly stops: readonly Pick<IntentTimelineFacts['stops'][number], 'proven'>[];
+  },
+): boolean => {
   if (facts.intent.status !== 'PENDING_HANDOFF') {
     return false;
   }

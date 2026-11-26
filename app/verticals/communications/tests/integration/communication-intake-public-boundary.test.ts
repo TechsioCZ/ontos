@@ -6,6 +6,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { QueryBuilder } from 'drizzle-orm/pg-core';
 import { communicationRequests, communicationDecisions } from '../../src/database/schema.ts';
 import { Effect, Layer, Option, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -81,6 +82,14 @@ const decisionExistsSql = new QueryBuilder()
   .limit(1)
   .toSQL().sql;
 
+interface SnapshotLookup {
+  after: () => void;
+  failure?: 'existence' | 'resend';
+}
+
+const failedSnapshotRead = () =>
+  Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'snapshot unavailable' }) }));
+
 /**
  * The real preparation reads an exactly scripted existence snapshot and resend history, then gathers owner facts. The service binding
  * keeps those prepared facts and replaces only the committing stores. Workload provenance is sealed by the source
@@ -106,13 +115,23 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   const sourceExecutionInvocations =
     sourceExecutionAdmitted === true ? [{ invocationId: '60000000-0000-4000-8000-000000000002', tenantId }] : [];
   const fenceChecks: boolean[] = [];
-  const lookup = { after: () => {} };
+  const lookup: SnapshotLookup = { after: () => {} };
   const harness = yield* makeActionTestHarness({
     ...owner,
     access: 'allowed',
     ownerRegistration: communicationsRegistration,
     preparationReads: [
-      ...resendPreparationReads(tenantId, originals),
+      ...resendPreparationReads(tenantId, originals).map((script, index) => ({
+        ...script,
+        execute: (query: Parameters<typeof script.execute>[0]) =>
+          Effect.suspend(() => {
+            if (index === 0 && lookup.failure === 'resend') {
+              lookup.after();
+              return failedSnapshotRead();
+            }
+            return script.execute(query);
+          }),
+      })),
       {
         execute: () =>
           Effect.sync(() => {
@@ -123,10 +142,16 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
       },
       {
         execute: ({ params }) =>
-          Effect.sync(() => {
-            const exists = intake.stored.has(String(params[1]));
-            lookup.after();
-            return exists ? [{ exists: true }] : [];
+          Effect.suspend(() => {
+            if (lookup.failure === 'existence') {
+              lookup.after();
+              return failedSnapshotRead();
+            }
+            return Effect.sync(() => {
+              const exists = intake.stored.has(String(params[1]));
+              lookup.after();
+              return exists ? [{ exists: true }] : [];
+            });
           }),
         sql: decisionExistsSql,
       },
@@ -238,6 +263,7 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
         });
         const result = yield* t.issue(request('o-resend-2'), 'k-resend-2');
         expect(result).toMatchObject({ decision: { kind: 'MESSAGE_INTENTS' }, outcome: 'DECIDED' });
+        expect(t.harness.snapshot().preparationQueries).toHaveLength(8);
         expect(t.resend.reads).toEqual([ORIGINAL_INTENT_ID]);
         // an original that is not there is refused, and no message is created
         const missing = yield* world([type]);
@@ -253,11 +279,54 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
         });
         const refused = yield* crossEntity.issue(request('o-resend-4'), 'k-resend-4');
         expect(refused).toMatchObject({ decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' } });
+        // The only owner reads are existence and scoped intent admission, never history of this foreign intent.
+        expect(crossEntity.harness.snapshot().preparationQueries).toHaveLength(2);
+        expect(missing.harness.snapshot().preparationQueries).toHaveLength(2);
         const notThere = yield* missing.issue(request('o-resend-4'), 'k-resend-4');
         expect(refused.outcome === 'DECIDED' && refused.decision).toEqual(
           notThere.outcome === 'DECIDED' && notThere.decision,
         );
       }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+});
+
+describe('Resend admission reads only the named original', () => {
+  it.effect('another source is indistinguishable from absence and a wrong type reads no history', () =>
+    Effect.gen(function* inaccessibleOriginal() {
+      const type = fixtureType({ resend: 'SOURCE_APPROVED' });
+      const request = communicationRequest({
+        bindings: [originalRecipient('customer-1')],
+        resendOf: { originalIntentId: ORIGINAL_INTENT_ID, reason: 'RECIPIENT_NOT_RECEIVED' },
+        tenantId,
+      });
+      const original = {
+        effectBlock: Option.none(),
+        pendingWithoutOutcome: false,
+        scopeKey: scopeKey(request.scope),
+        sourceModule: 'other.source',
+        typeId: type.typeId,
+      };
+      const foreign = yield* world([type], 'fixture.source', { [ORIGINAL_INTENT_ID]: original });
+      const absent = yield* world([type]);
+      const foreignResult = yield* foreign.issue(request, 'foreign-source');
+      const missingResult = yield* absent.issue(request, 'missing-source');
+      expect(foreignResult.outcome === 'DECIDED' && foreignResult.decision).toEqual(
+        missingResult.outcome === 'DECIDED' && missingResult.decision,
+      );
+      expect(foreignResult).toMatchObject({ decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' } });
+      expect(foreign.harness.snapshot().preparationQueries).toHaveLength(2);
+      const mismatch = yield* world([type], 'fixture.source', {
+        [ORIGINAL_INTENT_ID]: {
+          ...original,
+          sourceModule: 'fixture.source',
+          typeId: 'another.type',
+        },
+      });
+      expect(yield* mismatch.issue(request, 'wrong-type')).toMatchObject({
+        decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_TYPE_MISMATCH' },
+      });
+      expect(mismatch.harness.snapshot().preparationQueries).toHaveLength(2);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 
@@ -280,6 +349,52 @@ describe('Communication Request intake over the public Action boundary (#1401, A
       expect(t.harness.snapshot().committed.at(-1)?.evidence.outboxMessages).toEqual([]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
+
+  for (const failure of ['existence', 'resend'] as const) {
+    it.effect(`a concurrent winner is replayed after a typed ${failure} snapshot failure`, () =>
+      Effect.gen(function* snapshotWinner() {
+        const type = fixtureType({ resend: 'SOURCE_APPROVED' });
+        const t = yield* world([type]);
+        const base = { bindings: [originalRecipient('customer-1')], tenantId };
+        const request = communicationRequest(
+          failure === 'resend'
+            ? { ...base, resendOf: { originalIntentId: ORIGINAL_INTENT_ID, reason: 'RECIPIENT_NOT_RECEIVED' } }
+            : base,
+        );
+        const first = yield* t.issue(request, `winner-${failure}`);
+        const identity = requestIdentityKeyOf(request);
+        const winner = Option.getOrThrow(Option.fromNullishOr(t.intake.stored.get(identity)));
+        t.intake.stored.delete(identity);
+        t.lookup.failure = failure;
+        t.lookup.after = () => {
+          t.intake.stored.set(identity, winner);
+        };
+        const sourceReads = t.source.state.reads;
+        expect(yield* t.issue(request, `contender-${failure}`)).toEqual({ ...first, replayed: true });
+        expect(t.source.state.reads).toBe(sourceReads);
+        expect(t.intake.decisions).toHaveLength(1);
+        expect(t.harness.snapshot().committed.at(-1)?.evidence.outboxMessages).toEqual([]);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+    );
+    it.effect(`a typed ${failure} snapshot failure without a winner remains unavailable`, () =>
+      Effect.gen(function* snapshotNoWinner() {
+        const t = yield* world([fixtureType({ resend: 'SOURCE_APPROVED' })]);
+        t.lookup.failure = failure;
+        const base = { bindings: [originalRecipient('customer-1')], tenantId };
+        const request = communicationRequest(
+          failure === 'resend'
+            ? { ...base, resendOf: { originalIntentId: ORIGINAL_INTENT_ID, reason: 'RECIPIENT_NOT_RECEIVED' } }
+            : base,
+        );
+        expect(yield* Effect.flip(t.issue(request, `no-winner-${failure}`))).toMatchObject({
+          code: 'communication_decision_unavailable',
+        });
+        expect(t.source.state.reads).toBe(0);
+        expect(t.intake.stored.size).toBe(0);
+        expect(t.harness.snapshot().committed).toEqual([]);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+    );
+  }
 
   it.effect('source preparation failure with no concurrent decision stays retryable and stores nothing', () =>
     Effect.gen(function* noWinner() {
