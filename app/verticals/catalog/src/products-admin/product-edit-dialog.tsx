@@ -9,6 +9,8 @@ import { useState } from 'react';
 
 import { AddProductCategoryAssignmentPayloadSchema } from '../../shared/actions/add-product-category-assignment.ts';
 import { AssignSkuPayloadSchema } from '../../shared/actions/assign-sku.ts';
+import { ConfirmVariantCombinationPayloadSchema } from '../../shared/actions/confirm-variant-combination.ts';
+import { GovernVariantAxesPayloadSchema } from '../../shared/actions/govern-variant-axes.ts';
 import {
   CreateProductCategoryPayloadSchema,
   CreateProductCategoryResultSchema,
@@ -27,6 +29,8 @@ import { UpdateProductPayloadSchema } from '../../shared/actions/update-product.
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { executeAddProductCategoryAssignment } from '../api/add-product-category-assignment-action-client.ts';
 import { executeAssignSku } from '../api/assign-sku-action-client.ts';
+import { executeConfirmVariantCombination } from '../api/confirm-variant-combination-action-client.ts';
+import { executeGovernVariantAxes } from '../api/govern-variant-axes-action-client.ts';
 import { executeCreateProductCategory } from '../api/create-product-category-action-client.ts';
 import { executeReactivateProduct } from '../api/reactivate-product-action-client.ts';
 import { executeReactivateVariant } from '../api/reactivate-variant-action-client.ts';
@@ -100,6 +104,51 @@ const send = <P, I>(step: string, schema: Schema.Codec<P, I>, encoded: I, execut
     Effect.mapError((problem) => describe(step, problem)),
   );
 
+/**
+ * Catalog activates a Product only with an ACTIVE Variant, and a Variant becomes ACTIVE only by confirming its
+ * combination against the Product's axis basis. An ERP draft has no basis yet: initialize it axis-free (a basis that
+ * already exists answers a revision conflict, which is fine), then confirm every work-in-progress Variant at revision 1.
+ */
+const activationSteps = (item: ProductPageItem, draft: Draft) => {
+  const pending = item.variants.filter(
+    (variant) =>
+      variant.lifecycle === 'WORK_IN_PROGRESS' && draft.variants[variant.variantRef.resourceId]?.retired !== true,
+  );
+  if (pending.length === 0) {
+    return [];
+  }
+  const basis = send(
+    'Osy variant',
+    GovernVariantAxesPayloadSchema,
+    {
+      axes: [],
+      classification: { evidenceRefs: [evidence], kind: 'AXIS_INITIALIZATION', reason: draft.reason },
+      expectedAxisRevision: 0,
+      productRef: item.productRef,
+      reason: draft.reason,
+    },
+    executeGovernVariantAxes,
+  ).pipe(Effect.ignore);
+  return [
+    basis,
+    ...pending.map((variant) =>
+      send(
+        `Aktivace varianty ${variant.sku ?? variant.variantRef.resourceId.slice(0, 8)}`,
+        ConfirmVariantCombinationPayloadSchema,
+        {
+          evidenceRefs: [evidence],
+          expectedAxisRevision: 1,
+          expectedVariantRevision: variant.revision ?? 1,
+          productRef: item.productRef,
+          reason: draft.reason,
+          variantRef: variant.variantRef,
+        },
+        executeConfirmVariantCombination,
+      ),
+    ),
+  ];
+};
+
 const lifecycleStep = (item: ProductPageItem, draft: Draft) => {
   if (draft.lifecycle === item.lifecycle) {
     return [];
@@ -112,6 +161,7 @@ const lifecycleStep = (item: ProductPageItem, draft: Draft) => {
     return [send('Vyřazení produktu', RetireProductPayloadSchema, base, executeRetireProduct)];
   }
   return [
+    ...(draft.lifecycle === 'ACTIVE' ? activationSteps(item, draft) : []),
     send(
       'Stav produktu',
       UpdateProductPayloadSchema,
