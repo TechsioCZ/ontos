@@ -105,7 +105,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/zerops-delivery"
           bash app/scripts/zerops/read-delivery-history.sh comparison >"$RUNNER_TEMP/zerops-delivery/history.json"
           # The compare API is capped at 300 files. An unavailable, divergent or possibly cut list proves no
-          # subset: an empty list selects all three shards, never HEAD parent or only the first page of files.
+          # subset: the selector keeps all three shards unless this exact SHA is already verified. The
+          # explicit proof row still runs the hook's global job; no empty matrix or skipped lint can deliver.
           jq -j 'if .comparison.ancestor == true and .comparison.truncated == false then
             .comparison.changedPaths[] | ., "\u0000" else empty end' \
             "$RUNNER_TEMP/zerops-delivery/history.json" >"$RUNNER_TEMP/zerops-delivery/changed-paths"
@@ -114,6 +115,7 @@ jobs:
         id: shards
         env:
           PLAN_MODE: affected
+          COMPARISON_SNAPSHOT: ${{ runner.temp }}/zerops-delivery/history.json
           CHANGED_PATHS: ${{ runner.temp }}/zerops-delivery/changed-paths
         run: bash app/scripts/ci/choose-lint-shards.sh
 
@@ -127,7 +129,7 @@ jobs:
           retention-days: 3
 
   lint:
-    name: Stage lint (${{ matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
+    name: Stage lint (${{ matrix.shard == 'proof' && 'verified commit' || matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
     needs: [lint-plan]
     if: needs.lint-plan.result == 'success'
     runs-on: ubuntu-24.04
@@ -171,8 +173,9 @@ jobs:
           shard: ${{ matrix.shard }}
           changed-paths: ${{ runner.temp }}/zerops-delivery/changed-paths
 
-  # Planning took about 60 s and unit builds about 200 s. Neither needs lint, so both overlap its 30-50 s install
-  # plus hook execution (180-410 s for a whole-tree shard); only jobs that can mutate Zerops wait for its success.
+  # Candidate run 45791874819 measured lint-plan at 23 s and changed-file lint at 65 s (34 s install,
+  # 9 s hook). Planning took about 60 s and builds about 200 s in earlier runs: both still overlap lint;
+  # only jobs that can mutate Zerops wait for its success. Whole-tree shards previously took 210-460 s.
   plan:
     name: Plan stage and select unit builds
     needs: [lint-plan]

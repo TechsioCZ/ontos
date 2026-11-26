@@ -1780,6 +1780,15 @@ it('prints all failing hook chunks and later fixes without changing the index', 
   });
   expect(output).toContain('after 24/24; both exit 1');
   expect(output).toContain('index unchanged; exit 1');
+  const regressions = execFileSync(
+    '/bin/bash',
+    [fileURLToPath(new URL('../ci/test-lint-regressions.sh', import.meta.url))],
+    {
+      encoding: 'utf-8',
+    },
+  );
+  expect(regressions).toContain('every quoted path reported through run, args and both');
+  expect(regressions).toContain('Unsupported file templates');
 });
 
 it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
@@ -1867,6 +1876,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     // to check, and nothing else rides along.
     expect(sorted(selectFiles([...specialPaths, 'app/removed.ts', untrackedPath]))).toEqual(sorted(specialPaths));
     // Empty or missing input is invalid; deleted-only paths have no content to check.
+    expect(execFileSync('/bin/bash', [LINT_SELECTION, 'proof'], { cwd: repository, encoding: 'utf-8' })).toBe('');
     expect(() => selectFiles([])).toThrow();
     expect(() => selectFiles()).toThrow();
     expect(selectFiles(['app/removed.ts', untrackedPath])).toEqual([]);
@@ -3176,6 +3186,17 @@ it('uses a restored workspace only when pnpm would run in it without installing'
   }
 });
 
+it('proves the pinned formatter and linter configuration inputs on unchanged files', () => {
+  const output = execFileSync(
+    '/bin/bash',
+    [fileURLToPath(new URL('../ci/test-lint-configuration.sh', import.meta.url))],
+    {
+      encoding: 'utf-8',
+    },
+  );
+  expect(output).toContain('change unchanged-file results; .ignore does not');
+});
+
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true);
@@ -3189,13 +3210,22 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   expect(plan?.steps.find(({ id }) => id === 'lint-shards')?.run).toBe('bash app/scripts/ci/choose-lint-shards.sh');
   const choose = readFileSync(new URL('../ci/choose-lint-shards.sh', import.meta.url), 'utf-8');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
-  const shardsFor = (mode: string, paths: readonly string[]) => {
+  const shardsFor = (mode: string, paths: readonly string[], snapshot = '') => {
     const changed = path.join(directory, 'changed');
     const output = path.join(directory, 'output');
     writeFileSync(changed, paths.map((file) => `${file}\0`).join(''));
     writeFileSync(output, '');
+    const history = path.join(directory, 'history.json');
+    writeFileSync(history, snapshot);
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', choose], {
-      env: { CHANGED_PATHS: changed, GITHUB_OUTPUT: output, PATH: STEP_PATH, PLAN_MODE: mode },
+      env: {
+        CHANGED_PATHS: changed,
+        COMPARISON_SNAPSHOT: history,
+        GITHUB_OUTPUT: output,
+        GITHUB_SHA: 'a'.repeat(40),
+        PATH: STEP_PATH,
+        PLAN_MODE: mode,
+      },
       stdio: 'pipe',
     });
     return readFileSync(output, 'utf-8').trim();
@@ -3219,7 +3249,27 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
         Array.from({ length: 2000 }, (_, index) => `app/scripts/${index}.ts`),
       ),
     ).toBe(CHANGED_FILES_LINT_SHARD);
+    const comparison = { ancestor: true, base: 'a'.repeat(40), changedPaths: [], truncated: false };
+    expect(shardsFor('affected', [], JSON.stringify({ comparison }))).toBe('shards=["proof"]');
+    expect(shardsFor('affected', ordinary, JSON.stringify({ comparison }))).toBe(CHANGED_FILES_LINT_SHARD);
+    for (const unknown of [
+      null,
+      { ...comparison, ancestor: false },
+      { ...comparison, truncated: true },
+      { ...comparison, base: 'b'.repeat(40) },
+      { ...comparison, changedPaths: ['not-an-empty-comparison.ts'] },
+      {},
+    ]) {
+      expect(shardsFor('affected', [], JSON.stringify({ comparison: unknown }))).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
     for (const configuration of [
+      '.editorconfig',
+      'app/verticals/catalog/.editorconfig',
+      'app/.eslintignore',
+      'app/.prettierignore',
+      'app/.gitignore',
+      'app/verticals/catalog/.oxlintrc.jsonc',
+      'app/verticals/catalog/oxfmt.config.mts',
       'app/oxlint.config.ts',
       'app/.oxfmtrc.json',
       LEFTHOOK_CONFIG,

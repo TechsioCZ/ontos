@@ -3,7 +3,9 @@
 set -euo pipefail
 export LC_ALL=C GIT_LITERAL_PATHSPECS=1
 cd "$(git rev-parse --show-toplevel)"
-shard="${1:?lint shard (0, 1, 2, 3) is required}"
+shard="${1:?lint shard (proof, 0, 1, 2, 3) is required}"
+# An explicit proof row, never an absent changed-path artifact: the runner still checks global jobs.
+if [[ "$shard" == proof ]]; then exit 0; fi
 if [[ "$shard" == 0 ]]; then
   changed="${2:?changed-path list is required for shard 0}"
   [[ -s "$changed" ]] || { echo 'No changed paths for shard 0.' >&2; exit 1; }

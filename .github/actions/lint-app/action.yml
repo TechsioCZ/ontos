@@ -2,7 +2,7 @@ name: Format and lint through every pre-commit job
 description: Exhaust the selected files and hook jobs, print all failures and fixes, and require an unchanged commit.
 inputs:
   shard:
-    description: '0 for changed paths; 1, 2, 3 for the shared whole-tree slices.'
+    description: 'proof for global jobs only; 0 for changed paths; 1, 2, 3 for the shared whole-tree slices.'
     required: true
   changed-paths:
     description: NUL-separated repository paths, required for shard 0.
