@@ -281,7 +281,10 @@ it.effect('reads the newest green run as the base, every later run that changed 
       {
         [artifactsOf(13)]: JSON.stringify({ artifacts: [{ id: 77 }] }),
         [COMPARE]: JSON.stringify({
-          files: [{ filename: 'app/n1-storefront/src/a.ts' }, { filename: 'b.ts', previous_filename: 'a.ts' }],
+          files: [
+            { filename: 'app/n1-storefront/src/a.ts', status: 'modified' },
+            { filename: 'b.ts', previous_filename: 'a.ts', status: 'renamed' },
+          ],
           status: 'ahead',
         }),
         [jobsOf(12)]: JSON.stringify(jobs(null)),
@@ -373,7 +376,7 @@ it.effect('leaves every part it cannot read empty, so the plan deploys every ser
     expect(yield* readHistory({})).toEqual({ comparison: null, mutations: [], runs: null });
     const partial = yield* readHistory({
       [COMPARE]: JSON.stringify({
-        files: Array.from({ length: 300 }, (_, index) => ({ filename: `f${String(index)}` })),
+        files: Array.from({ length: 300 }, (_, index) => ({ filename: `f${String(index)}`, status: 'added' })),
         status: 'ahead',
       }),
       [jobsOf(13)]: JSON.stringify(jobs('success')),
@@ -480,8 +483,14 @@ it.effect('leaves malformed comparison file records unknown rather than granting
       [null],
       [{}],
       [{ filename: '' }],
-      [{ filename: 'valid.ts' }, {}],
-      [{ filename: 'new.ts', previous_filename: null }],
+      [{ filename: 'valid.ts', status: 'modified' }, {}],
+      [{ filename: 'new.txt' }],
+      [{ filename: 'new.txt', status: null }],
+      [{ filename: 'new.txt', status: '' }],
+      [{ filename: 'new.txt', status: 'unknown' }],
+      [{ filename: 'new.txt', status: 1 }],
+      [{ filename: 'new.ts', previous_filename: null, status: 'copied' }],
+      [{ filename: 'new.ts', previous_filename: '', status: 'copied' }],
       [{ filename: 'new.ts', status: 'renamed' }],
       [{ filename: 'new.ts', previous_filename: '', status: 'renamed' }],
       [{ filename: 'new.ts', previous_filename: null, status: 'renamed' }],
@@ -492,6 +501,33 @@ it.effect('leaves malformed comparison file records unknown rather than granting
       });
       expect(history).toMatchObject({ comparison: null });
     }
+  }),
+);
+
+it.effect('accepts every documented GitHub file status and preserves supplied copy origins', () =>
+  Effect.gen(function* documentedStatuses() {
+    for (const status of ['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged']) {
+      const origin = status === 'renamed' || status === 'copied';
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({
+          files: [
+            origin ? { filename: 'new.txt', previous_filename: 'old.txt', status } : { filename: 'new.txt', status },
+          ],
+          status: 'ahead',
+        }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({
+        comparison: { changedPaths: origin ? ['new.txt', 'old.txt'] : ['new.txt'], truncated: false },
+      });
+    }
+    // GitHub's diff-entry schema does not require previous_filename for copies.
+    expect(
+      yield* readHistory({
+        [COMPARE]: JSON.stringify({ files: [{ filename: 'copy.txt', status: 'copied' }], status: 'ahead' }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      }),
+    ).toMatchObject({ comparison: { changedPaths: ['copy.txt'] } });
   }),
 );
 

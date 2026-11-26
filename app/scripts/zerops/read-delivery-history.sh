@@ -73,9 +73,13 @@ base_sha="$(jq -r '.head_sha' <<<"$base")"
 if [[ "$mode" == comparison ]]; then
   # The changed files are listed on the first page for the whole comparison; per_page=1 keeps the commit list short.
   # GitHub lists at most 300 files, so a list of 300 or more may be cut short.
+  # File status enum: GitHub REST OpenAPI components.schemas.diff-entry (also used by compare).
+  # https://github.com/github/rest-api-description/blob/main/descriptions/api.github.com/api.github.com.json
+  # previous_filename identifies renames; preserve copy origins too when supplied by GitHub.
   comparison="$(gh api "$repository/compare/$base_sha...$GITHUB_SHA?per_page=1" \
     --jq 'if (.files | type == "array") and
       all(.files[]; type == "object" and (.filename | type == "string" and length > 0) and
+        (.status | IN("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")) and
         (if .status == "renamed" then (.previous_filename | type == "string" and length > 0) else true end) and
         (if has("previous_filename") then (.previous_filename | type == "string" and length > 0) else true end))
       then . else error("unreadable comparison files") end'" | {base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
