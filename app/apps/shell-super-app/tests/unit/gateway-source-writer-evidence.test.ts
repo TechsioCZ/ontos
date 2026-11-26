@@ -216,13 +216,30 @@ it.effect('executes durable worker admission for both canonical company source S
       }
       const service = queries.find((q) => q.sql.includes("p.kind = 'service'"));
       const original = queries.find((q) => q.sql.includes('core.action_invocations'));
-      expect(original?.sql).not.toContain('ob.principal_id = p.principal_id');
-      expect(original?.sql).toContain('ob.principal_id = $');
-      expect(original?.sql).toContain('ob.incarnation = $');
-      expect(original?.params).toContain(principalId);
-      expect(original?.params).toContain(receiverIncarnation);
-      expect(original?.sql).toContain("p.kind = 'integration' and p.status = 'active'");
-      expect(original?.sql).toContain("i.status = 'succeeded'");
+      const originalSql = original?.sql;
+      const originalParameters = original?.params;
+      expect(originalSql).not.toContain('ob.principal_id = p.principal_id');
+      expect(originalSql).toContain('ob.principal_id = $');
+      expect(originalSql).toContain('ob.incarnation = $');
+      expect(originalParameters).toContain(principalId);
+      expect(originalParameters).toContain(receiverIncarnation);
+      expect(originalSql).toContain("p.kind = 'integration' and p.status = 'active'");
+      expect(originalSql).toContain("i.status = 'succeeded'");
+      expect(originalSql).toMatch(/b\.workload_key not in \(\$\d+, \$\d+\) or exists/u);
+      expect(originalSql).toContain('original_payment_source.tenant_id=p.tenant_id');
+      expect(originalSql).toContain('original_payment_source.principal_id=p.principal_id');
+      expect(originalSql).toMatch(/original_payment_source.workload_key=\$\d+/u);
+      expect(originalSql).toContain("original_payment_source.status='active'");
+      expect(originalParameters).toEqual([
+        principalId,
+        receiverIncarnation,
+        workloadKey,
+        tenantId,
+        invocationId,
+        'payment.provider-notification-ingress',
+        'payment.provider-reconciliation',
+        'payment.source-ingress',
+      ]);
       expect(service?.params).toContain(principalId);
       expect(service?.params).toContain(tenantId);
       expect(service?.params).toContain(legalEntityId);

@@ -27,6 +27,7 @@ import {
 } from '@app/symmy-integration/outbox/integration-symmy-job-admitted-v1';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { Effect, Layer, Match, Option, Schema } from 'effect';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import type { GatewayDelegationRequestPayload } from './gateway-delegation-issuer.ts';
@@ -52,6 +53,24 @@ type RecoverySource = RecoverySubject['source'];
 type AssertionSubject = Extract<GatewayDelegationRequestPayload['subject'], { readonly _tag: 'RegisteredAssertion' }>;
 type Route = typeof SymmyRouteContextResponseSchema.Type;
 type SourcePurpose = RouteScopeFacts['sourcePurpose'];
+const paymentSourceWorkload = 'payment.source-ingress';
+/** Payment admission needs both its ingress workload and current source-owner authority, even after ingress. */
+const originalPaymentAuthority = (principal: 'p' | 'original', workload: SQL) => {
+  const original = sql.raw(principal);
+  const paymentWorkloads = sql.join(
+    PaymentRouteWorkloadSchema.literals.map((key) => sql`${key}`),
+    sql`, `,
+  );
+  return sql`(
+    ${workload} not in (${paymentWorkloads}) or exists (
+      select 1 from core.access_workload_bindings original_payment_source
+      where original_payment_source.tenant_id=${original}.tenant_id
+        and original_payment_source.principal_id=${original}.principal_id
+        and original_payment_source.workload_key=${paymentSourceWorkload}
+        and original_payment_source.status='active'
+    )
+  )`;
+};
 /** A finite receiver contract may project a verified company-scoped source into a tenant-only operation. */
 const targetWorkloadScope = (workload: RegisteredGatewayWorkload): RegisteredGatewayWorkload => {
   if (workload.legalEntityScope !== 'forbidden') {
@@ -249,7 +268,6 @@ const makeValidateCurrentHuman = (database: CoreDatabase['Service']) => {
 };
 
 const makeValidatePaymentRoutePrincipal = (database: CoreDatabase['Service']) => {
-  const paymentSourceWorkload = 'payment.source-ingress';
   const validatePaymentRoutePrincipal = Effect.fn('PaymentRouteScope.validatePrincipal')(function* validatePrincipal(
     candidate: TrustedPrincipalContext,
     requestedWorkload: PaymentRouteWorkload,
@@ -782,7 +800,7 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
             return yield* delegationForbidden('workload_binding_not_active')();
           }
           // The admitted integration identity outlives ingress credential rotation. Only its current
-          // registered source workload and active Principal govern fresh effects.
+          // registered source workload, owner authority and active Principal govern fresh effects.
           const originals = yield* transaction
             .execute(
               sql`
@@ -796,6 +814,7 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
         and ob.principal_id = ${row.principalId}::uuid and ob.incarnation = ${row.bindingIncarnation}::uuid
         and ob.status = 'active' and ob.workload_key = ${rule.workloadKey}
       where i.tenant_id = ${subject.tenantId}::uuid and i.action_invocation_id = ${row.actionInvocationId}::uuid and i.status = 'succeeded'
+        and ${originalPaymentAuthority('p', sql`b.workload_key`)}
     `,
               'objects',
             )
@@ -921,6 +940,7 @@ const makeAdmitAssertion = (database: CoreDatabase['Service']) => {
               ? sql`
         join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${workload.originalPrincipalId}::uuid and original.kind='integration' and original.status='active'
         join core.access_workload_bindings admission on admission.tenant_id=t.tenant_id and admission.principal_id=original.principal_id and admission.workload_key=${workload.originalWorkloadKey} and admission.incarnation=${workload.originalWorkloadBindingIncarnation}::uuid and admission.status='active'
+          and ${originalPaymentAuthority('original', sql`${workload.originalWorkloadKey}`)}
         join core.access_workload_bindings owner on owner.tenant_id=t.tenant_id and owner.binding_id=receiver.binding_id and owner.principal_id=receiver.principal_id and owner.workload_key=${rule.workloadKey} and owner.status='active'
         join core.access_workload_bindings source_owner on source_owner.tenant_id=t.tenant_id and source_owner.binding_id=current_source.binding_id and source_owner.principal_id=source_principal.principal_id and source_owner.workload_key=${workload.workloadKey} and source_owner.incarnation=${workload.originalOwnerBindingIncarnation}::uuid and source_owner.status='active'
           `
