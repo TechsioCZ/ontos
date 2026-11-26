@@ -221,6 +221,8 @@ export function HeaderSearch() {
 
   return (
     <>
+      {/* Before the form: shoppers type and submit before a script parsed after the form would run. */}
+      <script dangerouslySetInnerHTML={{ __html: EARLY_QUERY_SCRIPT }} />
       <SearchForm
         ref={formRef}
         action={href("/vyhledavani")}
@@ -334,7 +336,6 @@ export function HeaderSearch() {
           />
         </SearchForm.Control>
       </SearchForm>
-      <script dangerouslySetInnerHTML={{ __html: EARLY_QUERY_SCRIPT }} />
     </>
   );
 }
