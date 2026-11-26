@@ -68,7 +68,7 @@ export interface OperationOptions {
 }
 
 export const requestOperation = (operation: Operation): Operation => operation.request ?? operation;
-const isOperationError = Schema.is(Schema.instanceOf(OperationError));
+export const isOperationError = Schema.is(Schema.instanceOf(OperationError));
 const failureFromSignal = (signal: AbortSignal): OperationError => {
   const cause: unknown = signal.reason;
   return isOperationError(cause) ? cause : new OperationError('cancelled', cause);
@@ -230,11 +230,12 @@ export const createAdmission = (limit = REQUEST_LIMIT) => {
           return ['admitted', HashSet.add(requests, request.id)] as const;
         });
         if (outcome === 'overloaded') {
-          yield* Effect.fail(new OperationError('overloaded'));
+          return yield* Effect.fail(new OperationError('overloaded'));
         }
         if (outcome === 'admitted') {
-          yield* Scope.addFinalizer(request.scope, Ref.update(admitted, HashSet.remove(request.id)));
+          return yield* Scope.addFinalizer(request.scope, Ref.update(admitted, HashSet.remove(request.id)));
         }
+        return yield* Effect.void;
       }).pipe(Effect.uninterruptible),
   };
 };
@@ -248,12 +249,13 @@ const takePermit = Effect.fn('storefront.takePermit')(function* takeWorkPermit(b
             waiting >= waitLimit ? [false, waiting] : [true, waiting + 1],
           );
           if (!queued) {
-            yield* Effect.fail(new OperationError('overloaded'));
+            return yield* Effect.fail(new OperationError('overloaded'));
           }
           yield* restore(Semaphore.take(budget.permits, 1)).pipe(
             Effect.ensuring(Ref.update(budget.waiting, (waiting) => waiting - 1)),
           );
         }
+        return yield* Effect.void;
       }),
     ),
     () => Semaphore.release(budget.permits, 1),

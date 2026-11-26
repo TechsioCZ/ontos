@@ -11,8 +11,9 @@ import "server-only";
 // locale is unknown. As soon as one market or association exists, only the owners' markets are served.
 // The path locale is only a selector: nothing a browser sends is used before the owners confirmed it.
 import { Effect, Match } from "effect";
+import { isOperationError } from "@ontos/storefront-runtime";
 import { getConfig } from "./config";
-import { createOperation, OntosError, OperationError, readRecords } from "./gateway";
+import { createOperation, OntosError, readRecords } from "./gateway";
 import type { OperationOptions } from "./gateway";
 import { isLocaleSegment } from "./market-locale";
 import { isStoreCurrency, type StoreCurrency } from "@/lib/format";
@@ -345,10 +346,7 @@ async function liveMarkets(
         live[index].currency = offer.currency;
       } catch (error) {
         operation.check();
-        if (
-          error instanceof OperationError &&
-          (error.kind === "cancelled" || error.kind === "deadline")
-        )
+        if (isOperationError(error) && (error.kind === "cancelled" || error.kind === "deadline"))
           throw error;
         // Switcher currencies are optional, including when owner admission is saturated.
       }

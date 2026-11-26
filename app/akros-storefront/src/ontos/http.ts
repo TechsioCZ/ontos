@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import {
   createOperation,
   INGRESS_BYTES,
-  OperationError,
+  isOperationError,
   readJson,
 } from "@ontos/storefront-runtime";
 import type { Operation } from "@ontos/storefront-runtime";
@@ -70,7 +70,7 @@ export async function jsonValue(
   try {
     return await Effect.runPromise(readJson(request, { operation, maxBytes: INGRESS_BYTES }));
   } catch (error) {
-    if (error instanceof OperationError) {
+    if (isOperationError(error)) {
       if (error.kind === "body_oversize") throw new RequestError(413, t.server.request.tooLarge);
       throw error;
     }
@@ -97,7 +97,7 @@ export function problem(
 ) {
   if (RequestError.is(error))
     return Response.json({ message: error.message }, { status: error.status, headers });
-  if (error instanceof OperationError)
+  if (isOperationError(error))
     return Response.json(
       { message, code: error.kind },
       {

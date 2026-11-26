@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { Effect, Logger } from "effect";
+import { Effect, Logger, Predicate } from "effect";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -191,7 +191,9 @@ it.each(["cancelled", "deadline"] satisfies Parameters<Operation["abort"]>[0][])
     const rejected = pending.catch((error: unknown) => error);
     await started.promise;
     operation.abort(kind);
-    expect(await rejected).toMatchObject({ _tag: "OperationError", kind });
+    const failure = await rejected;
+    expect(Predicate.isTagged(failure, "OperationError")).toBe(true);
+    expect(failure).toMatchObject({ kind });
     expect(paths).toHaveLength(1);
     expect(JSON.stringify(entries)).not.toContain(secret);
   },

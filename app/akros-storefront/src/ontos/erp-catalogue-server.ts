@@ -9,6 +9,7 @@ import "server-only";
 // WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
 import { Effect, Predicate } from "effect";
 import { cache } from "react";
+import { isOperationError } from "@ontos/storefront-runtime";
 import {
   hasUndecidedPrice,
   shownVariantRefs,
@@ -22,7 +23,7 @@ import {
 import { portalCookie, portalRequest, requestPortal } from "./account";
 import { getActiveMarket, marketReadsFor } from "./active-market";
 import { getErpOffer, type ErpOffer } from "./erp-config";
-import { createOperation, OntosError, OperationError, readRecords } from "./gateway";
+import { createOperation, OntosError, readRecords } from "./gateway";
 import type { Operation, OperationOptions } from "./gateway";
 
 /** The owners answer at most 100 variants per stock or price read. */
@@ -79,7 +80,7 @@ const customerPricePage = async (
       );
   } catch (error) {
     operation.check();
-    if (error instanceof OperationError) throw error;
+    if (isOperationError(error)) throw error;
     if (OntosError.is(error) && error.code === "backend_unreachable") throw error;
     console.error(
       `[ontos] customer catalogue page prices failed (${String(error)}); priced as a guest`,
@@ -234,7 +235,7 @@ export const readErpCataloguePage = cache(
       const page = await readCatalogPage(locale, offset, limit, operation);
       return { count: page.count, products: await withOffers(offer, page, operation) };
     } catch (error) {
-      operation.abort(error instanceof OperationError ? error.kind : "cancelled");
+      operation.abort(isOperationError(error) ? error.kind : "cancelled");
       throw error;
     } finally {
       operation.dispose();
@@ -271,7 +272,7 @@ export const readErpProduct = cache(
       }
       return undefined;
     } catch (error) {
-      operation.abort(error instanceof OperationError ? error.kind : "cancelled");
+      operation.abort(isOperationError(error) ? error.kind : "cancelled");
       throw error;
     } finally {
       operation.dispose();

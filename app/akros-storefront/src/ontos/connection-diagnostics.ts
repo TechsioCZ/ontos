@@ -19,6 +19,10 @@ const codes = new Set([
 ]);
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+const isSocket = (value: unknown): value is Socket =>
+  value !== null && value !== undefined && Socket.prototype.isPrototypeOf(value);
+const isAggregateError = (value: unknown): value is AggregateError =>
+  value !== null && value !== undefined && AggregateError.prototype.isPrototypeOf(value);
 const code = (error: unknown) => {
   const value = record(error) && error.code;
   return typeof value === "string" && codes.has(value) ? value : "other";
@@ -216,7 +220,7 @@ export function observeShellConnections(
       try {
         if (!record(message)) return;
         if (name === "net.client.socket") {
-          if (message.socket instanceof Socket) watchSocket(message.socket);
+          if (isSocket(message.socket)) watchSocket(message.socket);
           return;
         }
         const params = message.connectParams;
@@ -240,9 +244,8 @@ export function observeShellConnections(
         const error = message.error;
         const key = code(error);
         window.errorCodes[key] = (window.errorCodes[key] ?? 0) + 1;
-        const aggregate =
-          record(error) && error.cause instanceof AggregateError ? error.cause : error;
-        if (!(aggregate instanceof AggregateError)) return;
+        const aggregate = record(error) && isAggregateError(error.cause) ? error.cause : error;
+        if (!isAggregateError(aggregate)) return;
         window.aggregateErrors++;
         if (key === "UND_ERR_CONNECT_TIMEOUT" && aggregate !== error)
           window.timeoutsWithNestedAggregate++;
