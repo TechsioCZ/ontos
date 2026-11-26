@@ -475,6 +475,11 @@ const services = (): ProductPageServices => {
     page: {
       count: () => Effect.succeed(2),
       currentSkus: (ids) => Effect.succeed(new Map(ids.includes(activeVariantId) ? [[activeVariantId, 'KL-500']] : [])),
+      editRevisions: (ids) =>
+        Effect.succeed({
+          skus: new Map(ids.includes(activeVariantId) ? [[activeVariantId, 1]] : []),
+          variants: new Map(ids.map((id) => [id, 1])),
+        }),
       productIds: () => Effect.succeed([activeProductId, draftProductId]),
     },
   };
@@ -504,6 +509,7 @@ describe('Catalog product page items', () => {
           ],
           lifecycle: 'ACTIVE',
           localized: { kind: 'PRESENT', locale: 'cs-CZ', name: 'Kladivo' },
+          localizedRevision: 1,
           media: [{ assignment: mediaAssignment, ownerAvailability: 'UNVERIFIED' }],
           productRef: productRef(activeProductId),
           revision: 2,
@@ -511,6 +517,7 @@ describe('Catalog product page items', () => {
             {
               lifecycle: 'ACTIVE',
               localized: { kind: 'MISSING_TRANSLATION', requestedLocale: 'cs-CZ' },
+              localizedRevision: 0,
               options: [
                 {
                   attributeDefinitionRef: {
@@ -523,13 +530,17 @@ describe('Catalog product page items', () => {
                   values: [{ kind: 'TEXT', text: 'Červená' }],
                 },
               ],
+              revision: 1,
               sku: 'KL-500',
+              skuRevision: 1,
               variantRef: variantRef(activeVariantId),
             },
             {
               lifecycle: 'WORK_IN_PROGRESS',
               localized: { kind: 'MISSING_TRANSLATION', requestedLocale: 'cs-CZ' },
+              localizedRevision: 0,
               options: [],
+              revision: 1,
               variantRef: variantRef(workVariantId),
             },
           ],
@@ -538,6 +549,7 @@ describe('Catalog product page items', () => {
           categories: [],
           lifecycle: 'DRAFT',
           localized: { kind: 'MISSING_TRANSLATION', requestedLocale: 'cs-CZ' },
+          localizedRevision: 1,
           media: [],
           productRef: productRef(draftProductId),
           revision: 2,
@@ -545,7 +557,9 @@ describe('Catalog product page items', () => {
             {
               lifecycle: 'WORK_IN_PROGRESS',
               localized: { description: 'Ocelové kladivo', kind: 'PRESENT', locale: 'cs-CZ', name: 'Kladivo 500 g' },
+              localizedRevision: 1,
               options: [],
+              revision: 1,
               variantRef: variantRef(importedVariantId),
             },
           ],

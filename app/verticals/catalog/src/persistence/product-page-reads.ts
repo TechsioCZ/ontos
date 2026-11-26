@@ -8,6 +8,7 @@ import {
   productCategoryAssignments,
   productLocalizedFacts,
   products,
+  productVariants,
 } from '../database/schema.ts';
 import { catalogMediaReadsForScope } from './catalog-media-reads.ts';
 import type { CatalogMediaReads } from './catalog-media-reads.ts';
@@ -42,6 +43,13 @@ export interface ProductPageReads {
   readonly currentSkus: (
     variantIds: readonly string[],
   ) => Effect.Effect<ReadonlyMap<string, string>, CatalogPersistenceUnavailable>;
+  /** The current revision of each Variant and of its Current SKU, by Variant id, for staff edits. */
+  readonly editRevisions: (
+    variantIds: readonly string[],
+  ) => Effect.Effect<
+    { readonly skus: ReadonlyMap<string, number>; readonly variants: ReadonlyMap<string, number> },
+    CatalogPersistenceUnavailable
+  >;
   readonly productIds: (input: ProductPageRequest) => Effect.Effect<readonly string[], CatalogPersistenceUnavailable>;
 }
 
@@ -122,6 +130,40 @@ const productPageForTransaction = (transaction: ScopedTransaction, tenantId: str
                   : Effect.fail(unavailable()),
               ),
             ),
+    editRevisions: (variantIds) =>
+      variantIds.length === 0
+        ? Effect.succeed({ skus: new Map<string, number>(), variants: new Map<string, number>() })
+        : Effect.all(
+            [
+              transaction
+                .select({ revision: productVariants.currentRevision, variantId: productVariants.variantId })
+                .from(productVariants)
+                .where(
+                  and(eq(productVariants.tenantId, tenantId), inArray(productVariants.variantId, [...variantIds])),
+                ),
+              transaction
+                .select({
+                  revision: commercialSkuReservations.currentRevision,
+                  variantId: commercialSkuReservations.variantId,
+                })
+                .from(commercialSkuReservations)
+                .where(
+                  and(
+                    eq(commercialSkuReservations.tenantId, tenantId),
+                    inArray(commercialSkuReservations.variantId, [...variantIds]),
+                    isNull(commercialSkuReservations.packageDefinitionId),
+                    eq(commercialSkuReservations.state, 'CURRENT'),
+                  ),
+                ),
+            ],
+            { concurrency: 1 },
+          ).pipe(
+            Effect.mapError(unavailable),
+            Effect.map(([variants, skus]) => ({
+              skus: new Map(skus.map(({ revision, variantId }) => [variantId, revision])),
+              variants: new Map(variants.map(({ revision, variantId }) => [variantId, revision])),
+            })),
+          ),
     productIds: (input) =>
       transaction
         .select({ productId: products.productId })

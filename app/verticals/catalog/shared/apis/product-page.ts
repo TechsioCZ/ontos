@@ -46,8 +46,14 @@ const RecordedVariantSchema = ListRecordedVariantsResponseSchema.fields.variants
 const ProductPageVariantSchema = Schema.Struct({
   lifecycle: ProductVariantLifecycleSchema,
   localized: ProductDetailLocalizedSchema,
+  /** The revision of the Variant's own text in the requested locale (0 when it has none), for staff edits. */
+  localizedRevision: Schema.optionalKey(Schema.Int),
   options: RecordedVariantSchema.fields.values,
+  /** The Variant's current revision, for staff lifecycle edits. */
+  revision: Schema.optionalKey(Schema.Int),
   sku: Schema.optionalKey(SkuCodeSchema),
+  /** The current revision of the Variant's SKU, for staff renames. */
+  skuRevision: Schema.optionalKey(Schema.Int),
   variantRef: VariantRefSchema,
 });
 
@@ -59,6 +65,8 @@ const ProductPageItemSchema = Schema.Struct({
   categories: ProductCategoryClassificationResponseSchema.fields.categoryNames,
   lifecycle: ProductLifecycleSchema,
   localized: ProductDetailLocalizedSchema,
+  /** The revision of the Product's own text in the requested locale (0 when it has none), for staff edits. */
+  localizedRevision: Schema.optionalKey(Schema.Int),
   media: CatalogMediaCurrentResponseSchema.fields.ordered,
   productRef: ProductRefSchema,
   revision: ProductRevisionSchema,

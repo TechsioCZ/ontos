@@ -20,6 +20,7 @@ import {
 } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
+import { ProductEditDialog } from '../../../../products-admin/product-edit-dialog.tsx';
 import type { ProductListInput, VariantFiguresInput } from '../../../../products-admin/page-data.ts';
 import {
   formatPrice,
@@ -153,16 +154,21 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
 };
 
 const ProductRows = ({
+  categories,
   item,
   legalEntityId,
+  locale,
   offer,
 }: {
+  readonly categories: ProductPageItem['categories'];
   readonly item: ProductPageItem;
   readonly legalEntityId: string;
+  readonly locale: string;
   readonly offer: Option.Option<ErpOffer>;
 }) => {
   const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const name = productName(item.localized);
   const toggle = () => setOpen((current) => !current);
   return (
@@ -179,6 +185,12 @@ const ProductRows = ({
           <Button aria-expanded={open} onClick={toggle} size="sm" theme="borderless" type="button" variant="secondary">
             {t(open ? `${key}.hideVariants` : `${key}.showVariants`)}
           </Button>
+          <Button onClick={() => setEditing(true)} size="sm" theme="outlined" type="button" variant="secondary">
+            Upravit
+          </Button>
+          {editing && (
+            <ProductEditDialog categories={categories} item={item} locale={locale} onClose={() => setEditing(false)} />
+          )}
         </Table.Cell>
       </Table.Row>
       {open && (
@@ -210,6 +222,13 @@ const ProductsList = ({
   if (page.value.items.length === 0) {
     return <EmptyState description={t(`${key}.emptyDescription`)} title={t(`${key}.empty`)} />;
   }
+  const pageCategories = [
+    ...new Map(
+      page.value.items.flatMap(({ categories }) =>
+        categories.map((category) => [category.categoryRef.resourceId, category] as const),
+      ),
+    ).values(),
+  ];
   return (
     <Table size="sm" variant="line">
       <Table.Header>
@@ -222,7 +241,14 @@ const ProductsList = ({
       </Table.Header>
       <Table.Body>
         {page.value.items.map((item) => (
-          <ProductRows item={item} key={item.productRef.resourceId} legalEntityId={input.legalEntityId} offer={offer} />
+          <ProductRows
+            categories={pageCategories}
+            item={item}
+            key={item.productRef.resourceId}
+            legalEntityId={input.legalEntityId}
+            locale={input.locale}
+            offer={offer}
+          />
         ))}
       </Table.Body>
     </Table>
