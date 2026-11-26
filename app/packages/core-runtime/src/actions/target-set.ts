@@ -6,7 +6,7 @@ import { earliestDeadline } from '../access/decision/contract.ts';
 import { ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { ActionPermissionCheckError } from './errors.ts';
-import { computeCanonicalValueHash } from './repository.ts';
+import { computeCanonicalValueHash } from './canonical-value-hash.ts';
 
 /**
  * The complete, nonempty set of records changed by this decoded command, in the trusted scope.

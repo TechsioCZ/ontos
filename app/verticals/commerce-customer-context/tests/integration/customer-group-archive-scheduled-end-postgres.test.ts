@@ -17,7 +17,7 @@ import {
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { OrganizationBusinessApplicabilityCurrentSchema } from '@app/privacy/api/organization-business-applicability';
 import { CommerceOrganizationBusinessEligibility } from '../../src/integrations/organization-business-eligibility.ts';
 import type { CommerceOrganizationBusinessRequest } from '../../src/integrations/organization-business-eligibility.ts';

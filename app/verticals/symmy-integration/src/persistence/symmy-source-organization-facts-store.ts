@@ -5,11 +5,11 @@ import {
   readVerifiedGatewayOrganizationGovernanceRead,
 } from '@app/core-runtime';
 import {
-  computeActionRequestHash,
   readScopedOriginalActionInvocation,
   readScopedSourceAdmissionEnrollment,
   readScopedSourceExecutionFence,
 } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';

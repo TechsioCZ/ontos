@@ -33,7 +33,7 @@ import {
   ActionRequestHashConflict,
 } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { computeActionRequestHash } from '../../src/actions/repository.ts';
+import { computeActionRequestHash } from '../../src/actions/canonical-value-hash.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { AccessEnforcementPorts, BoundAccessGate } from '../../src/operations/access-gate.ts';

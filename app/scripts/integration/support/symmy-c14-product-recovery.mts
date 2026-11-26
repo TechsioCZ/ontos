@@ -1,4 +1,4 @@
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { issueDelegatedGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Crypto, Effect } from 'effect';
 import type { Redacted, Schema } from 'effect';

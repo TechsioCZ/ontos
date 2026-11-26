@@ -1,4 +1,4 @@
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 
 import { canonicalSourceProvisioningExpectedPolicy } from '../../shared/domain/source-provisioning.ts';
 import type { ProvisionSourceStockItemInput } from '../../shared/domain/source-provisioning.ts';

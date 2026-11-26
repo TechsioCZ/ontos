@@ -41,6 +41,7 @@
     "./access/spicedb-config": "./src/access/spicedb-config.ts",
     "./access/lifecycle/persistence/journal-store": "./src/access/lifecycle/persistence/journal-store.ts",
     "./db/client": "./src/db/client.ts",
+    "./actions/canonical-value-hash": "./src/actions/canonical-value-hash.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
     "./auth/action-principal-ids": "./src/auth/action-principal-ids.ts",

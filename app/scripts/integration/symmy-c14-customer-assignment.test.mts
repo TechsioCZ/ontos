@@ -32,7 +32,7 @@ import {
   CustomerPriceGroupAssignmentReceiptResponseSchema,
 } from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt';
 import { assignCustomerPriceGroupRequestIdentity } from '@app/commerce-customer-context/domain/native-action-request-identity';
-import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import { issueDelegatedGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';

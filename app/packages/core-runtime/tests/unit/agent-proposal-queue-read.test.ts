@@ -9,7 +9,7 @@ import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/canonical-value-hash.ts';
 import { AgentProposalCommandPayloadSchema } from '../../src/auth/agent-proposal-command-contract.ts';
 import type {
   AgentProposalCommandPayload,

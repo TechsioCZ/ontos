@@ -56,7 +56,7 @@ import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayWorkload,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import {
   GatewayActorClaimSchema,

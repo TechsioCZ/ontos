@@ -74,7 +74,7 @@ import { executeCreateVariantWithAuthorization } from '../../src/api/create-vari
 import { CreateVariantPayloadSchema, CreateVariantResultSchema } from '../../shared/actions/create-variant.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
 import { catalogSourceProductsReadApiLive } from '../../api/catalog-source-products-read-server.ts';
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { correctProductActionApiLive } from '../../api/correct-product-action-server.ts';
 import { updateProductActionApiLive } from '../../api/update-product-action-server.ts';
 import { correctProductAction } from '../../src/actions/correct-product.action.ts';

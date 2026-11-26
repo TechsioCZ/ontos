@@ -44,7 +44,7 @@ import {
   ActionPermissionLive,
   ActionRepositoryLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { computeCanonicalValueHash, computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash, computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import {

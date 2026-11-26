@@ -86,12 +86,11 @@ import type {
 } from '../../src/actions/repository.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import {
-  computeActionRequestHash,
-  computeCanonicalValueHash,
   getActionInvocationPersistenceFailureCause,
   getActionTransactionFailureCause,
   makeActionRepository,
 } from '../../src/actions/repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/canonical-value-hash.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 

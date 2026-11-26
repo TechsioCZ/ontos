@@ -1,7 +1,7 @@
 import { Effect, Option, Result, Schema } from 'effect';
 
 import { ActionPermissionCheckError, ActionPermissionDenied } from '../../actions/errors.ts';
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import type { AccessDecision } from '../decision/contract.ts';
 import { CapabilityKeySchema } from '../ids.ts';
 import type { PrincipalId } from '../ids.ts';

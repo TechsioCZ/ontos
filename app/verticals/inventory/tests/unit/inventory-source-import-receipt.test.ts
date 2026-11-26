@@ -1,4 +1,4 @@
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { RegisteredGatewayRecoverySchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';

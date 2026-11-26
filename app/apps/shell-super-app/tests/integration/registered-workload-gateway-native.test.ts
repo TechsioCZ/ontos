@@ -48,13 +48,12 @@ import {
   AccessDecisionGate,
   AccessWorkloadBindingIdSchema,
   AccessWorkloadCompanyBindingIdSchema,
-  computeActionRequestHash,
-  computeCanonicalValueHash,
   makeAccessDecisionService,
   makeAccessWorkloadCompanyBindingDrizzleStore,
   makeDrizzleAccessPrincipalKinds,
   makeDrizzleAccessWorkloadBindings,
 } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { bootstrapScopesOf, writeBootstrapScopes } from '@app/core-runtime/access/bootstrap';
 import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import { stageScopeOf } from '@app/core-runtime/install/stage-context-bootstrap';

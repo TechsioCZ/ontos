@@ -1,4 +1,4 @@
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   OrganizationBusinessCounterpartyContextReason,
   OrganizationBusinessCustomerRoleReason,

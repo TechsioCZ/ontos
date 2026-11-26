@@ -22,7 +22,7 @@ import { SavedAddressSourceReceiptRequestSchema } from '@app/commerce-customer-c
 import { executeSavedAddressSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/saved-address-source-receipt/client';
 import { symmyOwnerOperationRequirementKey } from '../../shared/domain/symmy-owner-operation-requirements.ts';
 import { RegisteredGatewayRecoverySchema } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {

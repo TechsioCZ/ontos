@@ -1,6 +1,6 @@
 import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { issueDelegatedGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Effect, Redacted, Schema } from 'effect';
 

@@ -2,7 +2,7 @@ import { Cause, Context, Effect, Exit, Layer, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { computeCanonicalValueHash } from '../../src/actions/repository.ts';
+import { computeCanonicalValueHash } from '../../src/actions/canonical-value-hash.ts';
 import { KernelCallsLive, routeAnswerOutcome } from '../../src/execution/call.ts';
 import { CallRequirementUnresolved } from '../../src/execution/call-requirement-unresolved.ts';
 import { CallRequirements } from '../../src/execution/call-requirements.ts';

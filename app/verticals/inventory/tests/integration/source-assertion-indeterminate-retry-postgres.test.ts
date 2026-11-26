@@ -10,7 +10,7 @@ import {
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OwnerAuthorizationInput } from '@app/core-runtime';
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

@@ -131,7 +131,6 @@ export { readActiveWorkloadBindingHolders } from '../workloads/binding-holders.t
 export { WorkloadKeySchema } from '../../authorization/access-declaration.ts';
 export type { WorkloadBindingHolder } from '../workloads/binding-holders.ts';
 
-export { computeActionRequestHash, computeCanonicalValueHash } from '../../actions/repository.ts';
 export { readScopedOriginalActionInvocation } from '../workloads/original-action-invocation.ts';
 export type { OriginalActionInvocationQuery } from '../workloads/original-action-invocation.ts';
 

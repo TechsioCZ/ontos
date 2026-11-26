@@ -6,7 +6,7 @@ import {
 } from '@app/price-group-catalog-contracts';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { Effect, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';

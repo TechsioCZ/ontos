@@ -1,6 +1,6 @@
 import { DateTime, Effect } from 'effect';
 
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import type { AccessScopeId, ProposalId, TenantId } from '../ids.ts';
 import { CapabilityKeySchema } from '../ids.ts';
 import type { Proposal } from '../model.ts';

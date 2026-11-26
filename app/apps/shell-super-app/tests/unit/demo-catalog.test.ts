@@ -1,6 +1,6 @@
 import { assert, expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Effect, Option, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {

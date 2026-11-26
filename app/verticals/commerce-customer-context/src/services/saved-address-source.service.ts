@@ -6,7 +6,8 @@ import {
   requireModuleOperation,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { computeActionRequestHash, readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { Effect, Option, Schema } from 'effect';
 import {

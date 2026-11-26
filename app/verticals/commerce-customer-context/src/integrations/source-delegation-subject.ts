@@ -7,7 +7,7 @@ import type { CounterpartyOrganizationIcoFactsRequest } from '@app/party-registr
 import type { OrganizationProfileIcoApplicabilityRequest } from '@app/privacy/api/organization-profile-ico-applicability';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,

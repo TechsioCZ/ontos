@@ -19,7 +19,8 @@ import type {
 } from '../shared/domain/customer-profile-source.ts';
 import { readVerifiedGatewayActor, requireModuleOperation, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { computeCanonicalValueHash, readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { EnsureRetailCustomerProfileRejected } from '../shared/actions/ensure-retail-customer-profile.ts';
 import { CreateCounterpartyPurchasingProfileRejected } from '../shared/actions/create-counterparty-purchasing-profile.ts';
 import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';

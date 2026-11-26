@@ -3,7 +3,7 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/canonical-value-hash.ts';
 import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 
 const publicSurface = await import('../../src/index.ts');

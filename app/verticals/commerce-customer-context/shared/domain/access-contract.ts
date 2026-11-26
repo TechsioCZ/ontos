@@ -1,5 +1,5 @@
-import { PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime';
-import type { PrincipalRef as CorePrincipalRef } from '@app/core-runtime';
+import { PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import type { PrincipalRef as CorePrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { CounterpartyRefSchema as PartyCounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import type { CounterpartyRef as PartyCounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';

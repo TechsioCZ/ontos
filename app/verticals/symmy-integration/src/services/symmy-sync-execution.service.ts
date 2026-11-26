@@ -3,7 +3,7 @@ import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
 import type { SymmyItemOutcome } from '@app/shared-contracts/symmy';
 import { Context, Effect, Match, Option, Ref, Schema } from 'effect';
 
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { SymmyJobWorkerError } from './symmy-job-worker-error.ts';
 import type { AdmitSymmySyncResult } from '../../shared/actions/admit-symmy-sync.ts';
 import { projectSymmyUnsupportedBranches } from '../../shared/domain/symmy-job-execution.ts';

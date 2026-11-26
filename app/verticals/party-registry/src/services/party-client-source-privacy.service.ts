@@ -13,7 +13,7 @@ import {
 } from '@app/privacy/api/organization-business-applicability';
 import type { OrganizationBusinessApplicabilityResponse } from '@app/privacy/api/organization-business-applicability';
 import { executeOrganizationBusinessApplicabilityWithAuthorization } from '@app/privacy/api/organization-business-applicability/client';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readScopedCurrentActionInvocation, requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor, ScopedCurrentActionInvocationFact } from '@app/core-runtime';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/client';

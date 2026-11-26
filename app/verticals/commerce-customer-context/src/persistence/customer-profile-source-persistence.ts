@@ -21,7 +21,8 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { computeCanonicalValueHash, readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { Effect, Match, Option, Schema } from 'effect';
 import {

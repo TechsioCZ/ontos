@@ -1,4 +1,4 @@
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { Effect as EffectType, Option as OptionType } from 'effect';
 import { Crypto, DateTime, Effect, Match, Option, Schema } from 'effect';
 

@@ -1,4 +1,4 @@
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { CreatePriceGroupPayloadSchema } from './actions/create-price-group.ts';

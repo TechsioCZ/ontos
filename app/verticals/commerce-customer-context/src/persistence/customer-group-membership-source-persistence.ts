@@ -5,7 +5,7 @@ import {
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Effect, Option, Schema } from 'effect';
 import type { ApplyCustomerGroupMembershipSourcePayload } from '../../shared/actions/apply-customer-group-membership-source.ts';
 import {

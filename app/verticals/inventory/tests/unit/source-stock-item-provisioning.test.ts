@@ -1,4 +1,4 @@
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { NodeCrypto } from '@effect/platform-node';
 import { Array as EffectArray, DateTime, Duration, Effect, Option, Schema, Struct } from 'effect';
 import { TestClock } from 'effect/testing';

@@ -1,6 +1,6 @@
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   RegisteredGatewayRecoverySchema,
   RegisteredGatewayWorkloadSchema,

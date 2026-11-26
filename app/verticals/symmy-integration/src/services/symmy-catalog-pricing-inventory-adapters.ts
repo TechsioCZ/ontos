@@ -1,4 +1,4 @@
-import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   assignSkuRequestIdentity,
   bindInitialVariantSourceRequestIdentity,

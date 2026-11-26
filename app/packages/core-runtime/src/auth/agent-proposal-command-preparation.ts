@@ -1,7 +1,8 @@
 import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import { ActionPermissionCheckError } from '../actions/errors.ts';
-import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
+import { recoverSqlTransactionError } from '../actions/repository.ts';
+import { computeCanonicalValueHash } from '../actions/canonical-value-hash.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';

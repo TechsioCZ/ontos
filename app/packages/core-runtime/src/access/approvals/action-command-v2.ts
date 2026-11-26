@@ -20,7 +20,7 @@ import {
 } from '../../actions/definition.ts';
 import { getActionGoverningRead } from '../../actions/governing-read.ts';
 import { ActionPermissionCheckError } from '../../actions/errors.ts';
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import { resolveActionTargetSet } from '../../actions/target-set.ts';
 import type { AccessRecordTarget } from '../decision/contract.ts';
 import type { GateInput } from '../enforcement/contract.ts';

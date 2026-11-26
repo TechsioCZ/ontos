@@ -8,7 +8,7 @@ import {
 import { readScopedSourceAdmissionEnrollment } from '../../src/access/workloads/source-admission-enrollment.ts';
 import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
-import { computeCanonicalValueHash } from '../../src/actions/repository.ts';
+import { computeCanonicalValueHash } from '../../src/actions/canonical-value-hash.ts';
 import { historicalOwnerContract, historicalOwnerReadTarget } from '../support/historical-owner-targets.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { fixtureOwnerContract, ownerPermissionTarget } from '../support/owner-permission-target.ts';

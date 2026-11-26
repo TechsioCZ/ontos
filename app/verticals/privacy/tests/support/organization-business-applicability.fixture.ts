@@ -1,5 +1,5 @@
 import { ReadHandlerUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   OrganizationBusinessSourceFields,
   OrganizationBusinessSourceProjectionVersion,

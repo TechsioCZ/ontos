@@ -1,6 +1,6 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { defineScopedRoutine, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Effect, Predicate, Schema } from 'effect';
 
 import type { CustomerProfileSourceItem } from '../../shared/apis/customer-profile-source.ts';

@@ -29,7 +29,7 @@
  */
 import { Clock, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 
-import { computeCanonicalValueHash } from '../actions/repository.ts';
+import { computeCanonicalValueHash } from '../actions/canonical-value-hash.ts';
 import { isCoreOperationProvider } from '../modules/module-dependency-contracts.ts';
 import {
   callOkSchema,

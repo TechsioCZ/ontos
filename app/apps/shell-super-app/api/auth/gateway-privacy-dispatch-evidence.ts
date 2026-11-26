@@ -1,6 +1,7 @@
 import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
 
-import { AccessDecisionGate, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayPrivacyDispatchSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';

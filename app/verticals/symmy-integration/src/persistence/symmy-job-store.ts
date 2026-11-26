@@ -2,13 +2,13 @@ import { defineScopedRoutine, registeredAdmissionAuthContextRef } from '@app/cor
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
-  computeCanonicalValueHash,
   openScopedSourceExecutionFence,
   readScopedOriginalActionInvocation,
   readScopedSourceExecutionFence,
   readScopedWorkloadEnrollment,
   requireScopedSourceExecutionFenceOpen,
 } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { SQLWrapper } from 'drizzle-orm';
 import { Array as EffectArray, DateTime, Duration, Effect, Match, Option, Schema } from 'effect';

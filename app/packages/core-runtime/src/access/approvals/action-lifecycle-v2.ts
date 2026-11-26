@@ -2,7 +2,8 @@ import { Context, DateTime, Effect, Option, Predicate, Result, Schema } from 'ef
 
 import type { AnyActionRegistration } from '../../actions/definition.ts';
 import { ActionPermissionDenied, ActionPermissionCheckError } from '../../actions/errors.ts';
-import { computeCanonicalValueHash, recoverSqlTransactionError } from '../../actions/repository.ts';
+import { recoverSqlTransactionError } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import { insideDatabaseTransaction } from '../../db/transaction-io-guard.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';

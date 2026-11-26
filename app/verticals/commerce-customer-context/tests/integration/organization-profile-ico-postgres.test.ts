@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { changeOrganizationCustomerProfileIcoRequestIdentity } from '../../shared/domain/native-action-request-identity.ts';
 import { ContextAccessLive, ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';

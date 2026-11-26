@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { AdmitSymmySyncPayloadSchema } from '@app/symmy-integration/api/admit-symmy-sync-action';
 import { NodeHttpServer } from '@effect/platform-node';
 import { Context, Effect, Layer, Option, Ref, Schema } from 'effect';

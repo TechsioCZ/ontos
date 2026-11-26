@@ -3,8 +3,8 @@ import { Effect, Option, Schema } from 'effect';
 
 import { planProposalTransition, proposalReservationQuery } from './agent-proposal-command-transition.ts';
 
-import { computeActionRequestHash, computeCanonicalValueHash } from '../actions/repository.ts';
-import type { ActionRequestHashInput } from '../actions/repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from '../actions/canonical-value-hash.ts';
+import type { ActionRequestHashInput } from '../actions/canonical-value-hash.ts';
 import {
   actionInvocations,
   agentProposals,

@@ -4,7 +4,7 @@ import {
   GatewayDelegationSourceError,
 } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import {
   readVerifiedGatewayWorkload,
   readVerifiedGatewayRecovery,

@@ -1,6 +1,6 @@
 import { ImportSymmyRulePayloadSchema } from '@app/assortment/actions/import-symmy-rule';
 import { executeImportSymmyRuleWithAuthorization } from '@app/assortment/api/import-symmy-rule-action-client';
-import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { executeImportSellerVatRegimeDeclarationsWithAuthorization } from '@app/tax/api/import-seller-vat-regime-declarations-action-client';

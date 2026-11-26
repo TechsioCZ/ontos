@@ -54,7 +54,7 @@ import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityScope } from '../../operations/legal-entity-scope.ts';
 import type { AnyActionRegistration } from '../../actions/definition.ts';
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import { decodeActionCommandV2, encodeActionCommandV2, rebindRegisteredActionCommandV2 } from './action-command-v2.ts';
 import type { ActionCommandV2 } from './action-command-v2.ts';
 import {

@@ -1,4 +1,4 @@
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { executeImportSourceCatalogWithAuthorization } from '@app/merchandise/apis/import-source-catalog-action/client';
 import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
 import {

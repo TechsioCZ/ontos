@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import type { AccessCheckItem, AccessCheckResult, DecisionCheckPort } from '../decision/engine.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 

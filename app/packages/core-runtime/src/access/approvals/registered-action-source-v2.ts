@@ -3,7 +3,7 @@ import { Effect, Option, Result } from 'effect';
 import type { AnyActionRegistration } from '../../actions/definition.ts';
 import { getRegisteredActionCommandReader } from '../../actions/definition.ts';
 import { getActionGoverningRead } from '../../actions/governing-read.ts';
-import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { computeCanonicalValueHash } from '../../actions/canonical-value-hash.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../modules/active-application-composition.ts';
 import type { OntosDeploymentIdentitySchema } from '../../modules/manifest.ts';
 import { loadModuleOperationAdmission, validateBoundOperationOwner } from '../../modules/module-operation-execution.ts';

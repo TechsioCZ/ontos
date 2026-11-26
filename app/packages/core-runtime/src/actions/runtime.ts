@@ -204,13 +204,12 @@ import type {
 } from './repository.ts';
 import {
   ActionRepository,
-  computeActionRequestHash,
-  computeCanonicalValueHash,
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
   recoverSqlTransactionError,
   trackTransactionSettlement,
 } from './repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from './canonical-value-hash.ts';
 import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 
 const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>

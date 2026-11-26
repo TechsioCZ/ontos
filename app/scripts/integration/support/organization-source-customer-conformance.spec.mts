@@ -42,7 +42,7 @@ import {
   CustomerProfileOrganizationIcoFactsHistoricalIdentitySchema,
 } from '@app/commerce-customer-context/api/customer-profile-organization-ico-facts';
 import { randomUUID } from 'node:crypto';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { observeAcceptedEffectIdNativeFixture } from '@app/symmy-integration/testing/accepted-effect-native';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';

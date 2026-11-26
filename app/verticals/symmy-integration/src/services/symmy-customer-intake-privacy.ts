@@ -1,5 +1,5 @@
 import { requireModuleOperation } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { OperationalScope } from '@app/core-runtime';
 import { OrganizationMembershipSourcePayloadSchema } from '@app/commerce-customer-context/domain/organization-membership-source';
 import { OrganizationBusinessUpdateInputSchema } from '@app/party-registry/apis/organization-record-facts';

@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import type { CoreTransaction } from '../db/types.ts';
 import { actionInvocations, domainEvents, outboxMessages, tenants } from '../db/schema.ts';
-import { computeCanonicalValueHash } from '../actions/repository.ts';
+import { computeCanonicalValueHash } from '../actions/canonical-value-hash.ts';
 import type { OutboxWorkerHandlerContext } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
 import { OutboxWorkerCompletionPublicationError } from './completion-publication-error.ts';
