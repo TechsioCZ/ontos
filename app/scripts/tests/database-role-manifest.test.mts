@@ -122,7 +122,7 @@ it('keeps every shared runtime exception within its exact owner privileges', () 
       table: 'symmy_integration.import_jobs',
     },
     {
-      privileges: ['select'],
+      privileges: ['select', 'insert', 'update'],
       table: 'symmy_integration.job_routes',
     },
   ]);

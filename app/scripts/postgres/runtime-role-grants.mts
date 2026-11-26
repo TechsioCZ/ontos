@@ -125,8 +125,9 @@ export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
     table: 'symmy_integration.import_jobs',
   },
   {
-    privileges: ['select'],
-    reason: 'Symmy admission reads operator-managed route registrations',
+    privileges: ['select', 'insert', 'update'],
+    reason:
+      'Symmy admission reads route registrations; integration.symmy.manage-symmy-routes enrolls, replaces and deactivates them in its Tenant scope',
     table: 'symmy_integration.job_routes',
   },
 ] as const satisfies readonly DatabaseTableGrant[];

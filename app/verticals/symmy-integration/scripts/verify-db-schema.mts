@@ -23,7 +23,62 @@ import { ROUTE_ENROLLMENT_RECORD_CHECKS, normalizeConstraintDefinition } from '.
 class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerificationError>()(
   'SymmySchemaVerificationError',
   { reason: Schema.String },
-) {}
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+export interface SymmyTableFacts {
+  readonly enabled: boolean;
+  readonly forced: boolean;
+  readonly insert_allowed: boolean;
+  readonly name: string;
+  readonly read_allowed: boolean;
+  readonly unsafe_mutation: boolean;
+}
+
+/** The row security and the `ontos_runtime` grants each migrated table must have, in catalog order. */
+const expectedSymmyTableFacts = (name: string): SymmyTableFacts => ({
+  enabled: name !== 'gateway_assertion_redemptions',
+  forced: name !== 'gateway_assertion_redemptions',
+  insert_allowed: [
+    'executor_workload_grants',
+    'gateway_assertion_redemptions',
+    'import_jobs',
+    'job_effects',
+    'job_routes',
+    'route_enrollment_records',
+    'route_price_read_sources',
+    'route_retention_policies',
+    'sync_admissions',
+    'sync_admission_attempts',
+  ].includes(name),
+  name,
+  read_allowed: !['job_notifications', 'privacy_measure_executions', 'route_enrollment_records'].includes(name),
+  // UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER; the runtime role only updates these tables, under tenant RLS.
+  unsafe_mutation: ['executor_workload_grants', 'job_routes', 'route_price_read_sources'].includes(name),
+});
+
+/** One line per absent or unexpected table and per row security flag or runtime grant that differs. */
+export const symmyTableInventoryMismatches = (tables: readonly SymmyTableFacts[]): readonly string[] => {
+  const declared = new Set<string>(SYMMY_INTEGRATION_TABLES);
+  const migrated = new Set(tables.map(({ name }) => name));
+  return [
+    ...SYMMY_INTEGRATION_TABLES.filter((name) => !migrated.has(name)).map((name) => `table ${name}: absent`),
+    ...tables.flatMap((actual) => {
+      if (!declared.has(actual.name)) {
+        return [`table ${actual.name}: not declared in SYMMY_INTEGRATION_TABLES`];
+      }
+      const expected = expectedSymmyTableFacts(actual.name);
+      return (['enabled', 'forced', 'insert_allowed', 'read_allowed', 'unsafe_mutation'] as const).flatMap((fact) =>
+        actual[fact] === expected[fact]
+          ? []
+          : [`table ${actual.name}: ${fact} is ${String(actual[fact])}, expected ${String(expected[fact])}`],
+      );
+    }),
+  ];
+};
 
 /**
  * The enrollment records keep their key, route index and check definitions, and the change tokens come from a sequence
@@ -234,14 +289,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
   yield* database.select().from(symmyJobPrivacyExecutions).limit(0);
   yield* database.select().from(symmyRouteEnrollmentRecords).limit(0);
   // The catalog is used only by this operator-side verifier.
-  const tables = yield* client<{
-    readonly enabled: boolean;
-    readonly forced: boolean;
-    readonly insert_allowed: boolean;
-    readonly name: string;
-    readonly read_allowed: boolean;
-    readonly unsafe_mutation: boolean;
-  }>`
+  const tables = yield* client<SymmyTableFacts>`
     select c.relname as name, c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
       has_table_privilege('ontos_runtime', c.oid, 'SELECT') as read_allowed,
       has_table_privilege('ontos_runtime', c.oid, 'INSERT') as insert_allowed,
@@ -256,33 +304,10 @@ const verification = Effect.gen(function* verifySymmySchema() {
     where n.nspname = 'symmy_integration' and c.relkind in ('r', 'p')
     order by c.relname
   `;
-  if (
-    tables.length !== SYMMY_INTEGRATION_TABLES.length ||
-    tables.some(
-      ({ enabled, forced, insert_allowed, name, read_allowed, unsafe_mutation }, position) =>
-        name !== SYMMY_INTEGRATION_TABLES[position] ||
-        enabled !== (name !== 'gateway_assertion_redemptions') ||
-        forced !== (name !== 'gateway_assertion_redemptions') ||
-        insert_allowed !==
-          [
-            'executor_workload_grants',
-            'gateway_assertion_redemptions',
-            'import_jobs',
-            'job_effects',
-            'job_routes',
-            'route_enrollment_records',
-            'route_price_read_sources',
-            'route_retention_policies',
-            'sync_admissions',
-            'sync_admission_attempts',
-          ].includes(name) ||
-        read_allowed !==
-          !['job_notifications', 'privacy_measure_executions', 'route_enrollment_records'].includes(name) ||
-        unsafe_mutation !== ['executor_workload_grants', 'job_routes', 'route_price_read_sources'].includes(name),
-    )
-  ) {
+  const tableMismatches = symmyTableInventoryMismatches(tables);
+  if (tableMismatches.length > 0) {
     yield* new SymmySchemaVerificationError({
-      reason: 'Symmy table inventory, scope or runtime grants mismatch',
+      reason: ['Symmy table inventory, scope or runtime grants mismatch', ...tableMismatches].join('\n'),
     });
   }
   const [runtime] = yield* client<{

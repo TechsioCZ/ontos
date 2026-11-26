@@ -20,7 +20,11 @@ import { readApplicationMigrationRequirements } from './application-migration-ru
 class ApplicationDatabaseVerificationError extends Schema.TaggedError<ApplicationDatabaseVerificationError>()(
   'ApplicationDatabaseVerificationError',
   { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
-) {}
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 const verificationFailure = (reason: string, cause?: unknown): ApplicationDatabaseVerificationError =>
   new ApplicationDatabaseVerificationError(cause === undefined ? { reason } : { cause, reason });
@@ -296,7 +300,7 @@ const verifyApplicationDatabase = (
     }
     yield* verifyOwnerSchemas(paths, concurrency);
     return yield* Effect.void;
-  }).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+  });
 
 export const verifyApplicationDatabaseCommand = Command.make(
   'verify-application-db-schema',
