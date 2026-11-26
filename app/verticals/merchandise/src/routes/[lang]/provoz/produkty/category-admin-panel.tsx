@@ -16,10 +16,23 @@ import type { RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { loadCategoryDetail, loadCategoryTree } from './products-api.ts';
-import { categoryDraftErrors, draftOf, sameCategoryDraft, saveCategoryEdit, savedCategory } from './category-save.ts';
-import type { CategoryDraft } from './category-save.ts';
+import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
+import {
+  categoryDraftErrors,
+  categorySlugValid,
+  createCategoryCommandOf,
+  draftOf,
+  newCategoryInvalid,
+  newCategorySlug,
+  sameCategoryDraft,
+  saveCategoryEdit,
+  savedCategory,
+} from './category-save.ts';
+import type { CategoryDraft, NewCategoryDraft } from './category-save.ts';
+import { CategorySearchCombobox } from './category-search-combobox.tsx';
+import { fieldError } from './product-form-validation.ts';
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
@@ -161,6 +174,23 @@ const CategoryEditor = ({
         value={draft.longDescription}
       />
       <FormInput
+        helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá."
+        id="category-image-src"
+        label="Obrázek kategorie (adresa)"
+        maxLength={500}
+        name="imageSrc"
+        onChange={(event) => patchDraft({ imageSrc: event.target.value })}
+        value={draft.imageSrc}
+      />
+      <FormInput
+        id="category-image-alt"
+        label="Popis obrázku"
+        maxLength={300}
+        name="imageAlt"
+        onChange={(event) => patchDraft({ imageAlt: event.target.value })}
+        value={draft.imageAlt}
+      />
+      <FormInput
         id="category-position"
         inputMode="numeric"
         label={t('merchandise.ui.siblingPosition')}
@@ -198,6 +228,135 @@ const CategoryEditor = ({
       )}
       <CategoryHistory selected={selected} />
     </>
+  );
+};
+
+const EMPTY_NEW_CATEGORY: NewCategoryDraft = {
+  heading: '',
+  name: '',
+  parent: null,
+  positionText: '0',
+  published: true,
+  slug: null,
+};
+
+interface CategoryCreateFormProps {
+  readonly onCancel: () => void;
+  readonly onCreated: (id: string) => void;
+  readonly revision: number;
+}
+
+/** A new storefront category. Slug and parent are set here once; the rest is edited afterwards like any category. */
+const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFormProps) => {
+  const [draft, setDraft] = useState<NewCategoryDraft>(EMPTY_NEW_CATEGORY);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const patch = (next: Partial<NewCategoryDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const slug = newCategorySlug(draft);
+  const invalid = newCategoryInvalid(draft);
+  const submit = () => {
+    if (invalid || busy) {
+      return;
+    }
+    const id = `ontos-category-${crypto.randomUUID()}`;
+    setBusy(true);
+    setError(null);
+    runCommand(createCategoryCommandOf(draft, id), revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        setError(
+          outcome.reason === 'conflict'
+            ? 'Kategorii se nepodařilo vytvořit: adresa už existuje nebo se katalog mezitím změnil. Zkuste jinou adresu.'
+            : 'Kategorii se nepodařilo vytvořit.',
+        );
+        return;
+      }
+      onCreated(id);
+    });
+  };
+  return (
+    <form
+      className="flex flex-col gap-200 rounded border border-border-secondary p-200"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <h3 className="font-semibold text-sm">Nová kategorie</h3>
+      <FormInput
+        id="new-category-name"
+        label="Název"
+        maxLength={200}
+        name="newCategoryName"
+        onChange={(event) => patch({ name: event.target.value })}
+        required
+        value={draft.name}
+      />
+      <FormInput
+        helpText="Adresa v e-shopu; po vytvoření ji nelze změnit."
+        id="new-category-slug"
+        label="Adresa (slug)"
+        maxLength={200}
+        name="newCategorySlug"
+        onChange={(event) => patch({ slug: event.target.value })}
+        value={slug}
+        {...fieldError(!categorySlugValid(slug), 'Jen malá písmena bez diakritiky, číslice a pomlčky')}
+      />
+      <CategorySearchCombobox
+        errorMessage="Kategorie se nepodařilo načíst."
+        helpText="Prázdné = hlavní kategorie. Po vytvoření nelze změnit."
+        id="new-category-parent"
+        label="Nadřazená kategorie"
+        loadingMessage="Načítám kategorie…"
+        moreMessage={(shown, total) => `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání.`}
+        noResultsMessage="Žádná kategorie neodpovídá hledání."
+        onSelect={(parent) => patch({ parent })}
+        placeholder="Hledat nadřazenou kategorii"
+        retryLabel="Zkusit znovu"
+        selected={
+          draft.parent === null
+            ? null
+            : { id: CatalogCategoryIdSchema.make(draft.parent.id), trail: draft.parent.trail }
+        }
+      />
+      <FormInput
+        id="new-category-heading"
+        label="Nadpis stránky (prázdné = název)"
+        maxLength={300}
+        name="newCategoryHeading"
+        onChange={(event) => patch({ heading: event.target.value })}
+        value={draft.heading}
+      />
+      <FormInput
+        id="new-category-position"
+        inputMode="numeric"
+        label="Pořadí mezi sourozenci"
+        name="newCategoryPosition"
+        onChange={(event) => patch({ positionText: event.target.value })}
+        value={draft.positionText}
+      />
+      <Switch
+        checked={draft.published}
+        name="newCategoryPublished"
+        onCheckedChange={(published) => patch({ published })}
+      >
+        Zobrazit v navigaci e-shopu
+      </Switch>
+      {error === null ? null : (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      <div className="flex flex-wrap gap-100">
+        <Button disabled={invalid} isLoading={busy} type="submit" variant="primary">
+          Vytvořit kategorii
+        </Button>
+        <Button onClick={onCancel} theme="outlined" type="button" variant="secondary">
+          Zrušit
+        </Button>
+      </div>
+    </form>
   );
 };
 
@@ -301,6 +460,7 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const [selection, setSelection] = useState<Selected | null>(null);
   /** Whether a save landed while the panel is open: the list refreshes once, when the user leaves the editor. */
   const [savedOnce, setSavedOnce] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const categories = loaded.status === 'ready' ? loaded.categories : NO_CATEGORIES;
   const selected = selection?.status === 'ready' ? selection.category : undefined;
@@ -363,10 +523,19 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
     }
   };
 
+  const created = (id: string) => {
+    setCreating(false);
+    reload();
+    select(id);
+    setSavedOnce(true);
+  };
+
   return {
     backToList,
     categories,
     commitSaved,
+    created,
+    creating,
     list,
     loaded,
     open,
@@ -377,6 +546,7 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
     select,
     selected,
     selection,
+    setCreating,
     setOpen,
     setSearch,
     siblings,
@@ -396,6 +566,8 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
   const {
     backToList,
     commitSaved,
+    created,
+    creating,
     list,
     loaded,
     open,
@@ -406,6 +578,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
     select,
     selected,
     selection,
+    setCreating,
     setOpen,
     setSearch,
     siblings,
@@ -454,6 +627,20 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
               </>
             )}
             {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
+            {loaded.status === 'ready' && creating ? (
+              <CategoryCreateForm onCancel={() => setCreating(false)} onCreated={created} revision={loaded.revision} />
+            ) : null}
+            {loaded.status === 'ready' && !creating ? (
+              <Button
+                icon="icon-[mdi--plus]"
+                onClick={() => setCreating(true)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                Nová kategorie
+              </Button>
+            ) : null}
             {listState.visible && loaded.status === 'ready' && (
               <>
                 <FormInput

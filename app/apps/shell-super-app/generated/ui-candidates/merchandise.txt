@@ -31,6 +31,7 @@ block
 blur
 border
 border-border-primary
+border-border-secondary
 border-l-2
 border-t
 border-transparent
@@ -100,6 +101,7 @@ left-100
 lg:col-span-2
 lg:grid-cols-2
 line-through
+lowercase
 max-w-80
 max-w-full
 min-h-24
