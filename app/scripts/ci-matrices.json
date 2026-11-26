@@ -80,6 +80,7 @@
       "native-composition": true,
       "lanes": 2,
       "tasks": [
+        "whole:core-media",
         "whole:pricing-routes",
         "./packages/core-runtime#3/4",
         "./verticals/pricing#4/4",

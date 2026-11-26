@@ -1,6 +1,9 @@
 import { defineConfig } from '@rstest/core';
 
+import { jsonReportConfig } from '../../scripts/ci/rstest-json-report.mts';
+
 export default defineConfig({
+  ...jsonReportConfig,
   projects: [
     {
       include: ['tests/unit/**/*.test.ts'],

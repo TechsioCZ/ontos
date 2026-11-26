@@ -39,6 +39,8 @@ if [[ "${1:-}" == --execute ]]; then
     whole:customer-roundtrip)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:core-media)
+      exec bash scripts/ci/run-core-media-proof.sh ;;
     whole:pricing-routes)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
@@ -71,6 +73,17 @@ if [[ "${1:-}" == --execute ]]; then
     exec mise exec -- pnpm --filter ./verticals/party-registry run test:integration:shared --pool.maxWorkers 1 --shard "${task##*#}"
   fi
   if [[ "$task" == *#* ]]; then
+    # whole:core-media runs these against a real object store; a shard without one would only skip them.
+    if [[ "${task%#*}" == ./apps/shell-super-app ]]; then
+      exec mise exec -- pnpm --filter ./apps/shell-super-app run test:integration --pool.maxWorkers 1 \
+        --shard "${task##*#}" --exclude 'tests/integration/core-media-e2e-*.test.ts'
+    fi
+    if [[ "${task%#*}" == ./packages/core-runtime ]]; then
+      exec mise exec -- pnpm --filter ./packages/core-runtime run test:integration --pool.maxWorkers 1 \
+        --shard "${task##*#}" --exclude tests/integration/core-media-s3-storage.test.ts \
+        --exclude tests/integration/core-media-recovery-s3.test.ts \
+        --exclude tests/integration/core-media-upload-edge.test.ts
+    fi
     if [[ "${task%#*}" == ./verticals/privacy ]]; then
       exec mise exec -- pnpm --filter ./verticals/privacy run test:integration --pool.maxWorkers 1 \
         --shard "${task##*#}" --exclude tests/integration/privacy-composition-drain.test.ts

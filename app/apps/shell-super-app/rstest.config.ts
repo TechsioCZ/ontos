@@ -7,6 +7,8 @@ import { defineConfig } from '@rstest/core';
 import type { Rspack } from '@rstest/core';
 import { Result, Schema } from 'effect';
 
+import { jsonReportConfig } from '../../scripts/ci/rstest-json-report.mts';
+
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const encodedSiteUrl = Result.getOrThrow(
@@ -44,6 +46,7 @@ const swc = {
 } as const;
 
 export default defineConfig({
+  ...jsonReportConfig,
   projects: [
     {
       clearMocks: true,

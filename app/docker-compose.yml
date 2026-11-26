@@ -53,6 +53,13 @@ services:
       timeout: 5s
       retries: 20
 
+  # Not part of local development: the S3-compatible emulator of CI's Core Media proof, which
+  # scripts/ci/start-core-media-object-store.sh runs from this pinned image. It is not Cloudflare R2.
+  ontos-minio:
+    image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+    profiles:
+      - core-media
+
 volumes:
   ontos_postgres_data:
     name: ontos_postgres_data
