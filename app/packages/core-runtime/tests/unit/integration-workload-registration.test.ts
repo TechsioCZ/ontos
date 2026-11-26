@@ -1,6 +1,15 @@
 import { expect, it } from 'effect-rstest';
 
 import { bindableWorkloadOwner } from '../../src/access/workloads/integration-workload-registration.ts';
+import {
+  DORMANT_MODULE,
+  DORMANT_WORKLOAD,
+  PARTNER_ADMISSION_WORKLOAD,
+  PARTNER_MODULE,
+  PARTNER_READ_WORKLOAD,
+  PARTNER_SYSTEM_WORKLOAD,
+  integrationWorkloadCatalog,
+} from '../../src/testing/integration-workload-catalog.ts';
 
 const catalog = {
   manifest: {
@@ -31,4 +40,12 @@ it('never binds a system workload, an unpublished key or a key outside the publi
   expect(bindableWorkloadOwner([catalog, symmy], 'integration.symmy.execute-symmy-job')).toBeUndefined();
   expect(bindableWorkloadOwner([catalog, symmy], 'commerce.symmy-price-import')).toBeUndefined();
   expect(bindableWorkloadOwner([catalog], 'integration.symmy.admit-symmy-sync')).toBeUndefined();
+});
+
+it('reads the bindable workloads from installed, decoded module contracts', () => {
+  const { contracts } = integrationWorkloadCatalog();
+  expect(bindableWorkloadOwner(contracts, PARTNER_ADMISSION_WORKLOAD)).toBe(PARTNER_MODULE);
+  expect(bindableWorkloadOwner(contracts, PARTNER_READ_WORKLOAD)).toBe(PARTNER_MODULE);
+  expect(bindableWorkloadOwner(contracts, DORMANT_WORKLOAD)).toBe(DORMANT_MODULE);
+  expect(bindableWorkloadOwner(contracts, PARTNER_SYSTEM_WORKLOAD)).toBeUndefined();
 });
