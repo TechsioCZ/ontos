@@ -91,8 +91,8 @@ What does not enrol it, and why the Action is the only way:
 Recovery is client or workload driven; there is no scheduler, timer, retry loop, attempt count or deadline in Core Media recovery code (guard test `core-media-recovery-guards`). The one exception is the digest step guard below, a technical guard on a single platform call.
 
 - `reconcileUncertainUpload` settles an uncertain upload against the original asset row: `completed`, `closed_failed` (only when the confirm Action proves a mismatch) or `unresolved` (nothing proven; the same client may resend to the same asset).
-- A new independent upload may start only after a confirmed failure; `mayStartIndependentUpload` is the check and has no production caller (advisory).
-- `cleanup-eligibility.ts` is a check only; nothing removes objects. The S3 adapter's only HTTP `DELETE` aborts its own unfinished multipart upload.
+- A new independent upload may start only after a confirmed failure. This is the client's obligation: Core cannot link two independent idempotency keys, so a `reserve` under a new key is a new asset.
+- Core removes no object: the provider port has no delete and no Action removes bytes (the S3 adapter's only HTTP `DELETE` aborts its own unfinished multipart upload). **Abandoned temporary objects** are removed only by a separately approved operator procedure, and only when every condition holds for the one object: its key is the one derived from the named tenant and asset id; no Media Asset row (`ready`, `uploaded`, `scanning` or `failed`) holds that storage identity or id; no media link, evidence reference or Action invocation names it; the provider records no retention or hold, and that absence is confirmed rather than assumed; and the person acting holds the existing technical authority. Anything unproven keeps the object. Because every object Core writes belongs to a reserved asset row, this applies only to objects no Core intent ever created.
 - Recovery logging uses a closed vocabulary and a redacted reference, never keys, bytes, URLs or credentials.
 
 ## Download edge

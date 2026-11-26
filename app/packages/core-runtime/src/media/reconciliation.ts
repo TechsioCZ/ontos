@@ -68,10 +68,6 @@ export interface ReconcileUploadInput<Failure extends { readonly _tag: string },
 
 const SealedIdentitySchema = Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema });
 
-/** A new independent upload may begin only after the original intent was closed as failed. */
-export const mayStartIndependentUpload = (reconciliation: MediaUploadReconciliation): boolean =>
-  reconciliation.outcome === 'closed_failed';
-
 const conciliated = (reconciliation: MediaUploadReconciliation, storageKey: string) =>
   logMediaRecovery({
     category: reconciliation.outcome,

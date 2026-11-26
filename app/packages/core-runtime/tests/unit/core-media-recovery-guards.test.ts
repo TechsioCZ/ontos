@@ -10,7 +10,6 @@ import { expect, it } from 'effect-rstest';
  */
 
 const RECOVERY_SOURCES = [
-  'media/cleanup-eligibility.ts',
   'media/integrity-contract.ts',
   'media/reconciliation.ts',
   'media/recovery-log.ts',
