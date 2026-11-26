@@ -28,6 +28,8 @@ export const patternBytes = (length: number): Uint8Array<ArrayBuffer> => {
 };
 
 export interface ReservationOptions {
+  /** A size other than the bytes' own, for a reservation whose bytes are never sent. */
+  readonly declaredByteSize?: number;
   readonly displayFilename?: string;
   readonly idempotencyKey: string;
   readonly mimeType?: string;
@@ -41,7 +43,7 @@ export const parseJson = (bytes: Uint8Array): typeof Schema.Json.Type =>
 /** The reservation Action, run as the actor through the governed runtime over the real gate. */
 export const reservationPayload = (bytes: Uint8Array, options: Omit<ReservationOptions, 'idempotencyKey'> = {}) => {
   const payload = {
-    declaredByteSize: bytes.byteLength,
+    declaredByteSize: options.declaredByteSize ?? bytes.byteLength,
     declaredContentSha256: digestOf(bytes),
     displayFilename: options.displayFilename ?? 'Brochure.pdf',
     ingestionSource: 'user' as const,
