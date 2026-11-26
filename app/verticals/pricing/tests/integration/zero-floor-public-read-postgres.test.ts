@@ -481,6 +481,12 @@ it.live(
             expect(read.attempts.flatMap(({ zeroFloorReads }) => zeroFloorReads)).toEqual([]);
           };
 
+          // The tenant-wide snapshot includes both receivers: Catalog commits one Quantity Basis Compatibility
+          // audit per fresh attempt, before the ZERO_FLOOR fault. Core commits one Pricing audit after finish
+          // yields PRICING_INDETERMINATE. The sequence is Catalog, Catalog, Pricing for either request.
+          const allowedRead = { outcome: 'allowed', outcomeCode: 'read_allowed' };
+          const expectedFaultAudits = [allowedRead, allowedRead, allowedRead];
+
           expect(yield* harness.sqlFault.installed()).toBe(false);
           const baseline = yield* harness.committedEvidence();
           expect(baseline.zeroFloorReceipts).toEqual([]);
@@ -505,10 +511,7 @@ it.live(
           // receipts may commit, but no floor receipt or published price may escape the fault.
           expect(afterPositive.zeroFloorReceipts).toEqual(baseline.zeroFloorReceipts);
           expect(afterPositive.zeroFloorHeadGeneration).toEqual(baseline.zeroFloorHeadGeneration);
-          // Core commits the allowed/read_allowed audit for the returned customer-safe non-success in its own transaction.
-          expect(afterPositive.coreReadEvents.slice(baseline.coreReadEvents.length)).toEqual([
-            { outcome: 'allowed', outcomeCode: 'read_allowed' },
-          ]);
+          expect(afterPositive.coreReadEvents.slice(baseline.coreReadEvents.length)).toEqual(expectedFaultAudits);
 
           // NEGATIVE line with the exact approval: the same SQL abort, with the approval already committed.
           yield* harness.sqlFault.clear();
@@ -534,9 +537,7 @@ it.live(
           // The already committed approval head survives; only the failed floor receipt transaction is rolled back.
           expect(afterNegative.zeroFloorReceipts).toEqual(approved.zeroFloorReceipts);
           expect(afterNegative.zeroFloorHeadGeneration).toEqual(approved.zeroFloorHeadGeneration);
-          expect(afterNegative.coreReadEvents.slice(approved.coreReadEvents.length)).toEqual([
-            { outcome: 'allowed', outcomeCode: 'read_allowed' },
-          ]);
+          expect(afterNegative.coreReadEvents.slice(approved.coreReadEvents.length)).toEqual(expectedFaultAudits);
 
           // The fault is removed (observed in the catalog) and fresh reads succeed with the committed evidence.
           yield* harness.sqlFault.clear();
