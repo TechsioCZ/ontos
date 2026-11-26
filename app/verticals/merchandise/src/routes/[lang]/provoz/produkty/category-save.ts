@@ -5,11 +5,14 @@ import { DateTime, Effect, Match, Option, Random } from 'effect';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import type { CategoryPatch, MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 
 export interface CategoryDraft {
   readonly description: string;
   readonly heading: string;
+  readonly imageAlt: string;
+  readonly imageSrc: string;
   readonly longDescription: string;
   readonly name: string;
   readonly positionText: string;
@@ -27,6 +30,8 @@ export const NAME_LIMIT = 200;
 export const draftOf = (category: CategoryNode): CategoryDraft => ({
   description: category.description ?? '',
   heading: category.heading ?? '',
+  imageAlt: category.imageAlt ?? '',
+  imageSrc: category.imageSrc ?? '',
   longDescription: category.longDescription ?? '',
   name: category.name,
   positionText: String(category.position),
@@ -71,6 +76,8 @@ const samePosition = (left: CategoryDraft, right: CategoryDraft): boolean =>
 export const sameCategoryDraft = (left: CategoryDraft, right: CategoryDraft): boolean =>
   left.description.trim() === right.description.trim() &&
   left.heading.trim() === right.heading.trim() &&
+  left.imageAlt.trim() === right.imageAlt.trim() &&
+  left.imageSrc.trim() === right.imageSrc.trim() &&
   left.longDescription.trim() === right.longDescription.trim() &&
   left.name.trim() === right.name.trim() &&
   samePosition(left, right) &&
@@ -79,7 +86,7 @@ export const sameCategoryDraft = (left: CategoryDraft, right: CategoryDraft): bo
 /** Only the fields that differ; the server trims every text, so an emptied field clears it. */
 export const categoryPatchOf = (draft: CategoryDraft, category: CategoryNode): CategoryPatch => {
   const patch: { -readonly [Key in keyof CategoryPatch]: CategoryPatch[Key] } = {};
-  const text = (key: 'description' | 'heading' | 'longDescription', limit: number) => {
+  const text = (key: 'description' | 'heading' | 'imageAlt' | 'imageSrc' | 'longDescription', limit: number) => {
     const value = draft[key].trim().slice(0, limit);
     if (value !== (category[key] ?? '')) {
       patch[key] = value;
@@ -92,6 +99,8 @@ export const categoryPatchOf = (draft: CategoryDraft, category: CategoryNode): C
   text('heading', 300);
   text('description', 5000);
   text('longDescription', 50_000);
+  text('imageSrc', 500);
+  text('imageAlt', 300);
   const position = positionOf(draft);
   if (Option.isSome(position) && position.value !== category.position) {
     patch.position = position.value;
@@ -144,6 +153,61 @@ export const saveCategoryEdit = (
     return Effect.succeed('saved');
   }
   return saveCategory({ _tag: 'UpdateCategory', id: category.id, patch }, expectedRevision);
+};
+
+/** A storefront URL slug from a name: lowercase ASCII words joined by dashes, no diacritics. */
+export const categorySlugOf = (name: string): string =>
+  name
+    .normalize('NFD')
+    .replaceAll(/[\u0300-\u036F]/gu, '')
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, '-')
+    .replaceAll(/^-+|-+$/gu, '')
+    .slice(0, 200)
+    .replaceAll(/-+$/gu, '');
+
+export const categorySlugValid = (slug: string): boolean => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug);
+
+/** The fields of a new category as typed. */
+export interface NewCategoryDraft {
+  readonly heading: string;
+  readonly name: string;
+  readonly parent: { readonly id: string; readonly trail: string } | null;
+  readonly positionText: string;
+  readonly published: boolean;
+  /** Null while the slug follows the name. */
+  readonly slug: string | null;
+}
+
+export const newCategorySlug = (draft: NewCategoryDraft): string => draft.slug ?? categorySlugOf(draft.name);
+
+export const newCategoryInvalid = (draft: NewCategoryDraft): boolean => {
+  const position = Number(draft.positionText.trim());
+  return (
+    draft.name.trim() === '' ||
+    draft.name.trim().length > NAME_LIMIT ||
+    !categorySlugValid(newCategorySlug(draft)) ||
+    !Number.isInteger(position) ||
+    position < 0
+  );
+};
+
+/** The CreateCategory command of a valid draft, with a fresh id. */
+export const createCategoryCommandOf = (
+  draft: NewCategoryDraft,
+  id: string,
+): Extract<MerchandiseCommand, { readonly _tag: 'CreateCategory' }> => {
+  const command = {
+    _tag: 'CreateCategory',
+    id: CatalogCategoryIdSchema.make(id),
+    name: draft.name.trim(),
+    parentId: draft.parent === null ? Option.none() : Option.some(CatalogCategoryIdSchema.make(draft.parent.id)),
+    position: Number(draft.positionText.trim()),
+    published: draft.published,
+    slug: newCategorySlug(draft),
+  } as const;
+  const heading = draft.heading.trim();
+  return heading === '' ? command : { ...command, heading };
 };
 
 /** The saved category as the register has it now, so the next save builds on the revision the server confirmed. */

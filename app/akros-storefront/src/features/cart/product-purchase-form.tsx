@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { Table } from "@techsio/ui-kit/organisms/table";
@@ -29,6 +29,8 @@ interface ProductPurchaseFormProps {
 const variantListOnlyClassName =
   "hidden @min-sf-variant-list/sf-variants:@max-sf-variant-table/sf-variants:block";
 const noVariants: CatalogPurchaseVariant[] = [];
+// Server renders only the first rows; the rest render in a transition right after hydration.
+const SSR_VARIANT_ROWS = 30;
 const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
   sensitivity: "base",
@@ -264,6 +266,11 @@ export function ProductPurchaseForm({
     },
     [addItem, product],
   );
+  const [allRows, setAllRows] = useState(false);
+  useEffect(() => {
+    startTransition(() => setAllRows(true));
+  }, []);
+  const shownVariants = allRows ? visibleVariants : visibleVariants.slice(0, SSR_VARIANT_ROWS);
 
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
@@ -435,7 +442,10 @@ export function ProductPurchaseForm({
       </output>
 
       <>
-        <div className="sf-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border">
+        <div
+          data-variant-rows-complete={allRows ? "" : undefined}
+          className="sf-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border"
+        >
           <div className="relative w-full overflow-auto">
             <Table
               aria-label={cs.product.variantsTitle}
@@ -531,7 +541,7 @@ export function ProductPurchaseForm({
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {visibleVariants.map((item, index) => {
+                {shownVariants.map((item, index) => {
                   const label = formatVariantLabel(item);
                   const isAvailable =
                     !item.availabilityUnknown && item.stockCount >= item.minimumQuantity;
@@ -608,6 +618,12 @@ export function ProductPurchaseForm({
                             </span>
                           ) : (
                             <>
+                              {item.originalPriceMinor !== undefined &&
+                                item.originalPriceMinor > item.priceMinor && (
+                                  <s className="text-xs text-fg-secondary">
+                                    {formatPrice(item.originalPriceMinor)}
+                                  </s>
+                                )}
                               <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
                                 {formatPrice(item.priceMinor).replace(/\s(?=\S+$)/u, " ")}
                                 <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline! @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal">

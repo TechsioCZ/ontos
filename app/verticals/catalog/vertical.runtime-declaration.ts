@@ -716,8 +716,8 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
           },
           groupKey: 'shell.navigation.commerce',
           icon: 'icon-[mdi--package-variant]',
-          label: { cs: 'Produkty', en: 'Products' },
-          order: 505,
+          label: { cs: 'Produkty z ERP', en: 'ERP products' },
+          order: 515,
           pageKey: productsPageKey,
         }),
         // </generated-module-shell-navigation>

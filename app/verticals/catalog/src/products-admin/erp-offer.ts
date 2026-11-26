@@ -54,6 +54,24 @@ export const decodeStoredErpOffer = (stored: string | null): Option.Option<ErpOf
 
 const offerStorageKey = 'ontos.catalog.products.erp-offer';
 
+/**
+ * The ERP offer each company's storefront sells under, the same as the storefront's ONTOS_STOREFRONT_ERP_OFFERS
+ * (app/zerops.yaml), so staff see ERP price and stock without naming the offer in the address.
+ */
+const akrosCompanyId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
+const akrosStorefrontOffer = {
+  channelId: 'B2C',
+  currencyCode: 'CZK',
+  customerConfigurationId: 'akros',
+  marketId: 'e57c614d-3911-5a52-941e-29168b1db5e4',
+  unitId: '43d5c797-2b36-4877-85ad-caac3a674d9c',
+  unitQuantity: '1',
+};
+
+/** The offer the signed-in company's storefront sells under, or none. */
+export const companyErpOffer = (legalEntityId: string): Option.Option<ErpOffer> =>
+  legalEntityId === akrosCompanyId ? decodeOffer(akrosStorefrontOffer) : Option.none();
+
 /** The last complete offer this browser was opened with. Browser only. */
 export const rememberedErpOffer = (): Option.Option<ErpOffer> =>
   decodeStoredErpOffer(globalThis.localStorage.getItem(offerStorageKey));

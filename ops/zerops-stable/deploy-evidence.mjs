@@ -42,7 +42,9 @@ export async function readActiveVersions(config, { token, fetchImpl = fetch, api
     const body = await response.json();
     if (body?.id !== id || body.projectId !== config.projectId) fail(`Zerops returned another service for ${name}`);
     const version = body.activeAppVersion ?? null;
-    versions[name] = version === null ? null : String(version.name ?? '');
+    // The public API's active version carries no name; the service's appVersionName names the active version.
+    const named = (body.userData ?? []).find(({ key }) => key === 'appVersionName')?.content;
+    versions[name] = version === null ? null : String(version.name ?? named ?? '');
   }
   return versions;
 }
@@ -57,14 +59,15 @@ export async function readActiveVersions(config, { token, fetchImpl = fetch, api
 export function installKind(versions, commit) {
   if (versions.app === null) return 'bootstrap-app';
   const fronts = DEPLOYED_WORKLOADS.filter((name) => name !== 'app');
-  if (versions.app === commit && fronts.every((name) => versions[name] === null)) return 'bootstrap-fronts';
+  // Fronts that never deployed need the keys after-app stores, whatever the app runs; the fronts install takes the app too.
+  if (fronts.every((name) => versions[name] === null)) return 'bootstrap-fronts';
   return 'update';
 }
 
 /** The workloads an install of each kind deploys. */
 export const INSTALLED_WORKLOADS = Object.freeze({
   'bootstrap-app': Object.freeze(['app']),
-  'bootstrap-fronts': Object.freeze(DEPLOYED_WORKLOADS.filter((name) => name !== 'app')),
+  'bootstrap-fronts': DEPLOYED_WORKLOADS,
   update: DEPLOYED_WORKLOADS,
 });
 

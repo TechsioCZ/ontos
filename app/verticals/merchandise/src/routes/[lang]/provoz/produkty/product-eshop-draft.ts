@@ -9,6 +9,8 @@ export interface EshopDraft {
   readonly images: readonly string[];
   readonly published: boolean;
   readonly slug: string;
+  /** Listed as a main catalogue item; false keeps it out of Akros/ŠroubShop lists while "Jen hlavní produkty" is on. */
+  readonly sourceBaseProduct: boolean;
   readonly stockTracked: boolean;
 }
 
@@ -18,6 +20,7 @@ export const eshopDraftOf = (product: ProductRecord): EshopDraft => ({
   images: product.images ?? [],
   published: product.published !== false,
   slug: product.slug ?? '',
+  sourceBaseProduct: product.sourceBaseProduct !== false,
   stockTracked: product.stockTracked !== false,
 });
 
@@ -34,10 +37,15 @@ export const eshopCommandsOf = (
   const settingsChanged =
     value.published !== confirmed.published ||
     value.slug !== confirmed.slug ||
-    value.stockTracked !== confirmed.stockTracked;
+    value.stockTracked !== confirmed.stockTracked ||
+    value.sourceBaseProduct !== confirmed.sourceBaseProduct;
   if (settingsChanged) {
     const settings = { published: value.published, stockTracked: value.stockTracked } satisfies ProductPatch;
-    const patch: ProductPatch = value.slug.trim() === '' ? settings : { ...settings, slug: value.slug.trim() };
+    const slugged: ProductPatch = value.slug.trim() === '' ? settings : { ...settings, slug: value.slug.trim() };
+    const patch: ProductPatch =
+      value.sourceBaseProduct === confirmed.sourceBaseProduct
+        ? slugged
+        : { ...slugged, sourceBaseProduct: value.sourceBaseProduct };
     commands.push({ _tag: 'UpdateProduct', id: productId, patch });
   }
   if (!sameImages(value.images, confirmed.images)) {

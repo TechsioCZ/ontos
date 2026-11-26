@@ -8,6 +8,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { startNavigationProgress } from "@/components/navigation-progress";
 
 export default function NotFoundPage() {
   const router = useRouter();
@@ -18,7 +19,9 @@ export default function NotFoundPage() {
     const query = new FormData(event.currentTarget).get("q");
 
     if (typeof query === "string" && query.trim()) {
-      router.push(storeHref(`/vyhledavani?q=${encodeURIComponent(query.trim())}`));
+      const target = storeHref(`/vyhledavani?q=${encodeURIComponent(query.trim())}`);
+      startNavigationProgress(target);
+      router.push(target);
     }
   };
 

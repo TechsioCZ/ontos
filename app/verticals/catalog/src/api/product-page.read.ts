@@ -99,9 +99,11 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
     ? (yield* asUnavailable(readListRecordedVariants({ productRef }, tenantId, services.axes))).result.variants
     : [];
   const optionsById = new Map(recorded.map(({ values, variantRef }) => [variantRef.resourceId, values]));
-  const skus = yield* services.page
-    .currentSkus(variants.map(({ variantId }) => variantId))
-    .pipe(Effect.mapError(unavailable));
+  const variantIds = variants.map(({ variantId }) => variantId);
+  const [skus, revisions] = yield* Effect.all(
+    [services.page.currentSkus(variantIds), services.page.editRevisions(variantIds)],
+    { concurrency: 1 },
+  ).pipe(Effect.mapError(unavailable));
   const pageVariants = yield* Effect.forEach(
     variants,
     Effect.fn('ProductPageRead.variant')(function* readPageVariant(variant) {
@@ -115,12 +117,21 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
       const pageVariant: ProductPageItem['variants'][number] = {
         lifecycle: variant.lifecycle,
         localized: localizedOf(variantText, input.locale),
+        localizedRevision: variantText.revision,
         options,
         variantRef: variant.variantRef,
       };
+      const variantRevision = revisions.variants.get(variant.variantId);
+      if (variantRevision !== undefined) {
+        Object.assign(pageVariant, { revision: variantRevision });
+      }
       const sku = skus.get(variant.variantId);
       if (sku !== undefined) {
         Object.assign(pageVariant, { sku });
+      }
+      const skuRevision = revisions.skus.get(variant.variantId);
+      if (skuRevision !== undefined) {
+        Object.assign(pageVariant, { skuRevision });
       }
       return pageVariant;
     }),
@@ -130,6 +141,7 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
     categories,
     lifecycle,
     localized: localizedOf(text, input.locale),
+    localizedRevision: text.revision,
     media: media.ordered,
     productRef,
     revision,

@@ -47,11 +47,7 @@ start() {
   local service="$1" id setup source log status resolved head
   resolved="$(target "$service")"
   read -r id setup <<<"$resolved"
-  head="$(branch_head)"
-  if [ "$head" != "$GITHUB_SHA" ]; then
-    echo "::error::the stage branch points at ${head:-nothing readable}, not this run's $GITHUB_SHA; the $service push does not start"
-    return 1
-  fi
+  # Hotfix: a run delivers its commit even when a newer push arrived, so frequent pushes never starve stage.
   source="$PWD"
   if [ "$service" != app ]; then source="$RUNNER_TEMP/storefront-push/$setup"; fi
   log="$state/$service.log"
@@ -112,8 +108,8 @@ superseded() {
   # Unreadable is not superseded: the run goes on to verify.
   head="$(branch_head)" || head=''
   if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
-    echo "::error::the stage branch moved on to $head; the run that delivers it verifies stage"
-    return 1
+    echo "::notice::the stage branch moved on to $head; this run delivered its commit and the newer run follows"
+    return 0
   fi
 }
 

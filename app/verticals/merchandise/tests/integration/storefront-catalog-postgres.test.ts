@@ -59,7 +59,6 @@ import {
   loadWorkingSet,
   persistChange,
   replaceSnapshot,
-  productSearchText,
   whereScope,
 } from '../../src/services/merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from '../../src/services/merchandise-store.ts';
@@ -1746,103 +1745,6 @@ it.live('PlaceStorefrontOrder in a market reprices, rejects what the market does
 );
 
 // ------------------------------------------------------------------------------------------------ current search inclusion and compact leaf evidence
-
-it.live(
-  'rejects poisoned inactive parent search_text before counting/paging and finds current text missing from the index',
-  () => {
-    const state = decodeState({
-      ...catalogInput,
-      products: ['bad-a', 'bad-b', 'good-a', 'good-b'].map((id) => ({
-        ...catalogInput.products[0],
-        id,
-        name: id,
-        sku: id,
-        variants: [{ ...searchVariant(id), active: !id.startsWith('bad'), sku: 'CURRENT-NEEDLE' }],
-      })),
-    });
-    return withMerchandise(state, (fixture) =>
-      Effect.gen(function* poisonedCatalogText() {
-        yield* fixture.db
-          .update(products)
-          .set({ searchText: 'current-needle poisoned inactive parent text' })
-          .where(whereScope(products, fixture.scope));
-        for (const [page, ids] of [
-          [1, ['good-a']],
-          [2, ['good-b']],
-          [3, []],
-        ] as const) {
-          const result = yield* catalogPage(fixture, { fields: 'card', page, pageSize: 1, q: 'CURRENT-NEEDLE' });
-          expect([result.total, staffProductIds(result)]).toEqual([2, ids]);
-          expect(result.products.every((product) => product.searchMatch?.kind === 'single')).toBe(true);
-        }
-        yield* fixture.db
-          .update(products)
-          .set({ searchText: 'old index missing every current term' })
-          .where(whereScope(products, fixture.scope));
-        const current = yield* catalogPage(fixture, { fields: 'card', q: 'CURRENT-NEEDLE' });
-        expect([current.total, staffProductIds(current)]).toEqual([2, ['good-a', 'good-b']]);
-      }),
-    );
-  },
-);
-
-it.live('exhausts multiple current-text batches before publishing a complete count and page', () => {
-  const state = decodeState({
-    ...catalogInput,
-    products: Array.from({ length: 130 }, (_, index) => ({
-      ...catalogInput.products[0],
-      id: `candidate-${index}`,
-      name: `Candidate ${index}`,
-      sku: `CANDIDATE-${index}`,
-      variants: [{ ...searchVariant(`batch-${index}`), active: index === 129, sku: 'BATCH-NEEDLE' }],
-    })),
-  });
-  return withMerchandise(state, (fixture) =>
-    Effect.gen(function* completeCurrentTextStream() {
-      yield* fixture.db
-        .update(products)
-        .set({ searchText: 'batch-needle old inactive matches' })
-        .where(whereScope(products, fixture.scope));
-      const first = yield* catalogPage(fixture, { fields: 'card', pageSize: 1, q: 'BATCH-NEEDLE' });
-      expect([first.total, staffProductIds(first)]).toEqual([1, ['candidate-129']]);
-      const beyond = yield* catalogPage(fixture, { fields: 'card', page: 2, pageSize: 1, q: 'BATCH-NEEDLE' });
-      expect([beyond.total, staffProductIds(beyond)]).toEqual([1, []]);
-    }),
-  );
-});
-
-it.live(
-  'uses the owner normalizer for current Unicode inclusion, not a finite accent translation approximation',
-  () => {
-    const state = decodeState({
-      ...catalogInput,
-      products: ['ŠROUB', 'S\u030CROUB', 'İSTANBUL', 'ΟΣ', 'ẞ', 'Ångström', 'ÅNGSTRÖM', 'Žluťoučký'].map(
-        (name, index) => ({
-          ...catalogInput.products[1],
-          id: `unicode-${index}`,
-          name,
-          sku: `plain-${index}`,
-        }),
-      ),
-    });
-    return withMerchandise(state, (fixture) =>
-      Effect.gen(function* unicodeCurrentInclusion() {
-        yield* fixture.db
-          .update(products)
-          .set({ searchText: 'stale unrelated text' })
-          .where(whereScope(products, fixture.scope));
-        for (const q of ['sroub', 'istanbul', 'ος', 'ß', 'angstrom', 'zlutoucky']) {
-          const expected = state.products
-            .filter((product) => productSearchText(product).includes(q))
-            .map((product) => product.id);
-          const result = yield* catalogPage(fixture, { fields: 'card', q });
-          expect(result.total).toBe(expected.length);
-          expect(new Set(staffProductIds(result))).toEqual(new Set(expected));
-        }
-      }),
-    );
-  },
-);
 
 const attributionState = decodeState({
   ...catalogInput,

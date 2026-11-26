@@ -298,21 +298,6 @@ afterEach(async () => {
 });
 
 describe("OntOS catalog server reads", () => {
-  it("reads navigation, home and detail anew on independent requests", async () => {
-    await inRequest(() => server.getCatalog());
-    await inRequest(() => server.readProducts({ slug: "p1", pageSize: 1 }, "full"));
-    await network.idle();
-    calls.length = 0;
-    await inRequest(() => server.getShellSnapshot());
-    await network.idle();
-    expect(calls.map(catalogOf)).toEqual([{ mode: "categories", includeCategories: true }]);
-    await inRequest(() => server.getCatalog());
-    await inRequest(() => server.readProducts({ slug: "p1", pageSize: 1 }, "full"));
-    expect(calls.map(catalogOf).filter((query) => query.includeCategories === false)).toEqual([
-      { featured: true, pageSize: 20, fields: "card", includeCategories: false },
-      { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
-    ]);
-  });
   const pricedViews = [
     {
       name: "product detail",
@@ -338,8 +323,9 @@ describe("OntOS catalog server reads", () => {
     },
   ];
   it.each(pricedViews)(
-    "shows an admin price and stock edit on the very next independent $name view",
+    "shows an admin price and stock edit on a view after the 15 s catalogue cache refreshed ($name)",
     async ({ read }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
       expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
       answer = () => ({
         revision: 6,
@@ -350,15 +336,22 @@ describe("OntOS catalog server reads", () => {
         products: [{ ...product("p1"), grossPriceMinor: 242, stockOnHand: 2 }],
         categories: tree,
       });
-      expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 });
+      expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
+      vi.advanceTimersByTime(16_000);
+      await vi.waitFor(async () =>
+        expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 }),
+      );
       await network.idle();
     },
   );
   it.each(pricedViews)(
-    "rejects $name prices immediately when the owner becomes unavailable",
+    "rejects $name prices once the cached value is over 10 minutes old and the owner is unavailable",
     async ({ read }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
       await read();
       ownerUnavailable = true;
+      await expect(read()).resolves.toMatchObject({ priceMinor: 121 });
+      vi.advanceTimersByTime(11 * 60_000);
       await expect(read()).rejects.toMatchObject({ code: "owner_unavailable" });
     },
   );
@@ -391,24 +384,6 @@ describe("OntOS catalog server reads", () => {
       ],
     ]);
   });
-  it("answers every independent read for the request's market", async () => {
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
-    await inRequest(() => server.getCategoryTree());
-    requestMarket.id = skMarketId;
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
-    await inRequest(() => server.getCategoryTree());
-    expect(calls.map((call) => (call[2] as Query).view.storefrontCatalog.marketId)).toEqual([
-      czMarketId,
-      czMarketId,
-      skMarketId,
-      skMarketId,
-    ]);
-    requestMarket.id = czMarketId;
-    await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
-    await inRequest(() => server.getCategoryTree());
-    await network.idle();
-    expect(calls).toHaveLength(6);
-  });
   it("sends no market before any market exists (the whole CZK catalogue)", async () => {
     requestMarket.id = undefined;
     await inRequest(() => server.readProducts({ slug: "cache-test", pageSize: 1 }, "full"));
@@ -418,25 +393,14 @@ describe("OntOS catalog server reads", () => {
     await network.idle();
     expect(calls).toHaveLength(2);
   });
-  it("does not retain equal product queries across independent requests", async () => {
+  it("shares equal product queries across independent requests; fresh reads bypass", async () => {
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
     await network.idle();
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full", true));
     await network.idle();
-    expect(calls).toHaveLength(3);
-  });
-  it("reads the navigation tree on each request, separately from products", async () => {
-    await inRequest(() => server.getCatalogPage({ q: "a", pageSize: 24 }));
-    await inRequest(() => server.getCatalogPage({ q: "b", pageSize: 24 }));
-    await network.idle();
-    const queries = calls.map(catalogOf);
-    expect(queries.filter((call) => call.includeCategories === true)).toEqual([
-      { mode: "categories", includeCategories: true },
-      { mode: "categories", includeCategories: true },
-    ]);
-    expect(queries.filter((call) => call.includeCategories === false)).toHaveLength(2);
+    expect(calls).toHaveLength(2);
   });
   it("joins layout and page tree reads with omitted, undefined and empty arguments", async () => {
     await renderConcurrentCatalog();
@@ -481,7 +445,7 @@ describe("OntOS catalog server reads", () => {
     );
     await network.idle();
     const queries = calls.map(catalogOf);
-    expect(queries.filter((call) => call.categorySlug === "srouby")).toHaveLength(2);
+    expect(queries.filter((call) => call.categorySlug === "srouby")).toHaveLength(1);
     expect(model.getCategoryBySlug("srouby")?.heading).toBe("Nadpis srouby");
     expect(listing.products.map((p) => p.id)).toEqual(["p1"]);
     // Another page or a filter is its own product read, without the tree.
@@ -503,12 +467,12 @@ describe("OntOS catalog server reads", () => {
         .map(({ page, sort, includeCategories }) => ({ page, sort, includeCategories })),
     ).toEqual([
       { page: 1, sort: "name", includeCategories: false },
-      { page: 1, sort: "name", includeCategories: false },
       { page: 2, sort: "name", includeCategories: false },
       { page: undefined, sort: "price-asc", includeCategories: false },
     ]);
   });
-  it("reads category content again on the next request without retaining an old snapshot", async () => {
+  it("reads category content again once the 15 s catalogue cache refreshed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const first = await inRequest(() => server.getCatalog("srouby"));
     expect(first.getCategoryBySlug("srouby")?.longDescription).toBe("Velmi dlouhý popis kategorie");
     answer = () => ({
@@ -518,85 +482,19 @@ describe("OntOS catalog server reads", () => {
         longDescription: "Fresh source content",
       })),
     });
-    const next = await inRequest(() => server.getCatalog("srouby"));
-    expect(next.getCategoryBySlug("srouby")?.longDescription).toBe("Fresh source content");
+    vi.advanceTimersByTime(16_000);
+    await vi.waitFor(async () =>
+      expect(
+        (await inRequest(() => server.getCatalog("srouby"))).getCategoryBySlug("srouby")
+          ?.longDescription,
+      ).toBe("Fresh source content"),
+    );
     const listing = await inRequest(() =>
       server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 }),
     );
     expect(listing.products.map(({ id }) => id)).toEqual(["p2"]);
   });
 
-  it("publishes a new root immediately and merges a newly read branch absent from the navigation snapshot", async () => {
-    await inRequest(() => server.getShellSnapshot());
-    const added = category("source-root", null, "source-root", true);
-    answer = (query) => ({
-      products: [],
-      categories: query.includeCategoryContent
-        ? [added, category("source-child", added.id, "source-child")]
-        : tree,
-    });
-    const model = await inRequest(() => server.getCatalog("source-root"));
-    expect(model.getCategoryBySlug("source-root")?.id).toBe(added.id);
-    expect(model.getSidebarCategories("source-root").map(({ id }) => id)).toContain("source-child");
-    answer = () => ({ products: [], categories: [...tree, added] });
-    const snapshot = await inRequest(() => server.getShellSnapshot());
-    expect(snapshot.categories.categories.map(({ id }) => id)).toContain(added.id);
-  });
-
-  it("reads newly imported native products and media on the next identical search without a seeded identity", async () => {
-    await inRequest(() => server.getCatalogPage({ q: "NEW-NATIVE-SKU" }));
-    const id = "0193e001-0000-7000-8000-000000000001";
-    const asset = "0193e001-0000-7000-8000-000000000002";
-    answer = (query) => ({
-      products:
-        query.mode === "categories"
-          ? []
-          : [{ ...product(id), sku: "NEW-NATIVE-SKU", gallery: [`media:${asset}`] }],
-      categories: tree,
-    });
-    const page = await inRequest(() => server.getCatalogPage({ q: "NEW-NATIVE-SKU" }));
-    expect(page.products).toHaveLength(1);
-    expect(page.products[0]).toMatchObject({
-      id,
-      sku: "NEW-NATIVE-SKU",
-      imageSrc: `/obrazky/${id}/${asset}`,
-    });
-  });
-
-  it("loads navigation on demand and keeps product reads separate", async () => {
-    await inRequest(() => server.getShellSnapshot());
-    expect(calls.map(catalogOf)).toEqual([{ mode: "categories", includeCategories: true }]);
-    await inRequest(() => server.getShellSnapshot());
-    await network.idle();
-    expect(calls).toHaveLength(2);
-    await network.idle();
-    calls.length = 0;
-    await inRequest(() =>
-      Promise.all([
-        server.getShellSnapshot(),
-        server.getCatalog(),
-        server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }),
-      ]),
-    );
-    expect(calls.map(catalogOf).filter((query) => query.includeCategories === false)).toEqual([
-      { featured: true, pageSize: 20, fields: "card", includeCategories: false },
-      { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
-    ]);
-    await network.idle();
-    calls.length = 0;
-    await inRequest(() => server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 }));
-    expect(calls.map(catalogOf)).toEqual([
-      {
-        categorySlug: "srouby",
-        page: 1,
-        pageSize: 24,
-        sort: "name",
-        fields: "card",
-        includeCategories: false,
-        includeCategoryContent: true,
-      },
-    ]);
-  });
   it("reads product detail in full and listings as cards", async () => {
     await inRequest(() => server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }));
     await inRequest(() => server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 }));

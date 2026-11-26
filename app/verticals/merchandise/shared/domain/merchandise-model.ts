@@ -95,6 +95,8 @@ export const PriceTierSchema = Schema.Struct({
 export const CatalogFieldsSchema = Schema.Struct({
   imageSrc: Schema.optionalKey(Schema.String),
   minimumQuantity: Schema.optionalKey(Schema.Finite),
+  /** Strike-through gross price (VAT included). A patch cannot delete a key, so 0 means none. */
+  originalPriceMinor: Schema.optionalKey(MinorAmountSchema),
   packageQuantity: Schema.optionalKey(Schema.Finite),
   parameters: Schema.optionalKey(Schema.Array(CatalogParameterSchema)),
   priceTiers: Schema.optionalKey(Schema.Array(PriceTierSchema)),
@@ -113,6 +115,10 @@ export const ProductVariantSchema = Schema.Struct({
   ...CatalogFlagsSchema.fields,
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
+  /** Variant description for the storefront variant detail; '' means none. */
+  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  /** Variant weight in grams; 0 means none. */
+  weightGrams: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 1_000_000_000, minimum: 0 }))),
   /**
    * The stored gross unit price (VAT included) when the variant has no tiers: set by the server when the price is
    * entered, at the rate Tax gives the classification then. A later rate change never moves it; a value a client sends
@@ -223,6 +229,22 @@ export const ProductMetadataSchema = Schema.Struct({
   /** Optional direct memberships in addition to the primary category; absent preserves legacy behavior. */
   additionalCategoryIds: Schema.optionalKey(Schema.Array(CatalogCategoryIdSchema).check(Schema.isMaxLength(100))),
   categoryId: Schema.optionalKey(CatalogCategoryIdSchema),
+  /** Brand / manufacturer shown by storefronts; '' means none (a patch cannot delete a key). */
+  brand: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(120))),
+  /** SEO overrides; '' means the storefront falls back to the name / short description. */
+  seoDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  seoTitle: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(200))),
+  /** Downloadable documents (datasheets, certificates); [] means none. */
+  documents: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        label: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+        url: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+      }),
+    ).check(Schema.isMaxLength(20)),
+  ),
+  /** Hand-picked related products in display order; [] means none. */
+  relatedProductIds: Schema.optionalKey(Schema.Array(ProductIdReferenceSchema).check(Schema.isMaxLength(12))),
   /** Owner-derived membership closure: primary leaf-to-root first, then additional paths without duplicates. */
   categoryPathIds: Schema.optionalKey(Schema.Array(CatalogCategoryIdSchema)),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
@@ -299,6 +321,8 @@ export const VariantRecordSchema = Schema.Struct({
   active: Schema.Boolean,
   attributes: Schema.String,
   availability: AvailabilitySchema,
+  description: Schema.optionalKey(Schema.String),
+  weightGrams: Schema.optionalKey(Schema.Finite),
   /** Absent when the product's classification is not sellable now (staff reads only). */
   grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   id: VariantIdSchema,
@@ -328,6 +352,7 @@ export const SearchVariantOfferSchema = Schema.Struct({
   imageSrc: Schema.optionalKey(Schema.String),
   minimumQuantity: Schema.optionalKey(Schema.Finite),
   name: Schema.String,
+  originalPriceMinor: Schema.optionalKey(MinorAmountSchema),
   packageQuantity: Schema.optionalKey(Schema.Finite),
   /** Market-converted net display amount, not an unconverted seller/base price. */
   priceMinor: MinorAmountSchema,

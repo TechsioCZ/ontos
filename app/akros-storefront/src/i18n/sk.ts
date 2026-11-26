@@ -87,6 +87,7 @@ export const sk: Dictionary = {
       recommended: "Odporúčame",
       sale: "Dopredaj",
       action: "Akcia",
+      new: "Novinka",
       saleVariants: "Dopredaj vybraných variantov. Podrobnosti nájdete v detaile produktu.",
       actionVariants: "Akciová ponuka vybraných variantov. Podrobnosti nájdete v detaile produktu.",
     },
@@ -199,6 +200,9 @@ export const sk: Dictionary = {
   },
   productPage: {
     weight: "Hmotnosť",
+    manufacturer: "Výrobca",
+    documents: "Dokumenty na stiahnutie",
+    related: "Súvisiace produkty",
     descriptionUnavailable: "Popis nie je k dispozícii.",
     deliveryTitle: "Doprava a platba",
     deliveryText: "Spôsob dopravy a platby zvolíte v košíku.",

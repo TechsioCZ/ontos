@@ -46,11 +46,15 @@ export const CatalogResponseSchema = Schema.Struct({
     Schema.Struct({
       active: Schema.optionalKey(Schema.Boolean),
       availability: optionalString,
+      brand: optionalString,
       categoryId: optionalString,
       currency: optionalString,
       currentPriceMinor: optionalNumber,
       description: optionalString,
       descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
+      documents: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ label: Schema.String, url: Schema.String })),
+      ),
       gallery: Schema.optionalKey(Schema.Array(Schema.String)),
       grossPriceMinor: optionalNumber,
       id: Schema.String,
@@ -62,6 +66,10 @@ export const CatalogResponseSchema = Schema.Struct({
       parameters: Schema.optionalKey(ParametersSchema),
       priceTiers: Schema.optionalKey(PriceTiersSchema),
       published: Schema.optionalKey(Schema.Boolean),
+      relatedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
+      seoDescription: optionalString,
+      seoTitle: optionalString,
+      shortDescription: optionalString,
       sku: optionalString,
       slug: Schema.String,
       sourceProductId: optionalString,
@@ -151,6 +159,7 @@ interface ProductVariantModel {
 
 export interface ProductDetailModel extends ProductCardModel {
   readonly categoryId: string | null;
+  readonly documents: readonly { readonly label: string; readonly url: string }[];
   readonly imageAlt: string;
   readonly images: readonly string[];
   readonly manufacturer?: string;
@@ -158,6 +167,9 @@ export interface ProductDetailModel extends ProductCardModel {
   readonly paragraphs: readonly string[];
   readonly parameters: typeof ParametersSchema.Type;
   readonly priceExcludingVatMinor: number | null;
+  readonly relatedProductIds: readonly string[];
+  readonly seoDescription: string;
+  readonly seoTitle: string;
   readonly stockQuantity: number | null;
   readonly unit: string;
   readonly variants: readonly ProductVariantModel[];
@@ -317,6 +329,10 @@ const variantDetailsOf = (
 
 /** The audited N1 import joins producer.title into this parameter; other brands are not inferred. */
 const manufacturerOf = (product: OwnerProduct): string | undefined => {
+  const brand = product.brand?.trim();
+  if (brand !== undefined && brand.length > 0) {
+    return brand;
+  }
   if (
     product.sourceProductId === undefined ||
     product.sourceProductId.trim() !== product.sourceProductId ||
@@ -349,6 +365,12 @@ const detailOf = (
   const detail: ProductDetailModel = {
     ...card,
     categoryId: product.categoryId ?? null,
+    documents: (product.documents ?? []).filter(
+      (document) =>
+        document.label.trim().length > 0 &&
+        (document.url.startsWith("https://") ||
+          (document.url.startsWith("/") && !document.url.startsWith("//"))),
+    ),
     imageAlt: product.imageAlt ?? product.name,
     images: [
       ...new Set(
@@ -362,12 +384,20 @@ const detailOf = (
         ? product.minimumQuantity
         : 1,
     paragraphs:
-      product.descriptionParagraphs ?? (card.description.length > 0 ? [card.description] : []),
+      product.descriptionParagraphs ??
+      ((product.description ?? card.description).length > 0
+        ? [product.description ?? card.description]
+        : []),
     parameters: product.parameters ?? [],
     priceExcludingVatMinor:
       variants.length > 0 || (product.variantSummary?.count ?? 0) > 0
         ? null
         : netPriceOf(product.currentPriceMinor, product.priceTiers, card.priceMinor),
+    relatedProductIds: (product.relatedProductIds ?? []).filter(
+      (id) => id.length > 0 && id !== product.id,
+    ),
+    seoDescription: product.seoDescription?.trim() ?? "",
+    seoTitle: product.seoTitle?.trim() ?? "",
     stockQuantity: stockQuantityOf(product),
     unit: product.unit ?? "",
     variants,
@@ -412,7 +442,7 @@ export const projectCatalog = (
     const card: ProductCardModel = {
       ...Struct.pick(product, ["minimumQuantity", "packageQuantity", "unit"]),
       currency: body.market.currency,
-      description: product.description ?? "",
+      description: product.shortDescription || product.description || "",
       id: product.id,
       image: imageOf(
         product.id,

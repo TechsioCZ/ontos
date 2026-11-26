@@ -193,8 +193,8 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           groupKey: 'shell.navigation.commerce',
           homeStart: 110,
           icon: 'icon-[mdi--package-variant-closed]',
-          label: { cs: 'Produkty a sklad', en: 'Products and stock' },
-          order: 510,
+          label: { cs: 'Produkty', en: 'Products' },
+          order: 505,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

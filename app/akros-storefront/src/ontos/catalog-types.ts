@@ -59,6 +59,7 @@ export type CatalogSearchVariantOffer = Pick<
   | "packageQuantity"
   | "quantityStep"
   | "unit"
+  | "originalPriceMinor"
 > & {
   currency: StoreCurrency;
   /** Owner-selected net display amount after market conversion and tier deduplication. */
@@ -75,6 +76,11 @@ export interface CatalogPriceTier {
   minimumQuantity: number;
   priceMinor: number;
   priceExcludingVatMinor: number;
+}
+
+export interface CatalogDocument {
+  label: string;
+  url: string;
 }
 
 export interface CatalogParameter {
@@ -108,6 +114,14 @@ export interface CatalogProduct {
   description: string;
   priceMinor: number;
   originalPriceMinor?: number;
+  /** Manufacturer / brand name set in OntOS. */
+  brand?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  /** Downloadable documents (only https:// or same-origin "/" URLs). */
+  documents?: CatalogDocument[];
+  /** Staff-picked related products, in the stored order. */
+  relatedProductIds?: string[];
   /** The market currency every price of this product is in. */
   currency: StoreCurrency;
   unit: string;
@@ -161,7 +175,7 @@ export type CatalogPurchaseProduct = Pick<
 > & { detail: Pick<CatalogProductDetail, "priceTiers"> };
 export type CatalogPurchaseVariant = Omit<
   CatalogProductVariant,
-  "sourceId" | "vatRate" | "originalPriceMinor" | "isAction" | "isRecommended" | "isSale" | "isNew"
+  "sourceId" | "vatRate" | "isAction" | "isRecommended" | "isSale" | "isNew"
 >;
 
 export interface CatalogPromotionItem {

@@ -767,6 +767,17 @@ const reconciledVariants = Effect.fn('Merchandise.reconciledVariants')(function*
   return variants;
 });
 
+const skuTakenByOther = (products: readonly Product[], sku: string | undefined, id: string): boolean =>
+  sku !== undefined && products.some((entry) => entry.id !== id && sameSku(entry.sku, sku));
+
+/** The unique product keys an UpdateProduct must load to check a changed SKU or slug. */
+const updateProductKeysOf = (sku: string | undefined, slug: string | undefined) => {
+  if (sku === undefined) {
+    return slug === undefined ? undefined : { slug };
+  }
+  return slug === undefined ? { sku } : { sku, slug };
+};
+
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
   state: MerchandiseState,
   value: CommandOf<'UpdateProduct'>,
@@ -785,6 +796,9 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   }
   if (value.patch.slug !== undefined && slugTaken(state.products, value.patch.slug, product.id)) {
     return yield* conflict('Another product already uses this storefront slug');
+  }
+  if (skuTakenByOther(state.products, value.patch.sku, product.id)) {
+    return yield* conflict('A product with this SKU already exists');
   }
   // categoryPathIds is server-derived; categoryId moves the product inside the storefront category tree.
   const {
@@ -2307,8 +2321,8 @@ export const workingSetRequestOf = (
           movements: value.patch.variants !== undefined,
           productIds: [value.id],
         } satisfies WorkingSetRequest;
-        const keyed =
-          value.patch.slug === undefined ? request : { ...request, productKeys: { slug: value.patch.slug } };
+        const productKeys = updateProductKeysOf(value.patch.sku, value.patch.slug);
+        const keyed = productKeys === undefined ? request : { ...request, productKeys };
         return value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
           ? keyed
           : {

@@ -40,6 +40,16 @@ const contentFieldEntries = [
   ['priceTiers', 'Množstevní ceny'],
   ['published', 'Zveřejnění v e-shopu'],
   ['slug', 'Adresa v e-shopu'],
+  ['sku', 'Kód produktu'],
+  ['brand', 'Značka'],
+  ['seoTitle', 'SEO titulek'],
+  ['seoDescription', 'SEO popis'],
+  ['documents', 'Dokumenty'],
+  ['relatedProductIds', 'Související produkty'],
+  ['originalPriceMinor', 'Původní cena'],
+  ['featuredPosition', 'Pořadí na úvodní stránce'],
+  ['sourceUnit', 'Jednotka v e-shopu'],
+  ['sourceBaseProduct', 'Hlavní produkt v seznamech'],
 ] as const;
 
 const categoryFieldEntries = [
@@ -62,6 +72,8 @@ const ContentValueSchema = Schema.Union([
   Schema.Array(Schema.String),
   Schema.Array(CatalogParameterSchema),
   Schema.Array(PriceTierSchema),
+  Schema.Array(Schema.Struct({ label: Schema.String, url: Schema.String })),
+  Schema.OptionFromNullOr(Schema.Finite),
 ]);
 type ContentValue = typeof ContentValueSchema.Type;
 const equivalentContentValue = Schema.toEquivalence(ContentValueSchema);

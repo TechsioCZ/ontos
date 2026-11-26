@@ -99,7 +99,10 @@ export function ProductGrid({
                     src={product.imageSrc}
                     width={480}
                   />
-                  {(product.isRecommended || product.isSale || product.isAction) && (
+                  {(product.isRecommended ||
+                    product.isSale ||
+                    product.isAction ||
+                    product.isNew) && (
                     <div
                       className="absolute top-0 left-0 grid justify-items-start gap-1 pr-11"
                       data-sf-product-tags
@@ -126,6 +129,11 @@ export function ProductGrid({
                           {cs.product.tags.action}
                         </Badge>
                       ) : null}
+                      {product.isNew && (
+                        <Badge size="sm" variant="secondary">
+                          {cs.product.tags.new}
+                        </Badge>
+                      )}
                     </div>
                   )}
                 </StoreLink>

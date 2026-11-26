@@ -163,6 +163,12 @@ export function ProductVariantDetail({
                 </>
               ) : (
                 <>
+                  {variant.originalPriceMinor !== undefined &&
+                    variant.originalPriceMinor > variant.priceMinor && (
+                      <s className="text-xs text-fg-secondary">
+                        {formatPrice(variant.originalPriceMinor)}
+                      </s>
+                    )}
                   <strong>
                     {formatPrice(variant.priceMinor)} / {variant.unit}
                   </strong>

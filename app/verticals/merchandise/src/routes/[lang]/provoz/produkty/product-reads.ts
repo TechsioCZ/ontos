@@ -49,6 +49,15 @@ export const searchProducts = (search: string, activeOnly: boolean) => {
   );
 };
 
+/** Name and SKU rows of the given products (labels for stored references). */
+export const readProductLabels = (productIds: readonly ProductId[]) =>
+  correlation('labels').pipe(
+    Effect.flatMap((id) =>
+      executeRecords({ view: { limit: productIds.length, ordersLimit: 0, productIds, summary: true } }, id),
+    ),
+    Effect.map((response) => response.products),
+  );
+
 /** Tree categories whose path matches `text` (blank = top-level ones), best first, with the match count. */
 export const searchCategoryTrails = (text: string) =>
   correlation('categories').pipe(

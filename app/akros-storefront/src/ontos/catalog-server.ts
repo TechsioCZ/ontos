@@ -9,6 +9,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { createCatalog } from "./catalog-model";
 import { getConfig } from "./config";
 import { readRecords } from "./gateway";
+import { sharedRead } from "./shared-read";
 import {
   projectCategories,
   projectProducts,
@@ -56,6 +57,8 @@ export interface CatalogPage {
 export const CATEGORY_PAGE_SIZE = 24;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
+// Public catalogue reads are equal for every shopper of a market: shared across requests, served stale while refreshing.
+const CATALOG_TTL_MS = 15_000;
 
 const catalogWork = async <A>(
   options: OperationOptions,
@@ -126,10 +129,6 @@ const loadProducts = (key: string, operation: Operation) => async () => {
     await readCatalog(typeof marketId === "string" ? marketId : undefined, query, operation),
   );
 };
-// One owner read per render for equal queries, keyed by the serialized owner query.
-const cachedProducts = cache((operation: Operation, key: string): Promise<ProductPage> =>
-  loadProducts(key, operation)(),
-);
 
 /**
  * One bounded product read without the category tree. Equal reads share only the current render.
@@ -143,7 +142,13 @@ export async function readProducts(
 ): Promise<ProductPage> {
   return catalogWork(options, async (operation) => {
     const key = productKey(await marketIdOf(operation), query, fields);
-    return fresh ? await loadProducts(key, operation)() : await cachedProducts(operation, key);
+    if (fresh) return await loadProducts(key, operation)();
+    return await sharedRead(
+      `products:${key}`,
+      CATALOG_TTL_MS,
+      (detached) => loadProducts(key, detached)(),
+      { stale: true, caller: operation },
+    );
   });
 }
 
@@ -199,14 +204,25 @@ const withCategoryContent = (tree: CatalogCategory[], content: CatalogCategory[]
 const cachedCategoryPage = cache(
   async (operation: Operation, categorySlug: string): Promise<CategoryPage> => {
     const marketId = await marketIdOf(operation);
-    return await loadCategoryPage(marketId, categorySlug, operation)();
+    return await sharedRead(
+      `catpage:${marketId ?? ""}:${categorySlug}`,
+      CATALOG_TTL_MS,
+      (detached) => loadCategoryPage(marketId, categorySlug, detached)(),
+      { stale: true, caller: operation },
+    );
   },
 );
-// Category publication is request-time state, not a fifteen-minute process snapshot.
-// React cache joins equal tree reads within one render without hiding new categories on the next request.
-const rootTree = cache(
-  async (operation: Operation) => await loadRootTree(await marketIdOf(operation), operation)(),
-);
+// The 2,000+ node tree is shared process-wide: fresh for a minute, then served while one background refresh runs.
+const TREE_TTL_MS = 60_000;
+const rootTree = cache(async (operation: Operation) => {
+  const marketId = await marketIdOf(operation);
+  return await sharedRead(
+    `tree:${marketId ?? ""}`,
+    TREE_TTL_MS,
+    (detached) => loadRootTree(marketId, detached)(),
+    { stale: true, caller: operation },
+  );
+});
 
 /**
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the
@@ -281,13 +297,19 @@ const slimCategory = ({
  * children; no products, no full 2,000+ category tree). Category and product pages add their active
  * branch with `getCategoryBranch`; header search asks the BFF.
  */
+// The shared tree is the same array on every request while cached: build its snapshot once.
+const shellSnapshots = new WeakMap<CatalogCategory[], CatalogSnapshot>();
 export async function getShellSnapshot(options: OperationOptions = {}): Promise<CatalogSnapshot> {
   const categories = await getCategoryTree("", options);
+  const held = shellSnapshots.get(categories);
+  if (held !== undefined) return held;
   const model = createCatalog({ products: [], homepageFeaturedProductIds: [] }, { categories });
-  return {
+  const snapshot: CatalogSnapshot = {
     catalog: { products: [], homepageFeaturedProductIds: [] },
     categories: { categories: model.getSidebarCategories().map(slimCategory) },
   };
+  shellSnapshots.set(categories, snapshot);
+  return snapshot;
 }
 
 /** Extra navigation for one active category: its trail and the children of every trail level. */

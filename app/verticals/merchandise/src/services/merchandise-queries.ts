@@ -1,6 +1,6 @@
 // Bounded reads over the normalized merchandise tables. Every list is paged and filtered in PostgreSQL; the
 // largest unit a read ever materializes is one page of products (with variants only for detail reads).
-import { and, asc, desc, eq, gt, inArray, like, mapColumnsInSQLToAlias, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, like, mapColumnsInSQLToAlias, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -54,7 +54,6 @@ import {
   loadHead,
   MerchandiseStoreFailure,
   storedDocumentUndecodable,
-  productSearchText,
   query,
   whereScope,
 } from './merchandise-store.ts';
@@ -682,176 +681,6 @@ type SearchPlan = ReturnType<typeof searchPlanOf>;
 // ProductMetadataSchema's canonical maximum; overflow fails closed, never truncates evidence.
 const MAX_PRODUCT_VARIANTS = 1000;
 const VARIANT_SET_OVERFLOW_REASON = 'Stored variant set exceeds the catalog bound';
-const CURRENT_SEARCH_BATCH = 128;
-const CurrentSearchProductSchema = Schema.Struct({
-  id: ProductIdReferenceSchema,
-  legacyVariants: Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(MAX_PRODUCT_VARIANTS)),
-  name: Schema.String,
-  ordinal: Schema.Int,
-  parameters: Schema.Array(CatalogParameterSchema),
-  shortDescription: Schema.String,
-  sku: Schema.String,
-});
-const CurrentSearchVariantSchema = Schema.Struct({
-  attributes: Schema.String,
-  name: Schema.String,
-  parameters: Schema.Array(CatalogParameterSchema),
-  productId: ProductIdReferenceSchema,
-  sku: Schema.OptionFromNullOr(Schema.String),
-});
-
-/**
- * Exact current inclusion uses the SAME JS normalizer as writes. A finite SQL accent translation or a different
- * ICU/Unicode casing version is not that contract. Stream only text scalars in bounded candidate batches,
- * exhaust them BEFORE SQL count/public pagination, and hydrate only the eventual public page.
- */
-const currentSearchBatch = Effect.fn('MerchandiseQueries.currentSearchBatch')(function* currentSearchBatch(
-  db: MerchandiseDb,
-  scope: StoreScope,
-  filters: readonly (SQL | undefined)[],
-  words: readonly string[],
-  after: Option.Option<number>,
-) {
-  const rows = yield* query(
-    db
-      .select({
-        id: products.id,
-        // Historical inline fallback: project only searchable fields, NEVER full inline variants/history/tier blobs.
-        legacyVariants: sql<unknown>`case when exists(select 1 from ${productVariants} existing
-      where existing.tenant_id = ${scope.tenantId}::uuid and existing.legal_entity_id = ${scope.legalEntityId}::uuid
-        and existing.product_id = ${outerProductId}) then '[]'::jsonb else (
-      select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-        'active', legacy.value->'active', 'attributes', legacy.value->'attributes',
-        'name', legacy.value->'name', 'parameters', legacy.value->'parameters', 'sku', legacy.value->'sku'))
-        order by legacy.position), '[]'::jsonb)
-      from jsonb_array_elements(coalesce(${products.document}->'variants', '[]'::jsonb))
-        with ordinality legacy(value, position) where legacy.position <= ${MAX_PRODUCT_VARIANTS + 1}) end`,
-        name: products.name,
-        ordinal: products.ordinal,
-        parameters: sql<unknown>`coalesce(${products.document}->'parameters', '[]'::jsonb)`,
-        shortDescription: sql<string>`coalesce(${products.document}->>'shortDescription', '')`,
-        sku: products.sku,
-      })
-      .from(products)
-      .where(
-        and(
-          whereScope(products, scope),
-          ...filters,
-          Option.getOrUndefined(after.pipe(Option.map((ordinal) => gt(products.ordinal, ordinal)))),
-        ),
-      )
-      .orderBy(asc(products.ordinal))
-      .limit(CURRENT_SEARCH_BATCH),
-  );
-  const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchProductSchema))(rows).pipe(
-    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
-    Effect.mapError(storedRowsFailure),
-  );
-  if (candidates.length === 0) {
-    return { after, done: true, ids: [] };
-  }
-  const variantRows = yield* query(
-    db
-      .select({
-        attributes: sql<string>`coalesce(${productVariants.document}->>'attributes', '')`,
-        name: productVariants.name,
-        parameters: sql<unknown>`coalesce(${productVariants.document}->'parameters', '[]'::jsonb)`,
-        productId: productVariants.productId,
-        sku: productVariants.sku,
-      })
-      .from(productVariants)
-      .where(
-        and(
-          whereScope(productVariants, scope),
-          idsFilter(
-            productVariants.productId,
-            candidates.map((product) => product.id),
-          ),
-          eq(productVariants.active, true),
-        ),
-      )
-      .orderBy(asc(productVariants.position))
-      .limit(candidates.length * MAX_PRODUCT_VARIANTS + 1),
-  );
-  const variants = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchVariantSchema))(variantRows).pipe(
-    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
-    Effect.mapError(storedRowsFailure),
-  );
-  const grouped = new Map<string, (typeof variants)[number][]>();
-  for (const variant of variants) {
-    const group = grouped.get(variant.productId) ?? [];
-    group.push(variant);
-    grouped.set(variant.productId, group);
-  }
-  if ([...grouped.values()].some((group) => group.length > MAX_PRODUCT_VARIANTS)) {
-    return yield* new MerchandiseStoreFailure({ reason: VARIANT_SET_OVERFLOW_REASON });
-  }
-  const ids = candidates.flatMap((product) => {
-    const normalized = grouped.get(product.id);
-    const text = productSearchText({
-      ...product,
-      variants:
-        normalized === undefined
-          ? product.legacyVariants
-          : normalized.map((variant) => ({
-              attributes: variant.attributes,
-              name: variant.name,
-              parameters: variant.parameters,
-              sku: Option.getOrElse(variant.sku, () => ''),
-            })),
-    });
-    return words.every((word) => text.includes(word)) ? [product.id] : [];
-  });
-  return {
-    after: Option.fromUndefinedOr(candidates.at(-1)?.ordinal),
-    done: candidates.length < CURRENT_SEARCH_BATCH,
-    ids,
-  };
-});
-
-const currentProductInclusion = Effect.fn('MerchandiseQueries.currentProductInclusion')(
-  function* currentProductInclusion(
-    db: MerchandiseDb,
-    scope: StoreScope,
-    filters: readonly (SQL | undefined)[],
-    words: readonly string[],
-  ) {
-    const [stored] = yield* query(
-      db
-        .select({ bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint, revision: catalogHeads.revision })
-        .from(catalogHeads)
-        .where(whereScope(catalogHeads, scope))
-        .limit(1),
-    );
-    // An absent head is an empty catalog at revision 0; a head row whose import is unverified is not published.
-    if (
-      stored !== undefined &&
-      stored.bootstrapCheckpoint !== null &&
-      !Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(stored.bootstrapCheckpoint)
-    ) {
-      return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
-    }
-    const head = stored ?? EMPTY_CATALOG_HEAD;
-    let after = Option.none<number>();
-    let done = false;
-    const ids: ProductRecord['id'][] = [];
-    yield* Effect.whileLoop({
-      body: () => currentSearchBatch(db, scope, filters, words, after),
-      step: (batch) => {
-        ({ after, done } = batch);
-        ids.push(...batch.ids);
-      },
-      while: () => !done,
-    });
-    // One schema-encoded bound value avoids a parameter ceiling for broad searches, without a result cache.
-    const encodedIds = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(ProductIdReferenceSchema)))(
-      ids,
-    ).pipe(Effect.mapError(storedRowsFailure));
-    const filter =
-      ids.length === 0 ? sql`false` : sql`${products.id} in (select jsonb_array_elements_text(${encodedIds}::jsonb))`;
-    return { filter, revision: head.revision };
-  },
-);
 
 /** Only searchable scalars, not variant documents, stock, prices, histories or tiers of whole groups. */
 const searchVariantRows = Effect.fn('MerchandiseQueries.searchVariantRows')(function* searchVariantRows(
@@ -978,6 +807,7 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
       'unit', ${productVariants.document}->'unit', 'sourceUnit', ${productVariants.document}->'sourceUnit',
       'imageSrc', ${productVariants.document}->'imageSrc',
       'minimumQuantity', ${productVariants.document}->'minimumQuantity',
+      'originalPriceMinor', ${productVariants.document}->'originalPriceMinor',
       'packageQuantity', ${productVariants.document}->'packageQuantity'))`,
               productId: productVariants.productId,
               stockOnHand: productVariants.stockOnHand,
@@ -1050,6 +880,7 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
       'imageSrc', legacy.value->'imageSrc',
       'minimumQuantity', legacy.value->'minimumQuantity',
       'name', legacy.value->'name',
+      'originalPriceMinor', legacy.value->'originalPriceMinor',
       'packageQuantity', legacy.value->'packageQuantity',
       'priceMinor', legacy.value->'priceMinor',
       'priceTiers', case when jsonb_typeof(legacy.value->'priceTiers') = 'array' then (
@@ -1223,8 +1054,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     sellableClassificationFilter(scope),
     Option.getOrUndefined(offer),
   ];
-  const inclusion = words.length === 0 ? undefined : yield* currentProductInclusion(db, scope, baseFilters, words);
-  const filters = inclusion === undefined ? baseFilters : [...baseFilters, inclusion.filter];
+  const filters = [...baseFilters, ...containsAll(products.searchText, words)];
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
   const relevance =
     words.length === 0
@@ -1261,9 +1091,6 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   });
   if (result.head === null) {
     return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
-  }
-  if (inclusion !== undefined && inclusion.revision !== result.head.revision) {
-    return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
   }
   const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, result.rates, result.held);
   yield* verifySearchRevision(db, scope, result.head, needle, result.products.length);

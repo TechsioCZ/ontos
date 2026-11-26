@@ -1030,8 +1030,12 @@ export default defineConfig({
       files: [
         'verticals/pricing/shared/actions/manage-commitment-confirmation.ts',
         'verticals/pricing/shared/actions/manage-quotation.ts',
+        'verticals/pricing/shared/actions/define-price.ts',
+        'verticals/pricing/shared/actions/revise-price.ts',
         'verticals/pricing/shared/apis/manage-commitment-confirmation-action.ts',
         'verticals/pricing/shared/apis/manage-quotation-action.ts',
+        'verticals/pricing/shared/apis/define-price-action.ts',
+        'verticals/pricing/shared/apis/revise-price-action.ts',
       ],
       rules: {
         'oxc/no-barrel-file': 'off',

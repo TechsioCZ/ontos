@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
 import { getBrand } from "@/brand";
 import { ContentLink } from "@/components/content-link";
 import { ProductDetailActions } from "@/components/product-detail-actions";
+import { ProductDocuments } from "@/components/product-documents";
 import { ProductGrid } from "@/components/product-grid";
 import { ProductVariantDetail } from "@/components/product-variant-detail";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
@@ -42,7 +44,28 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
     getDictionary(),
   ]);
 
-  return { title: product?.name ?? cs.product.title };
+  if (!product) return { title: cs.product.title };
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  const origin = host
+    ? `${requestHeaders.get("x-forwarded-proto") ?? "https"}://${host}`
+    : undefined;
+  const absolute = (path: string) => (origin ? new URL(path, origin).toString() : path);
+  const title = product.seoTitle || product.name;
+  const description =
+    product.seoDescription || product.detail.descriptionParagraphs[0] || product.description;
+  const canonical = absolute(await marketHref(`/produkt/${slug}`));
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      images: [absolute(product.imageSrc)],
+    },
+  };
 }
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
@@ -119,21 +142,34 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     materialMarkers.filter((marker) =>
       candidateName.toLocaleUpperCase("cs-CZ").includes(marker.toLocaleUpperCase("cs-CZ")),
     ).length;
-  const recommendations = featuredCatalog
-    .getHomepageFeaturedProducts()
-    .filter(
-      (candidate) =>
-        candidate.id !== product.id &&
-        candidate.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
-        candidate.priceMinor > 0 &&
-        !isImagePlaceholder(candidate.imageSrc),
-    )
-    .sort(
-      (left, right) =>
-        recommendationScore(right.name) - recommendationScore(left.name) ||
-        left.name.localeCompare(right.name, "cs"),
-    )
-    .slice(0, 3);
+  const relatedIds = (product.relatedProductIds ?? []).filter((id) => id !== product.id);
+  const relatedProducts = relatedIds.length
+    ? await getCatalogPage(
+        { productIds: relatedIds, pageSize: relatedIds.length },
+        { fields: "card" },
+      )
+        .then(({ products }) =>
+          relatedIds.flatMap((id) => products.find((candidate) => candidate.id === id) ?? []),
+        )
+        .catch(() => [])
+    : [];
+  const recommendations = relatedProducts.length
+    ? relatedProducts
+    : featuredCatalog
+        .getHomepageFeaturedProducts()
+        .filter(
+          (candidate) =>
+            candidate.id !== product.id &&
+            candidate.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
+            candidate.priceMinor > 0 &&
+            !isImagePlaceholder(candidate.imageSrc),
+        )
+        .sort(
+          (left, right) =>
+            recommendationScore(right.name) - recommendationScore(left.name) ||
+            left.name.localeCompare(right.name, "cs"),
+        )
+        .slice(0, 3);
 
   const simpleStockLabel = purchaseItem.availabilityUnknown
     ? cs.product.availabilityNowUnknown
@@ -219,6 +255,26 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           <div className="sf-product-detail__summary">
             <header className="sf-product-detail__heading">
               <h1 id="product-title">{product.name}</h1>
+              {product.isRecommended && (
+                <Badge size="md" variant="primary">
+                  {cs.product.tags.recommended}
+                </Badge>
+              )}
+              {product.isSale && (
+                <Badge size="md" variant="discount">
+                  {cs.product.tags.sale}
+                </Badge>
+              )}
+              {product.isAction && (
+                <Badge size="md" variant="discount">
+                  {cs.product.tags.action}
+                </Badge>
+              )}
+              {product.isNew && (
+                <Badge size="md" variant="secondary">
+                  {cs.product.tags.new}
+                </Badge>
+              )}
               {hasMultipleVariants && (
                 <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
                   {cs.product.moreVariants}
@@ -244,6 +300,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <dt>{cs.product.sku}</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
+              {product.brand && (
+                <div>
+                  <dt>{cs.productPage.manufacturer}</dt>
+                  <dd>{product.brand}</dd>
+                </div>
+              )}
               {!hasMultipleVariants && productWeight && (
                 <div>
                   <dt>{cs.productPage.weight}</dt>
@@ -323,6 +385,13 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                             </strong>
                           </p>
                         )}
+                        {purchaseItem.originalPriceMinor !== undefined &&
+                          purchaseItem.originalPriceMinor > purchaseItem.priceMinor && (
+                            <p className="sf-product-detail__price-row">
+                              <span>{cs.product.originalPrice}</span>
+                              <s>{formatPrice(purchaseItem.originalPriceMinor, money)}</s>
+                            </p>
+                          )}
                         <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
                           <span>{cs.product.priceIncludingVat}</span>
                           <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
@@ -394,6 +463,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               ))}
             </ul>
           )}
+          <ProductDocuments documents={product.documents ?? []} title={cs.productPage.documents} />
         </section>
 
         {hasMultipleVariants && (
@@ -429,7 +499,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             className="sf-product-detail__surface sf-section sf-section--product-recommendations"
             aria-labelledby="product-recommendations-title"
           >
-            <h2 id="product-recommendations-title">{cs.catalog.recommendations}</h2>
+            <h2 id="product-recommendations-title">
+              {relatedProducts.length ? cs.productPage.related : cs.catalog.recommendations}
+            </h2>
             <ProductGrid
               action="detail"
               columns="related"
@@ -460,6 +532,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           loading="eager"
         />
         <p>{cs.productPage.printSku(purchaseItem.sku)}</p>
+        {product.brand && (
+          <p>
+            {cs.productPage.manufacturer}: {product.brand}
+          </p>
+        )}
         {!hasMultipleVariants && (
           <p>
             {cs.productPage.printPrice(

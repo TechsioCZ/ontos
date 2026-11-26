@@ -137,7 +137,9 @@ const profileSubject = (facts: ItemFacts, kind: 'COUNTERPARTY' | 'RETAIL') => ({
 });
 
 const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
-  const identifiers = row.officialIdentifiers.filter(({ identifierType }) => identifierType !== 'ICO');
+  // Party refuses the non-ICO identifiers (a DIČ) as unavailable, so the job retried for hours and blocked every
+  // release drain. The ICO reaches the profile below; the Party candidate carries none.
+  const identifiers: typeof row.officialIdentifiers = [];
   const evidence = {
     kind: 'CLIENT_SOURCE_ASSERTION',
     observedSubject: row.kind,

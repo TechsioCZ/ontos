@@ -59,6 +59,7 @@ export const ProductPatchSchema = Schema.Struct({
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockThreshold: Schema.optionalKey(MinorAmountSchema),
   name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  sku: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64))),
   taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
   unit: Schema.optionalKey(ProductUnitSchema),
 });

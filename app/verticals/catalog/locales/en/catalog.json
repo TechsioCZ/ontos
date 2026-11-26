@@ -19,10 +19,10 @@
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "products": {
-        "title": "Products",
+        "title": "ERP products",
         "description": "Catalog products imported from the ERP with the ERP price and stock.",
-        "intro": "Products the ERP (Symmy) imported into the OntOS catalog, in every state. Each variant shows the ERP price and stock. This page is read-only.",
-        "offerMissing": "ERP price and stock are not shown: the ERP offer is missing. Open the page with customerConfigurationId, channelId, marketId, currencyCode and unitId in the address; the browser remembers them.",
+        "intro": "Products the ERP (Symmy) imported into the OntOS catalog, in every state. Each variant shows the ERP price and stock. Edit e-shop products (prices, stock, images, publication) under Products.",
+        "editorLink": "Edit e-shop products",
         "search": "Search by name",
         "searchSubmit": "Search",
         "loading": "Loading products…",

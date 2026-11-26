@@ -25,6 +25,7 @@ export interface DetailDraft {
   /** Real (sellable) variants are edited on the Varianty tab; the detail form passes them through unchanged. */
   readonly realVariants: readonly ProductVariant[];
   readonly shortDescription: string;
+  readonly sku: string;
   /** The VAT classification; Tax gives its rate. */
   readonly taxClassificationCode: CzVatClassificationCode;
   readonly unit: ProductUnit;
@@ -68,6 +69,7 @@ export const draftOf = (product: ProductRecord): DetailDraft => ({
   priceText: moneyInputText(product.currentPriceMinor / 100),
   realVariants: (product.variants ?? []).filter(isRealVariant),
   shortDescription: product.shortDescription ?? '',
+  sku: product.sku,
   // Staff records always name the classification; only storefront records omit it.
   taxClassificationCode: product.taxClassificationCode ?? DEFAULT_TAX_CLASSIFICATION,
   unit: product.unit,
@@ -90,6 +92,7 @@ export const sameDetailDraft = (left: DetailDraft, right: DetailDraft): boolean 
   left.name.trim() === right.name.trim() &&
   left.priceCzk === right.priceCzk &&
   left.shortDescription.trim() === right.shortDescription.trim() &&
+  left.sku.trim() === right.sku.trim() &&
   left.taxClassificationCode === right.taxClassificationCode &&
   left.unit === right.unit &&
   left.weightGrams.trim() === right.weightGrams.trim() &&
@@ -146,6 +149,9 @@ export const detailSaveOf = (draft: DetailDraft, base: DetailDraft): DetailSave 
   if (draft.category.trim() !== base.category.trim()) {
     patch.category = draft.category.trim();
   }
+  if (draft.sku.trim() !== base.sku.trim()) {
+    patch.sku = draft.sku.trim();
+  }
   if (draft.unit !== base.unit) {
     patch.unit = draft.unit;
   }
@@ -168,6 +174,8 @@ const tooLong = (value: string, maximum: number): boolean => value.trim().length
 export const detailDraftInvalid = (draft: DetailDraft): boolean =>
   draft.name.trim() === '' ||
   draft.category.trim() === '' ||
+  draft.sku.trim() === '' ||
+  tooLong(draft.sku, 64) ||
   tooLong(draft.name, 200) ||
   tooLong(draft.category, 120) ||
   !Number.isFinite(draft.priceCzk) ||

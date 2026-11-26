@@ -85,6 +85,7 @@ export const cs = {
       recommended: "Doporučujeme",
       sale: "Doprodej",
       action: "Akce",
+      new: "Novinka",
       saleVariants: "Doprodej vybraných variant. Podrobnosti najdete v detailu produktu.",
       actionVariants: "Akční nabídka vybraných variant. Podrobnosti najdete v detailu produktu.",
     },
@@ -197,6 +198,9 @@ export const cs = {
   },
   productPage: {
     weight: "Hmotnost",
+    manufacturer: "Výrobce",
+    documents: "Dokumenty ke stažení",
+    related: "Související produkty",
     descriptionUnavailable: "Popis není k dispozici.",
     deliveryTitle: "Doprava a platba",
     deliveryText: "Způsob dopravy a platby zvolíte v košíku.",

@@ -506,7 +506,7 @@
           "selectAllLabel": "Select all rows",
           "selectionLabel": "Select rows"
         },
-        "title": "Products and stock",
+        "title": "Products",
         "validation": {
           "delta": "Enter a non-zero quantity between −1,000,000 and 1,000,000, with at most 6 decimal places.",
           "lowStock": "Enter a whole number of 0 or more.",

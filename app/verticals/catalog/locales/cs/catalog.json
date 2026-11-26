@@ -19,10 +19,10 @@
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
       "products": {
-        "title": "Produkty",
+        "title": "Produkty z ERP",
         "description": "Produkty katalogu importované z ERP s cenou a skladem z ERP.",
-        "intro": "Produkty, které do katalogu OntOS importoval ERP (Symmy), ve všech stavech. U variant je cena a sklad z ERP. Stránka je jen pro čtení.",
-        "offerMissing": "Cena a sklad z ERP se nezobrazí: chybí nabídka ERP. Otevřete stránku s parametry customerConfigurationId, channelId, marketId, currencyCode a unitId v adrese; prohlížeč si je zapamatuje.",
+        "intro": "Produkty, které do katalogu OntOS importoval ERP (Symmy), ve všech stavech. U variant je cena a sklad z ERP. Produkty e-shopu (ceny, sklad, obrázky, zveřejnění) upravíte v sekci Produkty.",
+        "editorLink": "Upravit produkty e-shopu",
         "search": "Hledat podle názvu",
         "searchSubmit": "Hledat",
         "loading": "Načítám produkty…",

@@ -3,7 +3,15 @@
 import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type KeyboardEvent,
+} from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Label } from "@techsio/ui-kit/atoms/label";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -22,6 +30,10 @@ import {
   type RemoteCategorySuggestion,
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
+import { startNavigationProgress } from "@/components/navigation-progress";
+
+/** Runs while the HTML parses: text typed before hydration (even before this script is parsed) reaches the hidden q field, a pre-hydration native submit carries it, and it survives the streamed loading-shell swap and hydration. */
+const EARLY_QUERY_SCRIPT = `(function(){var w=window,d=document;function hq(g){return g&&g.querySelector('input[type="hidden"][name="q"]')}function vis(g){return g.querySelector('input:not([type="hidden"])')}function fill(g,v){if(g.hasAttribute("data-sf-hydrated"))return;var q=hq(g);if(!q)return;q.value=v;g.setAttribute("data-sf-early-query",v);var t=vis(g);if(t&&t.value!==v)t.value=v;}function all(v){w.__sfEarlyQuery=v;var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++)fill(a[i],v);}if(!w.__sfEarlyQueryInit){w.__sfEarlyQueryInit=1;d.addEventListener("input",function(e){var t=e.target,g=t&&t.form;if(!g||t.type==="hidden"||typeof t.value!=="string"||g.hasAttribute("data-sf-hydrated")||!hq(g))return;all(t.value);},true);d.addEventListener("submit",function(e){var g=e.target;if(!g||!g.hasAttribute||g.hasAttribute("data-sf-hydrated")||!hq(g))return;var t=vis(g);if(t&&t.value.trim())hq(g).value=t.value;},true);}var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++){var g=a[i];if(g.hasAttribute("data-sf-hydrated")||!hq(g))continue;var t=vis(g);if(t&&t.value){all(t.value);break;}}if(w.__sfEarlyQuery)all(w.__sfEarlyQuery);})();`;
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -46,6 +58,18 @@ export function HeaderSearch() {
   const id = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const early_ = window as unknown as { __sfEarlyQuery?: string };
+    const early = (form.getAttribute("data-sf-early-query") ?? early_.__sfEarlyQuery ?? "").trim();
+    // Consumed once: later client-rendered headers must not get this text back.
+    early_.__sfEarlyQuery = undefined;
+    form.setAttribute("data-sf-hydrated", "");
+    if (early) setQuery((current) => (current.trim() ? current : early));
+  }, []);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
   // The browser only holds featured products and navigation, so all suggestions come from the BFF.
@@ -63,8 +87,15 @@ export function HeaderSearch() {
     categories: [],
   });
   const [searchAttempt, setSearchAttempt] = useState(0);
+  // Answers already seen in this page: repeated or backspaced queries show at once.
+  const seen = useRef(new Map<string, typeof remote>());
   useEffect(() => {
     if (!ready) return;
+    const held = seen.current.get(trimmedQuery);
+    if (held !== undefined) {
+      setRemote(held);
+      return;
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
@@ -87,14 +118,16 @@ export function HeaderSearch() {
             );
           return body;
         })
-        .then((body) =>
-          setRemote({
+        .then((body) => {
+          const next = {
             query: trimmedQuery,
             items: body.items ?? [],
             total: typeof body.total === "number" ? body.total : 0,
             categories: Array.isArray(body.categories) ? body.categories : [],
-          }),
-        )
+          };
+          seen.current.set(trimmedQuery, next);
+          setRemote(next);
+        })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
           setRemote({
@@ -108,7 +141,7 @@ export function HeaderSearch() {
                 : cs.search.unavailable,
           });
         });
-    }, 200);
+    }, 120);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
@@ -162,9 +195,16 @@ export function HeaderSearch() {
   const resultsHref = href(`/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`);
 
   const submit = () => {
-    if (!trimmedQuery) return;
+    const input = formRef.current?.querySelector<HTMLInputElement>('input:not([type="hidden"])');
+    const term = trimmedQuery || input?.value.trim();
+    if (!term) {
+      input?.focus();
+      return;
+    }
     setOpen(false);
-    router.push(resultsHref);
+    const target = href(`/vyhledavani?q=${encodeURIComponent(term)}`);
+    startNavigationProgress(target);
+    startTransition(() => router.push(target));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
@@ -180,111 +220,123 @@ export function HeaderSearch() {
   };
 
   return (
-    <SearchForm
-      action={href("/vyhledavani")}
-      className="whitespace-normal"
-      method="get"
-      onKeyDown={handleKeyDown}
-      onSubmit={submit}
-      size="md"
-    >
-      <Label className="sr-only" htmlFor={`${id}-input`}>
-        {cs.search.label}
-      </Label>
-      <input name="q" type="hidden" value={query} />
-      <SearchForm.Control>
-        {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
-        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
-          <SearchSuggestions
-            clearable={false}
-            groups={groups}
-            id={id}
-            inputValue={query}
-            navigate={({ href }) => {
-              setOpen(false);
-              const destination = new URL(href, window.location.origin);
-              router.push(`${destination.pathname}${destination.search}${destination.hash}`);
-            }}
-            noResultsMessage={cs.search.noSuggestions}
-            loading={searchLoading}
-            loadingMessage={cs.search.loading}
-            error={
-              searchError ? (
-                <span data-sf-search-error="">
-                  <strong>{cs.search.failed}</strong> {searchError}
-                </span>
-              ) : undefined
-            }
-            retryLabel={cs.search.retry}
-            onRetry={() => {
-              setRemote((current) => ({ ...current, query: "", error: undefined }));
-              setSearchAttempt((attempt) => attempt + 1);
-            }}
-            onInputValueChange={(value) => {
-              setQuery(value);
-              setOpen(value.trim().length >= 2);
-            }}
-            onOpenChange={setOpen}
-            open={open && ready}
-            placeholder={cs.search.placeholder}
-            size="md"
-            allResultsLink={
-              searchError || searchLoading ? undefined : (
-                <Link
-                  as={StoreLink}
-                  href={resultsHref}
-                  onClick={() => setOpen(false)}
-                  size="current"
-                >
-                  {cs.search.allResults(remoteTotal)}
-                </Link>
-              )
-            }
-            resultSlot={(item) =>
-              item.data && (
-                <span
-                  data-sf-search-result=""
-                  className="flex w-full min-w-0 items-center gap-(--dimension-12)"
-                >
-                  {item.data.kind === "category" ? (
-                    <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
-                      <Icon icon="icon-[mdi--folder-outline]" size="lg" />
-                    </span>
-                  ) : (
-                    <Image
-                      alt=""
-                      className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
-                      height={48}
-                      src={item.data.imageSrc}
-                      width={48}
-                    />
-                  )}
-                  <span
-                    data-sf-search-result-label=""
-                    className="grid min-w-0 flex-1 gap-(--dimension-4)"
+    <>
+      {/* Before the form: shoppers type and submit before a script parsed after the form would run. */}
+      <script dangerouslySetInnerHTML={{ __html: EARLY_QUERY_SCRIPT }} />
+      <SearchForm
+        ref={formRef}
+        action={href("/vyhledavani")}
+        className="whitespace-normal"
+        method="get"
+        onKeyDown={handleKeyDown}
+        onSubmit={submit}
+        size="md"
+      >
+        <Label className="sr-only" htmlFor={`${id}-input`}>
+          {cs.search.label}
+        </Label>
+        <input name="q" type="hidden" value={query} />
+        <SearchForm.Control>
+          {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
+          <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
+            <SearchSuggestions
+              clearable={false}
+              groups={groups}
+              id={id}
+              inputValue={query}
+              navigate={({ href }) => {
+                setOpen(false);
+                const destination = new URL(href, window.location.origin);
+                const target = `${destination.pathname}${destination.search}${destination.hash}`;
+                startNavigationProgress(target);
+                startTransition(() => router.push(target));
+              }}
+              noResultsMessage={cs.search.noSuggestions}
+              loading={searchLoading}
+              loadingMessage={cs.search.loading}
+              error={
+                searchError ? (
+                  <span data-sf-search-error="">
+                    <strong>{cs.search.failed}</strong> {searchError}
+                  </span>
+                ) : undefined
+              }
+              retryLabel={cs.search.retry}
+              onRetry={() => {
+                setRemote((current) => ({ ...current, query: "", error: undefined }));
+                setSearchAttempt((attempt) => attempt + 1);
+              }}
+              onInputValueChange={(value) => {
+                setQuery(value);
+                setOpen(value.trim().length >= 2);
+              }}
+              onOpenChange={setOpen}
+              open={open && ready}
+              placeholder={cs.search.placeholder}
+              size="md"
+              allResultsLink={
+                searchError || searchLoading ? undefined : (
+                  <Link
+                    as={StoreLink}
+                    href={resultsHref}
+                    onClick={() => setOpen(false)}
+                    size="current"
                   >
-                    <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
-                      {item.label}
-                    </span>
-                    {item.data.kind === "category" && item.data.trail && (
-                      <span className="truncate text-xs text-(--color-fg-secondary)">
-                        {item.data.trail}
+                    {cs.search.allResults(remoteTotal)}
+                  </Link>
+                )
+              }
+              resultSlot={(item) =>
+                item.data && (
+                  <span
+                    data-sf-search-result=""
+                    className="flex w-full min-w-0 items-center gap-(--dimension-12)"
+                  >
+                    {item.data.kind === "category" ? (
+                      <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
+                        <Icon icon="icon-[mdi--folder-outline]" size="lg" />
                       </span>
+                    ) : (
+                      <Image
+                        alt=""
+                        className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
+                        height={48}
+                        src={item.data.imageSrc}
+                        width={48}
+                      />
+                    )}
+                    <span
+                      data-sf-search-result-label=""
+                      className="grid min-w-0 flex-1 gap-(--dimension-4)"
+                    >
+                      <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
+                        {item.label}
+                      </span>
+                      {item.data.kind === "category" && item.data.trail && (
+                        <span className="truncate text-xs text-(--color-fg-secondary)">
+                          {item.data.trail}
+                        </span>
+                      )}
+                    </span>
+                    {item.data.kind === "product" ? (
+                      <SuggestionPrice {...item.data} />
+                    ) : (
+                      <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
                     )}
                   </span>
-                  {item.data.kind === "product" ? (
-                    <SuggestionPrice {...item.data} />
-                  ) : (
-                    <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
-                  )}
-                </span>
-              )
-            }
+                )
+              }
+            />
+          </div>
+          <SearchForm.Button
+            aria-label={cs.actions.search}
+            iconSize="lg"
+            isLoading={pending}
+            showSearchIcon
           />
-        </div>
-        <SearchForm.Button aria-label={cs.actions.search} iconSize="lg" showSearchIcon />
-      </SearchForm.Control>
-    </SearchForm>
+        </SearchForm.Control>
+      </SearchForm>
+    </>
   );
 }
 

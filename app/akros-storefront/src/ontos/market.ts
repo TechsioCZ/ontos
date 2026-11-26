@@ -17,6 +17,10 @@ import { createOperation, OntosError, readRecords } from "./gateway";
 import type { OperationOptions } from "./gateway";
 import { isLocaleSegment } from "./market-locale";
 import { isStoreCurrency, type StoreCurrency } from "@/lib/format";
+import { sharedRead } from "./shared-read";
+
+/** Directory and offers change rarely; one owner read per process per minute. */
+const MARKET_TTL_MS = 60_000;
 
 const MARKET_CATALOG_AUDIENCE = "commerce-market-catalog";
 const CHANNEL = "B2C";
@@ -281,7 +285,7 @@ const loadMarketOffer = async (marketId: string, options: OperationOptions): Pro
     marketId,
   );
 
-/** Promises belong to one operation, including rejected promises; no owner state crosses requests. */
+/** Directory and offers are shared process-wide for MARKET_TTL_MS (see shared-read.ts); a failure is never kept. */
 export const createMarketReadOperation = (options: OperationOptions = {}) => {
   const owned = options.operation === undefined || options.signal !== undefined;
   const operation = owned
@@ -297,7 +301,6 @@ export const createMarketReadOperation = (options: OperationOptions = {}) => {
         }),
       )
     : options.operation!;
-  const lifetime = { operation };
   let directory: Promise<MarketDirectory> | undefined;
   const offers = new Map<string, Promise<MarketOffer>>();
   return {
@@ -307,13 +310,23 @@ export const createMarketReadOperation = (options: OperationOptions = {}) => {
     check: () => operation.check(),
     directory: (): Promise<MarketDirectory> => {
       operation.check();
-      return (directory ??= loadMarketDirectory(lifetime));
+      return (directory ??= sharedRead(
+        "market:directory",
+        MARKET_TTL_MS,
+        (detached) => loadMarketDirectory({ operation: detached }),
+        { stale: true, caller: operation },
+      ));
     },
     offer: (marketId: string): Promise<MarketOffer> => {
       operation.check();
       const held = offers.get(marketId);
       if (held !== undefined) return held;
-      const offer = loadMarketOffer(marketId, lifetime);
+      const offer = sharedRead(
+        `market:offer:${marketId}`,
+        MARKET_TTL_MS,
+        (detached) => loadMarketOffer(marketId, { operation: detached }),
+        { stale: true, caller: operation },
+      );
       offers.set(marketId, offer);
       return offer;
     },

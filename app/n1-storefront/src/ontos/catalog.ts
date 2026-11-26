@@ -15,6 +15,7 @@ export interface CatalogQuery {
   featured?: boolean;
   page?: number;
   productId?: string;
+  productIds?: readonly string[];
   q?: string;
   slug?: string;
 }
@@ -25,6 +26,11 @@ const CatalogQuerySchema = Schema.Struct({
   page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   productId: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  ),
+  productIds: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
+      Schema.isMaxLength(24),
+    ),
   ),
   q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   slug: Schema.optionalKey(Schema.String),
@@ -37,19 +43,23 @@ export const loadCatalog = (locale: string, query: CatalogQuery) =>
       const config = yield* readConfiguration(process.env);
       const { markets, now } = yield* readCurrentMarketCatalog(config);
       const market = yield* selectMarket(markets, config, locale, now);
-      const { productId, ...filters } = query;
+      const { productId, productIds, ...filters } = query;
       const full = query.slug !== undefined || productId !== undefined;
       const fields: "card" | "full" = full ? "full" : "card";
       const catalogQuery = {
         ...filters,
         fields,
-        includeCategories: productId === undefined,
+        includeCategories: productId === undefined && productIds === undefined,
         marketId: market.marketRef.resourceId,
         pageSize: full ? 1 : 24,
         storefrontAppId: config.appId,
       };
       const storefrontCatalog =
-        productId === undefined ? catalogQuery : { ...catalogQuery, productIds: [productId] };
+        productIds !== undefined
+          ? { ...catalogQuery, productIds }
+          : productId === undefined
+            ? catalogQuery
+            : { ...catalogQuery, productIds: [productId] };
       const body = yield* readOwner(
         config,
         "merchandise",

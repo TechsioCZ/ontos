@@ -44,6 +44,7 @@ import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product
 import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
+import { SalesTermsPanel } from './product-sales-terms.tsx';
 import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { MovementDraft } from './product-movement-draft.ts';
@@ -207,7 +208,18 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
         onSave();
       }}
     >
-      <FormInput disabled id="detail-sku" label={k('fields.sku')} name="sku" value={product.sku} />
+      <FormInput
+        autoComplete="off"
+        disabled={disabled}
+        id="detail-sku"
+        label={k('fields.sku')}
+        maxLength={64}
+        name="sku"
+        onChange={(event) => onDraftChange({ sku: event.target.value })}
+        required
+        value={draft.sku}
+        {...fieldError(true, draft.sku.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : undefined)}
+      />
       <FormInput
         autoComplete="off"
         disabled={disabled}
@@ -617,7 +629,16 @@ export const ProductDetailView = ({
               revision={revision}
             />
           </Tabs.Content>
-          <Tabs.Content className="py-200" value="prices">
+          <Tabs.Content className="flex flex-col gap-250 py-200" value="prices">
+            <SalesTermsPanel
+              active={tab === 'prices'}
+              canWrite={canWrite}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
+              vat={vat}
+            />
             <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">

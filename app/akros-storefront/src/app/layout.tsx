@@ -1,7 +1,7 @@
 import { getShellSnapshot } from "@/ontos/catalog-server";
 import { CatalogProvider } from "@/ontos/catalog-provider";
 import localFont from "next/font/local";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import "./globals.css";
 
@@ -10,6 +10,7 @@ import { BrandProvider } from "@/brand/brand-context";
 
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
+import { NavigationProgress } from "@/components/navigation-progress";
 import { dictionaryFor, dictionaryLanguage } from "@/i18n";
 import { getMarketResolution, toClientMarket } from "@/ontos/active-market";
 import { MarketProvider } from "@/ontos/market-context";
@@ -79,6 +80,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 <CartProvider storageScope={market.marketCode}>
                   {children}
                   <CartNotifications />
+                  <Suspense fallback={null}>
+                    <NavigationProgress />
+                  </Suspense>
                 </CartProvider>
               </ErpCatalogueProvider>
             </CatalogProvider>
