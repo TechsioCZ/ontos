@@ -18,8 +18,8 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
  * - the native digest of a multi-chunk object verifies against the confirmed identity (and agrees with Node's SHA-256);
  * - a same-length substitution is `integrity_failed`, never `verified`;
  * - an early clean end and a stream that aborts are `unavailable`, never corruption;
- * - a digest step that does not answer within `DigestStepTimeout` is a DEFECT (never `integrity_failed`, never a
- *   typed outcome), a step slower than a tiny guard trips it and the same step under the built-in 5 s does not.
+ * - a digest step that does not answer within `DigestStepTimeout` is UNAVAILABLE (never `integrity_failed`, never a
+ *   defect), a step slower than a tiny guard trips it and the same step under the built-in 5 s does not.
  *   The stall is a delay wrapped around the REAL native stream (the platform itself never stalls on demand), so the
  *   guard is proven against native stream semantics but not against a genuinely hung platform call.
  *
@@ -254,8 +254,8 @@ const askWorker = (worker: Miniflare, probe: Probe) =>
   });
 
 const SMALL = 3 * 64 * 1024 + 7919;
-/** The defect `content-digest.ts` dies with when a platform digest step does not answer within the guard. */
-const DIGEST_GUARD_DEFECT = 'The platform digest did not answer';
+/** What a read answers when a platform digest step does not answer within the guard: retryable, never `failed`. */
+const UNANSWERED_DIGEST = { outcome: 'unavailable', reason: 'digest_unanswered' };
 
 it.live(
   'verifies a multi-chunk object with the native DigestStream on workerd, and a same-length swap is integrity_failed',
@@ -325,19 +325,19 @@ it.live('an early clean end and an aborted stream are unavailable on workerd, ne
 );
 
 it.live(
-  'a digest step slower than the guard is a defect on workerd, and the built-in 5 s lets the same step pass',
+  'a digest step slower than the guard is unavailable on workerd, and the built-in 5 s lets the same step pass',
   () =>
     Effect.gen(function* stepGuard() {
       const worker = yield* workerProbe;
       const original = patterned(SMALL);
       const slowStep = { stall: 'write:1', stallMs: '300' };
-      // A tiny configured guard: the stalled chunk write trips it. A defect, never a typed outcome or `failed`.
+      // A tiny configured guard: the stalled chunk write trips it. Unavailable, never `failed`.
       const tripped = yield* askWorker(worker, {
         delivered: original,
         query: { ...slowStep, stepMs: '50' },
         recorded: original,
       });
-      expect(tripped.outcome).toEqual({ defect: DIGEST_GUARD_DEFECT, kind: 'defect' });
+      expect(tripped.outcome).toEqual({ kind: 'value', value: UNANSWERED_DIGEST });
       expect(tripped.elapsedMs).toBeLessThan(2000);
       // The same stall under the built-in guard is only a slow step: the object verifies.
       const patient = yield* askWorker(worker, { delivered: original, query: slowStep, recorded: original });
@@ -350,7 +350,7 @@ it.live(
         query: { stall: 'close', stallMs: '300', stepMs: '50' },
         recorded: original,
       });
-      expect(closing.outcome).toEqual({ defect: DIGEST_GUARD_DEFECT, kind: 'defect' });
+      expect(closing.outcome).toEqual({ kind: 'value', value: UNANSWERED_DIGEST });
       // Every write is slow but each under the guard, and together they exceed it: the guard bounds a step, not the object.
       const everyStep = yield* askWorker(worker, {
         delivered: original,

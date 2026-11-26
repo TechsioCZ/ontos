@@ -2,6 +2,7 @@ import { Effect, Option, Schema, Stream } from 'effect';
 
 import { actionErrorSchema } from '../actions/error-schema.ts';
 import { ContentDigest, DigestStepTimeout } from './content-digest.ts';
+import type { MediaUnavailable } from './errors.ts';
 import { ObjectStorage, ObjectStorageObjectMissing } from './object-storage.ts';
 import type { ObjectStat, ObjectStorageFailure } from './object-storage.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -43,6 +44,8 @@ const UnavailableReasonSchema = Schema.Literals([
   'object_changed',
   /** The composed provider is not the one that holds this asset. */
   'provider_mismatch',
+  /** A step of the platform digest did not answer within its guard, so nothing was proven. */
+  'digest_unanswered',
 ]);
 
 const InconsistentMetadataReasonSchema = Schema.Literals([
@@ -127,6 +130,16 @@ export class MediaVerifiedReadInterrupted extends actionErrorSchema('MediaVerifi
 const interrupted = (read: MediaUnverifiedRead) => new MediaVerifiedReadInterrupted({ read });
 
 const isObjectMissing = Schema.is(ObjectStorageObjectMissing);
+
+/** An unanswered digest step as the interruption it is, for every place a read digests. */
+const asUnanswered = <Value, Failure extends { readonly _tag: string }, Requirements>(
+  step: Effect.Effect<Value, Failure | MediaUnavailable, Requirements>,
+) =>
+  step.pipe(
+    Effect.catchTag('MediaUnavailable', () =>
+      Effect.fail(interrupted({ outcome: 'unavailable', reason: 'digest_unanswered' })),
+    ),
+  );
 
 /** A provider failure as the interruption it is: a missing object is its own outcome, everything else unavailable. */
 const providerInterruption = (failure: ObjectStorageFailure) =>
@@ -216,7 +229,7 @@ const verdictOf = Effect.fn('MediaVerifiedRead.verdict')(function* verdictOf(
   digest: ContentDigest,
 ) {
   const storage = yield* ObjectStorage;
-  const observed = yield* digest.finish();
+  const observed = yield* asUnanswered(digest.finish());
   if (observed.byteSize !== opened.stat.byteSize) {
     return yield* interrupted({ outcome: 'unavailable', reason: 'framing_inconsistent' });
   }
@@ -260,7 +273,7 @@ const verifiedBody = (opened: OpenedObject) =>
     return opened.body.pipe(
       Stream.mapError(providerInterruption),
       // One chunk at a time: the digest is order-dependent, so the sequence is the contract, not an accident.
-      Stream.mapEffect((chunk) => digest.add(chunk).pipe(Effect.as(chunk)), { concurrency: 1 }),
+      Stream.mapEffect((chunk) => asUnanswered(digest.add(chunk)).pipe(Effect.as(chunk)), { concurrency: 1 }),
       // An empty chunk carries no byte and must never push the real last chunk out before the verdict.
       Stream.filter((chunk) => chunk.byteLength > 0),
       Stream.map((chunk) => exchange(Option.some(chunk))),
@@ -319,8 +332,8 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
     const opened = yield* openRecordedObject(asset, { refuseStatMismatch: false });
     const digest = new ContentDigest();
     yield* opened.body.pipe(
-      Stream.runForEach((chunk) => digest.add(chunk)),
-      Effect.mapError(providerInterruption),
+      Stream.mapError(providerInterruption),
+      Stream.runForEach((chunk) => asUnanswered(digest.add(chunk))),
     );
     return yield* verdictOf(opened, digest);
   });
