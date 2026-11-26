@@ -2,4 +2,6 @@
   --color-popover-bg: var(--color-primary);
   --color-popover-fg: var(--color-fg-primary);
   --padding-popover-md: var(--dimension-0);
+  --text-price-block-amount-size: var(--text-sm);
+  --font-weight-price-block-amount: var(--font-weight-bold);
 }
