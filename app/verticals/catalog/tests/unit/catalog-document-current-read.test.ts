@@ -11,7 +11,7 @@ import {
 import type { CallOutcome } from '@app/core-runtime/sdk';
 import { coreOperations } from '@app/core-runtime/sdk/core';
 import { makeExecutionStandIn } from '@app/core-runtime/testing/sdk';
-import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { catalogDocumentCurrentCalls, runCatalogDocumentCurrent } from '../../src/api/catalog-document-current.read.ts';
@@ -21,6 +21,7 @@ import { catalogMediaAssignmentSets, products } from '../../src/database/schema.
 import { CatalogDocumentCurrentRequestSchema } from '../../shared/apis/catalog-document-current.ts';
 import type { CatalogDocumentCurrentRequest } from '../../shared/apis/catalog-document-current.ts';
 import { catalogDocumentReadsForScope } from '../../src/persistence/catalog-document-reads.ts';
+import type { CatalogDocumentReads } from '../../src/persistence/catalog-document-reads.ts';
 
 /*
  * The production binding of Catalog's owner-evidence port to Core Media's Current V1 (#1443, ADR-0031): what the read
@@ -111,18 +112,37 @@ const entryOf = (resourceId: string, kind: 'ABSENT' | 'AVAILABLE' | 'CURRENT_UNV
     ? { current: { resourceRef: mediaRef(resourceId), revision: 1 as const }, kind, resourceRef: mediaRef(resourceId) }
     : { kind, resourceRef: mediaRef(resourceId) };
 
+const kindsOf = (result: { readonly assignments: readonly { readonly kind: string }[] }) =>
+  result.assignments.map(({ kind }) => kind);
+
+/** Catalog's own reads, noting what the projection said per assignment, also when the public read then refuses it. */
+const recording = (reads: CatalogDocumentReads, projections: (readonly string[])[]): CatalogDocumentReads => ({
+  current: (target, ownerAnswers) =>
+    reads.current(target, ownerAnswers).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          projections.push(Option.isSome(result) ? kindsOf(result.value) : []);
+        }),
+      ),
+    ),
+});
+
 /** Drives the read's `run` with Core's stand-ins, which die on a call while a transaction is open. */
 const harness = (input: {
   readonly core: (refs: readonly { readonly resourceId: string }[]) => CallOutcome<CoreAnswer>;
   /** The Catalog snapshot each transaction sees, by its sequence (1, 2, ...); the last one repeats. */
   readonly snapshots: readonly Snapshot[];
 }) => {
+  const projections: (readonly string[])[] = [];
   const standIn = makeExecutionStandIn(catalogDocumentCurrentCalls, {
     answers: { ownerCurrent: (payload) => Effect.succeed(input.core(payload.mediaAssetRefs)) },
     operationAt: DateTime.makeUnsafe(at),
     services: (sequence) =>
-      // @ts-expect-error Mock implements only exercised query chains.
-      catalogDocumentReadsForScope(mock(input.snapshots[sequence - 1] ?? input.snapshots.at(-1)), scope),
+      recording(
+        // @ts-expect-error Mock implements only exercised query chains.
+        catalogDocumentReadsForScope(mock(input.snapshots[sequence - 1] ?? input.snapshots.at(-1)), scope),
+        projections,
+      ),
   });
   const context: CatalogDocumentCurrentRunContext = {
     access: {},
@@ -138,6 +158,7 @@ const harness = (input: {
     transaction: standIn.transaction,
   };
   return {
+    projections,
     run: (target: CatalogDocumentCurrentRequest['target'] = target0) => runCatalogDocumentCurrent({ target }, context),
     steps: () =>
       standIn.steps.map((step) => (step.kind === 'call' ? { input: step.input, name: step.name } : step.kind)),
@@ -146,8 +167,6 @@ const harness = (input: {
 
 const allAvailable = (refs: readonly { readonly resourceId: string }[]) =>
   answered({ entries: refs.map(({ resourceId }) => entryOf(resourceId, 'AVAILABLE')) });
-const kindsOf = (result: { readonly assignments: readonly { readonly kind: string }[] }) =>
-  result.assignments.map(({ kind }) => kind);
 
 describe('Catalog document Current bound to Core Media', () => {
   it.effect(
@@ -212,18 +231,81 @@ describe('Catalog document Current bound to Core Media', () => {
     }),
   );
 
-  it.effect('refuses an answer that misses, adds or swaps a ref instead of inventing or dropping an entry', () =>
-    Effect.gen(function* contradictory() {
-      const two = { assignments: [A, { ...B, position: 2 }], revision: 1 };
-      for (const entries of [
-        // Missing one, one too many, the wrong asset, and the right assets in the wrong order.
-        [entryOf(assetA, 'AVAILABLE')],
-        [entryOf(assetA, 'AVAILABLE'), entryOf(assetB, 'AVAILABLE'), entryOf(assetB, 'AVAILABLE')],
-        [entryOf(assetA, 'AVAILABLE'), entryOf('33333333-3333-4333-8333-33333333333c', 'AVAILABLE')],
-        [entryOf(assetB, 'AVAILABLE'), entryOf(assetA, 'AVAILABLE')],
+  const assetC = '33333333-3333-4333-8333-33333333333c';
+  const twoAssets = { assignments: [A, { ...B, position: 2 }], revision: 1 };
+  const coreAnswers = (entries: CoreAnswer['entries']) =>
+    harness({ core: () => answered({ entries }), snapshots: [twoAssets] });
+
+  it.effect('reports RESOURCE_MISMATCH for the entry that answers another ref, and keeps the exact one', () =>
+    Effect.gen(function* mismatch() {
+      const otherTenant = { ...mediaRef(assetB), tenantId: '99999999-9999-4999-8999-999999999999' };
+      for (const wrong of [
+        entryOf(assetC, 'AVAILABLE'),
+        entryOf(assetC, 'ABSENT'),
+        // Asset A again where B was asked: the exact proof of A is never a proof for B.
+        entryOf(assetA, 'AVAILABLE'),
+        {
+          current: { resourceRef: otherTenant, revision: 1 as const },
+          kind: 'AVAILABLE' as const,
+          resourceRef: otherTenant,
+        },
       ]) {
-        const failure = yield* Effect.flip(harness({ core: () => answered({ entries }), snapshots: [two] }).run());
+        const answer = yield* coreAnswers([entryOf(assetA, 'AVAILABLE'), wrong]).run();
+        expect(kindsOf(answer.result)).toEqual(['AVAILABLE', 'RESOURCE_MISMATCH']);
+        // Nothing of the other Resource reaches the caller: only the assignment Catalog owns, and its kind.
+        expect(Object.keys(answer.result.assignments[1] ?? {})).toEqual(['assignment', 'kind']);
+        expect(answer.result.assignments[1]?.assignment.resourceRef).toEqual(mediaRef(assetB));
+      }
+    }),
+  );
+
+  it.effect('never re-pairs swapped entries by identity: both assignments are mismatched, neither is AVAILABLE', () =>
+    Effect.gen(function* swapped() {
+      const answer = yield* coreAnswers([entryOf(assetB, 'AVAILABLE'), entryOf(assetA, 'AVAILABLE')]).run();
+      expect(kindsOf(answer.result)).toEqual(['RESOURCE_MISMATCH', 'RESOURCE_MISMATCH']);
+    }),
+  );
+
+  it.effect('keeps the assignment with no proof OWNER_CHECK_REQUIRED, which the public response cannot carry', () =>
+    Effect.gen(function* missingProof() {
+      for (const [entries, projected] of [
+        [[entryOf(assetA, 'AVAILABLE')], ['AVAILABLE', 'OWNER_CHECK_REQUIRED']],
+        [[], ['OWNER_CHECK_REQUIRED', 'OWNER_CHECK_REQUIRED']],
+        // The first entry was dropped: B's proof sits where A was asked, so it proves neither.
+        [[entryOf(assetB, 'AVAILABLE')], ['RESOURCE_MISMATCH', 'OWNER_CHECK_REQUIRED']],
+      ] as const) {
+        const fixture = coreAnswers([...entries]);
+        const failure = yield* Effect.flip(fixture.run());
         expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
+        expect(fixture.projections.at(-1)).toEqual(projected);
+      }
+    }),
+  );
+
+  it.effect('fails the whole read for an answer with entries nobody asked for', () =>
+    Effect.gen(function* surplus() {
+      const fixture = coreAnswers([
+        entryOf(assetA, 'AVAILABLE'),
+        entryOf(assetB, 'AVAILABLE'),
+        entryOf(assetB, 'AVAILABLE'),
+      ]);
+      expect(Predicate.isTagged(yield* Effect.flip(fixture.run()), 'ReadHandlerUnavailable')).toBe(true);
+    }),
+  );
+
+  it.effect('asks once for a Resource assigned twice, so one answer judges both assignments', () =>
+    Effect.gen(function* assignedTwice() {
+      const again = { ...assignmentRow('66666666-6666-4666-8666-666666666664', assetA, 2), purpose: 'manual' };
+      for (const [entry, kind] of [
+        [entryOf(assetA, 'AVAILABLE'), 'AVAILABLE'],
+        [entryOf(assetC, 'AVAILABLE'), 'RESOURCE_MISMATCH'],
+      ] as const) {
+        const fixture = harness({
+          core: () => answered({ entries: [entry] }),
+          snapshots: [{ assignments: [A, again], revision: 1 }],
+        });
+        expect(kindsOf((yield* fixture.run()).result)).toEqual([kind, kind]);
+        expect(fixture.steps()[2]).toEqual({ input: { mediaAssetRefs: [mediaRef(assetA)] }, name: 'ownerCurrent' });
       }
     }),
   );
