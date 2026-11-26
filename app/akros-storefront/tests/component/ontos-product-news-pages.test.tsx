@@ -219,17 +219,15 @@ describe("OntOS product and news pages", () => {
     const updatedName = `${product.name} — aktualizováno`;
     runtime.setDetailName(updatedName);
     const beforeMetadata = runtime.reads.length;
-    expect(await runtime.request.run(() => runtime.generateMetadata(props))).toEqual({
-      title: updatedName,
+    // Public product reads are shared across requests for 15 s: the metadata call reuses the render's read.
+    expect(await runtime.request.run(() => runtime.generateMetadata(props))).toMatchObject({
+      title: product.name,
     });
     await runtime.network.idle();
     expect(runtime.reads.slice(beforeMetadata).filter((query) => query.slug !== undefined)).toEqual(
-      [detailQuery],
+      [],
     );
-    expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([
-      detailQuery,
-      detailQuery,
-    ]);
+    expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([detailQuery]);
     expect(container.querySelector(".sf-shell > .sf-header")).not.toBeNull();
     expect(container.querySelector(".sf-sidebar")).not.toBeNull();
   });
