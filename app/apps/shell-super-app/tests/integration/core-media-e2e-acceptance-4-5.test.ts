@@ -23,8 +23,10 @@ import {
   putBytes,
   refOf,
   renameAs,
+  renameOverHttp,
   requireFaultInjection,
   reserve,
+  reserveOverHttp,
   rowOf,
   rowsOf,
   textOf,
@@ -376,6 +378,43 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const recovered = yield* untilStatus(world, putBytes(edge, uploader, id, bytes), 200);
               expect(recovered.status).toBe(200);
               expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'ready' });
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'row 4: SpiceDB UNAVAILABLE reserves nothing and renames nothing (CONTROLLED FAULT INJECTION: engine partition)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* engineDownForActions() {
+              const injection = yield* requireFaultInjection(ctx, world);
+              const uploader = person(world, 'uploader');
+              const renamer = person(world, 'currentOnly');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(renamer, [MEDIA_CAPABILITIES.rename]);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('no decision, no write');
+              const id = yield* readyAsset(world, edge, bytes, 'engine-actions');
+              const sealed = yield* rowOf(world, id);
+
+              injection.engine.setDown(true);
+              const reserved = yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'engine-reserve' });
+              const renamed = yield* renameOverHttp(edge, renamer, id, 'Renamed.pdf', 'engine-rename');
+              injection.engine.setDown(false);
+              expect(reserved.status).toBe(503);
+              expect(renamed.status).toBe(503);
+              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowOf(world, id)).toEqual(sealed);
+
+              // The engine is back: the same rename, under a new attempt, is answered.
+              const recovered = yield* untilStatus(
+                world,
+                renameOverHttp(edge, renamer, id, 'Renamed.pdf', 'engine-rename-again'),
+                200,
+              );
+              expect(recovered.status).toBe(200);
             }),
           ),
         ),
