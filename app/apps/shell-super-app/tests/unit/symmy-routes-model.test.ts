@@ -22,17 +22,18 @@ const source = { issuerId: 'symmy-akros', sourceNamespace: 'akros-erp' };
 
 it('enables reads before writes, retention only on writes, and the price read source on price lists', () => {
   expect(symmyEnableChanges(setup, [])).toEqual([
-    { kind: 'enable', routeKey: 'adminProducts', settings: { source } },
-    { kind: 'enable', routeKey: 'adminCustomers', settings: { source } },
-    { kind: 'enable', routeKey: 'adminRegions', settings: { source } },
     {
       kind: 'enable',
       routeKey: 'priceLists',
       settings: { priceReadSource: { ownerModuleId: 'external.symmy', sourceSystemRef: 'symmy-akros' }, source },
     },
+    { kind: 'enable', routeKey: 'adminProducts', settings: { source } },
+    { kind: 'enable', routeKey: 'adminCustomers', settings: { source } },
+    { kind: 'enable', routeKey: 'adminRegions', settings: { source } },
     { kind: 'enable', routeKey: 'productsBatch', settings: { retentionDays: 30, source } },
     { kind: 'enable', routeKey: 'customersBatch', settings: { retentionDays: 30, source } },
     { kind: 'enable', routeKey: 'customerGroupsBatch', settings: { retentionDays: 30, source } },
+    { kind: 'enable', routeKey: 'priceListsBatchUpsert', settings: { retentionDays: 30, source } },
   ]);
 });
 

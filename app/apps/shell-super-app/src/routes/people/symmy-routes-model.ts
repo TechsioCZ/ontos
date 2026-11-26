@@ -1,3 +1,5 @@
+import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import { SYMMY_BULK_IMPORT_ROUTE_KEYS } from '@app/symmy-integration/actions/manage-symmy-routes';
 import type {
   SymmyManagedRouteKey,
   SymmyRouteChangeRequestSchema,
@@ -7,19 +9,23 @@ import type { SymmyCompanyRoutesResponse } from '@app/symmy-integration/api/symm
 /*
  * What the Shell's Symmy panel asks `integration.symmy.manage-symmy-routes` for. Symmy is a connector partner: the
  * administrator names the partner's source identity once, and the panel enables the route families the partner reads
- * and writes in the selected company. Route families that need owner references (stock, prices of a list, customer
- * group memberships, price-list upserts) are enabled outside this panel.
+ * and writes in the selected company: Symmy's own bulk-import set (`SYMMY_BULK_IMPORT_ROUTE_KEYS`) and the region read.
+ * Route families that need owner references (stock, prices of a list, customer group memberships) are enabled outside
+ * this panel.
  */
-export const SYMMY_PANEL_READ_ROUTES = ['adminProducts', 'adminCustomers', 'adminRegions', 'priceLists'] as const;
-export const SYMMY_PANEL_WRITE_ROUTES = ['productsBatch', 'customersBatch', 'customerGroupsBatch'] as const;
-type PanelRouteKey = (typeof SYMMY_PANEL_READ_ROUTES)[number] | (typeof SYMMY_PANEL_WRITE_ROUTES)[number];
-/** Reads first: a write route that depends on a read is applied after it (the Action applies changes in order). */
-export const SYMMY_PANEL_ROUTES: readonly PanelRouteKey[] = [...SYMMY_PANEL_READ_ROUTES, ...SYMMY_PANEL_WRITE_ROUTES];
+/** A write route keeps its admitted work for a retention; a read route keeps none. */
+const isWriteRoute = (routeKey: SymmyManagedRouteKey) => SYMMY_ROUTES[routeKey].method !== 'GET';
+/** Symmy's bulk-import set and the region read its orders need, reads first (the Action applies changes in order). */
+const panelRoutes: readonly SymmyManagedRouteKey[] = [
+  ...new Set([...SYMMY_BULK_IMPORT_ROUTE_KEYS, 'adminRegions' as const]),
+];
+export const SYMMY_PANEL_ROUTES: readonly SymmyManagedRouteKey[] = [
+  ...panelRoutes.filter((routeKey) => !isWriteRoute(routeKey)),
+  ...panelRoutes.filter(isWriteRoute),
+];
 export const SYMMY_DEFAULT_RETENTION_DAYS = 30;
 /** The pricing owner module a Symmy price list's prices are read from (the partner's source system). */
 const SYMMY_PRICE_OWNER_MODULE = 'external.symmy';
-
-const writeRoutes: ReadonlySet<SymmyManagedRouteKey> = new Set(SYMMY_PANEL_WRITE_ROUTES);
 
 type CompanyRoute = SymmyCompanyRoutesResponse['routes'][number];
 /** A change as the panel builds it from the administrator's input; the panel decodes it before it is sent. */
@@ -42,14 +48,14 @@ const routeSettings = (
   if (routeKey === 'priceLists') {
     return { priceReadSource: { ownerModuleId: SYMMY_PRICE_OWNER_MODULE, sourceSystemRef: source.issuerId }, source };
   }
-  return writeRoutes.has(routeKey) ? { retentionDays, source } : { source };
+  return isWriteRoute(routeKey) ? { retentionDays, source } : { source };
 };
 
 const baseRoute = (routes: readonly CompanyRoute[], routeKey: SymmyManagedRouteKey) =>
   routes.find((route) => route.routeKey === routeKey && route.routeCode === undefined);
 
 /** The panel's route families not active in the company yet, in panel order. */
-export const symmyPendingRoutes = (routes: readonly CompanyRoute[]): readonly PanelRouteKey[] =>
+export const symmyPendingRoutes = (routes: readonly CompanyRoute[]): readonly SymmyManagedRouteKey[] =>
   SYMMY_PANEL_ROUTES.filter((routeKey) => baseRoute(routes, routeKey)?.active !== true);
 
 /**
