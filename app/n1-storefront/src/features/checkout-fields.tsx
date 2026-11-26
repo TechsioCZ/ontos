@@ -48,6 +48,7 @@ interface CheckoutFieldState {
   readonly errors: FieldErrors;
   readonly identity: CustomerAddressIdentity | null;
   readonly postal: CheckoutPostalDraft;
+  readonly prefillVersion: number;
   readonly snapshot: (CustomerAddressesSnapshot & { readonly generation: number }) | null;
   readonly touched: Partial<Record<ContactField, boolean>>;
 }
@@ -83,6 +84,7 @@ const checkoutFieldStateForIdentity = (
     errors: postal === state.postal ? state.errors : clearPostalErrors(state.errors),
     identity,
     postal,
+    prefillVersion: state.prefillVersion,
     snapshot: identityChanged ? null : state.snapshot,
     touched: customerChanged ? {} : state.touched,
   };
@@ -98,13 +100,13 @@ const useCheckoutFields = (
   // Keep the draft through a pending read, while private reads/selections still require admission.
   const identity = auth.loaded && auth.outcome.state === "admitted" ? auth.outcome : null;
   const readIdentity = checkoutAddressIdentity(auth);
-  const profileEdited = useEffectEvent(() => onEdit());
   const [fieldState, setFieldState] = useState<CheckoutFieldState>(() => ({
     contact: contactDefaults(identity),
     epoch: 0,
     errors: {},
     identity,
     postal: initialCheckoutPostalDraft(countryCodes),
+    prefillVersion: 0,
     snapshot: null,
     touched: {},
   }));
@@ -113,6 +115,13 @@ const useCheckoutFields = (
     // Adjust only this component atomically; its parent independently observes Portal/country changes.
     setFieldState(state);
   }
+  const profileEdited = useEffectEvent(() => onEdit());
+  const { prefillVersion } = state;
+  useEffect(() => {
+    if (prefillVersion > 0) {
+      profileEdited();
+    }
+  }, [prefillVersion]);
   const { epoch, errors, postal: currentPostal, snapshot } = state;
   const values = { ...currentPostal.fields, ...state.contact } satisfies Record<Field, string>;
   const selectionContext = useRef({ countryCodes, disabled, epoch, identity, snapshot });
@@ -157,24 +166,27 @@ const useCheckoutFields = (
           return;
         }
         const { profile } = exit.value;
-        const defaults = {
-          ...contactDefaults({ ...readIdentity, name: profile.displayName }),
-          email: profile.contactEmail.trim() || readIdentity.email,
-          phone: profile.phone,
-        };
         setFieldState((previous) => {
           if (previous.identity !== readIdentity || previous.epoch !== epoch) {
             return previous;
           }
+          const defaults = {
+            ...contactDefaults({ ...readIdentity, name: profile.displayName }),
+            email: profile.contactEmail.trim() || readIdentity.email,
+            phone: profile.phone,
+          };
           const contact = { ...previous.contact };
+          let changed = false;
           for (const field of ["firstName", "lastName", "email", "phone"] as const) {
-            if (previous.touched[field] !== true) {
+            if (previous.touched[field] !== true && contact[field] !== defaults[field]) {
               contact[field] = defaults[field];
+              changed = true;
             }
           }
-          return { ...previous, contact };
+          return changed
+            ? { ...previous, contact, prefillVersion: previous.prefillVersion + 1 }
+            : previous;
         });
-        profileEdited();
       });
     }
     return () => {

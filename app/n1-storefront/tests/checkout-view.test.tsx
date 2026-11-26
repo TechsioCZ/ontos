@@ -660,6 +660,48 @@ describe("checkout through public session, cart and owner boundaries", () => {
     });
   });
 
+  it("keeps checkout confirmation when a delayed profile cannot change edited contact fields", async () => {
+    seed({ guarded: false });
+    admission = { ...ownerAdmission };
+    const response = Promise.withResolvers<Response>();
+    profileGate = response.promise;
+    await mount();
+    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    const editedContact = {
+      email: "order@example.test",
+      firstName: "Eva",
+      lastName: "Kupující",
+      phone: "+420987654321",
+    };
+    await editCheckoutFields({
+      ...editedContact,
+      city: "Praha",
+      postalCode: "11000",
+      street: "Test 1",
+    });
+    quoteGate = Promise.resolve(
+      Response.json({
+        ...confirmed,
+        orderId: null,
+        orderNumber: null,
+        outcome: "VALID",
+        status: null,
+      }),
+    );
+    await act(async () => container.querySelector("form")?.requestSubmit());
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    await act(async () => {
+      response.resolve(Response.json(ownerProfile));
+      await nextTurn(0);
+    });
+    await eventually(() => {
+      expect(button(d.checkout.confirm).disabled).toBe(false);
+      for (const [field, value] of Object.entries(editedContact)) {
+        expect(checkoutInput(field).value).toBe(value);
+      }
+    });
+  });
+
   it.each([true, false])(
     "starts a new checkout after confirming a saved previous order (edited: %s)",
     async (edited) => {
