@@ -19,6 +19,10 @@ on:
       - .github/workflows/zerops-stable.yml
       - app/scripts/zerops/app-host.mts
       - app/scripts/zerops/deployment-profile.mts
+      - app/scripts/demo/mcp-oauth-e2e/env.mts
+      - app/scripts/demo/mcp-oauth-e2e/prove.mts
+      - app/scripts/demo/mcp-oauth-e2e/verification-identity.mts
+      - app/scripts/demo/mcp-oauth-e2e/verification-identity.test.mts
       - app/scripts/materialize-zerops-environment.mts
       - app/scripts/tests/zerops-app-host.test.mts
       - app/scripts/tests/zerops-symmy-demo-bootstrap.test.mts
@@ -190,4 +194,4 @@ jobs:
           install-args: --trust-lockfile
       - name: Check the shared host and environment materializers
         working-directory: app
-        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts --pool.maxWorkers 1
+        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts scripts/demo/mcp-oauth-e2e/verification-identity.test.mts --pool.maxWorkers 1

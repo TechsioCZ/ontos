@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { ARTIFACTS_KIND } from './deploy.mjs';
+import { ARTIFACTS_KIND } from './release.mjs';
 import { EVIDENCE_KIND, REQUIRED_CHECK_IDS, parseCli, runVerification } from './verify.mjs';
 import { ERP_PROOF_BOUNDARIES, MCP_PROOF_STEPS } from './verify-journeys.mjs';
 import { validateVerificationManifest } from './verify-manifest.mjs';

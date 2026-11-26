@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Stable release candidates: immutable annotated `sales-stable/YYYY-MM-DD[-N]` tags on commits of demo/sales-crm.
 //
-//   node app/scripts/zerops/stable/release.mjs pin --tag sales-stable/2026-11-27 [--ref demo/sales-crm]
+//   node ops/zerops-stable/release.mjs pin --tag sales-stable/2026-11-27 [--ref demo/sales-crm]
 //       [--demo-ref origin/demo/sales-crm] [--remote origin] [--push]
-//   node app/scripts/zerops/stable/release.mjs inspect --tag sales-stable/2026-11-27
+//   node ops/zerops-stable/release.mjs inspect --tag sales-stable/2026-11-27
 //       [--demo-ref origin/demo/sales-crm] [--remote origin]
 //
 // `pin` creates the annotated tag locally and pushes it only with --push. `inspect` prints the tag's exact commit as
@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
+export const ARTIFACTS_KIND = 'ontos.stable.release-artifacts';
 export const TAG_PATTERN = /^sales-stable\/(\d{4})-(\d{2})-(\d{2})(?:-([1-9]\d*))?$/u;
 export const DEFAULT_PIN_REF = 'demo/sales-crm';
 export const DEFAULT_DEMO_REF = 'origin/demo/sales-crm';

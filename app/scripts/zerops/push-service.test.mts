@@ -497,14 +497,23 @@ it.live('a FAILED deploy fails at the first poll', () =>
 it.live('terminal app-version failures fail the waiter even while its native process still says RUNNING', () =>
   Effect.gen(function* failedCandidate() {
     for (const status of [
-      'DEPLOY_FAILED', 'BUILD_FAILED', 'PREPARING_RUNTIME_FAILED', 'BUILD_VALIDATION_FAILED', 'CANCELLED',
+      'DEPLOY_FAILED',
+      'BUILD_FAILED',
+      'PREPARING_RUNTIME_FAILED',
+      'BUILD_VALIDATION_FAILED',
+      'CANCELLED',
     ]) {
-      const result = yield* runPush(() => ({
-        body: JSON.stringify({
-          id: 'process-1', status: 'RUNNING', appVersion: { id: 'version-1', status },
+      const result = yield* runPush(
+        () => ({
+          body: JSON.stringify({
+            appVersion: { id: 'version-1', status },
+            id: 'process-1',
+            status: 'RUNNING',
+          }),
+          status: 200,
         }),
-        status: 200,
-      }), { DEPLOY_LIMIT_SECONDS: '0' });
+        { DEPLOY_LIMIT_SECONDS: '0' },
+      );
       expect(result.status).toBe(1);
       expect(result.polls).toBe(1);
       expect(result.stderr).toContain(`app version version-1 ${status}`);
@@ -518,29 +527,39 @@ it.live('terminal app-version failures fail the waiter even while its native pro
 it.live('native build and deploy queue states remain pending and are logged without any supersession mutation', () =>
   Effect.gen(function* nativeQueue() {
     const phases = ['WAITING_TO_BUILD', 'BUILDING', 'PREPARING_RUNTIME', 'WAITING_TO_DEPLOY', 'DEPLOYING', 'ACTIVE'];
-    const result = yield* runPush((call) => ({
-      body: JSON.stringify({
-        id: 'process-1', status: call === phases.length ? 'FINISHED' : 'RUNNING',
-        appVersion: { id: 'version-1', status: phases[call - 1] },
+    const result = yield* runPush(
+      (call) => ({
+        body: JSON.stringify({
+          appVersion: { id: 'version-1', status: phases[call - 1] },
+          id: 'process-1',
+          status: call === phases.length ? 'FINISHED' : 'RUNNING',
+        }),
+        status: 200,
       }),
-      status: 200,
-    }), { DEPLOY_POLL_SECONDS: '0' });
+      { DEPLOY_POLL_SECONDS: '0' },
+    );
     expect(result.status).toBe(0);
     expect(result.polls).toBe(phases.length);
-    for (const phase of phases) expect(result.stdout).toContain(`app version state: ${phase}`);
+    for (const phase of phases) {
+      expect(result.stdout).toContain(`app version state: ${phase}`);
+    }
     expect(writes(result.calls)).toEqual(ONE_EACH);
   }),
 );
 
 it.live('another app version failing never classifies this candidate as failed', () =>
   Effect.gen(function* foreignCandidate() {
-    const result = yield* runPush((call) => ({
-      body: JSON.stringify({
-        id: 'process-1', status: call === 1 ? 'RUNNING' : 'FINISHED',
-        appVersion: { id: 'other-version', status: 'DEPLOY_FAILED' },
+    const result = yield* runPush(
+      (call) => ({
+        body: JSON.stringify({
+          appVersion: { id: 'other-version', status: 'DEPLOY_FAILED' },
+          id: 'process-1',
+          status: call === 1 ? 'RUNNING' : 'FINISHED',
+        }),
+        status: 200,
       }),
-      status: 200,
-    }), { DEPLOY_POLL_SECONDS: '0' });
+      { DEPLOY_POLL_SECONDS: '0' },
+    );
     expect(result.status).toBe(0);
     expect(result.polls).toBe(2);
     expect(result.stdout).not.toContain('app version state:');
@@ -580,7 +599,7 @@ const STOREFRONT_ARCHIVE = {
 
 it.live('a storefront push ships only zerops.yaml and the runner-built archive with its manifest', () =>
   Effect.gen(function* storefrontPackage() {
-    for (const setup of ['storefront', 'n1']) {
+    for (const setup of ['storefront', 'shop', 'n1']) {
       const result = yield* runPush(
         () => processState('FINISHED'),
         {},
@@ -636,9 +655,9 @@ it.live('an app push without the packed unit builds fails before any Zerops call
 
 it.live('an unknown setup fails before any Zerops call', () =>
   Effect.gen(function* unknownSetup() {
-    const result = yield* runPush(() => processState('FINISHED'), {}, {}, { setup: 'shop' });
+    const result = yield* runPush(() => processState('FINISHED'), {}, {}, { setup: 'unsupported-setup' });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('unknown zerops.yaml setup: shop');
+    expect(result.stderr).toContain('unknown zerops.yaml setup: unsupported-setup');
     expect(result.calls).toEqual([]);
   }),
 );

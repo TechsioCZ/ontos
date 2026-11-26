@@ -23,7 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { loadStableConfig } from './config.mjs';
-import { ARTIFACTS_KIND } from './deploy.mjs';
+import { ARTIFACTS_KIND } from './release.mjs';
 import { readActiveVersions, sha256File } from './deploy-evidence.mjs';
 import { configFileDigest, inspectDeployableRelease } from './release.mjs';
 import { migrationRehearsalCheck, salesWalkthroughCheck } from './verify-evidence.mjs';

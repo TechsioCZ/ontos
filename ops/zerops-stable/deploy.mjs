@@ -53,6 +53,7 @@ import { cloudflareClientFromEnv, edgeSettingsFromEnv } from './edge.mjs';
 import { assertEdgeClosed, assertInMaintenance, assertProjectServices, createZeropsClient, maintenanceStatus } from './maintenance.mjs';
 import { materializeStableZerops } from './materialize.mjs';
 import {
+  ARTIFACTS_KIND,
   DEFAULT_DEMO_REF,
   DEFAULT_REMOTE,
   assertCleanCheckoutAt,
@@ -62,7 +63,6 @@ import {
 } from './release.mjs';
 
 export const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-export const ARTIFACTS_KIND = 'ontos.stable.release-artifacts';
 export const PREBUILT = 'app/.zerops-prebuilt.tar.zst';
 /** In install order. `kind` is the storefront build a front deploys (its .zerops-storefront.json setup). */
 export const PUSHES = Object.freeze([
