@@ -596,6 +596,17 @@ const establishDemoOwnerPolicies = (
             trustedOperationAt: yield* DateTime.nowAsDate,
           },
           persistence,
+        ).pipe(
+          // Hotfix: an overlapping standing policy already covers these keys; log its terms and keep going.
+          Effect.catchTag('ExternalPriceSourcePolicyConflict', (conflict) =>
+            Console.error(
+              `[symmy-demo-source-policies] ${conflict.code} kept the standing policy: ${policy.authority.sourceAuthorityRef} ${policy.commercialScope.channelId}/${
+                policy.commercialScope.marketId
+              } ${policy.currencyCode} x${policy.unitBasis.quantity} ${policy.priceGroupCoverage.kind} from ${
+                policy.effectivePeriod.effectiveFrom
+              }`,
+            ).pipe(Effect.as({ intent: 'ESTABLISH' as const, outcome: 'KEPT_STANDING' as const })),
+          ),
         ),
       );
     }
