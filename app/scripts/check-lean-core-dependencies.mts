@@ -1016,10 +1016,26 @@ const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
   ['apps/shell-super-app/api/payment-gateway/transport.ts', ['payment']],
   ['apps/shell-super-app/server/modern.server.ts', ['payment']],
   ['apps/shell-super-app/shared/api.ts', ['payment']],
-  // Main #1392's finite Privacy dispatch authority is inert integration metadata, not a platform dependency.
+]);
+
+// The closed dispatch registry needs these exact data literals, never a vertical package or source path.
+const PLATFORM_EXEMPT_LITERALS = new Map<string, readonly string[]>([
   [
     'packages/shared-contracts/src/privacy-dispatch-consumers.ts',
-    [SYMMY_DEPLOYMENT_ID, 'integration.symmy', 'privacy.core', 'communications', 'communications.core'],
+    [
+      SYMMY_DEPLOYMENT_ID,
+      'integration.symmy',
+      'privacy.core.requirement.symmy-owner-execution-outcome',
+      'integration.symmy.symmy-job-privacy-dispatch',
+      'communications',
+      'communications.core.record-owner-execution-evidence',
+      'communications.core.requirement.privacy-report-recorded-owner-outcome',
+      'communications.core.owner-execution-evidence-recorded.v1',
+      'communications.core.report-privacy-owner-outcome',
+      'communications.core',
+      'privacy.core.requirement.communications-owner-execution-outcome',
+      'communications.core.receive-privacy-measure',
+    ],
   ],
 ]);
 
@@ -1055,13 +1071,18 @@ export const platformVerticalIdViolations = (
   }
   const exemptIds = PLATFORM_EXEMPT_IDS.get(relative) ?? [];
   const patterns = verticalPatterns(verticals).filter(({ id }) => !exemptIds.includes(id));
-  return source
-    .split('\n')
-    .flatMap((line, index) =>
-      patterns
-        .filter(({ pattern }) => pattern.test(line))
-        .map(({ id }) => ({ file: relative, line: index + 1, reason: `platform source names MicroVertical ${id}` })),
-    );
+  const exemptLiterals = (PLATFORM_EXEMPT_LITERALS.get(relative) ?? []).map(
+    (literal) => new RegExp(`(['"\`])${escapeRegExp(literal)}\\1`, 'gu'),
+  );
+  return source.split('\n').flatMap((line, index) => {
+    let code = line;
+    for (const literal of exemptLiterals) {
+      code = code.replaceAll(literal, '');
+    }
+    return patterns
+      .filter(({ pattern }) => pattern.test(code))
+      .map(({ id }) => ({ file: relative, line: index + 1, reason: `platform source names MicroVertical ${id}` }));
+  });
 };
 
 const VerticalPackageFromJson = Schema.fromJsonString(

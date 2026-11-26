@@ -121,6 +121,30 @@ it.effect('admits the real finite Privacy dispatch registry but not another cons
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it('rejects vertical package and path imports in the Privacy dispatch registry itself', () => {
+  const file = 'packages/shared-contracts/src/privacy-dispatch-consumers.ts';
+  expect(
+    named(
+      file,
+      [
+        "import '@app/symmy-integration/api';",
+        "import '../../../verticals/symmy-integration/api/index.ts';",
+        "import '@app/privacy/privacy.core';",
+        "const consumer = 'symmy-integration'; import '@app/symmy-integration/api';",
+      ].join('\n'),
+    ),
+  ).toEqual([
+    '1 platform source names MicroVertical symmy-integration',
+    '2 platform source names MicroVertical symmy-integration',
+    '3 platform source names MicroVertical privacy',
+    '3 platform source names MicroVertical privacy.core',
+    '4 platform source names MicroVertical symmy-integration',
+  ]);
+  expect(named(file, "const unreviewed = 'privacy.core.new-consumer';")).toEqual([
+    '1 platform source names MicroVertical privacy.core',
+  ]);
+});
+
 it.live('rejects another Payment gateway file that names a vertical in a workspace tree', () =>
   Effect.acquireUseRelease(
     Effect.promise(() => mkdtemp(nodePath.join(os.tmpdir(), 'platform-vertical-ids-'))),

@@ -2,7 +2,6 @@ import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime/mo
 
 export const commerceCustomerContextMcpContribution = defineOntosMcpContribution({
   actions: {
-    // Introduced by main #1392; hidden until its agent tool text is designed.
     'add-saved-address': {
       title: {
         cs: 'Přidat uloženou adresu',
@@ -33,6 +32,7 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Manage purchasing currency policies',
       },
     },
+    // Introduced by main #1392; hidden until its agent tool text is designed.
     'relay-portal-auth-communication-request': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
     'admit-customer-group-membership-snapshot': OntosMcpHidden,

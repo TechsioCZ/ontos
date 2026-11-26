@@ -3,12 +3,14 @@ import path from 'node:path';
 
 import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parse } from 'yaml';
 
 import {
   privacyDispatchConsumerOfWorker,
   privacyDispatchConsumers,
 } from '../../packages/shared-contracts/src/privacy-dispatch-consumers.ts';
 import { ApplicationReleaseIntentSchema, selectApplicationReleaseUnits } from '../application-release-intent.mts';
+import { OWNER_RUNTIME_CONFIGURATIONS } from '../ops/owner-runtime-configuration.mts';
 
 /**
  * E21 (#1392): Communications is optional. Lean Core, staff Auth and unrelated compositions neither depend on it nor
@@ -18,6 +20,7 @@ const appRoot = path.resolve(import.meta.dirname, '../..');
 const COMMUNICATIONS_PACKAGE = '@app/communications';
 const COMMUNICATIONS_CONTRACTS_PACKAGE = '@app/communications-contracts';
 const COMMUNICATIONS_APP_ID = 'communications';
+const SHELL_APP_ID = 'shell-super-app';
 const EMAIL_DELIVERY_PACKAGE = '@app/email-delivery';
 
 const ManifestSchema = Schema.Struct({
@@ -305,7 +308,7 @@ it.effect('releases lean Core with no business module, so Communications is neit
 
     expect(selection.complete).toEqual([]);
     expect(selection.removed).toEqual([]);
-    expect(selection.shell.unit.id).toBe('shell-super-app');
+    expect(selection.shell.unit.id).toBe(SHELL_APP_ID);
   }),
 );
 
@@ -449,9 +452,44 @@ it('keeps Communications in the topology-driven app host, never a standalone dem
   expect(available.map(({ id }) => id)).toContain(COMMUNICATIONS_APP_ID);
 });
 
+it('keeps the shared app build and startup independent of Communications configuration', () => {
+  const manifest = Schema.decodeUnknownSync(
+    Schema.Struct({
+      zerops: Schema.Array(
+        Schema.Struct({
+          build: Schema.Record(Schema.String, Schema.Unknown),
+          run: Schema.Record(Schema.String, Schema.Unknown),
+          setup: Schema.String,
+        }),
+      ),
+    }),
+  )(parse(readFileSync(path.join(appRoot, 'zerops.yaml'), 'utf-8')));
+  const appSetups = manifest.zerops.filter(({ setup }) => setup === 'app');
+  expect(appSetups).toHaveLength(1);
+  for (const { build, run } of appSetups) {
+    // Inspect keys as well as values: build/run env, secret references, API bases and every startup command.
+    expect(JSON.stringify({ build, run })).not.toMatch(/communications/iu);
+    expect(run.start).toBe("sh -c 'cd app && exec node scripts/zerops/app-host.mts'");
+  }
+  // These read the host's boot settings and selected units, then launch their processes. Communications must be
+  // selected through release intent, never required by a host-specific setting, module key or API base.
+  for (const file of [
+    'scripts/zerops/app-host.mts',
+    'scripts/zerops/hosted-units.mts',
+    'scripts/zerops/deployment-profile.mts',
+    'scripts/zerops/serve-units.mts',
+  ]) {
+    expect([file, /communications/iu.test(readFileSync(path.join(appRoot, file), 'utf-8'))]).toEqual([file, false]);
+  }
+  // The shared owner configuration may describe opt-in callers, but must never make the Shell one of them.
+  expect(JSON.stringify(OWNER_RUNTIME_CONFIGURATIONS.filter(({ unitId }) => unitId === SHELL_APP_ID))).not.toMatch(
+    /communications/iu,
+  );
+});
+
 it.effect('releases every single business module without selecting Communications unless it is named', () =>
   Effect.gen(function* everyModuleAlone() {
-    const businessModules = available.filter(({ id }) => id !== COMMUNICATIONS_APP_ID && id !== 'shell-super-app');
+    const businessModules = available.filter(({ id }) => id !== COMMUNICATIONS_APP_ID && id !== SHELL_APP_ID);
     expect(businessModules.length).toBeGreaterThan(1);
     for (const { id } of businessModules) {
       const selection = yield* selectApplicationReleaseUnits({ modules: [{ appId: id }] }, available, []);
