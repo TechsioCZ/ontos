@@ -229,8 +229,10 @@ const searchOfferOf = (
     return invalidSearchMatch();
   const stock = searchNumber(raw.stockOnHand);
   const minimum = raw.minimumQuantity === undefined ? 1 : searchNumber(raw.minimumQuantity);
-  const packageQuantity =
+  const rawPackage =
     raw.packageQuantity === undefined ? undefined : searchNumber(raw.packageQuantity);
+  // The owner stores 0 for a cleared package: only a positive package is one.
+  const packageQuantity = rawPackage !== undefined && rawPackage > 0 ? rawPackage : undefined;
   const ownerUnit = searchText(raw.unit);
   const unit = raw.sourceUnit === undefined ? ownerUnit : searchText(raw.sourceUnit);
   const image = raw.imageSrc === undefined ? undefined : searchText(raw.imageSrc);
@@ -359,7 +361,8 @@ export function projectProducts(body: Raw): ProductPage {
               priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
             }))
             .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0);
-      const packageQuantity = number(v.packageQuantity);
+      const rawPackage = number(v.packageQuantity);
+      const packageQuantity = rawPackage !== undefined && rawPackage > 0 ? rawPackage : undefined;
       const unit =
         filled(v.sourceUnit) ?? filled(v.unit) ?? filled(p.sourceUnit) ?? filled(p.unit) ?? "ks";
       const variantWeightGrams = number(v.weightGrams);
