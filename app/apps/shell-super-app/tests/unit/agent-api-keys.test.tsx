@@ -30,7 +30,7 @@ import type {
   RotateManagedApiKeyPayload,
   SetManagedApiKeyStatusPayload,
 } from '../../shared/browser-api.ts';
-import { AgentApiKeys } from '../../src/routes/people/agent-api-keys.tsx';
+import { AgentApiKeys, ManagedKeyDetail } from '../../src/routes/people/agent-api-keys.tsx';
 import { shellLocaleCopy } from '../support/shell-i18n.tsx';
 import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
@@ -488,5 +488,58 @@ it.live('keeps a committed key change pending until the reread confirms the actu
     expect(Option.isSome(yield* shownOnFakeClock(() => screen.queryByText(copy('updated'))))).toBe(true);
     yield* networkIdle;
     expect(statuses).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
+);
+
+const integrationCopy = (copyKey: string) => {
+  expect(translations.exists(`shell.integrations.keys.${copyKey}`)).toBe(true);
+  return translations.t(`shell.integrations.keys.${copyKey}`);
+};
+const heldValue = 'SymmyHeldKeyValue0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ';
+
+it.live('registers a key value an integration already holds, sends it once and never displays it', () =>
+  Effect.gen(function* registerHeldValue() {
+    const integration = Schema.decodeUnknownSync(ManagedApiKeyListItemSchema.fields.principalId)(principalId);
+    // The tenant-managed list is the Tenant's: the detail shows only this integration's keys.
+    listAnswer = ({ offset }) =>
+      listOf(
+        offset === 0
+          ? [
+              { ...withKey({}), integrationKind: 'symmy', kind: 'integration' },
+              {
+                ...withKey({ authBindingId: secondBindingId, name: 'Other' }),
+                kind: 'service',
+                principalId: otherPrincipal,
+              },
+            ]
+          : [],
+      );
+    yield* mountKeys(
+      <ManagedKeyDetail
+        allowSuppliedSecret
+        copyKey="shell.integrations.keys"
+        subject={{ principalId: integration, scope: 'tenant-managed' }}
+      />,
+    );
+    yield* waitUntil(() => screen.queryByText('Automation') !== null);
+    expect(screen.queryByText('Other')).toBeNull();
+    expect(lists[0]).toEqual({ limit: 100, offset: 0, scope: 'tenant-managed' });
+    yield* click(button(integrationCopy('issue')));
+    yield* type(integrationCopy('name'), 'Symmy');
+    yield* type(integrationCopy('suppliedSecret'), 'too-short');
+    expect(screen.getByText(integrationCopy('suppliedSecretInvalid'))).toBeTruthy();
+    yield* type(integrationCopy('suppliedSecret'), heldValue);
+    yield* click(button(labels.save));
+    yield* waitUntil(() => issues.length === 1);
+    yield* networkIdle;
+    const [received] = issues;
+    const payload = received?.payload;
+    expect(payload?.scope).toBe('tenant-managed');
+    expect(
+      payload?.scope === 'tenant-managed' && payload.secret !== undefined ? Redacted.value(payload.secret) : null,
+    ).toBe(heldValue);
+    // The partner already holds the value: the answer's secret is not shown again.
+    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByDisplayValue(heldValue)).toBeNull();
   }).pipe(Effect.provide(network)),
 );

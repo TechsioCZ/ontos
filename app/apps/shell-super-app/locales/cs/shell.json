@@ -1229,6 +1229,65 @@
       "activity": {
         "table": "Aktivita agentů"
       }
+    },
+    "integrations": {
+      "title": "Integrace",
+      "description": "Propojení s partnery, kteří do tohoto tenanta posílají a čtou data (účetnictví, fakturace, ERP, migrace z jiného systému). Každá integrace má vlastní API klíče; klíč nepřidává oprávnění nad rámec trasy, kterou partner smí používat.",
+      "create": "Přidat integraci",
+      "createDescription": "Vyberte partnera a pojmenujte integraci. Klíč vydáte nebo zaregistrujete v dalším kroku.",
+      "partner": "Partner",
+      "name": "Název integrace",
+      "unnamed": "Integrace bez názvu",
+      "genericPartner": "Obecná integrace",
+      "usage": "Partner posílá klíč v hlavičce {{header}} na {{url}}.",
+      "docs": "Dokumentace API",
+      "empty": "Tenant zatím nemá žádné integrace.",
+      "failed": "Seznam integrací se nepodařilo načíst. Zkuste to znovu.",
+      "forbidden": "Integrace tohoto tenanta může spravovat jen jeho správce identit.",
+      "status": {
+        "active": "Aktivní",
+        "disabled": "Pozastavená",
+        "archived": "Archivovaná"
+      },
+      "keys": {
+        "title": "API klíče",
+        "description": "Přihlašovací údaje, kterými se tato integrace prokazuje. Klíč se zobrazí jen jednou; můžete také zaregistrovat hodnotu, kterou partner už má.",
+        "requiresProfile": "Nejprve uložte auditovaný profil a aktivujte agenta. Poté můžete spravovat jeho klíče.",
+        "retry": "Zkusit znovu",
+        "issue": "Vydat klíč",
+        "working": "Zpracovává se…",
+        "failed": "Seznam klíčů se nepodařilo načíst nebo potvrdit výsledek. Zkuste to znovu. Jednorázové tajemství nelze znovu získat.",
+        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Zobrazuje se aktuální seznam; příkaz neopakujte.",
+        "cleanupPending": "Dokončení odebrání přihlašovacích údajů čeká na zpracování. Původní klíč může stále fungovat; nepovažujte jej ještě za zrušený.",
+        "updated": "Příkaz byl přijat a aktuální seznam potvrdil očekávaný stav klíče.",
+        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Seznam se průběžně načítá znovu; příkaz neopakujte.",
+        "refreshRequired": "Další příkaz bude možný, až seznam potvrdí aktuální stav klíčů. Žádný příkaz se automaticky neopakuje.",
+        "oneTime": "Tajemství se zobrazí pouze jednou. Označte a zkopírujte jej do bezpečného správce přihlašovacích údajů, ne do chatu. Zavřením panelu nebo skrytím z tohoto pohledu zmizí.",
+        "secret": "Jednorázové tajemství",
+        "selectSecret": "Označit tajemství",
+        "hideSecret": "Mám uloženo — skrýt",
+        "empty": "Integrace nemá žádné nezrušené API klíče.",
+        "unnamed": "Klíč bez názvu",
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Pozastavený"
+        },
+        "noExpiry": "Poskytovatel přihlašovacích údajů neuvádí konec platnosti",
+        "expires": "Platnost do: {{date}}",
+        "rotate": "Obměnit klíč",
+        "disable": "Pozastavit klíč",
+        "enable": "Aktivovat klíč",
+        "revoke": "Zrušit klíč",
+        "more": "Další klíče",
+        "cancel": "Zrušit",
+        "confirm": "Jednou potvrdit",
+        "confirmDescription": "Změníte skutečné přihlašovací údaje této integrace. Obměna nahradí původní klíč; zrušení je trvalé a partnerovy požadavky s ním budou odmítnuty. Příkaz je auditovaný a nikdy se automaticky neopakuje.",
+        "name": "Název klíče",
+        "reason": "Důvod",
+        "suppliedSecret": "Existující hodnota klíče (nepovinné)",
+        "suppliedSecretDescription": "Vyplňte jen tehdy, když partner už klíč má a má jej dál používat. Uloží se pouze jeho otisk. Prázdné pole vygeneruje nový klíč.",
+        "suppliedSecretInvalid": "Hodnota klíče musí mít 32 až 256 znaků z písmen, číslic a znaků _ . ~ -."
+      }
     }
   }
 }

@@ -24,7 +24,7 @@ import {
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
 import { KeyConfirmation } from './agent-key-confirmation.tsx';
-import type { KeyCommandEnd } from './agent-key-confirmation.tsx';
+import type { KeyCommandDraft, KeyCommandEnd } from './agent-key-confirmation.tsx';
 
 class AgentKeyScopeError extends Schema.TaggedError<AgentKeyScopeError>()('AgentKeyScopeError', {
   reason: Schema.String,
@@ -37,31 +37,50 @@ const changesKeys = (event: Event): boolean =>
   Schema.decodeUnknownOption(LiveChangeDetailSchema)('detail' in event ? event.detail : null).pipe(
     Option.exists(({ apps }) => apps === 'all' || apps.includes('shell')),
   );
-type AgentPrincipalId = typeof PrincipalIdSchema.Type;
-type AgentKey = NonNullable<ManagedApiKeyListResponse['items'][number]['key']>;
+type ManagedPrincipalId = typeof PrincipalIdSchema.Type;
+type ManagedKey = NonNullable<ManagedApiKeyListResponse['items'][number]['key']>;
 type KeyCommand =
   | { readonly kind: 'issue' }
-  | { readonly key: AgentKey; readonly kind: 'disable' | 'enable' | 'revoke' | 'rotate' };
-const copyKey = 'shell.agents.keys';
+  | { readonly key: ManagedKey; readonly kind: 'disable' | 'enable' | 'revoke' | 'rotate' };
+/**
+ * Whose keys are managed: an agent's in the selected company, or a tenant-managed integration's (or service's), whose
+ * issue and rotation may register a key value the integration already holds.
+ */
+export interface ManagedKeySubject {
+  readonly principalId: ManagedPrincipalId;
+  readonly scope: 'company-agent' | 'tenant-managed';
+}
+const agentCopyKey = 'shell.agents.keys';
 const companyAgentScope = 'company-agent';
 const pageSize = 100;
 const readTimeout = '30 seconds';
 
-const keyCommand = (
-  command: KeyCommand,
-  principalId: AgentPrincipalId,
-  name: string,
-  reason: string,
-  token: string,
-) => {
-  const scope = companyAgentScope;
+/** An agent key is always generated; a tenant-managed key may carry the value the integration already holds. */
+const withSuppliedSecret = <Payload extends object>(
+  subject: ManagedKeySubject,
+  draft: KeyCommandDraft,
+  payload: Payload,
+): Payload | (Payload & { readonly secret: Redacted.Redacted }) =>
+  subject.scope === 'tenant-managed' && draft.suppliedSecret !== undefined
+    ? { ...payload, secret: draft.suppliedSecret }
+    : payload;
+
+const keyCommand = (command: KeyCommand, subject: ManagedKeySubject, draft: KeyCommandDraft, token: string) => {
+  const { principalId, scope } = subject;
+  const { name, reason } = draft;
   const options = { idempotencyKey: token };
   if (command.kind === 'issue') {
-    return issueManagedApiKey({ name, principalId, scope }, options);
+    return issueManagedApiKey(
+      scope === companyAgentScope
+        ? { name, principalId, scope }
+        : withSuppliedSecret(subject, draft, { name, principalId, scope }),
+      options,
+    );
   }
   if (command.kind === 'rotate') {
+    const rotation = { name, oldAuthBindingId: command.key.authBindingId, principalId, reason };
     return rotateManagedApiKey(
-      { name, oldAuthBindingId: command.key.authBindingId, principalId, reason, scope },
+      scope === companyAgentScope ? { ...rotation, scope } : withSuppliedSecret(subject, draft, { ...rotation, scope }),
       options,
     );
   }
@@ -84,19 +103,40 @@ const keyCommand = (
 };
 
 interface KeyProjection {
-  readonly authBindingId: AgentKey['authBindingId'];
-  readonly bindingStatus: AgentKey['bindingStatus'] | 'revoked';
+  readonly authBindingId: ManagedKey['authBindingId'];
+  readonly bindingStatus: ManagedKey['bindingStatus'] | 'revoked';
   readonly cleanupPending: boolean;
 }
-const projectionMatches = (projection: KeyProjection, keys: readonly AgentKey[], nextOffset: number | null) => {
+const projectionMatches = (projection: KeyProjection, keys: readonly ManagedKey[], nextOffset: number | null) => {
   const target = keys.find((candidate) => candidate.authBindingId === projection.authBindingId);
   return projection.bindingStatus === 'revoked'
     ? nextOffset === null && target === undefined
     : target?.bindingStatus === projection.bindingStatus;
 };
 
-const useAgentKeys = (principalId: AgentPrincipalId) => {
-  const [keys, setKeys] = useState<readonly AgentKey[] | null>(null);
+/**
+ * One page of the subject's keys. An agent's list is scoped to the agent by the server, and a row of another principal
+ * is a failed read. The tenant-managed list is the Tenant's (the administrator may see all of it); one integration's
+ * keys are its rows.
+ */
+const readKeys = (subject: ManagedKeySubject, offset: number) =>
+  subject.scope === companyAgentScope
+    ? listManagedApiKeys({ limit: pageSize, offset, principalId: subject.principalId, scope: subject.scope }).pipe(
+        Effect.flatMap((response) =>
+          response.items.some((item) => item.principalId !== subject.principalId || item.kind !== 'agent')
+            ? Effect.fail(new AgentKeyScopeError({ reason: 'Agent key response does not match its requested scope' }))
+            : Effect.succeed(response),
+        ),
+      )
+    : listManagedApiKeys({ limit: pageSize, offset, scope: subject.scope }).pipe(
+        Effect.map((response) => ({
+          ...response,
+          items: response.items.filter((item) => item.principalId === subject.principalId),
+        })),
+      );
+
+const useManagedKeys = (subject: ManagedKeySubject) => {
+  const [keys, setKeys] = useState<readonly ManagedKey[] | null>(null);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [busy, setBusy] = useState(true);
   const [failure, setFailure] = useState<'conflict' | 'failed' | null>(null);
@@ -105,7 +145,7 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
   const [notice, setNotice] = useState<'cleanupPending' | 'projectionPending' | 'updated' | null>(null);
   const pending = useRef<Fiber.Fiber<void> | null>(null);
   const expected = useRef<KeyProjection | null>(null);
-  const loadedKeys = useRef<readonly AgentKey[]>([]);
+  const loadedKeys = useRef<readonly ManagedKey[]>([]);
 
   useEffect(
     () => () => {
@@ -116,7 +156,7 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
     [],
   );
 
-  const updateKeys = (offset: number, items: readonly AgentKey[], next: number | null) => {
+  const updateKeys = (offset: number, items: readonly ManagedKey[], next: number | null) => {
     const all = offset === 0 ? items : [...loadedKeys.current, ...items];
     loadedKeys.current = [...new Map(all.map((item) => [item.authBindingId, item])).values()];
     setKeys(loadedKeys.current);
@@ -137,14 +177,8 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
     return confirmed;
   };
   const read = (offset: number) =>
-    listManagedApiKeys({ limit: pageSize, offset, principalId, scope: companyAgentScope }).pipe(
+    readKeys(subject, offset).pipe(
       Effect.flatMap((response) => {
-        // A server scope violation is a failed read, never a client-side ownership filter.
-        if (response.items.some((item) => item.principalId !== principalId || item.kind !== 'agent')) {
-          return Effect.fail(
-            new AgentKeyScopeError({ reason: 'Agent key response does not match its requested scope' }),
-          );
-        }
         const items = response.items.flatMap((item) => (item.key === null ? [] : [item.key]));
         return Effect.sync(() => updateKeys(offset, items, response.nextOffset));
       }),
@@ -190,12 +224,7 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
   };
 
   /** Runs one key command; false when it cannot start now. `onEnd` hears whether it committed or why it did not. */
-  const handleExecute = (
-    command: KeyCommand,
-    name: string,
-    reason: string,
-    onEnd: (end: KeyCommandEnd) => void,
-  ): boolean => {
+  const handleExecute = (command: KeyCommand, draft: KeyCommandDraft, onEnd: (end: KeyCommandEnd) => void): boolean => {
     if (busy || needsRefresh || secret !== null) {
       return false;
     }
@@ -205,10 +234,11 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
     setNotice(null);
     pending.current = browserRuntime.runFork(
       newRequestToken.pipe(
-        Effect.flatMap((token) => keyCommand(command, principalId, name, reason, token)),
+        Effect.flatMap((token) => keyCommand(command, subject, draft, token)),
         Effect.tap((response) =>
           Effect.sync(() => {
-            if (Schema.is(ApiKeyIssueResponseSchema)(response)) {
+            // A registered existing value is already held by the integration; only a generated one is shown.
+            if (Schema.is(ApiKeyIssueResponseSchema)(response) && draft.suppliedSecret === undefined) {
               setSecret(response.secret);
             }
             let bindingStatus: KeyProjection['bindingStatus'] = 'active';
@@ -275,9 +305,11 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
 };
 
 const OneTimeSecret = ({
+  copyKey,
   onDismiss,
   secret,
 }: {
+  readonly copyKey: string;
   readonly onDismiss: () => void;
   readonly secret: Redacted.Redacted;
 }) => {
@@ -308,12 +340,14 @@ const OneTimeSecret = ({
   );
 };
 
-const AgentKeyRow = ({
+const ManagedKeyRow = ({
+  copyKey,
   item,
   locked,
   onCommand,
 }: {
-  readonly item: AgentKey;
+  readonly copyKey: string;
+  readonly item: ManagedKey;
   readonly locked: boolean;
   readonly onCommand: (command: KeyCommand) => void;
 }) => {
@@ -369,9 +403,18 @@ const AgentKeyRow = ({
   );
 };
 
-const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalId }) => {
+/** The keys of one agent or integration, with every key command; `copyKey` names the copy of that kind. */
+export const ManagedKeyDetail = ({
+  allowSuppliedSecret = false,
+  copyKey,
+  subject,
+}: {
+  readonly allowSuppliedSecret?: boolean;
+  readonly copyKey: string;
+  readonly subject: ManagedKeySubject;
+}) => {
   const { t } = useModernI18n();
-  const state = useAgentKeys(principalId);
+  const state = useManagedKeys(subject);
   const [command, setCommand] = useState<KeyCommand | null>(null);
   const locked = state.busy || state.needsRefresh || state.secret !== null;
   return (
@@ -412,11 +455,19 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
         </StatusText>
       )}
       {state.needsRefresh && !state.busy && <StatusText status="warning">{t(`${copyKey}.refreshRequired`)}</StatusText>}
-      {state.secret !== null && <OneTimeSecret onDismiss={() => state.setSecret(null)} secret={state.secret} />}
+      {state.secret !== null && (
+        <OneTimeSecret copyKey={copyKey} onDismiss={() => state.setSecret(null)} secret={state.secret} />
+      )}
       {state.keys?.length === 0 && <p className="text-fg-secondary text-sm">{t(`${copyKey}.empty`)}</p>}
       <ul className="flex min-w-0 flex-col">
         {state.keys?.map((item) => (
-          <AgentKeyRow item={item} key={item.authBindingId} locked={locked} onCommand={setCommand} />
+          <ManagedKeyRow
+            copyKey={copyKey}
+            item={item}
+            key={item.authBindingId}
+            locked={locked}
+            onCommand={setCommand}
+          />
         ))}
       </ul>
       {state.nextOffset !== null && (
@@ -437,8 +488,10 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
       )}
       {command !== null && (
         <KeyConfirmation
+          allowSuppliedSecret={allowSuppliedSecret}
           busy={state.busy}
           command={command}
+          copyKey={copyKey}
           failure={state.failure}
           onClose={() => setCommand(null)}
           onConfirm={state.handleExecute}
@@ -451,11 +504,17 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
 export const AgentApiKeys = ({ agent }: { readonly agent: AgentEntity }) => {
   const { t } = useModernI18n();
   if (!agent.hasProfile || agent.status !== 'active') {
-    return <p className="text-fg-secondary text-sm">{t(`${copyKey}.requiresProfile`)}</p>;
+    return <p className="text-fg-secondary text-sm">{t(`${agentCopyKey}.requiresProfile`)}</p>;
   }
   const principalId = Schema.decodeOption(PrincipalIdSchema)(agent.principalId);
   if (Option.isNone(principalId)) {
-    return <StatusText status="error">{t(`${copyKey}.failed`)}</StatusText>;
+    return <StatusText status="error">{t(`${agentCopyKey}.failed`)}</StatusText>;
   }
-  return <AgentKeyDetail key={principalId.value} principalId={principalId.value} />;
+  return (
+    <ManagedKeyDetail
+      copyKey={agentCopyKey}
+      key={principalId.value}
+      subject={{ principalId: principalId.value, scope: companyAgentScope }}
+    />
+  );
 };

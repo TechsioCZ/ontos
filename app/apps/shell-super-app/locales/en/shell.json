@@ -1215,6 +1215,65 @@
       "activity": {
         "table": "Agent activity"
       }
+    },
+    "integrations": {
+      "title": "Integrations",
+      "description": "Connections to partners that send and read this tenant's data (accounting, invoicing, ERP, migration from another system). Each integration has its own API keys; a key grants nothing beyond the routes the partner may use.",
+      "create": "Add integration",
+      "createDescription": "Choose the partner and name the integration. You issue or register its key in the next step.",
+      "partner": "Partner",
+      "name": "Integration name",
+      "unnamed": "Unnamed integration",
+      "genericPartner": "Generic integration",
+      "usage": "The partner sends the key in the {{header}} header to {{url}}.",
+      "docs": "API documentation",
+      "empty": "This tenant has no integrations yet.",
+      "failed": "The integrations could not be loaded. Try again.",
+      "forbidden": "Only this tenant's identity administrator can manage its integrations.",
+      "status": {
+        "active": "Active",
+        "disabled": "Paused",
+        "archived": "Archived"
+      },
+      "keys": {
+        "title": "API keys",
+        "description": "The credentials this integration authenticates with. A generated key is shown once; you can also register a value the partner already holds.",
+        "requiresProfile": "Save an audited profile and activate the agent before managing its keys.",
+        "retry": "Try again",
+        "issue": "Issue key",
+        "working": "Processing…",
+        "failed": "The key list could not be loaded or the result could not be confirmed. Try again. A one-time secret cannot be recovered.",
+        "conflict": "This request was already accepted or the key changed. The current list is shown; do not repeat the command.",
+        "cleanupPending": "Credential cleanup is pending. The previous key may still be usable; do not treat it as revoked yet.",
+        "updated": "The command was accepted and the current list confirmed the expected key state.",
+        "projectionPending": "The command was accepted, but the list has not confirmed the expected key state yet. The list keeps reloading; do not repeat the command.",
+        "refreshRequired": "Another command becomes available once the list confirms the current key state. No command will be retried automatically.",
+        "oneTime": "This secret is shown only once. Select and copy it to your secure credential manager, not a chat. Closing the panel or hiding it removes it from this view.",
+        "secret": "One-time secret",
+        "selectSecret": "Select secret",
+        "hideSecret": "I saved it — hide",
+        "empty": "This integration has no unrevoked API keys.",
+        "unnamed": "Unnamed key",
+        "status": {
+          "active": "Active",
+          "disabled": "Disabled"
+        },
+        "noExpiry": "No expiry reported by the credential provider",
+        "expires": "Expires: {{date}}",
+        "rotate": "Rotate key",
+        "disable": "Disable key",
+        "enable": "Enable key",
+        "revoke": "Revoke key",
+        "more": "More keys",
+        "cancel": "Cancel",
+        "confirm": "Confirm once",
+        "confirmDescription": "You change this integration's real credentials. Rotation replaces the old key; revocation is permanent and the partner's requests with it are refused. The command is audited and never repeated automatically.",
+        "name": "Key name",
+        "reason": "Reason",
+        "suppliedSecret": "Existing key value (optional)",
+        "suppliedSecretDescription": "Fill in only when the partner already holds the key and keeps using it. Only its hash is stored. Leave empty to generate a new key.",
+        "suppliedSecretInvalid": "The key value must be 32 to 256 characters of letters, digits and _ . ~ -."
+      }
     }
   }
 }

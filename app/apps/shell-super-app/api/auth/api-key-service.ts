@@ -92,6 +92,8 @@ interface PendingApiKeyCleanupBatch {
 
 export interface ApiKeyServiceContract {
   readonly clearPendingCleanup: (keyId: string) => Effect.Effect<void, ApiKeyProviderError>;
+  /** Whether a key with this value exists in any state, so the same value is never registered twice. */
+  readonly isRegistered: (rawKey: Redacted.Redacted) => Effect.Effect<boolean, ApiKeyProviderError>;
   readonly issue: (
     requestHeaders: Headers,
     input: {
@@ -100,6 +102,11 @@ export interface ApiKeyServiceContract {
       readonly lifecycleOperationId: string;
       readonly name?: string;
       readonly prefix?: string;
+      /**
+       * An existing key value to register instead of a generated one. Better Auth stores it exactly as a key it
+       * generated (its hash and starting characters); the value itself is never stored.
+       */
+      readonly suppliedSecret?: Redacted.Redacted;
       readonly tenantId: string;
     },
   ) => Effect.Effect<IssuedApiKey, ApiKeyProviderError>;
@@ -259,20 +266,26 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
   const crypto = yield* Crypto.Crypto;
   const { adapter: databaseAdapter, executor: database } = yield* AuthDatabase;
   // Verification and metadata use SQL directly; only issuance needs the provider.
-  const makeProvider = () =>
+  const apiKeyOptions = {
+    enableMetadata: true,
+    enableSessionForAPIKeys: false,
+    // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
+    rateLimit: { enabled: false },
+    references: 'user',
+  } as const;
+  // Registering a key the integration already holds: Better Auth's own create path hashes and stores it.
+  const makeProvider = (suppliedSecret?: Redacted.Redacted) =>
     betterAuth({
       advanced: { useSecureCookies: configuration.secureCookies },
       baseURL: configuration.baseUrl,
       database: databaseAdapter,
       logger: { disabled: true },
       plugins: [
-        apiKey({
-          enableMetadata: true,
-          enableSessionForAPIKeys: false,
-          // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
-          rateLimit: { enabled: false },
-          references: 'user',
-        }),
+        apiKey(
+          suppliedSecret === undefined
+            ? apiKeyOptions
+            : { ...apiKeyOptions, customKeyGenerator: (): string => Redacted.value(suppliedSecret) },
+        ),
       ],
       secret: configuration.secret,
       trustedOrigins: [...configuration.trustedOrigins],
@@ -314,8 +327,24 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         ),
         Effect.asVoid,
       ),
+    isRegistered: (rawKey) =>
+      apiKeyLookupHash(crypto, Redacted.value(rawKey)).pipe(
+        Effect.flatMap((keyHash) =>
+          database
+            .select({ id: apikey.id })
+            .from(apikey)
+            .where(eq(apikey.key, keyHash))
+            .limit(1)
+            .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout),
+        ),
+        Effect.map((rows) => rows.length > 0),
+      ),
     issue: (requestHeaders, input) =>
-      Effect.try({ catch: mapProviderError, try: getProvider }).pipe(
+      Effect.try({
+        catch: mapProviderError,
+        // A supplied value needs a provider of its own: the key generator is per provider, not per call.
+        try: () => (input.suppliedSecret === undefined ? getProvider() : makeProvider(input.suppliedSecret)),
+      }).pipe(
         Effect.flatMap(({ api }) =>
           Effect.tryPromise({
             catch: mapProviderError,

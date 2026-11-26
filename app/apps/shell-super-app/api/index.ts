@@ -323,6 +323,7 @@ import {
   SwitchToTenantContextResponseSchema,
   SystemWorkloadEnrollmentResponseSchema,
 } from '../shared/browser-api.ts';
+import { ConnectorPartnerKindSchema } from '@app/shared-contracts/integrations/connector-partners';
 import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
 import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
@@ -2210,6 +2211,15 @@ const safeIdentity = <Value, Error, Requirements>(
     ),
   );
 
+/** A tenant-managed key may register a value the integration already holds; an agent key is always generated. */
+const suppliedSecretOf = (
+  payload:
+    | { readonly scope: 'company-agent' }
+    | { readonly scope: 'tenant-managed'; readonly secret?: Redacted.Redacted },
+): { readonly suppliedSecret?: Redacted.Redacted } =>
+  payload.scope === 'tenant-managed' && payload.secret !== undefined ? { suppliedSecret: payload.secret } : {};
+const isConnectorPartnerKind = Schema.is(ConnectorPartnerKindSchema);
+
 const keyIssuanceResponse = <Value extends object, Requirements>(
   effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
 ) =>
@@ -2446,6 +2456,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               withOptionalProperty(
                 {
                   ...context,
+                  ...suppliedSecretOf(payload),
                   managedPrincipalId: payload.principalId,
                   managedScope: payload.scope,
                 },
@@ -2492,13 +2503,30 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             result.items,
             Effect.fn(function* loadManagedApiKey(item) {
               const authBindingId = item.authBindingId === undefined ? null : Option.getOrNull(item.authBindingId);
-              if (authBindingId === null) {
-                return withOptionalProperty(
-                  { key: null, kind: item.kind, principalId: item.principalId, principalStatus: item.principalStatus },
-                  item.displayName !== undefined,
-                  'displayName',
-                  item.displayName,
+              // A partner this Shell does not declare is listed as a generic integration.
+              const integrationKind = Option.getOrNull(item.integrationKind);
+              const withPartner = <Row extends object>(row: Row) =>
+                withOptionalProperty(
+                  row,
+                  isConnectorPartnerKind(integrationKind),
+                  'integrationKind',
+                  integrationKind,
                   {},
+                );
+              if (authBindingId === null) {
+                return withPartner(
+                  withOptionalProperty(
+                    {
+                      key: null,
+                      kind: item.kind,
+                      principalId: item.principalId,
+                      principalStatus: item.principalStatus,
+                    },
+                    item.displayName !== undefined,
+                    'displayName',
+                    item.displayName,
+                    {},
+                  ),
                 );
               }
               return yield* resolver
@@ -2513,22 +2541,24 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                       .metadata(bindingState.providerSubjectId)
                       .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
                   ),
-                  Effect.map(({ bindingState, metadata }) => ({
-                    displayName: item.displayName,
-                    key: {
-                      authBindingId,
-                      bindingStatus: bindingState.status,
-                      cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
-                      createdAt: metadata.createdAt,
-                      enabled: metadata.enabled,
-                      expiresAt: metadata.expiresAt,
-                      name: metadata.name,
-                      start: metadata.start,
-                    },
-                    kind: item.kind,
-                    principalId: item.principalId,
-                    principalStatus: item.principalStatus,
-                  })),
+                  Effect.map(({ bindingState, metadata }) =>
+                    withPartner({
+                      displayName: item.displayName,
+                      key: {
+                        authBindingId,
+                        bindingStatus: bindingState.status,
+                        cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
+                        createdAt: metadata.createdAt,
+                        enabled: metadata.enabled,
+                        expiresAt: metadata.expiresAt,
+                        name: metadata.name,
+                        start: metadata.start,
+                      },
+                      kind: item.kind,
+                      principalId: item.principalId,
+                      principalStatus: item.principalStatus,
+                    }),
+                  ),
                   Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
                 );
             }),
@@ -2602,6 +2632,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               withOptionalProperty(
                 {
                   ...context,
+                  ...suppliedSecretOf(payload),
                   managedPrincipalId: payload.principalId,
                   managedScope: payload.scope,
                 },

@@ -28,6 +28,10 @@ import {
 import { coreOperations } from '@app/core-runtime/sdk/core';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
+import {
+  ConnectorPartnerKindSchema,
+  SuppliedApiKeySecretSchema,
+} from '@app/shared-contracts/integrations/connector-partners';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 import {
@@ -145,7 +149,6 @@ export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), 
 
 // Tenant request bodies cannot create Core-attested `system` principals.
 // Demo agents have their own creation lifecycle and remain visible in managed-key reads.
-const nonHumanPrincipalKind = Schema.Literals(['service', 'integration']);
 
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
@@ -163,12 +166,18 @@ export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
 export const DemoAccountListPayloadSchema = Schema.Struct({});
 export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boolean });
 
-export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
-  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
-  // a persisted kind is never evidence of Core attestation.
-  kind: nonHumanPrincipalKind,
-});
+const principalDisplayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
+// `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
+// a persisted kind is never evidence of Core attestation.
+export const CreateNonHumanPrincipalPayloadSchema = Schema.Union([
+  Schema.Struct({ displayName: principalDisplayName, kind: Schema.Literal('service') }),
+  Schema.Struct({
+    displayName: principalDisplayName,
+    /** The connector partner (`CONNECTOR_PARTNERS`) the integration authenticates for. */
+    integrationKind: Schema.optionalKey(ConnectorPartnerKindSchema),
+    kind: Schema.Literal('integration'),
+  }),
+]);
 const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
 const identityReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 export const ChangePrincipalStatusPayloadSchema = Schema.Union([
@@ -229,11 +238,24 @@ export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
 export const ManagedApiKeyScopeSchema = Schema.Literals(['company-agent', 'tenant-managed']);
-export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
-  scope: ManagedApiKeyScopeSchema,
-  ...IssueApiKeyPayloadSchema.fields,
-  principalId: PrincipalIdSchema,
-});
+const [companyAgentScope, tenantManagedScope] = ManagedApiKeyScopeSchema.members;
+/**
+ * A tenant-managed key may register a value the integration already holds (`secret`) instead of a generated one; an
+ * agent key is always generated.
+ */
+export const IssueManagedApiKeyPayloadSchema = Schema.Union([
+  Schema.Struct({
+    scope: companyAgentScope,
+    ...IssueApiKeyPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+  }),
+  Schema.Struct({
+    scope: tenantManagedScope,
+    ...IssueApiKeyPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+    secret: Schema.optionalKey(SuppliedApiKeySecretSchema),
+  }),
+]);
 const MutableApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled']);
 const apiKeyStatusFields = {
   authBindingId: AuthBindingIdSchema,
@@ -272,11 +294,19 @@ export const RotateApiKeyPayloadSchema = Schema.Struct({
   oldAuthBindingId: AuthBindingIdSchema,
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
-export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
-  scope: ManagedApiKeyScopeSchema,
-  ...RotateApiKeyPayloadSchema.fields,
-  principalId: PrincipalIdSchema,
-});
+export const RotateManagedApiKeyPayloadSchema = Schema.Union([
+  Schema.Struct({
+    scope: companyAgentScope,
+    ...RotateApiKeyPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+  }),
+  Schema.Struct({
+    scope: tenantManagedScope,
+    ...RotateApiKeyPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+    secret: Schema.optionalKey(SuppliedApiKeySecretSchema),
+  }),
+]);
 export const ApiKeyLifecycleResponseSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   cleanupPending: Schema.Boolean,
@@ -321,6 +351,8 @@ export const ManagedApiKeyListPayloadSchema = Schema.Union([
 ]);
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.optionalKey(Schema.String),
+  /** The connector partner an integration authenticates for; absent for any other principal or an unknown partner. */
+  integrationKind: Schema.optionalKey(ConnectorPartnerKindSchema),
   key: Schema.Union([
     Schema.Null,
     Schema.Struct({

@@ -4,11 +4,15 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useState } from 'react';
 
 import { AgentEntitiesSection } from '../../../people/agent-entities-section.tsx';
+import { IntegrationsSection } from '../../../people/integrations-section.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { HomePageModel } from '../../home-page-model.ts';
 
-/** Správa oprávnění › Agenti: the company's agents, their roles, operators and connections. */
+/**
+ * Správa oprávnění › Agenti: the company's agents, their roles, operators and connections, and the Tenant's
+ * connector-partner integrations (Symmy, …) with their API keys.
+ */
 const AgentsPage = () => {
   const { t } = useModernI18n();
   const shell: HomePageModel = useLoaderData({ from: '/$lang/access/agents' });
@@ -40,6 +44,7 @@ const AgentsPage = () => {
             onNotify={(title, description) => setNotification([title, description].filter(Boolean).join(' '))}
           />
         )}
+        <IntegrationsSection />
       </ShellContentLayout>
     );
   }

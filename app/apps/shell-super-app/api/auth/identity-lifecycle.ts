@@ -209,6 +209,20 @@ export const makeIdentityLifecycleService = (
       }),
     );
   };
+  /** A value already registered (in any state, revoked included) is never registered again. */
+  const refuseRegisteredValue = (secret: Redacted.Redacted): Effect.Effect<void, IdentityLifecycleError> =>
+    keys.isRegistered(secret).pipe(
+      Effect.flatMap((registered) =>
+        registered
+          ? Effect.fail(
+              new IdentityLifecycleConflictError({
+                code: 'identity_lifecycle_conflict',
+                reason: 'This API key value is already registered',
+              }),
+            )
+          : Effect.void,
+      ),
+    );
   const issue = (
     input: RequestIdentity & {
       readonly managedPrincipalId?: string;
@@ -216,6 +230,8 @@ export const makeIdentityLifecycleService = (
       readonly name?: string;
       readonly principal: TrustedPrincipalContext;
       readonly requestHeaders: Headers;
+      /** An existing key value the integration already holds, registered instead of a generated one. */
+      readonly suppliedSecret?: Redacted.Redacted;
     },
   ) =>
     eligibleTarget(input).pipe(
@@ -225,18 +241,25 @@ export const makeIdentityLifecycleService = (
           principal: input.principal,
         }),
       ),
+      Effect.andThen(input.suppliedSecret === undefined ? Effect.void : refuseRegisteredValue(input.suppliedSecret)),
       Effect.flatMap(() =>
         keys.issue(
           input.requestHeaders,
           withOptionalProperty(
-            {
-              issuerPrincipalId: input.principal.principalId,
-              lifecycleOperationId: input.idempotencyKey,
-              tenantId: input.principal.tenantId,
-            },
-            input.name !== undefined,
-            'name',
-            input.name,
+            withOptionalProperty(
+              {
+                issuerPrincipalId: input.principal.principalId,
+                lifecycleOperationId: input.idempotencyKey,
+                tenantId: input.principal.tenantId,
+              },
+              input.name !== undefined,
+              'name',
+              input.name,
+              {},
+            ),
+            input.suppliedSecret !== undefined,
+            'suppliedSecret',
+            input.suppliedSecret,
             {},
           ),
         ),
