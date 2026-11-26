@@ -365,6 +365,13 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                             </strong>
                           </p>
                         )}
+                        {purchaseItem.originalPriceMinor !== undefined &&
+                          purchaseItem.originalPriceMinor > purchaseItem.priceMinor && (
+                            <p className="sf-product-detail__price-row">
+                              <span>{cs.product.originalPrice}</span>
+                              <s>{formatPrice(purchaseItem.originalPriceMinor, money)}</s>
+                            </p>
+                          )}
                         <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
                           <span>{cs.product.priceIncludingVat}</span>
                           <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
