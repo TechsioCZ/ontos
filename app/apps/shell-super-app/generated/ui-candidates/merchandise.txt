@@ -103,7 +103,9 @@ left-100
 lg:col-span-2
 lg:grid-cols-2
 line-through
+list-disc
 lowercase
+m-0
 max-w-80
 max-w-full
 min-h-24
@@ -128,6 +130,7 @@ p-100
 p-150
 p-200
 pl-200
+pl-300
 pt-200
 px-200
 px-50
@@ -138,6 +141,7 @@ resize
 rounded
 rounded-full
 rounded-lg
+rounded-md
 rounded-sm
 running
 self-center

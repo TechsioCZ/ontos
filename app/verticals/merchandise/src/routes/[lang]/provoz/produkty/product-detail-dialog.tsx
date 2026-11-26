@@ -41,6 +41,7 @@ import { TaxClassificationSelect } from './product-tax-classification-select.tsx
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { StorefrontStatusPanel } from './storefront-status.tsx';
 import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
@@ -531,6 +532,7 @@ export const ProductDetailView = ({
           }
           title={product.name}
         />
+        <StorefrontStatusPanel product={product} />
         <Tabs
           onValueChange={(value) => {
             if (isProductDetailTab(value)) {

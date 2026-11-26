@@ -6,6 +6,7 @@ import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-clas
 import { Option, Schema } from 'effect';
 import { currencyOf, MarketCurrencySchema, OrderMarketSchema } from './market-offers.ts';
 import type { MarketCurrency } from './market-offers.ts';
+import { StorefrontVisibilitySchema } from './storefront-visibility.ts';
 
 const identifierLengthChecks = [Schema.isMinLength(1), Schema.isMaxLength(300)] as const;
 
@@ -408,6 +409,8 @@ export const ProductRecordSchema = Schema.Struct({
   /** Storefront-only derived fields: `description` split on blank lines, and `images` (or `[imageSrc]`). */
   descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
   gallery: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Staff reads of a company with an e-shop: the facts the storefront read filters the product on. */
+  storefrontVisibility: Schema.optionalKey(StorefrontVisibilitySchema),
 });
 export type ProductRecord = typeof ProductRecordSchema.Type;
 

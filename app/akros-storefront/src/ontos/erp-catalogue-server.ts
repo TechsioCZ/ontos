@@ -11,7 +11,9 @@ import { Effect, Predicate } from "effect";
 import { cache } from "react";
 import { isOperationError } from "@ontos/storefront-runtime";
 import {
+  erpItemMatches,
   hasUndecidedPrice,
+  isErpProductShown,
   shownVariantRefs,
   toErpProducts,
   withGuestPricesWhereUndecided,
@@ -25,6 +27,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { getErpOffer, type ErpOffer } from "./erp-config";
 import { createOperation, OntosError, readRecords } from "./gateway";
 import type { Operation, OperationOptions } from "./gateway";
+import { sharedRead } from "./shared-read";
 
 /** The owners answer at most 100 variants per stock or price read. */
 const VARIANT_PAGE = 100;
@@ -109,6 +112,7 @@ const withOffers = async (
   offer: ErpOffer,
   page: CatalogProductPage,
   operation: Operation,
+  guest = false,
 ): Promise<ErpProduct[]> => {
   operation.check();
   const variantRefs = shownVariantRefs(page);
@@ -145,7 +149,7 @@ const withOffers = async (
           throw new OntosError("Inventory exceeded its reference bound", 502, "erp_stock_oversize");
         stock[index] = answer.items;
       } else {
-        const answer = await pricePage(
+        const answer = await (guest ? guestPricePage : pricePage)(
           {
             channelId: offer.channelId,
             currencyCode: offer.currencyCode,
@@ -280,3 +284,77 @@ export const readErpProduct = cache(
     }
   },
 );
+
+/** Search reads are equal for every shopper: shared for 15 s and served stale while one refresh runs. */
+const ERP_SEARCH_TTL_MS = 15_000;
+type ErpPageItem = CatalogProductPage["items"][number];
+
+/** Every product Catalog answers the storefront (up to the detail scan bound), shared across shoppers. */
+const erpIndex = (locale: string, caller: Operation) =>
+  sharedRead(
+    `erp-index:${locale}`,
+    ERP_SEARCH_TTL_MS,
+    async (operation): Promise<ErpPageItem[]> => {
+      const items: ErpPageItem[] = [];
+      for (let index = 0; index < DETAIL_PAGES; index += 1) {
+        const page = await readCatalogPage(locale, index * DETAIL_PAGE, DETAIL_PAGE, operation);
+        items.push(...page.items);
+        if ((index + 1) * DETAIL_PAGE >= page.count) break;
+      }
+      return items;
+    },
+    { stale: true, caller },
+  );
+
+/**
+ * The ERP products a search query finds (the same products „Novinky z ERP“ shows), priced as a guest. Both the
+ * product index and each query's priced answer are shared reads, so a repeated query costs no owner call.
+ */
+export const searchErpProducts = async (
+  query: string,
+  limit: number,
+  operation: Operation,
+): Promise<{ count: number; products: ErpProduct[] }> => {
+  const offer = getErpOffer();
+  const term = query.trim();
+  if (offer === undefined || term === "") return { count: 0, products: [] };
+  const { locale } = await getActiveMarket(marketReadsFor(operation));
+  const matched = (await erpIndex(locale, operation)).filter(
+    (item) => isErpProductShown(item) && erpItemMatches(item, term),
+  );
+  if (matched.length === 0) return { count: 0, products: [] };
+  const items = matched.slice(0, limit);
+  const products = await sharedRead(
+    `erp-search:${locale}:${limit}:${items.map((item) => item.productRef.resourceId).join(",")}`,
+    ERP_SEARCH_TTL_MS,
+    (detached) => withOffers(offer, { count: items.length, items }, detached, true),
+    { stale: true, caller: operation },
+  );
+  return { count: matched.length, products };
+};
+
+/** The ERP search answer, or none when it is not ready within `ms` (search never waits on the ERP read). */
+export const searchErpProductsWithin = async (
+  query: string,
+  limit: number,
+  operation: Operation,
+  ms: number,
+): Promise<{ count: number; products: ErpProduct[] }> => {
+  const none = { count: 0, products: [] as ErpProduct[] };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      searchErpProducts(query, limit, operation).catch((error: unknown) => {
+        console.error(
+          `[ontos] ERP search failed (${String(error)}); searched without ERP products`,
+        );
+        return none;
+      }),
+      new Promise<typeof none>((resolve) => {
+        timer = setTimeout(() => resolve(none), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};

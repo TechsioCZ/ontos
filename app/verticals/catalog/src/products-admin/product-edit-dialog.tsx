@@ -27,6 +27,7 @@ import { RetireProductPayloadSchema } from '../../shared/actions/retire-product.
 import { RetireVariantPayloadSchema } from '../../shared/actions/retire-variant.ts';
 import { UpdateProductPayloadSchema } from '../../shared/actions/update-product.ts';
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
+import { erpStorefrontStatus } from './erp-storefront-status.ts';
 import { executeAddProductCategoryAssignment } from '../api/add-product-category-assignment-action-client.ts';
 import { executeAssignSku } from '../api/assign-sku-action-client.ts';
 import { executeConfirmVariantCombination } from '../api/confirm-variant-combination-action-client.ts';
@@ -313,12 +314,20 @@ interface ProductEditDialogProps {
   /** Categories the page knows by name (this product's and the other listed products'). */
   readonly categories: readonly CategoryName[];
   readonly item: ProductPageItem;
+  /** The signed-in company, whose e-shop the storefront status is for. */
+  readonly legalEntityId?: string;
   /** The locale the list reads, so the text revision the dialog sends matches. */
   readonly locale: string;
   readonly onClose: () => void;
 }
 
-export const ProductEditDialog = ({ categories, item, locale, onClose }: ProductEditDialogProps) => {
+export const ProductEditDialog = ({
+  categories,
+  item,
+  legalEntityId = '',
+  locale,
+  onClose,
+}: ProductEditDialogProps) => {
   const [draft, setDraft] = useState<Draft>(() => draftOf(item));
   const [newCategory, setNewCategory] = useState('');
   const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>([]);
@@ -438,6 +447,37 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
       title={title}
     >
       <div className="flex flex-col gap-200">
+        {Option.match(erpStorefrontStatus(item, legalEntityId), {
+          onNone: () => null,
+          onSome: (status) => (
+            <div
+              className="flex flex-col gap-50 rounded-md border border-border-primary p-150 text-sm"
+              data-storefront-status={status.visible ? 'visible' : 'hidden'}
+            >
+              <span className="flex flex-wrap items-center gap-100">
+                <span className="font-semibold">{status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}</span>
+                {status.href !== undefined && (
+                  <a className="underline" href={status.href} rel="noreferrer" target="_blank">
+                    Otevřít v e-shopu
+                  </a>
+                )}
+              </span>
+              {status.reasons.map((reason) => (
+                <span key={reason.why}>
+                  <span className="font-medium">{reason.why}</span> Co změnit: {reason.fix}
+                </span>
+              ))}
+              {status.notes.map((note) => (
+                <span className="text-fg-secondary" key={note}>
+                  {note}
+                </span>
+              ))}
+              <span className="text-fg-secondary">
+                Stav na e-shopu odpovídá uloženému produktu; po uložení se obnoví.
+              </span>
+            </div>
+          ),
+        })}
         <label className="flex flex-col gap-50 text-sm">
           <span className="font-medium">Název ({locale})</span>
           <Input

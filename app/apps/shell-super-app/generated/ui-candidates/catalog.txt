@@ -27,6 +27,7 @@ max-w-prose
 object-contain
 ordinal
 outline
+p-150
 p-250
 p-450
 px-150
@@ -40,6 +41,7 @@ text-sm
 text-xl
 text-xs
 transition
+underline
 visible
 w-64
 w-[96px]

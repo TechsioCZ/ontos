@@ -22,6 +22,7 @@ import {
 } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
+import { erpStorefrontStatus } from '../../../../products-admin/erp-storefront-status.ts';
 import { ErpVariantEditor } from '../../../../products-admin/erp-variant-editor.tsx';
 import { ProductEditDialog } from '../../../../products-admin/product-edit-dialog.tsx';
 import type { ProductListInput, VariantFiguresInput } from '../../../../products-admin/page-data.ts';
@@ -212,6 +213,34 @@ const ProductRows = ({
         </Table.Cell>
         <Table.Cell>{item.variants.length}</Table.Cell>
         <Table.Cell>
+          {Option.match(erpStorefrontStatus(item, legalEntityId), {
+            onNone: () => '—',
+            onSome: (status) => (
+              <span
+                className="flex flex-col gap-50"
+                data-storefront-status={status.visible ? 'visible' : 'hidden'}
+                title={[...status.reasons.map((reason) => `${reason.why} ${reason.fix}`), ...status.notes].join('\n')}
+              >
+                <span className="flex items-center gap-100">
+                  <Badge size="sm" variant={status.visible ? 'success' : 'warning'}>
+                    {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
+                  </Badge>
+                  {status.href !== undefined && (
+                    <Link external href={status.href} target="_blank">
+                      Otevřít
+                    </Link>
+                  )}
+                </span>
+                {status.reasons.map((reason) => (
+                  <span className="text-fg-secondary text-xs" key={reason.why}>
+                    {reason.why} {reason.fix}
+                  </span>
+                ))}
+              </span>
+            ),
+          })}
+        </Table.Cell>
+        <Table.Cell>
           <Button aria-expanded={open} onClick={toggle} size="sm" theme="borderless" type="button" variant="secondary">
             {t(open ? `${key}.hideVariants` : `${key}.showVariants`)}
           </Button>
@@ -219,13 +248,19 @@ const ProductRows = ({
             Upravit
           </Button>
           {editing && (
-            <ProductEditDialog categories={categories} item={item} locale={locale} onClose={() => setEditing(false)} />
+            <ProductEditDialog
+              categories={categories}
+              item={item}
+              legalEntityId={legalEntityId}
+              locale={locale}
+              onClose={() => setEditing(false)}
+            />
           )}
         </Table.Cell>
       </Table.Row>
       {open && (
         <Table.Row>
-          <Table.Cell colSpan={4}>
+          <Table.Cell colSpan={5}>
             <VariantTable input={{ item, legalEntityId, offer }} />
           </Table.Cell>
         </Table.Row>
@@ -266,6 +301,7 @@ const ProductsList = ({
           <Table.ColumnHeader>{t(`${key}.columns.name`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.lifecycle`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.variants`)}</Table.ColumnHeader>
+          <Table.ColumnHeader>Na e-shopu</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.detail`)}</Table.ColumnHeader>
         </Table.Row>
       </Table.Header>

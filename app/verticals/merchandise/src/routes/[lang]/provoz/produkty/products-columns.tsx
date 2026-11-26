@@ -9,6 +9,7 @@ import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
+import { StorefrontStatusCell } from './storefront-status.tsx';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
 const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
@@ -76,6 +77,15 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     },
     header: label('columns.name'),
     meta: { type: 'string', width: 240 },
+  },
+  {
+    accessorFn: (product) =>
+      product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
+    cell: (info) => <StorefrontStatusCell product={info.row.original} />,
+    enableSorting: false,
+    header: 'Na e-shopu',
+    id: 'storefront',
+    meta: { type: 'string', width: 200 },
   },
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {

@@ -102,6 +102,7 @@ import {
   storefrontOrderStatus,
   storefrontCustomerOrders,
   storefrontProducts,
+  storefrontVisibilityFacts,
 } from './merchandise-queries.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
 import {
@@ -3309,9 +3310,39 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           canRead && head.aiChanges !== undefined ? { ...history, aiChanges: head.aiChanges } : history;
         return response;
       }
-      const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
+      const staffPage = yield* staffProducts(transaction, store, view, storefront, options).pipe(
         Effect.mapError(unavailable),
       );
+      const shopOrigin = storefrontOriginOf(legalEntityId);
+      const page =
+        staff && shopOrigin !== undefined && staffPage.products.length > 0
+          ? yield* Effect.gen(function* page() {
+              const facts = yield* storefrontVisibilityFacts(transaction, store, {
+                markets: yield* listMarkets(transaction, store),
+                productIds: staffPage.products.map((product) => product.id),
+                storefrontAppId: legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'sroubshop-storefront' : 'akros-storefront',
+              });
+              const byId = new Map(facts.map((row) => [row.id, row] as const));
+              return {
+                ...staffPage,
+                products: staffPage.products.map((product) => {
+                  const row = byId.get(product.id);
+                  if (row === undefined) {
+                    return product;
+                  }
+                  const { id: _id, slug, ...rest } = row;
+                  void _id;
+                  return {
+                    ...product,
+                    storefrontVisibility: {
+                      ...rest,
+                      href: `${shopOrigin}/produkt/${encodeURIComponent(slug ?? product.id)}`,
+                    },
+                  };
+                }),
+              };
+            }).pipe(Effect.mapError(unavailable))
+          : staffPage;
       const movements =
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))

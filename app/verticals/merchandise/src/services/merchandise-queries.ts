@@ -63,7 +63,7 @@ import type { SellableVariantRecord } from './market-pricing.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
-import { NO_CATALOG_MARKET } from './market-store.ts';
+import { marketOfferPredicate, NO_CATALOG_MARKET } from './market-store.ts';
 import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 import type { CatalogMarketScope, StoredMarket } from './market-store.ts';
 import { productInMarketCurrency, searchVariantOffer } from './market-pricing.ts';
@@ -1609,3 +1609,65 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
     stockValueMinor: catalog?.stockValueMinor ?? 0,
   };
 });
+
+/**
+ * The storefront's own filters (storefrontFilters, sellableClassificationFilter, marketOfferPredicate per market,
+ * mainSourceListingFilter) evaluated per product for staff rows: the same SQL the storefront read applies.
+ */
+export const storefrontVisibilityFacts = Effect.fn('MerchandiseQueries.storefrontVisibilityFacts')(
+  function* storefrontVisibilityFacts(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    input: {
+      readonly markets: readonly Pick<StoredMarket, 'marketCode' | 'marketId' | 'offerMode'>[];
+      readonly productIds: readonly string[];
+      readonly storefrontAppId: string;
+    },
+  ) {
+    if (input.productIds.length === 0) {
+      return [];
+    }
+    const holds = (condition: SQL | undefined) =>
+      condition === undefined ? sql<boolean>`true` : sql<boolean>`coalesce((${condition}), false)`;
+    const markets =
+      input.markets.length === 0
+        ? sql<{ marketCode: string; offered: boolean }[]>`'[]'::json`
+        : sql<{ marketCode: string; offered: boolean }[]>`json_build_array(${sql.join(
+            input.markets.map(
+              (market) =>
+                sql`json_build_object('marketCode', ${market.marketCode}::text, 'offered', ${holds(
+                  marketOfferPredicate(scope, Option.some(market as StoredMarket)),
+                )})`,
+            ),
+            sql`, `,
+          )})`;
+    const variantCount = (extra: SQL) =>
+      sql<number>`(select count(*)::int from ${productVariants} v
+        where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+          and v.product_id = ${outerProductId} and v.variant_id is not null ${extra})`;
+    return yield* query(
+      db
+        .select({
+          active: products.active,
+          activeVariants: variantCount(sql`and v.active`),
+          archived: products.archived,
+          id: products.id,
+          mainSource: holds(
+            mainSourceListingFilter(scope, { storefrontAppId: input.storefrontAppId } as StorefrontCatalogQuery),
+          ),
+          markets,
+          priced: sql<boolean>`(${products.grossPriceMinor} is not null or exists (select 1 from ${productVariants} v
+            where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+              and v.product_id = ${outerProductId} and v.variant_id is not null and v.active
+              and v.gross_price_minor is not null))`,
+          published: products.published,
+          sellable: holds(sellableClassificationFilter(scope)),
+          slug: products.slug,
+          variants: variantCount(sql``),
+        })
+        .from(products)
+        .where(and(whereScope(products, scope), inArray(products.id, [...new Set(input.productIds)]))),
+      'Storefront visibility could not be read',
+    );
+  },
+);
