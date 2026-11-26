@@ -6,6 +6,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
 
 import { parseStageAccountsFile, STAGE_DECLARED_WORKLOAD_KEYS } from '../../src/install/stage-accounts-file.ts';
+import { coreSystemWorkloadKeys } from '../../src/modules/core-system-workloads.ts';
 
 /*
  * The operator accounts file names a stage tenant's v2 authority as data: which account owns the tenant
@@ -195,6 +196,18 @@ it.effect('accepts only the workloads a carrier declares, and refuses module-to-
   }),
 );
 
+it.effect('refuses the integrity key: only an enrollment makes the system principal the Shell resolves for it', () =>
+  Effect.gen(function* refusesEnrolledOnlyKey() {
+    const [first, second] = validFile.tenants;
+    const principalId = first?.accounts[0]?.principalId;
+    const reason = yield* rejectionReason({
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId, workloadKey: 'core.media.integrity' }] }, second],
+    });
+    expect(reason).toContain('core.identity.change-system-workload-enrollment');
+  }),
+);
+
 /** The repository's `app/` root, where every carrier package lives. */
 const APP_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 /** Where carriers declare `accessWorkload`: the Core runtime, the verticals and the Shell API. */
@@ -222,7 +235,7 @@ const productionSourceFiles = (directory: string): Effect.Effect<string[], Platf
 
 it.layer(NodeFileSystem.layer)('the carrier workload keys', (suite) => {
   suite.effect(
-    'accepts exactly the workload keys that carriers declare with accessWorkload',
+    'accepts exactly the workload keys that carriers declare with accessWorkload and no enrollment binds',
     () =>
       Effect.gen(function* declaresTheCarrierWorkloadKeys() {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -236,7 +249,8 @@ it.layer(NodeFileSystem.layer)('the carrier workload keys', (suite) => {
             }
           }
         }
-        expect([...declared].toSorted()).toStrictEqual([...STAGE_DECLARED_WORKLOAD_KEYS].toSorted());
+        const bindable = [...declared].filter((key) => !coreSystemWorkloadKeys.has(key));
+        expect(bindable.toSorted()).toStrictEqual([...STAGE_DECLARED_WORKLOAD_KEYS].toSorted());
       }),
     // It reads every production source file of the carrier roots, which outlasts the default on CI.
     30_000,
