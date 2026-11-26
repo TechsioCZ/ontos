@@ -191,3 +191,9 @@ export type { WorkerExecutionContextFact } from '../modules/module-operation-exe
 
 export { readScopedCurrentActionInvocation } from '../actions/current-invocation.ts';
 export type { ScopedCurrentActionInvocationFact } from '../actions/current-invocation.ts';
+// Symmy route enrollment runs in the worker's Action graph: it reads the route's company, the tenant's module state,
+// principal eligibility and the registered receivers of the workloads it binds.
+export { makeLegalEntityContext } from '../auth/legal-entity-context.ts';
+export { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
+export { principalEligibilityForTransaction } from '../permissions/principal-eligibility.ts';
+export { registeredWorkloadCallReceiverIssue } from '../modules/registered-workload-calls.ts';
