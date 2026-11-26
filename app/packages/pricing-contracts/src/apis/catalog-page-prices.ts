@@ -3,6 +3,8 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
+import { PriceGroupRefSchema } from '@app/price-group-catalog-contracts/resources/price-group';
+
 import { PriceGroupSelectorSchema, PriceIdentityKeySchema, PriceRevisionSchema } from '../domain/price-definition.ts';
 import { PriceGroupFallbackConfigurationReasonSchema } from '../domain/price-group-fallback.ts';
 import { PriceGroupAssignmentResolutionRequestSchema } from '../domain/price-group-interpretation.ts';
@@ -74,6 +76,11 @@ export type CatalogPageCustomer = typeof CatalogPageCustomerSchema.Type;
 export const CatalogPagePricesRequestSchema = Schema.Struct({
   ...CatalogPagePricesPageSchema.fields,
   customer: Schema.optionalKey(CatalogPageCustomerSchema),
+  /**
+   * Staff only: the page priced with exactly this Price Group's own Price key (no fallback to the no-group Price), so
+   * the ERP editor lists and revises each group Price. Refused together with `customer` and for workloads.
+   */
+  priceGroupRef: Schema.optionalKey(PriceGroupRefSchema),
 });
 export type CatalogPagePricesRequest = typeof CatalogPagePricesRequestSchema.Type;
 

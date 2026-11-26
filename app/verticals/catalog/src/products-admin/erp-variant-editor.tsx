@@ -26,6 +26,8 @@ import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { freshUuid as newUuid, requestId as newRequestId } from './browser-crypto.ts';
 import type { ErpOffer } from './erp-offer.ts';
+import { readErpPriceGroups } from './erp-price-groups.ts';
+import type { ErpPriceGroup } from './erp-price-groups.ts';
 import { variantFiguresData } from './page-data.ts';
 import { onHandRequestOf, pricesRequestOf } from './products-model.ts';
 
@@ -79,8 +81,11 @@ const foundPrices = (answer: PageAnswer) =>
     CURRENCY_SUPPORT_NOT_CURRENT: () => [],
   });
 
-const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
-  Schema.decodeUnknownEffect(CatalogPagePricesRequestSchema)(pricesRequestOf(offer, single(item, variant))).pipe(
+const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer, group?: ErpPriceGroup) =>
+  Schema.decodeUnknownEffect(CatalogPagePricesRequestSchema)({
+    ...pricesRequestOf(offer, single(item, variant)),
+    ...(group === undefined ? {} : { priceGroupRef: group.priceGroupRef }),
+  }).pipe(
     Effect.mapError((problem) => describe('Čtení ceny', problem)),
     Effect.flatMap((request) =>
       requestId.pipe(
@@ -110,6 +115,32 @@ const readStock = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
   );
 
 type PriceFound = NonNullable<Effect.Success<ReturnType<typeof readPrice>>>;
+
+interface GroupPrice {
+  readonly group: ErpPriceGroup;
+  readonly price: PriceFound | undefined;
+}
+
+/**
+ * The variant's Price in each of the company's Price Groups (the group's own key, whichever source wrote it last). A
+ * company without readable groups shows none; the base Price and stock stay editable.
+ */
+const readGroupPrices = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
+  requestId.pipe(
+    Effect.flatMap((id) => readErpPriceGroups(offer, id)),
+    Effect.flatMap((groups) =>
+      Effect.forEach(
+        groups,
+        (group) =>
+          readPrice(item, variant, offer, group).pipe(
+            Effect.map((price): GroupPrice => ({ group, price })),
+            Effect.orElseSucceed((): GroupPrice => ({ group, price: undefined })),
+          ),
+        { concurrency: 4 },
+      ),
+    ),
+    Effect.orElseSucceed((): readonly GroupPrice[] => []),
+  );
 type StockPage = Effect.Success<ReturnType<typeof readStock>>;
 
 /** Pricing's Current Revision of the Price, revised value-only under the staff source authority. */
@@ -334,6 +365,7 @@ interface ErpVariantEditorProps {
 }
 
 interface Loaded {
+  readonly groups: readonly GroupPrice[];
   readonly price: PriceFound | undefined;
   readonly stock: StockPage;
 }
@@ -343,6 +375,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [amount, setAmount] = useState('');
   const [stock, setStock] = useState('');
+  const [groupAmounts, setGroupAmounts] = useState<Readonly<Record<string, string>>>({});
   const [reason, setReason] = useState('Úprava ceny a skladu v administraci');
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -352,14 +385,27 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
     }
     browserRuntime.runFork(
       Effect.all(
-        { price: readPrice(item, variant, offer), stock: readStock(item, variant, offer) },
-        { concurrency: 2 },
+        {
+          groups: readGroupPrices(item, variant, offer),
+          price: readPrice(item, variant, offer),
+          stock: readStock(item, variant, offer),
+        },
+        { concurrency: 3 },
       ).pipe(
         Effect.match({
           onFailure: (text: string) => setFailure(text),
           onSuccess: (value) => {
             setLoaded(value);
             setAmount(value.price?.priceRevision.monetaryAmount.amount ?? '');
+            setGroupAmounts(
+              Object.fromEntries(
+                value.groups.flatMap(({ group, price }) =>
+                  price === undefined
+                    ? []
+                    : [[group.priceGroupRef.resourceId, price.priceRevision.monetaryAmount.amount] as const],
+                ),
+              ),
+            );
             const [answer] = value.stock.items;
             setStock(answer?.outcome === 'ON_HAND' ? answer.total.amount : '');
           },
@@ -384,7 +430,18 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
       nextAmount !== loaded.price.priceRevision.monetaryAmount.amount;
     const [first] = loaded.stock.items;
     const stockChanged = nextStock !== null && !(first?.outcome === 'ON_HAND' && first.total.amount === nextStock);
-    if ((amount.trim() !== '' && nextAmount === null) || (stock.trim() !== '' && nextStock === null)) {
+    const groupChanges = loaded.groups.flatMap(({ group, price }) => {
+      const typed = groupAmounts[group.priceGroupRef.resourceId] ?? '';
+      const next = canonical(typed);
+      return price === undefined || next === null || next === price.priceRevision.monetaryAmount.amount
+        ? []
+        : [{ next, price }];
+    });
+    const badGroup = loaded.groups.some(({ group }) => {
+      const typed = groupAmounts[group.priceGroupRef.resourceId] ?? '';
+      return typed.trim() !== '' && canonical(typed) === null;
+    });
+    if (badGroup || (amount.trim() !== '' && nextAmount === null) || (stock.trim() !== '' && nextStock === null)) {
       setFailure('Cena i sklad musí být nezáporná čísla.');
       return;
     }
@@ -394,6 +451,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
       ...(priceChanged && loaded.price !== undefined && nextAmount !== null
         ? [Effect.asVoid(revisePrice(loaded.price, nextAmount, why))]
         : []),
+      ...groupChanges.map(({ next, price }) => Effect.asVoid(revisePrice(price, next, why))),
       ...(stockChanged ? [Effect.asVoid(writeStock(loaded.stock, nextStock, offer, why))] : []),
     ];
     browserRuntime.runFork(
@@ -461,6 +519,41 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
                   value={amount}
                 />
               </label>
+            )}
+            {loaded.groups.some(({ price }) => price !== undefined) && (
+              <div className="flex flex-col gap-100 text-sm" data-testid="erp-variant-group-prices">
+                <span className="font-medium">Ceny cenových skupin bez DPH ({currency})</span>
+                {loaded.groups.flatMap(({ group, price }) =>
+                  price === undefined
+                    ? []
+                    : [
+                        <label
+                          className="flex items-center justify-between gap-100"
+                          htmlFor={`erp-group-price-${group.priceGroupRef.resourceId}`}
+                          key={group.priceGroupRef.resourceId}
+                        >
+                          <span>{group.label}</span>
+                          <Input
+                            aria-label={`Cena skupiny ${group.label}`}
+                            id={`erp-group-price-${group.priceGroupRef.resourceId}`}
+                            inputMode="decimal"
+                            onChange={(event) => {
+                              const { value } = event.target;
+                              setGroupAmounts((current) => ({ ...current, [group.priceGroupRef.resourceId]: value }));
+                            }}
+                            size="sm"
+                            value={groupAmounts[group.priceGroupRef.resourceId] ?? ''}
+                          />
+                        </label>,
+                      ],
+                )}
+                {loaded.groups.some(({ price }) => price === undefined) && (
+                  <span className="text-fg-secondary">
+                    Bez ceny pro tuto variantu:{' '}
+                    {loaded.groups.flatMap(({ group, price }) => (price === undefined ? [group.label] : [])).join(', ')}
+                  </span>
+                )}
+              </div>
             )}
             <label className="flex flex-col gap-50 text-sm" htmlFor="erp-variant-stock">
               <span className="font-medium">Skladem (ks)</span>
