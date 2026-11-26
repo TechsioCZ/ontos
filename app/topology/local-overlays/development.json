@@ -31,8 +31,8 @@
     "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json",
     "payment": "http://localhost:4130/.well-known/ontos-module-manifest.json",
     "promotion": "http://localhost:4131/.well-known/ontos-module-manifest.json",
-      "symmy-integration": "http://localhost:4132/.well-known/ontos-module-manifest.json",
-    "communications": "http://localhost:4133/communications-api"
+    "symmy-integration": "http://localhost:4132/.well-known/ontos-module-manifest.json",
+    "communications": "http://localhost:4133/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -70,8 +70,8 @@
     "crm": 4125,
     "payment": 4130,
     "promotion": 4131,
-      "symmy-integration": 4132,
-    "communications": "http://localhost:4133/communications-api"
+    "symmy-integration": 4132,
+    "communications": 4133
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -1778,7 +1778,7 @@
     "property-leasing": "http://localhost:4115/property-leasing-api",
     "legal-agreements": "http://localhost:4116/legal-agreements-api",
     "work-tasks": "http://localhost:4117/work-tasks-api",
-    "workforce": "http://localhost:4133/workforce-api",
+    "workforce": "http://localhost:4120/workforce-api",
     "tagging": "http://localhost:4121/tagging-api",
     "sales-pipeline": "http://localhost:4122/sales-pipeline-api",
     "merchandise": "http://localhost:4123/merchandise-api",
@@ -1789,7 +1789,7 @@
     "crm": "http://localhost:4125/crm-api",
     "payment": "http://localhost:4130/payment-api",
     "promotion": "http://localhost:4131/promotion-api",
-      "symmy-integration": "http://localhost:4132/symmy-integration-api",
+    "symmy-integration": "http://localhost:4132/symmy-integration-api",
     "communications": "http://localhost:4133/communications-api"
   }
 }
