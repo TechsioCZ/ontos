@@ -88,6 +88,7 @@ const nativeReadOperations = [
   [priceGroupModule, priceGroupDefinitionRead, priceGroupSourceRead],
   [priceGroupModule, priceGroupAssociationRead, priceGroupSourceRead],
   ['commerce.pricing', 'commerce.pricing.api.price-group-source-prices', 'commerce.pricing.source-read'],
+  ['commerce.pricing', 'commerce.pricing.api.price-schedule', 'commerce.pricing.source-read'],
   ['commerce.catalog', catalogProductPageRead, 'commerce.catalog.symmy-product-read'],
   ['commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution', 'commerce.inventory.source-read'],
 ] as const;

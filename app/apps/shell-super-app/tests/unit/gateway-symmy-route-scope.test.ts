@@ -1008,6 +1008,7 @@ it.effect(
   'issues and redeems V9 only after current canonical source-read selection, never from copied issuer input',
   () =>
     Effect.gen(function* nativeSourceReads() {
+      const priceSchedule = 'commerce.pricing.api.price-schedule';
       const cases = [
         [
           'party-registry',
@@ -1032,6 +1033,24 @@ it.effect(
           'pricing.price-group-catalog.source-read',
           'priceLists',
           'read',
+        ],
+        [
+          'pricing',
+          'commerce.pricing',
+          'commerce.pricing.api.price-group-source-prices',
+          'commerce.pricing.source-read',
+          'priceLists',
+          'read',
+          '1',
+        ],
+        [
+          'pricing',
+          'commerce.pricing',
+          'commerce.pricing.api.price-group-source-prices',
+          'commerce.pricing.source-read',
+          'priceLists',
+          'read',
+          '2',
         ],
         [
           'pricing',
@@ -1066,9 +1085,35 @@ it.effect(
           'admit',
         ],
       ] as const;
-      for (const [audience, moduleId, entrypointKey, workloadKey, routeKey, sourcePurpose] of cases) {
+      for (const [
+        audience,
+        moduleId,
+        entrypointKey,
+        workloadKey,
+        routeKey,
+        sourcePurpose,
+        scheduleEnrollment,
+      ] of cases) {
         const base = makeModuleContractFixture({ appId: audience, buildMarker: 'native-route-build', moduleId });
         const unrelatedKey = `${moduleId}.api.unrelated`;
+        const publishedReads = [
+          { key: entrypointKey, operationKey: 'source.execute' },
+          { key: unrelatedKey, operationKey: 'unrelated.execute' },
+        ];
+        if (audience === 'pricing') {
+          publishedReads.push({ key: priceSchedule, operationKey: 'schedule.execute' });
+        }
+        const expectedOperations = (scheduleEnrollment === '1' ? [entrypointKey, priceSchedule] : [entrypointKey]).map(
+          (key) => ({ entrypointKey: key, schemaVersion: '1' }),
+        );
+        const enrolledOperations = [entrypointKey, unrelatedKey].map((key) => ({
+          entrypointKey: key,
+          moduleId,
+          schemaVersion: '1',
+        }));
+        if (scheduleEnrollment !== undefined) {
+          enrolledOperations.push({ entrypointKey: priceSchedule, moduleId, schemaVersion: scheduleEnrollment });
+        }
         const snapshot = yield* makeCompositionSnapshot([
           {
             ...base,
@@ -1076,8 +1121,13 @@ it.effect(
               ...base.manifest,
               publicSurface: {
                 ...base.manifest.publicSurface,
-                api: [{ key: `${moduleId}.api.source`, operationKeys: ['source.execute', 'unrelated.execute'] }],
-                operationContracts: [entrypointKey, unrelatedKey].map((key, index) => ({
+                api: [
+                  {
+                    key: `${moduleId}.api.source`,
+                    operationKeys: publishedReads.map(({ operationKey }) => operationKey),
+                  },
+                ],
+                operationContracts: publishedReads.map(({ key, operationKey }) => ({
                   apiKey: `${moduleId}.api.source`,
                   entrypoint: defineTenantModuleEntrypoint({
                     access: 'read',
@@ -1086,7 +1136,7 @@ it.effect(
                     moduleKey: moduleId,
                     role: 'api',
                   }),
-                  operationKey: index === 0 ? 'source.execute' : 'unrelated.execute',
+                  operationKey,
                   schemaVersion: '1',
                 })),
               },
@@ -1107,11 +1157,7 @@ it.effect(
         const originalReadWorkload = sourcePurpose === 'admit' ? 'integration.symmy-admit' : 'integration.symmy-poll';
         for (const receiver of ['system', 'service'] as const) {
           const current = yield* fixture({
-            allowedOwnerOperations: [entrypointKey, unrelatedKey].map((key) => ({
-              entrypointKey: key,
-              moduleId,
-              schemaVersion: '1',
-            })),
+            allowedOwnerOperations: enrolledOperations,
             catalog,
             originalReadWorkload,
             receiver,
@@ -1157,7 +1203,7 @@ it.effect(
                 originalWorkloadKey: originalReadWorkload,
                 workloadKey,
               },
-              operations: [{ entrypointKey, schemaVersion: '1' }],
+              operations: expectedOperations,
               routeKey: sourceRequest.routeRequest.routeKey,
             });
             expect(claims.routeScope.legalEntityId).toBe(tenantOnly ? undefined : legalEntityId);
@@ -1175,7 +1221,9 @@ it.effect(
                 redemption: { consume: () => Effect.void },
               })
               .pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
-            expect(readVerifiedGatewayRouteScope(redeemed)?.nativeReadReceiver?.workloadKey).toBe(workloadKey);
+            const redeemedScope = readVerifiedGatewayRouteScope(redeemed);
+            expect(redeemedScope?.nativeReadReceiver?.workloadKey).toBe(workloadKey);
+            expect(redeemedScope?.operations).toEqual(expectedOperations);
             const raw = {
               audience,
               compositionRevision: snapshot.composition.revision,
@@ -1209,7 +1257,7 @@ it.effect(
           const current = yield* fixture({
             catalog,
             ...options,
-            allowedOwnerOperations: [{ entrypointKey, moduleId, schemaVersion: '1' }],
+            allowedOwnerOperations: enrolledOperations,
             originalReadWorkload,
           });
           const failure = yield* Effect.gen(function* rejectedNativeRead() {
