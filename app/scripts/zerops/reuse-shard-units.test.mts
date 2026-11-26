@@ -14,7 +14,8 @@ const WORKFLOW = path.resolve(APP, '../.github/workflows/zerops-stage.yml');
 const DIGEST = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const NEEDS_BUILD = 3;
-const BUILD_SHARD_CONDITION = "needs.deliver.outputs.build_units == 'true'";
+const BUILD_SHARD_CONDITION =
+  "github.ref == 'refs/heads/demo/sales-crm' && needs.plan.result == 'success' && needs.plan.outputs.build_units == 'true'";
 const FORCE_OFF = "env.ZEROPS_FORCE_BUILD != 'true'";
 const NOT_REUSED = "steps.reuse.outputs.reused != 'true'";
 const REUSE_STEP = "Reuse the shard's unchanged units";
@@ -24,23 +25,27 @@ const UNITS_ARCHIVE = 'units.tar.zst';
 const BUILD_FALSE = 'build=false';
 const TAKE_STEP = "Take this commit's units from the earlier builds by identity";
 const DECIDE_STEP = 'Decide where the units come from';
+const RETAKE_STEP = "Take this commit's unchanged units for the upload";
 
 const StepSchema = Schema.Struct({
+  'continue-on-error': Schema.optional(Schema.Boolean),
   env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
   id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
   run: Schema.optional(Schema.String),
   uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))),
 });
 const JobSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))),
   if: Schema.optional(Schema.String),
   needs: Schema.optional(Schema.Array(Schema.String)),
+  outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   steps: Schema.Array(StepSchema),
 });
 const WorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({ build: JobSchema, deliver: JobSchema }),
+  jobs: Schema.Struct({ build: JobSchema, deliver: JobSchema, deliver_app: JobSchema, plan: JobSchema }),
 });
 
 const workflow = Effect.gen(function* readWorkflow() {
@@ -265,7 +270,7 @@ const stubs = (root: string) =>
 it.live("runs the workflow's identity step: the digest table from build-app.sh and one unit list per shard", () =>
   Effect.gen(function* identityStep() {
     const fs = yield* FileSystem.FileSystem;
-    const script = yield* stepRun((yield* workflow).deliver, IDENTITY_STEP);
+    const script = yield* stepRun((yield* workflow).plan, IDENTITY_STEP);
     const { app, root } = yield* fixture(BOTH_CURRENT);
     const bin = yield* stubs(root);
     const searchPath = `${bin}:${yield* Config.String('PATH')}`;
@@ -281,7 +286,7 @@ it.live("runs the workflow's identity step: the digest table from build-app.sh a
     expect(shards).toHaveLength(7);
     expect(shards[0]).toBe('0\tshell-super-app');
     expect(shards[2]).toBe('2\tcrm tax');
-    // A failing table write fails the job, so the shards build instead of reading a partial table.
+    // A failing table write fails planning; no shard may read a partial table.
     yield* fs.writeFileString(path.join(app, BUILD_APP), 'exit 4\n');
     const failed = yield* runStep(app, script, {
       PATH: searchPath,
@@ -318,8 +323,8 @@ it.live("runs the workflow's build step: it builds, prunes foreign cached units 
 
 it.effect('reuses only by identity, builds whenever any unit is unproven, and rebuild_units always builds', () =>
   Effect.gen(function* wiring() {
-    const { build, deliver } = yield* workflow;
-    expect(build.needs).toEqual(['deliver']);
+    const { build, plan } = yield* workflow;
+    expect(build.needs).toEqual(['plan']);
     expect(build.if).toBe(BUILD_SHARD_CONDITION);
     const step = (name: string) => build.steps.find((candidate) => candidate.name === name);
     expect(step("Take this commit's unit identities")?.if).toBeUndefined();
@@ -333,7 +338,7 @@ it.effect('reuses only by identity, builds whenever any unit is unproven, and re
     );
     expect(step("Upload the shard's unit builds")?.if).toBeUndefined();
     // The identities are computed in the build environment: the same declared variables, the same values.
-    const identityStep = deliver.steps.find((candidate) => candidate.name === IDENTITY_STEP);
+    const identityStep = plan.steps.find((candidate) => candidate.name === IDENTITY_STEP);
     for (const name of [
       'ONTOS_PUBLIC_ORIGIN',
       'ONTOS_SHOP_STOREFRONT_ORIGIN',
@@ -342,17 +347,22 @@ it.effect('reuses only by identity, builds whenever any unit is unproven, and re
     ]) {
       expect(identityStep?.env?.[name], name).toBe(build.env?.[name]);
     }
-    expect(deliver.env?.SHARDS).toBe(build.env?.SHARDS);
-    expect(yield* stepRun(deliver, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
-    // The front path never runs for rebuild_units, and only its proof lets this job deliver without the matrix.
-    expect(front(deliver, 'Find the newest earlier unit builds of this branch')?.if).toBe(
+    expect(plan.env?.SHARDS).toBe(build.env?.SHARDS);
+    expect(plan.outputs).toMatchObject({
+      build_units: `\${{ steps.units.outputs.build }}`,
+      earlier_run: `\${{ steps.earlier.outputs.run_id }}`,
+      missing: `\${{ steps.taken.outputs.missing }}`,
+    });
+    expect(yield* stepRun(plan, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
+    // rebuild_units bypasses earlier builds; only the take's proof lets the front delivery avoid the matrix.
+    expect(front(plan, 'Find the newest earlier unit builds of this branch')?.if).toBe(
       "steps.plan.outputs.app == 'true' && inputs.rebuild_units != true",
     );
-    const take = yield* stepRun(deliver, TAKE_STEP);
+    const take = yield* stepRun(plan, TAKE_STEP);
     expect(take).toContain('reuse-shard-units.sh take-units');
     expect(take).toContain('scripts/zerops/zerops-unit-build-seconds.mts');
-    expect(front(deliver, TAKE_STEP)?.if).toBe("steps.plan.outputs.app == 'true' && inputs.rebuild_units != true");
-    expect(front(deliver, DECIDE_STEP)?.env).toMatchObject({
+    expect(front(plan, TAKE_STEP)?.if).toBe("steps.plan.outputs.app == 'true' && inputs.rebuild_units != true");
+    expect(front(plan, DECIDE_STEP)?.env).toMatchObject({
       APP: `\${{ steps.plan.outputs.app }}`,
       TAKEN: `\${{ steps.taken.outcome }}`,
       ZEROPS_SECONDS: `\${{ steps.taken.outputs.seconds }}`,
@@ -360,12 +370,37 @@ it.effect('reuses only by identity, builds whenever any unit is unproven, and re
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect('gates both delivery paths on lint and re-takes the plan-selected units before any mutation', () =>
+  Effect.gen(function* deliveryWiring() {
+    const { deliver, deliver_app: deliverApp } = yield* workflow;
+    expect(deliver.needs).toEqual(['plan', 'lint']);
+    expect(deliver.if).toBe(
+      "github.ref == 'refs/heads/demo/sales-crm' && needs.plan.result == 'success' && needs.lint.result == 'success' && needs.plan.outputs.any == 'true' && needs.plan.outputs.build_units != 'true'",
+    );
+    expect(deliverApp.needs).toEqual(['plan', 'build', 'lint']);
+    expect(deliverApp.if).toBe(
+      "github.ref == 'refs/heads/demo/sales-crm' && needs.plan.result == 'success' && needs.plan.outputs.build_units == 'true' && needs.build.result == 'success' && needs.lint.result == 'success'",
+    );
+    expect(front(deliver, 'Download the earlier unit builds selected by the plan')?.with?.['run-id']).toBe(
+      `\${{ needs.plan.outputs.earlier_run }}`,
+    );
+    expect(front(deliver, RETAKE_STEP)?.if).toBe("needs.plan.outputs.app == 'true'");
+    expect(front(deliver, RETAKE_STEP)?.['continue-on-error']).toBeUndefined();
+    expect(front(deliver, RETAKE_STEP)?.env?.EXPECTED_MISSING).toBe(`\${{ needs.plan.outputs.missing }}`);
+    const retake = deliver.steps.findIndex(({ name }) => name === RETAKE_STEP);
+    expect(retake).toBeGreaterThan(-1);
+    expect(deliver.steps.findIndex(({ name }) => name === 'Mark the actual deployment attempt')).toBeGreaterThan(
+      retake,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live('runs the decision: the Zerops build builds the missing units only within its budget', () =>
   Effect.gen(function* decide() {
     const fs = yield* FileSystem.FileSystem;
-    const { deliver } = yield* workflow;
-    const script = yield* stepRun(deliver, DECIDE_STEP);
-    const budget = String(front(deliver, DECIDE_STEP)?.env?.ZEROPS_BUILD_BUDGET_SECONDS);
+    const { plan } = yield* workflow;
+    const script = yield* stepRun(plan, DECIDE_STEP);
+    const budget = String(front(plan, DECIDE_STEP)?.env?.ZEROPS_BUILD_BUDGET_SECONDS);
     const root = yield* fs.makeTempDirectoryScoped({ prefix: 'decide-units-' });
     const decision = (env: Readonly<Record<string, string>>) =>
       Effect.gen(function* runDecision() {
@@ -481,6 +516,30 @@ for (const scenario of EARLIER_SCENARIOS) {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+it.live('re-takes the planned units before upload and fails if the missing list differs from the plan', () =>
+  Effect.gen(function* retakePlannedUnits() {
+    const fs = yield* FileSystem.FileSystem;
+    const script = yield* stepRun((yield* workflow).deliver, RETAKE_STEP);
+    for (const scenario of EARLIER_SCENARIOS) {
+      const { app, archives, identities, root } = yield* earlierArchives(scenario.units, scenario.shards);
+      const temp = path.join(root, 'temp');
+      yield* fs.makeDirectory(temp);
+      yield* fs.copy(identities, path.join(temp, 'zerops-unit-identities'));
+      yield* fs.copy(archives, path.join(temp, 'earlier-units'));
+      const missing = scenario.missing.map((unit) => `${unit} `).join('');
+      const execute = (expected: string) => runStep(app, script, { EXPECTED_MISSING: expected, RUNNER_TEMP: temp });
+      const matching = yield* execute(missing);
+      expect(matching.status, `${scenario.name}: ${matching.stderr}`).toBe(0);
+      // The same number of missing units is not enough: their exact identities must agree.
+      const changed = yield* execute(missing === '' ? 'tax ' : 'other-unit ');
+      expect(changed.status, scenario.name).not.toBe(0);
+      yield* fs.remove(path.join(temp, 'earlier-units'), { recursive: true });
+      const disappeared = yield* execute(missing);
+      expect(disappeared.status, `${scenario.name}: vanished archives`).not.toBe(0);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.live('lends units from the packed archive an earlier delivery pushed, which has no directory entries', () =>
   Effect.gen(function* takePushed() {

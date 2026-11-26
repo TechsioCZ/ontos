@@ -3,9 +3,10 @@ description: >-
   Every stage mutation of a run and every proof after it, on one runner (.github/workflows/zerops-stage.yml): the
   secrets of every selected service before the first push, the app push first, the storefront builds and pushes while
   Zerops builds the app, then every service's verification once the app is live, and the warm-up and MCP OAuth proofs.
-  Run from the repository root after the caller's own "Mark the actual deployment attempt" step. Every step up to the
-  app upload runs only bash, curl, jq, tar, zstd and git, so a caller that installed nothing pushes right after its
-  checkout; the toolchain and the whole workspace install after the upload, while Zerops builds the app.
+  Run from the repository root after lint succeeds and the caller's own "Mark the actual deployment attempt" step.
+  Every step up to the app upload runs only bash, curl, jq, tar, zstd and git, so a caller that installed nothing
+  pushes right after its unit preparation; the toolchain and the whole workspace install after the upload,
+  while Zerops builds the app.
 
 inputs:
   toolchain:

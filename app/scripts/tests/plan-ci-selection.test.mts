@@ -211,6 +211,27 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
   ).toBe('full');
 });
 
+it('selects the repository tooling suite for every lint regression script on both trunks', () => {
+  const main = Result.getOrThrow(
+    parseCiMatrices(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')),
+  );
+  for (const script of ['test-lint-files.sh', 'test-lint-regressions.sh', 'test-lint-configuration.sh']) {
+    for (const matrices of [main, templates]) {
+      const selected = planCiChecks({
+        applyAffected: true,
+        changedPaths: [`app/scripts/ci/${script}`],
+        packages,
+        templates: matrices,
+      });
+      for (const [index, row] of TOOLING_ROWS.entries()) {
+        expect(selected.source.find(({ name }) => name === row)?.commands, script).toContain(
+          `bash scripts/ci/rstest-weighted-shard.sh ${String(index + 1)}/3 scripts`,
+        );
+      }
+    }
+  }
+});
+
 it('refuses a scope that names a source row the matrices do not have', () => {
   const renamed = {
     ...templates,

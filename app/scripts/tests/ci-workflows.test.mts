@@ -3197,6 +3197,19 @@ it('proves the pinned formatter and linter configuration inputs on unchanged fil
   expect(output).toContain('change unchanged-file results; .ignore does not');
 });
 
+for (const [script, proof] of [
+  ['test-lint-files.sh', 'Earlier job failure and later auto-fix both printed; index unchanged; exit 1.'],
+  ['test-lint-regressions.sh', 'Unsupported file templates in run and args fail closed before executing the hook.'],
+]) {
+  it(`runs the real hook regression proof ${script} in the repository tooling suite`, () => {
+    const output = execFileSync('/bin/bash', [fileURLToPath(new URL(`../ci/${script}`, import.meta.url))], {
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+    expect(output).toContain(proof);
+  });
+}
+
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true);

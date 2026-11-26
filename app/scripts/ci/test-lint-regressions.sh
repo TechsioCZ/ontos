@@ -36,7 +36,7 @@ CONFIG
   for input in excluded workflow empty; do
     case "$input" in
       excluded) printf 'app/fixtures/excluded.ts\0' >files ;;
-      workflow) printf '.github/workflows/zerops-stage.yml\0' >files ;;
+      workflow) printf '.github/workflows/fixture.yml\0' >files ;;
       empty) : >files ;;
     esac
     status=0
