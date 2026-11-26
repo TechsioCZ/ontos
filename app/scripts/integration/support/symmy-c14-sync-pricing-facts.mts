@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import type { ProductCategoryRef } from '@app/catalog/resources/product-category';
 import { executeCreateProductCategoryWithAuthorization } from '@app/catalog/api/client';
@@ -12,7 +10,7 @@ import { PriceCommercialScopeSchema, PriceUnitBasisSchema } from '@app/pricing-c
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
 import { SymmyRouteExecutionConfigurationSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect } from 'effect-rstest';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 
 import type { prepareInternalSyncAuthority } from './symmy-c14-sync-authority.mts';
 import { internalSyncSource } from './symmy-c14-sync-plans.mts';
@@ -20,6 +18,7 @@ import { internalStockItemKeys } from './symmy-c14-sync-stock-facts.mts';
 
 type Authority = Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>;
 export const internalSyncListCode = 'INTERNAL_C14_SOURCE_OWNED_LIST';
+const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const groupModule = 'pricing.price-group-catalog';
 const priceSource = {
   mapping: {
@@ -66,7 +65,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
         jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
         lifecycle: 'ACTIVE',
         marketCode: 'INTERNAL_C14_SYNC_MARKET',
-        marketId: randomUUID(),
+        marketId: yield* nextId,
         purpose: 'Explicit shared commercial scope for unseen source SKUs',
         reason: 'INTERNAL_C14 one-time integration configuration',
         sellingLegalEntityRef: {
@@ -77,7 +76,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
         },
         supportedLocales: ['en'],
       },
-      requestCorrelation: randomUUID(),
+      requestCorrelation: yield* nextId,
     },
     unit: {
       authorization: Redacted.make(`Bearer ${catalog.token}`),
@@ -90,12 +89,12 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
         rule: { rounding: 'HALF_UP', step: '1' },
         unitRef: yield* Schema.decodeUnknownEffect(ProductUnitRefSchema)({
           moduleId: 'commerce.catalog',
-          resourceId: randomUUID(),
+          resourceId: yield* nextId,
           resourceType: 'commerce.catalog.product-unit',
           tenantId,
         }),
       },
-      requestCorrelation: randomUUID(),
+      requestCorrelation: yield* nextId,
     },
   });
   const options = { baseUrl: input.pricingUrl, compositionRevision };
@@ -106,7 +105,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
       reason: 'Shared fixture merchandising classification explicitly selected by the source payload',
     },
     `Bearer ${categoryGateway.token}`,
-    randomUUID(),
+    yield* nextId,
     { baseUrl: input.catalogUrl, compositionRevision, idempotencyKey: 'INTERNAL_C14_SOURCE_CATEGORY' },
   );
   assert.isOk('category' in category);
@@ -122,7 +121,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
       supportedCurrencies: ['CZK'],
     }),
     `Bearer ${currency.token}`,
-    randomUUID(),
+    yield* nextId,
     { ...options, idempotencyKey: 'INTERNAL_C14_SYNC_CURRENCY' },
   );
   assert.isOk('current' in currencies);
@@ -156,7 +155,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
           verificationRef: `INTERNAL_C14_SYNC_POLICY_${kind}`,
         },
         `Bearer ${gateway.token}`,
-        randomUUID(),
+        yield* nextId,
         { ...options, idempotencyKey: `INTERNAL_C14_SYNC_POLICY_${kind}` },
       );
       assert.isOk('policyId' in result);
@@ -214,12 +213,16 @@ export const makeInternalSyncListBody = (effectiveFrom: string) => ({
   ],
 });
 
-export const internalSyncSkuPrices = [
+export const internalSyncCategoryFreeKey = 'INTERNAL_C14_CATEGORY_FREE';
+const internalSyncSkuPrices = [
   { base: '25', itemKey: internalStockItemKeys[0], list: '19' },
   { base: '43', itemKey: internalStockItemKeys[1], list: '31' },
+  { base: '25', itemKey: internalSyncCategoryFreeKey, list: '19' },
 ] as const;
+type InternalSyncSkuKey = (typeof internalSyncSkuPrices)[number]['itemKey'];
+
 export const makeInternalSyncProducts = (
-  keys: readonly (typeof internalStockItemKeys)[number][],
+  keys: readonly InternalSyncSkuKey[],
   effectiveFrom: string,
   categories?: readonly ProductCategoryRef[],
 ): typeof Schema.Json.Type => ({
@@ -243,7 +246,7 @@ export const makeInternalSyncProducts = (
 /** Native persisted amounts and source association, not a successful HTTP envelope or a captured exact grant. */
 export const assertInternalSyncPrices = Effect.fn('InternalC14Sync.persistedPrices')(function* persisted(input: {
   readonly authority: Authority;
-  readonly expectedCatalogProducts: number;
+  readonly keys: readonly InternalSyncSkuKey[];
   readonly sourceRouteId: string;
 }) {
   const { admin, legalEntityId, systemPrincipalId, tenantId } = input.authority;
@@ -287,9 +290,11 @@ export const assertInternalSyncPrices = Effect.fn('InternalC14Sync.persistedPric
       }),
     ),
   )(prices);
-  expect(parsed).toHaveLength(4);
-  expect(new Set(parsed.map(({ price_id }) => price_id)).size).toBe(4);
-  for (const { base, itemKey, list } of internalSyncSkuPrices) {
+  const priceCount = input.keys.length * 2;
+  expect(parsed).toHaveLength(priceCount);
+  expect(new Set(parsed.map(({ price_id }) => price_id)).size).toBe(priceCount);
+  const expectedPrices = internalSyncSkuPrices.filter(({ itemKey }) => input.keys.includes(itemKey));
+  for (const { base, itemKey, list } of expectedPrices) {
     const rows = parsed.filter(({ item_key }) => item_key === `product:sku:${itemKey}`);
     expect(rows).toHaveLength(2);
     expect(rows.map(({ amount, selector }) => ({ amount, selector }))).toEqual([
@@ -329,9 +334,9 @@ export const assertInternalSyncPrices = Effect.fn('InternalC14Sync.persistedPric
     inventory_policies: 1,
     lists: 1,
     policies: 2,
-    products: input.expectedCatalogProducts,
-    revisions: 4,
-    variants: input.expectedCatalogProducts,
+    products: input.keys.length,
+    revisions: priceCount,
+    variants: input.keys.length,
   });
   const coverages = yield* admin`select price_group_coverage from pricing.external_price_source_policies
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} order by price_group_coverage`;
