@@ -95,20 +95,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/zerops-delivery"
           bash app/scripts/zerops/read-delivery-history.sh comparison >"$RUNNER_TEMP/zerops-delivery/history.json"
-          # The compare API is capped at 300 files. An unavailable, divergent or possibly cut list proves no
-          # subset: the selector keeps all three shards unless this exact SHA is already verified. The
-          # explicit proof row still runs the hook's global job; no empty matrix or skipped lint can deliver.
-          jq -j 'if .comparison.ancestor == true and .comparison.truncated == false then
-            .comparison.changedPaths[] | ., "\u0000" else empty end' \
-            "$RUNNER_TEMP/zerops-delivery/history.json" >"$RUNNER_TEMP/zerops-delivery/changed-paths"
 
-      - name: Choose the format and lint shards
+      - name: Choose stage whole-tree lint or verified-commit proof
         id: shards
         env:
-          PLAN_MODE: affected
           COMPARISON_SNAPSHOT: ${{ runner.temp }}/zerops-delivery/history.json
-          CHANGED_PATHS: ${{ runner.temp }}/zerops-delivery/changed-paths
-        run: bash app/scripts/ci/choose-lint-shards.sh
+        run: bash app/scripts/ci/choose-stage-lint-shards.sh
 
       - name: Retain the shared lint and delivery inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -120,7 +112,7 @@ jobs:
           retention-days: 3
 
   lint:
-    name: Stage lint (${{ matrix.shard == 'proof' && 'verified commit' || matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
+    name: Stage lint (${{ matrix.shard == 'proof' && 'verified commit' || format('{0}/3', matrix.shard) }})
     needs: [lint-plan]
     if: needs.lint-plan.result == 'success'
     runs-on: ubuntu-24.04
@@ -145,13 +137,6 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Take the exact changed-path list
-        if: matrix.shard == 0
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-lint-inputs
-          path: ${{ runner.temp }}/zerops-delivery
-
       # A push during the 30-50 s install should not then spend 180-410 s linting an obsolete whole-tree shard.
       - name: Refuse a head superseded during the lint install
         run: |
@@ -162,10 +147,9 @@ jobs:
         uses: ./.github/actions/lint-app
         with:
           shard: ${{ matrix.shard }}
-          changed-paths: ${{ runner.temp }}/zerops-delivery/changed-paths
 
-  # Candidate changed-file lint took 65 s in run 45791874819 and about 50 s in 45792197352; neither measures ordinary pushes.
-  # Ordinary stage pushes use whole-tree lint, including docs-only changes. Both workflows share the selector.
+  # Stage and gates share the whole-tree shard cut, lint-app action and lint-files.sh runner.
+  # Stage alone selects a global-only proof for an exact verified-SHA manual dispatch.
   # Run 45798439167
   # measured stage shards at 298-449 s; gates run 45798433673 measured 281-411 s. Planning and runner builds
   # overlap lint and hid about 260 s on the build path. A delivery without runner builds waits for lint.

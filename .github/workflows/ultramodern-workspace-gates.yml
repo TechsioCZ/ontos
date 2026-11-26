@@ -1,6 +1,6 @@
 name: Ultramodern Workspace Gates and Main-to-Stage Deploy
 
-# Existing trigger policy skips repository-root docs-only pushes; the shared lint selector governs jobs selected below.
+# Existing trigger policy skips repository-root docs-only pushes; selected lint jobs cover all three whole-tree slices.
 on:
   push:
     branches:
@@ -149,7 +149,6 @@ jobs:
       integrationBrowser: ${{ steps.selection.outputs.integrationBrowser || steps.changes.outputs.integrationBrowser }}
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
-      lint-shards: ${{ steps.lint-shards.outputs.shards || '[1,2,3]' }}
       seed-run: ${{ steps.seed.outputs.run }}
     steps:
       - name: Harden Runner
@@ -207,18 +206,6 @@ jobs:
         env:
           REASON: ${{ steps.changes.outputs.reason }}
         run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
-      # $RUNNER_TEMP is job-local and format-and-lint checks out at depth 1, so it can neither read this list nor
-      # recompute the diff. The list is empty whenever the comparison is unavailable (full, docs and proven modes),
-      # so an empty file is a valid result. The planning steps after it can fail, so a re-run of this job replaces its
-      # own earlier upload instead of failing on the existing name.
-      - name: Publish the exact changed-path list
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ci-changed-paths
-          path: ${{ runner.temp }}/ci-changed-paths
-          if-no-files-found: warn
-          overwrite: true
-          retention-days: 1
       # The planner reads authored JSON and imports nothing outside the repository, so it runs on the runner image's
       # own Node, which strips its types, before anything is installed (scripts/plan-ci-without-install.sh).
       - name: Select the preinstalled Node runtime for dependency-free planning
@@ -241,16 +228,6 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           bash scripts/plan-ci-without-install.sh "${args[@]}"
-      # When lint is selected, both workflows lint the whole tree even for narrowed plans. Markdown is not an exception:
-      # the enabled service-constructor rule can read explicit .md imports. Only exact verified-SHA dispatches
-      # with a complete empty comparison earn the global-only proof row; unknown history never narrows lint.
-      - name: Choose the format and lint shards
-        id: lint-shards
-        if: steps.selection.outputs.mode != ''
-        env:
-          CHANGED_PATHS: ${{ runner.temp }}/ci-changed-paths
-          PLAN_MODE: ${{ steps.selection.outputs.mode }}
-        run: bash app/scripts/ci/choose-lint-shards.sh
       # A later push of this exact commit to the base branch skips its gates only when this run compared with the
       # commit that push starts from (scripts/ci/commit-proof.sh). The runs API keeps no dispatch inputs and no job
       # outputs, so the record is an artifact of this run, which only this run's jobs can write.
@@ -866,7 +843,7 @@ jobs:
   # included, which the hook's lint globs leave out or check with milder rules, and the rule tests lint real storefront
   # files, so they belong to this row that every plan runs: a scoped plan skips the Typecheck row.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
     # Lint needs source only; it never holds a runner waiting for build jobs.
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
@@ -875,8 +852,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [1, 2, 3] even for narrowed plans. The shared selector cannot grant changed-file lint.
-        shard: ${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}
+        # Whole-tree slices even for narrowed plans; stage alone can select a proof row.
+        shard: [1, 2, 3]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -893,33 +870,24 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      # A missing artifact fails: without the exact changed list shard 0 proves nothing.
-      - name: Download the exact changed-path list
-        if: matrix.shard == 0
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ci-changed-paths
-          path: ${{ runner.temp }}/ci-plan
-
       - name: Format and Lint through every pre-commit job
         uses: ./.github/actions/lint-app
         with:
           shard: ${{ matrix.shard }}
-          changed-paths: ${{ runner.temp }}/ci-plan/ci-changed-paths
 
       # Once per run, whatever the hook found.
       - name: Typecheck the Effect lint rules
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
         working-directory: app
         run: mise exec -- pnpm typecheck:lint-rules
 
       - name: Test the Effect lint rules
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
         working-directory: app
         run: mise exec -- pnpm test:lint-rules
 
       - name: Repository policy over the whole app tree
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
         working-directory: app
         run: mise exec -- pnpm lint:repository-policy
 

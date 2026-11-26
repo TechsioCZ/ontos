@@ -191,7 +191,7 @@ it.effect('requires exact-commit lint success for both delivery paths, even when
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('feeds the verified comparison snapshot into the shared lint selector', () =>
+it.effect('feeds only the verified comparison snapshot into the stage proof selector', () =>
   Effect.gen(function* verifiedComparisonInput() {
     const fs = yield* FileSystem.FileSystem;
     const workflow = Schema.decodeUnknownSync(
@@ -209,12 +209,10 @@ it.effect('feeds the verified comparison snapshot into the shared lint selector'
       }),
     )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
     const selector = workflow.jobs['lint-plan'].steps.find(
-      ({ run: command }) => command === 'bash app/scripts/ci/choose-lint-shards.sh',
+      ({ run: command }) => command === 'bash app/scripts/ci/choose-stage-lint-shards.sh',
     );
-    expect(selector?.env).toMatchObject({
-      CHANGED_PATHS: `\${{ runner.temp }}/zerops-delivery/changed-paths`,
+    expect(selector?.env).toEqual({
       COMPARISON_SNAPSHOT: `\${{ runner.temp }}/zerops-delivery/history.json`,
-      PLAN_MODE: 'affected',
     });
   }).pipe(Effect.provide(NodeServices.layer)),
 );

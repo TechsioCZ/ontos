@@ -48,12 +48,12 @@ const readWorkflow = (name: string) =>
   );
 
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
+const STAGE_WORKFLOW = 'zerops-stage.yml';
 const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
 const GATES_WORKFLOW_PATH = '.github/workflows/ultramodern-workspace-gates.yml';
 const NODE_PROOF_COMMAND = 'mise exec -- pnpm node:proof';
 const TYPECHECK_COMMAND = 'pnpm typecheck';
 const PREPROPOSAL_PREFIX = 'whole:preproposal-';
-const FIRST_SHARD_CONDITION = 'matrix.shard == 0';
 const PRECOMMIT_COMMAND = 'run pre-commit --files-from-stdin --no-auto-install';
 const CLEAN_TREE_COMMAND = 'git diff --exit-code HEAD';
 const LINT_ACTION = './.github/actions/lint-app';
@@ -63,7 +63,6 @@ const APP_PACKAGE_PATH = 'app/package.json';
 const EMPTY_MODULE_SOURCE = 'export {};\n';
 const BOOTSTRAP_ORDERING_STEP = 'Remove the pre-seeded runtime role to prove deployment bootstrap ordering';
 const CI_PLAN_JOB = 'ci-plan';
-const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
@@ -137,11 +136,9 @@ const readGateWorkflow = () => {
     expect(matrix.include).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key}) }}`);
     jobs[job] = { ...entry, strategy: { ...strategy, matrix: { ...matrix, include: rows } } };
   }
-  // ci-plan picks the lint shards; a complete run keeps the three whole-tree shards.
+  // Lint always runs the same three whole-tree slices, independent of the package plan.
   const lint = record(jobs['format-and-lint']);
-  const lintStrategy = record(lint.strategy);
-  expect(record(lintStrategy.matrix).shard).toBe(`\${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}`);
-  jobs['format-and-lint'] = { ...lint, strategy: { ...lintStrategy, matrix: { shard: [1, 2, 3] } } };
+  expect(record(record(lint.strategy).matrix).shard).toEqual([1, 2, 3]);
   return { ...workflow, jobs };
 };
 /** The fixed system PATH a workflow step script runs with in these tests. */
@@ -1792,94 +1789,23 @@ it('prints all failing hook chunks and later fixes without changing the index', 
   expect(regressions).toContain('Unsupported file templates');
 });
 
-it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
+it('runs whole-tree lint without a comparison artifact and keeps proof rows global-only', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
   expect(lint.strategy.matrix.shard).toEqual([1, 2, 3]);
-  const download = lint.steps.find(({ name }) => name === 'Download the exact changed-path list');
-  expect(download?.with).toEqual({
-    name: CHANGED_PATHS_ARTIFACT,
-    path: `${RUNNER_TEMP_EXPRESSION}/ci-plan`,
-  });
+  expect(lint.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
   const step = lint.steps.find(({ uses }) => uses === LINT_ACTION);
-  expect(step?.with?.shard).toBe(expression(MATRIX_SHARD));
-  expect(download?.if).toBe(FIRST_SHARD_CONDITION);
+  expect(step?.with).toEqual({ shard: expression(MATRIX_SHARD) });
   expect(step?.env).toBeUndefined();
-  const run = LINT_RUN;
-  // The hook sees the selected files, and a file it fixes fails the gate.
-  expect(run).toContain(PRECOMMIT_COMMAND);
-  expect(run).toContain('--no-stage-fixed');
-  // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
-  // and lost its runner.
-  expect(run).not.toMatch(/pnpm lint$/mu);
-  expect(run).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
-  const select = `bash "${LINT_SELECTION}" 0 "$RUNNER_TEMP/ci-plan/ci-changed-paths" >"$RUNNER_TEMP/hook-files"`;
-  const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-selection-'));
-  const repository = path.join(directory, 'repository');
-  /** Runs the selection with this changed-path list and returns the files the hook would receive. */
-  const selectFiles = (changedPaths?: readonly string[]) => {
-    const planDirectory = path.join(directory, 'ci-plan');
-    mkdirSync(planDirectory, { recursive: true });
-    const list = path.join(planDirectory, CHANGED_PATHS_ARTIFACT);
-    rmSync(list, { force: true });
-    rmSync(path.join(directory, 'hook-files'), { force: true });
-    if (changedPaths !== undefined) {
-      writeFileSync(list, changedPaths.map((changed) => `${changed}\0`).join(''));
-    }
-    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
-      cwd: repository,
-      env: {
-        PATH: STEP_PATH,
-        RUNNER_TEMP: directory,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return readFileSync(path.join(directory, 'hook-files'), 'utf-8').split('\0').filter(Boolean);
-  };
+  expect(LINT_RUN).toContain(PRECOMMIT_COMMAND);
+  expect(LINT_RUN).toContain('--no-stage-fixed');
+  expect(LINT_RUN).not.toMatch(/pnpm lint$/mu);
+  expect(LINT_RUN).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-proof-'));
   try {
-    mkdirSync(repository);
-    execFileSync(NATIVE_GIT, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
-    const sourcePaths = [
-      GATES_WORKFLOW_PATH,
-      'README.md',
-      APP_PACKAGE_PATH,
-      'app/scripts/ci-matrices.demo.json',
-      LEFTHOOK_CONFIG,
-    ];
-    for (const file of sourcePaths) {
-      const destination = path.join(repository, file);
-      mkdirSync(path.dirname(destination), { recursive: true });
-      writeFileSync(destination, readFileSync(path.join(sourceRepository, file)));
-    }
-    // A name with a space, a newline or a glob character is a file name, never a pathspec pattern.
-    const specialPaths = [
-      'app/source/with spaces.ts',
-      'app/source/with\nnewline.ts',
-      'app/source/žluťoučký.ts',
-      'app/source/star*.ts',
-    ];
-    const fixturePaths = [...Array.from({ length: 3 }, (_, index) => `app/source/file-${index}.ts`), ...specialPaths];
-    for (const file of fixturePaths) {
-      const destination = path.join(repository, file);
-      mkdirSync(path.dirname(destination), { recursive: true });
-      writeFileSync(destination, EMPTY_MODULE_SOURCE);
-    }
-    execFileSync(NATIVE_GIT, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
-    const untrackedPath = 'app/source/untracked-negative.ts';
-    writeFileSync(path.join(repository, untrackedPath), EMPTY_MODULE_SOURCE);
-    const tracked = execFileSync(NATIVE_GIT, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
-      .split('\0')
-      .filter(Boolean);
-    expect(tracked).toHaveLength(sourcePaths.length + fixturePaths.length);
-    expect(tracked).not.toContain(untrackedPath);
-    // Exactly the changed files that this commit still tracks: a deleted or untracked path has nothing
-    // to check, and nothing else rides along.
-    expect(sorted(selectFiles([...specialPaths, 'app/removed.ts', untrackedPath]))).toEqual(sorted(specialPaths));
-    // Empty or missing input is invalid; deleted-only paths have no content to check.
-    expect(execFileSync('/bin/bash', [LINT_SELECTION, 'proof'], { cwd: repository, encoding: 'utf-8' })).toBe('');
-    expect(() => selectFiles([])).toThrow();
-    expect(() => selectFiles()).toThrow();
-    expect(selectFiles(['app/removed.ts', untrackedPath])).toEqual([]);
+    execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
+    expect(execFileSync('/bin/bash', [LINT_SELECTION, 'proof'], { cwd: directory, encoding: 'utf-8' })).toBe('');
+    expect(() => execFileSync('/bin/bash', [LINT_SELECTION, 'unknown'], { cwd: directory, stdio: 'pipe' })).toThrow();
+    expect(() => execFileSync('/bin/bash', [LINT_SELECTION], { cwd: directory, stdio: 'pipe' })).toThrow();
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -2519,7 +2445,12 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       mkdirSync(path.dirname(destination), { recursive: true });
       writeFileSync(destination, readFileSync(path.join(sourceRepository, file)));
     }
-    const specialPaths = ['app/source/with spaces.ts', 'app/source/with\nnewline.ts', 'app/source/žluťoučký.ts'];
+    const specialPaths = [
+      'app/source/with spaces.ts',
+      'app/source/with\nnewline.ts',
+      'app/source/žluťoučký.ts',
+      'app/source/star*.ts',
+    ];
     const fixturePaths = [
       ...Array.from({ length: shards * 2 + 1 }, (_, index) => `app/source/file-${index}.ts`),
       ...specialPaths,
@@ -2969,7 +2900,7 @@ it('publishes the lockfile verdict from one build shard and reuses it only in jo
     expect(verdict, job).toBe(REUSE_LOCKFILE_VERDICT);
   }
   // Other workflows install on their own and keep the default.
-  for (const file of ['quality-audit.yml', 'zerops-stage.yml', 'merge-adaptation-check.yml']) {
+  for (const file of ['quality-audit.yml', STAGE_WORKFLOW, 'merge-adaptation-check.yml']) {
     const steps = Object.values(readJobsOf(file)).flatMap(({ steps: jobSteps }) => jobSteps);
     expect(
       steps.filter(({ uses, with: inputs }) => uses === INSTALL_APP_ACTION && inputs?.[LOCKFILE_VERDICT] !== undefined),
@@ -3209,156 +3140,80 @@ for (const [script, proof] of [
   });
 }
 
-it('defaults both workflows to whole-tree lint because even regular docs Markdown can be an outside input', () => {
+it('selects stage proof only for a manual dispatch with an exact verified complete empty snapshot', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
-  const upload = plan?.steps.find(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true);
-  // A re-run of ci-plan, whose planning can fail after this upload, replaces it instead of failing on the name.
-  expect(upload?.with).toMatchObject({
-    name: CHANGED_PATHS_ARTIFACT,
-    overwrite: true,
-    path: `${RUNNER_TEMP_EXPRESSION}/ci-changed-paths`,
-  });
-  expect(plan?.outputs?.['lint-shards']).toBe(expression("steps.lint-shards.outputs.shards || '[1,2,3]'"));
-  expect(plan?.steps.find(({ id }) => id === 'lint-shards')?.run).toBe('bash app/scripts/ci/choose-lint-shards.sh');
-  const choose = readFileSync(new URL('../ci/choose-lint-shards.sh', import.meta.url), 'utf-8');
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
-  execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
-  const shardsFor = (
-    mode: string,
-    paths: readonly string[],
-    snapshot = '',
-    event = 'workflow_dispatch',
-    complete = true,
-  ) => {
-    const changed = path.join(directory, 'changed');
+  expect(plan?.outputs?.['lint-shards']).toBeUndefined();
+  expect(
+    plan?.steps.some(
+      ({ uses, with: inputs }) =>
+        uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true && inputs?.name === 'ci-changed-paths',
+    ),
+  ).toBe(false);
+  const choose = readFileSync(new URL('../ci/choose-stage-lint-shards.sh', import.meta.url), 'utf-8');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-stage-lint-choice-'));
+  const head = 'a'.repeat(40);
+  const comparison = { ancestor: true, base: head, changedPaths: [], truncated: false };
+  const shardsFor = (snapshot: string | undefined, event = 'workflow_dispatch', sha = head) => {
     const output = path.join(directory, 'output');
-    writeFileSync(changed, paths.join('\0') + (complete && paths.length > 0 ? '\0' : ''));
-    writeFileSync(output, '');
     const history = path.join(directory, 'history.json');
-    writeFileSync(history, snapshot);
+    writeFileSync(output, '');
+    rmSync(history, { force: true });
+    if (snapshot !== undefined) {
+      writeFileSync(history, snapshot);
+    }
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', choose], {
-      cwd: directory,
       env: {
-        CHANGED_PATHS: changed,
         COMPARISON_SNAPSHOT: history,
         GITHUB_EVENT_NAME: event,
         GITHUB_OUTPUT: output,
-        GITHUB_SHA: 'a'.repeat(40),
+        GITHUB_SHA: sha,
         PATH: STEP_PATH,
-        PLAN_MODE: mode,
       },
       stdio: 'pipe',
     });
     return readFileSync(output, 'utf-8').trim();
   };
   try {
-    const documents = ['docs/x.md', 'app/docs/y/z.md'];
-    for (const document of documents) {
-      mkdirSync(path.dirname(path.join(directory, document)), { recursive: true });
-      writeFileSync(path.join(directory, document), '# Before\n');
-      execFileSync(NATIVE_GIT, ['add', '--', document], { cwd: directory });
-    }
-    for (const document of documents) {
-      // Even real regular Markdown, added/modified/deleted, cannot earn changed-file lint:
-      // native-external-inputs.test.mts proves an enabled rule parses explicit .md imports.
-      expect(shardsFor('affected', [document]), `added ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
-      writeFileSync(path.join(directory, document), '# After\n');
-      expect(shardsFor('scoped', [document]), `modified ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
-      execFileSync(NATIVE_GIT, ['rm', '-f', '--', document], { cwd: directory });
-      expect(shardsFor('affected', [document]), `deleted ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
-    }
-    expect(shardsFor('affected', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('scoped', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('full', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('scoped', [])).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('affected', [])).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('affected', ['docs/a b.md', 'app/docs/line\nbreak.md'])).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('affected', ['docs/x.md'], '', 'push', false)).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('affected', ['docs/x.md', ''], '', 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
-    for (const count of [2000, 2001]) {
-      expect(
-        shardsFor(
-          'affected',
-          Array.from({ length: count }, (_, index) => `docs/${index}.md`),
-        ),
-      ).toBe(WHOLE_TREE_LINT_SHARDS);
-    }
-    const comparison = { ancestor: true, base: 'a'.repeat(40), changedPaths: [], truncated: false };
-    expect(shardsFor('affected', [], JSON.stringify({ comparison }))).toBe('shards=["proof"]');
-    expect(shardsFor('affected', [], JSON.stringify({ comparison }), 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
+    const verified = JSON.stringify({ comparison });
+    expect(shardsFor(verified)).toBe('shards=["proof"]');
+    expect(shardsFor(verified, 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor(verified, 'pull_request')).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor(verified, 'workflow_dispatch', '')).toBe(WHOLE_TREE_LINT_SHARDS);
     for (const unknown of [
       null,
       { ...comparison, ancestor: false },
       { ...comparison, truncated: true },
       { ...comparison, base: 'b'.repeat(40) },
-      { ...comparison, changedPaths: ['not-an-empty-comparison.ts'] },
+      { ...comparison, base: '' },
+      { ...comparison, changedPaths: ['app/docs/parser.md'] },
+      { ...comparison, changedPaths: ['app/packages/shared-contracts/package.json'] },
+      { ...comparison, changedPaths: null },
       {},
     ]) {
-      expect(shardsFor('affected', [], JSON.stringify({ comparison: unknown }))).toBe(WHOLE_TREE_LINT_SHARDS);
+      expect(shardsFor(JSON.stringify({ comparison: unknown })), JSON.stringify(unknown)).toBe(WHOLE_TREE_LINT_SHARDS);
     }
-    // These regressions are examples of outside inputs, not a census for a denylist.
-    for (const outsideDocument of [
-      'app/packages/shared-contracts/package.json',
-      'app/verticals/facility-operations/modern.config.ts',
-      'app/scripts/ci-matrices.demo.json',
-      GATES_WORKFLOW_PATH,
-      'app/verticals/catalog/Panel.vue',
-      'app/packages/tooling/README.md',
-      'settings.txt',
-      '.editorconfig',
-      'docs/UPPER.MD',
-      'Docs/x.md',
-      'app/DOCS/x.md',
-      'README.md',
-      'docs/x.mdx',
-      'docs/a b.sh',
-      'app/scripts/line\nbreak.sh',
-    ]) {
-      expect(shardsFor('affected', [outsideDocument]), outsideDocument).toBe(WHOLE_TREE_LINT_SHARDS);
-      expect(shardsFor('scoped', [...documents, outsideDocument]), outsideDocument).toBe(WHOLE_TREE_LINT_SHARDS);
+    for (const malformed of [undefined, '', 'not JSON', '{}']) {
+      expect(shardsFor(malformed)).toBe(WHOLE_TREE_LINT_SHARDS);
     }
-    mkdirSync(path.join(directory, 'docs'), { recursive: true });
-    writeFileSync(path.join(directory, 'README.md'), '# Repository\n');
-    const docLink = 'docs/link.md';
-    const executableDoc = 'docs/executable.md';
-    symlinkSync('../README.md', path.join(directory, docLink));
-    execFileSync(NATIVE_GIT, ['add', '--', docLink], { cwd: directory });
-    expect(shardsFor('affected', [docLink])).toBe(WHOLE_TREE_LINT_SHARDS);
-    writeFileSync(path.join(directory, executableDoc), '# Executable\n');
-    execFileSync(NATIVE_GIT, ['add', '--', executableDoc], { cwd: directory });
-    execFileSync(NATIVE_GIT, ['update-index', '--chmod=+x', '--', executableDoc], { cwd: directory });
-    expect(shardsFor('affected', [executableDoc])).toBe(WHOLE_TREE_LINT_SHARDS);
+    // The native-binary regressions prove why even regular Markdown requires all slices.
+    const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
+    expect(lint.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
+    expect(lint.find(({ uses }) => uses === LINT_ACTION)?.with).toEqual({ shard: expression(MATRIX_SHARD) });
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
-  const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
-  const download = lint.find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
-  expect(download?.if).toBe(FIRST_SHARD_CONDITION);
-  expect(download?.with?.name).toBe(CHANGED_PATHS_ARTIFACT);
-  const hook = lint.find(({ uses }) => uses === LINT_ACTION);
-  expect(hook?.with?.shard).toBe(expression(MATRIX_SHARD));
-  expect(readFileSync(LINT_SELECTION, 'utf-8')).toContain('GIT_LITERAL_PATHSPECS=1');
-  expect(LINT_RUN).toContain(PRECOMMIT_COMMAND);
-  expect(LINT_RUN).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
 });
 
 it('runs the lint rules and the whole-tree repository policy once in every plan, beside the lint', () => {
   const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
   // Every plan now selects whole-tree shard 1 here, even when scoped. A scoped plan skips the Typecheck
   // row, and the policy lints the whole app tree, so it runs here whatever the hook found.
-  // The action still supports shard 0 for direct callers, but the selector cannot grant it.
-  const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1");
+  const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard == 1");
   expect(lint.filter((step) => step.if === once).map(({ run }) => run)).toEqual([
     'mise exec -- pnpm typecheck:lint-rules',
     'mise exec -- pnpm test:lint-rules',
     'mise exec -- pnpm lint:repository-policy',
   ]);
-  for (const shards of [[0], [1, 2, 3]]) {
-    expect(
-      shards.filter((shard) => shard <= 1),
-      String(shards),
-    ).toHaveLength(1);
-  }
   expect(WHOLE_TREE_LINT_SHARDS).toBe('shards=[1,2,3]');
   expect(
     readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include.filter(({ commands }) =>
@@ -3430,21 +3285,6 @@ it('keys browser apt archives by OS and pinned Playwright, and preserves bounded
   expect(scheduler.indexOf('capture-integration-hang.sh')).toBeLessThan(scheduler.indexOf('kill -TERM'));
 });
 
-it('selects every shard for a nested workspace export change', () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-manifest-choice-'));
-  try {
-    const changed = path.join(directory, 'changed');
-    const output = path.join(directory, 'output');
-    writeFileSync(changed, 'app/packages/shared-contracts/package.json\0');
-    execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/choose-lint-shards.sh', import.meta.url))], {
-      env: { CHANGED_PATHS: changed, GITHUB_OUTPUT: output, PATH: STEP_PATH, PLAN_MODE: 'affected' },
-    });
-    expect(readFileSync(output, 'utf-8').trim()).toBe(WHOLE_TREE_LINT_SHARDS);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
-
 it.effect('executes the composite lint action itself and reports findings for every selectable shard', () =>
   Effect.gen(function* compositeLintAction() {
     const toolsPath = yield* Config.String('PATH');
@@ -3465,10 +3305,10 @@ it.effect('executes the composite lint action itself and reports findings for ev
         }),
       }),
     )(parse(readFileSync(path.join(sourceRepository, '.github/actions/lint-app/action.yml'), 'utf-8')));
-    for (const [workflowName, lintJob, planJob, outputName] of [
-      [GATES_WORKFLOW, FORMAT_AND_LINT_JOB, CI_PLAN_JOB, 'lint-shards'],
-      ['zerops-stage.yml', 'lint', 'lint-plan', 'shards'],
-    ]) {
+    for (const [workflowName, lintJob, planJob, matrix] of [
+      [GATES_WORKFLOW, FORMAT_AND_LINT_JOB, CI_PLAN_JOB, [1, 2, 3]],
+      [STAGE_WORKFLOW, 'lint', 'lint-plan', expression('fromJSON(needs.lint-plan.outputs.shards)')],
+    ] as const) {
       const workflow = Schema.decodeUnknownSync(
         Schema.Struct({
           jobs: Schema.Record(
@@ -3489,16 +3329,17 @@ it.effect('executes the composite lint action itself and reports findings for ev
           ),
         }),
       )(parse(readFileSync(path.join(sourceRepository, '.github/workflows', workflowName), 'utf-8')));
-      expect(workflow.jobs[lintJob]?.strategy?.matrix.shard).toBe(
-        expression(`fromJSON(needs.${planJob}.outputs.${outputName})`),
-      );
+      expect(workflow.jobs[lintJob]?.strategy?.matrix.shard).toEqual(matrix);
       const calls = workflow.jobs[lintJob]?.steps.filter((step) => step.uses === LINT_ACTION);
       expect(calls).toHaveLength(1);
       expect(calls?.[0]?.if).toBeUndefined();
       expect(calls?.[0]?.with?.shard).toBe(expression(MATRIX_SHARD));
       expect(
-        workflow.jobs[planJob]?.steps.some((step) => step.run === 'bash app/scripts/ci/choose-lint-shards.sh'),
-      ).toBe(true);
+        workflow.jobs[planJob]?.steps.some((step) => step.run === 'bash app/scripts/ci/choose-stage-lint-shards.sh'),
+      ).toBe(workflowName === STAGE_WORKFLOW);
+      expect(
+        workflow.jobs[lintJob]?.steps.some((step) => step.uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true),
+      ).toBe(false);
     }
     const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-composite-lint-'));
     try {
@@ -3547,9 +3388,7 @@ it.effect('executes the composite lint action itself and reports findings for ev
         path.join(sourceRepository, 'app/node_modules/.bin/lefthook'),
         path.join(directory, 'app/node_modules/.bin/lefthook'),
       );
-      const changed = path.join(directory, 'changed');
-      writeFileSync(changed, files.map((file) => `${file}\0`).join(''));
-      for (const shard of ['0', '1', '2', '3', 'proof']) {
+      for (const shard of ['1', '2', '3', 'proof']) {
         let output = '';
         let status = 0;
         for (const step of action.runs.steps) {
@@ -3558,9 +3397,7 @@ it.effect('executes the composite lint action itself and reports findings for ev
           const environment = Object.fromEntries(
             Object.entries(step.env ?? {}).map(([key, value]) => [
               key,
-              value
-                .replaceAll(expression('inputs.shard'), shard)
-                .replaceAll(expression('inputs.changed-paths'), changed),
+              value.replaceAll(expression('inputs.shard'), shard),
             ]),
           );
           const result = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', step.run], {

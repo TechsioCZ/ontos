@@ -60,13 +60,12 @@ CONFIG
     test "$(grep -c '^GLOBAL' "$input.log")" -eq 1
     if grep -q '^FILE' "$input.log"; then exit 1; fi
   done
-  # The all-deletion commit has no tracked file left in its changed-path selection. Deleting a
-  # generated projection still invalidates the global invariant, even with no linter arguments.
+  # Deleting a generated projection invalidates the global invariant even when every
+  # remaining tracked file in the whole-tree slice is excluded from the linter.
   git rm --quiet app/projection.ts
   git -c user.name='Lint fixture' -c user.email='lint@example.invalid' commit --quiet -m 'Delete generated projection'
-  printf 'app/projection.ts\0' >changed
-  bash "$selector" 0 changed >files
-  test ! -s files
+  bash "$selector" 1 >files
+  test "$(tr '\0' '\n' <files)" = app/fixtures/excluded.ts
   status=0
   bash "$runner" <files >global-failure.log 2>&1 || status=$?
   test "$status" -eq 1
