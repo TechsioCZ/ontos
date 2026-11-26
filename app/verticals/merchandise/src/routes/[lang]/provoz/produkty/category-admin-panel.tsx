@@ -15,7 +15,7 @@ import {
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
-import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryNode, ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
@@ -36,8 +36,15 @@ import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { fieldError } from './product-form-validation.ts';
 import { loadProductRecord } from './product-reads.ts';
 import type { ProductRecordState } from './product-reads.ts';
+import { useImageSource } from './product-image-source.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+
+/** An uploaded photo's admin preview: the governed media read, since the shell has no /obrazky route. */
+const PickerThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
+  const source = useImageSource(productId, image, 'thumbnail');
+  return source.status === 'ready' ? <img alt="" className="h-full w-full object-cover" src={source.src} /> : null;
+};
 
 /** Picks an uploaded product photo (a 'media:' gallery ref) and returns its same-origin /obrazky path. */
 const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => void }) => {
@@ -94,7 +101,7 @@ const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => voi
                 }}
                 type="button"
               >
-                <img alt="" className="h-full w-full object-cover" src={src} />
+                <PickerThumbnail image={ref} productId={state.product.id} />
               </button>
             );
           })}
