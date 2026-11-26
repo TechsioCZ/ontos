@@ -75,9 +75,9 @@ const parametersInvalidOf = (parameters: readonly ParameterDraft[]) =>
   parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '');
 
 /** The UpdateProduct patch of a content draft. */
-const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, product: ProductRecord): ProductPatch => {
-  const picked = draft.category === 'keep' ? category : draft.category;
-  const categoryId = picked?.id ?? product.categoryId;
+const contentPatchOf = (draft: ContentDraft, product: ProductRecord): ProductPatch => {
+  // 'keep' never touches the category: re-linking a free-text category to its tree match would rename it.
+  const categoryId = draft.category === 'keep' ? product.categoryId : (draft.category?.id ?? product.categoryId);
   const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
   if (categoryId !== undefined && categoryId !== product.categoryId) {
     patch.categoryId = categoryId;
@@ -120,7 +120,7 @@ export const CatalogContentPanel = ({
   const setParameters = (update: (current: readonly ParameterDraft[]) => readonly ParameterDraft[]) =>
     setForm((current) => ({ ...current, parameters: update(current.parameters) }));
   const save = useProductTabSave<ContentDraft>({
-    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, category, product) }),
+    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, product) }),
     isValid: (value) => !parametersInvalidOf(value.parameters) && !contentExtrasInvalid(value.extras),
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
