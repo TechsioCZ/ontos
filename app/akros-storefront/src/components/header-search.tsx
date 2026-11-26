@@ -3,7 +3,7 @@
 import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Label } from "@techsio/ui-kit/atoms/label";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -63,8 +63,15 @@ export function HeaderSearch() {
     categories: [],
   });
   const [searchAttempt, setSearchAttempt] = useState(0);
+  // Answers already seen in this page: repeated or backspaced queries show at once.
+  const seen = useRef(new Map<string, typeof remote>());
   useEffect(() => {
     if (!ready) return;
+    const held = seen.current.get(trimmedQuery);
+    if (held !== undefined) {
+      setRemote(held);
+      return;
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
@@ -87,14 +94,16 @@ export function HeaderSearch() {
             );
           return body;
         })
-        .then((body) =>
-          setRemote({
+        .then((body) => {
+          const next = {
             query: trimmedQuery,
             items: body.items ?? [],
             total: typeof body.total === "number" ? body.total : 0,
             categories: Array.isArray(body.categories) ? body.categories : [],
-          }),
-        )
+          };
+          seen.current.set(trimmedQuery, next);
+          setRemote(next);
+        })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
           setRemote({
@@ -108,7 +117,7 @@ export function HeaderSearch() {
                 : cs.search.unavailable,
           });
         });
-    }, 200);
+    }, 120);
     return () => {
       window.clearTimeout(timer);
       controller.abort();

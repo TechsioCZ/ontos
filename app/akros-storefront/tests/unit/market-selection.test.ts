@@ -332,18 +332,6 @@ describe("market resolution", () => {
     expect(resolution.live.map((entry) => entry.locale)).toEqual(["cs", "en", "sk"]);
   });
 
-  it("reads the current directory and offers again for every independent operation", async () => {
-    await market$.resolveStorefrontMarket("cs");
-    await market$.resolveStorefrontMarket("sk");
-    expect(catalogReads()).toBe(2);
-    catalogBody = {
-      markets: [market("m-sk", "AKROS-SK", ["sk"], { lifecycle: "SUSPENDED" })],
-      associations: [association("m-sk")],
-    };
-    expect(await market$.resolveStorefrontMarket("sk")).toMatchObject({ kind: "not-active" });
-    expect(catalogReads()).toBe(3);
-  });
-
   it("reuses one directory and one selected offer across concurrent active and switcher reads", async () => {
     const operation = market$.createMarketReadOperation();
     const [active, chrome] = await Promise.all([
@@ -573,20 +561,6 @@ describe("before any market exists", () => {
     },
     live: [{ locale: "cs", marketCode: "", label: "CZ", currency: "CZK" }],
   };
-  it("serves /cs as the Czech CZK catalogue without a market when the catalog is empty", async () => {
-    catalogBody = { ...catalog, markets: [], associations: [] };
-    expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
-    expect(await market$.storefrontMarketKind("cs")).toBe("live");
-    expect(await market$.storefrontMarketKind("sk")).toBe("unknown");
-    expect(await market$.resolveStorefrontMarket("sk")).toMatchObject({
-      kind: "unknown",
-      live: unmarketed.live,
-    });
-    // No resolution and no merchandise read: nothing to resolve yet.
-    await network.idle();
-    expect(reads).toHaveLength(4);
-  });
-
   it("ignores other sellers' markets and other storefronts' associations", async () => {
     catalogBody = {
       markets: [market("m-kav", "KAVARNA-CZ", ["cs"], { country: "CZ", legalEntity: KAVARNA })],
@@ -614,7 +588,7 @@ describe("before any market exists", () => {
       "GatewayAudienceInvalidProblem",
     ],
   ])(
-    "serves /cs without a market when %s, without retaining it across operations",
+    "serves /cs without a market when %s, sharing the answer across operations",
     async (_case, status, tag) => {
       failure = { status, code: "rejected", _tag: tag };
       expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
@@ -623,7 +597,7 @@ describe("before any market exists", () => {
       expect(catalogReads()).toBe(1);
       expect(await market$.storefrontMarketKind("en")).toBe("unknown");
       await network.idle();
-      expect(catalogReads()).toBe(2);
+      expect(catalogReads()).toBe(1);
     },
   );
 

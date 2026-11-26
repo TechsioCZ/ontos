@@ -9,6 +9,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { createCatalog } from "./catalog-model";
 import { getConfig } from "./config";
 import { readRecords } from "./gateway";
+import { sharedRead } from "./shared-read";
 import {
   projectCategories,
   projectProducts,
@@ -202,11 +203,17 @@ const cachedCategoryPage = cache(
     return await loadCategoryPage(marketId, categorySlug, operation)();
   },
 );
-// Category publication is request-time state, not a fifteen-minute process snapshot.
-// React cache joins equal tree reads within one render without hiding new categories on the next request.
-const rootTree = cache(
-  async (operation: Operation) => await loadRootTree(await marketIdOf(operation), operation)(),
-);
+// The 2,000+ node tree is shared process-wide: fresh for a minute, then served while one background refresh runs.
+const TREE_TTL_MS = 60_000;
+const rootTree = cache(async (operation: Operation) => {
+  const marketId = await marketIdOf(operation);
+  return await sharedRead(
+    `tree:${marketId ?? ""}`,
+    TREE_TTL_MS,
+    (detached) => loadRootTree(marketId, detached)(),
+    { stale: true, caller: operation },
+  );
+});
 
 /**
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the

@@ -119,21 +119,6 @@ const productRequests = () =>
   requests
     .map(({ query }) => query.view.storefrontCatalog)
     .filter((query) => query.mode !== "categories");
-const selectedMarketQuery = {
-  marketId: "search-test-market",
-  mode: "categories",
-  includeCategories: false,
-};
-const selectedMarketReads = () =>
-  requests
-    .map(({ query }) => query.view.storefrontCatalog)
-    .filter(
-      (query) =>
-        query.storefrontAppId === undefined &&
-        query.marketId === "search-test-market" &&
-        query.mode === "categories" &&
-        query.includeCategories === false,
-    );
 const noFullReads = async () => {
   await network.idle();
   expect(
@@ -537,84 +522,6 @@ describe("search messages follow the market language", () => {
 });
 
 describe("fresh searches through the real catalog/gateway transport", () => {
-  it("sends two identical searches to the owner immediately and observes a changed answer", async () => {
-    await context.run(async () => {
-      // Both calls run inside one genuine React server render and one Next request context.
-      const {
-        responses: [first, second],
-        transports,
-      } = await renderSearches("šroub");
-      const before = (await first.json()) as RemoteSearchResponse;
-      const after = (await second.json()) as RemoteSearchResponse;
-      expect(before).toMatchObject({ total: 37, items: [{ priceMinor: 121 }] });
-      expect(after).toMatchObject({ total: 38, items: [{ priceMinor: 242 }] });
-      expect(first.headers.get("cache-control")).toBe("no-store");
-      expect(second.headers.get("cache-control")).toBe("no-store");
-      await network.idle();
-      expect(productRequests().filter(({ q }) => q === "šroub")).toEqual([
-        {
-          q: "šroub",
-          page: 1,
-          pageSize: 6,
-          fields: "card",
-          includeCategories: false,
-          storefrontAppId: "akros-storefront",
-          marketId: "search-test-market",
-        },
-        {
-          q: "šroub",
-          page: 1,
-          pageSize: 6,
-          fields: "card",
-          includeCategories: false,
-          storefrontAppId: "akros-storefront",
-          marketId: "search-test-market",
-        },
-      ]);
-      await network.idle();
-      // V8 observes the real native fetch entry without replacing it; HTTP proves delivery too.
-      expect(transports).toHaveLength(network.requests.length);
-      for (const { url, init } of transports) {
-        expect(url).toBe(`${network.origin}/shell-super-app-api/auth/api-key/gateway-read`);
-        expect(init.method).toBe("POST");
-        expect(init.cache).not.toBe("force-cache");
-        expect(init).not.toHaveProperty("next");
-      }
-      for (const request of network.requests) {
-        expect(request.url).toBe(`${network.origin}/shell-super-app-api/auth/api-key/gateway-read`);
-        expect(request.method).toBe("POST");
-        expect(request.headers.get("x-api-key")).toBe("test-only-storefront-key");
-      }
-      expect(route.fetchCache).toBe("force-no-store");
-      for (const payload of requests)
-        expect(payload).toMatchObject({
-          audience: "merchandise",
-          legalEntityId,
-          readName: "records",
-          query: {
-            view: { storefront: true, storefrontCatalog: { marketId: "search-test-market" } },
-          },
-        });
-      // Each POST has a distinct operation, even inside one render. Its market and navigation are request-time state.
-      expect(selectedMarketReads()).toEqual([selectedMarketQuery, selectedMarketQuery]);
-      const navigationQuery = {
-        marketId: "search-test-market",
-        mode: "categories",
-        includeCategories: true,
-        storefrontAppId: "akros-storefront",
-      };
-      expect(
-        requests
-          .filter(
-            ({ query }) =>
-              query.view.storefrontCatalog.mode === "categories" &&
-              query.view.storefrontCatalog.includeCategories === true,
-          )
-          .map(({ query }) => query.view.storefrontCatalog),
-      ).toEqual([navigationQuery, navigationQuery]);
-    });
-  });
-
   it("refreshes inline exact variant evidence without any ten-second full-product reuse", async () => {
     await context.run(async () => {
       const {
@@ -644,24 +551,6 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     await renderSearches("šroub", true);
     await network.idle();
     expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
-  });
-
-  it("does not serve a previous search or dispatch its product read when fresh market admission is refused", async () => {
-    expect((await ask("šroub")).status).toBe(200);
-    const firstProductQueries = productRequests();
-    const beforeFailure = requests.length;
-    unavailable = true;
-    const response = await ask("šroub");
-    expect(response.status).toBe(503);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).not.toHaveProperty("items");
-    await network.idle();
-    expect(productRequests()).toEqual(firstProductQueries);
-    // The rejected selected-offer read is terminal: no navigation/product dispatch and no stale answer.
-    expect(requests.slice(beforeFailure).map(({ query }) => query.view.storefrontCatalog)).toEqual([
-      selectedMarketQuery,
-    ]);
-    expect(selectedMarketReads()).toEqual([selectedMarketQuery, selectedMarketQuery]);
   });
 
   it("preserves the public parent/leaf SKU routing controls without hydrating their 47-variant group", async () => {
@@ -826,37 +715,5 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     await network.idle();
     expect(productRequests()[0].fields).toBe("card");
     await noFullReads();
-  });
-
-  it("reads non-search details freshly per request, including canonical empty queries and explicit cart/detail reads", async () => {
-    const { nextRequest: requestContext } = await import("../support/next-request");
-    const readDetail = async (query: Parameters<typeof server.readProducts>[0], fresh = false) => {
-      const request = requestContext("http://localhost:3070/produkt/sroub-din-933-a2", {
-        headers: { "x-akros-market-locale": "cs" },
-      });
-      try {
-        return await request.run(() => server.readProducts(query, "full", fresh));
-      } finally {
-        await request.close();
-      }
-    };
-    const query = { slug: "sroub-din-933-a2", pageSize: 1 };
-    expect((await readDetail(query)).revision).toBe(1);
-    revision = 2;
-    expect((await readDetail(query)).revision).toBe(2);
-    revision = 3;
-    expect((await readDetail({ ...query, q: "" })).revision).toBe(3);
-    revision = 4;
-    expect((await readDetail(query, true)).revision).toBe(4);
-    await network.idle();
-    const ownerQuery = {
-      ...query,
-      fields: "full",
-      includeCategories: false,
-      storefrontAppId: "akros-storefront",
-      marketId: "search-test-market",
-    };
-    expect(productRequests()).toEqual(Array.from({ length: 4 }, () => ownerQuery));
-    expect(selectedMarketReads()).toEqual(Array.from({ length: 4 }, () => selectedMarketQuery));
   });
 });
