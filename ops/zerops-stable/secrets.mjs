@@ -77,6 +77,12 @@ export async function initializeSecrets({ config, generateTls = generateTlsMater
     const gateway = gatewayKeySecrets();
     const ownerSecrets = {
       ...gateway.owners,
+      // The storefront customer realm (sign-in, account read, checkout); without it every shop's account read and order
+      // placement fails with a malformed-configuration 500.
+      'commerce-customer-context': {
+        ...gateway.owners['commerce-customer-context'],
+        COMMERCE_PORTAL_AUTH_SECRET: secret(),
+      },
       pricing: {
         ...gateway.owners.pricing,
         ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: secret(),
