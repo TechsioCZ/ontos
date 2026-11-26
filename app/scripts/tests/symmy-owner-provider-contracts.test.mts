@@ -107,7 +107,7 @@ it('publishes source Category worker requirements that the actual Catalog write 
     assert.isDefined(call);
     expect(call).toMatchObject({
       audience: 'catalog',
-      legalEntityScope: 'forbidden',
+      legalEntityScope: entrypointKey.startsWith('commerce.catalog.api.') ? 'forbidden' : 'optional',
       schemaVersion: '1',
       workerKey,
     });
