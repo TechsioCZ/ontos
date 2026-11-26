@@ -12,7 +12,7 @@ import {
   CommunicationOutcomeFeedPolicyConflictProblemSchema,
   CommunicationOutcomeFeedPolicyProblemSchema,
   CommunicationOutcomeFeedUnavailableProblemSchema,
-} from '../shared/apis/communication-outcome-feed.ts';
+} from '@app/communications-contracts/communication-outcome-feed';
 import { communicationOutcomeFeedRead } from '../src/api/communication-outcome-feed.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

@@ -1,4 +1,4 @@
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { Schema } from 'effect';
 import { AddressBookDomainErrorSchema } from './address-errors.ts';
 import { AddressBookProfileSchema, SavedAddressPurposesSchema, SavedAddressPurposeSchema } from './address-book.ts';

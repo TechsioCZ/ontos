@@ -12,7 +12,7 @@ import {
   PreVerificationEligibilityPolicyConflictProblemSchema,
   PreVerificationEligibilityPolicyProblemSchema,
   PreVerificationEligibilityUnavailableProblemSchema,
-} from '../shared/apis/pre-verification-eligibility.ts';
+} from '@app/privacy-contracts/pre-verification-eligibility';
 import { preVerificationEligibilityRead } from '../src/api/pre-verification-eligibility.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

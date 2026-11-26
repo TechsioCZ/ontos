@@ -1,9 +1,9 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerCoverageRequestSchema } from '@app/communications-contracts/privacy-owner-coverage';
 import type {
   PrivacyOwnerExecutionOutcomeRequest,
   PrivacyOwnerExecutionReceipt,
-} from '../../shared/apis/privacy-owner-execution-outcome.ts';
+} from '@app/communications-contracts/privacy-owner-execution-outcome';
 import {
   communicationsMeasureOf,
   evidenceRecordsOf,

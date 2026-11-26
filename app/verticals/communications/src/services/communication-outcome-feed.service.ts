@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Option } from 'effect';
 
 import type { CommunicationOutcomeFeed } from '../../shared/communication-history.ts';
-import type { CommunicationOutcomeFeedRequest } from '../../shared/apis/communication-outcome-feed.ts';
+import type { CommunicationOutcomeFeedRequest } from '@app/communications-contracts/communication-outcome-feed';
 import { communicationRequests } from '../database/schema.ts';
 import { exactScopeOf } from '../domain/access/exact-scope.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';

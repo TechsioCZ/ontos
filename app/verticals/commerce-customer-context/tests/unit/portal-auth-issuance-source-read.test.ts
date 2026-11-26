@@ -7,7 +7,7 @@ import {
   PortalAuthIssuanceSourceRequestSchema,
   PortalAuthRecipientSubjectIdSchema,
   PortalAuthIssuanceSourceResponseSchema,
-} from '../../shared/apis/portal-auth-issuance-source.ts';
+} from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { PORTAL_AUTH_ISSUANCE_STATE, PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../shared/portal-auth-communications.ts';
 import { portalAuthIssuanceSourceAnswer } from '../../src/api/portal-auth-issuance-source.read.ts';

@@ -12,6 +12,7 @@
     "./communication-request": "./src/communication-request.ts",
     "./message-handoff": "./src/message-handoff.ts",
     "./privacy-owner-coverage": "./src/apis/privacy-owner-coverage.ts",
+    "./privacy-owner-coverage/client": "./src/api/privacy-owner-coverage-client.ts",
     "./privacy-owner-execution-outcome": "./src/apis/privacy-owner-execution-outcome.ts",
     "./privacy-owner-execution-outcome/client": "./src/api/privacy-owner-execution-outcome-client.ts",
     "./privacy-owner/contribution": "./src/privacy-owner/contribution.ts",

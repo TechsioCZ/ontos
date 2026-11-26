@@ -11,7 +11,7 @@ import {
 import {
   PreVerificationEligibilityRequestSchema,
   PreVerificationEligibilityResponseSchema,
-} from '../../shared/apis/pre-verification-eligibility.ts';
+} from '@app/privacy-contracts/pre-verification-eligibility';
 import { PreVerificationBindingPolicySchema } from '../../shared/domain/pre-verification-binding.ts';
 import {
   PreVerificationBindingsRequestSchema,

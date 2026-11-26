@@ -81,10 +81,10 @@ import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permiss
 import { makeTestTenantRoleAccess } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
 import { makeCommunicationsApiRuntime } from '../../api/index.ts';
 import type { LanguagePolicyRequestSchema } from '../../shared/apis/language-policy.ts';
-import { PrivacyOwnerCoverageResponseSchema } from '../../shared/apis/privacy-owner-coverage.ts';
-import type { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
-import { PrivacyOwnerExecutionOutcomeResponseSchema } from '../../shared/apis/privacy-owner-execution-outcome.ts';
-import type { PrivacyOwnerExecutionOutcomeRequestSchema } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+import { PrivacyOwnerCoverageResponseSchema } from '@app/communications-contracts/privacy-owner-coverage';
+import type { PrivacyOwnerCoverageRequestSchema } from '@app/communications-contracts/privacy-owner-coverage';
+import { PrivacyOwnerExecutionOutcomeResponseSchema } from '@app/communications-contracts/privacy-owner-execution-outcome';
+import type { PrivacyOwnerExecutionOutcomeRequestSchema } from '@app/communications-contracts/privacy-owner-execution-outcome';
 import { OutboxPayloadSchema as ContinuationPayloadSchema } from '../../shared/outbox/communications-core-owner-execution-evidence-recorded-v1.ts';
 import { RecordOwnerExecutionEvidenceResultSchema } from '../../shared/owner-execution-evidence.ts';
 import type { RecordOwnerExecutionEvidencePayloadSchema } from '../../shared/owner-execution-evidence.ts';

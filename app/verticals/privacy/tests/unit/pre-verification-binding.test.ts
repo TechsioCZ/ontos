@@ -8,7 +8,7 @@ import { PreVerificationBindingRejected } from '../../shared/actions/pre-verific
 import {
   PreVerificationEligibilityRequestSchema,
   PreVerificationEligibilityResponseSchema,
-} from '../../shared/apis/pre-verification-eligibility.ts';
+} from '@app/privacy-contracts/pre-verification-eligibility';
 import type { PrivacyProcessingIntervention } from '../../shared/domain/privacy-processing-eligibility.ts';
 import {
   evaluatePreVerificationEligibility,

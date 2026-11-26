@@ -52,7 +52,7 @@ import { EnsureRetailCustomerProfilePayloadSchema } from '@app/commerce-customer
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy/api/source-processing-eligibility';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import {
   CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema,
   CustomerPriceGroupAssignmentReceiptRequestSchema,

@@ -15,13 +15,13 @@ import {
   SourceProcessingEligibilityResponseSchema,
   CommunicationsSourceProcessingConsumerModule,
   SymmyCustomerSourceIntakeConsumerModule,
-} from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import type {
   SourceProcessingEligibilityRequest,
   SourceProcessingNotEvaluatedCause,
   SourceProcessingEligibilityResponse,
-} from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import { AntiResurrectionProtectionSchema, assessAntiResurrection } from '../../shared/domain/anti-resurrection.ts';
 import type { AntiResurrectionProtection } from '../../shared/domain/anti-resurrection.ts';

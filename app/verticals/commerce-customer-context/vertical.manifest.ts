@@ -152,7 +152,7 @@ import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-c
 import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
 import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
-import { PortalAuthIssuanceSourceApi } from './shared/apis/portal-auth-issuance-source.ts';
+import { PortalAuthIssuanceSourceApi } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { portalAuthIssuanceSourceRead } from './src/api/portal-auth-issuance-source.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { PricingPurchaseContextVerificationApi } from './shared/apis/pricing-purchase-context-verification.ts';

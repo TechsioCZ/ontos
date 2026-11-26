@@ -9,7 +9,7 @@ import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { RecordOwnerExecutionEvidencePayload } from '../../shared/owner-execution-evidence.ts';
-import { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerCoverageRequestSchema } from '@app/communications-contracts/privacy-owner-coverage';
 import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import { COMMUNICATIONS_TABLES } from '../../src/database/schema.ts';
 import { ownerExecutionEvidenceFor } from '../../src/services/owner-execution-evidence.service.ts';

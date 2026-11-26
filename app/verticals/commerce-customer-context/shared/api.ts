@@ -101,7 +101,7 @@ import { OrganizationCustomerProfileIcoMigrationApi } from './apis/organization-
 import { PaymentTermAffectedUseAssessmentApi } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
-import { PortalAuthIssuanceSourceApi } from './apis/portal-auth-issuance-source.ts';
+import { PortalAuthIssuanceSourceApi } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { PreparePurchaseProposalBasisActionApi } from './apis/prepare-purchase-proposal-basis-action.ts';
 import { PricingPurchaseContextVerificationApi } from './apis/pricing-purchase-context-verification.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';

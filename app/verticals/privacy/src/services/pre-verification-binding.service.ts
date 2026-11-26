@@ -13,7 +13,7 @@ import type {
 import type {
   PreVerificationEligibilityRequest,
   PreVerificationEligibilityResponse,
-} from '../../shared/apis/pre-verification-eligibility.ts';
+} from '@app/privacy-contracts/pre-verification-eligibility';
 import {
   evaluatePreVerificationEligibility,
   PreVerificationBindingPolicySchema,

@@ -11,8 +11,8 @@ import type { PrivacyMeasureEncoded, PrivacyOwnerExecutionOutcomeEncoded } from 
 import { Crypto, DateTime, Effect, Match, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import { CommunicationsOwnerLookupSchema } from '../apis/privacy-owner-coverage.ts';
-import type { CommunicationsOwnerLookup } from '../apis/privacy-owner-coverage.ts';
+import { CommunicationsOwnerLookupSchema } from '@app/communications-contracts/privacy-owner-coverage';
+import type { CommunicationsOwnerLookup } from '@app/communications-contracts/privacy-owner-coverage';
 import { COMMUNICATIONS_OWNER_CAPABILITY } from './inventory.ts';
 import type { OwnerBlockerAssessment, OwnerExecutionEvidenceRecord } from './outcome.ts';
 

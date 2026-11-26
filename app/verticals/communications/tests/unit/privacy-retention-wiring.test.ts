@@ -5,7 +5,7 @@ import { describe, expect, it } from 'effect-rstest';
 import {
   PrivacyOwnerCoverageRequestSchema,
   PrivacyOwnerCoverageResponseSchema,
-} from '../../shared/apis/privacy-owner-coverage.ts';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import { evaluateCommunicationsRetention } from '../../shared/privacy-owner/retention-evaluation.ts';
 import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import { ownerScope, requestRef, tenantId } from './support/privacy-owner-fixtures.ts';

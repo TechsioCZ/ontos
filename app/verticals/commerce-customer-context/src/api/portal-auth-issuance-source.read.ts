@@ -5,8 +5,8 @@ import { Effect, Option } from 'effect';
 import {
   PortalAuthIssuanceSourceRequestSchema,
   PortalAuthIssuanceSourceResponseSchema,
-} from '../../shared/apis/portal-auth-issuance-source.ts';
-import type { PortalAuthIssuanceSourceResponse } from '../../shared/apis/portal-auth-issuance-source.ts';
+} from '@app/portal-auth-contracts/portal-auth-issuance-source';
+import type { PortalAuthIssuanceSourceResponse } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { issuanceSourceAnswerOf } from '../portal-auth/communications/owner-facts.ts';
 import { CommercePortalAuthProtectedHandoff } from '../portal-auth/communications/protected-handoff.ts';
 import type { ProtectedHandoffService } from '../portal-auth/communications/protected-handoff.ts';

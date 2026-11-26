@@ -40,7 +40,7 @@ import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy
 import { seedOrganizationBusinessSourceNativeFixture } from '@app/privacy/testing/organization-business-source-native';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { SourceProcessingContextSchema } from '@app/privacy/domain/source-processing-context';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import {
   SymmyInternalExecutionPlanSchema,

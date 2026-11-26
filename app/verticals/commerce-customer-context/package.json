@@ -70,8 +70,6 @@
     "./api/order-commitment-approval-evidence/client": "./src/api/order-commitment-approval-evidence-client.ts",
     "./api/order-service-approval-evidence": "./shared/apis/order-service-approval-evidence.ts",
     "./api/order-service-approval-evidence/client": "./src/api/order-service-approval-evidence-client.ts",
-    "./api/portal-auth-issuance-source": "./shared/apis/portal-auth-issuance-source.ts",
-    "./api/portal-auth-issuance-source/client": "./src/api/portal-auth-issuance-source-client.ts",
     "./api/pricing-purchase-context-verification": "./shared/apis/pricing-purchase-context-verification.ts",
     "./api/pricing-purchase-context-verification/client": "./src/api/pricing-purchase-context-verification-client.ts",
     "./api/purchase-proposal-basis": "./shared/apis/purchase-proposal-basis.ts",

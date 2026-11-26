@@ -5,8 +5,8 @@ import { eq } from 'drizzle-orm';
 import { DateTime, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
-import type { PrivacyOwnerCoverageRequest } from '../../shared/apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerCoverageRequestSchema } from '@app/communications-contracts/privacy-owner-coverage';
+import type { PrivacyOwnerCoverageRequest } from '@app/communications-contracts/privacy-owner-coverage';
 import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import type { SuppliedPrivacyReferences } from '../../shared/privacy-owner/inventory.ts';
 import { evaluateCommunicationsOwnerMeasure, handoffRecordOf } from '../../shared/privacy-owner/outcome.ts';

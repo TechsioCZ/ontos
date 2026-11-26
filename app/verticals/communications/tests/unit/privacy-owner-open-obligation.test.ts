@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { PrivacyOwnerExecutionReceiptSchema } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+import { PrivacyOwnerExecutionReceiptSchema } from '@app/communications-contracts/privacy-owner-execution-outcome';
 import { evaluateCommunicationsOwnerMeasure, handoffRecordOf } from '../../shared/privacy-owner/outcome.ts';
 import {
   humanDispositionOwnerOf,

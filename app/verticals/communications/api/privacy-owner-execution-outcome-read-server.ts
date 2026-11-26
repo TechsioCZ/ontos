@@ -12,7 +12,7 @@ import {
   PrivacyOwnerExecutionOutcomePolicyConflictProblemSchema,
   PrivacyOwnerExecutionOutcomePolicyProblemSchema,
   PrivacyOwnerExecutionOutcomeUnavailableProblemSchema,
-} from '../shared/apis/privacy-owner-execution-outcome.ts';
+} from '@app/communications-contracts/privacy-owner-execution-outcome';
 import { privacyOwnerExecutionOutcomeRead } from '../src/api/privacy-owner-execution-outcome.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

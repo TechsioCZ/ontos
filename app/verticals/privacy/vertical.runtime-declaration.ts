@@ -44,7 +44,7 @@ import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
 import { ownerInventoryRead } from './src/api/owner-inventory.read.ts';
 import { PreVerificationBindingsApi } from './shared/apis/pre-verification-bindings.ts';
 import { preVerificationBindingsRead } from './src/api/pre-verification-bindings.read.ts';
-import { PreVerificationEligibilityApi } from './shared/apis/pre-verification-eligibility.ts';
+import { PreVerificationEligibilityApi } from '@app/privacy-contracts/pre-verification-eligibility';
 import { preVerificationEligibilityRead } from './src/api/pre-verification-eligibility.read.ts';
 import { PrivacySubjectsApi } from './shared/apis/privacy-subjects.ts';
 import { privacySubjectsRead } from './src/api/privacy-subjects.read.ts';
@@ -72,7 +72,7 @@ import { recordProcessingInterventionAction } from './src/actions/record-process
 import { recordRetentionExceptionAction } from './src/actions/record-retention-exception.action.ts';
 import { ResponsibilityAssignmentsApi } from './shared/apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './shared/apis/retention-rules.ts';
-import { SourceProcessingEligibilityApi } from './shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityApi } from '@app/privacy-contracts/source-processing-eligibility';
 import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
 import { transitionProcessingActivityAction } from './src/actions/transition-processing-activity.action.ts';
 import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';

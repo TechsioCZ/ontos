@@ -5,8 +5,8 @@ import { Effect } from 'effect';
 import {
   PreVerificationEligibilityRequestSchema,
   PreVerificationEligibilityResponseSchema,
-} from '../../shared/apis/pre-verification-eligibility.ts';
-import type { PreVerificationEligibilityRequest } from '../../shared/apis/pre-verification-eligibility.ts';
+} from '@app/privacy-contracts/pre-verification-eligibility';
+import type { PreVerificationEligibilityRequest } from '@app/privacy-contracts/pre-verification-eligibility';
 import { preVerificationBindingRepositoryFor } from '../persistence/pre-verification-binding-repository.ts';
 import {
   evaluatePreVerificationEligibilityRequest,

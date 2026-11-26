@@ -9,7 +9,7 @@ import type {
   CommunicationsOwnerLookup,
   PrivacyOwnerCoverageRequest,
   PrivacyOwnerCoverageResponse,
-} from '../../shared/apis/privacy-owner-coverage.ts';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import { assembleCommunicationsContribution } from '../../shared/privacy-owner/contribution.ts';
 import type { SuppliedRightEligibility } from '../../shared/privacy-owner/contribution.ts';
 import {

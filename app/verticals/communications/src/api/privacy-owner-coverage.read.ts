@@ -10,8 +10,8 @@ import { Effect, Option } from 'effect';
 import {
   PrivacyOwnerCoverageRequestSchema,
   PrivacyOwnerCoverageResponseSchema,
-} from '../../shared/apis/privacy-owner-coverage.ts';
-import type { PrivacyOwnerCoverageRequest } from '../../shared/apis/privacy-owner-coverage.ts';
+} from '@app/communications-contracts/privacy-owner-coverage';
+import type { PrivacyOwnerCoverageRequest } from '@app/communications-contracts/privacy-owner-coverage';
 import { privacyOwnerCoverageForScope } from '../services/privacy-owner-coverage.service.ts';
 import type { PrivacyOwnerCoverageService } from '../services/privacy-owner-coverage.service.ts';
 import { productionPrivacyOwnerInputSource } from '../services/privacy-owner-inputs.ts';

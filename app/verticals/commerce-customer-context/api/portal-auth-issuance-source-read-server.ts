@@ -12,7 +12,7 @@ import {
   PortalAuthIssuanceSourcePolicyConflictProblemSchema,
   PortalAuthIssuanceSourcePolicyProblemSchema,
   PortalAuthIssuanceSourceUnavailableProblemSchema,
-} from '../shared/apis/portal-auth-issuance-source.ts';
+} from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { portalAuthIssuanceSourceRead } from '../src/api/portal-auth-issuance-source.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

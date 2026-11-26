@@ -1,6 +1,6 @@
 import { Effect, Match, Option, Redacted } from 'effect';
 
-import type { PortalAuthIssuanceSourceResponse } from '../../../shared/apis/portal-auth-issuance-source.ts';
+import type { PortalAuthIssuanceSourceResponse } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import {
   PORTAL_AUTH_ISSUANCE_REVISION,
   PORTAL_AUTH_ISSUANCE_STATE,

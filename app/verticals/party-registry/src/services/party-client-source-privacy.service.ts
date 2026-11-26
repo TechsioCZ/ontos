@@ -4,7 +4,7 @@ import {
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import {
   OrganizationBusinessApplicabilityRequestSchema,
   OrganizationBusinessSourceOnboardLiveProofSchema,
@@ -14,7 +14,7 @@ import { executeOrganizationBusinessApplicabilityWithAuthorization } from '@app/
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { readScopedCurrentActionInvocation, requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor, ScopedCurrentActionInvocationFact } from '@app/core-runtime';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/client';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import {

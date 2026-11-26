@@ -5,8 +5,8 @@ import { Effect, Option } from 'effect';
 import {
   CommunicationOutcomeFeedRequestSchema,
   CommunicationOutcomeFeedResponseSchema,
-} from '../../shared/apis/communication-outcome-feed.ts';
-import type { CommunicationOutcomeFeedRequest } from '../../shared/apis/communication-outcome-feed.ts';
+} from '@app/communications-contracts/communication-outcome-feed';
+import type { CommunicationOutcomeFeedRequest } from '@app/communications-contracts/communication-outcome-feed';
 import { sourceOutcomeServiceForScope } from '../services/communication-outcome-feed.service.ts';
 import type { SourceOutcomeService } from '../services/communication-outcome-feed.service.ts';
 import { requireSourceCaller } from './source-outcome-caller.ts';

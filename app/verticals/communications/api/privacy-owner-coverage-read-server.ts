@@ -12,7 +12,7 @@ import {
   PrivacyOwnerCoveragePolicyConflictProblemSchema,
   PrivacyOwnerCoveragePolicyProblemSchema,
   PrivacyOwnerCoverageUnavailableProblemSchema,
-} from '../shared/apis/privacy-owner-coverage.ts';
+} from '@app/communications-contracts/privacy-owner-coverage';
 import { privacyOwnerCoverageRead } from '../src/api/privacy-owner-coverage.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

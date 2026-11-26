@@ -5,10 +5,6 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/privacy-client.ts",
-    "./api/source-processing-eligibility": "./shared/apis/source-processing-eligibility.ts",
-    "./api/source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts",
-    "./api/pre-verification-eligibility": "./shared/apis/pre-verification-eligibility.ts",
-    "./api/pre-verification-eligibility/client": "./src/api/pre-verification-eligibility-client.ts",
     "./api/bind-pre-verification-subject-action": "./shared/apis/bind-pre-verification-subject-action.ts",
     "./api/bind-pre-verification-subject-action/client": "./src/api/bind-pre-verification-subject-action-client.ts",
     "./actions/bind-pre-verification-subject": "./shared/actions/bind-pre-verification-subject.ts",

@@ -292,7 +292,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
         import('@app/customer-payment-term-contracts/payment-term-affected-use-assessment/client'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
-      'portal-auth-issuance-source': () => import('./src/api/portal-auth-issuance-source-client.ts'),
+      'portal-auth-issuance-source': () => import('@app/portal-auth-contracts/portal-auth-issuance-source/client'),
       'pricing-purchase-context-verification': () =>
         import('./src/api/pricing-purchase-context-verification-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),

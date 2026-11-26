@@ -8,7 +8,7 @@ import { OWNER_ASK_CONSUMERS, OWNER_ASKS } from './src/handoff/requirement-keys.
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { BuiltInTemplateDefaultsApi } from './shared/apis/built-in-template-defaults.ts';
 import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
-import { CommunicationOutcomeFeedApi } from './shared/apis/communication-outcome-feed.ts';
+import { CommunicationOutcomeFeedApi } from '@app/communications-contracts/communication-outcome-feed';
 import { communicationOutcomeFeedRead } from './src/api/communication-outcome-feed.read.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { ingestProviderObservationAction } from './src/actions/ingest-provider-observation.action.ts';
@@ -20,9 +20,9 @@ import { messageHistoryDetailRead } from './src/api/message-history-detail.read.
 import { MessageHistoryListApi } from './shared/apis/message-history-list.ts';
 import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
-import { PrivacyOwnerCoverageApi } from './shared/apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerCoverageApi } from '@app/communications-contracts/privacy-owner-coverage';
 import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
-import { PrivacyOwnerExecutionOutcomeApi } from './shared/apis/privacy-owner-execution-outcome.ts';
+import { PrivacyOwnerExecutionOutcomeApi } from '@app/communications-contracts/privacy-owner-execution-outcome';
 import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execution-outcome.read.ts';
 import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';

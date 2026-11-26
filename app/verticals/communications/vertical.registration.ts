@@ -43,12 +43,13 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'built-in-template-defaults': () => import('./src/api/built-in-template-defaults-client.ts'),
-      'communication-outcome-feed': () => import('./src/api/communication-outcome-feed-client.ts'),
+      'communication-outcome-feed': () => import('@app/communications-contracts/communication-outcome-feed/client'),
       'language-policy': () => import('./src/api/language-policy-client.ts'),
       'message-history-detail': () => import('./src/api/message-history-detail-client.ts'),
       'message-history-list': () => import('./src/api/message-history-list-client.ts'),
-      'privacy-owner-coverage': () => import('./src/api/privacy-owner-coverage-client.ts'),
-      'privacy-owner-execution-outcome': () => import('./src/api/privacy-owner-execution-outcome-client.ts'),
+      'privacy-owner-coverage': () => import('@app/communications-contracts/privacy-owner-coverage/client'),
+      'privacy-owner-execution-outcome': () =>
+        import('@app/communications-contracts/privacy-owner-execution-outcome/client'),
       'template-revision-list': () => import('./src/api/template-revision-list-client.ts'),
       // </generated-module-registration-apis>
     },

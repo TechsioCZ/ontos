@@ -5,9 +5,9 @@ import { and, eq } from 'drizzle-orm';
 import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { SourceProcessingEligibilityResponseSchema } from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import {
   PrivacyApplicabilityPolicySchema,

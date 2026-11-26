@@ -7,7 +7,7 @@ import { describe, expect, it } from 'effect-rstest';
 import {
   CommunicationOutcomeFeedRequestSchema,
   CommunicationOutcomeFeedResponseSchema,
-} from '../../shared/apis/communication-outcome-feed.ts';
+} from '@app/communications-contracts/communication-outcome-feed';
 import {
   communicationOutcomeFeedRead,
   readCommunicationOutcomeFeed,

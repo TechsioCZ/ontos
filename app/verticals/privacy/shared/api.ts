@@ -36,7 +36,7 @@ import { OrganizationIcoApplicabilityApi } from './apis/organization-ico-applica
 import { OrganizationProfileIcoApplicabilityApi } from './apis/organization-profile-ico-applicability.ts';
 import { OwnerInventoryApi } from './apis/owner-inventory.ts';
 import { PreVerificationBindingsApi } from './apis/pre-verification-bindings.ts';
-import { PreVerificationEligibilityApi } from './apis/pre-verification-eligibility.ts';
+import { PreVerificationEligibilityApi } from '@app/privacy-contracts/pre-verification-eligibility';
 import { PrivacySubjectsApi } from './apis/privacy-subjects.ts';
 import { ProcessingActivitiesApi } from './apis/processing-activities.ts';
 import { ProcessingEligibilityApi } from './apis/processing-eligibility.ts';
@@ -61,7 +61,7 @@ import { RecordProcessingInterventionActionApi } from './apis/record-processing-
 import { RecordRetentionExceptionActionApi } from './apis/record-retention-exception-action.ts';
 import { ResponsibilityAssignmentsApi } from './apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './apis/retention-rules.ts';
-import { SourceProcessingEligibilityApi } from './apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityApi } from '@app/privacy-contracts/source-processing-eligibility';
 import { TransitionProcessingActivityActionApi } from './apis/transition-processing-activity-action.ts';
 import { UpdateDsrCaseActionApi } from './apis/update-dsr-case-action.ts';
 import { UpsertDsrOwnerTaskActionApi } from './apis/upsert-dsr-owner-task-action.ts';
@@ -345,15 +345,6 @@ export const privacyApiContract = {
   readinessPath: '/privacy-api/privacy/readiness',
 } as const;
 
-export {
-  SourceProcessingIdentitySchema,
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from './apis/source-processing-eligibility.ts';
-export type {
-  SourceProcessingEligibilityRequest,
-  SourceProcessingEligibilityResponse,
-} from './apis/source-processing-eligibility.ts';
 export { SourceProcessingContextSchema } from './domain/source-processing-context.ts';
 export type { SourceProcessingContext } from './domain/source-processing-context.ts';
 

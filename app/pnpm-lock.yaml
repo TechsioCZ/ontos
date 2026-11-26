@@ -319,6 +319,9 @@ importers:
       '@app/pricing-contracts':
         specifier: workspace:*
         version: link:packages/pricing-contracts
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:packages/shared-contracts
@@ -2219,6 +2222,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:../privacy
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:../../packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -3227,6 +3233,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:../privacy
+      '@app/privacy-contracts':
+        specifier: workspace:*
+        version: link:../../packages/privacy-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

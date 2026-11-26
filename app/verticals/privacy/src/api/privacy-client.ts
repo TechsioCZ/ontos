@@ -252,12 +252,6 @@ export const getPrivacyReadiness = ({
   );
 
 export {
-  executeSourceProcessingEligibility,
-  executeSourceProcessingEligibilityWithAuthorization,
-} from './source-processing-eligibility-client.ts';
-export type { SourceProcessingEligibilityClientOptions } from './source-processing-eligibility-client.ts';
-
-export {
   executeMeasureExecutionEligibility,
   executeMeasureExecutionEligibilityWithAuthorization,
 } from './measure-execution-eligibility-client.ts';

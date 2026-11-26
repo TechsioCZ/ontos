@@ -7,7 +7,7 @@ import { describe, expect, it } from 'effect-rstest';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-} from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import {
   runSourceProcessingEligibility,

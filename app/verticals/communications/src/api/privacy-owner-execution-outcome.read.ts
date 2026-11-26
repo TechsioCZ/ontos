@@ -5,8 +5,8 @@ import { Effect, Option } from 'effect';
 import {
   PrivacyOwnerExecutionOutcomeRequestSchema,
   PrivacyOwnerExecutionOutcomeResponseSchema,
-} from '../../shared/apis/privacy-owner-execution-outcome.ts';
-import type { PrivacyOwnerExecutionOutcomeRequest } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+} from '@app/communications-contracts/privacy-owner-execution-outcome';
+import type { PrivacyOwnerExecutionOutcomeRequest } from '@app/communications-contracts/privacy-owner-execution-outcome';
 import {
   OwnerExecutionReceipt,
   privacyOwnerExecutionReceiptForScope,
