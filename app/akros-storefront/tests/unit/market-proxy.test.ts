@@ -181,7 +181,8 @@ describe("market routing proxy", () => {
     const inactive = await run("/pl");
     expect(rewrite(inactive)).toBe(`${origin}/trh-nedostupny`);
     expect(forwarded(inactive, "x-akros-market-locale")).toBe("pl");
-    expect(network.requests).toHaveLength(2);
+    // The market directory is shared across requests.
+    expect(network.requests).toHaveLength(1);
   });
 
   it("leaves an OntOS outage to the page render instead of reporting an unknown market", async () => {

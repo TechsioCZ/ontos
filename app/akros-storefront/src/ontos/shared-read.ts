@@ -13,6 +13,14 @@ interface Entry {
   refreshing: boolean;
 }
 const entries = new Map<string, Entry>();
+// Full product records are large and the heap is about 281 MB: keep the newest entries only.
+const MAX_ENTRIES = 200;
+// Older stale values are not served; they reload with a blocking read.
+const MAX_STALE_MS = 10 * 60_000;
+const put = (key: string, entry: Entry) => {
+  entries.set(key, entry);
+  if (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
+};
 
 /** Tests: forget every shared read. */
 export const clearSharedReads = () => entries.clear();
@@ -69,12 +77,12 @@ function read<A>(
   const held = entries.get(key);
   if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
     return held.value as Promise<A>;
-  if (held !== undefined && stale) {
+  if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
     if (!held.refreshing) {
       held.refreshing = true;
       detached(load).then(
         (value) =>
-          entries.set(key, {
+          put(key, {
             at: Date.now(),
             value: Promise.resolve(value),
             done: true,
@@ -89,7 +97,7 @@ function read<A>(
   }
   const value = detached(load);
   const entry: Entry = { at: Date.now(), value, done: false, refreshing: false };
-  entries.set(key, entry);
+  put(key, entry);
   value.then(
     () => {
       entry.done = true;

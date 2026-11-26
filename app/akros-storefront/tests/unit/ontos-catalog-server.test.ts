@@ -323,8 +323,9 @@ describe("OntOS catalog server reads", () => {
     },
   ];
   it.each(pricedViews)(
-    "shows an admin price and stock edit on the very next independent $name view",
+    "shows an admin price and stock edit on a view after the 15 s catalogue cache refreshed ($name)",
     async ({ read }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
       expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
       answer = () => ({
         revision: 6,
@@ -335,15 +336,22 @@ describe("OntOS catalog server reads", () => {
         products: [{ ...product("p1"), grossPriceMinor: 242, stockOnHand: 2 }],
         categories: tree,
       });
-      expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 });
+      expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
+      vi.advanceTimersByTime(16_000);
+      await vi.waitFor(async () =>
+        expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 }),
+      );
       await network.idle();
     },
   );
   it.each(pricedViews)(
-    "rejects $name prices immediately when the owner becomes unavailable",
+    "rejects $name prices once the cached value is over 10 minutes old and the owner is unavailable",
     async ({ read }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
       await read();
       ownerUnavailable = true;
+      await expect(read()).resolves.toMatchObject({ priceMinor: 121 });
+      vi.advanceTimersByTime(11 * 60_000);
       await expect(read()).rejects.toMatchObject({ code: "owner_unavailable" });
     },
   );
@@ -385,14 +393,14 @@ describe("OntOS catalog server reads", () => {
     await network.idle();
     expect(calls).toHaveLength(2);
   });
-  it("does not retain equal product queries across independent requests", async () => {
+  it("shares equal product queries across independent requests; fresh reads bypass", async () => {
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full"));
     await network.idle();
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
     await inRequest(() => server.readProducts({ slug: "same-query", pageSize: 1 }, "full", true));
     await network.idle();
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
   });
   it("joins layout and page tree reads with omitted, undefined and empty arguments", async () => {
     await renderConcurrentCatalog();
@@ -437,7 +445,7 @@ describe("OntOS catalog server reads", () => {
     );
     await network.idle();
     const queries = calls.map(catalogOf);
-    expect(queries.filter((call) => call.categorySlug === "srouby")).toHaveLength(2);
+    expect(queries.filter((call) => call.categorySlug === "srouby")).toHaveLength(1);
     expect(model.getCategoryBySlug("srouby")?.heading).toBe("Nadpis srouby");
     expect(listing.products.map((p) => p.id)).toEqual(["p1"]);
     // Another page or a filter is its own product read, without the tree.
@@ -459,12 +467,12 @@ describe("OntOS catalog server reads", () => {
         .map(({ page, sort, includeCategories }) => ({ page, sort, includeCategories })),
     ).toEqual([
       { page: 1, sort: "name", includeCategories: false },
-      { page: 1, sort: "name", includeCategories: false },
       { page: 2, sort: "name", includeCategories: false },
       { page: undefined, sort: "price-asc", includeCategories: false },
     ]);
   });
-  it("reads category content again on the next request without retaining an old snapshot", async () => {
+  it("reads category content again once the 15 s catalogue cache refreshed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const first = await inRequest(() => server.getCatalog("srouby"));
     expect(first.getCategoryBySlug("srouby")?.longDescription).toBe("Velmi dlouhý popis kategorie");
     answer = () => ({
@@ -474,8 +482,13 @@ describe("OntOS catalog server reads", () => {
         longDescription: "Fresh source content",
       })),
     });
-    const next = await inRequest(() => server.getCatalog("srouby"));
-    expect(next.getCategoryBySlug("srouby")?.longDescription).toBe("Fresh source content");
+    vi.advanceTimersByTime(16_000);
+    await vi.waitFor(async () =>
+      expect(
+        (await inRequest(() => server.getCatalog("srouby"))).getCategoryBySlug("srouby")
+          ?.longDescription,
+      ).toBe("Fresh source content"),
+    );
     const listing = await inRequest(() =>
       server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 }),
     );

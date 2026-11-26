@@ -314,7 +314,7 @@ export const createMarketReadOperation = (options: OperationOptions = {}) => {
         "market:directory",
         MARKET_TTL_MS,
         (detached) => loadMarketDirectory({ operation: detached }),
-        { caller: operation },
+        { stale: true, caller: operation },
       ));
     },
     offer: (marketId: string): Promise<MarketOffer> => {
@@ -325,7 +325,7 @@ export const createMarketReadOperation = (options: OperationOptions = {}) => {
         `market:offer:${marketId}`,
         MARKET_TTL_MS,
         (detached) => loadMarketOffer(marketId, { operation: detached }),
-        { caller: operation },
+        { stale: true, caller: operation },
       );
       offers.set(marketId, offer);
       return offer;
