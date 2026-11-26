@@ -191,6 +191,7 @@ jobs:
       # build-app.sh keeps a unit whose build digest is unchanged from UNIT_CACHE_DIR (default app/.zerops/unit-cache,
       # ignored by Git); a kept unit keeps the source revision it was built from, an ancestor of this commit.
       - name: Restore the stable unit builds
+        id: stable-units
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: app/.zerops/unit-cache
@@ -216,6 +217,7 @@ jobs:
           TAG: ${{ needs.pin.outputs.tag }}
         run: node ops/zerops-stable/deploy.mjs build --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/release"
       - name: Save the stable unit builds
+        if: steps.stable-units.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: app/.zerops/unit-cache
