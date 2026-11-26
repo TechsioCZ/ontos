@@ -11,6 +11,7 @@ import {
 import type { OrganizationIcoFactsResponse } from '@app/party-registry/apis/organization-ico-facts';
 import { executeOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/organization-ico-facts/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { and, eq } from 'drizzle-orm';
 import { Config, Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
@@ -132,6 +133,27 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
     | 'privacy.core.requirement.organization-profile-ico-party-facts'
     | 'privacy.core.requirement.record-organization-profile-ico-party-facts',
 ) {
+  let subject: GatewayDelegationSubject;
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    subject = {
+      _tag: 'NativeRouteRead',
+      operationRequirementKey,
+      requestHash: computeCanonicalValueHash({
+        fieldContractVersion: OrganizationIcoFieldContractVersion,
+        partyRef: request.partyRef,
+      }),
+      scope,
+    };
+  } else if (scope.authMethod === 'system') {
+    subject = {
+      _tag: 'RegisteredAssertion',
+      declarationKey: 'party.registry.organization-ico-facts.read',
+      operationRequirementKey,
+      scope,
+    };
+  } else {
+    subject = { _tag: 'Assertion', scope };
+  }
   // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   const issued = yield* acquireDelegatedGatewayContext(
     {
@@ -139,25 +161,7 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
       callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
-      subject:
-        readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined
-          ? {
-              _tag: 'NativeRouteRead',
-              scope,
-              operationRequirementKey,
-              requestHash: computeCanonicalValueHash({
-                fieldContractVersion: OrganizationIcoFieldContractVersion,
-                partyRef: request.partyRef,
-              }),
-            }
-          : scope.authMethod === 'system'
-          ? {
-              _tag: 'RegisteredAssertion',
-              declarationKey: 'party.registry.organization-ico-facts.read',
-              operationRequirementKey,
-              scope,
-            }
-          : { _tag: 'Assertion', scope },
+      subject,
     },
     crypto,
   ).pipe(privacyEvidenceCall.organizationIcoOwnerFacts, Effect.mapError(unavailable));

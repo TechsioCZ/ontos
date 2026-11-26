@@ -129,6 +129,15 @@ interface CatalogRow {
   readonly table_name: string;
 }
 
+const ingressTableIsUnsafe = (table: CatalogRow, adminUser: string) =>
+  table.owner_name !== adminUser ||
+  table.rls_enabled ||
+  table.rls_forced ||
+  !table.can_select ||
+  !table.can_insert ||
+  table.can_update ||
+  !table.can_delete;
+
 interface ForeignKeyRow {
   readonly constraint_name: string;
 }
@@ -293,15 +302,7 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
     }
     const unsafeTables = catalog.rows.filter((table) => {
       if (INGRESS_TABLES.has(table.table_name)) {
-        return (
-          table.owner_name !== connections.admin.user ||
-          table.rls_enabled ||
-          table.rls_forced ||
-          !table.can_select ||
-          !table.can_insert ||
-          table.can_update ||
-          !table.can_delete
-        );
+        return ingressTableIsUnsafe(table, connections.admin.user);
       }
       const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
       if (table.table_name === 'demo_source_processing_policies') {

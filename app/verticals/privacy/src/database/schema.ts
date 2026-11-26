@@ -1451,12 +1451,12 @@ export const PRIVACY_TABLES = [
 export const PRIVACY_GOVERNED_TABLES = PRIVACY_TABLES.filter((table) => table !== gatewayAssertionRedemptions);
 
 const privacyDatabaseSchema = {
-  demoSourceProcessingPolicies,
   antiResurrectionProtections,
   applicabilityDecisions,
   applicabilityPolicies,
   consentDecisions,
   consentScopeBindings,
+  demoSourceProcessingPolicies,
   dispositionDecisions,
   dsrCases,
   dsrDeadlines,

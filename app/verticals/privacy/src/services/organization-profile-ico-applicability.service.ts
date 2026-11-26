@@ -6,6 +6,7 @@ import { OperationContextUnavailable, ReadHandlerUnavailable, requireModuleOpera
 import { CustomerProfileOrganizationIcoFactsResponseSchema } from '@app/commerce-customer-context/api/customer-profile-organization-ico-facts';
 import { executeCustomerProfileOrganizationIcoFactsWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-organization-ico-facts/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { OrganizationIcoFactsResponseSchema } from '@app/party-registry/apis/organization-ico-facts';
 import { Config, Context, Crypto, Effect, Match, Option, Schema } from 'effect';
@@ -185,11 +186,29 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
   OrganizationProfileIcoOwnerEvidence,
   ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError
 > {
-  yield* (
+  const operationRequirementKey =
     operation === 'RECORD'
-      ? requireModuleOperation('privacy.core.requirement.record-organization-profile-ico-owner-facts')
-      : requireModuleOperation('privacy.core.requirement.organization-profile-ico-owner-facts')
-  ).pipe(Effect.mapError(unavailable));
+      ? 'privacy.core.requirement.record-organization-profile-ico-owner-facts'
+      : 'privacy.core.requirement.organization-profile-ico-owner-facts';
+  yield* requireModuleOperation(operationRequirementKey).pipe(Effect.mapError(unavailable));
+  let subject: GatewayDelegationSubject;
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    subject = {
+      _tag: 'NativeRouteRead',
+      operationRequirementKey,
+      requestHash: computeCanonicalValueHash({ profileRef: request.profileRef }),
+      scope,
+    };
+  } else if (scope.authMethod === 'system') {
+    subject = {
+      _tag: 'RegisteredAssertion',
+      declarationKey: 'commerce.customer-context.customer-profile-organization-ico-facts.read',
+      operationRequirementKey,
+      scope,
+    };
+  } else {
+    subject = { _tag: 'Assertion', scope };
+  }
   // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   const issued = yield* acquireDelegatedGatewayContext(
     {
@@ -197,27 +216,7 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
       callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
-      subject:
-        readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined
-          ? {
-              _tag: 'NativeRouteRead',
-              scope,
-              operationRequirementKey: operation === 'RECORD'
-                ? 'privacy.core.requirement.record-organization-profile-ico-owner-facts'
-                : 'privacy.core.requirement.organization-profile-ico-owner-facts',
-              requestHash: computeCanonicalValueHash({ profileRef: request.profileRef }),
-            }
-          : scope.authMethod === 'system'
-          ? {
-              _tag: 'RegisteredAssertion',
-              declarationKey: 'commerce.customer-context.customer-profile-organization-ico-facts.read',
-              operationRequirementKey:
-                operation === 'RECORD'
-                  ? 'privacy.core.requirement.record-organization-profile-ico-owner-facts'
-                  : 'privacy.core.requirement.organization-profile-ico-owner-facts',
-              scope,
-            }
-          : { _tag: 'Assertion', scope },
+      subject,
     },
     crypto,
   ).pipe(privacyEvidenceCall.organizationProfileIcoOwnerFacts, Effect.mapError(unavailable));

@@ -58,9 +58,9 @@ export const PrivacySubjectPartyCredentialsLive = Layer.effect(
             }
             subject = {
               _tag: 'NativeRouteRead',
-              scope,
               operationRequirementKey,
               requestHash: recoveryRequestHash,
+              scope,
             };
           } else if (
             scope.authMethod === 'system' ||

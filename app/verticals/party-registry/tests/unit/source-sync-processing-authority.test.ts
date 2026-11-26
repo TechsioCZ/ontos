@@ -59,7 +59,7 @@ const now = DateTime.makeUnsafe('2026-11-23T12:00:01.000Z');
 const select = (response: typeof SourceProcessingEligibilityResponseSchema.Type = result) =>
   sourceSyncPartyProcessingAuthority({ scope, request, result: response, now });
 type DemoEvidence = Extract<
-  Extract<typeof SourceProcessingEligibilityResponseSchema.Type, { readonly outcome: 'ALLOWED' }>['evidence'],
+  Extract<typeof SourceProcessingEligibilityResponseSchema.Encoded, { readonly outcome: 'ALLOWED' }>['evidence'],
   { readonly _tag: 'SOURCE_SYNC_PROCESSING_POLICY' }
 >;
 
@@ -94,7 +94,9 @@ it('refuses stale, mismatched or denied source-sync authority rather than using 
       reason: 'AUTHORITY_NOT_CURRENT',
     }),
   ];
-  for (const decision of decisions) {expect(select(decision)).toBe('DENIED');}
+  for (const decision of decisions) {
+    expect(select(decision)).toBe('DENIED');
+  }
   expect(
     sourceSyncPartyProcessingAuthority({
       scope: { ...scope, legalEntityId: '10000000-0000-4000-8000-000000000002' },
@@ -108,7 +110,9 @@ it('refuses stale, mismatched or denied source-sync authority rather than using 
 it.effect('keeps the selected source-sync authority distinct through source enrollment authorization', () =>
   Effect.gen(function* sourceAuthorization() {
     const decision = select();
-    if (decision === 'DENIED') {return yield* Effect.die('Native source-sync authority fixture was rejected');}
+    if (decision === 'DENIED') {
+      return yield* Effect.die('Native source-sync authority fixture was rejected');
+    }
     const authorization = yield* authorizePartyClientSourceReferenceWithProjection(
       {
         occurrenceId: source.occurrenceId,
