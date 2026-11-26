@@ -340,31 +340,80 @@ it.effect('uses the genuine approved owner/build revision instead of the histori
   }),
 );
 
+for (const prepared of [false, true]) {
+  it.effect(`preserves directly bound callable services with preparation ${prepared}`, () =>
+    Effect.gen(function* directlyBoundCallableServices() {
+      let calls = 0;
+      const received: (() => number)[] = [];
+      const stub = () => {
+        calls += 1;
+        return 42;
+      };
+      const factory = (): Effect.Effect<() => number> => Effect.succeed(() => received.length);
+      const handler = (
+        _payload: typeof lifecycleAction.descriptor.payloadSchema.Type,
+        context: { readonly services: () => number },
+      ) =>
+        Effect.sync(() => {
+          received.push(context.services);
+          return { total: 42 };
+        });
+      const registration = prepared
+        ? defineAction(lifecycleAction.descriptor, handler, factory, {
+            prepareServices: () => Effect.succeed(factory),
+          })
+        : defineAction(lifecycleAction.descriptor, handler, factory);
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        ownerRegistration: fixtureOwner(registration),
+        services: [bindActionTestServices(registration, stub)],
+        tenantPermission: 'allowed',
+      });
+      expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 42 });
+      expect(received).toEqual([stub]);
+      expect(calls).toBe(0);
+      expect(harness.snapshot().committed).toHaveLength(1);
+    }),
+  );
+}
+
 it.effect('transforms the genuine prepared services rather than replacing preparation or its factory', () =>
   Effect.gen(function* transformedPreparedValue() {
-    let factories = 0;
+    const phases: string[] = [];
+    const acquire = (amount: number) =>
+      Effect.sync(() => {
+        phases.push('factory');
+        return { total: amount + 1 };
+      });
     const registration = defineAction(
       lifecycleAction.descriptor,
-      (_payload, context) => Effect.succeed({ total: context.services.total }),
+      (_payload, context) =>
+        Effect.sync(() => {
+          phases.push('handler');
+          return { total: context.services.total };
+        }),
       (): Effect.Effect<{ readonly total: number }> => Effect.die('Ordinary acquisition is not preparation'),
       {
         prepareServices: (payload) =>
-          Effect.succeed(() =>
-            Effect.sync(() => {
-              factories += 1;
-              return { total: payload.amount + 1 };
-            }),
-          ),
+          Effect.sync(() => {
+            phases.push('preparation');
+            return () => acquire(payload.amount);
+          }),
       },
     );
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
       ownerRegistration: fixtureOwner(registration),
-      services: [bindActionTestServiceTransform(registration, (prepared) => ({ total: prepared.total + 10 }))],
+      services: [
+        bindActionTestServiceTransform(registration, (prepared) => {
+          phases.push('transform');
+          return { total: prepared.total + 10 };
+        }),
+      ],
       tenantPermission: 'allowed',
     });
     expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 13 });
-    expect(factories).toBe(1);
+    expect(phases).toEqual(['preparation', 'factory', 'transform', 'handler']);
     expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );

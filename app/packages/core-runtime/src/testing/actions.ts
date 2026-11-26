@@ -182,12 +182,17 @@ class ActionTestServiceBindingValue implements ActionTestServiceBinding {
 }
 
 const isActionTestServiceBindingValue = Schema.is(Schema.instanceOf(ActionTestServiceBindingValue));
+
 type ActionTestServiceTransform = <Services>(services: Services) => Services;
-const isActionServiceTransform = Schema.is(
-  Schema.declare<ActionTestServiceTransform>((value): value is ActionTestServiceTransform =>
-    Predicate.isFunction(value),
-  ),
+const isActionTestServiceTransformValue = Schema.is(
+  Schema.TaggedStruct('ActionTestServiceTransform', {
+    transform: Schema.declare<ActionTestServiceTransform>((value): value is ActionTestServiceTransform =>
+      Predicate.isFunction(value),
+    ),
+  }),
 );
+const actionTestServicesValue = Schema.TaggedStruct('ActionTestServices', { services: Schema.Unknown });
+const isActionTestServicesValue = Schema.is(actionTestServicesValue);
 
 export const bindActionTestServices = <
   Payload extends Schema.ConstraintDecoder<unknown>,
@@ -200,7 +205,13 @@ export const bindActionTestServices = <
 >(
   registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
   services: NoInfer<Services>,
-): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
+): ActionTestServiceBinding =>
+  Object.freeze(
+    new ActionTestServiceBindingValue({
+      registration,
+      services: Object.freeze(actionTestServicesValue.make({ services })),
+    }),
+  );
 
 export const bindActionTestServiceTransform = <
   Payload extends Schema.ConstraintDecoder<unknown>,
@@ -213,7 +224,13 @@ export const bindActionTestServiceTransform = <
 >(
   registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
   services: (prepared: NoInfer<Services>) => NoInfer<Services>,
-): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
+): ActionTestServiceBinding =>
+  Object.freeze(
+    new ActionTestServiceBindingValue({
+      registration,
+      services: Object.freeze({ _tag: 'ActionTestServiceTransform', transform: services }),
+    }),
+  );
 
 export interface ActionTestHarnessOptions extends Pick<
   ActionRuntimeOptions,
@@ -732,10 +749,11 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         return getActionServiceFactory(registration);
       }
       const binding = bindings.get(registration);
-      if (isActionServiceTransform(binding)) {
-        return flow(getActionServiceFactory(registration), Effect.map(binding));
+      if (isActionTestServiceTransformValue(binding)) {
+        return flow(getActionServiceFactory(registration), Effect.map(binding.transform));
       }
-      return () => Schema.decodeUnknownEffect(Schema.Any)(binding).pipe(Effect.orDie);
+      const services = isActionTestServicesValue(binding) ? binding.services : undefined;
+      return () => Schema.decodeUnknownEffect(Schema.Any)(services).pipe(Effect.orDie);
     };
     const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
     const mandateOptions: Pick<ActionRuntimeOptions, 'mandateDispatch'> =
@@ -776,8 +794,8 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
                 return prepared;
               }
               const binding = bindings.get(registration);
-              const substituted = isActionServiceTransform(binding)
-                ? flow(prepared, Effect.map(binding))
+              const substituted = isActionTestServiceTransformValue(binding)
+                ? flow(prepared, Effect.map(binding.transform))
                 : resolveServiceFactory(registration);
               return Object.assign(substituted, { [originalActionPreparationFactory]: prepared });
             }),
