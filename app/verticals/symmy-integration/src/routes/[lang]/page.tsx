@@ -19,7 +19,7 @@ const SymmyIntegrationHome = () => {
             className="symmyintegration:rounded-full symmyintegration:border symmyintegration:border-stone-900/15 symmyintegration:bg-white symmyintegration:px-4 symmyintegration:py-2 symmyintegration:text-sm symmyintegration:font-bold symmyintegration:text-stone-950 symmyintegration:no-underline"
             key={code}
             params={{ lang: code }}
-            to="/$lang/"
+            to="/$lang"
           >
             {t(`symmy-integration.language.${code}`)}
           </Link>
