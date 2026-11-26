@@ -478,6 +478,10 @@ export function projectProducts(body: Raw): ProductPage {
         : ownOriginal !== undefined && ownOriginal > productGross
           ? ownOriginal
           : undefined;
+    const dimensions = [p.lengthMm, p.widthMm, p.heightMm].flatMap((value) => {
+      const mm = number(value);
+      return mm !== undefined && mm > 0 ? [mm.toLocaleString("cs-CZ")] : [];
+    });
     const brandName = filled(p.brand);
     const seoTitle = filled(p.seoTitle);
     const seoDescription = filled(p.seoDescription);
@@ -492,6 +496,7 @@ export function projectProducts(body: Raw): ProductPage {
       currency: money.currency,
       unit: productUnit,
       ...(netWeight === undefined ? {} : { netWeight }),
+      ...(dimensions.length ? { dimensionsText: `${dimensions.join(" × ")} mm` } : {}),
       vatRate: number(p.vatRate),
       priceMinor: productGross,
       ...(productOriginal === undefined ? {} : { originalPriceMinor: productOriginal }),

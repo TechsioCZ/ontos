@@ -201,6 +201,7 @@ export const en: Dictionary = {
   },
   productPage: {
     weight: "Weight",
+    dimensions: "Dimensions",
     manufacturer: "Manufacturer",
     documents: "Documents to download",
     related: "Related products",

@@ -200,6 +200,7 @@ export const sk: Dictionary = {
   },
   productPage: {
     weight: "Hmotnosť",
+    dimensions: "Rozmery",
     manufacturer: "Výrobca",
     documents: "Dokumenty na stiahnutie",
     related: "Súvisiace produkty",

@@ -312,6 +312,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   <dd>{productWeight}</dd>
                 </div>
               )}
+              {product.dimensionsText && (
+                <div>
+                  <dt>{cs.productPage.dimensions}</dt>
+                  <dd>{product.dimensionsText}</dd>
+                </div>
+              )}
               <div>
                 <dt>{cs.product.measurementUnit}</dt>
                 <dd>{purchaseItem.unit}</dd>

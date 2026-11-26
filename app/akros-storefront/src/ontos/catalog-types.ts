@@ -130,6 +130,8 @@ export interface CatalogProduct {
   quantityStep?: number;
   /** kg per sales unit of a product without variants (source feed index); absent = unknown. */
   netWeight?: number;
+  /** Staff-entered length × width × height in mm (only the filled ones), e.g. "120 × 80 mm". */
+  dimensionsText?: string;
   stockCount: number;
   /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */
   availabilityUnknown?: boolean;

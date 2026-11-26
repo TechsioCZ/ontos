@@ -198,6 +198,7 @@ export const cs = {
   },
   productPage: {
     weight: "Hmotnost",
+    dimensions: "Rozměry",
     manufacturer: "Výrobce",
     documents: "Dokumenty ke stažení",
     related: "Související produkty",
