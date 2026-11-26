@@ -1,5 +1,11 @@
-import { Effect, Option, Result, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { Reactivity } from 'effect/reactivity';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
+import {
+  scriptedPgClientLayer,
+  testSqlConnection,
+} from '../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import {
   planAdditiveCompanyInternalWorkloads,
@@ -40,6 +46,7 @@ import {
   symmyDemoCompanyBindingNeedsCreate,
   symmyDemoExternalReceiverBindingsToRevoke,
   symmyDemoCustomerWorkloadRequirements,
+  readSymmyDemoCustomerEnvironment,
 } from './symmy-demo-customer-authority.mts';
 
 const partyReaderWorkload = 'party.registry.source-read';
@@ -527,4 +534,64 @@ it.effect(
         ).toBe(true);
       }
     }),
+);
+
+/** The previous release's database: it lacks every column this release's migrations add, which the host runs later. */
+const previousReleaseDatabase = (statements: string[]) => {
+  const writers = new Map<unknown, string>([
+    ['party.registry.source-write', identities.partyWriterId],
+    ['commerce.customer-context.source-write', identities.commerceWriterId],
+    [partyReaderWorkload, identities.partyReaderId],
+  ]);
+  return testSqlConnection((statement, params) => {
+    statements.push(statement);
+    if (statement.includes('integration_kind')) {
+      return Effect.fail(new SqlError({ reason: new UnknownError({ cause: { code: '42703' } }) }));
+    }
+    if (statement.includes('symmy_integration.job_routes')) {
+      return Effect.succeed([{ principalId: identities.integrationPrincipalId }]);
+    }
+    if (statement.includes('core.access_workload_bindings b')) {
+      const requested = params.find((param) => writers.has(param));
+      return Effect.succeed([
+        {
+          bindingId: identities.privacyReceiverId,
+          kind: 'system',
+          legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY,
+          platformRole: null,
+          principalId: writers.get(requested) ?? foreignCompany,
+          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+          workloadKey: requested,
+        },
+      ]);
+    }
+    if (statement.includes('inner join "core"."tenants"')) {
+      return Effect.succeed([{ kind: 'system', principalStatus: 'active', tenantStatus: 'active' }]);
+    }
+    return Effect.succeed([]);
+  });
+};
+
+it.effect('discovers the AKROS customer writers before migrations by reading the previous schema only', () =>
+  Effect.gen(function* test() {
+    const statements: string[] = [];
+    const discovered = yield* readSymmyDemoCustomerEnvironment.pipe(
+      Effect.provide(
+        scriptedPgClientLayer(Effect.succeed(previousReleaseDatabase(statements))).pipe(
+          Layer.provide(Reactivity.layer),
+        ),
+      ),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' }),
+      ),
+    );
+    expect(discovered.identities).toEqual({
+      commerceWriterId: identities.commerceWriterId,
+      integrationPrincipalId: identities.integrationPrincipalId,
+      partyReaderId: identities.partyReaderId,
+      partyWriterId: identities.partyWriterId,
+    });
+    expect(statements.filter((statement) => !/^\s*select\b/iu.test(statement))).toEqual([]);
+  }),
 );

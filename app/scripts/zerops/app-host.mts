@@ -51,7 +51,7 @@ import {
   readSymmyDemoCustomerEnvironment,
   SymmyDemoCustomerAuthorityError,
   isSafeSymmyDemoEnrollmentReason,
-  SymmyDemoCustomerAuthorityLive,
+  SymmyDemoCustomerDiscoveryLive,
 } from '../demo/symmy-demo-customer-authority.mts';
 import {
   earliestExpiryOf,
@@ -2627,7 +2627,7 @@ export const stopSignal = Effect.callback<string>((resume) => {
 if (import.meta.main) {
   // Supply discovery lazily: the host runs it only with the demo fixtures and keeps its database scope private.
   const program = readSymmyDemoCustomerEnvironment.pipe(
-    Effect.provide(SymmyDemoCustomerAuthorityLive),
+    Effect.provide(SymmyDemoCustomerDiscoveryLive),
     Effect.mapError(customerDiscoveryHostError),
     runAppHost,
     Effect.scoped,

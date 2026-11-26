@@ -21,6 +21,7 @@ import {
   SYMMY_DEMO_GROUPS_SOURCE_ROUTE,
   symmyDemoCustomerInternalWorkloadDeclarations,
   SymmyDemoCustomerAuthorityLive,
+  SymmyDemoCustomerDiscoveryLive,
 } from '../demo/symmy-demo-customer-authority.mts';
 import {
   bootstrapSymmyDemoExchangeAuthority,
@@ -175,28 +176,27 @@ it.live('bootstraps AKROS twice under a prebuilt admin database and preserves na
       const adminDatabase = yield* CoreDatabase;
       const adminStore = yield* AccessReleaseStore;
       expect(yield* sessionRole(adminDatabase)).toEqual([{ role: connections.admin.user }]);
-      // App Host discovers the customer environment before starting owners, while the admin layer is already built.
-      const discover = Effect.gen(function* discover() {
-        expect(yield* sessionRole(yield* CoreDatabase)).toEqual([{ role: connections.runtime.user }]);
-        expect(yield* AccessReleaseStore).not.toBe(adminStore);
-        return yield* readSymmyDemoCustomerEnvironment;
-      }).pipe(Effect.provide(SymmyDemoCustomerAuthorityLive));
+      // App Host discovers the customer environment before migrations and owners start: it only reads.
+      const discover = readSymmyDemoCustomerEnvironment.pipe(Effect.provide(SymmyDemoCustomerDiscoveryLive));
       const inventoryBoot = Effect.gen(function* inventoryBoot() {
         expect(yield* sessionRole(yield* CoreDatabase)).toEqual([{ role: connections.runtime.user }]);
         expect(yield* AccessReleaseStore).not.toBe(adminStore);
         return yield* bootstrapSymmyDemoInventoryAuthority;
       }).pipe(Effect.provide(SymmyDemoInventoryAuthorityLive));
-      const customerBoot = bootstrapSymmyDemoCustomerAuthority('apply').pipe(
-        Effect.provide(SymmyDemoCustomerAuthorityLive),
-      );
+      const customerBoot = Effect.gen(function* customerBoot() {
+        expect(yield* sessionRole(yield* CoreDatabase)).toEqual([{ role: connections.runtime.user }]);
+        expect(yield* AccessReleaseStore).not.toBe(adminStore);
+        return yield* bootstrapSymmyDemoCustomerAuthority('apply');
+      }).pipe(Effect.provide(SymmyDemoCustomerAuthorityLive));
       const exchangeBoot = bootstrapSymmyDemoExchangeAuthority('apply').pipe(
         Effect.provide(SymmyDemoExchangeAuthorityLive),
       );
-      const firstDiscovery = yield* discover;
-      expect(firstDiscovery.identities.integrationPrincipalId).toBe(principalId);
       // Run their entry-point effects in host order, sharing the memo map to exercise the collision case.
       const firstInventory = yield* inventoryBoot;
       const firstCustomer = yield* customerBoot;
+      // The next boot discovers the writers this boot's post-migration enrollment registered.
+      const firstDiscovery = yield* discover;
+      expect(firstDiscovery.identities.integrationPrincipalId).toBe(principalId);
       // The enclosing reader cannot see the first exchange grants until the exchange transaction commits.
       const firstExchange = yield* exchangeBoot;
       const firstState = yield* stableAuthority(admin);
