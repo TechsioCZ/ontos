@@ -122,13 +122,13 @@ export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   customers: Schema.Array(
     Schema.Struct({
+      addresses: CustomerProfileSourceItemSchema.fields.sourceAddresses,
       business_name: Schema.optionalKey(OrganizationBusinessNameExportResponseSchema.members[1].fields.businessName),
       ico: Schema.optionalKey(SymmyCustomerIcoProjectionSchema),
       id: SymmyQualifiedReadIdSchema,
       party: Schema.optionalKey(SourceProfileExportResponseSchema.members[1]),
       partyRef: CustomerProfileSourceItemSchema.fields.partyRef,
       profile: CustomerProfileSourceItemSchema.fields.profile,
-      addresses: CustomerProfileSourceItemSchema.fields.sourceAddresses,
       source_record_id: sourceId,
     }),
   ),

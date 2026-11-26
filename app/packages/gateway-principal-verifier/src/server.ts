@@ -339,13 +339,21 @@ const ReceivingGatewayDeploymentSchema = Schema.Struct({
 });
 type ReceivingGatewayDeployment = typeof ReceivingGatewayDeploymentSchema.Type;
 
-const targetReleaseIsApproved = (
+const verifyTargetRelease = (
   revision: string,
-  signedRevision: string,
-  targetBuild: string,
+  claims: Pick<typeof GatewayContextClaimsSchema.Type, 'compositionRevision' | 'targetBuildMarker'>,
   expectedBuild: string,
-  approvedBuild: string | undefined,
-): boolean => revision === signedRevision && targetBuild === expectedBuild && approvedBuild === expectedBuild;
+  approvedDeployment: Pick<ReceivingGatewayDeployment, 'buildMarker'> | undefined,
+): Effect.Effect<void, ActionPrincipalScopeError> =>
+  revision === claims.compositionRevision &&
+  claims.targetBuildMarker === expectedBuild &&
+  approvedDeployment?.buildMarker === expectedBuild
+    ? Effect.void
+    : Effect.fail(
+        ActionPrincipalScopeErrorSchema.make({
+          reason: 'The Bearer assertion does not target this approved release',
+        }),
+      );
 
 const signedSourceBuildIsApproved = (
   deployment: Pick<ReceivingGatewayDeployment, 'buildMarker'> | undefined,
@@ -494,21 +502,12 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         snapshot.composition.shell.deployment.appId === appId
           ? snapshot.composition.shell.deployment
           : snapshot.composition.modules.find((module) => module.deployment.appId === appId)?.deployment;
-      if (
-        !targetReleaseIsApproved(
-          snapshot.composition.revision,
-          claims.compositionRevision,
-          claims.targetBuildMarker,
-          deployment.buildMarker,
-          approvedDeploymentOf(deployment.appId)?.buildMarker,
-        )
-      ) {
-        return yield* Effect.fail(
-          ActionPrincipalScopeErrorSchema.make({
-            reason: 'The Bearer assertion does not target this approved release',
-          }),
-        );
-      }
+      yield* verifyTargetRelease(
+        snapshot.composition.revision,
+        claims,
+        deployment.buildMarker,
+        approvedDeploymentOf(deployment.appId),
+      );
       let actor: VerifiedGatewayActor | undefined;
       let workload: RegisteredGatewayWorkload | undefined;
       let routeScope: RegisteredGatewayRouteScope | undefined;

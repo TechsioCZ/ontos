@@ -444,17 +444,28 @@ const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
   Match.value(subject).pipe(
-    Match.tag('NativeRouteRead', ({ scope, operationRequirementKey, requestHash }) =>
+    Match.tag('NativeRouteRead', ({ operationRequirementKey, requestHash, scope }) =>
       assertionWire({ scope }).pipe(
         Effect.flatMap((source) =>
           Match.value(source.subject).pipe(
-            Match.tag('Assertion', (proof) => Effect.succeed({
-              compositionRevision: source.compositionRevision,
-              subject: { _tag: 'NativeRouteRead' as const, operationRequirementKey, requestHash, sourceAssertion: proof.sourceAssertion },
-            })),
-            Match.orElse(() => Effect.fail(
-              new GatewayDelegationSourceError({ reason: 'A native route Read requires its original verified assertion' }),
-            )),
+            Match.tag('Assertion', (proof) =>
+              Effect.succeed({
+                compositionRevision: source.compositionRevision,
+                subject: {
+                  _tag: 'NativeRouteRead' as const,
+                  operationRequirementKey,
+                  requestHash,
+                  sourceAssertion: proof.sourceAssertion,
+                },
+              }),
+            ),
+            Match.orElse(() =>
+              Effect.fail(
+                new GatewayDelegationSourceError({
+                  reason: 'A native route Read requires its original verified assertion',
+                }),
+              ),
+            ),
           ),
         ),
       ),
@@ -622,7 +633,13 @@ const ShellGatewayBaseUrl = shellGatewayBaseUrlConfig;
 const subjectTenantOf = (subject: GatewayDelegationSubject): string =>
   Match.value(subject).pipe(
     Match.tag('Originator', 'RegisteredAdmission', ({ tenantId }) => tenantId),
-    Match.tag('Assertion', 'OrganizationGovernanceRead', 'RegisteredAssertion', 'NativeRouteRead', ({ scope }) => scope.tenantId),
+    Match.tag(
+      'Assertion',
+      'OrganizationGovernanceRead',
+      'RegisteredAssertion',
+      'NativeRouteRead',
+      ({ scope }) => scope.tenantId,
+    ),
     Match.tag('RegisteredWorkload', ({ context }) => context.tenantId),
     Match.tag('RegisteredRecovery', ({ source }) =>
       Match.value(source).pipe(
@@ -667,27 +684,40 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
       { concurrency: 1 },
     );
     yield* Match.value(request.subject).pipe(
-      Match.tag('NativeRouteRead', (subject) => Effect.gen(function* checkNativeReadRequirement() {
-        const route = readVerifiedGatewayRouteScope(subject.scope);
-        const fact = yield* readModuleOperationRequirement(subject.operationRequirementKey, subject.scope).pipe(
-          Effect.mapError((cause) => new GatewayDelegationSourceError({
-            cause, reason: 'A native route Read requires its active declared operation lease',
-          })),
-        );
-        if (
-          route === undefined || request.legalEntityScope !== 'subject' ||
-          fact.providerAppId !== request.audience ||
-          fact.compositionRevision !== readVerifiedGatewayCompositionRevision(subject.scope) ||
-          fact.tenantId !== subject.scope.tenantId ||
-          !route.operations.some((operation) =>
-            operation.entrypointKey === fact.consumerEntrypointKey &&
-            operation.schemaVersion === fact.consumerSchemaVersion)
+      Match.tag(
+        'NativeRouteRead',
+        Effect.fn('GatewayDelegation.checkNativeReadRequirement')(function* checkNativeReadRequirement(
+          subject: Extract<GatewayDelegationSubject, { readonly _tag: 'NativeRouteRead' }>,
         ) {
-          return yield* new GatewayDelegationSourceError({
-            reason: 'A native route Read does not match the signed route and current declared operation',
-          });
-        }
-      })),
+          const route = readVerifiedGatewayRouteScope(subject.scope);
+          const fact = yield* readModuleOperationRequirement(subject.operationRequirementKey, subject.scope).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GatewayDelegationSourceError({
+                  cause,
+                  reason: 'A native route Read requires its active declared operation lease',
+                }),
+            ),
+          );
+          if (
+            route === undefined ||
+            request.legalEntityScope !== 'subject' ||
+            fact.providerAppId !== request.audience ||
+            fact.compositionRevision !== readVerifiedGatewayCompositionRevision(subject.scope) ||
+            fact.tenantId !== subject.scope.tenantId ||
+            !route.operations.some(
+              (operation) =>
+                operation.entrypointKey === fact.consumerEntrypointKey &&
+                operation.schemaVersion === fact.consumerSchemaVersion,
+            )
+          ) {
+            return yield* new GatewayDelegationSourceError({
+              reason: 'A native route Read does not match the signed route and current declared operation',
+            });
+          }
+          return yield* Effect.void;
+        }),
+      ),
       Match.tag('OrganizationGovernanceRead', () =>
         request.audience === organizationGovernanceReadOperationContract().appId &&
         request.legalEntityScope === 'subject'

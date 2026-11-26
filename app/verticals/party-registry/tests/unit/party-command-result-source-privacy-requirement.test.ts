@@ -53,7 +53,7 @@ const executing = (registration: typeof partyCommandResultRead | typeof partyMat
 
 it.effect('business-name export resolves its own native source Privacy requirement', () =>
   Effect.gen(function* exportRequirement() {
-    const entrypointKey = organizationBusinessNameExportRead.descriptor.entrypoint.entrypointKey;
+    const { entrypointKey } = organizationBusinessNameExportRead.descriptor.entrypoint;
     const key = partySourcePrivacyRequirementKey(entrypointKey);
     expect(ownerDescriptors.requirements?.operations.find((operation) => operation.key === key)).toMatchObject({
       entrypointKey,

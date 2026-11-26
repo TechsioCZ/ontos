@@ -9,22 +9,34 @@ import { retryPendingOutboxDelivery } from '../packages/core-runtime/src/outbox/
 import { ApplicationCompositionAuthorityAdminDatabaseLive } from './application-composition-authority-publication.mts';
 import { OutboxDeadDeliveryResolutionArgumentsSchema } from './outbox-dead-delivery.mts';
 
-const command = Command.make('outbox-retry-pending-delivery', {
-  messageId: Flag.String('message-id'),
-  operator: Flag.String('operator'),
-  reason: Flag.String('reason'),
-  tenantId: Flag.String('tenant-id'),
-  workerKey: Flag.String('worker-key'),
-}, (flags) => Effect.gen(function* requestRetry() {
-  // Reference and operator-evidence syntax is identical to dead-delivery operations; state admission is separate.
-  const input = yield* Schema.decodeUnknownEffect(OutboxDeadDeliveryResolutionArgumentsSchema)(flags);
-  const { executor } = yield* CoreDatabase;
-  const receipt = yield* executor.transaction((transaction) => retryPendingOutboxDelivery(transaction, {
-    outboxMessageId: input.messageId, tenantId: input.tenantId, workerKey: input.workerKey,
-    operatorName: input.operator, reason: input.reason,
-  }));
-  yield* Console.log(`[outbox-retry-pending-delivery] ${receipt.outcome}; attempt history and completion debt retained`);
-})).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+const command = Command.make(
+  'outbox-retry-pending-delivery',
+  {
+    messageId: Flag.String('message-id'),
+    operator: Flag.String('operator'),
+    reason: Flag.String('reason'),
+    tenantId: Flag.String('tenant-id'),
+    workerKey: Flag.String('worker-key'),
+  },
+  (flags) =>
+    Effect.gen(function* requestRetry() {
+      // Reference and operator-evidence syntax is identical to dead-delivery operations; state admission is separate.
+      const input = yield* Schema.decodeUnknownEffect(OutboxDeadDeliveryResolutionArgumentsSchema)(flags);
+      const { executor } = yield* CoreDatabase;
+      const receipt = yield* executor.transaction((transaction) =>
+        retryPendingOutboxDelivery(transaction, {
+          operatorName: input.operator,
+          outboxMessageId: input.messageId,
+          reason: input.reason,
+          tenantId: input.tenantId,
+          workerKey: input.workerKey,
+        }),
+      );
+      yield* Console.log(
+        `[outbox-retry-pending-delivery] ${receipt.outcome}; attempt history and completion debt retained`,
+      );
+    }),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 
 export const main = Command.run({ version: '1.0.0' })(command);
 

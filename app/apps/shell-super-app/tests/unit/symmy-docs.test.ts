@@ -33,7 +33,10 @@ describe('Symmy API documentation', () => {
       true,
     );
     expect(
-      accepted(SymmyCustomersBatchRequestSchema, symmyDocumentedRoutes.customersBatch.requestExamples.organization.value),
+      accepted(
+        SymmyCustomersBatchRequestSchema,
+        symmyDocumentedRoutes.customersBatch.requestExamples.organization.value,
+      ),
     ).toBe(true);
     expect(
       accepted(
@@ -115,7 +118,7 @@ describe('Symmy API documentation', () => {
     expect(symmyDocumentedRoutes.demoCategories.description).toContain('GET /catalog/revision');
     expect(symmyDocumentedRoutes.demoCatalogProducts.description).toContain('GET /catalog/revision');
     expect(symmyDocumentedRoutes.demoMedia.description).toContain('GET /catalog/revision');
-    const description = symmyOpenApiDocument.info.description;
+    const { description } = symmyOpenApiDocument.info;
     expect(description).not.toContain('twelve prepared');
     expect(description).not.toContain('one-time preparation');
     expect(description).not.toContain('Not available yet');

@@ -34,7 +34,9 @@ const rolesWhere = (matches: (identity: (typeof DATABASE_IDENTITIES)[number]) =>
 it('lets the Party request identity verify native registered executor identity without reading personal fields', () => {
   const entry = manifestEntryForRole('party_registry_runtime');
   expect(entry?.kind).toBe('explicit');
-  if (entry?.kind !== 'explicit') return;
+  if (entry?.kind !== 'explicit') {
+    return;
+  }
   const grants = entry.grants.tables.filter(({ table }) => table === 'core.principals');
   const readable = new Set(grants.flatMap((grant) => grant.columns?.select ?? []));
   for (const column of ['tenant_id', 'principal_id', 'kind', 'status', 'platform_role']) {

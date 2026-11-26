@@ -490,9 +490,9 @@ const fakeShell = (settings: ShellSettings = {}) => {
 
 const chosen: RoleChoice = {
   [ESHOP]: Option.some(ESHOP_ROLE),
+  eshopRegistry: Option.some(REGISTRY_ROLE),
   [EXPEDICE]: Option.some(EXPEDICE_ROLE),
   routing: Option.some(ROUTING_ROLE),
-  eshopRegistry: Option.some(REGISTRY_ROLE),
 };
 const options = (apply: boolean, overrides: Partial<RunOptions> = {}): RunOptions => ({
   adminEmail: ADMIN,
@@ -573,7 +573,12 @@ it.effect('without chosen roles the plan lists existing roles and plans no write
   Effect.gen(function* lists() {
     const shell = fakeShell();
     const result = yield* runWith(shell, false, {
-      roles: { [ESHOP]: Option.none(), [EXPEDICE]: Option.none(), routing: Option.none(), eshopRegistry: Option.none() },
+      roles: {
+        [ESHOP]: Option.none(),
+        eshopRegistry: Option.none(),
+        [EXPEDICE]: Option.none(),
+        routing: Option.none(),
+      },
     });
     expect(result.roleCandidates).toHaveLength(4);
     expect(result.steps).toEqual([]);

@@ -7,8 +7,9 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { partyLifecycleReceiptMatches } from '../../src/services/party-source-lifecycle.service.ts';
 
+const id = (n: number) => `ad130000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
 it('admits a different receipt reader only for the sealed original write and never for write replay', () => {
-  const id = (n: number) => `ad130000-0000-4000-8000-${String(n).padStart(12, '0')}`;
   const principal = {
     ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
       authMethod: 'system',

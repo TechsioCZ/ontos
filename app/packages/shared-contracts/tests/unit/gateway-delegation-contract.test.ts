@@ -550,18 +550,21 @@ it.effect('refuses a native route Read outside its actual declared operation lea
       assertion: Redacted.make('fixture-signed-source-proof'),
       audience: 'catalog',
     });
-    const failure = yield* acquireDelegatedGatewayContext({
-      audience: 'privacy',
-      callingAppId: 'catalog',
-      legalEntityScope: 'subject',
-      requestCorrelation: 'native-read-outside-lease',
-      subject: {
-        _tag: 'NativeRouteRead',
-        requestHash: 'b'.repeat(64),
-        scope,
-        operationRequirementKey: 'integration.symmy.requirement.customer-intake-privacy',
+    const failure = yield* acquireDelegatedGatewayContext(
+      {
+        audience: 'privacy',
+        callingAppId: 'catalog',
+        legalEntityScope: 'subject',
+        requestCorrelation: 'native-read-outside-lease',
+        subject: {
+          _tag: 'NativeRouteRead',
+          operationRequirementKey: 'integration.symmy.requirement.customer-intake-privacy',
+          requestHash: 'b'.repeat(64),
+          scope,
+        },
       },
-    }, crypto).pipe(
+      crypto,
+    ).pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, configuration),
       Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
       Effect.flip,
