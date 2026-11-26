@@ -85,6 +85,9 @@ export const searchVariantOffer = (
   if (variant.sourceUnit !== undefined) {
     offer = { ...offer, sourceUnit: variant.sourceUnit };
   }
+  if (variant.originalPriceMinor !== undefined) {
+    offer = { ...offer, originalPriceMinor: variant.originalPriceMinor };
+  }
   return offer;
 };
 

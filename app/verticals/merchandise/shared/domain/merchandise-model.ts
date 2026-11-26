@@ -352,6 +352,7 @@ export const SearchVariantOfferSchema = Schema.Struct({
   imageSrc: Schema.optionalKey(Schema.String),
   minimumQuantity: Schema.optionalKey(Schema.Finite),
   name: Schema.String,
+  originalPriceMinor: Schema.optionalKey(MinorAmountSchema),
   packageQuantity: Schema.optionalKey(Schema.Finite),
   /** Market-converted net display amount, not an unconverted seller/base price. */
   priceMinor: MinorAmountSchema,

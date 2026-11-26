@@ -807,6 +807,7 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
       'unit', ${productVariants.document}->'unit', 'sourceUnit', ${productVariants.document}->'sourceUnit',
       'imageSrc', ${productVariants.document}->'imageSrc',
       'minimumQuantity', ${productVariants.document}->'minimumQuantity',
+      'originalPriceMinor', ${productVariants.document}->'originalPriceMinor',
       'packageQuantity', ${productVariants.document}->'packageQuantity'))`,
               productId: productVariants.productId,
               stockOnHand: productVariants.stockOnHand,
@@ -879,6 +880,7 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
       'imageSrc', legacy.value->'imageSrc',
       'minimumQuantity', legacy.value->'minimumQuantity',
       'name', legacy.value->'name',
+      'originalPriceMinor', legacy.value->'originalPriceMinor',
       'packageQuantity', legacy.value->'packageQuantity',
       'priceMinor', legacy.value->'priceMinor',
       'priceTiers', case when jsonb_typeof(legacy.value->'priceTiers') = 'array' then (
