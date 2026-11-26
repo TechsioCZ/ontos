@@ -86,6 +86,7 @@ const availableComposition = (overrides: AvailableCompositionFields = {}) =>
     deniedAppIds: [],
     gatewayAudiences: [],
     homeComponents: [],
+    integrationComponents: [],
     navigation,
     state: 'available',
     unavailableDeployments: [],
@@ -165,6 +166,7 @@ it.effect('resolves trusted context before returning one serializable compositio
       gatewayAudiences: [],
       homeContribution: { state: 'forbidden' },
       identity,
+      integrationComponents: [],
       legalEntities: {
         items: [{ legalEntityId, legalName: 'Alpha company' }],
         state: 'available',

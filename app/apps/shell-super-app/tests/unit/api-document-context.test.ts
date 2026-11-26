@@ -74,6 +74,7 @@ const fixture = Effect.gen(function* documentFixture() {
     deniedAppIds: [],
     gatewayAudiences: [],
     homeComponents: [],
+    integrationComponents: [],
     navigation: [],
     state: 'available',
     unavailableDeployments: [],

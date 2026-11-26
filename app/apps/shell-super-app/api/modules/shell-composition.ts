@@ -8,6 +8,7 @@ import type {
 import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-runtime';
 import type { GateInput } from '@app/core-runtime/access/enforcement';
 import type { LegalEntityNavigationExclusionsContract } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
+import { ConnectorPartnerKindSchema } from '@app/shared-contracts/integrations/connector-partners';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/browser-api.ts';
@@ -484,12 +485,43 @@ const gatedContributions = (catalog: ShellInstalledCatalog) => {
       }
     }
     for (const component of contributions.publicComponents) {
-      if (component.home !== undefined && isProtectedContribution(component)) {
+      const placed = component.home !== undefined || component.integration !== undefined;
+      if (placed && isProtectedContribution(component)) {
         gated.push({ contribution: component, contributionKey: String(component.contributionKey), moduleId });
       }
     }
   }
   return gated;
+};
+
+const isConnectorPartnerKind = Schema.is(ConnectorPartnerKindSchema);
+
+/**
+ * The Integrace card components the person may open, one per connector partner the Shell knows: a partner kind no
+ * integration can have is never offered, and two modules offering the same partner offer none (the Shell cannot pick).
+ */
+const integrationComponents = (catalog: ShellInstalledCatalog, decisions: ReadonlyMap<string, ShellAccessDecision>) => {
+  const offered = catalog.contracts.flatMap((contract) =>
+    contract.manifest.publicSurface.shellContributions.publicComponents.flatMap(
+      ({ contributionKey, entrypoint, integration }) =>
+        integration === undefined ||
+        !isConnectorPartnerKind(integration.connectorPartner) ||
+        decisions.get(String(contributionKey))?.outcome !== 'ALLOWED'
+          ? []
+          : [
+              {
+                connectorPartner: integration.connectorPartner,
+                entrypointKey: entrypoint.entrypointKey,
+                moduleId: entrypoint.moduleKey,
+              },
+            ],
+    ),
+  );
+  return offered
+    .filter(
+      ({ connectorPartner }) => offered.filter((other) => other.connectorPartner === connectorPartner).length === 1,
+    )
+    .toSorted((left, right) => left.connectorPartner.localeCompare(right.connectorPartner));
 };
 
 /** The steps of composition and module targets around the transaction: the catalog and one gate snapshot, no database. */
@@ -670,6 +702,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
           ),
         )
         .toSorted((left, right) => left.order - right.order || left.entrypointKey.localeCompare(right.entrypointKey)),
+      integrationComponents: integrationComponents(catalog, decisions),
       navigation: navigation.toSorted(
         (left, right) =>
           left.order - right.order ||

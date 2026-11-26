@@ -413,6 +413,7 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
       deniedAppIds: [],
       gatewayAudiences: ['documents-center', 'property-registry'],
       homeComponents: [],
+      integrationComponents: [],
       navigation: [
         {
           appId: 'documents-center',
@@ -520,6 +521,7 @@ it.effect.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
         deniedAppIds: [],
         gatewayAudiences: ['documents-center', 'property-registry'],
         homeComponents: [],
+        integrationComponents: [],
         navigation: [],
         state: 'available',
         unavailableDeployments: [],
@@ -1087,6 +1089,88 @@ it.effect('resolves only exact declared public components after fresh module, li
   }),
 );
 
+/** One module deployment that offers a component on the Integrace card of one connector partner's integrations. */
+const integrationOffer = (appId: string, moduleId: string, order: number, connectorPartner: string) => {
+  const owner = deployment(appId, moduleId, moduleId, order);
+  return {
+    ...owner,
+    manifest: {
+      ...owner.manifest,
+      publicSurface: {
+        ...owner.manifest.publicSurface,
+        components: [
+          ...owner.manifest.publicSurface.components,
+          { expose: './Partner', key: `${moduleId}.partner`, mfBoundaryId: `vertical${appId.replaceAll('-', '')}` },
+        ],
+        shellContributions: {
+          ...owner.manifest.publicSurface.shellContributions,
+          publicComponents: [
+            {
+              accessDeclaration: {
+                key: `${moduleId}.component.partner.open`,
+                kind: 'read',
+                modes: ['run'],
+                placement: { group: 'components', level: 'basic' },
+                risk: 'routine',
+                selectors: [],
+              },
+              componentKey: `${moduleId}.partner`,
+              contributionKey: `${moduleId}.component.partner`,
+              entrypoint: {
+                access: 'read',
+                authorization: { kind: 'protected' },
+                entrypointKey: `${moduleId}.component.partner`,
+                moduleKey: moduleId,
+                role: 'public_component',
+                scope: 'tenant',
+              },
+              expose: './Partner',
+              integration: { connectorPartner },
+            },
+          ],
+        },
+      },
+    },
+  };
+};
+
+const integrationComponentsOf = (offers: readonly ReturnType<typeof integrationOffer>[], denied: readonly string[]) =>
+  Effect.gen(function* composeIntegrationComponents() {
+    const approvedCatalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot(offers));
+    const composition = makeShellComposition({
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: makeShellTestAccessGate({
+        answers: Object.fromEntries(denied.map((moduleId) => [`${moduleId}.component.partner.open`, 'denied'])),
+        defaultAnswer: 'allowed',
+      }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    });
+    const result = yield* composition.compose(context);
+    return result.state === 'available' ? result.integrationComponents : [];
+  });
+
+it.effect('offers one Integrace component per known connector partner the person may open, never by module', () =>
+  Effect.gen(function* integrationComponentOffers() {
+    const symmy = integrationOffer('property-registry', 'property.registry', 20, 'symmy');
+    const unknownPartner = integrationOffer('documents-center', 'documents.center', 10, 'no-such-partner');
+    const secondSymmy = integrationOffer('documents-center', 'documents.center', 10, 'symmy');
+    expect(yield* integrationComponentsOf([symmy, unknownPartner], [])).toEqual([
+      {
+        connectorPartner: 'symmy',
+        entrypointKey: 'property.registry.component.partner',
+        moduleId: 'property.registry',
+      },
+    ]);
+    // A denied component is not offered, and the Shell cannot pick between two modules offering one partner.
+    expect(yield* integrationComponentsOf([symmy], ['property.registry'])).toEqual([]);
+    expect(yield* integrationComponentsOf([symmy, secondSymmy], [])).toEqual([]);
+  }),
+);
+
 /**
  * The default catalog with exactly the property home page opted into tenant-only admission. The opt-in is built into
  * the composition before decoding, so the installed catalog's own `getByModuleId` contract carries it (a post-hoc
@@ -1285,6 +1369,7 @@ it.effect('keeps the admitted Shell frame available when every contributed modul
       deniedAppIds: ['documents-center', 'property-registry'],
       gatewayAudiences: [],
       homeComponents: [],
+      integrationComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],

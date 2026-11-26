@@ -69,6 +69,7 @@ const availableComposition = (overrides: AvailableCompositionFields = {}) =>
     deniedAppIds: [],
     gatewayAudiences: [],
     homeComponents: [],
+    integrationComponents: [],
     navigation,
     state: 'available',
     unavailableDeployments: [],
@@ -168,6 +169,7 @@ it.effect('server rendering reads the whole document context in one request', ()
       gatewayAudiences: [],
       homeContribution: { state: 'forbidden' },
       identity,
+      integrationComponents: [],
       legalEntities: {
         items: [{ legalEntityId, legalName: 'Alpha company' }],
         state: 'available',

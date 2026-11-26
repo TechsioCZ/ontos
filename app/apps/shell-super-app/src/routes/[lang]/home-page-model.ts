@@ -14,6 +14,7 @@ import type {
   ShellDocumentContext,
   ShellDocumentTarget,
   ShellHomeComponent,
+  ShellIntegrationComponent,
   ShellNavigationItem,
   ShellUnavailableDeployment,
 } from '../../../shared/browser-api.ts';
@@ -88,6 +89,8 @@ export interface AuthenticatedHomePageModel {
   readonly gatewayAudiences?: readonly string[];
   readonly homeContribution?: HomeContribution;
   readonly identity: SafeTenantIdentity;
+  /** The Integrace card components the composition offers this person, keyed by connector partner. */
+  readonly integrationComponents?: readonly ShellIntegrationComponent[];
   readonly legalEntities:
     | {
         readonly items: readonly LegalEntityChoice[];
@@ -507,6 +510,7 @@ const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
     contextState: session.state,
     gatewayAudiences: composition.gatewayAudiences,
     identity: session.identity,
+    integrationComponents: composition.integrationComponents,
     legalEntities:
       context.legalEntities === undefined
         ? unavailableLegalEntities
@@ -679,6 +683,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
           contextState: session.state,
           gatewayAudiences,
           identity: session.identity,
+          integrationComponents: composition.integrationComponents,
           legalEntities,
           navigation,
           selectedLegalEntityId: session.identity.legalEntityId,

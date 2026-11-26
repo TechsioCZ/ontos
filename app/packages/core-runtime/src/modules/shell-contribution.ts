@@ -226,6 +226,15 @@ export const ShellHomePlacementSchema = Schema.Struct({
   requiresModules: Schema.Array(stableKey).check(Schema.isMinLength(1)),
 });
 
+/**
+ * Offers a public component on the Shell's Integrace card of every integration created for one connector partner. The
+ * Shell renders it for that partner's integrations only, keyed by the partner kind it stores on the integration
+ * Principal, and never names the module that offers it.
+ */
+export const ShellIntegrationPlacementSchema = Schema.Struct({
+  connectorPartner: stableKey,
+});
+
 export const ShellPublicComponentContributionSchema = Schema.Struct({
   accessDeclaration,
   componentKey,
@@ -233,6 +242,7 @@ export const ShellPublicComponentContributionSchema = Schema.Struct({
   entrypoint: componentEntrypoint,
   expose,
   home: Schema.optionalKey(ShellHomePlacementSchema),
+  integration: Schema.optionalKey(ShellIntegrationPlacementSchema),
 }).check(protectedDeclaration);
 
 export const ShellSearchContributionSchema = Schema.Struct({

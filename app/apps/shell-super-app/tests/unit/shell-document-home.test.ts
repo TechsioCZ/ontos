@@ -37,6 +37,7 @@ const composition = Schema.decodeUnknownSync(ShellCompositionSchema)({
     order,
     requiresModules: [moduleId],
   })),
+  integrationComponents: [],
   navigation: ['fixture.first', 'fixture.second'].map((moduleId, order) => ({
     appId: 'fixture-app',
     enabled: true,

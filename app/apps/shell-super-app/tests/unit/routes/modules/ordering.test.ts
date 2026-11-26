@@ -44,6 +44,7 @@ const composition = {
   deniedAppIds: [],
   gatewayAudiences: [],
   homeComponents: [],
+  integrationComponents: [],
   navigation: [],
   state: 'available' as const,
   unavailableDeployments: [],
