@@ -162,6 +162,7 @@ import { ApplicationCompositionLegacyOwnersLive } from '../application-compositi
 import { OWNER_RUNTIME_CONFIGURATIONS, unitApiBaseUrl } from '../ops/owner-runtime-configuration.mts';
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { PublicOriginSchema, demoFixturesEnabled, n1StorefrontOrigin } from './deployment-profile.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
@@ -327,16 +328,8 @@ export const processEnvironment = (
   };
 };
 
-const PublicOriginSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    url.protocol === 'https:' && url.pathname === '/' && url.search === '' && url.hash === '' && url.username === ''
-      ? undefined
-      : 'the public origins must be bare HTTPS origins',
-  ),
-);
-
-/** Explicit Stage-only Commerce Portal admission; never inferred from an incoming request. */
-const STAGE_N1_PORTAL_ORIGINS = ['https://ontos-stage-n1.web-revolution.cz', 'http://localhost:3071'] as const;
+/** A developer's local N1 storefront, admitted only by the canonical demo, whose demo fixtures it exercises. */
+const N1_LOCAL_DEVELOPMENT_ORIGIN = 'http://localhost:3071';
 
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
@@ -359,22 +352,33 @@ const ownerRuntimeEnvironment = (ports: ReadonlyMap<string, number>) =>
  * Settings every process derives from the public origins of this environment and the host's own ports. They win over
  * stored owner secrets, whose URL values name whatever hostnames the bundle was written for.
  */
-export const derivedEnvironment = (
-  origin: string,
-  storefrontOrigin: string,
-  controlPort: number,
-  ports: ReadonlyMap<string, number>,
-  shopStorefrontOrigin: string,
-  environment = 'production',
-) => {
+export const derivedEnvironment = ({
+  controlPort,
+  demoFixturesEnabled: admitsLocalN1,
+  n1StorefrontOrigin: n1Origin,
+  origin,
+  ports,
+  shopStorefrontOrigin,
+  storefrontOrigin,
+}: {
+  readonly controlPort: number;
+  readonly demoFixturesEnabled: boolean;
+  /** Explicit deployment configuration; never inferred from an incoming request. */
+  readonly n1StorefrontOrigin: Option.Option<string>;
+  readonly origin: string;
+  readonly ports: ReadonlyMap<string, number>;
+  readonly shopStorefrontOrigin: string;
+  readonly storefrontOrigin: string;
+}) => {
   const shellGateway = unitApiBaseUrl(loopbackOrigin(SHELL_PORT), SHELL_ID);
-  // AKROS names the shared realm. The approved N1 additions belong only to Commerce Portal on Stage.
+  // AKROS names the shared realm. The configured N1 storefront joins only the Commerce Portal realm.
   const trustedOrigins = [origin, storefrontOrigin, shopStorefrontOrigin].join(',');
   const portalTrustedOrigins = [
     origin,
     storefrontOrigin,
     shopStorefrontOrigin,
-    ...(environment === 'stage' ? STAGE_N1_PORTAL_ORIGINS : []),
+    ...Option.toArray(n1Origin),
+    ...(admitsLocalN1 ? [N1_LOCAL_DEVELOPMENT_ORIGIN] : []),
   ].join(',');
   return {
     ...ownerRuntimeEnvironment(ports),
@@ -655,7 +659,7 @@ const runChild = (
     ),
   );
 
-/** Stage supervisor commands, in dependency order; none runs inside an owner process. */
+/** Demo fixture supervisor commands, in dependency order; none runs inside an owner process. */
 const CUSTOMER_AUTHORITY = 'customer-authority';
 export const STAGE_SYMMY_DEMO_BOOTSTRAPS = [
   { args: [], kind: 'inventory-authority', script: 'scripts/demo/symmy-demo-inventory-authority.mts' },
@@ -675,13 +679,15 @@ const SYMMY_DEMO_CUSTOMER_SETTINGS = [
   'ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS',
 ] as const;
 
-/** Reapply the demo's canonical source policies, customer authority and exchange authority on every stage boot. */
+/**
+ * Reapply the demo's canonical source policies, customer authority and exchange authority on every boot of the
+ * deployment that opted into the demo fixtures; a fresh deployment's database has none of their records.
+ */
 export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyDemo() {
-  const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
-    Config.withDefault('production'),
-    Effect.tapError(() => Console.error('[app-host] stage Symmy environment bootstrap failed category=config')),
+  const enabled = yield* demoFixturesEnabled.pipe(
+    Effect.tapError(() => Console.error('[app-host] stage Symmy demo-fixtures bootstrap failed category=config')),
   );
-  if (environment !== 'stage') {
+  if (!enabled) {
     return;
   }
   const admin = yield* Config.Redacted('DATABASE_ADMIN_URL').pipe(
@@ -2069,6 +2075,20 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 /** A provisioning pass succeeded only when no caller was left without its key. */
 const provisionedEveryKey = (provisioned: ProvisioningOutput) => provisioned.failedAppIds.length === 0;
 
+/**
+ * Whether this deployment opted into the demo fixtures and, if so, the canonical demo's existing AKROS customer source,
+ * read before migrations. Without the fixtures the discovery never runs, so an empty database reaches its migrations
+ * without a demo read.
+ */
+export const demoFixtureCustomerSource = Effect.fn(function* demoFixtureCustomerSource<
+  A extends { readonly environment: object },
+  E,
+  R,
+>(discoverCustomers: Effect.Effect<A, E, R>) {
+  const enabled = yield* demoFixturesEnabled;
+  return { demoFixturesEnabled: enabled, environment: enabled ? (yield* discoverCustomers).environment : {} };
+});
+
 export const runAppHost = Effect.fn(function* hostProgram<R>(
   discoverCustomers: Effect.Effect<Effect.Success<typeof readSymmyDemoCustomerEnvironment>, AppHostError, R>,
 ) {
@@ -2083,7 +2103,6 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
   const shopStorefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_SHOP_STOREFRONT_ORIGIN')).origin;
-  const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(Config.withDefault('production'));
   const ownerSecrets = yield* Config.Redacted('ONTOS_OWNER_SECRETS_JSON').pipe(
     Config.withDefault(Redacted.make('{}')),
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
@@ -2091,10 +2110,18 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const customerSourceEnvironment = environment === 'stage' ? (yield* discoverCustomers).environment : {};
+  const demoFixtures = yield* demoFixtureCustomerSource(discoverCustomers);
   const derived = {
-    ...derivedEnvironment(publicOrigin, storefrontOrigin, CONTROL_PORT, ports, shopStorefrontOrigin, environment),
-    ...customerSourceEnvironment,
+    ...derivedEnvironment({
+      controlPort: CONTROL_PORT,
+      demoFixturesEnabled: demoFixtures.demoFixturesEnabled,
+      n1StorefrontOrigin: yield* n1StorefrontOrigin,
+      origin: publicOrigin,
+      ports,
+      shopStorefrontOrigin,
+      storefrontOrigin,
+    }),
+    ...demoFixtures.environment,
   };
   const node = process.execPath;
   const runtime = yield* shellRuntime;
@@ -2588,7 +2615,7 @@ export const stopSignal = Effect.callback<string>((resume) => {
 }).pipe(Effect.flatMap((signal) => Console.log(`[app-host] ${signal} received; stopping gracefully`)));
 
 if (import.meta.main) {
-  // Supply discovery lazily: the host runs it only on stage and keeps its database scope private.
+  // Supply discovery lazily: the host runs it only with the demo fixtures and keeps its database scope private.
   const program = readSymmyDemoCustomerEnvironment.pipe(
     Effect.provide(SymmyDemoCustomerAuthorityLive),
     Effect.mapError(customerDiscoveryHostError),

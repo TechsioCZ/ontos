@@ -247,6 +247,12 @@ zerops:
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
         ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '2'
         ONTOS_DATABASE_POOL_SHARED: 'true'
+        # The canonical demo owns the AKROS demo fixtures: the host discovers their customer source before migrations
+        # and replays their Symmy authorities after them, and admits the local N1 development storefront to the
+        # Commerce Portal realm. A fresh deployment of this same release sets 'false' (scripts/zerops/deployment-profile.mts).
+        ONTOS_DEMO_FIXTURES_ENABLED: 'true'
+        # This deployment's N1 storefront, admitted to the Commerce Portal realm only. Runtime-only: no build reads it.
+        ONTOS_N1_STOREFRONT_ORIGIN: https://ontos-stage-n1.web-revolution.cz
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         # The demo company's pseudonymous e-shop (ŠroubShop): its staff links, e-mail links and portal sign-in.
         ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz

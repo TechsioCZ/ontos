@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, ConfigProvider, Console, Effect, Match } from 'effect';
+import { Cause, ConfigProvider, Console, Effect, Match, Option } from 'effect';
 import { systemError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestConsole } from 'effect/testing';
@@ -11,11 +11,13 @@ import {
   AppHostError,
   bootstrapStageSymmyDemo,
   customerDiscoveryHostError,
+  demoFixtureCustomerSource,
   formatAppHostStop,
   processEnvironment,
 } from '../zerops/app-host.mts';
 import { SymmyDemoCustomerAuthorityError } from '../demo/symmy-demo-customer-authority.mts';
 import { workspaceRoot } from '../zerops/hosted-units.mts';
+import { n1StorefrontOrigin } from '../zerops/deployment-profile.mts';
 
 const SCRIPTS = [
   ['scripts/demo/symmy-demo-inventory-authority.mts'],
@@ -38,9 +40,13 @@ const STAGE = {
   ...CUSTOMER_SETTINGS,
   DATABASE_ADMIN_URL: ADMIN_URL,
   ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://not-published-yet/composition',
+  ONTOS_DEMO_FIXTURES_ENABLED: 'true',
   ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"unrelated":"never-inherit-this"}}',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
 };
+/** A fresh deployment of the same stage release: every credential, but no demo fixtures. */
+const FRESH_STAGE = { ...STAGE, ONTOS_DEMO_FIXTURES_ENABLED: 'false' };
+const FIXTURES_ONLY = { ONTOS_DEMO_FIXTURES_ENABLED: 'true', ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' };
 
 it('prints only allowlisted host-authored stop reasons, never dynamic reasons or raw causes', () => {
   expect(
@@ -79,6 +85,56 @@ it('preserves only exact typed discovery phases and replaces every other source 
     );
   }
 });
+
+it.effect(
+  'reads the demo customer source before migrations only with the demo fixtures, never on a fresh database',
+  () =>
+    Effect.gen(function* customerSourceDiscovery() {
+      let discoveries = 0;
+      const discovered = {
+        ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: '[]',
+        ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true',
+      };
+      const discover = Effect.sync(() => {
+        discoveries += 1;
+        return { environment: discovered };
+      });
+      const resolve = (environment: Readonly<Record<string, string>>) =>
+        demoFixtureCustomerSource(discover).pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+        );
+      const freshDeployments: readonly Readonly<Record<string, string>>[] = [
+        {},
+        FRESH_STAGE,
+        { ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' },
+      ];
+      for (const fresh of freshDeployments) {
+        expect(yield* resolve(fresh)).toEqual({ demoFixturesEnabled: false, environment: {} });
+      }
+      expect(discoveries).toBe(0);
+      expect(yield* resolve(STAGE)).toEqual({ demoFixturesEnabled: true, environment: discovered });
+      expect(discoveries).toBe(1);
+      expect(yield* resolve({ ONTOS_DEMO_FIXTURES_ENABLED: 'not-a-flag' }).pipe(Effect.flip)).toBeDefined();
+      expect(discoveries).toBe(1);
+    }),
+);
+
+const readN1Origin = (environment: Readonly<Record<string, string>>) =>
+  n1StorefrontOrigin.pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+  );
+
+it.effect('accepts only a bare HTTPS N1 storefront origin and admits none when unset', () =>
+  Effect.gen(function* n1Origin() {
+    expect(yield* readN1Origin({})).toEqual(Option.none());
+    expect(yield* readN1Origin({ ONTOS_N1_STOREFRONT_ORIGIN: 'https://n1.stable.example' })).toEqual(
+      Option.some('https://n1.stable.example'),
+    );
+    for (const rejected of ['http://localhost:3071', 'https://n1.example/path', 'https://user@n1.example', '*']) {
+      expect(yield* readN1Origin({ ONTOS_N1_STOREFRONT_ORIGIN: rejected }).pipe(Effect.flip)).toBeDefined();
+    }
+  }),
+);
 
 /** Exercise the real child boundary without running the database-writing demo commands. */
 const fixture = (failAt = 0, exitCode = 7) =>
@@ -156,13 +212,15 @@ it.live('enrolls the native receiver before all source bootstraps with only supe
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live('does nothing outside stage, even without bootstrap credentials', () =>
-  Effect.gen(function* notStage() {
+it.live('does nothing without the demo fixture opt-in, even on a fully configured stage deployment', () =>
+  Effect.gen(function* withoutDemoFixtures() {
     const { calls, run } = yield* fixture();
     yield* run({});
-    for (const environment of ['production', 'development']) {
+    for (const environment of ['production', 'development', 'stage']) {
       yield* run({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: environment });
     }
+    yield* run(FRESH_STAGE);
+    yield* run(Object.fromEntries(Object.entries(STAGE).filter(([key]) => key !== 'ONTOS_DEMO_FIXTURES_ENABLED')));
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -205,7 +263,7 @@ for (const [failAt, kind] of [
 it.live('fails stage configuration before starting any command and does not expose configuration values', () =>
   Effect.gen(function* missingAdmin() {
     const { calls, output, run } = yield* fixture();
-    const problem = yield* run({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' }).pipe(Effect.flip);
+    const problem = yield* run(FIXTURES_ONLY).pipe(Effect.flip);
     expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
     expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([
@@ -250,10 +308,7 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
 it.live('identifies native receiver configuration failure before starting a child or publishing secrets', () =>
   Effect.gen(function* missingCustomerRuntime() {
     const { calls, output, run } = yield* fixture();
-    const problem = yield* run({
-      DATABASE_ADMIN_URL: ADMIN_URL,
-      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-    }).pipe(Effect.flip);
+    const problem = yield* run({ ...FIXTURES_ONLY, DATABASE_ADMIN_URL: ADMIN_URL }).pipe(Effect.flip);
     expect(problem.reason).toBe(STAGE_BOOTSTRAP_FAILED);
     expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([

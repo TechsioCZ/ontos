@@ -4,6 +4,8 @@ import { Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { isMap, isSeq, parseDocument } from 'yaml';
 
+import { DEMO_FIXTURES_ENABLED_VARIABLE, N1_STOREFRONT_ORIGIN_VARIABLE } from './zerops/deployment-profile.mts';
+
 /**
  * `app/zerops.yaml` describes stage, the environment every push deploys. A deployment to another
  * environment pushes a copy that names that environment in every build and runtime, so its services never
@@ -14,7 +16,9 @@ import { isMap, isSeq, parseDocument } from 'yaml';
  * `ONTOS_SYMMY_JOB_RETENTION_POLICIES` and `ONTOS_SYMMY_PRICE_READ_SOURCES` from every setup: their entries name stage
  * Tenants and routes. The Symmy owner reads an absent retention setting as no retention policy, so production admits no
  * Symmy write route until its own deployment configures one, and the Shell reads an absent price read setting as no
- * price read source, so production pages no price-list prices and revises no price until it configures its own.
+ * price read source, so production pages no price-list prices and revises no price until it configures its own. It
+ * also drops the canonical demo's fixture opt-in and N1 storefront origin, so production neither replays demo fixtures
+ * nor admits the stage N1 storefront.
  */
 export const DEPLOYMENT_ENVIRONMENT_VARIABLE = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
@@ -114,6 +118,8 @@ const configureZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnviro
         SYMMY_RETENTION_POLICIES_VARIABLE,
         SYMMY_PRICE_READ_SOURCES_VARIABLE,
         SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE,
+        DEMO_FIXTURES_ENABLED_VARIABLE,
+        N1_STOREFRONT_ORIGIN_VARIABLE,
       ]) {
         for (const path of variablePaths(document, setupCount, variable)) {
           document.deleteIn(path);
