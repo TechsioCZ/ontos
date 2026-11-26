@@ -1,5 +1,5 @@
 import { OntosRegisteredWorkloadCallsSchema } from '@app/core-runtime';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
@@ -44,13 +44,16 @@ it('publishes an unambiguous source call set and retains exact Catalog localized
     'commerce.catalog.set-variant-localized-facts-recovery.read',
     'commerce.catalog.sku.assign',
     'commerce.catalog.assign-sku-recovery.read',
-  ])
+  ]) {
     expect(calls.some((call) => call.declarationKey === declarationKey)).toBe(true);
+  }
 });
 
-it('imports the real owner manifest with unique conditional operation requirements', async () => {
-  const { symmyIntegrationManifest } = await import('../../vertical.manifest.ts');
-  expect(symmyIntegrationManifest.module.id).toBe('integration.symmy');
-  const requirements = symmyIntegrationManifest.requirements?.operations ?? [];
-  expect(new Set(requirements.map((requirement) => requirement.key)).size).toBe(requirements.length);
-});
+it.effect('imports the real owner manifest with unique conditional operation requirements', () =>
+  Effect.gen(function* manifestRequirements() {
+    const { symmyIntegrationManifest } = yield* Effect.promise(() => import('../../vertical.manifest.ts'));
+    expect(symmyIntegrationManifest.module.id).toBe('integration.symmy');
+    const requirements = symmyIntegrationManifest.requirements?.operations ?? [];
+    expect(new Set(requirements.map((requirement) => requirement.key)).size).toBe(requirements.length);
+  }),
+);

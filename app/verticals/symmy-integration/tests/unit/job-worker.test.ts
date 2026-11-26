@@ -430,16 +430,18 @@ describe('Symmy durable execution and original-effect recovery', () => {
       fixture.replaceJob({
         ...initialJob,
         effects: initialJob.effects.map((saved): SymmyExecutionJob['effects'][number] =>
-          saved.state === 'settled' ? saved : {
-            ...saved,
-            state: 'settled',
-            outcome: Option.some({
-              effectId: saved.effect.ref.effectId,
-              owner: saved.effect.ref.operation.moduleId,
-              status: 'denied',
-            }),
-            version: saved.version + 1,
-          },
+          saved.state === 'settled'
+            ? saved
+            : {
+                ...saved,
+                outcome: Option.some({
+                  effectId: saved.effect.ref.effectId,
+                  owner: saved.effect.ref.operation.moduleId,
+                  status: 'denied',
+                }),
+                state: 'settled',
+                version: saved.version + 1,
+              },
         ),
       });
       fixture.originalEligible(false);

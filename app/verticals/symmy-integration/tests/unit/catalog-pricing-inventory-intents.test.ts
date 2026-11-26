@@ -1,4 +1,4 @@
-import { Effect, Exit, Schema } from 'effect';
+import { Effect, Exit, Schema, Struct } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyRouteContextResponseSchema } from '../../shared/apis/symmy-route-context.ts';
@@ -80,13 +80,18 @@ describe('Symmy finite internal owner intent contracts', () => {
           reason: 'ERP source',
         },
       };
-      expect(yield* decode(sku)).toEqual(sku);
-      expect(yield* decode(text)).toEqual(text);
+      const intents = SymmyCatalogPricingInventoryIntentSchema.pipe(Schema.toTaggedUnion('_tag')).cases;
+      const parsedSku = yield* decode(sku);
+      expect(Schema.is(intents.CatalogAssignVariantSku)(parsedSku)).toBe(true);
+      expect(Struct.omit(parsedSku, ['_tag'])).toEqual({ payload: sku.payload });
+      const parsedText = yield* decode(text);
+      expect(Schema.is(intents.CatalogSetProductLocalizedFacts)(parsedText)).toBe(true);
+      expect(Struct.omit(parsedText, ['_tag'])).toEqual({ payload: text.payload });
       for (const invalid of [
         { ...sku, payload: baseSku },
         {
           ...sku,
-          payload: { ...sku.payload, target: { kind: 'PACKAGE_OPTION', tenantId, packageDefinitionId: resourceId } },
+          payload: { ...sku.payload, target: { kind: 'PACKAGE_OPTION', packageDefinitionId: resourceId, tenantId } },
         },
         { ...text, payload: { ...text.payload, evidenceRefs: [] } },
       ]) {

@@ -83,6 +83,7 @@ import { systemPrincipalContextResolverFromRepository } from '../../../../packag
 import {
   GatewayContextResponseSchema,
   GatewayDelegatedContextRequestSchema,
+  GatewayRegisteredWorkloadSubjectSchema,
   shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
@@ -305,12 +306,6 @@ const owners = {
 };
 const routedOwners: readonly RoutedOwnerEndpoint[] = Object.values(owners);
 interface PeerState {
-  selectedExecutor:
-    | {
-        readonly declarationKey: string;
-        readonly context: TrustedPrincipalContext;
-      }
-    | undefined;
   /** Whether Core records the succeeded invocation once an owner write is acknowledged. */
   exposeCommittedAckFact: boolean;
   fact: { actionInvocationId: string; status: string } | null;
@@ -318,18 +313,22 @@ interface PeerState {
   readonly gateway: (typeof GatewayDelegatedContextRequestSchema.Type)[];
   readonly hashes: { authContextRef: string; hash: string }[];
   readonly order: string[];
+  selectedExecutor: {
+    readonly context: TrustedPrincipalContext;
+    readonly declarationKey: string;
+  } | null;
   /** Requests no owner peer was scripted to answer; every test ends with none. */
   readonly unrouted: string[];
 }
 const peer: PeerState & typeof owners = {
   ...owners,
   exposeCommittedAckFact: true,
-  selectedExecutor: undefined,
   fact: null,
   factReads: 0,
   gateway: [],
   hashes: [],
   order: [],
+  selectedExecutor: null,
   unrouted: [],
 };
 const decodeGatewayRequest = Schema.decodeUnknownSync(Schema.fromJsonString(GatewayDelegatedContextRequestSchema));
@@ -546,7 +545,7 @@ const reset = () => {
   }
   peer.fact = null;
   peer.exposeCommittedAckFact = true;
-  peer.selectedExecutor = undefined;
+  peer.selectedExecutor = null;
   peer.factReads = 0;
   peer.hashes.length = 0;
   peer.gateway.length = 0;
@@ -1748,7 +1747,9 @@ it.effect('uses only independently guarded minimal Retail creation receipt after
       Match.tag('EnsureRetailProfile', (intent) => intent.payload),
       Match.orElse(() => {}),
     );
-    const minimal = Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+    const minimalReceipt = CustomerProfileSourceResponseSchema.pipe(Schema.toTaggedUnion('_tag')).cases.MINIMAL_RECEIPT;
+    const decodeMinimalReceipt = Schema.decodeUnknownSync(minimalReceipt);
+    const minimal = decodeMinimalReceipt({
       _tag: 'MINIMAL_RECEIPT',
       currentAdmission: {
         outcome: 'SOURCE_PERSON_CURRENT',
@@ -1795,9 +1796,8 @@ it.effect('uses only independently guarded minimal Retail creation receipt after
     expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
     expect(peer.retail.sent).toHaveLength(0);
     expect(peer.profileReceipt.bodies.map((body) => body.mode)).toEqual(['RECEIPT', 'MINIMAL_RECEIPT']);
-    if (minimal._tag !== 'MINIMAL_RECEIPT') throw new Error('Expected minimal fixture');
     forbidFull().succeedOnce(
-      Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+      decodeMinimalReceipt({
         ...minimal,
         receipt: { ...minimal.receipt, actionInvocationId: '10000000-0000-4000-8000-000000000097' },
       }),
@@ -3281,7 +3281,7 @@ describe('company source-writer executor kinds', () => {
           const partyWrite = sourceJob === 'party.registry.source-write';
           const principalId =
             kind === 'service'
-              ? internalWorkloadPrincipalId({ tenantId, legalEntityId: sellingLegalEntityId, workloadKey: sourceJob })
+              ? internalWorkloadPrincipalId({ legalEntityId: sellingLegalEntityId, tenantId, workloadKey: sourceJob })
               : executorPrincipalId;
           const resolver = systemPrincipalContextResolverFromRepository({
             load: () =>
@@ -3292,7 +3292,7 @@ describe('company source-writer executor kinds', () => {
           // The source writer is not the integration.symmy worker. Only its exact registration admits SERVICE.
           const selected = yield* resolver.resolve({
             principalId,
-            registration: registerSystemWorkload({ jobKey: sourceJob, allowServicePrincipal: true }),
+            registration: registerSystemWorkload({ allowServicePrincipal: true, jobKey: sourceJob }),
             runReference: context.deliveryId,
             tenantId,
           });
@@ -3310,37 +3310,42 @@ describe('company source-writer executor kinds', () => {
           const adapter = yield* partyWrite ? createAdapter : membershipAdapter;
           const pins: Parameters<SymmyEffectAdapterInput['recordOwnerRequest']>[0][] = [];
           const original = input();
-          const result = yield* adapter.execute({
+          const execution: SymmyEffectAdapterInput = {
             ...original,
             effect: selectedEffect,
             legalEntityId: sellingLegalEntityId,
-            ...(partyWrite ? {} : { routeKey: 'customerGroupCustomersBatch' as const, selector: membershipSelector }),
             recordOwnerRequest: (pin) =>
               original.recordOwnerRequest(pin).pipe(Effect.tap(() => Effect.sync(() => pins.push(pin)))),
-          });
+          };
+          const result = yield* adapter.execute(
+            partyWrite
+              ? execution
+              : { ...execution, routeKey: 'customerGroupCustomersBatch', selector: membershipSelector },
+          );
           expect(result.status).toBe(partyWrite ? 'accepted_change' : 'accepted_no_change');
           const sent = partyWrite ? peer.create.sent : peer.membership.sent;
           expect(sent).toHaveLength(1);
           expect(sent[0]?.headers.get('idempotency-key')).toBe(selectedEffect.ref.effectId);
           expect(pins).toHaveLength(1);
-          expect(pins[0]).toMatchObject({ executorPrincipalId: principalId, authContextRef: selected.authContextRef });
+          expect(pins[0]).toMatchObject({ authContextRef: selected.authContextRef, executorPrincipalId: principalId });
           const intent = yield* Schema.decodeUnknownEffect(SymmyPartyCommerceIntentSchema)(selectedEffect.intent);
           expect(pins[0]?.requestHash).toBe(
             yield* prepareSymmyPartyCommerceRequestHash(intent, {
-              tenantId,
-              principalId,
               legalEntityId: sellingLegalEntityId,
+              principalId,
+              tenantId,
             }),
           );
           const delegation = peer.gateway.find(
             (request) => 'declarationKey' in request.subject && request.subject.declarationKey === declarationKey,
           );
-          expect(delegation?.subject).toMatchObject({
-            _tag: 'RegisteredWorkload',
-            tenantId,
-            legalEntityId: sellingLegalEntityId,
-            workerKey: 'integration.symmy.execute-symmy-job',
+          const subject = delegation?.subject;
+          expect(Schema.is(GatewayRegisteredWorkloadSubjectSchema)(subject)).toBe(true);
+          expect(subject).toMatchObject({
             deliveryId: context.deliveryId,
+            legalEntityId: sellingLegalEntityId,
+            tenantId,
+            workerKey: 'integration.symmy.execute-symmy-job',
           });
         }).pipe(asSymmyWorker),
       );

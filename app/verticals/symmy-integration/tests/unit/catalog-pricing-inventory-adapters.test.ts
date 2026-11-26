@@ -2590,8 +2590,8 @@ describe('Symmy commands on the Product the same job creates', () => {
       Effect.gen(function* recoverSourceCommands() {
         const initial = yield* resolutionOf(skuEffectOf('ERP-NEW-SAMPLE'), [parentState]);
         expect(Exit.isSuccess(initial.exit) && initial.exit.value.status).toBe('accepted_change');
-        const sku = initial.h.resolvedEffects[0];
-        if (sku === undefined) return yield* Effect.die('Missing resolved SKU');
+        const [sku] = initial.h.resolvedEffects;
+        assert.isDefined(sku);
         for (const [selected, path] of [
           [sku, '/reads/assign-sku-recovery'],
           [resolvedProductTextOf({ name: 'Sample' }), '/reads/set-product-localized-facts-recovery'],
@@ -2606,7 +2606,7 @@ describe('Symmy commands on the Product the same job creates', () => {
                 canExecuteNewEffects: false,
                 originalInvocationId: invocationId,
               });
-              expect(recovered).toMatchObject({ status: 'settled', outcome: { status: 'accepted_change' } });
+              expect(recovered).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
               expect(h.requests.filter((request) => request.url.includes(path))).toHaveLength(1);
               expect(h.events).not.toContain('owner-write');
             }),
@@ -3407,22 +3407,22 @@ const readinessNameFixture = () => {
     ...dependentEffect(
       {
         _tag: 'CatalogReadiness',
-        step: 'NAME',
-        kind: 'AXIS_FREE_UNTYPED',
         divisible: false,
         evidenceRefs: ['symmy-product:source'],
+        kind: 'AXIS_FREE_UNTYPED',
         locale: 'cs-CZ',
         name: 'Fallback',
+        step: 'NAME',
         unitRef,
       },
       productFactsOperation,
     ),
-    effectKey: 'readiness-name',
-    ref: { ...effect.ref, operation: productFactsOperation, effectId: '10000000-0000-4000-8000-000000000072' },
     dependsOn: dependencies.map(({ effect: parent }) => ({
       effectKey: parent.effectKey,
       itemKey: productParent.itemKey,
     })),
+    effectKey: 'readiness-name',
+    ref: { ...effect.ref, effectId: '10000000-0000-4000-8000-000000000072', operation: productFactsOperation },
   });
   const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
     items: [
@@ -3439,7 +3439,7 @@ const readinessNameFixture = () => {
       },
     ],
   });
-  return { dependencies, original, acceptedPlan };
+  return { acceptedPlan, dependencies, original };
 };
 
 describe('Symmy Product readiness', () => {
@@ -3793,13 +3793,13 @@ describe('Symmy Product readiness', () => {
   );
 
   for (const [scenario, initial] of [
-    ['explicit localized name', { name: 'Explicit', description: 'Source text', revision: 4 }],
+    ['explicit localized name', { description: 'Source text', name: 'Explicit', revision: 4 }],
     ['description only', { description: 'Source text', revision: 3 }],
     ['absent locale', { revision: 0 }],
   ] as const) {
     it.effect(`readiness NAME preserves ${scenario} and never overwrites a name on replay`, () =>
       Effect.gen(function* readinessName() {
-        const { dependencies, original, acceptedPlan } = readinessNameFixture();
+        const { acceptedPlan, dependencies, original } = readinessNameFixture();
         let current: LocaleProjection = initial;
         const h = harness(
           false,
@@ -3831,10 +3831,10 @@ describe('Symmy Product readiness', () => {
                 false,
               );
             } else {
-              const facts = {
-                name: 'Fallback',
-                ...(current.description === undefined ? {} : { description: current.description }),
-              };
+              const facts =
+                current.description === undefined
+                  ? { name: 'Fallback' }
+                  : { description: current.description, name: 'Fallback' };
               const [write] = writes;
               assert.isDefined(write);
               expect(yield* Effect.promise(() => write.clone().json())).toMatchObject({
@@ -3851,8 +3851,10 @@ describe('Symmy Product readiness', () => {
             expect(h.receipts).toEqual([]);
             if (!named) {
               const proof = yield* originalProof({ ...input, effect: resolved });
-              const pinned = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema)(resolved.intent);
-              if (pinned._tag !== 'CatalogReadinessName') return yield* Effect.die('Expected a pinned NAME write');
+              const { CatalogReadinessName } = SymmyCatalogPricingInventoryIntentSchema.pipe(
+                Schema.toTaggedUnion('_tag'),
+              ).cases;
+              const pinned = yield* Schema.decodeUnknownEffect(CatalogReadinessName)(resolved.intent);
               const altered = {
                 ...resolved,
                 intent: { ...pinned, payload: { ...pinned.payload, expectedRevision: 99 } },
@@ -3864,10 +3866,10 @@ describe('Symmy Product readiness', () => {
               const start = h.requests.length;
               const recovered = yield* adapter.recover({
                 ...proof,
-                originalInvocationId: invocationId,
                 canExecuteNewEffects: false,
+                originalInvocationId: invocationId,
               });
-              expect(recovered).toMatchObject({ status: 'settled', outcome: { status: 'accepted_change' } });
+              expect(recovered).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
               expect(
                 h.requests
                   .slice(start)
@@ -3882,7 +3884,7 @@ describe('Symmy Product readiness', () => {
   }
 
   it.effect('refuses a NAME projection for another source record even on the same Product', () => {
-    const { dependencies, original, acceptedPlan } = readinessNameFixture();
+    const { acceptedPlan, dependencies, original } = readinessNameFixture();
     const h = harness(
       false,
       original,
@@ -3897,25 +3899,25 @@ describe('Symmy Product readiness', () => {
       {
         action: 'catalog-source-products',
         response: {
-          outcome: 'FOUND',
           items: [
             {
-              source: { ...Struct.omit(sourceCorrelation, ['sourceOccurrenceId']), recordId: 'other-product' },
+              entityKind: 'PRODUCT',
               localized: currentSourceText,
               originalActionInvocationId: invocationId,
               product: result.product,
+              source: { ...Struct.omit(sourceCorrelation, ['sourceOccurrenceId']), recordId: 'other-product' },
               variantId,
               variantSources: [],
-              entityKind: 'PRODUCT',
             },
           ],
+          outcome: 'FOUND',
         },
       },
     );
     return h.provide(
       Effect.gen(function* foreignName() {
         const adapter = yield* h.adapter;
-        expect(Exit.isFailure(yield* Effect.exit(adapter.execute({ ...h.input, dependencies, acceptedPlan })))).toBe(
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute({ ...h.input, acceptedPlan, dependencies })))).toBe(
           true,
         );
         expect(h.requests.some((r) => r.url.includes('/actions/'))).toBe(false);
@@ -3925,7 +3927,7 @@ describe('Symmy Product readiness', () => {
   });
 
   it.effect('does not overwrite a description changed after NAME resolution', () => {
-    const { dependencies, original, acceptedPlan } = readinessNameFixture();
+    const { acceptedPlan, dependencies, original } = readinessNameFixture();
     let revision = 1;
     const h = harness(
       false,
@@ -3939,12 +3941,16 @@ describe('Symmy Product readiness', () => {
       priceGroupA,
       undefined,
       undefined,
-      () => ({ description: `description ${revision}`, revision: revision++ }),
+      () => {
+        const currentRevision = revision;
+        revision += 1;
+        return { description: `description ${currentRevision}`, revision: currentRevision };
+      },
     );
     return h.provide(
       Effect.gen(function* staleFallback() {
         const adapter = yield* h.adapter;
-        expect((yield* adapter.execute({ ...h.input, dependencies, acceptedPlan })).status).toBe('stale');
+        expect((yield* adapter.execute({ ...h.input, acceptedPlan, dependencies })).status).toBe('stale');
         expect(h.events.some((event) => event === 'owner-write' || event.startsWith('executor:'))).toBe(false);
       }),
     );

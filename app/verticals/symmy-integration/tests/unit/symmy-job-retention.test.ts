@@ -8,10 +8,7 @@ import {
   symmyRetentionTargetForPrivacyHandoff,
 } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
-import {
-  SymmyRouteEnrollmentRequestSchema,
-  symmyRetentionRefusals,
-} from '../../src/ops/symmy-route-enrollment.ts';
+import { SymmyRouteEnrollmentRequestSchema, symmyRetentionRefusals } from '../../src/ops/symmy-route-enrollment.ts';
 
 const id = '10000000-0000-4000-8000-000000000003';
 const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
@@ -106,18 +103,21 @@ const demoFamilyPolicy = {
   routeId: demo.enrollmentRouteId,
   targetLegalEntityId: demo.companyId,
   tenantId: demo.tenantId,
-};
+} satisfies typeof SymmyJobRetentionPolicySchema.Encoded;
 const demoRoute = () => ({
-  tenantId: demo.tenantId,
-  legalEntityId: demo.companyId,
-  routeId: id,
-  routeKey: 'customerGroupCustomersBatch',
   fixturePlan: Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
-    sourceRouteId: demo.sourceRouteId,
-    sourceRouteRevision: demo.revision,
-    sourceMappingVersion: demo.revision,
     items: [
       {
+        effects: [
+          {
+            effectKey: 'operation-0',
+            operation: {
+              entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+              moduleId: 'commerce.customer-context',
+              schemaVersion: '1',
+            },
+          },
+        ],
         itemKey: 'source-template',
         source: {
           entityKind: 'CUSTOMER_GROUP',
@@ -125,16 +125,6 @@ const demoRoute = () => ({
           sourceNamespace: demo.namespace,
           sourceRecordId: 'ENROLLMENT_TEMPLATE',
         },
-        effects: [
-          {
-            effectKey: 'operation-0',
-            operation: {
-              moduleId: 'commerce.customer-context',
-              entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
-              schemaVersion: '1',
-            },
-          },
-        ],
       },
     ],
     selector: {
@@ -142,18 +132,25 @@ const demoRoute = () => ({
       source: {
         entityKind: 'CUSTOMER_GROUP',
         issuerId: demo.issuer,
+        route: { integrationRouteId: demo.sourceRouteId, tenantId: demo.tenantId },
         sourceNamespace: demo.namespace,
         sourceRecordId: 'created-after-boot',
-        route: { integrationRouteId: demo.sourceRouteId, tenantId: demo.tenantId },
       },
       target: {
         moduleId: 'commerce.customer-context',
-        resourceType: 'commerce.customer-context.customer-group',
         resourceId: id,
+        resourceType: 'commerce.customer-context.customer-group',
         tenantId: demo.tenantId,
       },
     },
+    sourceMappingVersion: demo.revision,
+    sourceRouteId: demo.sourceRouteId,
+    sourceRouteRevision: demo.revision,
   }),
+  legalEntityId: demo.companyId,
+  routeId: id,
+  routeKey: 'customerGroupCustomersBatch',
+  tenantId: demo.tenantId,
 });
 
 it('authorizes new demo membership route IDs under one explicit source-family retention policy', () => {
@@ -173,7 +170,6 @@ it('keeps the physical retention policy while matching the enrolled logical grou
   const logicalSource = '5a6fb39a-c26e-4186-9dc2-5e410210d36c';
   const plan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
     ...route.fixturePlan,
-    sourceRouteId: logicalSource,
     selector: {
       ...route.fixturePlan.selector,
       source: {
@@ -181,12 +177,12 @@ it('keeps the physical retention policy while matching the enrolled logical grou
         route: { integrationRouteId: logicalSource, tenantId: demo.tenantId },
       },
     },
+    sourceRouteId: logicalSource,
   });
   expect(policy.routeId).toBe('f637a6ec-865b-43bc-9c28-57783757f367');
   expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, fixturePlan: plan })).toBe(true);
   const physicalSourcePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
     ...plan,
-    sourceRouteId: policy.routeId,
     selector: {
       ...plan.selector,
       source: {
@@ -194,6 +190,7 @@ it('keeps the physical retention policy while matching the enrolled logical grou
         route: { integrationRouteId: policy.routeId, tenantId: demo.tenantId },
       },
     },
+    sourceRouteId: policy.routeId,
   });
   expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, fixturePlan: physicalSourcePlan })).toBe(false);
 });
@@ -201,16 +198,16 @@ it('keeps the physical retention policy while matching the enrolled logical grou
 it('uses the same family policy when bootstrapping or verifying a new membership route', () => {
   const route = demoRoute();
   const request = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
-    tenantId: route.tenantId,
+    configuration: route.fixturePlan,
     legalEntityId: route.legalEntityId,
+    lifecyclePolicy: { policyId: demo.policyId, revision: demo.revision },
+    mappingVersion: demo.revision,
+    principalId: '10000000-0000-4000-8000-000000000009',
+    routeCode: 'created-after-boot',
     routeId: route.routeId,
     routeKey: route.routeKey,
-    routeCode: 'created-after-boot',
-    principalId: '10000000-0000-4000-8000-000000000009',
-    lifecyclePolicy: { policyId: demo.policyId, revision: demo.revision },
     routeRevision: demo.revision,
-    mappingVersion: demo.revision,
-    configuration: route.fixturePlan,
+    tenantId: route.tenantId,
   });
   const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)(demoFamilyPolicy);
   expect(symmyRetentionRefusals(request, [policy])).toEqual([]);

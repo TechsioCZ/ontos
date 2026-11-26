@@ -43,9 +43,6 @@ const admitWorkload = 'integration.symmy-admit';
 const importWorkload = 'commerce.catalog.symmy-product-import';
 const priceWriteWorkload = 'commerce.pricing.source-write';
 const catalogModule = 'commerce.catalog';
-const inventoryModule = 'commerce.inventory';
-const stockWriteWorkload = 'commerce.inventory.source-write';
-const stockReadWorkload = 'commerce.inventory.source-read';
 const digest = (seed: string) => seed.repeat(64).slice(0, 64);
 const services = Layer.mergeAll(NodeServices.layer, Reactivity.layer);
 
@@ -92,56 +89,6 @@ const bindings: readonly SymmyRequiredBinding[] = [
   },
   { companyScoped: false, identity: 'executor', purpose: 'Symmy job execution', workloads: [SYMMY_JOB_KEY] },
 ];
-/** The same route that also defines prices: Pricing's define is published for a company, so its executor runs in it. */
-const pricedBindings: readonly SymmyRequiredBinding[] = [
-  ...bindings,
-  {
-    companyScoped: true,
-    identity: 'executor',
-    purpose: 'commerce.pricing.define-price@2',
-    workloads: [priceWriteWorkload],
-  },
-];
-/**
- * What a Tenant-wide stock route needs on main's contracts (symmy-route-bindings-main-contracts.test.ts): it names no
- * company, so none of its bindings needs a company registration.
- */
-const stockBindings: readonly SymmyRequiredBinding[] = [
-  {
-    companyScoped: false,
-    identity: 'integration',
-    purpose: 'route context',
-    workloads: [admitWorkload, 'integration.symmy-poll'],
-  },
-  { companyScoped: false, identity: 'integration', purpose: 'synchronous admission', workloads: [admitWorkload] },
-  { companyScoped: false, identity: 'integration', purpose: 'synchronous receipt', workloads: [admitWorkload] },
-  {
-    companyScoped: false,
-    identity: 'integration',
-    purpose: 'commerce.inventory.import-source-assertion@1',
-    workloads: [stockWriteWorkload],
-  },
-  {
-    companyScoped: false,
-    identity: 'executor',
-    purpose: 'commerce.inventory.import-source-assertion@1',
-    workloads: [stockWriteWorkload],
-  },
-  {
-    companyScoped: false,
-    identity: 'executor',
-    purpose: 'commerce.inventory.api.inventory-source-import-receipt@1',
-    workloads: [stockReadWorkload],
-  },
-];
-const StockRouteSchema = Schema.Tuple([
-  Schema.Struct({
-    backend: Schema.String,
-    companyless: Schema.Boolean,
-    positions: Schema.Number,
-    route_key: Schema.String,
-  }),
-]);
 const attribution = {
   operatorRef: 'operator:route-enrollment-test',
   reason: 'Enroll the products route for the import',

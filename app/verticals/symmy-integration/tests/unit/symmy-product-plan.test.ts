@@ -273,27 +273,22 @@ it.effect('orders readiness after every explicit product text, including the rea
       catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
       items: [enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations)],
     });
-    for (const localized of [
+    const textCases: readonly (readonly { description?: string; locale: string; name?: string }[])[] = [
       [
         { description: 'Zdrojový popis', locale: 'cs-CZ', name: 'Zdrojová židle' },
         { locale: 'en', name: 'Source chair' },
       ],
       [{ description: 'Pouze zdrojový popis', locale: 'cs-CZ' }],
-    ]) {
+    ];
+    for (const localized of textCases) {
       const plan = Option.getOrThrow(
         yield* build(rowsOf(product({ lifecycle: 'ACTIVE', localized })), { template: readyTemplate }),
       );
       const axes = effectOf(plan, 'product-0', 'readiness-axes');
-      for (const [index, text] of localized.entries()) {
+      for (const [index, { locale, ...facts }] of localized.entries()) {
         const effectKey = `product-facts-${index}`;
         expect(axes.dependsOn).toContainEqual({ effectKey, itemKey: 'product-0' });
-        expect(textRequestOf(effectOf(plan, 'product-0', effectKey))).toMatchObject({
-          facts: {
-            ...('name' in text ? { name: text.name } : {}),
-            ...('description' in text ? { description: text.description } : {}),
-          },
-          locale: text.locale,
-        });
+        expect(textRequestOf(effectOf(plan, 'product-0', effectKey))).toMatchObject({ facts, locale });
       }
       // Every later readiness step waits for AXES, so NAME and activation cannot bypass a pending source text.
       for (const step of ['confirm', 'name', 'activate', 'unit', 'untyped']) {
@@ -724,7 +719,8 @@ describe('Symmy product plan from the public rows', () => {
 
   it.effect('plans one product and its initial variant without localized texts or prices', () =>
     Effect.gen(function* noProductTexts() {
-      for (const extra of [{}, { localized: [] }]) {
+      const textCases: readonly Fields[] = [{}, { localized: [] }];
+      for (const extra of textCases) {
         const plan = Option.getOrThrow(yield* build(rowsOf(product(extra))));
         expect(itemKeys(plan)).toEqual(['product-0']);
         expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
