@@ -22,6 +22,8 @@ export interface CatalogContentPanelProps {
   readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category: CategoryTrail | null;
+  /** Path labels of the product's categories (additional ones included). */
+  readonly categoryTrails?: readonly CategoryTrail[];
   /** The company has a storefront category tree. */
   readonly hasCategoryTree: boolean;
   readonly onCommitted: (message: string) => void;
@@ -53,9 +55,9 @@ interface ContentDraft {
   readonly parameters: readonly ParameterDraft[];
 }
 
-const contentDraftOf = (product: ProductRecord): ContentDraft => ({
+const contentDraftOf = (product: ProductRecord, trails: readonly CategoryTrail[] = []): ContentDraft => ({
   category: 'keep',
-  extras: contentExtrasOf(product),
+  extras: contentExtrasOf(product, trails),
   flags: {
     isAction: product.isAction === true,
     isNew: product.isNew === true,
@@ -102,6 +104,7 @@ export const CatalogContentPanel = ({
   active = true,
   canWrite,
   category,
+  categoryTrails = [],
   hasCategoryTree,
   onCommitted,
   onReload,
@@ -109,7 +112,7 @@ export const CatalogContentPanel = ({
   revision,
 }: CatalogContentPanelProps) => {
   const { t } = useModernI18n();
-  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product));
+  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product, categoryTrails));
   const picked = form.category === 'keep' ? category : form.category;
   const { flags, imageAlt, parameters } = form;
   const nextKey = useRef((product.parameters ?? []).length);
@@ -129,7 +132,7 @@ export const CatalogContentPanel = ({
       nextKey.current = Math.max(nextKey.current, next.parameters.length);
     },
     revision,
-    server: contentDraftOf(product),
+    server: contentDraftOf(product, categoryTrails),
     value: form,
   });
 

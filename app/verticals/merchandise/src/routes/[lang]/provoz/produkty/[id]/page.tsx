@@ -145,6 +145,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
             ? {}
             : { storefrontOrigin: state.response.storefrontOrigin })}
           category={state.response.categoryTrails?.find((trail) => trail.id === state.product.categoryId) ?? null}
+          categoryTrails={state.response.categoryTrails ?? []}
           hasCategoryTree={state.response.hasCategoryTree === true}
           key={state.product.id}
           markets={{

@@ -3118,7 +3118,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         metadata.categoryMatchTotal = categorySearch.total;
       }
       if (staff && view.categoryTrails === true) {
-        const ids = pageProducts.flatMap((product) => (product.categoryId === undefined ? [] : [product.categoryId]));
+        // Additional categories too, so the editor names them by their path instead of their id.
+        const ids = pageProducts.flatMap((product) => [
+          ...(product.categoryId === undefined ? [] : [product.categoryId]),
+          ...(product.additionalCategoryIds ?? []),
+        ]);
         if (view.categoryId !== undefined) {
           ids.push(view.categoryId);
         }

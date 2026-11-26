@@ -67,6 +67,8 @@ export interface ProductDetailViewProps {
   readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
+  /** Path labels of the product's categories (additional ones included). */
+  readonly categoryTrails?: readonly CategoryTrail[];
   readonly hasCategoryTree?: boolean;
   /**
    * The product's offer and price in every configured market of the company, and whether the viewer may switch it
@@ -452,6 +454,7 @@ export const ProductDetailView = ({
   canWrite,
   canMoveStock = canWrite,
   category = null,
+  categoryTrails = [],
   hasCategoryTree = false,
   markets = NO_MARKETS,
   movements,
@@ -611,6 +614,7 @@ export const ProductDetailView = ({
               active={tab === 'content'}
               canWrite={canWrite}
               category={category}
+              categoryTrails={categoryTrails}
               hasCategoryTree={hasCategoryTree}
               onCommitted={onCommitted}
               onReload={onReload}

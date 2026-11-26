@@ -22,8 +22,11 @@ export interface ContentExtras {
   readonly seoTitle: string;
 }
 
-export const contentExtrasOf = (product: ProductRecord): ContentExtras => ({
-  additionalCategories: (product.additionalCategoryIds ?? []).map((id) => ({ id, trail: id })),
+export const contentExtrasOf = (product: ProductRecord, trails: readonly CategoryTrail[] = []): ContentExtras => ({
+  additionalCategories: (product.additionalCategoryIds ?? []).map((id) => ({
+    id,
+    trail: trails.find((trail) => trail.id === id)?.trail ?? id,
+  })),
   brand: product.brand ?? '',
   documents: (product.documents ?? []).map((document, index) => ({ ...document, key: index })),
   featuredText: Option.match(product.featuredPosition ?? Option.none(), { onNone: () => '', onSome: String }),
