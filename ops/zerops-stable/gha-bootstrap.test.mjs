@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -156,17 +157,40 @@ test('app container steps carry secrets only on ssh stdin, never as an argument'
   assert.doesNotMatch(script, /secret-password|password-value/u);
   assert.match(script, /bootstrap-stage-accounts\.mts --commit/u);
   assert.match(script, /activate-tenant-modules\.mts --tenant-id \S+ --modules demo\.merchandise --mode apply/u);
-  let seen;
+  const seen = [];
   runRemote(script, {
     run: (command, args, options) => {
-      seen = { args, command, input: options.input };
+      seen.push({ args, command, input: options.input });
       return { status: 0 };
     },
   });
-  assert.equal(seen.command, 'ssh');
-  assert.equal(seen.input, script);
-  assert.doesNotMatch(seen.args.join(' '), /password|base64/u);
-  assert.throws(() => runRemote('exit 1', { run: () => ({ status: 255 }) }), /app container failed/u);
+  assert.deepEqual(seen.map(({ command }) => command), ['ssh-keygen', 'ssh']);
+  const [keygen, ssh] = seen;
+  // The runner has no SSH identity: each call presents the throwaway key it just made, and runs POSIX sh, not bash.
+  assert.equal(ssh.args[ssh.args.indexOf('-i') + 1], keygen.args[keygen.args.indexOf('-f') + 1]);
+  assert.deepEqual(ssh.args.slice(-2), ['app', 'sh -l -s']);
+  assert.equal(ssh.input, script);
+  assert.doesNotMatch(ssh.args.join(' '), /password|base64/u);
+  const failing = (failed) => (command) => ({ status: command === failed ? 255 : 0 });
+  assert.throws(() => runRemote('exit 1', { run: failing('ssh') }), /app container failed/u);
+  assert.throws(() => runRemote('exit 1', { run: failing('ssh-keygen') }), /ssh-keygen could not create/u);
+});
+
+test('the remote steps are POSIX sh, and a failed workload dry run stops the script', () => {
+  const bundle = parse(bundleValue());
+  for (const script of [accountsScript(bundle.accounts, true), workloadsScript({ schemaVersion: 1, tenants: [] }, true)]) {
+    assert.equal(spawnSync('sh', ['-n'], { encoding: 'utf8', input: script }).status, 0);
+  }
+  const lines = workloadsScript({ schemaVersion: 1, tenants: [] }, true).split('\n');
+  const from = lines.findIndex((line) => line.includes('--mode dry-run'));
+  const bin = mkdtempSync(`${tmpdir()}/gha-node-`);
+  writeFileSync(`${bin}/node`, '#!/bin/sh\necho "dry run refused" >&2\nexit 3\n', { mode: 0o755 });
+  const result = spawnSync('sh', ['-c', ['set -eu', 'private="$(mktemp -d)"', ...lines.slice(from, from + 2), 'echo reached'].join('\n')], {
+    encoding: 'utf8',
+    env: { PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 3);
+  assert.doesNotMatch(result.stdout, /reached/u);
 });
 
 test('the workload plan fingerprint is read from the dry run output', () => {
@@ -201,8 +225,6 @@ test('storefront keys already on Zerops are reused, new ones go straight to thei
     create: async (serviceId, key, content) => stored.push([serviceId, key, content]),
     list: async (serviceId) => (serviceId === config.services.shop ? [{ content: 'held-shop-key', id: 'x', key: 'ONTOS_AKROS_STOREFRONT_API_KEY' }] : []),
   };
-  const { mkdtempSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
   const keysDir = mkdtempSync(`${tmpdir()}/gha-keys-`);
   const registrations = await ensureStorefrontSecrets({ apply: true, bundle, config, keysDir, log: () => {}, shellClient, store });
   assert.deepEqual(stored, [
@@ -256,20 +278,23 @@ test('each storefront tenant gets one native Commerce portal key, kept in the ap
   };
   let owners = { 'shell-super-app': { BETTER_AUTH_SECRET: 'auth' } };
   const store = { list: async () => [{ content: JSON.stringify(owners), id: 'o', key: 'ONTOS_OWNER_SECRETS_JSON' }] };
-  const first = await ensureCommercePortal({ bundle, config, log: () => {}, shellClient, store });
-  assert.equal(first.issued, true);
+  const persisted = [];
+  const persist = async (credentials) => persisted.push(Object.keys(credentials).length);
+  const first = await ensureCommercePortal({ bundle, config, log: () => {}, persist, shellClient, store });
   assert.equal(issued.length, 3);
+  assert.deepEqual(persisted, [1, 2, 3], 'each key is stored as soon as it is issued');
   assert.deepEqual(first.credentials[accounts.tenants[0].tenantId], {
     coreIdentityApiKey: 'portal-key-obchod@sroubshop.example',
     gatewayApiKey: 'portal-key-obchod@sroubshop.example',
   });
   const secrets = portalOwnerSecrets(first.credentials, { deployment: { d: 1 }, verification: { v: 1 } });
   owners = { ...owners, ...secrets };
-  const again = await ensureCommercePortal({ bundle, config, log: () => {}, shellClient, store });
-  assert.equal(again.issued, false);
+  const again = await ensureCommercePortal({ bundle, config, log: () => {}, persist, shellClient, store });
+  assert.equal(issued.length, 3);
+  assert.deepEqual(persisted, [1, 2, 3]);
   assert.deepEqual(again.credentials, first.credentials);
   owners = { 'shell-super-app': { BETTER_AUTH_SECRET: 'auth' } };
-  await assert.rejects(ensureCommercePortal({ bundle, config, log: () => {}, shellClient, store }), /rotate it deliberately/u);
+  await assert.rejects(ensureCommercePortal({ bundle, config, log: () => {}, persist, shellClient, store }), /rotate it deliberately/u);
   const registrations = withPortalWorkloads(
     { schemaVersion: 1, tenants: [{ ownerPrincipalId: 'o', tenantId: accounts.tenants[0].tenantId, workloads: [] }] },
     first.workloads,
@@ -278,4 +303,98 @@ test('each storefront tenant gets one native Commerce portal key, kept in the ap
     registrations.tenants[0].workloads.map(({ workloadKey }) => workloadKey),
     ['commerce.storefront-client', 'core.identity-provider'],
   );
+});
+
+test('a Commerce portal key issued before a failure is stored, so the rerun goes on instead of refusing it', async () => {
+  const bundle = parse(bundleValue());
+  const principals = new Map();
+  let failOn = 'owner@akros.example';
+  const shellClient = {
+    createServicePrincipal: async (cookie, displayName) => {
+      const principalId = newId();
+      principals.set(cookie, [{ displayName, key: null, kind: 'service', principalId, principalStatus: 'active' }]);
+      return principalId;
+    },
+    issueManagedKey: async (cookie) => {
+      if (cookie === failOn) throw new Error('Shell answered HTTP 503');
+      principals.get(cookie)[0].key = { bindingStatus: 'active' };
+      return `portal-key-${cookie}`;
+    },
+    listManaged: async (cookie) => principals.get(cookie) ?? [],
+    signIn: async (email) => email,
+  };
+  let owners = { 'shell-super-app': { BETTER_AUTH_SECRET: 'auth' } };
+  const store = { list: async () => [{ content: JSON.stringify(owners), id: 'o', key: 'ONTOS_OWNER_SECRETS_JSON' }] };
+  const persist = async (credentials) => {
+    owners = { ...owners, 'commerce-customer-context': { COMMERCE_TENANT_CREDENTIALS: JSON.stringify(credentials) } };
+  };
+  const run = () => ensureCommercePortal({ bundle, config, log: () => {}, persist, shellClient, store });
+  await assert.rejects(run(), /HTTP 503/u);
+  failOn = undefined;
+  const rerun = await run();
+  assert.deepEqual(Object.keys(rerun.credentials).sort(), accounts.tenants.map(({ tenantId }) => tenantId).sort());
+});
+
+test('storefront keys issued before a failure reach their services', async () => {
+  const bundle = parse(bundleValue());
+  const shellClient = {
+    createServicePrincipal: async () => newId(),
+    issueManagedKey: async (cookie, principalId, name) => {
+      if (name === 'akros-storefront') throw new Error('Shell answered HTTP 503');
+      return `issued-${name}`;
+    },
+    listManaged: async () => [],
+    signIn: async () => 'session',
+  };
+  const stored = [];
+  const store = { create: async (serviceId, key, content) => stored.push([serviceId, key, content]), list: async () => [] };
+  const keysDir = mkdtempSync(`${tmpdir()}/gha-keys-`);
+  await assert.rejects(ensureStorefrontSecrets({ apply: true, bundle, config, keysDir, log: () => {}, shellClient, store }), /HTTP 503/u);
+  assert.deepEqual(stored, [[config.services.shop, 'ONTOS_AKROS_STOREFRONT_API_KEY', 'issued-sroubshop-storefront']]);
+});
+
+test('after-app restarts the app even when this run stored nothing new, before the steps that need it', async () => {
+  const bundle = parse(bundleValue());
+  const calls = [];
+  const owners = JSON.stringify({ 'shell-super-app': { BETTER_AUTH_SECRET: 'auth' } });
+  const principal = (displayName) => ({ displayName, key: { bindingStatus: 'active' }, kind: 'service', principalId: newId(), principalStatus: 'active' });
+  const result = await afterApp({
+    apply: true,
+    bundle,
+    config,
+    deps: {
+      applySecrets: async () => {
+        calls.push('secrets');
+        return { changes: [{ action: 'unchanged', key: 'ONTOS_OWNER_SECRETS_JSON', service: 'app' }] };
+      },
+      assertServices: async () => services('ACTIVE'),
+      portalDeployment: () => ({ deployment: {}, verification: {} }),
+      remote: (script) => calls.push(script.includes('register-stage-workloads') ? 'workloads' : 'remote'),
+      restartApp: async () => calls.push('restart'),
+      salesData: () => {
+        calls.push('sales');
+        return { pending: [] };
+      },
+      shellClient: {
+        listManaged: async (cookie) => [principal('commerce-portal'), principal('sroubshop-storefront'), principal('akros-storefront'), principal('n1-storefront')].filter(() => cookie),
+        signIn: async () => 'session',
+      },
+      store: {
+        list: async (serviceId) =>
+          serviceId === config.services.app
+            ? [{ content: JSON.stringify({ ...JSON.parse(owners), 'commerce-customer-context': { COMMERCE_TENANT_CREDENTIALS: JSON.stringify(Object.fromEntries(accounts.tenants.map(({ tenantId }) => [tenantId, { coreIdentityApiKey: 'k', gatewayApiKey: 'k' }]))) } }), id: 'o', key: 'ONTOS_OWNER_SECRETS_JSON' }]
+            : [{ content: 'held', id: 'x', key: serviceId === config.services.n1 ? 'ONTOS_N1_STOREFRONT_API_KEY' : 'ONTOS_AKROS_STOREFRONT_API_KEY' }],
+      },
+      taxBaseline: ({ mode }) => {
+        calls.push(`tax ${mode}`);
+        return { fingerprint: 'f' };
+      },
+      waitForShell: async () => calls.push('shell'),
+    },
+    log: () => {},
+  });
+  assert.equal(result.applied, true);
+  const at = (step) => calls.indexOf(step);
+  assert.ok(at('secrets') < at('workloads') && at('workloads') < at('restart') && at('restart') < at('shell'), calls.join(','));
+  assert.ok(at('shell') < at('tax dry-run') && at('tax verify') < at('sales'), calls.join(','));
 });

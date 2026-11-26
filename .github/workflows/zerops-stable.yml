@@ -6,6 +6,8 @@
 #           hostnames (DNS only) and checks the project runs the tag
 #   verify  checks the stable project runs the given tag and its public origins answer
 # The first install of a fresh project bootstraps it (ops/zerops-stable/gha-bootstrap.mjs) around the app's first deploy.
+# A bootstrap that stopped after the app deployed resumes on the next dispatch (install kind bootstrap-fronts): the
+# after-app steps run again, idempotently, before the fronts install.
 # Credentials reach only the jobs of the sales-stable environment, through env, never a file the run uploads.
 name: Zerops Stable Release
 on:
@@ -307,6 +309,7 @@ jobs:
           project="$(jq -er .projectId "$config")"
           printf 'STABLE_CONFIG=%s\nZEROPS_PROJECT_ID=%s\nARTIFACTS=%s\n' "$config" "$project" "$RUNNER_TEMP/sales-stable/release" >>"$GITHUB_ENV"
       # Read-only: proves the project and the artifacts, and reads what this install deploys from the live versions.
+      # bootstrap: bootstrap-app (fresh project) or bootstrap-fronts (the app runs this release, no front ever did).
       - name: Plan the install
         id: plan
         env:
@@ -315,14 +318,16 @@ jobs:
           set -euo pipefail
           node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" >"$RUNNER_TEMP/plan.json"
           kind="$(jq -er .kind "$RUNNER_TEMP/plan.json")"
-          echo "kind=$kind" >>"$GITHUB_OUTPUT"
+          bootstrap=false
+          if [[ "$kind" == bootstrap-* ]]; then bootstrap=true; fi
+          printf 'kind=%s\nbootstrap=%s\n' "$kind" "$bootstrap" >>"$GITHUB_OUTPUT"
           printf '### Install %s: %s\n' "$TAG" "$kind" >>"$GITHUB_STEP_SUMMARY"
       # A fresh project: the database identities, SpiceDB and the secrets the app needs before its first start, and the
       # accounts on the app container after it, over the project VPN. zcli 1.1.3 drives wg-quick and resolvectl as root;
       # its state lives in a runner-owned directory, and the token stays in env, never in arguments.
       - name: Join the stable project VPN
         id: vpn
-        if: steps.plan.outputs.kind == 'bootstrap-app'
+        if: steps.plan.outputs.bootstrap == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
@@ -351,15 +356,18 @@ jobs:
           STAGE_SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
           STABLE_BOOTSTRAP_JSON: ${{ secrets.STABLE_BOOTSTRAP_JSON }}
         run: node ops/zerops-stable/gha-bootstrap.mjs before-app --config "$STABLE_CONFIG" --tag "$TAG" --apply
+      # A bootstrap-fronts install deploys only the fronts, which need the keys after-app stores: it runs below.
       - name: Install
+        if: steps.plan.outputs.kind != 'bootstrap-fronts'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" --execute >"$RUNNER_TEMP/install.json"
       # Zerops routes a hostname only to a deployed port, so each install routes what it deployed and what ran before:
-      # a Zerops public routing plus DNS-only A and AAAA records. Idempotent.
+      # a Zerops public routing plus DNS-only A and AAAA records. Idempotent. A resumed bootstrap routes what the plan
+      # read running.
       - name: Route the installed hostnames
         env:
-          INSTALL: ${{ runner.temp }}/install.json
+          INSTALL: ${{ runner.temp }}/${{ steps.plan.outputs.kind == 'bootstrap-fronts' && 'plan.json' || 'install.json' }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -376,7 +384,7 @@ jobs:
           bash app/scripts/zerops/route-stage-domains.sh "${routes[@]}"
       # A new routing answers HTTPS only once Zerops has its certificate: up to fifteen minutes.
       - name: Wait for the Shell origin to answer HTTPS
-        if: steps.plan.outputs.kind == 'bootstrap-app'
+        if: steps.plan.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           shell="$(jq -er .origins.shell "$STABLE_CONFIG")"
@@ -392,7 +400,7 @@ jobs:
           exit 1
       # The app runs and its hostname answers: the accounts, modules, storefront principals and keys, then the fronts.
       - name: Bootstrap the project after the first app deploy
-        if: steps.plan.outputs.kind == 'bootstrap-app'
+        if: steps.plan.outputs.bootstrap == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -400,12 +408,12 @@ jobs:
           STABLE_BOOTSTRAP_JSON: ${{ secrets.STABLE_BOOTSTRAP_JSON }}
         run: node ops/zerops-stable/gha-bootstrap.mjs after-app --config "$STABLE_CONFIG" --tag "$TAG" --apply
       - name: Install the fronts
-        if: steps.plan.outputs.kind == 'bootstrap-app'
+        if: steps.plan.outputs.bootstrap == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" --execute >"$RUNNER_TEMP/install-fronts.json"
       - name: Route the front hostnames
-        if: steps.plan.outputs.kind == 'bootstrap-app'
+        if: steps.plan.outputs.bootstrap == 'true'
         env:
           INSTALL: ${{ runner.temp }}/install-fronts.json
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}

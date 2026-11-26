@@ -15,12 +15,15 @@
 // after-app (app ACTIVE, Shell origin routed): on the app container over `ssh app`, the native accounts bootstrap
 //   (bootstrap-stage-accounts.mts: dry run, commit, verify) and each tenant's modules (activate-tenant-modules.mts).
 //   Then each storefront's service principal and managed key through the public Shell (bootstrap.mjs), each new key
-//   straight into its service's Zerops secret, each storefront tenant's Commerce portal principal and key (merged into
-//   the app's owner secrets as COMMERCE_TENANT_CREDENTIALS with the portal identity deployment, then an app restart),
-//   the workload registrations of both (register-stage-workloads.mts),
+//   straight into its service's Zerops secret, each storefront tenant's Commerce portal principal and key (each key
+//   merged into the app's owner secrets as COMMERCE_TENANT_CREDENTIALS as soon as it is issued, then the portal identity
+//   deployment), the workload registrations of both (register-stage-workloads.mts), an app restart so the app runs the
+//   stored owner secrets,
 //   each selling tenant's VAT baseline (seed-tax-baseline.mts) and the synthetic sales data of the tenants the bundle
 //   names in `salesData`: storefront registration, market, association, market settings and products, all through
 //   native Actions over the public Shell.
+// Every step is idempotent and no issued key exists only in memory, so after-app reruns until it completes (the
+// workflow runs it again on a `bootstrap-fronts` install).
 //
 // STABLE_BOOTSTRAP_JSON (a private GitHub secret; parsed here, never printed or written):
 //   { "schemaVersion": 1, "kind": "ontos.stable.bootstrap", "projectId": "<stable project>",
@@ -221,7 +224,9 @@ export const workloadsScript = (registrations, apply) =>
   [
     ...REMOTE_PREAMBLE,
     remoteFile('workloads.json', JSON.stringify(registrations)),
-    'node scripts/demo/register-stage-workloads.mts --registrations "$private/workloads.json" --mode dry-run | tee "$private/plan.txt"',
+    // Redirected, not piped through tee: a failed dry run stops the script with its own status.
+    'node scripts/demo/register-stage-workloads.mts --registrations "$private/workloads.json" --mode dry-run >"$private/plan.txt"',
+    'cat "$private/plan.txt"',
     ...(apply
       ? [
           `fingerprint="$(sed -n "s/.*fingerprint: '\\([0-9a-f]\\{64\\}\\)'.*/\\1/p" "$private/plan.txt")"`,
@@ -232,20 +237,31 @@ export const workloadsScript = (registrations, apply) =>
       : []),
   ].join('\n');
 
-/** `ssh app` over the project VPN; the script (with its secrets) is ssh's stdin, its output goes to this stderr. */
+/**
+ * `ssh app` over the project VPN; the script (with its secrets) is ssh's stdin, its output goes to this stderr. The
+ * runner has no SSH identity of its own, so each call presents a fresh throwaway key. The script is POSIX sh: the
+ * container's Alpine image guarantees `sh`, not bash.
+ */
 export const runRemote = (script, { run = spawnSync } = {}) => {
   const directory = mkdtempSync(path.join(tmpdir(), 'ontos-stable-ssh-'));
   try {
+    const identity = path.join(directory, 'id_ed25519');
+    const keygen = run('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'ontos-stable-bootstrap', '-f', identity], {
+      stdio: 'ignore',
+    });
+    if (keygen.error || keygen.status !== 0) fail('ssh-keygen could not create the runner key');
     const result = run(
       'ssh',
       [
         '-o', 'BatchMode=yes',
+        '-o', 'IdentitiesOnly=yes',
+        '-i', identity,
         '-o', 'StrictHostKeyChecking=accept-new',
         '-o', `UserKnownHostsFile=${path.join(directory, 'known_hosts')}`,
         '-o', 'ConnectTimeout=30',
         '-o', 'ServerAliveInterval=30',
         'app',
-        'bash -l -s',
+        'sh -l -s',
       ],
       { encoding: 'utf8', input: script, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 2, 2] },
     );
@@ -258,6 +274,7 @@ export const runRemote = (script, { run = spawnSync } = {}) => {
 /**
  * Storefront keys through the Shell, kept in Zerops: a key the service already holds is written to the private keys
  * directory first, so bootstrap.mjs reuses its principal and key; a newly issued key goes straight to the service.
+ * Keys issued before a later failure are stored too, so a rerun finds them instead of refusing the unstored keys.
  */
 export const ensureStorefrontSecrets = async ({ apply, bundle, config, keysDir, log, shellClient, store }) => {
   const storefronts = bundle.spec.tenants.flatMap(({ storefronts }) => storefronts);
@@ -272,23 +289,25 @@ export const ensureStorefrontSecrets = async ({ apply, bundle, config, keysDir, 
       held.set(storefront.storefrontAppId, true);
     }
   }
-  const registrations = await ensureStorefrontKeys({
-    accountsFile: bundle.accounts,
-    apply,
-    client: shellClient,
-    keysDir,
-    log,
-    passwords: bundle.passwords,
-    spec: bundle.spec,
-    stable: config,
-  });
-  for (const storefront of storefronts) {
-    if (held.get(storefront.storefrontAppId) || !existsSync(keyFile(storefront))) continue;
-    const variable = STOREFRONT_KEY_VARIABLES[storefront.service];
-    await store.create(config.services[storefront.service], variable, readFileSync(keyFile(storefront), 'utf8'));
-    log(`stored ${storefront.service}.${variable} (value withheld)`);
+  try {
+    return await ensureStorefrontKeys({
+      accountsFile: bundle.accounts,
+      apply,
+      client: shellClient,
+      keysDir,
+      log,
+      passwords: bundle.passwords,
+      spec: bundle.spec,
+      stable: config,
+    });
+  } finally {
+    for (const storefront of storefronts) {
+      if (held.get(storefront.storefrontAppId) || !existsSync(keyFile(storefront))) continue;
+      const variable = STOREFRONT_KEY_VARIABLES[storefront.service];
+      await store.create(config.services[storefront.service], variable, readFileSync(keyFile(storefront), 'utf8'));
+      log(`stored ${storefront.service}.${variable} (value withheld)`);
+    }
   }
-  return registrations;
 };
 
 /** seed-tax-baseline.mts --json, run in the app workspace as the tenant's owner; returns its parsed run. */
@@ -525,13 +544,13 @@ const readOwnerSecrets = async (store, config) => {
  * Each storefront tenant's Commerce portal principal and managed key, issued natively through the Shell as the tenant
  * owner. One key serves as both the Core identity and the gateway key (commerce-portal.mts). A key already in the
  * app's COMMERCE_TENANT_CREDENTIALS is kept; a principal with a key that is not stored there is refused, because
- * rotating it is a deliberate act. Returns the credentials map, the portal workloads and what changed.
+ * rotating it is a deliberate act. Each new key is handed to `persist` with the whole map before the next tenant, so
+ * a failure never leaves an issued key unstored. Returns the credentials map and the portal workloads.
  */
-export const ensureCommercePortal = async ({ bundle, config, log, shellClient, store }) => {
+export const ensureCommercePortal = async ({ bundle, config, log, persist, shellClient, store }) => {
   const owners = await readOwnerSecrets(store, config);
   const storedText = owners['commerce-customer-context']?.COMMERCE_TENANT_CREDENTIALS;
   const credentials = storedText === undefined ? {} : JSON.parse(storedText);
-  let issued = false;
   const workloads = [];
   for (const tenant of bundle.spec.tenants.filter(({ storefronts }) => storefronts.length > 0)) {
     const written = bundle.accounts.tenants.find(({ slug }) => slug === tenant.slug);
@@ -557,7 +576,7 @@ export const ensureCommercePortal = async ({ bundle, config, log, shellClient, s
     if (!hasKey) {
       const key = await shellClient.issueManagedKey(cookie, principalId, COMMERCE_PORTAL_PRINCIPAL);
       credentials[written.tenantId] = { coreIdentityApiKey: key, gatewayApiKey: key };
-      issued = true;
+      await persist(credentials);
       log(`issued the Commerce portal key of ${tenant.slug} (value withheld)`);
     }
     workloads.push({
@@ -568,7 +587,7 @@ export const ensureCommercePortal = async ({ bundle, config, log, shellClient, s
       tenantId: written.tenantId,
     });
   }
-  return { credentials, issued, workloads };
+  return { credentials, workloads };
 };
 
 /** The portal's owner secrets: tenant credentials and verification grants for Commerce, the deployment for the Shell. */
@@ -638,24 +657,31 @@ export const afterApp = async ({ apply, bundle, config, deps, log }) => {
   } finally {
     rmSync(keysDir, { force: true, recursive: true });
   }
-  const portal = await ensureCommercePortal({ bundle, config, log, shellClient: deps.shellClient, store: deps.store });
-  const stored = await deps.applySecrets({
-    apply: true,
-    bundle: {
-      projectId: config.projectId,
-      schemaVersion: 1,
-      services: { app: { [OWNER_SECRETS]: JSON.stringify(portalOwnerSecrets(portal.credentials, deps.portalDeployment(portal.workloads))) } },
-    },
-    confirmRotation: true,
+  // Merged per owner (secrets.mjs mergeOwnerSecrets): the stored auth secrets and every other setting stay.
+  const storeOwnerSecrets = (owners) =>
+    deps.applySecrets({
+      apply: true,
+      bundle: { projectId: config.projectId, schemaVersion: 1, services: { app: { [OWNER_SECRETS]: JSON.stringify(owners) } } },
+      confirmRotation: true,
+      config,
+    });
+  const portal = await ensureCommercePortal({
+    bundle,
     config,
+    log,
+    persist: (credentials) =>
+      storeOwnerSecrets({ 'commerce-customer-context': { COMMERCE_TENANT_CREDENTIALS: JSON.stringify(credentials) } }),
+    shellClient: deps.shellClient,
+    store: deps.store,
   });
+  await storeOwnerSecrets(portalOwnerSecrets(portal.credentials, deps.portalDeployment(portal.workloads)));
   log('workloads: storefront and Commerce portal registrations');
   deps.remote(workloadsScript(withPortalWorkloads(registrations, portal.workloads), true));
-  if (stored.changes.some(({ action }) => action !== 'unchanged')) {
-    log('restarting app for its new owner secrets');
-    await deps.restartApp();
-    await deps.waitForShell();
-  }
+  // Zerops gives a container its secret variables when it starts. A run that stored them earlier and failed before
+  // this point left the app on the old ones, so the restart does not depend on what this run changed.
+  log('restarting app so it runs the stored owner secrets');
+  await deps.restartApp();
+  await deps.waitForShell();
   const selling = Object.entries(bundle.modules)
     .filter(([, keys]) => keys.includes('demo.merchandise') || keys.includes('finance.billing') || keys.includes('commerce.tax'))
     .map(([slug]) => slug);

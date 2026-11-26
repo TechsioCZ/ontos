@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 const { parse } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
@@ -86,4 +88,54 @@ test('credentials reach only sales-stable jobs, through env, and never shell sou
   for (const step of steps) {
     if (step.uses && !step.uses.startsWith('./')) assert.match(step.uses, /@[0-9a-f]{40}$/u);
   }
+});
+
+/** The deploy job's step expressions, evaluated for one plan: the outputs of the plan step and of a joined VPN. */
+const evaluate = (expression, outputs) =>
+  new Function(
+    'outputs',
+    `return (${expression
+      .replaceAll(/steps\.plan\.outputs\.(\w+)/gu, 'outputs.$1')
+      .replaceAll('steps.vpn.outputs.state-directory', 'outputs.vpnState')
+      .replaceAll('always()', 'true')});`,
+  )(outputs);
+const deploySteps = workflow.jobs.deploy.steps;
+const planOutputs = (kind) => {
+  const plan = deploySteps.find((step) => step.name === 'Plan the install');
+  const directory = mkdtempSync(`${tmpdir()}/stable-plan-`);
+  writeFileSync(`${directory}/node`, `#!/bin/sh\nprintf '{"kind":"%s"}' '${kind}'\n`, { mode: 0o755 });
+  const result = spawnSync('bash', ['-c', plan.run], {
+    encoding: 'utf8',
+    env: { ...process.env, ARTIFACTS: directory, GITHUB_OUTPUT: `${directory}/output`, STABLE_CONFIG: `${directory}/config.json`, TAG: "sales-stable/2026-11-26", GITHUB_STEP_SUMMARY: `${directory}/summary`, PATH: `${directory}:${process.env.PATH}`, RUNNER_TEMP: directory },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return Object.fromEntries(readFileSync(`${directory}/output`, 'utf8').trim().split('\n').map((line) => line.split('=')));
+};
+const ranFor = (kind) => {
+  const outputs = { ...planOutputs(kind), vpnState: '' };
+  return deploySteps
+    .filter((step) => {
+      const runs = step.if === undefined || evaluate(step.if, outputs);
+      if (runs && step.id === 'vpn') outputs.vpnState = 'vpn-state';
+      return runs;
+    })
+    .map((step) => step.name);
+};
+const resolvedEnv = (name, kind) =>
+  deploySteps
+    .find((step) => step.name === name)
+    .env.INSTALL.replaceAll(/\$\{\{(.*?)\}\}/gu, (_, expression) => (expression.trim() === 'runner.temp' ? 'TMP' : evaluate(expression, { ...planOutputs(kind), vpnState: '' })));
+
+test('a fresh project bootstraps around the first app deploy, and a bootstrap that stopped after it resumes', () => {
+  const bootstrap = ['Join the stable project VPN', 'Route the installed hostnames', 'Wait for the Shell origin to answer HTTPS',
+    'Bootstrap the project after the first app deploy', 'Install the fronts', 'Route the front hostnames', 'Verify the stable project runs the release',
+    "Clear this runner's VPN key and configuration"];
+  const live = (names) => names.filter((name) => !['Checkout the pinned commit', 'Install the app workspace', 'Download the release packages',
+    'Write the sales-stable config outside the repository', 'Plan the install'].includes(name));
+  assert.deepEqual(live(ranFor('bootstrap-app')), [bootstrap[0], 'Bootstrap the project before the first app deploy', 'Install', ...bootstrap.slice(1)]);
+  // The app already runs this release: its keys, accounts and modules are completed before any front deploys.
+  assert.deepEqual(live(ranFor('bootstrap-fronts')), bootstrap);
+  assert.equal(resolvedEnv('Route the installed hostnames', 'bootstrap-fronts'), 'TMP/plan.json');
+  assert.equal(resolvedEnv('Route the installed hostnames', 'bootstrap-app'), 'TMP/install.json');
+  assert.deepEqual(live(ranFor('update')), ['Install', 'Route the installed hostnames', 'Verify the stable project runs the release']);
 });
