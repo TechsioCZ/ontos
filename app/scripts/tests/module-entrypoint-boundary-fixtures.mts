@@ -32,6 +32,7 @@ export const CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH =
   'verticals/commerce-customer-context/src/handlers/private-contract.ts';
 
 export const PRIVACY_VERTICAL_PATH = 'verticals/privacy';
+const PUBLISHED_CONTRACT_PACKAGE_PATHS = ['packages/communications-contracts', 'packages/privacy-contracts'] as const;
 
 export const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 
@@ -67,6 +68,8 @@ const CUSTOMER_CONTEXT_REACH = [
   'packages/customer-market-retirement-contracts',
   'packages/customer-payment-term-contracts',
   'packages/payment-term-catalog-contracts',
+  // the Portal Auth issuance source Read is published through its own contracts package
+  'packages/portal-auth-contracts',
   'packages/catalog-selection-contracts',
   // customer-price-group-resolution calls the Catalog's operation reference from this package.
   'packages/price-group-catalog-contracts',
@@ -77,8 +80,23 @@ const CUSTOMER_CONTEXT_REACH = [
   PARTY_VERTICAL_PATH,
 ] as const;
 
-/** Customer Context's purchase currency resolution names Pricing's published currencies, held by this manifest alone. */
-const PRICING_CONTRACTS_PACKAGE_JSON_PATH = 'packages/pricing-contracts/package.json';
+const PRIVACY_CONTRACTS_PACKAGE_PATH = 'packages/privacy-contracts';
+
+/** Party Registry's source reads take Privacy's published source processing eligibility, held by this manifest alone. */
+const PRIVACY_CONTRACTS_PACKAGE_JSON_PATH = `${PRIVACY_CONTRACTS_PACKAGE_PATH}/package.json`;
+
+const COMMUNICATIONS_CONTRACTS_PACKAGE_JSON_PATH = 'packages/communications-contracts/package.json';
+
+/**
+ * Published reads Customer Context and Party Registry take, held by their packages' manifests alone: Pricing's
+ * currencies (purchase currency resolution), Communications' outcome feed (the Portal Auth delivery reader) and
+ * Privacy's source processing eligibility.
+ */
+const CUSTOMER_CONTEXT_PUBLISHED_PACKAGE_MANIFESTS = [
+  'packages/pricing-contracts/package.json',
+  COMMUNICATIONS_CONTRACTS_PACKAGE_JSON_PATH,
+  PRIVACY_CONTRACTS_PACKAGE_JSON_PATH,
+] as const;
 
 const CUSTOMER_CONTEXT_REACH_OWNERS = [
   { id: 'catalog', path: CATALOG_VERTICAL_PATH },
@@ -1264,6 +1282,19 @@ export const readPricingSourceTree = (root: string, folder: string) => {
   return Effect.promise(async () => await readSources(path.join(root, folder)));
 };
 
+/**
+ * The schema-only contracts packages Privacy reaches Communications' Owner Coverage and its own eligibility and
+ * owner-outcome contracts through. Privacy mounts and registers its package reads from them and its owner inventory
+ * declares its governed call against them, so a fixture that judges Privacy's seam needs their manifests and sources.
+ */
+export const readPublishedContractPackages = Effect.fn(function* publishedContractPackages(root: string) {
+  const sources: (readonly [string, string])[] = [];
+  for (const folder of PUBLISHED_CONTRACT_PACKAGE_PATHS) {
+    sources.push(...(yield* readPricingSourceTree(root, folder)));
+  }
+  return sources;
+});
+
 export const PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'protected' },";
 
 export const NON_PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'authenticated_principal' },";
@@ -1580,6 +1611,7 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
+    PRIVACY_CONTRACTS_PACKAGE_JSON_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -1668,7 +1700,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
-    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
+    ...CUSTOMER_CONTEXT_PUBLISHED_PACKAGE_MANIFESTS,
   ]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -1710,8 +1742,14 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
       ],
     }),
   );
-  // Its read contracts take Party Registry's and its value kernel's, so they are copied with it.
-  for (const folder of [PRIVACY_VERTICAL_PATH, PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]) {
+  // Its read contracts take Party Registry's and its value kernel's, so they are copied with it, as is the contracts
+  // package publishing Privacy's own reads. Communications' published Owner Coverage is held by its manifest alone.
+  for (const folder of [
+    PRIVACY_VERTICAL_PATH,
+    PRIVACY_CONTRACTS_PACKAGE_PATH,
+    PARTY_VERTICAL_PATH,
+    PARTY_CONTRACTS_PACKAGE_PATH,
+  ]) {
     for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
       yield* write(root, file, source);
     }
@@ -1722,6 +1760,7 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
+    COMMUNICATIONS_CONTRACTS_PACKAGE_JSON_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -1835,13 +1874,9 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
     ...CUSTOMER_CONTEXT_REACH,
     ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: owner }) => owner),
   ]);
-  yield* write(
-    root,
-    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
-    yield* Effect.promise(
-      async () => await readFile(path.join(workspace, PRICING_CONTRACTS_PACKAGE_JSON_PATH), 'utf-8'),
-    ),
-  );
+  for (const file of CUSTOMER_CONTEXT_PUBLISHED_PACKAGE_MANIFESTS) {
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
+  }
   // Each copied package is linked as the workspace links it, so the check resolves what Customer Context takes.
   for (const [file, source] of yield* readPricingSourceTree(workspace, SHARED_CONTRACTS_WORKSPACE_PATH)) {
     yield* write(root, file, source);

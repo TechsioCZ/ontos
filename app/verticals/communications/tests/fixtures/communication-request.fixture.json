@@ -1,0 +1,45 @@
+{
+  "idempotency": { "correlationId": "fixture-correlation-1", "key": "fixture-key-order-1-accepted" },
+  "occurrence": { "occurrenceId": "fixture-order-1-accepted", "revision": 3 },
+  "originalRecipients": [
+    {
+      "originalContact": {
+        "contactRef": { "moduleId": "fixture.party", "resourceId": "contact-customer-1", "resourceType": "fixture.contact-point" },
+        "evidence": { "contactRevision": 4, "kind": "VERSIONED_SNAPSHOT" }
+      },
+      "recipientRef": { "moduleId": "fixture.party", "resourceId": "customer-1", "resourceType": "fixture.recipient" },
+      "role": "original-recipient",
+      "scope": {
+        "legalEntityId": "33333333-3333-4333-8333-333333333333",
+        "profileRef": { "moduleId": "fixture.customer-context", "resourceId": "profile-1", "resourceType": "fixture.profile" },
+        "tenantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "validAt": "2026-11-18T09:30:00.000Z"
+    },
+    {
+      "originalContact": {
+        "contactRef": { "moduleId": "fixture.party", "resourceId": "contact-approver-1", "resourceType": "fixture.contact-point" },
+        "evidence": { "kind": "AUTHORITATIVE_REFERENCE" }
+      },
+      "recipientRef": { "moduleId": "fixture.party", "resourceId": "approver-1", "resourceType": "fixture.recipient" },
+      "role": "fixture-approver",
+      "scope": {
+        "legalEntityId": "33333333-3333-4333-8333-333333333333",
+        "profileRef": { "moduleId": "fixture.customer-context", "resourceId": "profile-1", "resourceType": "fixture.profile" },
+        "tenantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "validAt": "2026-11-18T09:30:00.000Z"
+    }
+  ],
+  "purpose": "fixture.single",
+  "safeReferences": [
+    { "key": "order", "ref": { "moduleId": "fixture.source", "resourceId": "order-1", "resourceType": "fixture.order" } }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "legalEntityId": "33333333-3333-4333-8333-333333333333",
+    "profileRef": { "moduleId": "fixture.customer-context", "resourceId": "profile-1", "resourceType": "fixture.profile" },
+    "tenantId": "11111111-1111-4111-8111-111111111111"
+  },
+  "source": { "moduleKey": "fixture.source" }
+}

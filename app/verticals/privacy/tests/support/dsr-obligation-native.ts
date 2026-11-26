@@ -32,7 +32,10 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
+import { NodeCrypto } from '@effect/platform-node';
 import { Clock, Effect, Layer, Option, Schema, Stream } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { Pool } from 'pg';
 import { HttpApi } from 'effect/http-api';
@@ -300,6 +303,21 @@ export const makePrivacyDsrCompositionSnapshot = Effect.fn('DsrTests.makePrivacy
   },
 );
 
+/**
+ * The owner-inventory Read calls the Communications coverage Read, so every Privacy Read runtime needs the production module
+ * route (no cache, no redirect) exactly as the production assembly composes it.
+ */
+export const privacyModuleCallRouteLive = ModuleCallRouteLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      FetchHttpClient.layer.pipe(
+        Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+      ),
+    ),
+  ),
+);
+
 /** Existing production constructors with the same real database and grants supplied by the caller. */
 export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Layer.unwrap(
@@ -320,7 +338,7 @@ export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositio
       const scope = OperationalScopeResolverLive.pipe(Layer.provide(access));
       return Layer.mergeAll(
         makeActionRuntimeLive(expectedDeployment, privacyRegistration),
-        makeReadRuntimeLive(expectedDeployment, privacyRegistration),
+        makeReadRuntimeLive(expectedDeployment, privacyRegistration).pipe(Layer.provide(privacyModuleCallRouteLive)),
       ).pipe(
         Layer.provide(
           Layer.mergeAll(

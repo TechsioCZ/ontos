@@ -302,6 +302,7 @@ it.live(
         'commerce-order',
         'payment',
         'promotion',
+        'communications',
       ]);
       const baseline = yield* observeNative(native.selectedEnvironment);
       expect(baseline.nativeTargets.map(({ database }) => database)).toEqual([native.database]);

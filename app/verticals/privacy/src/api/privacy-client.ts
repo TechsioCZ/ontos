@@ -195,6 +195,16 @@ export {
   executeAcknowledgePrivacyNoticeWithAuthorization,
 } from './acknowledge-privacy-notice-action-client.ts';
 export type { AcknowledgePrivacyNoticeActionClientOptions } from './acknowledge-privacy-notice-action-client.ts';
+export {
+  executeBindPreVerificationSubject,
+  executeBindPreVerificationSubjectWithAuthorization,
+} from './bind-pre-verification-subject-action-client.ts';
+export type { BindPreVerificationSubjectActionClientOptions } from './bind-pre-verification-subject-action-client.ts';
+export {
+  executeWithdrawPreVerificationBinding,
+  executeWithdrawPreVerificationBindingWithAuthorization,
+} from './withdraw-pre-verification-binding-action-client.ts';
+export type { WithdrawPreVerificationBindingActionClientOptions } from './withdraw-pre-verification-binding-action-client.ts';
 // </generated-action-http-client-exports>
 
 type PrivacyApiGroups = typeof privacyApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
@@ -240,12 +250,6 @@ export const getPrivacyReadiness = ({
     Effect.flatMap((clientOptions) => makeEffectHttpApiClient(privacyApi, clientOptions)),
     Effect.flatMap((client) => client.foundation.readiness({})),
   );
-
-export {
-  executeSourceProcessingEligibility,
-  executeSourceProcessingEligibilityWithAuthorization,
-} from './source-processing-eligibility-client.ts';
-export type { SourceProcessingEligibilityClientOptions } from './source-processing-eligibility-client.ts';
 
 export {
   executeMeasureExecutionEligibility,

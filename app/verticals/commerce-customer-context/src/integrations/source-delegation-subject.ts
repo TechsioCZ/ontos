@@ -1,6 +1,6 @@
 import type { OrganizationBusinessApplicabilityRequest } from '@app/privacy/api/organization-business-applicability';
 import type { LegacyIcoInventoryRequest } from '@app/party-registry/apis/legacy-ico-inventory';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import type { SourcePersonAdmissionRequest } from '@app/party-registry/apis/source-person-admission';
 import type { SourceCounterpartyAdmissionRequest } from '@app/party-registry/apis/source-counterparty-admission';
 import type { CounterpartyOrganizationIcoFactsRequest } from '@app/party-registry/apis/counterparty-organization-ico-facts';

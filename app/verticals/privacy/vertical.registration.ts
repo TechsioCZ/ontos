@@ -23,13 +23,15 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'organization-profile-ico-applicability': () =>
         import('./src/api/organization-profile-ico-applicability-client.ts'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
+      'pre-verification-bindings': () => import('./src/api/pre-verification-bindings-client.ts'),
+      'pre-verification-eligibility': () => import('@app/privacy-contracts/pre-verification-eligibility/client'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),
       'processing-activities': () => import('./src/api/processing-activities-client.ts'),
       'processing-eligibility': () => import('./src/api/processing-eligibility-client.ts'),
       'processing-purposes': () => import('./src/api/processing-purposes-client.ts'),
       'responsibility-assignments': () => import('./src/api/responsibility-assignments-client.ts'),
       'retention-rules': () => import('./src/api/retention-rules-client.ts'),
-      'source-processing-eligibility': () => import('./src/api/source-processing-eligibility-client.ts'),
+      'source-processing-eligibility': () => import('@app/privacy-contracts/source-processing-eligibility/client'),
       // </generated-module-registration-apis>
     },
     components: {

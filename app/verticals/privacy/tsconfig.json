@@ -48,6 +48,12 @@
     },
     {
       "path": "../../packages/party-registry-contracts"
+    },
+    {
+      "path": "../../packages/privacy-contracts"
+    },
+    {
+      "path": "../../packages/communications-contracts"
     }
   ]
 }

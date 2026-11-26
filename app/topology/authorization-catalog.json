@@ -9100,6 +9100,41 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.portal-auth-issuance-source.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "portal-auth-issuance-source",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.portal-auth-issuance-source",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "communications"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "communications.core.request-source"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.portal-enrollment-outcome.record",
             "kind": "action",
             "modes": [
@@ -14306,6 +14341,480 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "communications.core.communication-outcome-feed.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "communication-outcome-feed",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.communication-outcome-feed",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.communication-request.submit",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "communication-request",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.submit-communication-request",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.language-policy.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "language-policy",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.language-policy",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.language-policy.set",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "language-policy",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.set-language-policy",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.message-history.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "message-history",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "items.recipient.endpointMask"
+              ],
+              "key": "communications.core.message-history-recipient-mask.list",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.message-history-list",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.message-history.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "message-history",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "message.recipient.endpointMask"
+              ],
+              "key": "communications.core.message-history-recipient-mask.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            },
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "message.templateUse"
+              ],
+              "key": "communications.core.message-history-template-use.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.message-history-detail",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.owner-execution-evidence.record",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "owner-execution-evidence",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.record-owner-execution-evidence",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.privacy-owner-coverage.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "privacy-owner-coverage",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.privacy-owner-coverage",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "rights"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.privacy-owner-execution-outcome.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "privacy-owner-execution-outcome",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.privacy-owner-execution-outcome",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "rights"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.activate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.activate-template-revision",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.deactivate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.deactivate-template-revision",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.invalidate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.invalidate-template-revision",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.built-in-template-defaults",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.prepare",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.prepare-template-revision",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.template-revision-list",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "communications.core"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "core.identity.binding-subject.read",
             "kind": "read",
             "modes": [
@@ -19490,6 +19999,7 @@
           "actor": {
             "callers": [
               "commerce-customer-context",
+              "communications",
               "party-registry",
               "symmy-integration"
             ],
@@ -19520,6 +20030,126 @@
             "moduleKey": "privacy.core",
             "role": "api",
             "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-binding.withdraw",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.withdraw-pre-verification-binding",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-bindings.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.pre-verification-bindings",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-eligibility.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.pre-verification-eligibility",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "communications"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-subject.bind",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.bind-pre-verification-subject",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "identity"
           }
         },
         {
@@ -20098,6 +20728,7 @@
           "actor": {
             "callers": [
               "commerce-customer-context",
+              "communications",
               "party-registry",
               "symmy-integration"
             ],

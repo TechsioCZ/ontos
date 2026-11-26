@@ -51,7 +51,7 @@ export const handleRecordOwnerExecutionOutcome = Effect.fn('RecordOwnerExecution
 export const recordOwnerExecutionOutcomeAction = defineAction(
   {
     accessActor: {
-      callers: ['commerce-customer-context', 'party-registry', 'symmy-integration'],
+      callers: ['commerce-customer-context', 'communications', 'party-registry', 'symmy-integration'],
       reason: 'Owner modules report privacy measure outcomes for a verified originating requester.',
       subject: 'identity',
     },

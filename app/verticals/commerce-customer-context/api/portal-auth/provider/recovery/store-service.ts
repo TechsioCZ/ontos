@@ -21,10 +21,48 @@ export type CommercePortalAuthRecoveryResetClaim = typeof CommercePortalAuthReco
 /** A non-destructive read of one ledger's recorded issuance-time binding. */
 export interface CommercePortalAuthRecoveryLedgerBinding {
   readonly email: string;
+  /** The expiry Auth's own ledger stored for the token (the instant the issuance stops being usable); set by the real store. */
+  readonly expiresAt?: Date;
   readonly providerSubjectId: string;
   /** The stored digest of the token this binding was read by; the audit trail's correlation key. */
   readonly tokenDigest: string;
 }
+
+/** What Better Auth's two-factor plugin itself stored for ONE issued one-time code: the challenge it lives under and its real state. */
+export interface CommercePortalAuthOtpChallenge {
+  /** Failed presentations Better Auth counted against the code; the code is exhausted at the plugin's own limit. */
+  readonly attempts: number;
+  /** The verification row identifier the code is stored under (Better Auth's hashed form); opaque, never logged. */
+  readonly challenge: Redacted.Redacted;
+  readonly expiresAt: Date;
+}
+
+/**
+ * Which two-factor challenge a freshly issued one-time code belongs to: the key Better Auth's two-factor plugin stores the code
+ * under. Never the code, never an address; a sign-in challenge is named by its signed challenge cookie (the pending row it
+ * names holds the user), a challenge of a signed-in session by that session.
+ */
+export type CommercePortalAuthOtpChallengeKey =
+  | { readonly cookie: Redacted.Redacted; readonly kind: 'SIGN_IN' }
+  | { readonly kind: 'SESSION'; readonly sessionId: string };
+
+/**
+ * What Auth's own stored state says about ONE issuance it issued, read from the rows that really exist, never guessed:
+ * - CURRENT: the issuance is still offered, for the same subject (and, for a one-time code, the same code);
+ * - EXPIRED: its row is still there but past its expiry (or terminal as expired);
+ * - CONSUMED: the issuance was spent (a completed reset or verification, a verified one-time code, or one exhausted at the
+ *   plugin's failed-attempt limit);
+ * - SUPERSEDED: a newer issuance replaced it (the token is re-registered for another binding, or a newer code replaced the code);
+ * - NOT_LOCATED: Auth's rows no longer say anything about it, so it can only be reported as not resumable, never as revoked.
+ */
+const CommercePortalAuthIssuanceLedgerStateSchema = Schema.Literals([
+  'CONSUMED',
+  'CURRENT',
+  'EXPIRED',
+  'NOT_LOCATED',
+  'SUPERSEDED',
+]);
+export type CommercePortalAuthIssuanceLedgerState = typeof CommercePortalAuthIssuanceLedgerStateSchema.Type;
 
 export interface CommercePortalAuthRecoveryStore {
   /** Read-only: true when the named provider subject still names an active account. */
@@ -85,6 +123,17 @@ export interface CommercePortalAuthRecoveryStore {
     readonly email: string;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
   /**
+   * Read-only: the stored challenge of a one-time code that was just issued, found by the two-factor challenge KEY it is stored
+   * under (never by the code: the code is not a query parameter, so no failure of the statement can echo it) and bound to the
+   * user it was issued for. The code is compared in-process, in constant time. None when that challenge holds no live code,
+   * another code, or belongs to another user.
+   */
+  readonly locateOtpChallenge: (input: {
+    readonly challengeKey: CommercePortalAuthOtpChallengeKey;
+    readonly otp: Redacted.Redacted;
+    readonly userId: string;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
+  /**
    * Non-destructive: reads the binding of a password-reset row that is still claimed for a dispatch
    * whose outcome never came back. Unlike `peekPasswordResetLedger` this deliberately ignores
    * expiry — the token can no longer be spent, but whether the earlier dispatch changed the
@@ -106,6 +155,26 @@ export interface CommercePortalAuthRecoveryStore {
   readonly peekPasswordResetLedger: (input: {
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
+  /** Read-only: the real state of ONE issued verification link, by the ledger row it was registered under. */
+  readonly readEmailVerificationIssuanceState: (input: {
+    readonly providerSubjectId: string;
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Read-only: the real state of ONE issued one-time code under its stored challenge. No row means Better Auth spent the
+   * challenge (a verification consumed it); a newer code under the same challenge supersedes the held one; a row at the plugin's
+   * own failed-attempt limit is spent.
+   */
+  readonly readOtpIssuanceState: (input: {
+    readonly challenge: Redacted.Redacted;
+    readonly maxFailedAttempts: number;
+    readonly otp: Redacted.Redacted;
+  }) => Effect.Effect<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable>;
+  /** Read-only: the real state of ONE issued reset link, by the reset ledger row it was registered under. */
+  readonly readPasswordResetIssuanceState: (input: {
+    readonly providerSubjectId: string;
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable>;
   /**
    * Records one detected conflict. Writing this row is the only effect detection ever has: it
    * never updates `user`, `session` or `account`, and a duplicate detection of the same conflict

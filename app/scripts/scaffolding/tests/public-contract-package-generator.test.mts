@@ -70,21 +70,23 @@ const loadCustomerContractSources = () =>
     customerContractPackagePath,
     // The module's other contract package: a seam reads every contract package its module owns.
     'packages/customer-market-retirement-contracts',
+    'packages/portal-auth-contracts',
     publicContractPackagePath,
   ]);
 
-/** The reads the module's other contract package publishes, which stay beside the focused one. */
-const marketRetirementReads = [
+/** The reads the module's other contract packages publish, which stay beside the focused one. */
+const otherPackageReads = [
   'market-affected-use-assessment',
   'market-subject-restrictions-current',
   'market-retirement-reservation-recovery',
+  'portal-auth-issuance-source',
 ];
 
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
-  const kept = ['payment-term-affected-use-assessment', ...marketRetirementReads];
+  const kept = ['payment-term-affected-use-assessment', ...otherPackageReads];
   const keptBindings =
-    /[Pp]aymentTermAffectedUseAssessment|[Mm]arketAffectedUseAssessment|[Mm]arketSubjectRestrictionsCurrent|[Mm]arketRetirementReservationRecovery|ActionApi/u;
+    /[Pp]aymentTermAffectedUseAssessment|[Mm]arketAffectedUseAssessment|[Mm]arketSubjectRestrictionsCurrent|[Mm]arketRetirementReservationRecovery|[Pp]ortalAuthIssuanceSource|ActionApi/u;
   const manifestApiEnd = '// </generated-module-manifest-apis>';
   // Only the owner's read contracts leave; its Action contracts stay, since the code beyond the slots still uses them.
   const focused = new Map(

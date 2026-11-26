@@ -5,7 +5,7 @@ import {
 } from '@app/party-registry/apis/legacy-ico-inventory';
 import type { IcoCorrelationWitness, LegacyIcoInventoryResponse } from '@app/party-registry/apis/legacy-ico-inventory';
 import { CounterpartyMigrationCorrelationResponseSchema } from '@app/party-registry/apis/counterparty-migration-correlation';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { Schema } from 'effect';
 import { OrganizationProfileIcoApplicabilityResponseSchema } from '@app/privacy/api/organization-profile-ico-applicability';
 import { CounterpartyOrganizationIcoFactsResponseSchema } from '@app/party-registry/apis/counterparty-organization-ico-facts';

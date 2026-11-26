@@ -1,0 +1,120 @@
+import type { ScopedRoutineInvoker } from '@app/core-runtime';
+import { DateTime, Effect, Schema } from 'effect';
+
+import type { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import { IngestOutcomeSchema } from '../../shared/provider-observation-ingest.ts';
+import { observationIdOf } from '../domain/history/provider-observation.ts';
+import type { ProviderObservationInput } from '../domain/history/provider-observation.ts';
+import { ObservationEvidenceSchema } from '../domain/history/vocabulary.ts';
+import type { LinkReasonCodeSchema } from '../domain/history/vocabulary.ts';
+import type { RetryBasis } from '../domain/recovery/vocabulary.ts';
+import { storeUnavailable } from '../handoff/handoff-errors.ts';
+import {
+  ingestProviderObservationRoutine,
+  workerLinkRetryAttemptRoutine,
+  workerResolveObservationConflictRoutine,
+} from '../persistence/communications-routines.ts';
+
+/**
+ * What the owner does with a provider observation and a retry link (#1402). Both go through a scoped routine, so the binding
+ * of the Tenant, the intent and the attempt is decided by the database in the same statement that writes, and neither can
+ * create, finish or schedule an attempt: an observation can never cause a second send.
+ */
+
+/**
+ * The answer to one observation is the published `IngestOutcome` (`shared/provider-observation-ingest.ts`, where each answer is
+ * explained). None of the refusals carries a value of a row, so a caller learns nothing about foreign data. The same key with
+ * ANOTHER evidence kind is not a conflict but a new observation (a bounce after an acceptance).
+ */
+export const IngestAnswerSchema = Schema.Struct({ outcome: IngestOutcomeSchema });
+
+export const ingestProviderObservation = Effect.fn('Communications.ingestProviderObservation')(function* ingest(
+  invoker: ScopedRoutineInvoker,
+  observation: ProviderObservationInput,
+) {
+  const observationId = yield* observationIdOf(observation);
+  const evidence = yield* Schema.encodeEffect(ObservationEvidenceSchema)(observation.evidence).pipe(Effect.orDie);
+  const rows = yield* invoker
+    .invoke(ingestProviderObservationRoutine, [
+      observation.tenantId,
+      observation.intentId,
+      observation.attemptId,
+      observationId,
+      observation.providerKey,
+      observation.observationKey,
+      observation.providerRef ?? null,
+      observation.evidence.kind,
+      DateTime.formatIso(observation.observedAt),
+      { ...evidence },
+    ])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The provider observation could not be recorded', cause)));
+  const answer = yield* Schema.decodeUnknownEffect(IngestAnswerSchema)(rows[0]?.result).pipe(
+    Effect.mapError((cause) => storeUnavailable('The provider observation answer was unreadable', cause)),
+  );
+  return answer.outcome;
+});
+
+export interface RetryLinkInput {
+  readonly attemptId: typeof DeliveryAttemptIdSchema.Type;
+  readonly basis: RetryBasis;
+  readonly intentId: typeof MessageIntentIdSchema.Type;
+  readonly previousAttemptId: typeof DeliveryAttemptIdSchema.Type;
+  readonly reasonCode: typeof LinkReasonCodeSchema.Type;
+}
+
+export const RetryLinkAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['BASIS_MISSING', 'CONFLICT', 'EXISTS', 'LINKED', 'MISSING', 'NOT_FINISHED', 'ORDER']),
+});
+
+/** Records the structural link of a Technical Retry (a later attempt of the same intent); it decides nothing about eligibility. */
+export const linkRetryAttempt = Effect.fn('Communications.linkRetryAttempt')(function* link(
+  invoker: ScopedRoutineInvoker,
+  input: RetryLinkInput,
+) {
+  const rows = yield* invoker
+    .invoke(workerLinkRetryAttemptRoutine, [
+      input.intentId,
+      input.attemptId,
+      input.previousAttemptId,
+      input.reasonCode,
+      input.basis.kind,
+      input.basis.kind === 'RECONCILED_NON_ACCEPTANCE' ? input.basis.observationId : null,
+    ])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The retry link could not be recorded', cause)));
+  const answer = yield* Schema.decodeUnknownEffect(RetryLinkAnswerSchema)(rows[0]?.result).pipe(
+    Effect.mapError((cause) => storeUnavailable('The retry link answer was unreadable', cause)),
+  );
+  return answer.outcome;
+});
+
+/**
+ * The answer to the resolution of one provider observation conflict (#1403): RESOLVED, EXISTS (already resolved by this very
+ * basis), MISSING (no such conflict of this intent), BASIS_INVALID (not a reconciliation of the same attempt, recorded at or after
+ * the conflict). A resolution is an appended fact; the conflict and every observation stay.
+ */
+export const ResolveAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['BASIS_INVALID', 'EXISTS', 'MISSING', 'RESOLVED']),
+});
+
+export const resolveObservationConflict = Effect.fn('Communications.resolveObservationConflict')(function* resolve(
+  invoker: ScopedRoutineInvoker,
+  input: {
+    readonly basisObservationId: string;
+    readonly conflictId: string;
+    readonly intentId: typeof MessageIntentIdSchema.Type;
+    readonly reasonCode: string;
+  },
+) {
+  const rows = yield* invoker
+    .invoke(workerResolveObservationConflictRoutine, [
+      input.intentId,
+      input.conflictId,
+      input.basisObservationId,
+      input.reasonCode,
+    ])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The conflict resolution could not be recorded', cause)));
+  const answer = yield* Schema.decodeUnknownEffect(ResolveAnswerSchema)(rows[0]?.result).pipe(
+    Effect.mapError((cause) => storeUnavailable('The conflict resolution answer was unreadable', cause)),
+  );
+  return answer.outcome;
+});

@@ -1,0 +1,432 @@
+import type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
+import { inspect } from 'node:util';
+import { Cause, DateTime, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
+
+import { withCause } from '../../api/portal-auth/problems-support.ts';
+import { CommercePortalAuthRecoveryUnavailable } from '../../api/portal-auth/provider/recovery/unavailable.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+import { CommercePortalAuthCommunicationsEmailLive } from '../../api/portal-auth/provider/communications-email-delivery.ts';
+import { CommercePortalAuthRawEmailDeliveryService } from '../../api/portal-auth/provider/raw-email-delivery-service.ts';
+import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
+import { CommercePortalAuthOtpChallengeKeyReader } from '../../api/portal-auth/provider/otp-challenge-key-service.ts';
+import type { CommercePortalAuthOtpChallengeKey } from '../../api/portal-auth/provider/recovery/store-service.ts';
+import { CommercePortalAuthIssuedFacts } from '../../src/portal-auth/communications/issued-facts.ts';
+import type { IssuedFactsService } from '../../src/portal-auth/communications/issued-facts.ts';
+import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
+import {
+  CommercePortalAuthOwnerSlotCompletion,
+  ownerSlotCompletionLayer,
+} from '../../src/portal-auth/communications/owner-completion.ts';
+import {
+  CommercePortalAuthProtectedHandoff,
+  protectedHandoffLayer,
+} from '../../src/portal-auth/communications/protected-handoff.ts';
+import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
+import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
+import {
+  CommercePortalAuthTrustedScope,
+  unconfiguredTrustedScopeLayer,
+} from '../../src/portal-auth/communications/trusted-scope.ts';
+import {
+  communicationStoreLayers,
+  makeCommunicationStoreDouble,
+} from '../support/portal-auth-communication-store.double.ts';
+
+/**
+ * #1406 AUTH-COM-01/06/08 and D1: the Communications-routed form of the three Auth callbacks. A callback only COMMITS the
+ * issuance with its request into the Auth-local outbox; the relay submits it afterwards. The submitter below is scripted, so
+ * these tests prove what AUTH does with an issuance and with each answer of Communications; the store is the labelled
+ * in-memory double (PostgreSQL is the integration suite's), and the real Action is exercised by the end-to-end suites. Every
+ * token, link, code and address is FICTIONAL.
+ */
+
+const TENANT = '11111111-1111-4111-8111-111111111111';
+const EPOCH = DateTime.toDateUtc(DateTime.makeUnsafe(0));
+const USER = {
+  createdAt: EPOCH,
+  email: 'holder@example.test',
+  emailVerified: false,
+  id: 'subject-1',
+  name: 'Holder',
+  twoFactorEnabled: true,
+  updatedAt: EPOCH,
+};
+const decodeRef = Schema.decodeSync(PortalAuthIssuanceRefSchema);
+
+/**
+ * The two-factor challenge key the plugin would store a freshly issued code under, scripted and FICTIONAL: a pending sign-in names it
+ * by its signed cookie. The key is read through the delivery's reader service, so no fixture forges Better Auth's endpoint context;
+ * how the real plugin names it is proven by the end-to-end suite of the one-time code and the Better Auth canary.
+ */
+const SIGN_IN_CHALLENGE: Option.Option<CommercePortalAuthOtpChallengeKey> = Option.some({
+  cookie: Redacted.make('fictional-challenge-cookie'),
+  kind: 'SIGN_IN',
+});
+
+/** The expiry Auth itself stored for each issuance (the ledger rows and Better Auth's challenge row), scripted and FICTIONAL. */
+const STORED_EXPIRY = new Date('2026-11-19T10:15:00.000Z');
+const storedFacts = {
+  locateOtpChallenge: () =>
+    Effect.succeed(
+      Option.some({ attempts: 0, challenge: Redacted.make('2fa-otp-fictional-key'), expiresAt: STORED_EXPIRY }),
+    ),
+  peekEmailVerificationLedger: () =>
+    Effect.succeed(
+      Option.some({ email: USER.email, expiresAt: STORED_EXPIRY, providerSubjectId: USER.id, tokenDigest: 'digest' }),
+    ),
+  peekPasswordResetLedger: () =>
+    Effect.succeed(
+      Option.some({ email: USER.email, expiresAt: STORED_EXPIRY, providerSubjectId: USER.id, tokenDigest: 'digest' }),
+    ),
+} satisfies IssuedFactsService;
+
+const pending: PortalAuthSubmission = {
+  decision: { intents: [{ intentId: 'intent-1', status: 'PENDING_HANDOFF' }], kind: 'MESSAGE_INTENTS' },
+  decisionId: 'decision-1',
+  outcome: 'DECIDED',
+  replayed: false,
+  requestId: 'request-1',
+};
+
+const RELAY = {
+  leaseMillis: 30_000,
+  leaseOwner: 'relay-unit',
+  limit: 16,
+  maxRetryMillis: 60_000,
+  retryMillis: 1000,
+  tenantId: TENANT,
+};
+
+const fixture = (
+  answer: () => Effect.Effect<PortalAuthSubmission, PortalAuthCommunicationUnavailable> = () => Effect.succeed(pending),
+  facts: IssuedFactsService = storedFacts,
+  challengeKey: Option.Option<CommercePortalAuthOtpChallengeKey> = SIGN_IN_CHALLENGE,
+) => {
+  const requests: CommunicationRequestEncoded[] = [];
+  const submitter = Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, {
+    submit: (request) => {
+      requests.push(request);
+      return answer();
+    },
+  });
+  const store = makeCommunicationStoreDouble();
+  const storeLayers = communicationStoreLayers(store.service);
+  const handoffLayer = protectedHandoffLayer(() => Effect.succeed('CURRENT')).pipe(Layer.provide(storeLayers));
+  const base = Layer.mergeAll(
+    handoffLayer,
+    Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId: TENANT }) }),
+    // the delivery reads only these three of the store: the stored expiry of the issuance it was just handed
+    Layer.succeed(CommercePortalAuthIssuedFacts, facts),
+    Layer.succeed(CommercePortalAuthOtpChallengeKeyReader, { keyOf: () => Effect.succeed(challengeKey) }),
+    commercePortalAuthPlatformCryptoLive,
+  );
+  const delivery = CommercePortalAuthCommunicationsEmailLive.pipe(Layer.provide(base));
+  const completion = ownerSlotCompletionLayer.pipe(Layer.provide(handoffLayer));
+  /** One relay tick over this world's outbox with the scripted intake. */
+  const relay = relayCommunicationRequests(RELAY).pipe(
+    Effect.provide(Layer.merge(Layer.succeed(CommercePortalAuthCommunicationStore, store.service), submitter)),
+  );
+  return { base, completion, delivery, handoffLayer, relay, requests, store };
+};
+
+const servicesOf = (world: ReturnType<typeof fixture>) =>
+  Effect.gen(function* services() {
+    return {
+      handoff: yield* CommercePortalAuthProtectedHandoff,
+      raw: yield* CommercePortalAuthRawEmailDeliveryService,
+    };
+  }).pipe(Effect.provide(Layer.merge(world.delivery, world.handoffLayer)));
+
+const runHook = <Value>(run: () => Promise<Value>) => Effect.tryPromise({ catch: (cause) => cause, try: run });
+
+describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () => {
+  it.effect(
+    'each flow submits ONE secret-free request and holds the secret and the original address in the protected handoff',
+    () => {
+      const world = fixture();
+      const everything = Layer.mergeAll(world.delivery, world.handoffLayer, world.completion);
+      return Effect.gen(function* threeFlows() {
+        const handoff = yield* CommercePortalAuthProtectedHandoff;
+        const completion = yield* CommercePortalAuthOwnerSlotCompletion;
+        const raw = yield* CommercePortalAuthRawEmailDeliveryService;
+        yield* runHook(
+          async () =>
+            await raw.sendVerificationEmail({
+              token: 'fictional-token-v',
+              url: 'https://portal.example.test/verify?token=fictional-token-v',
+              user: USER,
+            }),
+        );
+        yield* runHook(
+          async () =>
+            await raw.sendResetPassword({
+              token: 'fictional-token-r',
+              url: 'https://portal.example.test/reset/fictional-token-r',
+              user: USER,
+            }),
+        );
+        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }));
+        // D1: a callback submits nothing itself; its request waits, committed, in the Auth-local outbox
+        expect(world.requests).toHaveLength(0);
+        const outbox = [...(yield* Ref.get(world.store.outbox)).values()];
+        expect(outbox.map(({ state }) => state)).toStrictEqual(['PENDING', 'PENDING', 'PENDING']);
+        expect(JSON.stringify(outbox)).not.toContain('fictional-token');
+        expect(yield* world.relay).toMatchObject({ claimed: 3, decided: 3 });
+        expect(world.requests).toHaveLength(3);
+        const sent = JSON.stringify(world.requests);
+        for (const secret of ['fictional-token-v', 'fictional-token-r', '482913', 'holder@example.test', 'https://']) {
+          expect(sent).not.toContain(secret);
+        }
+        const { requests } = world;
+        expect(new Set(requests.map(({ idempotency }) => idempotency.key)).size).toBe(3);
+        expect(requests.map(({ idempotency }) => idempotency.key.split('.').slice(0, 2).join('.'))).toStrictEqual([
+          'portal-auth.verify-email',
+          'portal-auth.reset-password',
+          'portal-auth.otp',
+        ]);
+        // Auth alone can complete each slot: the link, the link, the code
+        const expected = [
+          ['verify-email', 'verification_link', 'https://portal.example.test/verify?token=fictional-token-v'],
+          ['reset-password', 'reset_link', 'https://portal.example.test/reset/fictional-token-r'],
+          ['otp', 'otp_code', '482913'],
+        ] as const;
+        for (const [index, [flow, slot, value]] of expected.entries()) {
+          const issuanceRef = decodeRef(requests[index]?.occurrence.occurrenceId ?? '');
+          expect(yield* handoff.currentness(issuanceRef)).toBe('CURRENT');
+          const completed = yield* completion.complete({ flow, issuanceRef, slots: [slot] });
+          expect(Redacted.value(completed.get(slot) ?? Redacted.make(''))).toBe(value);
+        }
+      }).pipe(Effect.provide(everything));
+    },
+  );
+
+  it.effect(
+    "a failing read of Auth's stored facts carries NO secret anywhere in its error, its Cause or its log output (a live code is never echoed)",
+    () => {
+      const SECRET_CODE = '739204';
+      const SECRET_TOKEN = 'fictional-token-leak';
+      // a database failure as the driver reports it: the statement text with every bound parameter echoed
+      const echoed = new Error(
+        `Failed query: select ... where value like '${SECRET_CODE}:%' and identifier = '${SECRET_TOKEN}' params: ${SECRET_CODE}:%,${SECRET_TOKEN}`,
+        { cause: new Error(`params: ${SECRET_CODE}`) },
+      );
+      const unavailable = () =>
+        Effect.fail(
+          withCause(
+            new CommercePortalAuthRecoveryUnavailable({
+              operation: 'stored-facts',
+              reason: 'The store is unavailable',
+            }),
+            echoed,
+          ),
+        );
+      const failingFacts = {
+        locateOtpChallenge: unavailable,
+        peekEmailVerificationLedger: unavailable,
+        peekPasswordResetLedger: unavailable,
+      } satisfies IssuedFactsService;
+      const world = fixture(() => Effect.succeed(pending), failingFacts);
+      return Effect.gen(function* scan() {
+        const { raw } = yield* servicesOf(world);
+        const failures = [
+          yield* Effect.flip(runHook(async () => await raw.sendOTP({ otp: SECRET_CODE, user: USER }))),
+          yield* Effect.flip(
+            runHook(
+              async () =>
+                await raw.sendVerificationEmail({
+                  token: SECRET_TOKEN,
+                  url: `https://portal.example.test/verify?token=${SECRET_TOKEN}`,
+                  user: USER,
+                }),
+            ),
+          ),
+          yield* Effect.flip(
+            runHook(
+              async () =>
+                await raw.sendResetPassword({
+                  token: SECRET_TOKEN,
+                  url: `https://portal.example.test/reset/${SECRET_TOKEN}`,
+                  user: USER,
+                }),
+            ),
+          ),
+        ];
+        for (const failure of failures) {
+          expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
+          // everything an operator, a log or a Cause printer could ever reach: the error, its hidden properties and its causes
+          const everything = [
+            inspect(failure, { depth: 12, showHidden: true }),
+            JSON.stringify(failure),
+            String(failure),
+            Cause.pretty(Cause.fail(failure)),
+          ].join('\n');
+          expect(everything).not.toContain(SECRET_CODE);
+          expect(everything).not.toContain(SECRET_TOKEN);
+        }
+      });
+    },
+  );
+
+  it.effect('a one-time code whose challenge cannot be named is never submitted: no challenge key, no request', () => {
+    const world = fixture(() => Effect.succeed(pending), storedFacts, Option.none());
+    return Effect.gen(function* unnamed() {
+      const { raw } = yield* servicesOf(world);
+      const failure = yield* Effect.flip(runHook(async () => await raw.sendOTP({ otp: '555111', user: USER })));
+      expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
+      expect((yield* Ref.get(world.store.outbox)).size).toBe(0);
+      expect(yield* world.relay).toMatchObject({ claimed: 0 });
+      expect(world.requests).toEqual([]);
+    });
+  });
+
+  it.effect(
+    'the challenge of a code is located by the KEY of its challenge and the user, never by the code alone',
+    () => {
+      const located: { challengeKey: unknown; userId: string }[] = [];
+      const world = fixture(() => Effect.succeed(pending), {
+        ...storedFacts,
+        locateOtpChallenge: (input) => {
+          located.push({ challengeKey: input.challengeKey, userId: input.userId });
+          return storedFacts.locateOtpChallenge();
+        },
+      });
+      return Effect.gen(function* byKey() {
+        const { raw } = yield* servicesOf(world);
+        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }));
+        expect(located).toHaveLength(1);
+        expect(located[0]?.userId).toBe(USER.id);
+        expect(located[0]?.challengeKey).toMatchObject({ kind: 'SIGN_IN' });
+      });
+    },
+  );
+
+  it.effect(
+    'an unavailable intake keeps the held issuance and its request due, and a decided stop forgets it, never reissuing',
+    () => {
+      const outage = fixture(() =>
+        Effect.fail(new PortalAuthCommunicationUnavailable({ operation: 'submit-communication-request' })),
+      );
+      const stopped = fixture(() =>
+        Effect.succeed({
+          decision: { kind: 'NO_MESSAGE', reason: 'UNKNOWN_PURPOSE' },
+          decisionId: 'decision-2',
+          outcome: 'DECIDED',
+          replayed: false,
+          requestId: 'request-2',
+        }),
+      );
+      const suppressed = fixture(() =>
+        Effect.succeed({
+          decision: {
+            intents: [{ intentId: 'intent-3', reason: 'PRIVACY_INDETERMINATE', status: 'SUPPRESSED' }],
+            kind: 'MESSAGE_INTENTS',
+          },
+          decisionId: 'decision-3',
+          outcome: 'DECIDED',
+          replayed: false,
+          requestId: 'request-3',
+        }),
+      );
+      return Effect.gen(function* stops() {
+        const out = yield* servicesOf(outage);
+        yield* runHook(async () => await out.raw.sendOTP({ otp: '111222', user: USER }));
+        expect(yield* outage.relay).toMatchObject({ claimed: 1, released: 1 });
+        expect(outage.requests).toHaveLength(1);
+        const [row] = [...(yield* Ref.get(outage.store.outbox)).values()];
+        expect(row?.state).toBe('PENDING');
+        expect(row?.lastFailure).toStrictEqual(Option.some('INTAKE_UNAVAILABLE'));
+        expect(JSON.stringify(row)).not.toContain('111222');
+        // the issuance is still held: the request will be submitted again, and its slot still completes
+        expect(yield* out.handoff.currentness(decodeRef(outage.requests[0]?.occurrence.occurrenceId ?? ''))).toBe(
+          'CURRENT',
+        );
+
+        for (const world of [stopped, suppressed]) {
+          const { handoff, raw } = yield* servicesOf(world);
+          yield* runHook(
+            async () =>
+              await raw.sendResetPassword({
+                token: 'fictional-token-x',
+                url: 'https://portal.example.test/r/x',
+                user: USER,
+              }),
+          );
+          expect(yield* world.relay).toMatchObject({ claimed: 1, decided: 1 });
+          const [request] = world.requests;
+          // the held secret serves nothing now: gone, not reproduced
+          expect(yield* handoff.currentness(decodeRef(request?.occurrence.occurrenceId ?? ''))).toBe('NOT_RESUMABLE');
+          const [ended] = [...(yield* Ref.get(world.store.outbox)).values()];
+          expect(ended?.state).toBe('DECIDED');
+          expect(Option.getOrThrow(ended?.outcome ?? Option.none())).not.toContain('fictional-token-x');
+        }
+      });
+    },
+  );
+
+  it.effect('without a trusted scope nothing is held and nothing is submitted: the deployment fails closed', () => {
+    const world = fixture();
+    const unconfigured = CommercePortalAuthCommunicationsEmailLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          world.handoffLayer,
+          unconfiguredTrustedScopeLayer,
+          Layer.succeed(CommercePortalAuthIssuedFacts, storedFacts),
+          Layer.succeed(CommercePortalAuthOtpChallengeKeyReader, { keyOf: () => Effect.succeed(SIGN_IN_CHALLENGE) }),
+          commercePortalAuthPlatformCryptoLive,
+        ),
+      ),
+    );
+    return Effect.gen(function* failClosed() {
+      const raw = yield* CommercePortalAuthRawEmailDeliveryService;
+      const failure = yield* Effect.flip(
+        runHook(
+          async () =>
+            await raw.sendVerificationEmail({
+              token: 'fictional-token-s',
+              url: 'https://portal.example.test/v/s',
+              user: USER,
+            }),
+        ),
+      );
+      expect(JSON.stringify(failure)).not.toContain('fictional-token-s');
+      expect((yield* Ref.get(world.store.outbox)).size).toBe(0);
+    }).pipe(Effect.provide(unconfigured));
+  });
+
+  it.effect(
+    'an enrollment reservation names the issuance, which is then a DIFFERENT identity from the enrollment operation',
+    () => {
+      const world = fixture();
+      return Effect.gen(function* reserved() {
+        const { handoff, raw } = yield* servicesOf(world);
+        yield* handoff.reserve({
+          flow: 'verify-email',
+          providerSubjectId: 'subject-1',
+          reservation: {
+            enrollmentOwnerInvocationId: '22222222-2222-4222-8222-222222222222',
+            issuanceRef: decodeRef('pae-reserved-1'),
+          },
+        });
+        yield* runHook(
+          async () =>
+            await raw.sendVerificationEmail({
+              token: 'fictional-token-e',
+              url: 'https://portal.example.test/v/e',
+              user: USER,
+            }),
+        );
+        yield* world.relay;
+        const [request] = world.requests;
+        expect(request?.occurrence.occurrenceId).toBe('pae-reserved-1');
+        expect(request?.idempotency.key).toBe('portal-auth.verify-email.pae-reserved-1');
+        expect(JSON.stringify(world.requests)).not.toContain('22222222-2222-4222-8222-222222222222');
+        const issuance = yield* handoff.issuanceOf(decodeRef('pae-reserved-1'));
+        expect(Option.getOrThrow(issuance).enrollmentOwnerInvocationId).toBe('22222222-2222-4222-8222-222222222222');
+        expect(Redacted.isRedacted(Redacted.make('x'))).toBe(true);
+      });
+    },
+  );
+});

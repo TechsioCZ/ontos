@@ -111,8 +111,8 @@ import { executeCustomerProfileIcoWithAuthorization } from '@app/commerce-custom
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy/api/source-processing-eligibility';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/client';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
