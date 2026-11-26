@@ -9,6 +9,7 @@ import {
 import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect';
 import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
+import { parse as parseYaml } from 'yaml';
 
 import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
@@ -377,8 +378,9 @@ export const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot
  * @param {string} importedPath External dependency specifier.
  * @param {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} packages Workspace manifests.
  * @param {Record<string, string>} dependencies Collected production versions.
+ * @param {Effect.Effect<Readonly<Record<string, string>>, unknown>} defaultCatalog The workspace's default pnpm catalog.
  */
-const collectProductionDependency = (importedPath, packages, dependencies) =>
+const collectProductionDependency = (importedPath, packages, dependencies, defaultCatalog) =>
   Effect.gen(function* collectProductionDependencyEffect() {
     if (isBuiltin(importedPath)) {
       return null;
@@ -397,7 +399,10 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
     if (uniqueVersions.length !== 1) {
       return yield* Effect.fail(failure(`Worker dependency ${name} must have one declared production version`));
     }
-    const [version] = uniqueVersions;
+    const [declared] = uniqueVersions;
+    // The runtime installs outside the workspace, where `catalog:` means nothing: pin the default catalog's version.
+    const version =
+      declared === 'catalog:' || declared === 'catalog:default' ? (yield* defaultCatalog)[name] : declared;
     if (version === undefined) {
       return yield* Effect.fail(failure(`Worker dependency ${name} has no version`));
     }
@@ -655,8 +660,17 @@ const materializeOutboxWorkerEffect = ({
     const externalImports = Object.values(metafile.outputs).flatMap((output) =>
       output.imports.filter((item) => item.external === true),
     );
+    const defaultCatalog = yield* fs.readFileString(path.join(workspaceRoot, 'pnpm-workspace.yaml')).pipe(
+      Effect.flatMap((source) =>
+        Schema.decodeUnknownEffect(Schema.Struct({ catalog: Schema.Record(Schema.String, Schema.String) }))(
+          parseYaml(source),
+        ),
+      ),
+      Effect.map(({ catalog }) => catalog),
+      Effect.cached,
+    );
     for (const imported of externalImports) {
-      yield* collectProductionDependency(imported.path, packages, dependencies);
+      yield* collectProductionDependency(imported.path, packages, dependencies, defaultCatalog);
     }
     yield* fs.copyFile(path.join(workspaceRoot, TOPOLOGY_PATH), path.join(runtimeDir, 'topology.json'));
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);

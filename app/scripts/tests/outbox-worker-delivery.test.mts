@@ -820,9 +820,15 @@ it.live('materializes and starts a relocatable production worker artifact', () =
   }),
 );
 
-const makeDependencyWorkerFixture = () =>
+const makeDependencyWorkerFixture = (declaredVersion: string = REGISTRY_DEPENDENCY_VERSION) =>
   Effect.gen(function* dependencyWorkerFixture() {
     const root = yield* makeReleaseMarkerFixture();
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, 'pnpm-workspace.yaml'),
+        `catalog:\n  ${REGISTRY_DEPENDENCY}: ${REGISTRY_DEPENDENCY_VERSION}\npackages:\n  - packages/*\n`,
+      ),
+    );
     yield* Effect.tryPromise(() =>
       writeFile(
         path.join(root, 'pnpm-lock.yaml'),
@@ -833,7 +839,7 @@ const makeDependencyWorkerFixture = () =>
       writeFile(
         path.join(root, LEDGER_PATH, PACKAGE_MANIFEST),
         JSON.stringify({
-          dependencies: { [REGISTRY_DEPENDENCY]: REGISTRY_DEPENDENCY_VERSION },
+          dependencies: { [REGISTRY_DEPENDENCY]: declaredVersion },
           exports: { './outbox-worker-host': `./${WORKER_ENTRY}` },
           name: LEDGER_PACKAGE,
           scripts: { 'worker:start': `node --experimental-strip-types ./${WORKER_HOST_ENTRY}` },
@@ -1008,6 +1014,19 @@ writeFileSync(${JSON.stringify(rebuildEvidencePath)}, JSON.stringify({ args: pro
     }),
   );
 }
+
+// A worker bundle can reach a module manifest's browser component, whose UI kit the workspace pins in its default catalog.
+it.live('pins a default-catalog production dependency to the catalog version in the worker runtime', () =>
+  Effect.gen(function* catalogDependencyWorker() {
+    const root = yield* makeDependencyWorkerFixture('catalog:');
+    const result = yield* materializeDependencyWorker(root);
+    expect(result.status, result.diagnostics).toBe(0);
+    const manifest = yield* Schema.decodeUnknownEffect(RuntimeManifestSchema)(
+      yield* Effect.tryPromise(() => readFile(path.join(root, HOST_RUNTIME_DIR, PACKAGE_MANIFEST), 'utf-8')),
+    );
+    expect(manifest.dependencies).toEqual({ [REGISTRY_DEPENDENCY]: REGISTRY_DEPENDENCY_VERSION });
+  }),
+);
 
 it.live('finalizes production dependencies through the published tool and runs the worker outside its workspace', () =>
   Effect.gen(function* portableDependencyWorker() {
