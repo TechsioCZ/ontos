@@ -164,8 +164,9 @@ jobs:
           shard: ${{ matrix.shard }}
           changed-paths: ${{ runner.temp }}/zerops-delivery/changed-paths
 
-  # Candidate changed-file lint took 65 s in run 45791874819 and later 50 s; neither measures ordinary pushes.
-  # Ordinary pushes use whole-tree lint in both workflows, including docs-only changes. Candidate run 45798439167
+  # Candidate changed-file lint took 65 s in run 45791874819 and about 50 s in 45792197352; neither measures ordinary pushes.
+  # Ordinary stage pushes use whole-tree lint, including docs-only changes. Both workflows share the selector.
+  # Run 45798439167
   # measured stage shards at 298-449 s; gates run 45798433673 measured 281-411 s. Planning and runner builds
   # overlap lint and hid about 260 s on the build path. A delivery without runner builds waits for lint.
   # Only jobs that can mutate Zerops wait for lint success; a narrowed delivery plan does not narrow its lint.

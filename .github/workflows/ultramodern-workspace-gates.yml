@@ -1,6 +1,6 @@
 name: Ultramodern Workspace Gates and Main-to-Stage Deploy
 
-# Repository-root documentation feeds no app check (app/ tools read app/AGENTS.md, not the root one), so it deploys nothing.
+# Existing trigger policy skips repository-root docs-only pushes; the shared lint selector governs jobs selected below.
 on:
   push:
     branches:
@@ -241,7 +241,7 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           bash scripts/plan-ci-without-install.sh "${args[@]}"
-      # Both workflows lint the whole tree even for narrowed plans. Regular docs Markdown is not an exception:
+      # When lint is selected, both workflows lint the whole tree even for narrowed plans. Markdown is not an exception:
       # the enabled service-constructor rule can read explicit .md imports. Only exact verified-SHA dispatches
       # with a complete empty comparison earn the global-only proof row; unknown history never narrows lint.
       - name: Choose the format and lint shards

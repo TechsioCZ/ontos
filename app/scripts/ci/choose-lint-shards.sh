@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Both workflows lint the whole tree, even for narrowed plans. Outside inputs include
+# This shared selector requires whole-tree lint, even for narrowed plans. Outside inputs include
 # anti-slop-effect/no-service-constructor-imports' package census and explicit imports of arbitrary suffixes,
 # no-unregistered-native-test-imports' matrices/workflow, and import/no-cycle's Vue/Svelte/Astro imports.
 # Formatter configuration can also come through a symlink. A path denylist cannot exhaust these inputs.

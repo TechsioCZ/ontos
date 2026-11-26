@@ -31,7 +31,8 @@ Zerops pricing for the services in `app/zerops-import.yaml` before you create an
    service IDs. Keep planning and unit builds parallel with lint, but require lint success before either
    delivering job can sync secrets or push. Red lint means stage was not changed by that run, even if
    its builds succeeded. Fix the findings and push again; the verified base has not advanced.
-   Both workflows lint the whole tree, even when the delivery plan narrows other gates. Regular Markdown
+   When lint is selected, both workflows lint the whole tree, even when the delivery plan narrows other gates.
+   The gates workflow retains its separate repository-root documentation no-op classification. Regular Markdown
    under `docs/` or `app/docs/` is not an exception: an enabled rule can parse explicit `.md` imports and
    change an untouched file's result. Unknown history also requires whole-tree lint.
    A recovery dispatch of an exact already verified commit with a complete empty comparison
