@@ -1287,6 +1287,38 @@
         "suppliedSecret": "Existující hodnota klíče (nepovinné)",
         "suppliedSecretDescription": "Vyplňte jen tehdy, když partner už klíč má a má jej dál používat. Uloží se pouze jeho otisk. Prázdné pole vygeneruje nový klíč.",
         "suppliedSecretInvalid": "Hodnota klíče musí mít 32 až 256 znaků z písmen, číslic a znaků _ . ~ -."
+      },
+      "symmyRoutes": {
+        "title": "Trasy ve vybrané firmě",
+        "description": "Které datové trasy smí partner v této firmě číst a zapisovat. Zapnutí je auditovaná akce Symmy; potřebná oprávnění integrace se zaregistrují pro tuto firmu.",
+        "empty": "Integrace v této firmě zatím nemá žádné trasy.",
+        "readFailed": "Trasy se nepodařilo načíst.",
+        "active": "Zapnutá",
+        "inactive": "Vypnutá",
+        "retention": "Uchování {{days}} dní",
+        "disable": "Vypnout",
+        "issuerId": "Identifikátor zdroje (issuer)",
+        "sourceNamespace": "Jmenný prostor zdroje",
+        "retentionDays": "Uchování zápisů (dny)",
+        "enable": "Zapnout vybrané trasy",
+        "working": "Zpracovává se…",
+        "refused": "Trasy nelze zapnout:",
+        "failed": "Změnu tras se nepodařilo provést. Zkuste to znovu.",
+        "invalid": "Zkontrolujte identifikátor, jmenný prostor a počet dní (1–3650).",
+        "route": {
+          "adminProducts": "Čtení produktů",
+          "adminCustomers": "Čtení zákazníků",
+          "adminRegions": "Čtení regionů",
+          "priceLists": "Čtení ceníků",
+          "productsBatch": "Zápis produktů",
+          "customersBatch": "Zápis zákazníků",
+          "customerGroupsBatch": "Zápis zákaznických skupin",
+          "priceListsBatchUpsert": "Zápis ceníků",
+          "priceListPricesBatch": "Zápis cen",
+          "inventoryStockBatch": "Zápis skladových zásob",
+          "customerGroupCustomersBatch": "Členství zákazníků ve skupinách"
+        },
+        "readForbidden": "Trasy této integrace může spravovat jen správce tenanta ve vybrané firmě."
       }
     }
   }

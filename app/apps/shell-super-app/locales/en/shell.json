@@ -1273,6 +1273,38 @@
         "suppliedSecret": "Existing key value (optional)",
         "suppliedSecretDescription": "Fill in only when the partner already holds the key and keeps using it. Only its hash is stored. Leave empty to generate a new key.",
         "suppliedSecretInvalid": "The key value must be 32 to 256 characters of letters, digits and _ . ~ -."
+      },
+      "symmyRoutes": {
+        "title": "Routes in the selected company",
+        "description": "Which data routes the partner may read and write in this company. Enabling is an audited Symmy action; the integration's required workloads are registered for this company.",
+        "empty": "The integration has no routes in this company yet.",
+        "readFailed": "The routes could not be loaded.",
+        "active": "Enabled",
+        "inactive": "Disabled",
+        "retention": "Kept {{days}} days",
+        "disable": "Disable",
+        "issuerId": "Source issuer ID",
+        "sourceNamespace": "Source namespace",
+        "retentionDays": "Write retention (days)",
+        "enable": "Enable selected routes",
+        "working": "Working…",
+        "refused": "The routes cannot be enabled:",
+        "failed": "The route change failed. Try again.",
+        "invalid": "Check the issuer, namespace and days (1–3650).",
+        "route": {
+          "adminProducts": "Read products",
+          "adminCustomers": "Read customers",
+          "adminRegions": "Read regions",
+          "priceLists": "Read price lists",
+          "productsBatch": "Write products",
+          "customersBatch": "Write customers",
+          "customerGroupsBatch": "Write customer groups",
+          "priceListsBatchUpsert": "Write price lists",
+          "priceListPricesBatch": "Write prices",
+          "inventoryStockBatch": "Write stock",
+          "customerGroupCustomersBatch": "Customer group memberships"
+        },
+        "readForbidden": "Only a tenant administrator in the selected company can manage this integration's routes."
       }
     }
   }

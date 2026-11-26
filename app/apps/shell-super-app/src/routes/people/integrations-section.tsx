@@ -27,6 +27,7 @@ import { ManagedKeyDetail } from './agent-api-keys.tsx';
 import { integrationEntries } from './integrations-model.ts';
 import type { IntegrationEntry } from './integrations-model.ts';
 import { newRequestToken } from './people-client.ts';
+import { SymmyRoutesPanel } from './symmy-routes-panel.tsx';
 
 const copyKey = 'shell.integrations';
 const keysCopyKey = 'shell.integrations.keys';
@@ -211,10 +212,14 @@ const subscribeToNothing = () => constVoid;
 const pageOrigin = () => globalThis.location.origin;
 const serverOrigin = () => '';
 
+/** Each connector partner's own route administration in the selected company, run through the partner's Actions. */
+const partnerRoutePanels = { symmy: SymmyRoutesPanel } satisfies Record<ConnectorPartnerKind, typeof SymmyRoutesPanel>;
+
 const IntegrationCard = ({ entry }: { readonly entry: IntegrationEntry }) => {
   const { t } = useModernI18n();
   const partner = entry.integrationKind === null ? null : CONNECTOR_PARTNERS[entry.integrationKind];
   const origin = useSyncExternalStore(subscribeToNothing, pageOrigin, serverOrigin);
+  const RoutePanel = entry.integrationKind === null ? null : partnerRoutePanels[entry.integrationKind];
   return (
     <li className="flex min-w-0 flex-col gap-100 rounded-md border border-border-primary/60 p-200">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
@@ -241,6 +246,7 @@ const IntegrationCard = ({ entry }: { readonly entry: IntegrationEntry }) => {
           subject={{ principalId: entry.principalId, scope: 'tenant-managed' }}
         />
       )}
+      {entry.principalStatus === 'active' && RoutePanel !== null && <RoutePanel principalId={entry.principalId} />}
     </li>
   );
 };
