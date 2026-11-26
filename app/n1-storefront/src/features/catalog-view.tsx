@@ -95,6 +95,11 @@ export const CatalogView = ({
                 </Link>
               </ProductCard.Name>
             </div>
+            {product.description !== "" && (
+              <p className="line-clamp-2 text-center text-sm text-fg-secondary">
+                {product.description}
+              </p>
+            )}
             <div className="mx-auto aspect-square w-full max-w-n1-product-image">
               <Link
                 aria-hidden="true"
