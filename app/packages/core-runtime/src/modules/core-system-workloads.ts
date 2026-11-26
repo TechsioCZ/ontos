@@ -7,8 +7,8 @@ import { OntosModuleIdSchema } from './manifest.ts';
 /*
  * The system modules Core itself runs and the system workloads each runs as. An app module declares its system
  * workloads in its published manifest (`systemWorkloads`) and is enrolled against its installed contract; a core module
- * has no installed contract and no Tenant module state, because it is part of Core and always active. This declaration
- * is the one place Core says which keys such a module may be enrolled for
+ * has no installed contract, and its enrollment reads no Tenant module state (a Tenant's state for it still governs its
+ * capabilities). This declaration is the one place Core says which keys such a module may be enrolled for
  * (`core.identity.change-system-workload-enrollment`), and the module-contract check holds every `registerSystemWorkload`
  * in the Shell's own source to it. A core module's worker identity is its workload key alone: it declares no registered
  * workload calls.

@@ -50,10 +50,9 @@ const MediaMimeTypeSchema = Schema.String.check(isRecordedText);
 const ExternalSourceRefSchema = Schema.String.check(isRecordedText);
 
 /**
- * PROPOSED DEFAULT (ratification pending): a reservation declares the size and SHA-256 of the file it is about
- * to receive. They fix the content identity before any byte moves, so a replay with other bytes is a conflict.
- * This is the single place that makes them required; relaxing the default means making these two optional here
- * and leaving the reservation without a digest claim.
+ * A reservation declares the size and SHA-256 of the file it is about to receive (CORE_MEDIA.md, "Recorded
+ * decisions"). They fix the content identity before any byte moves, so a replay with other bytes is a conflict,
+ * and a caller that generates a file on the fly has to buffer it first.
  */
 const DeclaredContentFields = {
   declaredByteSize: MediaByteSizeSchema,
