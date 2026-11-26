@@ -35,6 +35,7 @@ const ownerMigrations = [
   'privacy',
   'symmy-integration',
   'promotion',
+  'communications',
 ];
 const generatedOwnerMigrations = [
   'property-portfolio',

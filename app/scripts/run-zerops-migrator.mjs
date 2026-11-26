@@ -256,6 +256,7 @@ const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
   yield* migrate('verticals/payment', 'drizzle.config.ts');
   yield* migrate('verticals/promotion', 'drizzle.config.ts');
   yield* migrate('verticals/symmy-integration', 'drizzle.config.ts');
+  yield* migrate('verticals/communications', 'drizzle.config.ts');
   // </generated-vertical-provider-migrations>
   return yield* Effect.void;
 });

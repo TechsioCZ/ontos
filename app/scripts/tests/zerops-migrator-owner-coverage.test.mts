@@ -6,6 +6,7 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
+import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const migrator = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
@@ -36,6 +37,7 @@ for (const owner of [
   'payment',
   'promotion',
   'symmy-integration',
+  'communications',
 ]) {
   it(`D1 migrates and packages ${owner} before claiming database readiness`, () => {
     const migration = migrator.indexOf(`yield* migrate('verticals/${owner}', 'drizzle.config.ts');`);
@@ -57,6 +59,21 @@ for (const owner of [
     }
   });
 }
+
+it.effect('the stage migrator runs every reviewed primary stream before schema verification', () =>
+  Effect.gen(function* everyPrimaryStream() {
+    const inventory = yield* loadApplicationMigrationInventory();
+    for (const stream of inventory.filter(({ database }) => database === 'primary')) {
+      if (stream.ownerId === 'core-runtime') {
+        expect(migrator).toContain("yield* migrateConvergentOwner('core');");
+      } else if (stream.ownerId === 'party-registry' || stream.ownerId === 'party-registry-contacts') {
+        expect(migrator).toContain("yield* migrateConvergentOwner('party');");
+      } else {
+        expect(migrator).toContain(`yield* migrate('${stream.directory}', '${stream.configFile}');`);
+      }
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it('the migrator verifies every owner schema after every migration, and only then activates access', () => {
   expect(migrator).toContain('yield* Effect.andThen(migrations, verificationAndActivation)');
