@@ -20,7 +20,7 @@ import { SymmyCatalogPricingInventoryAdaptersLive } from '../services/symmy-cata
 import { SymmyPolicyFixtureAdaptersLive } from '../services/symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdaptersLive } from '../services/symmy-party-commerce-adapters.ts';
 import { outboxWorkers } from '../workers/index.ts';
-import { symmyIntegrationRegistration } from '../../vertical.registration.ts';
+import { symmyIntegrationBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -83,7 +83,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
   ),
-  ownerRegistration: symmyIntegrationRegistration,
+  ownerRegistration: symmyIntegrationBackendRegistration,
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
 });
