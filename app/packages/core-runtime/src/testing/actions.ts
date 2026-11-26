@@ -199,7 +199,20 @@ export const bindActionTestServices = <
   Requirements,
 >(
   registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
-  services: NoInfer<Services> | ((prepared: NoInfer<Services>) => NoInfer<Services>),
+  services: NoInfer<Services>,
+): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
+
+export const bindActionTestServiceTransform = <
+  Payload extends Schema.ConstraintDecoder<unknown>,
+  Result extends Schema.ConstraintDecoder<unknown>,
+  DomainError extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  Events extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  Requirements,
+>(
+  registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
+  services: (prepared: NoInfer<Services>) => NoInfer<Services>,
 ): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
 
 export interface ActionTestHarnessOptions extends Pick<

@@ -1,5 +1,5 @@
 import { ActionAlreadyCommitted } from '@app/core-runtime';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { bindActionTestServiceTransform, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
@@ -132,7 +132,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
       },
     ],
     services: [
-      bindActionTestServices(submitCommunicationRequestAction, (prepared) => ({
+      bindActionTestServiceTransform(submitCommunicationRequestAction, (prepared) => ({
         ...prepared,
         intake: intake.port,
         policies: policies.port,

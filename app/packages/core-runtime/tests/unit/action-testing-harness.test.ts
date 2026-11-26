@@ -13,7 +13,11 @@ import { defineAction } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
+import {
+  bindActionTestServices,
+  bindActionTestServiceTransform,
+  makeActionTestHarness,
+} from '../../src/testing/actions.ts';
 import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
@@ -356,7 +360,7 @@ it.effect('transforms the genuine prepared services rather than replacing prepar
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
       ownerRegistration: fixtureOwner(registration),
-      services: [bindActionTestServices(registration, (prepared) => ({ total: prepared.total + 10 }))],
+      services: [bindActionTestServiceTransform(registration, (prepared) => ({ total: prepared.total + 10 }))],
       tenantPermission: 'allowed',
     });
     expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 13 });
@@ -388,7 +392,7 @@ for (const phase of ['preparation', 'factory'] as const) {
         actionPermission: 'allowed',
         ownerRegistration: fixtureOwner(registration),
         services: [
-          bindActionTestServices(registration, () => {
+          bindActionTestServiceTransform(registration, () => {
             transforms += 1;
             return { total: 999 };
           }),
