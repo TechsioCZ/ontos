@@ -71,9 +71,9 @@ it('a Modern default-export-only edit changes lint of an untouched Facility Ops 
     expect(readFileSync(path.join(root, target), 'utf-8')).toBe(source);
   }));
 
-it('removing only the production-declarations matrix invocation invalidates its untouched native imports', () =>
+it('removing only a native test matrix invocation invalidates its untouched native imports', () =>
   fixture((root) => {
-    const target = 'scripts/zerops/production-declarations.test.mts';
+    const target = 'scripts/demo/symmy-demo-source-policies.test.mts';
     for (const file of [
       'rstest.config.ts',
       'scripts/ci-matrices.json',
