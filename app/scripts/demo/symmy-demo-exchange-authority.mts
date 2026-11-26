@@ -13,13 +13,17 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Console, DateTime, Effect, Layer, Schema } from 'effect';
+import { Config, Console, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Reactivity } from 'effect/reactivity';
 
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
-import { makeDrizzleAccessWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/bindings.ts';
+import { AccessWorkloadBindingSourceLive } from '../../packages/core-runtime/src/access/workloads/bindings.ts';
+import { AccessWorkloadBindingSource } from '../../packages/core-runtime/src/access/enforcement/workload-port.ts';
+import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { SymmyLifecycleRouteIdSchema } from '../../verticals/symmy-integration/shared/domain/symmy-job-notification.ts';
 import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
@@ -37,47 +41,59 @@ import { SymmyFixtureExecutionPlanSchema } from '../../verticals/symmy-integrati
 import { stageWorkloadBindingIds, stageWorkloadCompanyIds } from './register-stage-workloads.mts';
 
 export const symmyDemoExchangeScope = {
-  tenantId: TenantIdSchema.make('bceaa540-13eb-5508-9ac0-9ed7e40a2ee9'),
   legalEntityId: LegalEntityIdSchema.make('c0c78a3e-6e2a-57e0-9d0d-86253499fee7'),
   principalId: PrincipalIdSchema.make('90620f06-db0a-41ae-be48-4866258f6ea0'),
+  tenantId: TenantIdSchema.make('bceaa540-13eb-5508-9ac0-9ed7e40a2ee9'),
 };
 export const SYMMY_DEMO_EXCHANGE_PRODUCTS_ROUTE = '1a24b716-0542-40d5-8906-c78554b7436d';
 export const symmyDemoExchangeOperations = {
-  productsBatch: {
-    operation: {
-      moduleId: 'demo.merchandise',
-      entrypointKey: 'demo.merchandise.import-source-catalog',
-      schemaVersion: '1',
-    },
-    effectKey: 'demo-catalog-import-v1',
-    workloadKey: SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD,
-  },
   adminProducts: {
+    effectKey: 'demo-order-export-v1',
     operation: {
-      moduleId: demoOrderExportOperation.moduleId,
       entrypointKey: demoOrderExportOperation.entrypointKey,
+      moduleId: demoOrderExportOperation.moduleId,
       schemaVersion: demoOrderExportOperation.schemaVersion,
     },
-    effectKey: 'demo-order-export-v1',
     workloadKey: demoOrderExportOperation.workloadKey,
+  },
+  productsBatch: {
+    effectKey: 'demo-catalog-import-v1',
+    operation: {
+      entrypointKey: 'demo.merchandise.import-source-catalog',
+      moduleId: 'demo.merchandise',
+      schemaVersion: '1',
+    },
+    workloadKey: SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD,
   },
 } as const;
 const reason = 'Standing-approved AKROS stage demo Symmy catalog import and order export enrollment';
 const attribution = 'ontos:stage:symmy-demo-exchange-authority:v1';
 const enrollment = defineDatabaseIdentityEnrollment([]);
-const JsonObject = Schema.Record(Schema.String, Schema.Json);
-const Uuid = Schema.String.check(Schema.isUUID());
-export const SymmyDemoExchangeRouteSchema = Schema.Struct({
+// Preservation envelope only: the native plan schema below remains the authority for every operation.
+// Opaque effects retain nested owner extensions instead of round-tripping the native projection.
+const SymmyDemoExchangeConfigurationSchema = Schema.StructWithRest(
+  Schema.Struct({
+    items: Schema.NonEmptyArray(
+      Schema.StructWithRest(Schema.Struct({ effects: Schema.Array(Schema.Json) }), [
+        Schema.Record(Schema.String, Schema.Json),
+      ]),
+    ),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+const BindingStatusSchema = Schema.Literals(['active', 'revoked']);
+const DecodedExchangeRouteSchema = Schema.Struct({
   active: Schema.Boolean,
   changeToken: Schema.Int,
-  configuration: JsonObject,
-  legalEntityId: Schema.NullOr(Uuid),
-  principalId: Uuid,
-  routeCode: Schema.NullOr(Schema.String),
-  routeId: Uuid,
+  configuration: Schema.Record(Schema.String, Schema.Json),
+  legalEntityId: Schema.OptionFromNullOr(LegalEntityIdSchema),
+  principalId: PrincipalIdSchema,
+  routeCode: Schema.OptionFromNullOr(Schema.String),
+  routeId: SymmyLifecycleRouteIdSchema,
   routeKey: Schema.Literals(['productsBatch', 'adminProducts']),
-  tenantId: Uuid,
+  tenantId: TenantIdSchema,
 });
+export const SymmyDemoExchangeRouteSchema = Schema.toEncoded(DecodedExchangeRouteSchema);
 type Route = typeof SymmyDemoExchangeRouteSchema.Type;
 type RouteKey = Route['routeKey'];
 
@@ -88,8 +104,8 @@ export const symmyDemoExchangeRouteOperations = (routeKey: RouteKey) =>
         {
           effectKey: 'demo-catalog-revision-v1',
           operation: {
-            moduleId: demoCatalogRevisionOperation.moduleId,
             entrypointKey: demoCatalogRevisionOperation.entrypointKey,
+            moduleId: demoCatalogRevisionOperation.moduleId,
             schemaVersion: demoCatalogRevisionOperation.schemaVersion,
           },
         },
@@ -100,14 +116,14 @@ export class SymmyDemoExchangeAuthorityError extends Schema.TaggedError<SymmyDem
   'SymmyDemoExchangeAuthorityError',
   { reason: Schema.String },
 ) {}
-const fail = (reason: string) => new SymmyDemoExchangeAuthorityError({ reason });
+const fail = (message: string) => new SymmyDemoExchangeAuthorityError({ reason: message });
 
 /** Validate the known plan, but retain the original JSON, including owner fields unknown to this release. */
 export const symmyDemoExchangeConfiguration = Effect.fn('SymmyDemoExchange.configuration')(function* configuration(
-  raw: unknown,
+  raw: Schema.Json | typeof SymmyFixtureExecutionPlanSchema.Type,
   routeKey: RouteKey,
 ) {
-  let current = yield* Schema.decodeUnknownEffect(JsonObject)(raw);
+  let current = yield* Schema.decodeUnknownEffect(SymmyDemoExchangeConfigurationSchema)(raw);
   let changed = false;
   for (const addition of symmyDemoExchangeRouteOperations(routeKey)) {
     const plan = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(current);
@@ -121,16 +137,22 @@ export const symmyDemoExchangeConfiguration = Effect.fn('SymmyDemoExchange.confi
     if (existing.some(({ operation }) => operation.schemaVersion !== addition.operation.schemaVersion)) {
       return yield* fail(`The ${routeKey} demo operation is already enrolled at another version`);
     }
-    if (existing.length > 0) continue;
+    if (existing.length > 0) {
+      continue;
+    }
     const index = plan.items.findIndex(({ effects }) => effects.length < 32);
-    if (index < 0) return yield* fail(`The ${routeKey} configuration has no capacity for the demo operation`);
+    if (index === -1) {
+      return yield* fail(`The ${routeKey} configuration has no capacity for the demo operation`);
+    }
     if (plan.items[index]?.effects.some(({ effectKey }) => effectKey === addition.effectKey)) {
       return yield* fail(`The ${routeKey} demo effect key already names another operation`);
     }
-    const items = yield* Schema.decodeUnknownEffect(Schema.NonEmptyArray(JsonObject))(current.items);
+    const { items } = current;
     const selected = items[index];
-    if (selected === undefined) return yield* fail('The selected Symmy configuration item is absent');
-    const effects = yield* Schema.decodeUnknownEffect(Schema.Array(JsonObject))(selected.effects);
+    if (selected === undefined) {
+      return yield* fail('The selected Symmy configuration item is absent');
+    }
+    const { effects } = selected;
     const updated = {
       ...current,
       items: items.map((item, position) =>
@@ -140,7 +162,7 @@ export const symmyDemoExchangeConfiguration = Effect.fn('SymmyDemoExchange.confi
       ),
     };
     yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(updated);
-    current = updated;
+    current = yield* Schema.decodeUnknownEffect(SymmyDemoExchangeConfigurationSchema)(updated);
     changed = true;
   }
   return { changed, configuration: current };
@@ -148,16 +170,17 @@ export const symmyDemoExchangeConfiguration = Effect.fn('SymmyDemoExchange.confi
 
 /** The read route is discovered from live enrollment, never guessed or substituted for a write route. */
 export const planSymmyDemoExchangeRoutes = Effect.fn('SymmyDemoExchange.plan')(function* plan(rows: readonly Route[]) {
+  const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(DecodedExchangeRouteSchema))(rows);
   if (
     rows.length !== 2 ||
-    rows.some(
+    decoded.some(
       (row) =>
         !row.active ||
         row.tenantId !== symmyDemoExchangeScope.tenantId ||
-        (row.legalEntityId !== symmyDemoExchangeScope.legalEntityId &&
-          !(row.routeKey === 'adminProducts' && row.legalEntityId === null)) ||
+        (!Option.contains(row.legalEntityId, symmyDemoExchangeScope.legalEntityId) &&
+          !(row.routeKey === 'adminProducts' && Option.isNone(row.legalEntityId))) ||
         row.principalId !== symmyDemoExchangeScope.principalId ||
-        row.routeCode !== null,
+        Option.isSome(row.routeCode),
     )
   ) {
     return yield* fail(
@@ -171,7 +194,9 @@ export const planSymmyDemoExchangeRoutes = Effect.fn('SymmyDemoExchange.plan')(f
   }
   const [product] = products;
   const [read] = reads;
-  if (product === undefined || read === undefined) return yield* fail('The product source pair is absent');
+  if (product === undefined || read === undefined) {
+    return yield* fail('The product source pair is absent');
+  }
   const sourceOf = (row: Route) => Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(row.configuration);
   const productPlan = yield* sourceOf(product);
   const readPlan = yield* sourceOf(read);
@@ -194,8 +219,8 @@ export const planSymmyDemoExchangeRoutes = Effect.fn('SymmyDemoExchange.plan')(f
           ...route,
           ...change,
           changed: change.changed || route.legalEntityId === null,
-          previousLegalEntityId: route.legalEntityId,
           legalEntityId: symmyDemoExchangeScope.legalEntityId,
+          previousLegalEntityId: route.legalEntityId,
         })),
       ),
     { concurrency: 1 },
@@ -211,7 +236,7 @@ export const SymmyDemoExchangeAuthorityLive = Layer.unwrap(
   Effect.gen(function* adminLayer() {
     yield* requireStage;
     const url = yield* Config.Redacted('DATABASE_ADMIN_URL');
-    return PgClient.layer({ url, maxConnections: 1 });
+    return PgClient.layer({ maxConnections: 1, url });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
@@ -221,7 +246,7 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
   yield* requireStage;
   const sql = yield* PgClient.PgClient;
   const executor = yield* makeWithDefaults({ relations: coreRelations });
-  const { tenantId, legalEntityId, principalId } = symmyDemoExchangeScope;
+  const { legalEntityId, principalId, tenantId } = symmyDemoExchangeScope;
   return yield* sql.withTransaction(
     Effect.gen(function* exchangeTransaction() {
       // symmyRouteEnrollmentLockKey groups both productsBatch and adminProducts in the products source family.
@@ -287,12 +312,23 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
           }),
         ]),
       )(eligibility);
-      const scope = yield* stageScopeOf({ tenantId, principalId: owner.principalId });
+      const scope = yield* stageScopeOf({ principalId: owner.principalId, tenantId });
       const database = { enrollment, executor };
+      // An enclosing reader cannot observe grants made in this still-uncommitted transaction.
+      const authorityContext = yield* Layer.buildWithMemoMap(
+        AccessWorkloadBindingSourceLive.pipe(
+          Layer.provide(Layer.succeed(CoreDatabase, { executor })),
+          Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, enrollment)),
+        ),
+        yield* Layer.makeMemoMap,
+        yield* Effect.scope,
+      );
+      const authoritySource = Context.get(authorityContext, AccessWorkloadBindingSource);
       yield* sql`set local role ontos_runtime`;
       yield* installOperationalScope(executor, scope, enrollment);
-      const grants = [];
-      for (const addition of Object.values(symmyDemoExchangeOperations)) {
+      const grantWorkload = Effect.fn('SymmyDemoExchange.grant')(function* grant(
+        addition: (typeof symmyDemoExchangeOperations)[keyof typeof symmyDemoExchangeOperations],
+      ) {
         const workloadKey = yield* Schema.decodeUnknownEffect(WorkloadKeySchema)(addition.workloadKey);
         const current = yield* sql`select binding_id as "bindingId", status from core.access_workload_bindings
           where tenant_id=${tenantId} and principal_id=${principalId} and workload_key=${workloadKey} for update`;
@@ -300,7 +336,7 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
           Schema.Array(
             Schema.Struct({
               bindingId: AccessWorkloadBindingIdSchema,
-              status: Schema.Literals(['active', 'revoked']),
+              status: BindingStatusSchema,
             }),
           ),
         )(current);
@@ -318,7 +354,7 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
             Schema.Struct({
               companyBindingId: AccessWorkloadCompanyBindingIdSchema,
               legalEntityId: LegalEntityIdSchema,
-              status: Schema.Literals(['active', 'revoked']),
+              status: BindingStatusSchema,
             }),
           ),
         )(registrations);
@@ -360,10 +396,10 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
             ],
           });
         }
-        const authority = yield* makeDrizzleAccessWorkloadBindings(database).readWorkloadAuthority({
+        const authority = yield* authoritySource.readWorkloadAuthority({
           principalId,
-          tenantId,
           scope,
+          tenantId,
         });
         if (
           !authority.workloadKeys.has(workloadKey) ||
@@ -372,7 +408,11 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
         ) {
           return yield* fail(`Core did not admit workload ${workloadKey} in the AKROS company`);
         }
-        grants.push({ workloadKey, bindingId, legalEntityId });
+        return { bindingId, legalEntityId, workloadKey };
+      });
+      const grants = [];
+      for (const addition of [symmyDemoExchangeOperations.productsBatch, symmyDemoExchangeOperations.adminProducts]) {
+        grants.push(yield* grantWorkload(addition));
       }
       yield* sql`reset role`;
       const routes = [];
@@ -387,7 +427,9 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
           const [written] = yield* Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ changeToken: Schema.Int })]),
           )(updated);
-          if (written.changeToken === route.changeToken) return yield* fail('The Symmy route epoch did not advance');
+          if (written.changeToken === route.changeToken) {
+            return yield* fail('The Symmy route epoch did not advance');
+          }
           yield* sql`insert into symmy_integration.route_enrollment_records
             (tenant_id,legal_entity_id,route_id,route_key,route_revision,change_token,change,
               previous_change_token,previous_revision,stated_operator_ref,reason)
@@ -399,16 +441,18 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
           where tenant_id=${tenantId} and principal_id=${principalId} and legal_entity_id=${legalEntityId}
             and route_id=${route.routeId} and route_key=${route.routeKey} and active=true
             and fixture_plan=${sql.json(route.configuration)}::jsonb`;
-        yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ routeId: Uuid })]))(confirmed);
+        yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ routeId: SymmyLifecycleRouteIdSchema })]))(
+          confirmed,
+        );
         routes.push({
+          operations: symmyDemoExchangeRouteOperations(route.routeKey).map(({ operation }) => operation),
+          outcome: route.changed ? 'replaced' : 'verified',
           routeId: route.routeId,
           routeKey: route.routeKey,
-          outcome: route.changed ? 'replaced' : 'verified',
-          operations: symmyDemoExchangeRouteOperations(route.routeKey).map(({ operation }) => operation),
         });
       }
       return { grants, routes };
-    }),
+    }).pipe(Effect.scoped),
   );
 });
 
