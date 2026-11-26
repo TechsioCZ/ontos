@@ -1290,7 +1290,7 @@
       },
       "symmyRoutes": {
         "title": "Trasy ve vybrané firmě",
-        "description": "Které datové trasy smí partner v této firmě číst a zapisovat. Zapnutí je auditovaná akce Symmy; potřebná oprávnění integrace se zaregistrují pro tuto firmu.",
+        "description": "Které datové trasy smí partner v této firmě číst a zapisovat. Zapnutí je auditovaná akce Symmy. Chybějící oprávnění panel nejdřív vypíše a zapíše je až po vašem potvrzení.",
         "empty": "Integrace v této firmě zatím nemá žádné trasy.",
         "readFailed": "Trasy se nepodařilo načíst.",
         "active": "Zapnutá",
@@ -1305,6 +1305,16 @@
         "refused": "Trasy nelze zapnout:",
         "failed": "Změnu tras se nepodařilo provést. Zkuste to znovu.",
         "invalid": "Zkontrolujte identifikátor, jmenný prostor a počet dní (1–3650).",
+        "confirmPrerequisites": "Změnu tras nelze provést, dokud se nezapíše toto:",
+        "confirm": "Zapsat a změnu zopakovat",
+        "cancel": "Zrušit",
+        "prerequisite": {
+          "enrollExecutor": "Zapsat do tenanta systémový workload {{workloadKey}} modulu {{moduleKey}} (zapisovač úloh Symmy)",
+          "registerWorkloads": "Zaregistrovat integraci v této firmě workloady:"
+        },
+        "retryFailed": "Potvrzené zápisy proběhly, ale opakovaná změna tras se nezdařila.",
+        "prerequisiteFailed": "Tento zápis se nepodařilo potvrdit; mohl, ale nemusel proběhnout:",
+        "prerequisitesDone": "Už zapsáno:",
         "route": {
           "adminProducts": "Čtení produktů",
           "adminCustomers": "Čtení zákazníků",

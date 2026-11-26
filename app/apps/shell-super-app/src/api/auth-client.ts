@@ -128,6 +128,8 @@ import type {
   IssueManagedApiKeyPayload,
   RegisterIntegrationWorkloadsPayload,
   RegisterIntegrationWorkloadsResponse,
+  ChangeSystemWorkloadEnrollmentPayload,
+  SystemWorkloadEnrollmentResponse,
   ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
@@ -462,6 +464,18 @@ export const registerIntegrationWorkloads = (
 ): Effect.Effect<RegisterIntegrationWorkloadsResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.registerIntegrationWorkloads({
+      headers: identityHeaders(options),
+      payload,
+    }),
+  );
+
+/** Enrolls or ends the Tenant's system Principal for one system workload an active module declares. */
+export const changeSystemWorkloadEnrollment = (
+  payload: ChangeSystemWorkloadEnrollmentPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<SystemWorkloadEnrollmentResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.identity.changeSystemWorkloadEnrollment({
       headers: identityHeaders(options),
       payload,
     }),

@@ -194,10 +194,10 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
     reason: identityReason,
   }),
 ]);
-const SystemWorkloadModuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)).pipe(
+export const SystemWorkloadModuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)).pipe(
   Schema.brand('ModuleKey'),
 );
-const WorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+export const WorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
   Schema.brand('WorkloadKey'),
 );
 const systemWorkloadEnrollmentChange = {
@@ -410,6 +410,10 @@ export type RegisterIntegrationWorkloadsPayload = Schema.Schema.Type<typeof Regi
 export type RegisterIntegrationWorkloadsResponse = Schema.Schema.Type<
   typeof RegisterIntegrationWorkloadsResponseSchema
 >;
+export type ChangeSystemWorkloadEnrollmentPayload = Schema.Schema.Type<
+  typeof ChangeSystemWorkloadEnrollmentPayloadSchema
+>;
+export type SystemWorkloadEnrollmentResponse = Schema.Schema.Type<typeof SystemWorkloadEnrollmentResponseSchema>;
 export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayloadSchema>;
 export type IssueApiKeyPayload = Schema.Schema.Type<typeof IssueApiKeyPayloadSchema>;
 export type IssueManagedApiKeyPayload = Schema.Schema.Type<typeof IssueManagedApiKeyPayloadSchema>;

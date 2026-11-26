@@ -1,10 +1,14 @@
 import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import { ManageSymmyRoutesActionIneligibleProblemSchema } from '@app/symmy-integration/api/manage-symmy-routes-action';
 import { SYMMY_BULK_IMPORT_ROUTE_KEYS } from '@app/symmy-integration/actions/manage-symmy-routes';
 import type {
   SymmyManagedRouteKey,
   SymmyRouteChangeRequestSchema,
 } from '@app/symmy-integration/actions/manage-symmy-routes';
 import type { SymmyCompanyRoutesResponse } from '@app/symmy-integration/api/symmy-company-routes';
+import { Effect, Option, Schema } from 'effect';
+
+import { SystemWorkloadModuleKeySchema, WorkloadKeySchema } from '../../../shared/browser-api.ts';
 
 /*
  * What the Shell's Symmy panel asks `integration.symmy.manage-symmy-routes` for. Symmy is a connector partner: the
@@ -24,6 +28,8 @@ export const SYMMY_PANEL_ROUTES: readonly SymmyManagedRouteKey[] = [
   ...panelRoutes.filter(isWriteRoute),
 ];
 export const SYMMY_DEFAULT_RETENTION_DAYS = 30;
+/** No route starts ticked: only the routes the administrator ticks are sent. */
+export const SYMMY_INITIAL_ROUTE_CHOICE: readonly SymmyManagedRouteKey[] = [];
 /** The pricing owner module a Symmy price list's prices are read from (the partner's source system). */
 const SYMMY_PRICE_OWNER_MODULE = 'external.symmy';
 
@@ -84,21 +90,115 @@ export const symmyEnableChanges = (
 
 const bindingRefusals = new Set(['integration_binding_missing', 'integration_company_registration_missing']);
 
-/**
- * The workloads to register for the integration before the route change can succeed, when every refusal is a missing
- * integration binding or company registration that names them; any other refusal is the administrator's to fix, so
- * the answer is then `null`. Of each refusal's alternatives the first is registered.
- */
-export const symmyMissingWorkloads = (
-  refusals: readonly { readonly code: string; readonly workloads?: readonly string[] | undefined }[],
-): readonly [string, ...string[]] | null => {
-  if (refusals.length === 0 || !refusals.every(({ code }) => bindingRefusals.has(code))) {
-    return null;
-  }
-  const firsts = refusals.flatMap(({ workloads }) => workloads?.slice(0, 1) ?? []);
-  if (firsts.length < refusals.length) {
-    return null;
-  }
-  const [first, ...rest] = [...new Set(firsts)];
-  return first === undefined ? null : [first, ...rest];
+/** Symmy's background job writer: the system workload `core.identity.change-system-workload-enrollment` enrolls. */
+export const SYMMY_EXECUTOR = {
+  moduleKey: SystemWorkloadModuleKeySchema.make('integration.symmy'),
+  workloadKey: WorkloadKeySchema.make('integration.symmy.execute-symmy-job'),
 };
+
+const WorkloadKeysSchema = Schema.NonEmptyArray(WorkloadKeySchema);
+/** One write the panel makes, only after the administrator confirmed it, before it repeats a refused route change. */
+export const SymmyPrerequisiteSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('enrollExecutor'),
+    moduleKey: SystemWorkloadModuleKeySchema,
+    workloadKey: WorkloadKeySchema,
+  }),
+  Schema.Struct({ kind: Schema.Literal('registerWorkloads'), workloadKeys: WorkloadKeysSchema }),
+]);
+export type SymmyPrerequisite = typeof SymmyPrerequisiteSchema.Type;
+export type SymmyPrerequisites = readonly [SymmyPrerequisite, ...SymmyPrerequisite[]];
+
+interface Refusal {
+  readonly code: string;
+  readonly workloads?: readonly string[] | undefined;
+}
+
+const isExecutorRefusal = ({ code, workloads }: Refusal) =>
+  code === 'executor_binding_missing' && workloads?.length === 1 && workloads[0] === SYMMY_EXECUTOR.workloadKey;
+
+/**
+ * What the panel would write before repeating a refused route change, in order: the Symmy executor's enrollment when
+ * the Tenant has none, then the integration workloads missing in the company (the first of each refusal's
+ * alternatives). `null` when any refusal is something else, which is the administrator's to fix.
+ */
+export const symmyMissingPrerequisites = (refusals: readonly Refusal[]): SymmyPrerequisites | null => {
+  const executor = refusals.filter(isExecutorRefusal);
+  const bindings = refusals.filter(({ code }) => bindingRefusals.has(code));
+  if (executor.length + bindings.length !== refusals.length) {
+    return null;
+  }
+  const firsts = bindings.flatMap(({ workloads }) => workloads?.slice(0, 1) ?? []);
+  if (firsts.length < bindings.length) {
+    return null;
+  }
+  const registration = Schema.decodeUnknownOption(WorkloadKeysSchema)([...new Set(firsts)]);
+  if (bindings.length > 0 && Option.isNone(registration)) {
+    return null;
+  }
+  const prerequisites: SymmyPrerequisite[] = [
+    ...(executor.length > 0 ? [{ kind: 'enrollExecutor' as const, ...SYMMY_EXECUTOR }] : []),
+    ...registration.pipe(
+      Option.map((workloadKeys) => ({ kind: 'registerWorkloads' as const, workloadKeys })),
+      Option.toArray,
+    ),
+  ];
+  const [head, ...tail] = prerequisites;
+  return head === undefined ? null : [head, ...tail];
+};
+
+const isIneligible = Schema.is(ManageSymmyRoutesActionIneligibleProblemSchema);
+
+/** A submitted route change either went through or waits for the administrator to confirm the writes it needs. */
+export type SymmyChangeStep =
+  | { readonly kind: 'confirm'; readonly prerequisites: SymmyPrerequisites }
+  | { readonly kind: 'done' };
+
+/**
+ * Submits a route change once. A refusal the panel can resolve comes back as the writes to confirm; nothing is enrolled
+ * or registered here.
+ */
+export const symmySubmitChange = <E, R>(submit: Effect.Effect<unknown, E, R>): Effect.Effect<SymmyChangeStep, E, R> =>
+  submit.pipe(
+    Effect.as<SymmyChangeStep>({ kind: 'done' }),
+    Effect.catchIf(isIneligible, (problem) => {
+      const prerequisites = symmyMissingPrerequisites(problem.refusals ?? []);
+      return prerequisites === null
+        ? Effect.fail(problem)
+        : Effect.succeed<SymmyChangeStep>({ kind: 'confirm', prerequisites });
+    }),
+  );
+
+/** Where a confirmed run stopped: the writes that went through, the step that failed, and its problem. */
+export class SymmyConfirmedRunFailed extends Schema.TaggedError<SymmyConfirmedRunFailed>()('SymmyConfirmedRunFailed', {
+  done: Schema.Array(SymmyPrerequisiteSchema),
+  failed: Schema.Union([SymmyPrerequisiteSchema, Schema.Literal('retry')]),
+  problem: Schema.Unknown,
+}) {}
+
+/**
+ * After the administrator confirmed: makes exactly the confirmed writes, one after another, then repeats the route
+ * change once. A failure names the writes that already went through.
+ */
+export const symmyFulfilThenRetry = <E, R, ES, RS>(
+  prerequisites: SymmyPrerequisites,
+  fulfil: (prerequisite: SymmyPrerequisite) => Effect.Effect<unknown, E, R>,
+  submit: Effect.Effect<unknown, ES, RS>,
+): Effect.Effect<void, SymmyConfirmedRunFailed, R | RS> =>
+  Effect.forEach(
+    prerequisites,
+    (prerequisite, index) =>
+      fulfil(prerequisite).pipe(
+        Effect.mapError(
+          (problem) =>
+            new SymmyConfirmedRunFailed({ done: prerequisites.slice(0, index), failed: prerequisite, problem }),
+        ),
+      ),
+    { concurrency: 1, discard: true },
+  ).pipe(
+    Effect.andThen(
+      submit.pipe(
+        Effect.mapError((problem) => new SymmyConfirmedRunFailed({ done: prerequisites, failed: 'retry', problem })),
+      ),
+    ),
+  );

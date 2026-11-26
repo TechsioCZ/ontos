@@ -1,6 +1,8 @@
 // The Symmy routes of one integration in the selected company. Enabling a route family runs Symmy's own audited
-// `integration.symmy.manage-symmy-routes`; when that names integration workloads the principal does not hold yet, the
-// panel registers them through Core's `core.identity.register-integration-workloads` and repeats the change once.
+// `integration.symmy.manage-symmy-routes`. When that refuses for a Symmy executor the Tenant has not enrolled or for
+// integration workloads the principal does not hold yet, the panel lists exactly those writes and, only after the
+// administrator confirms them, makes them through Core's `core.identity.change-system-workload-enrollment` and
+// `core.identity.register-integration-workloads`, then repeats the change once.
 import { FormInput } from '@app/admin-ui/form-controls';
 import { ManageSymmyRoutesPayloadSchema } from '@app/symmy-integration/actions/manage-symmy-routes';
 import type { ManageSymmyRoutesPayload } from '@app/symmy-integration/actions/manage-symmy-routes';
@@ -15,27 +17,32 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Effect, Schema } from 'effect';
-import type { Cause } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
-import { RegisterIntegrationWorkloadsPayloadSchema } from '../../../shared/browser-api.ts';
+import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
+  RegisterIntegrationWorkloadsPayloadSchema,
+} from '../../../shared/browser-api.ts';
 import type { ManagedApiKeyListResponse } from '../../../shared/browser-api.ts';
-import { registerIntegrationWorkloads } from '../../api/auth-client.ts';
+import { changeSystemWorkloadEnrollment, registerIntegrationWorkloads } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
 import {
   SYMMY_DEFAULT_RETENTION_DAYS,
+  SYMMY_INITIAL_ROUTE_CHOICE,
   SYMMY_PANEL_ROUTES,
   symmyEnableChanges,
-  symmyMissingWorkloads,
+  symmyFulfilThenRetry,
   symmyPendingRoutes,
+  symmySubmitChange,
 } from './symmy-routes-model.ts';
-import type { SymmyRouteChangeInput } from './symmy-routes-model.ts';
+import type { SymmyPrerequisite, SymmyPrerequisites, SymmyRouteChangeInput } from './symmy-routes-model.ts';
 
 const copyKey = 'shell.integrations.symmyRoutes';
 const timeout = '60 seconds';
 const enableReason = 'Tenant administrator enabled Symmy routes for this company';
 const disableReason = 'Tenant administrator disabled a Symmy route for this company';
+const enrollReason = 'Tenant administrator confirmed enrolling the Symmy executor to change Symmy routes';
 
 type PrincipalId = ManagedApiKeyListResponse['items'][number]['principalId'];
 type CompanyRoute = SymmyCompanyRoutesResponse['routes'][number];
@@ -69,41 +76,126 @@ const registerMissing = Effect.fn('SymmyRoutesPanel.registerMissing')(function* 
   return yield* registerIntegrationWorkloads(registration, { idempotencyKey: yield* newRequestToken });
 });
 
-/** One route change, repeated once after registering the integration workloads it names as missing. */
-const changeRoutes = Effect.fn('SymmyRoutesPanel.changeRoutes')(function* changeRoutes(
-  principalId: PrincipalId,
-  changes: readonly SymmyRouteChangeInput[],
-  reason: string,
+const enrollExecutor = Effect.fn('SymmyRoutesPanel.enrollExecutor')(function* enrollExecutor(
+  moduleKey: string,
+  workloadKey: string,
 ) {
-  const payload = yield* Schema.decodeUnknownEffect(ManageSymmyRoutesPayloadSchema)({
+  const enrollment = yield* Schema.decodeUnknownEffect(ChangeSystemWorkloadEnrollmentPayloadSchema)({
+    _tag: 'ENROLL',
+    moduleKey,
+    reason: enrollReason,
+    workloadKey,
+  }).pipe(Effect.mapError(inputInvalid));
+  return yield* changeSystemWorkloadEnrollment(enrollment, { idempotencyKey: yield* newRequestToken });
+});
+
+const fulfil = Effect.fn('SymmyRoutesPanel.fulfil')(function* fulfil(
+  principalId: PrincipalId,
+  prerequisite: SymmyPrerequisite,
+) {
+  if (prerequisite.kind === 'enrollExecutor') {
+    return yield* enrollExecutor(prerequisite.moduleKey, prerequisite.workloadKey);
+  }
+  return yield* registerMissing(principalId, prerequisite.workloadKeys);
+});
+
+/** A route change as the administrator asked for it, kept to repeat it after confirmed writes. */
+interface Attempt {
+  readonly changes: readonly SymmyRouteChangeInput[];
+  readonly reason: string;
+}
+
+const routePayload = (principalId: PrincipalId, { changes, reason }: Attempt) =>
+  Schema.decodeUnknownEffect(ManageSymmyRoutesPayloadSchema)({
     changes,
     integrationPrincipalId: principalId,
     reason,
   }).pipe(Effect.mapError(inputInvalid));
-  return yield* submitRoutes(payload).pipe(
-    Effect.catch((error) => {
-      const missing = isIneligible(error) ? symmyMissingWorkloads(error.refusals ?? []) : null;
-      return missing === null
-        ? Effect.fail(error)
-        : registerMissing(principalId, missing).pipe(Effect.andThen(submitRoutes(payload)));
-    }),
+
+/** One route change; a refusal the panel can resolve comes back as the writes for the administrator to confirm. */
+const changeRoutes = (principalId: PrincipalId, attempt: Attempt) =>
+  routePayload(principalId, attempt).pipe(
+    Effect.flatMap((payload) => symmySubmitChange(submitRoutes(payload).pipe(Effect.timeout(timeout)))),
   );
-});
-type RouteChangeFailure = Effect.Error<ReturnType<typeof changeRoutes>> | Cause.TimeoutError;
+
+/** The confirmed writes, then the same route change once more. */
+const confirmAndRetry = (principalId: PrincipalId, attempt: Attempt, prerequisites: SymmyPrerequisites) =>
+  routePayload(principalId, attempt).pipe(
+    Effect.flatMap((payload) =>
+      symmyFulfilThenRetry(
+        prerequisites,
+        (prerequisite) => fulfil(principalId, prerequisite).pipe(Effect.timeout(timeout)),
+        submitRoutes(payload).pipe(Effect.timeout(timeout)),
+      ),
+    ),
+  );
+type RouteChangeFailure = Effect.Error<ReturnType<typeof changeRoutes>>;
+type ConfirmedRunProblem = Effect.Error<ReturnType<typeof confirmAndRetry>>;
 
 type ChangeState =
+  | { readonly attempt: Attempt; readonly kind: 'confirm'; readonly prerequisites: SymmyPrerequisites }
+  | {
+      readonly done: readonly SymmyPrerequisite[];
+      readonly failed: SymmyPrerequisite | 'retry';
+      readonly kind: 'confirmedRunFailed';
+      readonly refusals: Refusals;
+    }
   | { readonly kind: 'failed' }
   | { readonly kind: 'idle' }
   | { readonly kind: 'invalid' }
   | { readonly kind: 'refused'; readonly refusals: Refusals }
   | { readonly kind: 'saving' };
 
+const isInvalid = Schema.is(SymmyRoutesInputInvalid);
+
 const failureState = (problem: RouteChangeFailure): ChangeState => {
   if (isIneligible(problem)) {
     return { kind: 'refused', refusals: problem.refusals ?? [] };
   }
-  return Schema.is(SymmyRoutesInputInvalid)(problem) ? { kind: 'invalid' } : { kind: 'failed' };
+  return isInvalid(problem) ? { kind: 'invalid' } : { kind: 'failed' };
 };
+
+const confirmedRunFailureState = (failure: ConfirmedRunProblem): ChangeState => {
+  // Only the route change's own input decodes before any write; a failed write still lists what went through.
+  if (isInvalid(failure)) {
+    return { kind: 'invalid' };
+  }
+  const refusals = isIneligible(failure.problem) ? (failure.problem.refusals ?? []) : [];
+  return { done: failure.done, failed: failure.failed, kind: 'confirmedRunFailed', refusals };
+};
+
+const PrerequisiteItem = ({ prerequisite }: { readonly prerequisite: SymmyPrerequisite }) => {
+  const { t } = useModernI18n();
+  return (
+    <li className="[overflow-wrap:anywhere]">
+      {prerequisite.kind === 'enrollExecutor'
+        ? t(`${copyKey}.prerequisite.enrollExecutor`, {
+            moduleKey: prerequisite.moduleKey,
+            workloadKey: prerequisite.workloadKey,
+          })
+        : t(`${copyKey}.prerequisite.registerWorkloads`)}
+      {prerequisite.kind === 'registerWorkloads' && (
+        <ul className="list-disc pl-200">
+          {prerequisite.workloadKeys.map((workloadKey) => (
+            <li className="font-mono text-xs" key={workloadKey}>
+              {workloadKey}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+};
+
+const RefusalList = ({ refusals }: { readonly refusals: Refusals }) => (
+  <ul className="list-disc pl-200">
+    {refusals.map((refusal) => (
+      <li className="[overflow-wrap:anywhere]" key={`${refusal.code}:${refusal.detail}`}>
+        {refusal.detail}
+      </li>
+    ))}
+  </ul>
+);
 
 const RouteRow = ({
   onDisable,
@@ -143,6 +235,73 @@ const RouteRow = ({
   );
 };
 
+/** The writes a refused route change needs, listed exactly, made only after the administrator confirms them. */
+const ConfirmPrerequisites = ({
+  onCancel,
+  onConfirm,
+  prerequisites,
+}: {
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+  readonly prerequisites: SymmyPrerequisites;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex min-w-0 flex-col gap-100">
+      <StatusText showIcon status="warning">
+        {t(`${copyKey}.confirmPrerequisites`)}
+        <ul className="list-disc pl-200">
+          {prerequisites.map((prerequisite) => (
+            <PrerequisiteItem key={prerequisite.kind} prerequisite={prerequisite} />
+          ))}
+        </ul>
+      </StatusText>
+      <div className="flex flex-wrap gap-100">
+        <Button onClick={onConfirm} size="sm" type="button" variant="primary">
+          {t(`${copyKey}.confirm`)}
+        </Button>
+        <Button onClick={onCancel} size="sm" theme="outlined" type="button" variant="secondary">
+          {t(`${copyKey}.cancel`)}
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+/** Where a confirmed run stopped, with every write that already went through. */
+const ConfirmedRunFailure = ({
+  failure,
+}: {
+  readonly failure: Extract<ChangeState, { readonly kind: 'confirmedRunFailed' }>;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <StatusText showIcon status="error">
+      {failure.failed === 'retry' ? (
+        t(`${copyKey}.retryFailed`)
+      ) : (
+        <>
+          {t(`${copyKey}.prerequisiteFailed`)}
+          <ul className="list-disc pl-200">
+            <PrerequisiteItem prerequisite={failure.failed} />
+          </ul>
+        </>
+      )}
+      {failure.done.length > 0 && (
+        <>
+          {t(`${copyKey}.prerequisitesDone`)}
+          <ul className="list-disc pl-200">
+            {failure.done.map((prerequisite) => (
+              <PrerequisiteItem key={prerequisite.kind} prerequisite={prerequisite} />
+            ))}
+          </ul>
+        </>
+      )}
+      {failure.refusals.length > 0 && <RefusalList refusals={failure.refusals} />}
+    </StatusText>
+  );
+};
+
 /** Symmy's routes of this integration in the selected company, and the form that enables more of them. */
 export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: PrincipalId }) => {
   const { t } = useModernI18n();
@@ -152,7 +311,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
   const [issuerId, setIssuerId] = useState('');
   const [sourceNamespace, setSourceNamespace] = useState('');
   const [retentionDays, setRetentionDays] = useState(String(SYMMY_DEFAULT_RETENTION_DAYS));
-  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set(SYMMY_PANEL_ROUTES));
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set(SYMMY_INITIAL_ROUTE_CHOICE));
   const load = () => {
     browserRuntime.runFork(
       readRoutes(principalId).pipe(
@@ -169,21 +328,37 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
   };
   const loadOnMount = useEffectEvent(load);
   useEffect(() => loadOnMount(), []);
+  const settled = () => {
+    setChange({ kind: 'idle' });
+    setChosen(new Set(SYMMY_INITIAL_ROUTE_CHOICE));
+    load();
+  };
   const run = (changes: readonly SymmyRouteChangeInput[], reason: string) => {
-    if (changes.length === 0 || change.kind === 'saving') {
+    if (changes.length === 0 || change.kind === 'saving' || change.kind === 'confirm') {
+      return;
+    }
+    const attempt = { changes, reason };
+    setChange({ kind: 'saving' });
+    browserRuntime.runFork(
+      changeRoutes(principalId, attempt).pipe(
+        Effect.match({
+          onFailure: (problem) => setChange(failureState(problem)),
+          onSuccess: (step) =>
+            step.kind === 'done'
+              ? settled()
+              : setChange({ attempt, kind: 'confirm', prerequisites: step.prerequisites }),
+        }),
+      ),
+    );
+  };
+  const confirm = () => {
+    if (change.kind !== 'confirm') {
       return;
     }
     setChange({ kind: 'saving' });
     browserRuntime.runFork(
-      changeRoutes(principalId, changes, reason).pipe(
-        Effect.timeout(timeout),
-        Effect.match({
-          onFailure: (problem) => setChange(failureState(problem)),
-          onSuccess: () => {
-            setChange({ kind: 'idle' });
-            load();
-          },
-        }),
+      confirmAndRetry(principalId, change.attempt, change.prerequisites).pipe(
+        Effect.match({ onFailure: (problem) => setChange(confirmedRunFailureState(problem)), onSuccess: settled }),
       ),
     );
   };
@@ -214,7 +389,9 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
     setChosen(next);
   };
   const saving = change.kind === 'saving';
+  const busy = saving || change.kind === 'confirm';
   const pending = routes === null ? [] : symmyPendingRoutes(routes);
+  const nothingChosen = !pending.some((routeKey) => chosen.has(routeKey));
   return (
     <section className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-t pt-150">
       <h3 className="font-medium text-sm">{t(`${copyKey}.title`)}</h3>
@@ -227,7 +404,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
       {routes?.length === 0 && <p className="text-fg-secondary text-xs">{t(`${copyKey}.empty`)}</p>}
       <ul className="flex min-w-0 flex-col gap-75">
         {routes?.map((route) => (
-          <RouteRow key={route.routeId} onDisable={disable} route={route} saving={saving} />
+          <RouteRow key={route.routeId} onDisable={disable} route={route} saving={busy} />
         ))}
       </ul>
       {routes !== null && pending.length > 0 && (
@@ -277,7 +454,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
           </div>
           <div>
             <Button
-              disabled={saving || issuerId.trim().length === 0 || sourceNamespace.trim().length === 0}
+              disabled={busy || nothingChosen || issuerId.trim().length === 0 || sourceNamespace.trim().length === 0}
               onClick={enable}
               size="sm"
               type="button"
@@ -288,16 +465,18 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
           </div>
         </div>
       )}
+      {change.kind === 'confirm' && (
+        <ConfirmPrerequisites
+          onCancel={() => setChange({ kind: 'idle' })}
+          onConfirm={confirm}
+          prerequisites={change.prerequisites}
+        />
+      )}
+      {change.kind === 'confirmedRunFailed' && <ConfirmedRunFailure failure={change} />}
       {change.kind === 'refused' && (
         <StatusText showIcon status="error">
           {t(`${copyKey}.refused`)}
-          <ul className="list-disc pl-200">
-            {change.refusals.map((refusal) => (
-              <li className="[overflow-wrap:anywhere]" key={`${refusal.code}:${refusal.detail}`}>
-                {refusal.detail}
-              </li>
-            ))}
-          </ul>
+          <RefusalList refusals={change.refusals} />
         </StatusText>
       )}
       {(change.kind === 'failed' || change.kind === 'invalid') && (
