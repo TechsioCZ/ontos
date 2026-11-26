@@ -9,12 +9,18 @@ import {
   SymmyPinnedJobPlanSchema,
   projectSymmyUnsupportedBranches,
 } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyPartyCommerceOwnerReceiptSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
+import {
+  SymmyPartyCommerceIntentSchema,
+  SymmyPartyCommerceOwnerReceiptSchema,
+} from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { symmyCustomerSourceRecordId } from '../../src/persistence/symmy-customer-plan.ts';
 import {
   buildSymmyGroupMembershipPlan,
   symmyMembershipProfilesFromReceipts,
 } from '../../src/persistence/symmy-customer-group-membership-plan.ts';
+
+const membershipIntentSchema = SymmyPartyCommerceIntentSchema.pipe(Schema.toTaggedUnion('_tag')).cases
+  .CustomerGroupMembership;
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenant = '99999999-9999-4999-8999-999999999999';
@@ -46,9 +52,9 @@ const templateFor = (targetTenant = tenantId, enrolled = true) =>
       source: {
         entityKind: 'CUSTOMER_GROUP',
         issuerId: 'erp',
+        route: { integrationRouteId: routeId, tenantId },
         sourceNamespace: 'groups',
         sourceRecordId: 'wholesale',
-        route: { integrationRouteId: routeId, tenantId },
       },
       target: {
         moduleId: 'commerce.customer-context',
@@ -88,8 +94,8 @@ const organizationReceipt = Schema.decodeUnknownSync(SymmyPartyCommerceOwnerRece
 const profiles = () =>
   symmyMembershipProfilesFromReceipts(
     [
-      { recordId: 'person', receipt: retailReceipt(), organization: false },
-      { recordId: 'organization', receipt: organizationReceipt, organization: true },
+      { organization: false, receipt: retailReceipt(), recordId: 'person' },
+      { organization: true, receipt: organizationReceipt, recordId: 'organization' },
     ],
     tenantId,
   );
@@ -102,11 +108,11 @@ const build = (rows = rowsOf('person', 'organization', 'unknown'), template = te
     digest,
     idempotencyKey: key,
     legalEntityId,
+    reserve: () => Effect.succeed({ effectiveAt: DateTime.makeUnsafe('2026-11-23T00:00:00Z'), order: 1 }),
+    resolveProfiles: () => Effect.succeed(profiles()),
     rows,
     template,
     tenantId,
-    resolveProfiles: () => Effect.succeed(profiles()),
-    reserve: () => Effect.succeed({ order: 1, effectiveAt: DateTime.makeUnsafe('2026-11-23T00:00:00Z') }),
   });
 
 describe('public group customers admission', () => {
@@ -120,10 +126,10 @@ describe('public group customers admission', () => {
   });
   it('requires the group route, code and no other source', () => {
     const payload = {
-      routeKey: 'customerGroupCustomersBatch',
       code: 'wholesale',
       groupCustomers: [{ customerId: 'person' }],
       idempotencyKey: 'request-1',
+      routeKey: 'customerGroupCustomersBatch',
     };
     expect(Schema.is(AdmitSymmyJobPayloadSchema)(payload)).toBe(true);
     expect(Schema.is(AdmitSymmyJobPayloadSchema)({ ...payload, routeKey: 'customersBatch' })).toBe(false);
@@ -145,7 +151,7 @@ describe('source-owned profile receipts', () => {
     });
     expect(
       symmyMembershipProfilesFromReceipts(
-        [{ recordId: 'person', receipt: organizationReceipt, organization: false }],
+        [{ organization: false, receipt: organizationReceipt, recordId: 'person' }],
         tenantId,
       ).get('person')?.processingKind,
     ).toBe('PERSONAL_DATA');
@@ -154,12 +160,12 @@ describe('source-owned profile receipts', () => {
     expect(
       symmyMembershipProfilesFromReceipts(
         [
-          { recordId: 'person', receipt: retailReceipt(), organization: false },
-          { recordId: 'person', receipt: retailReceipt('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), organization: false },
+          { organization: false, receipt: retailReceipt(), recordId: 'person' },
+          { organization: false, receipt: retailReceipt('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), recordId: 'person' },
           {
-            recordId: 'foreign',
-            receipt: retailReceipt('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', otherTenant),
             organization: false,
+            receipt: retailReceipt('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', otherTenant),
+            recordId: 'foreign',
           },
         ],
         tenantId,
@@ -167,12 +173,11 @@ describe('source-owned profile receipts', () => {
     ).toBe(0);
   });
   it.effect('uses the identical source record normalization as customer import', () =>
-    Effect.gen(function* () {
+    Effect.gen(function* matchesCustomerRecordNormalization() {
       expect(yield* symmyCustomerSourceRecordId('person', digest)).toBe('person');
       const id = 'x'.repeat(201);
-      expect(yield* symmyCustomerSourceRecordId(id, digest)).toBe(
-        `symmy-customer:${createHash('sha256').update(`customer-record\u0000${id}`).digest('hex')}`,
-      );
+      const hashedRecord = createHash('sha256').update(`customer-record\u0000${id}`).digest('hex');
+      expect(yield* symmyCustomerSourceRecordId(id, digest)).toBe(`symmy-customer:${hashedRecord}`);
       expect(yield* symmyCustomerSourceRecordId(' padded ', digest)).not.toBe(' padded ');
     }),
   );
@@ -205,43 +210,45 @@ describe('group membership planner', () => {
     expect(Schema.is(SymmyEffectOutcomeSchema)(outcome)).toBe(true);
   });
   it.effect('assigns imported people and organizations and refuses only the unknown item', () =>
-    Effect.gen(function* () {
+    Effect.gen(function* assignsKnownCustomers() {
       const result = yield* build();
       expect(Option.isSome(result)).toBe(true);
-      if (Option.isNone(result)) return;
-      expect(result.value.items).toHaveLength(3);
-      const [person, organization, missing] = result.value.items;
-      expect(person?.effects[0]?.intent).toMatchObject({
-        _tag: 'CustomerGroupMembership',
-        payload: { operation: 'ASSIGN', profile: { profileKind: 'RETAIL' }, reason: expect.any(String) },
+      const { items } = Option.getOrThrow(result);
+      expect(items).toHaveLength(3);
+      const [person, organization, missing] = items;
+      const personIntent = person?.effects[0]?.intent;
+      Schema.asserts(membershipIntentSchema, personIntent);
+      expect(personIntent.payload).toMatchObject({
+        operation: 'ASSIGN',
+        profile: { profileKind: 'RETAIL' },
+        reason: expect.any(String),
       });
-      expect(organization?.effects[0]?.intent).toMatchObject({
-        _tag: 'CustomerGroupMembership',
-        payload: {
-          operation: 'ASSIGN',
-          processingKind: 'ORG_BUSINESS_REFERENCE',
-          reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
-        },
+      const organizationIntent = organization?.effects[0]?.intent;
+      Schema.asserts(membershipIntentSchema, organizationIntent);
+      expect(organizationIntent.payload).toMatchObject({
+        operation: 'ASSIGN',
+        processingKind: 'ORG_BUSINESS_REFERENCE',
+        reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
       });
       expect(missing?.effects).toEqual([]);
       expect(missing?.unsupportedBranches).toEqual([{ branchKey: 'customer', kind: 'CustomerHint' }]);
     }),
   );
   it.effect('represents all-unknown requests without fake owner effects', () =>
-    Effect.gen(function* () {
+    Effect.gen(function* representsUnknownCustomers() {
       const result = yield* build(rowsOf('unknown'));
       expect(Option.isSome(result)).toBe(true);
-      if (Option.isSome(result)) expect(result.value.items[0].effects).toEqual([]);
+      expect(Option.getOrThrow(result).items[0].effects).toEqual([]);
     }),
   );
   it.effect('refuses unenrolled operations and foreign selected groups', () =>
-    Effect.gen(function* () {
+    Effect.gen(function* refusesOutOfScopeGroups() {
       expect(Option.isNone(yield* build(rowsOf('person'), templateFor(tenantId, false)))).toBe(true);
       expect(Option.isNone(yield* build(rowsOf('person'), templateFor(otherTenant)))).toBe(true);
     }),
   );
   it.effect('replays derived identities but separates different keys', () =>
-    Effect.gen(function* () {
+    Effect.gen(function* derivesStableReplayIdentities() {
       const first = yield* build();
       expect(yield* build()).toEqual(first);
       expect(yield* build(rowsOf('person', 'organization', 'unknown'), templateFor(), 'request-2')).not.toEqual(first);
@@ -250,7 +257,7 @@ describe('group membership planner', () => {
   it('rejects silent items with neither work nor an unsupported outcome', () => {
     expect(
       Schema.is(SymmyFixtureExecutionPlanSchema)({
-        items: [{ itemKey: 'empty', source: templateFor().items[0].source, effects: [] }],
+        items: [{ effects: [], itemKey: 'empty', source: templateFor().items[0].source }],
       }),
     ).toBe(false);
   });
