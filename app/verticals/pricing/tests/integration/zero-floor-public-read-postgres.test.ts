@@ -1,5 +1,4 @@
-import { ReadEvidencePersistenceError } from '@app/core-runtime';
-import { Cause, Clock, DateTime, Duration, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Clock, DateTime, Duration, Effect, Exit, Layer, Option } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import {
@@ -436,7 +435,7 @@ it.live(
 );
 
 it.live(
-  'publishes nothing and commits no evidence when the native ZERO_FLOOR routine fails in SQL, and recovers once cleared',
+  'publishes nothing and rolls back only ZERO_FLOOR evidence when its routine fails in SQL, and recovers once cleared',
   () =>
     Effect.scoped(
       Effect.gen(function* publicSqlFailure() {
@@ -464,16 +463,22 @@ it.live(
             return { attempts: harness.wholeAttempts.slice(attemptsBefore), exit };
           });
           /**
-           * The REAL top-level result of a SQL abort inside the native routine: the Read itself FAILS with Core's
-           * evidence-persistence error (the aborted transaction cannot persist the read evidence). It is not a customer
-           * response, so no price and no `result` exists, and the owner evaluation never reached publication.
+           * The native SQL abort rolls back its own short owner transaction, not the phased Read. Owner unavailability
+           * exhausts the bounded retry and returns a customer-safe non-success, with no published price or floor proof.
            */
-          const expectReadFailedWithoutResult = (read: Effect.Success<ReturnType<typeof attemptRead>>) => {
-            assert(Exit.isFailure(read.exit));
-            const failure = Cause.findErrorOption(read.exit.cause);
-            assert(Option.isSome(failure));
-            expect(Schema.is(ReadEvidencePersistenceError)(failure.value)).toBe(true);
+          const expectReadIndeterminateWithoutResult = (
+            read: Effect.Success<ReturnType<typeof attemptRead>>,
+            occurrenceId: string,
+          ) => {
+            assert(Exit.isSuccess(read.exit));
+            expect(read.exit.value).toEqual(customerNonSuccess('PRICING_INDETERMINATE', [occurrenceId], true));
+            expect('result' in read.exit.value).toBe(false);
+            expect(read.attempts.map(({ kind }) => kind)).toEqual([
+              'INDETERMINATE_OR_UNVERIFIABLE',
+              'INDETERMINATE_OR_UNVERIFIABLE',
+            ]);
             expect(read.attempts.some(({ kind }) => kind === 'READY_FOR_FINAL_PUBLICATION')).toBe(false);
+            expect(read.attempts.flatMap(({ zeroFloorReads }) => zeroFloorReads)).toEqual([]);
           };
 
           expect(yield* harness.sqlFault.installed()).toBe(false);
@@ -485,7 +490,7 @@ it.live(
           yield* harness.sqlFault.failZeroFloorProofReceiptWrite();
           expect(yield* harness.sqlFault.installed()).toBe(true);
           const failedPositive = yield* attemptRead(p1, 'SQL-positive');
-          expectReadFailedWithoutResult(failedPositive);
+          expectReadIndeterminateWithoutResult(failedPositive, 'SQL-positive');
           yield* Effect.logInfo(
             `#1277 SQL failure, positive line: top-level ${describeTopLevel(failedPositive.exit)}; attempts ${describeAttempts(failedPositive.attempts)}`,
           );
@@ -496,9 +501,11 @@ it.live(
               .join(' ; ')}`,
           );
           const afterPositive = yield* harness.committedEvidence();
-          // No partial publication: nothing of the failed read is committed, not even the lazily initialised head.
-          expect({ ...afterPositive, coreReadEvents: [] }).toEqual({ ...baseline, coreReadEvents: [] });
-          // The only Core evidence is the access ALLOW decision recorded before the handler ran, never a result.
+          // Only the failed ZERO_FLOOR transaction rolls back, including its lazily initialised head. Earlier owner
+          // receipts may commit, but no floor receipt or published price may escape the fault.
+          expect(afterPositive.zeroFloorReceipts).toEqual(baseline.zeroFloorReceipts);
+          expect(afterPositive.zeroFloorHeadGeneration).toEqual(baseline.zeroFloorHeadGeneration);
+          // Core commits the allowed/read_allowed audit for the returned customer-safe non-success in its own transaction.
           expect(afterPositive.coreReadEvents.slice(baseline.coreReadEvents.length)).toEqual([
             { outcome: 'allowed', outcomeCode: 'read_allowed' },
           ]);
@@ -514,14 +521,19 @@ it.live(
             subject: 'PROFILE',
           });
           const approved = yield* harness.committedEvidence();
+          const approvedGeneration = Option.getOrUndefined(approved.zeroFloorHeadGeneration);
+          assert(approvedGeneration !== undefined);
           yield* harness.sqlFault.failZeroFloorProofReceiptWrite();
+          expect(yield* harness.sqlFault.installed()).toBe(true);
           const failedNegative = yield* attemptRead(p2, 'SQL-negative');
-          expectReadFailedWithoutResult(failedNegative);
+          expectReadIndeterminateWithoutResult(failedNegative, 'SQL-negative');
           yield* Effect.logInfo(
             `#1277 SQL failure, negative line: top-level ${describeTopLevel(failedNegative.exit)}; attempts ${describeAttempts(failedNegative.attempts)}`,
           );
           const afterNegative = yield* harness.committedEvidence();
-          expect({ ...afterNegative, coreReadEvents: [] }).toEqual({ ...approved, coreReadEvents: [] });
+          // The already committed approval head survives; only the failed floor receipt transaction is rolled back.
+          expect(afterNegative.zeroFloorReceipts).toEqual(approved.zeroFloorReceipts);
+          expect(afterNegative.zeroFloorHeadGeneration).toEqual(approved.zeroFloorHeadGeneration);
           expect(afterNegative.coreReadEvents.slice(approved.coreReadEvents.length)).toEqual([
             { outcome: 'allowed', outcomeCode: 'read_allowed' },
           ]);
@@ -529,12 +541,22 @@ it.live(
           // The fault is removed (observed in the catalog) and fresh reads succeed with the committed evidence.
           yield* harness.sqlFault.clear();
           expect(yield* harness.sqlFault.installed()).toBe(false);
+          const recoveryAttemptsBefore = harness.wholeAttempts.length;
           const recoveredNegative = yield* price(harness, {
             lines: [{ handoff: p2, occurrenceId: 'SQL-recovered-negative' }],
             operationTime: yield* requestedInstant(harness),
             subject: 'PROFILE',
           });
           expect(recoveredNegative).toEqual(customerResolved([['SQL-recovered-negative', 0]]));
+          // No approval was recreated: recovery uses the exact authorization committed before the fault, unchanged.
+          const recoveredFloorReads = harness.wholeAttempts
+            .slice(recoveryAttemptsBefore)
+            .flatMap(({ zeroFloorReads }) => zeroFloorReads);
+          expect(recoveredFloorReads).toHaveLength(1);
+          const [recoveredFloorRead] = recoveredFloorReads;
+          assert(recoveredFloorRead !== undefined);
+          expect(recoveredFloorRead.authorizationRefs).toEqual(['TEST:1277:exact']);
+          expect(recoveredFloorRead.generation).toBe(approvedGeneration);
           const recoveredPositive = yield* price(harness, {
             lines: [{ handoff: p1, occurrenceId: 'SQL-recovered-positive' }],
             operationTime: yield* requestedInstant(harness),
