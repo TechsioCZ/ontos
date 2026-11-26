@@ -70,8 +70,14 @@ import {
 
 import { settleParkedEnrollmentPublicationWork } from '../verticals/commerce-customer-context/scripts/enrollment-publication-accounting.mts';
 
-const unavailable = (reason: string) =>
-  new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
+const unavailable = (reason: string, cause?: unknown) =>
+  cause === undefined
+    ? new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason })
+    : new ApplicationCompositionAuthorityError({
+        cause,
+        code: 'application_composition_authority_unavailable',
+        reason,
+      });
 
 const AUTHORITY_MISSING = 'authority-missing';
 const DURABLE_DRAIN = 'durable-drain';
@@ -1416,7 +1422,9 @@ export const renewApplicationCompositionAuthoritySnapshot = Effect.fn('Applicati
     publishProviderPointer: Effect.Effect<unknown, Failure, Requirements>,
   ) {
     const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
-      Effect.mapError(() => unavailable('The complete Application Composition snapshot is invalid or expired')),
+      Effect.mapError((cause) =>
+        unavailable('The complete Application Composition snapshot is invalid or expired', cause),
+      ),
     );
     const database = yield* CoreDatabase;
     const renewal = Effect.gen(function* renewHeldAuthority() {

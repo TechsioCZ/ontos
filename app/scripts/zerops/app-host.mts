@@ -147,6 +147,9 @@ import type {
 } from '../../packages/core-runtime/src/index.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../../packages/core-runtime/src/modules/active-application-composition-errors.ts';
+import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import { ApplicationCompositionValidationError } from '../../packages/core-runtime/src/modules/application-composition.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
@@ -232,6 +235,27 @@ const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
   'module credential provisioning exceeded its time budget',
   HOST_SUPERSEDED,
 ]);
+
+/** Composition validation and publication reasons are code-authored text naming modules and phases, never values. */
+const CompositionFailureSchema = Schema.Union([
+  Schema.instanceOf(ApplicationCompositionAuthorityError),
+  Schema.instanceOf(ActiveApplicationCompositionUnavailableError),
+  Schema.instanceOf(ApplicationCompositionValidationError),
+  Schema.instanceOf(AppHostError),
+]);
+type CompositionFailure = typeof CompositionFailureSchema.Type;
+const decodeCompositionFailure = Schema.decodeUnknownOption(CompositionFailureSchema);
+
+/** The chain of typed composition failure reasons, outermost first; anything untyped ends it unrendered. */
+export const compositionFailureReasons = (outermost: CompositionFailure): string => {
+  const reasons: string[] = [];
+  let current: Option.Option<CompositionFailure> = Option.some(outermost);
+  while (Option.isSome(current) && reasons.length < 8) {
+    reasons.push(`${current.value._tag}: ${current.value.reason}`);
+    current = decodeCompositionFailure(current.value.cause);
+  }
+  return reasons.join(' <- ');
+};
 
 /** Only host-authored typed reasons are public diagnostics; never render a platform/database cause. */
 export const formatAppHostStop = (cause: Cause.Cause<unknown>): string => {
@@ -2328,7 +2352,17 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
         `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
       );
       return snapshot.composition.revision;
-    }).pipe(observeRuntimeJob('composition-publish'));
+    }).pipe(
+      Effect.tapError((problem) =>
+        Console.error(
+          `[app-host] composition publication failed: ${Option.match(decodeCompositionFailure(problem), {
+            onNone: () => 'unclassified',
+            onSome: compositionFailureReasons,
+          })}`,
+        ),
+      ),
+      observeRuntimeJob('composition-publish'),
+    );
   // The renewal only ever renews: under the publication lock it refuses when the row names another release.
   const renewHeld = observeOwners(units, publicOrigin).pipe(
     Effect.flatMap((snapshot) =>

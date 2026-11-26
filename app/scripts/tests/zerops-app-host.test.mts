@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs';
 
-import { ConfigProvider, Duration, Effect, Option, Ref, Schema } from 'effect';
+import { ConfigProvider, Duration, Effect, Option, Redacted, Ref, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 import { parseDocument } from 'yaml';
 
+import { ActiveApplicationCompositionUnavailableError } from '../../packages/core-runtime/src/modules/active-application-composition-errors.ts';
+import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import { ApplicationCompositionValidationError } from '../../packages/core-runtime/src/modules/application-composition.ts';
+
 import {
+  compositionFailureReasons,
   BOOT_COMPILE_CACHE,
   containerCompileCache,
   awaitSupersedingRevision,
@@ -652,4 +657,26 @@ describe('moduleCredentialCallersOf', () => {
     ]);
     expect(moduleCredentialCallersOf([SHELL_ID])).toEqual([]);
   });
+});
+
+it('renders the typed composition failure chain and stops at an untyped cause', () => {
+  const inner = new ApplicationCompositionValidationError({
+    cause: Redacted.make(new Error('postgres://secret')),
+    reason: 'module integration.symmy contribution does not match its component expose',
+  });
+  const outer = new ApplicationCompositionAuthorityError({
+    cause: new ActiveApplicationCompositionUnavailableError({
+      cause: inner,
+      reason: 'The active Application Composition snapshot is unavailable or invalid',
+    }),
+    code: 'application_composition_authority_unavailable',
+    reason: 'The complete Application Composition snapshot is invalid or expired',
+  });
+  expect(compositionFailureReasons(outer)).toBe(
+    [
+      'ApplicationCompositionAuthorityError: The complete Application Composition snapshot is invalid or expired',
+      'ActiveApplicationCompositionUnavailableError: The active Application Composition snapshot is unavailable or invalid',
+      'ApplicationCompositionValidationError: module integration.symmy contribution does not match its component expose',
+    ].join(' <- '),
+  );
 });
