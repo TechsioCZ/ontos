@@ -1,5 +1,5 @@
 import type { Effect as EffectType } from 'effect';
-import { Effect, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { ExternalStockCorrelationPersistenceUnavailable } from './external-stock-correlation-persistence-unavailable.ts';
 import { ExternalStockCorrelationRejected } from './external-stock-correlation-rejected.ts';
@@ -372,3 +372,19 @@ export const makeExternalStockCorrelationLifecycle = (
         ),
       ),
 });
+
+/** Owner composition of the same transaction-bound lifecycle used by Inventory actions. */
+export class ExternalStockCorrelationLifecycle extends Context.Service<
+  ExternalStockCorrelationLifecycle,
+  ReturnType<typeof makeExternalStockCorrelationLifecycle>
+>()('@app/inventory/shared/domain/external-stock-correlation/ExternalStockCorrelationLifecycle') {
+  static layer(
+    persistence: ExternalStockCorrelationPersistence,
+    options: Parameters<typeof makeExternalStockCorrelationLifecycle>[1],
+  ) {
+    return Layer.succeed(
+      ExternalStockCorrelationLifecycle,
+      makeExternalStockCorrelationLifecycle(persistence, options),
+    );
+  }
+}

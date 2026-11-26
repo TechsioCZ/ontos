@@ -1,9 +1,11 @@
-import { Effect, Option, Ref, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   AmbiguousExternalStockCorrelationSchema,
   ExternalStockCorrelationSchema,
+  EstablishExternalStockCorrelationInputSchema,
+  ExternalStockCorrelationLifecycle,
   ExternalStockItemTargetSchema,
   ExternalStockKeySchema,
   ExternalStockTargetSchema,
@@ -258,72 +260,100 @@ const effectiveAt = (candidate: ExternalStockCorrelation, asOf: string) =>
   candidate.effectivePeriod.from <= asOf &&
   (candidate.effectivePeriod.to === null || asOf < candidate.effectivePeriod.to);
 
-/* oxlint-disable sonarjs/no-nested-functions -- In-memory Effect persistence models the public transaction-owned lifecycle seam; expires: 2027-03-31. */
+const closedCorrelation = (current: ExternalStockCorrelation, endedAt: string) =>
+  decodeCorrelation({
+    ...current,
+    effectivePeriod: { ...current.effectivePeriod, to: endedAt },
+    lifecycle: 'ENDED',
+    revision: current.revision + 1,
+  });
+
+const replaceCorrelation = (all: readonly ExternalStockCorrelation[], next: ExternalStockCorrelation) =>
+  all.map((candidate) => (candidate.correlationRef.resourceId === next.correlationRef.resourceId ? next : candidate));
+
+const memoryPersistence = (
+  state: Ref.Ref<readonly ExternalStockCorrelation[]>,
+): ExternalStockCorrelationPersistence => ({
+  endCurrent: ({ current, endedAt }) =>
+    Effect.gen(function* endCurrent() {
+      const ended = closedCorrelation(current, endedAt);
+      yield* Ref.update(state, (all) => replaceCorrelation(all, ended));
+      return ended;
+    }),
+  findByRef: (ref) =>
+    Ref.get(state).pipe(
+      Effect.map((all) =>
+        Option.fromNullishOr(
+          all.find(
+            (candidate) =>
+              candidate.correlationRef.tenantId === ref.tenantId &&
+              candidate.correlationRef.resourceId === ref.resourceId,
+          ),
+        ),
+      ),
+    ),
+  findEffective: (externalKey, asOf) =>
+    Ref.get(state).pipe(
+      Effect.map((all) =>
+        all.filter((candidate) => sameKey(candidate.externalKey, externalKey) && effectiveAt(candidate, asOf)),
+      ),
+    ),
+  insertCurrent: (candidate) => Ref.update(state, (all) => [...all, candidate]).pipe(Effect.as(candidate)),
+  replaceCurrent: ({ current, endedAt, replacement }) =>
+    Effect.gen(function* replaceCurrent() {
+      const ended = closedCorrelation(current, endedAt);
+      yield* Ref.update(state, (all) => [...replaceCorrelation(all, ended), replacement]);
+      return replacement;
+    }),
+  saveConfirmation: ({ next }) => Ref.update(state, (all) => replaceCorrelation(all, next)).pipe(Effect.as(next)),
+});
+
 const makeMemoryPersistence = (initial: readonly ExternalStockCorrelation[] = []) =>
   Effect.gen(function* makePersistence() {
     const state = yield* Ref.make(initial);
-    const persistence: ExternalStockCorrelationPersistence = {
-      endCurrent: ({ current, endedAt }) =>
-        Effect.gen(function* endCurrent() {
-          const ended = decodeCorrelation({
-            ...current,
-            effectivePeriod: { ...current.effectivePeriod, to: endedAt },
-            lifecycle: 'ENDED',
-            revision: current.revision + 1,
-          });
-          yield* Ref.update(state, (all) =>
-            all.map((candidate) =>
-              candidate.correlationRef.resourceId === current.correlationRef.resourceId ? ended : candidate,
-            ),
-          );
-          return ended;
-        }),
-      findByRef: (ref) =>
-        Ref.get(state).pipe(
-          Effect.map((all) =>
-            Option.fromNullishOr(
-              all.find(
-                (candidate) =>
-                  candidate.correlationRef.tenantId === ref.tenantId &&
-                  candidate.correlationRef.resourceId === ref.resourceId,
-              ),
-            ),
-          ),
-        ),
-      findEffective: (externalKey, asOf) =>
-        Ref.get(state).pipe(
-          Effect.map((all) =>
-            all.filter((candidate) => sameKey(candidate.externalKey, externalKey) && effectiveAt(candidate, asOf)),
-          ),
-        ),
-      insertCurrent: (candidate) => Ref.update(state, (all) => [...all, candidate]).pipe(Effect.as(candidate)),
-      replaceCurrent: ({ current, endedAt, replacement }) =>
-        Effect.gen(function* replaceCurrent() {
-          const ended = decodeCorrelation({
-            ...current,
-            effectivePeriod: { ...current.effectivePeriod, to: endedAt },
-            lifecycle: 'ENDED',
-            revision: current.revision + 1,
-          });
-          yield* Ref.update(state, (all) => [
-            ...all.map((candidate) =>
-              candidate.correlationRef.resourceId === current.correlationRef.resourceId ? ended : candidate,
-            ),
-            replacement,
-          ]);
-          return replacement;
-        }),
-      saveConfirmation: ({ next }) =>
-        Ref.update(state, (all) =>
-          all.map((candidate) =>
-            candidate.correlationRef.resourceId === next.correlationRef.resourceId ? next : candidate,
-          ),
-        ).pipe(Effect.as(next)),
-    };
-    return { persistence, state };
+    return { persistence: memoryPersistence(state), state };
   });
 
 describe('Inventory External Stock Correlation lifecycle', () => {
+  it.effect('binds each Layer to its own persistence and supplied identity without acquiring global state', () =>
+    Effect.scoped(
+      Effect.gen(function* isolatedLifecycleLayers() {
+        const first = yield* makeMemoryPersistence([]);
+        const second = yield* makeMemoryPersistence([]);
+        const firstId = '55555555-5555-4555-8555-555555555555';
+        const secondId = '66666666-6666-4666-8666-666666666666';
+        const firstContext = yield* Layer.build(
+          ExternalStockCorrelationLifecycle.layer(first.persistence, {
+            makeCorrelationId: () => firstId,
+          }),
+        );
+        const secondContext = yield* Layer.build(
+          ExternalStockCorrelationLifecycle.layer(second.persistence, {
+            makeCorrelationId: () => secondId,
+          }),
+        );
+        expect(yield* Ref.get(first.state)).toEqual([]);
+        expect(yield* Ref.get(second.state)).toEqual([]);
+        const input = Schema.decodeUnknownSync(EstablishExternalStockCorrelationInputSchema)({
+          effectiveFrom: currentInstant,
+          externalKey: itemKey,
+          ownerEvidenceRef: 'layer-establishment',
+          target: Schema.decodeUnknownSync(ExternalStockTargetSchema)(itemTarget),
+        });
+        const firstLifecycle = Context.get(firstContext, ExternalStockCorrelationLifecycle);
+        const created = yield* firstLifecycle.establish(input);
+        expect(created.correlationRef.resourceId).toBe(firstId);
+        expect(yield* Ref.get(first.state)).toEqual([created]);
+        expect(yield* Ref.get(second.state)).toEqual([]);
+        const other = yield* Context.get(secondContext, ExternalStockCorrelationLifecycle).establish(input);
+        expect(other.correlationRef.resourceId).toBe(secondId);
+        expect(yield* Ref.get(second.state)).toEqual([other]);
+        const rejection = yield* Effect.flip(firstLifecycle.establish(input));
+        expect(rejection.reason).toBe('OVERLAPPING_EFFECTIVE_PERIOD');
+        expect(yield* Ref.get(first.state)).toEqual([created]);
+      }),
+    ),
+  );
   it.effect('ends an old meaning and establishes a new Resource with its own Effective Period', () =>
     Effect.gen(function* correctExternalMeaning() {
       const { persistence } = yield* makeMemoryPersistence([correlation()]);

@@ -112,6 +112,7 @@ const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* 
 });
 
 const schemaOnly = 'schema-only' as const;
+const symmyDemoAuthorityPurpose = 'demo-symmy-authority-bootstrap';
 const browserCompositionPurpose = 'implementation-1296-browser-composition';
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
@@ -119,6 +120,7 @@ const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authoriza
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 /** The core-system Outbox claim and publication-drain suite (`scripts/integration/core-system-outbox-drain`). */
 const coreSystemDrainPurpose = 'publication-drain-core-system';
+const symmyDemoSourcePolicyPurpose = 'demo-symmy-source-policy-bootstrap';
 const preproposalSourcePurpose = 'implementation-1290-preproposal-native-source';
 type IsolatedNativeDatabaseInput = (
   | {
@@ -127,7 +129,9 @@ type IsolatedNativeDatabaseInput = (
       readonly purpose:
         | typeof browserCompositionPurpose
         | typeof retainedPrivacyPurpose
-        | typeof preproposalSourcePurpose;
+        | typeof preproposalSourcePurpose
+        | typeof symmyDemoAuthorityPurpose
+        | typeof symmyDemoSourcePolicyPurpose;
     }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
@@ -241,6 +245,8 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         browserCompositionPurpose,
         retainedPrivacyPurpose,
         preproposalSourcePurpose,
+        symmyDemoAuthorityPurpose,
+        symmyDemoSourcePolicyPurpose,
         'stabilization-1196-product-create',
         'implementation-1126-group-definition',
         'implementation-1134-inventory-source-import-receipt',
