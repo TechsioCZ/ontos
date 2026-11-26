@@ -27,7 +27,7 @@ export function AddressFields({
     { value: "CZ" as const, label: fields.czechia, callingCode: "420", flag: czechiaFlag },
   ];
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="sf-checkout-address-fields">
       {(
         [
           ["firstName", fields.firstName, "given-name"],
@@ -98,7 +98,7 @@ export function AddressFields({
 export function AddressText({ address }: { address: CheckoutAddress }) {
   const fields = useDictionary().checkout.fields;
   return (
-    <address className="text-sm leading-(--sf-checkout-body-leading) not-italic">
+    <address className="sf-checkout-compact-copy wrap-anywhere not-italic">
       <p>
         {address.firstName} {address.lastName}
       </p>

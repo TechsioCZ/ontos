@@ -5,6 +5,7 @@ import { type CSSProperties, useId, useState } from "react";
 import { ActionIcon } from "@techsio/ui-kit/atoms/action-icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { useCart } from "@/features/cart/cart-provider";
 import {
@@ -60,9 +61,15 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
 
 function CartQuantity({ line }: { line: CartLine }) {
   const cs = useDictionary();
+  const { locale } = useMoney();
   const id = useId();
   const { dispatch } = useCart();
   const [draftQuantity, setDraftQuantity] = useState<number | null>(null);
+  const [adjustedQuantity, setAdjustedQuantity] = useState<number | null>(null);
+  const maximum = getMaximumOrderQuantity(line);
+  const step = line.quantityStep ?? line.minimumQuantity;
+  const formatQuantity = new Intl.NumberFormat(locale, { maximumFractionDigits: 6 });
+  const atLimit = maximum > 0 && Math.max(line.quantity, draftQuantity ?? 0) >= maximum;
   const commit = (quantity: number) =>
     dispatch({
       type: "set-quantity",
@@ -71,14 +78,14 @@ function CartQuantity({ line }: { line: CartLine }) {
       quantity,
     });
   return (
-    <div className="flex items-center justify-center gap-1">
+    <div data-sf-cart-line-quantity>
       <NumericInput
         id={id}
         locale="cs-CZ"
         formatOptions={{ maximumFractionDigits: 6 }}
         min={line.minimumQuantity}
-        max={getMaximumOrderQuantity(line)}
-        step={line.quantityStep ?? line.minimumQuantity}
+        max={maximum}
+        step={step}
         value={draftQuantity ?? line.quantity}
         size="sm"
         allowMouseWheel={false}
@@ -86,12 +93,18 @@ function CartQuantity({ line }: { line: CartLine }) {
           // An emptied field reports NaN. Keep it as the draft, so the field stays empty while the shopper retypes;
           // blur then restores the cart quantity.
           setDraftQuantity(quantity);
+          setAdjustedQuantity(null);
           if (!Number.isFinite(quantity)) return;
           // Preserve unfinished typing (e.g. "2" on the way to "20" with a minimum of 10).
           if (quantity > 0 && normalizeOrderQuantity(line, quantity) === quantity) commit(quantity);
         }}
         onBlur={() => {
-          if (draftQuantity !== null && draftQuantity > 0) commit(draftQuantity);
+          if (draftQuantity !== null && Number.isFinite(draftQuantity) && draftQuantity > 0) {
+            const rounded = Math.ceil(draftQuantity / step - 0.000001) * step;
+            const quantity = normalizeOrderQuantity(line, rounded);
+            commit(quantity);
+            if (quantity !== draftQuantity) setAdjustedQuantity(quantity);
+          }
           setDraftQuantity(null);
         }}
       >
@@ -109,16 +122,14 @@ function CartQuantity({ line }: { line: CartLine }) {
               ),
             } as CSSProperties
           }
-          className="w-(--sf-cart-control-width) shrink-0 gap-(--sf-cart-control-gap) overflow-visible"
         >
           <NumericInput.DecrementTrigger
             aria-label={cs.cart.decrementQuantityOf(line.variantLabel ?? line.name)}
-            className="h-full w-(--sf-cart-trigger-width) flex-none rounded-(--sf-cart-control-radius) bg-(--sf-cart-trigger-bg)"
             icon="token-icon-minus"
           />
           <NumericInput.Input
             aria-label={cs.cart.quantityOf(line.variantLabel ?? line.name)}
-            className="min-w-0 flex-1 rounded-(--sf-cart-control-radius)! border-solid! border-(length:--sf-cart-value-border-width)! border-(--sf-cart-value-border-color)! text-center leading-(--sf-checkout-heading-leading)"
+            aria-describedby={`${id}-quantity-details`}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -128,11 +139,31 @@ function CartQuantity({ line }: { line: CartLine }) {
           />
           <NumericInput.IncrementTrigger
             aria-label={cs.cart.incrementQuantityOf(line.variantLabel ?? line.name)}
-            className="h-full w-(--sf-cart-trigger-width) flex-none rounded-(--sf-cart-control-radius) bg-(--sf-cart-trigger-bg)"
+            title={
+              atLimit
+                ? cs.cart.quantityStockLimit(formatQuantity.format(maximum), line.unit)
+                : undefined
+            }
             icon="token-icon-plus"
           />
         </NumericInput.Control>
       </NumericInput>
+      <StatusText id={`${id}-quantity-details`} size="sm" data-sf-cart-quantity-details>
+        <span data-sf-cart-quantity-copy>
+          <span>
+            {adjustedQuantity !== null
+              ? cs.cart.quantityAdjusted(formatQuantity.format(adjustedQuantity), line.unit)
+              : step !== 1
+                ? cs.cart.quantityStep(formatQuantity.format(step), line.unit)
+                : line.unit}
+          </span>
+          {atLimit && (
+            <span className="sr-only">
+              {cs.cart.quantityStockLimit(formatQuantity.format(maximum), line.unit)}
+            </span>
+          )}
+        </span>
+      </StatusText>
     </div>
   );
 }
@@ -204,57 +235,63 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
               className="@max-sf-cart-wide/sf-cart:grid @max-sf-cart-wide/sf-cart:grid-cols-[minmax(0,1fr)_auto] @max-sf-cart-wide/sf-cart:items-center @max-sf-cart-wide/sf-cart:gap-(--sf-cart-row-gap) @max-sf-cart-wide/sf-cart:py-(--dimension-16)"
             >
               <Table.Cell>
-                <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--sf-cart-detail-gap) gap-y-1 whitespace-normal">
-                  <Link
-                    as={StoreLink}
-                    href={`/produkt/${line.slug}`}
-                    size="current"
-                    className="min-w-0 wrap-anywhere text-inherit no-underline"
-                  >
-                    {formatCartProductName(line.name)}
-                  </Link>
-                  {line.variantLabel && (
-                    <span className="wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-fg-secondary)">
-                      {line.variantLabel}
-                    </span>
-                  )}
-                  {quote?.status === "ready" &&
-                    quote.lineIssues(line.productId, line.variantId).map((issue) => (
-                      <span
-                        key={issue.message}
-                        className="basis-full wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-danger)"
-                      >
-                        {issue.message}
+                <div className="sf-cart-row-content">
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--sf-cart-detail-gap) gap-y-1 whitespace-normal">
+                    <Link
+                      as={StoreLink}
+                      href={`/produkt/${line.slug}`}
+                      size="current"
+                      className="min-w-0 wrap-anywhere text-inherit no-underline"
+                    >
+                      {formatCartProductName(line.name)}
+                    </Link>
+                    {line.variantLabel && (
+                      <span className="wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-fg-secondary)">
+                        {line.variantLabel}
                       </span>
-                    ))}
+                    )}
+                    {quote?.status === "ready" &&
+                      quote.lineIssues(line.productId, line.variantId).map((issue) => (
+                        <span
+                          key={issue.message}
+                          className="basis-full wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-danger)"
+                        >
+                          {issue.message}
+                        </span>
+                      ))}
+                  </div>
                 </div>
               </Table.Cell>
               <Table.Cell style={{ width: "var(--sf-cart-stock-width)" }}>
-                <LineAvailability line={line} quote={quote} />
+                <div className="sf-cart-row-content">
+                  <LineAvailability line={line} quote={quote} />
+                </div>
               </Table.Cell>
               <Table.Cell align="center" style={{ width: "var(--sf-cart-quantity-width)" }}>
                 <CartQuantity line={line} />
               </Table.Cell>
               <Table.Cell align="end" style={{ width: "var(--sf-cart-price-width)" }}>
-                <div className="grid min-w-0 justify-items-end gap-1 text-right @max-sf-cart-wide/sf-cart:justify-items-start @max-sf-cart-wide/sf-cart:text-left">
+                <div className="sf-cart-row-content min-w-0 justify-end @max-sf-cart-wide/sf-cart:justify-start @max-sf-cart-wide/sf-cart:text-left">
                   <strong className="whitespace-normal font-(weight:--sf-cart-price-weight)">
                     {formatCheckoutPrice(getLineTotal(line), money)}
                   </strong>
                 </div>
               </Table.Cell>
               <Table.Cell align="end" style={{ width: "var(--sf-cart-remove-width)" }}>
-                <ActionIcon
-                  aria-label={cs.cart.removeItem(line.name)}
-                  icon="token-icon-sf-checkout-remove"
-                  size="md"
-                  onClick={() =>
-                    dispatch({
-                      type: "remove",
-                      productId: line.productId,
-                      variantId: line.variantId,
-                    })
-                  }
-                />
+                <div className="sf-cart-row-content justify-end">
+                  <ActionIcon
+                    aria-label={cs.cart.removeItem(line.name)}
+                    icon="token-icon-sf-checkout-remove"
+                    size="md"
+                    onClick={() =>
+                      dispatch({
+                        type: "remove",
+                        productId: line.productId,
+                        variantId: line.variantId,
+                      })
+                    }
+                  />
+                </div>
               </Table.Cell>
             </Table.Row>
           ))}

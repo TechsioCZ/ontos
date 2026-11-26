@@ -114,7 +114,7 @@ export const cs = {
     netWeight: "Váha",
     measurementUnit: "Měrná jednotka",
     minimumOrder: "Minimální odběr",
-    minimumOrderByVariant: "Dle zvolené varianty – pouze celá balení",
+    minimumOrderByVariant: "Podle zvolené varianty",
     variantCount: "Počet variant",
     inStockCount: (quantity: number, unit: string) => `Skladem ${count(quantity)} ${unit}`,
     limitedStockCount: (quantity: number, unit: string) =>
@@ -155,6 +155,13 @@ export const cs = {
     },
     variantAvailabilityUnknown: "OntOS nyní nemůže potvrdit dostupnost této varianty.",
     noVariantsForFilters: "Pro zadané filtry nebyla nalezena varianta.",
+    orderIncrement: (quantity: string, unit: string) => `Odběr po ${quantity} ${unit}`,
+    quantityRequired: "Zadejte množství.",
+    quantityMinimum: (quantity: string, unit: string) => `Zadejte alespoň ${quantity} ${unit}.`,
+    quantityMaximum: (quantity: string, unit: string) => `Lze koupit nejvýše ${quantity} ${unit}.`,
+    quantityMultiple: (step: string, unit: string, lower: string, upper: string) =>
+      `Zadejte násobek ${step} ${unit}, například ${lower} nebo ${upper}.`,
+    packageQuantityInvalid: "Zadejte platný počet celých balení podle dostupného skladu.",
     wholePackagesOnly: (quantity: number, unit: string) =>
       `Pouze celá balení po ${count(quantity)} ${unit}.`,
     wholePackagesMinimum: (quantity: number, unit: string, minimum: number) =>
@@ -374,6 +381,9 @@ export const cs = {
     decrementQuantityOf: (label: string) => `Snížit množství: ${label}`,
     incrementQuantityOf: (label: string) => `Zvýšit množství: ${label}`,
     quantityOf: (label: string) => `Množství: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `Po ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Upraveno na ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Ze skladu max. ${quantity} ${unit}`,
     lineState: {
       inStock: "Skladem",
       unverified: "Nelze ověřit",

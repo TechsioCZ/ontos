@@ -53,6 +53,8 @@ describe("MiniCart", () => {
     expect(await screen.findByText("Nerezový řetěz")).not.toBeNull();
     expect(screen.getByText("A4 · 4 mm")).not.toBeNull();
     expect(screen.getByText("2 m")).not.toBeNull();
+    expect(screen.getByText(/25,80\sKč/)).not.toBeNull();
+    expect(screen.queryByText("Aktuální cenu ověří košík")).toBeNull();
     expect(document.activeElement).toBe(document.body);
     expect(screen.getByRole("link", { name: /Nerezový řetěz/ }).getAttribute("href")).toBe(
       "/kosik",
@@ -62,6 +64,22 @@ describe("MiniCart", () => {
     await waitFor(() => {
       expect(screen.queryByText("Nerezový řetěz")).toBeNull();
     });
+  });
+
+  it("keeps the no-price state when a restored line has no usable price", async () => {
+    window.localStorage.setItem(
+      "akros-demo-cart-v3",
+      JSON.stringify({ version: 3, lines: [{ ...cartLine, priceMinor: 0 }] }),
+    );
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={window.localStorage}>
+        <MiniCart />
+      </CartProvider>,
+    );
+    await user.hover(await screen.findByRole("link", { name: /Košík, 1 položka/ }));
+    expect(await screen.findByText("Aktuální cenu ověří košík")).not.toBeNull();
+    expect(screen.queryByText(/^0(?:,00)?\sKč$/)).toBeNull();
   });
 
   it("provides a useful empty state", async () => {

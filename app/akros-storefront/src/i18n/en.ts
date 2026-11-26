@@ -116,7 +116,7 @@ export const en: Dictionary = {
     netWeight: "Weight",
     measurementUnit: "Unit of measure",
     minimumOrder: "Minimum order",
-    minimumOrderByVariant: "Depends on the variant – whole packages only",
+    minimumOrderByVariant: "Depends on the variant",
     variantCount: "Variants",
     inStockCount: (quantity: number, unit: string) => `In stock: ${count(quantity)} ${unit}`,
     limitedStockCount: (quantity: number, unit: string) =>
@@ -157,6 +157,14 @@ export const en: Dictionary = {
     },
     variantAvailabilityUnknown: "OntOS cannot confirm the availability of this variant right now.",
     noVariantsForFilters: "No variant matches the selected filters.",
+    orderIncrement: (quantity: string, unit: string) =>
+      `Order in increments of ${quantity} ${unit}`,
+    quantityRequired: "Enter a quantity.",
+    quantityMinimum: (quantity: string, unit: string) => `Enter at least ${quantity} ${unit}.`,
+    quantityMaximum: (quantity: string, unit: string) => `You can buy at most ${quantity} ${unit}.`,
+    quantityMultiple: (step: string, unit: string, lower: string, upper: string) =>
+      `Enter a multiple of ${step} ${unit}, for example ${lower} or ${upper}.`,
+    packageQuantityInvalid: "Enter a valid number of whole packages within available stock.",
     wholePackagesOnly: (quantity: number, unit: string) =>
       `Whole packages only, ${count(quantity)} ${unit} each.`,
     wholePackagesMinimum: (quantity: number, unit: string, minimum: number) =>
@@ -378,6 +386,9 @@ export const en: Dictionary = {
     decrementQuantityOf: (label: string) => `Decrease quantity: ${label}`,
     incrementQuantityOf: (label: string) => `Increase quantity: ${label}`,
     quantityOf: (label: string) => `Quantity: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `In steps of ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Adjusted to ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Up to ${quantity} ${unit} in stock`,
     lineState: {
       inStock: "In stock",
       unverified: "Cannot verify",

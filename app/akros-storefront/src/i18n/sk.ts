@@ -116,7 +116,7 @@ export const sk: Dictionary = {
     netWeight: "Hmotnosť",
     measurementUnit: "Merná jednotka",
     minimumOrder: "Minimálny odber",
-    minimumOrderByVariant: "Podľa zvoleného variantu – iba celé balenia",
+    minimumOrderByVariant: "Podľa zvoleného variantu",
     variantCount: "Počet variantov",
     inStockCount: (quantity: number, unit: string) => `Skladom ${count(quantity)} ${unit}`,
     limitedStockCount: (quantity: number, unit: string) =>
@@ -157,6 +157,13 @@ export const sk: Dictionary = {
     },
     variantAvailabilityUnknown: "OntOS teraz nemôže potvrdiť dostupnosť tohto variantu.",
     noVariantsForFilters: "Pre zadané filtre sa nenašiel žiadny variant.",
+    orderIncrement: (quantity: string, unit: string) => `Odber po ${quantity} ${unit}`,
+    quantityRequired: "Zadajte množstvo.",
+    quantityMinimum: (quantity: string, unit: string) => `Zadajte aspoň ${quantity} ${unit}.`,
+    quantityMaximum: (quantity: string, unit: string) => `Možno kúpiť najviac ${quantity} ${unit}.`,
+    quantityMultiple: (step: string, unit: string, lower: string, upper: string) =>
+      `Zadajte násobok ${step} ${unit}, napríklad ${lower} alebo ${upper}.`,
+    packageQuantityInvalid: "Zadajte platný počet celých balení podľa dostupného skladu.",
     wholePackagesOnly: (quantity: number, unit: string) =>
       `Iba celé balenia po ${count(quantity)} ${unit}.`,
     wholePackagesMinimum: (quantity: number, unit: string, minimum: number) =>
@@ -376,6 +383,9 @@ export const sk: Dictionary = {
     decrementQuantityOf: (label: string) => `Znížiť množstvo: ${label}`,
     incrementQuantityOf: (label: string) => `Zvýšiť množstvo: ${label}`,
     quantityOf: (label: string) => `Množstvo: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `Po ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Upravené na ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Zo skladu max. ${quantity} ${unit}`,
     lineState: {
       inStock: "Skladom",
       unverified: "Nemožno overiť",

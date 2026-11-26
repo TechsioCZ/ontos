@@ -10,14 +10,14 @@
     max(58px, var(--sf-cart-max-quantity-characters, 2) * 16px + var(--dimension-16)) +
       var(--sf-cart-trigger-width) * 2 + var(--sf-cart-control-gap) * 2 + var(--dimension-24)
   );
-  --sf-cart-price-width: calc(var(--dimension-96) + var(--dimension-64));
+  --sf-cart-price-width: calc(var(--dimension-80) + var(--dimension-48));
   --sf-cart-remove-width: calc(var(--dimension-44) + var(--dimension-16));
   --sf-cart-trigger-width: var(--dimension-44);
-  --sf-cart-control-gap: 4.64px;
-  --sf-cart-control-radius: 9.28px;
-  --sf-cart-value-border-width: 1.74px;
-  --sf-cart-value-border-color: #535353;
-  --sf-cart-trigger-bg: #eeeeee;
+  --sf-cart-control-gap: var(--dimension-4);
+  --sf-cart-control-radius: var(--dimension-8);
+  --sf-cart-control-height: 58px;
+  --sf-cart-value-border-color: var(--color-fg-secondary);
+  --sf-cart-trigger-bg: var(--color-neutral-100);
   --sf-cart-secondary-size: var(--dimension-16);
   --sf-cart-quantity-size: 25px;
   --sf-cart-compact-quantity-size: var(--dimension-16);
@@ -25,7 +25,7 @@
   --text-numeric-input-sm: var(--sf-cart-quantity-size);
   --color-numeric-input-fg: var(--sf-cart-value-border-color);
   --color-input-fg: var(--sf-cart-value-border-color);
-  --height-form-control-sm: 58px;
+  --height-form-control-sm: var(--sf-cart-control-height);
   --text-icon-control-md: 18.468px;
   --color-numeric-input-input-bg-hover: var(--color-base);
   --color-numeric-input-input-bg-focus: var(--color-base);
@@ -46,6 +46,20 @@
     max(58px, var(--sf-cart-quantity-characters, 2) * 1ch + var(--dimension-16)) +
       var(--sf-cart-trigger-width) * 2 + var(--sf-cart-control-gap) * 2
   );
+  @apply w-(--sf-cart-control-width) max-w-full shrink-0 gap-(--sf-cart-control-gap) overflow-visible;
+
+  & [data-part="decrement-trigger"],
+  & [data-part="increment-trigger"] {
+    @apply h-full w-(--sf-cart-trigger-width) flex-none justify-center rounded-(--sf-cart-control-radius) bg-(--sf-cart-trigger-bg);
+
+    &:enabled:hover {
+      @apply bg-numeric-input-trigger-bg-hover;
+    }
+
+    &:enabled:active {
+      @apply bg-numeric-input-trigger-bg-active;
+    }
+  }
 }
 
 [data-sf-cart-quantity] [data-part="input"] {
@@ -57,6 +71,34 @@
   --padding-input-inline-sm: var(--dimension-4);
   --padding-input-inline-md: var(--dimension-4);
   --padding-numeric-input-input-sm: var(--dimension-4);
+  @apply min-w-0 flex-1 rounded-(--sf-cart-control-radius) border border-solid border-(--sf-cart-value-border-color) text-center leading-(--sf-checkout-heading-leading);
+}
+
+[data-sf-cart-line-quantity] {
+  @apply grid min-w-0 justify-items-center gap-(--dimension-4);
+}
+
+[data-sf-cart-quantity-details] {
+  --text-status-text-sm: var(--sf-cart-secondary-size);
+  @apply text-center text-(--color-fg-secondary);
+}
+
+[data-sf-cart-quantity-copy] {
+  @apply flex flex-wrap justify-center gap-x-(--dimension-8) text-balance;
+}
+
+@utility sf-cart-row-content {
+  @apply flex items-center;
+
+  @variant @min-sf-cart-wide/sf-cart {
+    @apply min-h-(--sf-cart-control-height);
+  }
+}
+
+[data-sf-cart-items] tbody td {
+  @variant @min-sf-cart-wide/sf-cart {
+    @apply align-top;
+  }
 }
 
 @container sf-cart (width < 28rem) {

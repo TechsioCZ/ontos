@@ -9,8 +9,10 @@
   --color-steps-indicator-fg-complete: var(--color-base-light);
   --border-width-steps-indicator: 0px;
   --size-steps-indicator-md: var(--dimension-40);
-  --text-steps-number-md: var(--text-sm);
-  --text-steps-title-md: var(--text-sm);
+  --spacing-steps-list: 0px;
+  --spacing-steps-trigger: var(--dimension-8);
+  --text-steps-number-md: var(--sf-checkout-body-size);
+  --text-steps-title-md: var(--sf-checkout-body-size);
   --color-steps-title-fg: var(--color-fg-disabled);
   --color-steps-title-fg-current: var(--color-fg-primary);
   --color-steps-title-fg-complete: var(--color-fg-primary);
@@ -23,7 +25,36 @@
   --text-steps-content-md: var(--text-sm);
 }
 
-/* Steps uses an unstyled Button; unavailable steps keep the page background. */
-[data-sf-checkout] [data-scope="steps"][data-part="list"] {
+[data-sf-checkout-steps] {
   --color-button-bg-disabled-treatment: var(--color-transparent);
+  @apply order-first mb-(--dimension-60) pt-(--dimension-24);
+
+  /* The kit lays desktop labels next to the indicator. Checkout places them underneath. */
+  & [data-scope="steps"][data-part="trigger"] {
+    @apply w-full flex-col justify-start text-center;
+  }
+
+  & [data-sf-checkout-step-title] {
+    @apply whitespace-normal wrap-anywhere text-center;
+  }
+
+  & [data-scope="steps"][data-part="separator"] {
+    @apply pointer-events-none absolute mt-(--dimension-0);
+    inset-block-start: calc((var(--size-steps-indicator-md) - var(--height-steps-separator)) / 2);
+    inset-inline-start: calc(
+      50% + var(--size-steps-indicator-md) / 2 + var(--spacing-steps-trigger)
+    );
+    inline-size: calc(100% - var(--size-steps-indicator-md) - 2 * var(--spacing-steps-trigger));
+  }
+
+  @variant 2xl {
+    @apply ps-(--dimension-64) pe-(--dimension-88);
+  }
+
+  @variant max-sm {
+    --size-steps-indicator-md: var(--dimension-32);
+    --text-steps-number-md: var(--sf-checkout-small-size);
+    --text-steps-title-md: var(--sf-checkout-small-size);
+    @apply mb-(--dimension-32);
+  }
 }

@@ -29,14 +29,8 @@ export function CartContent() {
       </section>
     );
   return (
-    <section
-      className="rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
-      aria-labelledby="cart-title"
-    >
-      <h1
-        id="cart-title"
-        className="mb-(--dimension-32) text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
-      >
+    <section className="sf-checkout-panel" aria-labelledby="cart-title">
+      <h1 id="cart-title" className="sf-checkout-section-heading">
         {cs.cart.itemsTitle}
       </h1>
       <CartItemsTable />
@@ -51,27 +45,25 @@ export function CartNavigation() {
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
   return (
-    <div
-      data-sf-cart-navigation
-      className="order-3 mt-(--dimension-24) flex flex-wrap justify-between gap-(--dimension-24) pt-(--dimension-16) leading-(--sf-checkout-heading-leading) xl:col-start-1"
-    >
+    <div data-sf-cart-navigation className="sf-checkout-actions">
       <LinkButton
         as={StoreLink}
         href="/"
         variant="secondary"
         size="sm"
-        className="w-full sm:w-(--sf-checkout-back-width)"
+        className="sf-checkout-back"
+        data-sf-checkout-action
         uppercase
       >
         {cs.cart.backToShop}
       </LinkButton>
       {blocked ? (
-        <div className="grid w-full gap-2 sm:w-(--sf-checkout-continue-width)">
+        <div className="sf-checkout-next">
           <Button
             type="button"
             variant="primary"
             size="sm"
-            className="w-full"
+            data-sf-checkout-action
             uppercase
             disabled
             aria-describedby="cart-continue-blocked"
@@ -83,16 +75,18 @@ export function CartNavigation() {
           </p>
         </div>
       ) : (
-        <LinkButton
-          as={StoreLink}
-          href="/kosik/doprava-platba"
-          variant="primary"
-          size="sm"
-          className="w-full sm:w-(--sf-checkout-continue-width)"
-          uppercase
-        >
-          {cs.cart.chooseDelivery}
-        </LinkButton>
+        <div className="sf-checkout-next">
+          <LinkButton
+            as={StoreLink}
+            href="/kosik/doprava-platba"
+            variant="primary"
+            size="sm"
+            data-sf-checkout-action
+            uppercase
+          >
+            {cs.cart.chooseDelivery}
+          </LinkButton>
+        </div>
       )}
     </div>
   );

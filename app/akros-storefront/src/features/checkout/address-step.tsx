@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@/components/form-controls";
 import { useCheckout } from "./checkout-provider";
@@ -19,7 +20,13 @@ export function AddressStep() {
   const { checkout } = useDictionary();
   const copy = checkout.address;
   const formRef = useRef<HTMLFormElement>(null);
-  const [editing, setEditing] = useState(true);
+  const [editing, setEditing] = useState(
+    () =>
+      !accountEmail ||
+      Object.keys(
+        validateAddresses({ ...draft, differentDeliveryAddress: false }, checkout.validation),
+      ).length > 0,
+  );
   const [attempted, setAttempted] = useState(false);
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
@@ -61,21 +68,18 @@ export function AddressStep() {
       }}
     >
       <section
-        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
+        className="sf-checkout-panel sf-checkout-section-stack"
         aria-labelledby="address-title"
       >
         <div>
-          <h1
-            id="address-title"
-            className="mb-6 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
-          >
+          <h1 id="address-title" className="sf-checkout-section-heading">
             {checkout.steps.address}
           </h1>
-          <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
+          <StatusText className="sf-checkout-address-intro" size="sm">
             {accountEmail ? copy.accountIntro : copy.guestIntro}
-          </p>
+          </StatusText>
           {editing ? (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sf-checkout-address-fields">
               <FormInput
                 id="checkout-email"
                 label={checkout.email}
@@ -122,7 +126,7 @@ export function AddressStep() {
               />
             </div>
           ) : (
-            <div className="text-sm leading-(--sf-checkout-body-leading)">
+            <div className="sf-checkout-address-copy">
               <p>
                 {draft.billing.firstName} {draft.billing.lastName}
               </p>
@@ -134,7 +138,7 @@ export function AddressStep() {
             </div>
           )}
         </div>
-        <div className="grid gap-4">
+        <div className="sf-checkout-address-section">
           <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
             {copy.billingAddress}
           </h2>
@@ -146,7 +150,7 @@ export function AddressStep() {
               onChange={(billing) => updateDraft((current) => ({ ...current, billing }))}
             />
           ) : (
-            <div className="text-sm leading-(--sf-checkout-body-leading)">
+            <div className="sf-checkout-address-copy">
               <p>{draft.billing.street}</p>
               <p>{draft.billing.city}</p>
               <p>{draft.billing.postalCode}</p>
@@ -159,14 +163,14 @@ export function AddressStep() {
             variant="secondary"
             uppercase
             data-sf-checkout-action
-            className="w-fit min-w-40 leading-(--sf-checkout-heading-leading)"
+            className="sf-checkout-address-action"
             aria-label={editing ? copy.save : copy.editBilling}
             onClick={() => (editing ? saveBilling() : setEditing(true))}
           >
             {editing ? copy.save : copy.edit}
           </Button>
         </div>
-        <div className="grid gap-4">
+        <div className="sf-checkout-address-section">
           <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
             {copy.deliveryAddress}
           </h2>
@@ -189,25 +193,24 @@ export function AddressStep() {
           )}
         </div>
       </section>
-      <div className="mt-6 flex flex-wrap justify-between gap-4">
+      <div className="sf-checkout-actions">
         <LinkButton
           as={StoreLink}
           href="/kosik/doprava-platba"
           data-sf-checkout-action
-          className="leading-(--sf-checkout-heading-leading)"
+          className="sf-checkout-back"
           variant="secondary"
           size="sm"
           uppercase
         >
           {copy.back}
         </LinkButton>
-        <div className="grid gap-2">
+        <div className="sf-checkout-next">
           <Button
             type="submit"
             variant="primary"
             size="sm"
             data-sf-checkout-action
-            className="leading-(--sf-checkout-heading-leading)"
             uppercase
             disabled={blocked}
             aria-describedby={blocked ? "address-blocked" : undefined}
@@ -215,9 +218,9 @@ export function AddressStep() {
             {copy.next}
           </Button>
           {blocked && (
-            <p id="address-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">
+            <StatusText id="address-blocked" size="sm">
               {quote?.blockedReason}
-            </p>
+            </StatusText>
           )}
         </div>
       </div>

@@ -7,12 +7,14 @@ import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
+import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 
 import { useCart } from "./cart-provider";
 
 import type { Dictionary } from "@/i18n";
-import { useDictionary } from "@/ontos/market-context";
-import { formatQuantity } from "@/features/cart/cart-state";
+import { useDictionary, useMoney } from "@/ontos/market-context";
+import { formatQuantity, getLineTotal } from "@/features/cart/cart-state";
+import { formatCheckoutPrice } from "@/features/checkout/checkout-format";
 
 const getItemCountLabel = (cs: Dictionary, count: number) => {
   const lastDigit = count % 10;
@@ -35,6 +37,7 @@ export function MiniCart() {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { cart, itemCount, ready } = useCart();
   const cs = useDictionary();
+  const money = useMoney();
   const itemCountLabel = getItemCountLabel(cs, itemCount);
   const triggerLabel = ready
     ? `${cs.header.cart}, ${itemCountLabel}`
@@ -175,9 +178,9 @@ export function MiniCart() {
                 <strong>{cs.cart.miniCart.openCart}</strong>
               </span>
             ) : (
-              <span className="grid">
+              <div className="grid">
                 {cart.lines.map((line) => (
-                  <span
+                  <div
                     className="grid min-h-14 grid-cols-[minmax(72px,auto)_minmax(0,1fr)_auto] items-center gap-3 px-4 py-1 text-sm leading-tight uppercase max-md:grid-cols-[minmax(56px,auto)_minmax(0,1fr)] max-md:gap-x-3 max-md:gap-y-2"
                     key={`${line.productId}:${line.variantId ?? "base"}`}
                   >
@@ -190,12 +193,22 @@ export function MiniCart() {
                         <span className="truncate text-xs font-normal">{line.variantLabel}</span>
                       )}
                     </span>
-                    <strong className="whitespace-nowrap max-md:col-start-2">
-                      {cs.cart.priceCheckNote}
-                    </strong>
-                  </span>
+                    {line.priceMinor > 0 ? (
+                      <PriceBlock
+                        className="whitespace-nowrap normal-case max-md:col-start-2"
+                        state="known"
+                        amountLabel={formatCheckoutPrice(getLineTotal(line), money)}
+                      />
+                    ) : (
+                      <PriceBlock
+                        className="max-md:col-start-2"
+                        state="on-request"
+                        label={cs.cart.priceCheckNote}
+                      />
+                    )}
+                  </div>
                 ))}
-              </span>
+              </div>
             )}
           </Link>
         </Popover.Content>

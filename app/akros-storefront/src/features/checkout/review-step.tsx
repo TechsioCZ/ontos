@@ -6,6 +6,7 @@ import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { CartItemsTable } from "./cart-items-table";
@@ -22,7 +23,8 @@ import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
   const money = useMoney();
-  const { checkout } = useDictionary();
+  const cs = useDictionary();
+  const { checkout } = cs;
   const copy = checkout.review;
   const { cart } = useCart();
   const { draft, methods, accountEmail, completeOrder, submitted, storageError } = useCheckout();
@@ -55,16 +57,16 @@ export function ReviewStep() {
         }
       }}
     >
-      <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="review-title">
-        <h1
-          id="review-title"
-          className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
-        >
+      <section
+        className="sf-checkout-panel sf-checkout-review-panel"
+        aria-labelledby="review-title"
+      >
+        <h1 id="review-title" className="sf-checkout-section-heading">
           {checkout.steps.summary}
         </h1>
         <CartItemsTable showHeader />
-        <dl className="divide-y divide-(--color-border-primary) border-b border-(--color-border-primary) text-sm">
-          <div className="flex justify-between gap-4 py-4">
+        <dl className="sf-checkout-compact-copy divide-y divide-(--color-border-primary) border-b border-(--color-border-primary)">
+          <div className="sf-checkout-review-detail">
             <dt className="grid gap-2">
               <span>{copy.deliveryMethod(getDelivery(draft, methods)?.title ?? "")}</span>
               <span>{getDeliveryLocation(draft)}</span>
@@ -78,22 +80,22 @@ export function ReviewStep() {
                 : formatPrice(totals.shipping ?? 0, money)}
             </dd>
           </div>
-          <div className="flex justify-between gap-4 py-4">
+          <div className="sf-checkout-review-detail">
             <dt>{checkout.delivery.paymentTitle}</dt>
             <dd>{checkout.delivery.noOnlinePayment}</dd>
           </div>
-          <div className="flex justify-between gap-4 py-4">
+          <div className="sf-checkout-review-detail">
             <dt>{copy.netPrice}</dt>
             <dd>{totals.net !== null ? formatPrice(totals.net, money) : copy.netPending}</dd>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-4 py-4">
+          <div className="sf-checkout-review-detail flex-wrap">
             <dt>{copy.totalWithVat}</dt>
             <dd className="text-(length:--sf-checkout-body-size) font-extrabold" aria-live="polite">
               {formatPrice(totals.total, money)}
             </dd>
           </div>
         </dl>
-        <div className="grid gap-6 py-6 sm:grid-cols-2">
+        <div className="sf-checkout-review-addresses sf-checkout-compact-copy wrap-anywhere">
           <section aria-labelledby="billing-review-title">
             <h2
               id="billing-review-title"
@@ -102,7 +104,7 @@ export function ReviewStep() {
               {copy.billingTitle}
             </h2>
             <AddressText address={draft.billing} />
-            <div className="text-sm leading-(--sf-checkout-body-leading)">
+            <div>
               <p>{draft.email}</p>
               <p>{draft.company}</p>
               {draft.companyId && <p>{checkout.address.companyIdValue(draft.companyId)}</p>}
@@ -117,41 +119,31 @@ export function ReviewStep() {
               {checkout.steps.address}
             </h2>
             <AddressText address={getDeliveryAddress(draft)} />
-            <p className="text-sm">{draft.email}</p>
+            <p>{draft.email}</p>
           </section>
         </div>
       </section>
-      <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="sf-checkout-actions">
         <LinkButton
           as={StoreLink}
           href="/kosik/dodaci-udaje"
           data-sf-checkout-action
-          className="leading-(--sf-checkout-heading-leading)"
+          className="sf-checkout-back"
           variant="secondary"
           size="sm"
           uppercase
         >
           {copy.back}
         </LinkButton>
-        <div className="grid max-w-sm gap-3">
+        <div className="sf-checkout-next sf-checkout-compact-copy">
           {storageError && (
-            <p
-              role="alert"
-              className="rounded-sm border border-(--color-danger) p-4 text-sm text-(--color-danger)"
-            >
+            <StatusText role="alert" size="sm" status="error">
               {storageError}
-            </p>
+            </StatusText>
           )}
-          <p
-            role="note"
-            className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
-          >
-            {copy.ontosNote}
-          </p>
           <Button
             type="submit"
             data-sf-checkout-action
-            className="leading-(--sf-checkout-heading-leading)"
             variant="primary"
             size="sm"
             uppercase
@@ -161,13 +153,21 @@ export function ReviewStep() {
             {sending ? copy.sending : copy.submit}
           </Button>
           {blocked && (
-            <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
+            <StatusText id="review-blocked" size="sm" status="error">
               {quote?.blockedReason}
-            </p>
+            </StatusText>
           )}
-          <p className="text-center text-xs text-(--color-fg-secondary)">
-            {accountEmail ? copy.accountNote : copy.guestNote(draft.email)}
-          </p>
+          <div className="sf-checkout-review-guidance">
+            <StatusText role="note" size="sm">
+              {copy.ontosNote}
+            </StatusText>
+            <StatusText size="sm">
+              {accountEmail ? copy.accountNote : copy.guestNote(draft.email)}
+            </StatusText>
+            <Link as={StoreLink} href="/obchodni-podminky" size="current">
+              {cs.header.terms}
+            </Link>
+          </div>
         </div>
       </div>
     </form>
