@@ -811,6 +811,17 @@ const safeEnrollmentCodes: ReadonlySet<string> = new Set([
   'additive-step-revoke-workload',
   'additive-step-disable-principal',
 ]);
+/**
+ * An enrollment failure reason is a fixed code, plus PostgreSQL's SQLSTATE and constraint name for a Core write.
+ * Neither carries a value, so the host may print it.
+ */
+export const isSafeSymmyDemoEnrollmentReason = (reason: string) => {
+  const [code = '', ...detail] = reason.split(':');
+  return (
+    (code === 'customer-workload-enrollment' || safeEnrollmentCodes.has(code)) &&
+    (detail.length === 0 || (detail.length === 2 && detail.every((part) => /^[A-Za-z0-9_-]{1,63}$/u.test(part))))
+  );
+};
 export const safeSymmyDemoEnrollmentFailure = (cause: unknown) => {
   if (
     !(Schema.is(SymmyDemoCustomerAuthorityError)(cause) || Schema.is(ReleaseInternalWorkloadError)(cause)) ||

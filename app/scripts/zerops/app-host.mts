@@ -50,6 +50,7 @@ import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
   readSymmyDemoCustomerEnvironment,
   SymmyDemoCustomerAuthorityError,
+  isSafeSymmyDemoEnrollmentReason,
   SymmyDemoCustomerAuthorityLive,
 } from '../demo/symmy-demo-customer-authority.mts';
 import {
@@ -206,9 +207,15 @@ const CUSTOMER_DISCOVERY_FAILED = 'Unable to resolve the existing AKROS customer
 const STAGE_BOOTSTRAP_FAILED = 'stage Symmy demo bootstrap failed; composition not published';
 const HOST_SUPERSEDED = 'this host was superseded and never writes the authority again';
 
+const CUSTOMER_ENROLLMENT_PREFIX = 'AKROS customer workload enrollment failed reason=';
+
 export const customerDiscoveryHostError = flow(
   Schema.decodeUnknownOption(Schema.instanceOf(SymmyDemoCustomerAuthorityError)),
-  Option.flatMap((problem) => Option.fromUndefinedOr(CUSTOMER_DISCOVERY_REASONS.get(problem.reason))),
+  Option.flatMap((problem) =>
+    isSafeSymmyDemoEnrollmentReason(problem.reason)
+      ? Option.some(`${CUSTOMER_ENROLLMENT_PREFIX}${problem.reason}`)
+      : Option.fromUndefinedOr(CUSTOMER_DISCOVERY_REASONS.get(problem.reason)),
+  ),
   Option.getOrElse(() => CUSTOMER_DISCOVERY_FAILED),
   failure,
 );
@@ -230,7 +237,12 @@ const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
 export const formatAppHostStop = (cause: Cause.Cause<unknown>): string => {
   const error = Cause.findErrorOption(cause).pipe(
     Option.flatMap(Schema.decodeUnknownOption(Schema.instanceOf(AppHostError))),
-    Option.filter((problem) => SAFE_HOST_STOP_REASONS.has(problem.reason)),
+    Option.filter(
+      (problem) =>
+        SAFE_HOST_STOP_REASONS.has(problem.reason) ||
+        (problem.reason.startsWith(CUSTOMER_ENROLLMENT_PREFIX) &&
+          isSafeSymmyDemoEnrollmentReason(problem.reason.slice(CUSTOMER_ENROLLMENT_PREFIX.length))),
+    ),
   );
   return Option.isSome(error)
     ? `[app-host] stopped: ${error.value.reason}`
