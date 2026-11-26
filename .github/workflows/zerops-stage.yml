@@ -16,16 +16,6 @@ on:
   push:
     branches:
       - demo/sales-crm
-    paths-ignore:
-      - 'docs/**'
-      - 'app/docs/**'
-      - '**/README.md'
-      - '**/AGENTS.md'
-      - '**/CLAUDE.md'
-      - '**/CONTRIBUTING.md'
-      - '**/SECURITY.md'
-      - '**/CHANGELOG.md'
-      - '**/LICENSE.md'
   workflow_dispatch:
     # The upload warm-up shares one curl invocation, and so one connection, with the upload itself
     # (scripts/zerops/push-service.sh). Its rule was: a second upload attempt means this goes back off. Job
@@ -52,9 +42,9 @@ defaults:
 # One delivery at a time; a newer push waits for the running one. A run that a newer push superseded ends once its own
 # Zerops processes have finished, before its proofs (scripts/zerops/stage-push.sh superseded): GitHub never cancels
 # it, and no two runs ever overlap on Zerops.
-concurrency:
-  group: zerops-stage
-  cancel-in-progress: false
+# Hotfix: per job, not per run. Deliveries never overlap and never get cancelled; a newer pending delivery replaces
+# an older pending one. A newer push's unit builds cancel an older run's builds at once, so an older run that has not
+# started delivering ends cancelled and the newest head goes next.
 
 env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
@@ -74,6 +64,9 @@ jobs:
   deliver:
     name: Plan, deliver and verify stage
     if: github.ref == 'refs/heads/demo/sales-crm'
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     # The app deploy's own limit plus the storefronts and the proofs.
     timeout-minutes: 95
@@ -105,16 +98,6 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-
-      # A queued commit can already be obsolete when its runner starts. Fail before install/planning, not only at
-      # the mutation marker after every shard built. Never cancel a delivery whose Zerops processes are running.
-      - name: Refuse a superseded stage head before preparation
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          if [ -z "$current_head" ] || [ "$current_head" != "$GITHUB_SHA" ]; then
-            echo '::notice::Stage head changed or could not be read; this run performs no further preparation or deployment.'
-            exit 1
-          fi
 
       # Run history, not caches: the newest green run is the verified base, and every later run that changed stage
       # without being verified hands its services on. Only gh, jq and unzip: overlap the API reads with installation
@@ -252,14 +235,25 @@ jobs:
 
       # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
       # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
-      - name: Mark the actual deployment attempt
+      # A newer head has its own run, which delivers it and everything before it: this run skips and stays green.
+      - name: Skip when a newer push is the stage head
+        id: head
         if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
         run: |
-          # Hotfix: a run that started delivers even when a newer push arrived, so frequent pushes never starve stage.
+          if [ "$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)" = "$GITHUB_SHA" ]; then
+            echo 'current=true' >>"$GITHUB_OUTPUT"
+          else
+            echo '::notice::a newer push is the stage head; its run delivers'
+          fi
+
+      - name: Mark the actual deployment attempt
+        id: mark
+        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true' && steps.head.outputs.current == 'true'
+        run: |
           echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
 
       - name: Deliver and verify stage
-        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
+        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true' && steps.head.outputs.current == 'true'
         uses: ./.github/actions/deliver-stage
         with:
           toolchain: installed
@@ -297,6 +291,9 @@ jobs:
     needs: [deliver]
     # Only when the units the earlier builds cannot lend exceed the Zerops build's budget (the delivery's front path).
     if: needs.deliver.outputs.build_units == 'true'
+    concurrency:
+      group: zerops-stage-build-${{ matrix.shard }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -423,6 +420,9 @@ jobs:
     name: Deliver and verify stage after the unit builds
     needs: [deliver, build]
     if: needs.deliver.outputs.build_units == 'true' && needs.build.result == 'success'
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 95
     # Downloading this run's unit builds needs `actions: read`.
@@ -462,12 +462,23 @@ jobs:
 
       # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
       # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
-      - name: Mark the actual deployment attempt
+      - name: Skip when a newer push is the stage head
+        id: head
         run: |
-          # Hotfix: a run that started delivers even when a newer push arrived, so frequent pushes never starve stage.
+          if [ "$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)" = "$GITHUB_SHA" ]; then
+            echo 'current=true' >>"$GITHUB_OUTPUT"
+          else
+            echo '::notice::a newer push is the stage head; its run delivers'
+          fi
+
+      - name: Mark the actual deployment attempt
+        id: mark
+        if: steps.head.outputs.current == 'true'
+        run: |
           echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
 
       - name: Deliver and verify stage
+        if: steps.head.outputs.current == 'true'
         uses: ./.github/actions/deliver-stage
         with:
           toolchain: none
