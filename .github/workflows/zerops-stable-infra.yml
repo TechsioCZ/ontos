@@ -1,0 +1,50 @@
+name: Zerops Stable Infrastructure
+on:
+  workflow_dispatch:
+  push:
+    branches: [demo/sales-crm]
+    paths: [.github/workflows/zerops-stable-infra.yml]
+permissions:
+  contents: read
+concurrency:
+  group: zerops-stable-infrastructure
+  cancel-in-progress: false
+jobs:
+  route:
+    name: Configure stable HTTPS routes and DNS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: sales-stable
+      deployment: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Route the stable origins
+        env:
+          STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.STABLE_CLOUDFLARE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          config="$RUNNER_TEMP/stable-config.json"
+          printf '%s\n' "$STABLE_CONFIG_JSON" > "$config"
+          export STABLE_CONFIG="$config"
+          ZEROPS_PROJECT_ID="$(node --input-type=module -e 'import{loadStableConfig}from"./ops/zerops-stable/config.mjs";console.log((await loadStableConfig(process.env.STABLE_CONFIG)).projectId)')"
+          export ZEROPS_PROJECT_ID
+          mapfile -t targets < <(node --input-type=module <<'JS'
+          import {loadStableConfig} from './ops/zerops-stable/config.mjs';
+          const c = await loadStableConfig(process.env.STABLE_CONFIG);
+          for (const [origin, service] of [['shell','app'],['storefront','storefront'],['shop','shop'],['n1','n1']]) {
+            console.log(new URL(c.origins[origin]).hostname);
+            console.log(c.services[service]);
+            console.log('3000');
+          }
+          JS
+          )
+          bash app/scripts/zerops/route-stage-domains.sh "${targets[@]}"
