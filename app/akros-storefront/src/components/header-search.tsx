@@ -32,8 +32,8 @@ import {
 } from "@/ontos/search-suggestions";
 import { startNavigationProgress } from "@/components/navigation-progress";
 
-/** Runs while the HTML parses: text typed before hydration reaches the hidden q field and survives hydration. */
-const EARLY_QUERY_SCRIPT = `(function(){var s=document.currentScript;var w=s&&s.previousElementSibling;var f=w&&(w.tagName==="FORM"?w:w.querySelector("form"));if(!f)return;f.addEventListener("input",function(e){if(f.hasAttribute("data-sf-hydrated"))return;var t=e.target;if(!t||t.type==="hidden"||typeof t.value!=="string")return;var q=f.querySelector('input[type="hidden"][name="q"]');if(q)q.value=t.value;f.setAttribute("data-sf-early-query",t.value);},true);})();`;
+/** Runs while the HTML parses: text typed before hydration reaches the hidden q field and survives both the streamed loading-shell swap and hydration. */
+const EARLY_QUERY_SCRIPT = `(function(){var w=window,s=document.currentScript,p=s&&s.previousElementSibling,f=p&&(p.tagName==="FORM"?p:p.querySelector("form"));function fill(g,v){if(g.hasAttribute("data-sf-hydrated"))return;var q=g.querySelector('input[type="hidden"][name="q"]');if(!q)return;q.value=v;g.setAttribute("data-sf-early-query",v);var t=g.querySelector('input:not([type="hidden"])');if(t&&t.value!==v)t.value=v;}if(!w.__sfEarlyQueryInit){w.__sfEarlyQueryInit=1;document.addEventListener("input",function(e){var t=e.target,g=t&&t.form;if(!g||t.type==="hidden"||typeof t.value!=="string"||g.hasAttribute("data-sf-hydrated")||!g.querySelector('input[type="hidden"][name="q"]'))return;w.__sfEarlyQuery=t.value;var a=document.querySelectorAll("form");for(var i=0;i<a.length;i++)fill(a[i],t.value);},true);}if(f&&w.__sfEarlyQuery)fill(f,w.__sfEarlyQuery);})();`;
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -63,7 +63,10 @@ export function HeaderSearch() {
   useEffect(() => {
     const form = formRef.current;
     if (!form) return;
-    const early = form.getAttribute("data-sf-early-query")?.trim() ?? "";
+    const early_ = window as unknown as { __sfEarlyQuery?: string };
+    const early = (form.getAttribute("data-sf-early-query") ?? early_.__sfEarlyQuery ?? "").trim();
+    // Consumed once: later client-rendered headers must not get this text back.
+    early_.__sfEarlyQuery = undefined;
     form.setAttribute("data-sf-hydrated", "");
     if (early) setQuery((current) => (current.trim() ? current : early));
   }, []);
