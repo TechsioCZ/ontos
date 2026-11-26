@@ -21,6 +21,7 @@ import { internalSyncSource } from './symmy-c14-sync-plans.mts';
 type Authority = Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>;
 const uuid = Schema.String.check(Schema.isUUID());
 const digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
+const nameEffectKey = 'readiness-name';
 const productReceiptSchema = Schema.TaggedStruct('ProductCreated', {
   actionInvocationId: ProductActionInvocationIdSchema,
   initialVariantRef: VariantRefSchema,
@@ -28,7 +29,16 @@ const productReceiptSchema = Schema.TaggedStruct('ProductCreated', {
   productRevision: CreateProductRecoveryResponseSchema.fields.product.fields.revision,
   variantRevision: CreateProductRecoveryResponseSchema.fields.product.fields.revision,
 });
-const snapshotSchema = Schema.Struct({
+const readinessFields = {
+  outcome: SymmyEffectOutcomeSchema.members[0],
+  owner_receipt: Schema.OptionFromNullOr(Schema.Json),
+  product_receipt: productReceiptSchema,
+  product_result: CreateProductRecoveryResponseSchema,
+  ref: SymmyOwnerEffectRefSchema,
+  source_product: CreateProductPayloadSchema,
+};
+const committedSnapshotSchema = Schema.Struct({
+  ...readinessFields,
   acting_principal_id: uuid,
   action_key: Schema.String,
   committed_reply: Schema.Struct({ encoded: Schema.Json, kind: Schema.Literal('result') }),
@@ -38,17 +48,32 @@ const snapshotSchema = Schema.Struct({
   core_status: Schema.Literal('succeeded'),
   effect_key: Schema.String,
   invocation_id: uuid,
-  outcome: SymmyEffectOutcomeSchema.members[0],
+  owner_auth_context_ref: Schema.String,
   owner_executor_principal_id: uuid,
-  owner_receipt: Schema.OptionFromNullOr(Schema.Json),
   owner_request_hash: digest,
-  product_receipt: productReceiptSchema,
-  product_result: CreateProductRecoveryResponseSchema,
-  ref: SymmyOwnerEffectRefSchema,
   result: Schema.Json,
   schema_version: Schema.Literal(1),
-  source_product: CreateProductPayloadSchema,
 });
+// An existing localized name satisfies readiness via Catalog's source lookup without submitting an Action.
+const observedNameSchema = Schema.Struct({
+  ...readinessFields,
+  acting_principal_id: Schema.Null,
+  action_key: Schema.Null,
+  committed_reply: Schema.Null,
+  core_action_key: Schema.Null,
+  core_principal_id: Schema.Null,
+  core_request_hash: Schema.Null,
+  core_status: Schema.Null,
+  effect_key: Schema.Literal(nameEffectKey),
+  invocation_id: Schema.Null,
+  owner_auth_context_ref: Schema.Null,
+  owner_executor_principal_id: Schema.Null,
+  owner_receipt: Schema.Null,
+  owner_request_hash: Schema.Null,
+  result: Schema.Null,
+  schema_version: Schema.Null,
+});
+const readinessRowSchema = Schema.Union([committedSnapshotSchema, observedNameSchema]);
 const axesReceiptSchema = Schema.TaggedStruct('ReadinessAxes', {
   axisRevision: GovernVariantAxesRecoveryResponseSchema.fields.axisRevision,
 });
@@ -85,6 +110,8 @@ const currentSchema = Schema.Struct({
   decision_state: Schema.Literal('CONFIRMED'),
   divisible: Schema.Literal(false),
   locale: Schema.Literal('en'),
+  localized_actor: uuid,
+  localized_invocation_id: uuid,
   localized_revision: Schema.Int,
   localized_state: Schema.Literal('SET'),
   name: Schema.String,
@@ -115,6 +142,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
       select e.effect_key, coalesce(e.resolved_effect,e.effect)->'ref' as ref,
         e.resolved_effect#>'{intent,payload,sourceProduct}' as source_product,
         e.owner_invocation_id as invocation_id, e.owner_executor_principal_id, e.owner_request_hash,
+        e.owner_auth_context_ref,
         e.owner_receipt, e.outcome, parent.owner_receipt as product_receipt,
         original.encoded_result as product_result,
         s.action_key, s.acting_principal_id, s.schema_version, s.encoded_result as result,
@@ -126,7 +154,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
       left join catalog.catalog_result_snapshots original on original.tenant_id=parent.tenant_id
         and original.action_invocation_id::text=parent.owner_receipt->>'actionInvocationId'
         and original.action_key='commerce.catalog.create-product'
-        and original.acting_principal_id=e.owner_executor_principal_id
+        and original.acting_principal_id=${systemPrincipalId}
         and original.schema_version=${Number(createProductAction.descriptor.schemaVersion)}
       left join catalog.catalog_result_snapshots s on s.tenant_id=e.tenant_id
         and s.action_invocation_id=e.owner_invocation_id
@@ -134,7 +162,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         and i.action_invocation_id=e.owner_invocation_id
       where e.tenant_id=${tenantId} and e.job_id=${input.jobId} and e.effect_key like 'readiness-%'
       order by e.effect_key
-    `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(snapshotSchema))));
+    `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(readinessRowSchema))));
     expect(snapshots).toHaveLength(input.keys.length * 6);
     return yield* Effect.forEach(
       input.keys,
@@ -149,12 +177,17 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           assert.isDefined(row);
           return row;
         };
-        const axesRow = rowFor('readiness-axes');
-        const confirmRow = rowFor('readiness-confirm');
-        const nameRow = rowFor('readiness-name');
-        const activateRow = rowFor('readiness-activate');
-        const unitRow = rowFor('readiness-unit');
-        const untypedRow = rowFor('readiness-untyped');
+        const committedRowFor = (effectKey: string) => {
+          const row = rowFor(effectKey);
+          assert.isNotNull(row.invocation_id);
+          return row;
+        };
+        const axesRow = committedRowFor('readiness-axes');
+        const confirmRow = committedRowFor('readiness-confirm');
+        const nameRow = rowFor(nameEffectKey);
+        const activateRow = committedRowFor('readiness-activate');
+        const unitRow = committedRowFor('readiness-unit');
+        const untypedRow = committedRowFor('readiness-untyped');
         const receipt = axesRow.product_receipt;
         const { initialVariantRef, productRef } = receipt;
         const original = axesRow.product_result;
@@ -174,19 +207,22 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           [untypedRow, 'decide-product-type-unnecessary'],
         ] as const) {
           const actionKey = `commerce.catalog.${action}`;
-          expect(row.action_key).toBe(actionKey);
-          expect(row.core_action_key).toBe(actionKey);
+          expect(row.invocation_id === null).toBe(input.adoption && row.effect_key === nameEffectKey);
+          if (row.invocation_id !== null) {
+            expect(row.action_key).toBe(actionKey);
+            expect(row.core_action_key).toBe(actionKey);
+            expect(row.owner_executor_principal_id).toBe(systemPrincipalId);
+            expect(row.core_principal_id).toBe(systemPrincipalId);
+            expect(row.acting_principal_id).toBe(systemPrincipalId);
+            expect(row.owner_request_hash).toBe(row.core_request_hash);
+            expect(row.committed_reply.encoded).toEqual(row.result);
+          }
           expect(row.ref.operation).toEqual({
             entrypointKey: actionKey,
             moduleId: 'commerce.catalog',
             schemaVersion: '1',
           });
           expect(row.ref.originalTarget).toEqual(productRef);
-          expect(row.owner_executor_principal_id).toBe(systemPrincipalId);
-          expect(row.core_principal_id).toBe(systemPrincipalId);
-          expect(row.acting_principal_id).toBe(systemPrincipalId);
-          expect(row.owner_request_hash).toBe(row.core_request_hash);
-          expect(row.committed_reply.encoded).toEqual(row.result);
           expect(row.product_receipt).toEqual(receipt);
           expect(row.product_result).toEqual(original);
           expect(row.outcome.effectId).toBe(row.ref.effectId);
@@ -214,11 +250,14 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         }
         const axes = yield* Schema.decodeUnknownEffect(GovernVariantAxesRecoveryResponseSchema)(axesRow.result);
         const confirmed = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationResultSchema)(confirmRow.result);
-        const name = yield* Schema.decodeUnknownEffect(SetProductLocalizedFactsRecoveryResponseSchema)(nameRow.result);
+        const name =
+          nameRow.invocation_id === null
+            ? undefined
+            : yield* Schema.decodeUnknownEffect(SetProductLocalizedFactsRecoveryResponseSchema)(nameRow.result);
         const activated = yield* Schema.decodeUnknownEffect(UpdateProductRecoveryResponseSchema)(activateRow.result);
         const unit = yield* Schema.decodeUnknownEffect(SetProductUnitTargetDivisibilityResultSchema)(unitRow.result);
         const untyped = yield* Schema.decodeUnknownEffect(DecideProductTypeUnnecessaryResultSchema)(untypedRow.result);
-        for (const result of [axes, confirmed, name, activated, unit, untyped]) {
+        for (const result of [axes, confirmed, activated, unit, untyped]) {
           expect(result.changed).toBe(!input.adoption);
         }
         expect(axes.productRef).toEqual(productRef);
@@ -288,6 +327,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
             v.combination_axis_revision, v.combination_key,
             a.axis_revision, a.attribute_definition_ids as axes,
             l.locale, l.current_revision as localized_revision, l.state as localized_state, l.name,
+            lr.acting_principal_id as localized_actor, lr.action_invocation_id as localized_invocation_id,
             u.unit_id, u.current_revision as unit_revision, u.divisible,
             d.decision_revision, d.decision_state, d.structured_attributes_required, d.variant_axes_required,
             d.value_revision_tokens, d.variant_revision_tokens, d.acting_principal_id as decision_actor
@@ -295,6 +335,8 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           join catalog.product_variants v on v.tenant_id=p.tenant_id and v.product_id=p.product_id
           join catalog.product_variant_axis_events a on a.tenant_id=p.tenant_id and a.product_id=p.product_id
           join catalog.product_localized_facts l on l.tenant_id=p.tenant_id and l.product_id=p.product_id
+          join catalog.product_localized_fact_revisions lr on lr.tenant_id=l.tenant_id and lr.product_id=l.product_id
+            and lr.locale=l.locale and lr.revision=l.current_revision
           join catalog.variant_unit_divisibility u on u.tenant_id=v.tenant_id and u.variant_id=v.variant_id
           join catalog.product_type_untyped_decisions d on d.tenant_id=p.tenant_id and d.product_id=p.product_id
           where p.tenant_id=${tenantId} and p.product_id=${productRef.resourceId}
@@ -302,7 +344,14 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(currentSchema))));
         expect(currentRows).toHaveLength(1);
         const [current] = currentRows;
-        expect(current).toEqual({
+        assert.isDefined(current);
+        const { localized_invocation_id: nameInvocationId, localized_revision: nameRevision, ...facts } = current;
+        if (name !== undefined) {
+          expect(name.changed).toBe(true);
+          expect(nameInvocationId).toBe(nameRow.invocation_id);
+          expect(nameRevision).toBe(name.revision);
+        }
+        expect(facts).toEqual({
           axes: [],
           axis_revision: axes.axisRevision,
           combination_axis_revision: confirmed.combinationAxisRevision,
@@ -312,7 +361,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           decision_state: 'CONFIRMED',
           divisible: false,
           locale: 'en',
-          localized_revision: name.revision,
+          localized_actor: systemPrincipalId,
           localized_state: 'SET',
           name: key,
           product_lifecycle: 'ACTIVE',
@@ -327,13 +376,14 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           variant_revision_tokens: [`${initialVariantRef.resourceId}:${confirmed.variantRevision}`],
         });
         return {
-          invocations: rows.map(({ effect_key, invocation_id }) => ({
-            effectKey: effect_key,
-            invocationId: invocation_id,
-          })),
+          invocations: rows.flatMap(({ effect_key, invocation_id }) =>
+            invocation_id === null ? [] : [{ effectKey: effect_key, invocationId: invocation_id }],
+          ),
           key,
           productReceipt: receipt,
-          snapshots: rows.map(({ effect_key, result }) => ({ effectKey: effect_key, result })),
+          snapshots: rows.flatMap(({ effect_key, invocation_id, result }) =>
+            invocation_id === null ? [] : [{ effectKey: effect_key, result }],
+          ),
           state: { correlations, current, productRef, variantRef: initialVariantRef },
         };
       }),

@@ -1113,7 +1113,7 @@ it.live(
           jobId: adoptionJobId,
           keys: internalStockItemKeys,
         });
-        // Fresh native no-change results must retain the original Products, Variants, readiness revisions and sources.
+        // Adoption keeps the original Products, Variants, readiness revisions and sources, including the NAME write.
         expect(adoptedCatalog.map(({ key, state }) => ({ key, state }))).toEqual(
           originalCatalog.map(({ key, state }) => ({ key, state })),
         );
@@ -1124,8 +1124,18 @@ it.live(
         const adoptionInvocations = adoptedCatalog.flatMap(({ invocations }) =>
           invocations.map(({ invocationId }) => invocationId),
         );
-        expect(new Set(adoptionInvocations).size).toBe(12);
+        // Five Actions per SKU run anew; NAME only observes the existing owner fact.
+        expect(adoptionInvocations).toHaveLength(internalStockItemKeys.length * 5);
+        expect(new Set(adoptionInvocations).size).toBe(adoptionInvocations.length);
         expect(adoptionInvocations.some((invocationId) => originalReadinessInvocations.has(invocationId))).toBe(false);
+        // The absence of a linked receipt must not hide a separate, unrecorded NAME dispatch.
+        const nameInvocations = yield* admin`select action_invocation_id from core.action_invocations
+          where tenant_id=${tenantId} and action_key='commerce.catalog.set-product-localized-facts'`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(invocationRowSchema))),
+        );
+        expect(nameInvocations.map(({ action_invocation_id }) => action_invocation_id).toSorted()).toEqual(
+          originalCatalog.map(({ state }) => state.current.localized_invocation_id).toSorted(),
+        );
         expect(yield* assertInternalSyncPrices(pricedCatalog)).toEqual(originalPrices);
         expect(yield* configuredRoutes).toEqual(initialRoutes);
         expect(yield* provisioningCount).toBe(2);
