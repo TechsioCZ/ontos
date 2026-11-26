@@ -40,6 +40,7 @@ try {
     const table = page.locator(".sf-variant-data-table__table");
     const rows = table.locator("tbody tr");
     const links = table.locator("[data-variant-detail-link]");
+    await page.locator(".sf-variant-data-table[data-variant-rows-complete]").waitFor();
     await links.last().waitFor();
     await page.locator(".sf-product-actions__watch:not(:disabled)").waitFor();
     await page.evaluate(() => document.fonts.ready);
@@ -130,6 +131,7 @@ try {
 
     await page.setViewportSize({ width: 390, height: 1000 });
     await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.locator(".sf-variant-data-table[data-variant-rows-complete]").waitFor();
     await links.last().waitFor();
     await page.locator(".sf-product-actions__watch:not(:disabled)").waitFor();
     assert.equal(await rows.count(), ids.length);
@@ -143,6 +145,7 @@ try {
       const shared = new URL(url);
       shared.searchParams.set("variantIds", [ids[0], lastId].join(","));
       await page.goto(shared.href, { waitUntil: "domcontentloaded" });
+      await page.locator(".sf-variant-data-table[data-variant-rows-complete]").waitFor();
       await links.last().waitFor();
       assert.deepEqual(
         (
@@ -151,11 +154,13 @@ try {
         [ids[0], lastId].sort((left, right) => left.localeCompare(right)),
       );
       await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator(".sf-variant-data-table[data-variant-rows-complete]").waitFor();
       await links.last().waitFor();
       assert.equal(await rows.count(), 2);
       const searched = new URL(url);
       searched.searchParams.set("variant", lastVariant.sku);
       await page.goto(searched.href, { waitUntil: "domcontentloaded" });
+      await page.locator(".sf-variant-data-table[data-variant-rows-complete]").waitFor();
       await links.first().waitFor();
       assert.equal(await rows.count(), 1);
       assert.equal(await links.first().getAttribute("data-variant-detail-link"), lastId);
