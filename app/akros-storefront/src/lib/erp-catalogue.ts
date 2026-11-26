@@ -169,15 +169,14 @@ function nameOf(localized: Localized): string | undefined {
 const shown = (variant: { readonly lifecycle: string }) => variant.lifecycle !== "RETIRED";
 
 /**
- * The storefront rule of an ERP product: Catalog answers it to the storefront's page read (lifecycle DRAFT or
- * ACTIVE) and it has a Variant that is not RETIRED. Such a product is on „Novinky z ERP“, has its own page and is
+ * The storefront rule of an ERP product: it is ACTIVE (a DRAFT „Koncept“ is never sold; the storefront's page read
+ * asks Catalog for ACTIVE only) and it has a Variant that is not RETIRED. Such a product is on „Novinky z ERP“, has its own page and is
  * found by the header search and the search results page. A missing price shows „Cena na dotaz“, it does not hide it.
  */
 export const isErpProductShown = (item: {
   readonly lifecycle: string;
   readonly variants: readonly { readonly lifecycle: string }[];
-}): boolean =>
-  (item.lifecycle === "DRAFT" || item.lifecycle === "ACTIVE") && item.variants.some(shown);
+}): boolean => item.lifecycle === "ACTIVE" && item.variants.some(shown);
 
 const foldSearch = (value: string) =>
   value

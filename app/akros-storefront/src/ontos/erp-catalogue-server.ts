@@ -5,8 +5,8 @@ import "server-only";
 // page and Pricing's catalogue page prices (both for this storefront's company). A visitor with a portal session has
 // the prices read through Commerce's portal for that signed-in customer, with the customer's own Price Group (an item
 // Pricing could not decide for the customer takes the guest price of the same page); a guest, a session Commerce no
-// longer admits, or a portal price call that fails is priced as before. An import leaves its Products DRAFT with
-// WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
+// longer admits, or a portal price call that fails is priced as before. Only ACTIVE Products are sold: an import
+// leaves its Products DRAFT („Koncept“) until staff activate them in the ERP product editor.
 import { Effect, Predicate } from "effect";
 import { cache } from "react";
 import { isOperationError } from "@ontos/storefront-runtime";
@@ -50,7 +50,7 @@ const readCatalogPage = async (
   const page = (await readRecords(
     "catalog",
     "product-page",
-    { lifecycles: ["DRAFT", "ACTIVE"], locale, limit, offset },
+    { lifecycles: ["ACTIVE"], locale, limit, offset },
     { company: false, operation },
   )) as CatalogProductPage;
   if (page.items.length > limit)

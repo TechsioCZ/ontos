@@ -1,6 +1,6 @@
 // „Na e-shopu: ano/ne“ of an ERP product on the Akros storefront. The storefront rule is
-// akros-storefront/src/lib/erp-catalogue.ts `isErpProductShown`: Catalog answers the product to the storefront's page
-// read (DRAFT or ACTIVE) and it has a Variant that is not RETIRED. Such a product is on „Novinky z ERP“, has its own
+// akros-storefront/src/lib/erp-catalogue.ts `isErpProductShown`: the product is ACTIVE (a DRAFT „Koncept“ is never
+// sold) and it has a Variant that is not RETIRED. Such a product is on „Novinky z ERP“, has its own
 // page and is found by the header search and the search results page; a Variant without a price shows „Cena na dotaz“.
 import { Option } from 'effect';
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
@@ -31,9 +31,15 @@ export const erpStorefrontStatus = (
     return Option.none();
   }
   const reasons: { fix: string; why: string }[] = [];
+  if (item.lifecycle === 'DRAFT') {
+    reasons.push({
+      fix: 'V Upravit nastavte stav na „Aktivní (ACTIVE)“ a uložte.',
+      why: 'Produkt je ve stavu Koncept; e-shop prodává jen aktivní produkty.',
+    });
+  }
   if (item.lifecycle === 'RETIRED') {
     reasons.push({
-      fix: 'V Upravit nastavte stav produktu na Aktivní (nebo Koncept).',
+      fix: 'V Upravit produkt obnovte a nastavte stav na „Aktivní (ACTIVE)“.',
       why: 'Produkt je vyřazený.',
     });
   }
@@ -44,9 +50,7 @@ export const erpStorefrontStatus = (
   const notes = visible
     ? [
         'Najdete ho v sekci Novinky z ERP, ve vyhledávání e-shopu (název, SKU, parametry) a na jeho vlastní stránce.',
-        ...(item.lifecycle === 'DRAFT'
-          ? ['Demo e-shop ukazuje i produkty ve stavu Koncept. Skrýt ho jde jen vyřazením.']
-          : []),
+        'Z e-shopu ho stáhnete stavem Koncept nebo Vyřazený.',
         'Varianta bez ceny z ERP se v e-shopu ukáže jako „Cena na dotaz“ (ceny vidíte v Zobrazit varianty).',
       ]
     : [];
