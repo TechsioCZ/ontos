@@ -1,5 +1,8 @@
 import { Config, Context, Effect, Redacted } from 'effect';
 
+import { loadVerificationIdentity } from './verification-identity.mts';
+import type { VerificationIdentity } from './verification-identity.mts';
+
 interface E2eConfiguration {
   readonly issuer: string;
   readonly mcpUrl: string;
@@ -7,6 +10,7 @@ interface E2eConfiguration {
   readonly password: Redacted.Redacted;
   readonly shellUrl: string;
   readonly shotsDir: string;
+  readonly verification: VerificationIdentity;
 }
 
 export class E2eSettings extends Context.Service<E2eSettings, E2eConfiguration>()('OAuthProof/E2eSettings') {}
@@ -27,10 +31,9 @@ export const loadE2eSettings = Effect.gen(function* loadSettings() {
     shotsDir: yield* Config.String('E2E_SHOTS_DIR').pipe(
       Config.withDefault('/Volumes/TraceDecayKingston/techsio-demo/v2/shots/mcp-oauth-e2e'),
     ),
+    verification: yield* loadVerificationIdentity,
   } satisfies E2eConfiguration;
 });
-
-export const VERIFICATION_PERSONA = 'verification@ci.ontos';
 
 export const PERSONA = 'management@najempark.demo';
 

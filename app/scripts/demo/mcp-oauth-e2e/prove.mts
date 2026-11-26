@@ -22,16 +22,9 @@ import { FetchHttpClient, HttpClient } from 'effect/http';
 import { NodeServices } from '@effect/platform-node';
 import { randomUUID } from 'node:crypto';
 import type { Client } from '@modelcontextprotocol/client';
-import {
-  E2eSettings,
-  loadE2eSettings,
-  PERSONA,
-  VERIFICATION_PERSONA,
-  AGENT_OPERATOR_PERSONA,
-  CIMD_CLIENT_ID,
-  GRANT_CLAIM,
-} from './env.mts';
+import { E2eSettings, loadE2eSettings, PERSONA, AGENT_OPERATOR_PERSONA, CIMD_CLIENT_ID, GRANT_CLAIM } from './env.mts';
 import { oldRefreshVerdict, Recorder } from './report.mts';
+import { verificationWhoamiHolds } from './verification-identity.mts';
 import type { OldRefreshReplay } from './report.mts';
 import { startLoopbackCallback } from './loopback.mts';
 import type { E2eOAuthProviderOptions } from './provider.mts';
@@ -405,13 +398,18 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         const pass =
           def.key === 'v1'
             ? profileOk &&
-              acting.kind === 'human' &&
-              value.writePolicy === 'approval' &&
-              (!verification ||
-                (acting.principalId === '72000000-0000-4000-8000-000000000090' &&
-                  asRecord(value.company).legalEntityId === '71000000-0000-4000-8000-000000000090' &&
-                  modules.length === 1 &&
-                  modules[0]?.moduleId === 'work.tasks'))
+              (verification
+                ? verificationWhoamiHolds(
+                    {
+                      actingKind: acting.kind,
+                      legalEntityId: asRecord(value.company).legalEntityId,
+                      moduleIds: modules.map((item) => item.moduleId),
+                      principalId: acting.principalId,
+                      writePolicy: value.writePolicy,
+                    },
+                    E2E.verification,
+                  )
+                : acting.kind === 'human' && value.writePolicy === 'approval')
             : profileOk &&
               acting.kind === 'agent' &&
               delegatedBy !== null &&
@@ -763,7 +761,7 @@ const command = Command.make(
         for (const def of selected) {
           const summary: VariantSummary = { grantId: null, key: def.key, label: def.label, profileId: null };
           variants.push(summary);
-          const selectedDef = verification ? { ...def, persona: VERIFICATION_PERSONA } : def;
+          const selectedDef = verification ? { ...def, persona: E2E.verification.persona } : def;
           yield* runVariant(selectedDef, summary, verification, keep).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterrupts(cause)
