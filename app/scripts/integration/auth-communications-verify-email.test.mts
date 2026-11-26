@@ -257,7 +257,10 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         yield* expired.create();
         const now = yield* DateTime.now;
         const later = yield* Effect.gen(function* laterStep() {
-          yield* TestClock.setTime(DateTime.add(now, { minutes: 16 }).epochMilliseconds);
+          yield* TestClock.setTime(
+            DateTime.add(now, { seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds + 1 })
+              .epochMilliseconds,
+          );
           return yield* step(expired.world, expired.world.messageHandoff, yield* onlyIntent(expired.world));
         }).pipe(Effect.provide(TestClock.layer()));
         expect(later.kind).not.toBe('HANDED_OFF');

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   ActiveApplicationCompositionService,
   loadDatabaseConnectionPair,
@@ -1141,8 +1142,8 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
               Effect.orDie,
             ),
           );
+          yield* holdTestModuleCredentials({ communications: 'fictional-communications-module-api-key' });
           const pushConfiguration = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-communications-module-api-key',
             ONTOS_SHELL_GATEWAY_BASE_URL: `${peer.origin}${SHELL_PREFIX}`,
           });
           const deliverContinuations = Effect.fnUntraced(function* deliverContinuations() {
@@ -1710,8 +1711,8 @@ const SOURCE_ADMISSION_WORKLOAD = 'commerce.customer-context.source-write';
  * reads (the Shell issuing the assertion and Core's native admission Action are NOT run, so these rows are seeded):
  * - a real `system` principal of the Tenant bound to the registered workload `communications.core.request-source`
  *   (`bound: false` leaves it unregistered);
- * - the original integration principal of the source application with its admission and owner bindings, and the open
- *   execution fence of its original admission;
+ * - the original integration principal with its admission binding and open execution fence; the signed owner binding
+ *   incarnation is the native receiver's, never another binding on that external integration;
  * - the source's own claimed Outbox delivery that the worker runs in (`processing`, not expired).
  */
 const bindWorkload = (tenantId: string, principalId: string, workload: string, incarnation: string) =>
@@ -1732,7 +1733,6 @@ const seedSourceWorkerDelivery = (
       messageId: randomUUID(),
       originalPrincipalId: randomUUID(),
       originalWorkloadIncarnation: randomUUID(),
-      ownerIncarnation: randomUUID(),
       principalId: randomUUID(),
       workerIncarnation: randomUUID(),
     };
@@ -1754,10 +1754,6 @@ const seedSourceWorkerDelivery = (
             'objects',
           );
         }
-        yield* transaction.execute(
-          bindWorkload(tenantId, ids.originalPrincipalId, REQUEST_SOURCE, ids.ownerIncarnation),
-          'objects',
-        );
         yield* transaction.execute(
           bindWorkload(tenantId, ids.originalPrincipalId, SOURCE_ADMISSION_WORKLOAD, ids.originalWorkloadIncarnation),
           'objects',
@@ -1837,7 +1833,7 @@ const workloadAssertionFor = Effect.fnUntraced(function* workloadAssertionFor(in
         entrypointKey: 'communications.core.submit-communication-request',
         jobKey: SOURCE_JOB,
         legalEntityScope: 'optional',
-        originalOwnerBindingIncarnation: seed.ownerIncarnation,
+        originalOwnerBindingIncarnation: seed.workerIncarnation,
         originalPrincipalId: seed.originalPrincipalId,
         originalWorkloadBindingIncarnation: seed.originalWorkloadIncarnation,
         originalWorkloadKey: SOURCE_ADMISSION_WORKLOAD,
@@ -1891,8 +1887,8 @@ const submitHarness = Effect.fnUntraced(function* submitHarness() {
       };
     }),
   );
+  yield* holdTestModuleCredentials({ communications: 'fictional-communications-module-api-key' });
   const runtime = yield* mountRuntime(gateway, document, {
-    ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-communications-module-api-key',
     ONTOS_SHELL_GATEWAY_BASE_URL: `${authPeer.origin}${SHELL_PREFIX}`,
   });
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });

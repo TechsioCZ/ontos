@@ -11,10 +11,7 @@ import { OutboxPayloadSchema as ProviderObservationRecordedPayloadSchema } from 
 import { IngestProviderObservationPayloadSchema } from '../../shared/provider-observation-ingest.ts';
 import { ingestProviderObservationAction } from '../../src/actions/ingest-provider-observation.action.ts';
 import type { ProviderObservationInput } from '../../src/domain/history/provider-observation.ts';
-import {
-  ProviderObservationIngest,
-  ingestProviderObservationService,
-} from '../../src/services/ingest-provider-observation.service.ts';
+import { ingestProviderObservationService } from '../../src/services/ingest-provider-observation.service.ts';
 import { handleReconcileProviderEvidence } from '../../src/workers/reconcile-provider-evidence.worker.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
@@ -60,39 +57,39 @@ const setup = (options: Parameters<typeof intakeWorld>[1] = {}) =>
 /** The Messaging Adapter calling the PUBLIC Action; the Action's own service is the real one, over the world's native store. */
 const boundary = Effect.fn('ObservationIngestTest.boundary')(function* adapterBoundary(world: World) {
   const principalId = yield* nextId;
-  const observations = ProviderObservationIngest.of({
-    ingest: (observation) =>
-      world.database
-        .inTenant(world.tenantId, (transaction) =>
-          ingestProviderObservationService(transaction).pipe(
-            Effect.flatMap((services) => services.observations.ingest(observation)),
-          ),
-        )
-        .pipe(Effect.orDie),
-  });
-  const harness = yield* makeActionTestHarness({
-    access: 'allowed',
-    ownerRegistration: communicationsRegistration,
-    services: [bindActionTestServices(ingestProviderObservationAction, { observations })],
-  });
+  const messages: { readonly payloadJson: unknown; readonly topic: string }[] = [];
   let sequence = 0;
   const issue = (observation: ProviderObservationInput) => {
     sequence += 1;
     const key = `adapter-call-${String(sequence)}`;
-    return harness.runtime
-      .runAction({
-        payload: encode(observation),
-        principal: adapterOf(world.tenantId, principalId),
-        registration: ingestProviderObservationAction,
-        transport: { correlationId: key, idempotencyKey: key },
-      })
+    // The runtime harness scripts Core's database, not the owner's native store. Open that native transaction first
+    // and bind its service once: the handler must never acquire a second connection inside its commit phase.
+    return world.database
+      .inTenant(world.tenantId, (transaction) =>
+        Effect.gen(function* ingestInOwnerTransaction() {
+          const services = yield* ingestProviderObservationService(transaction);
+          const harness = yield* makeActionTestHarness({
+            access: 'allowed',
+            ownerRegistration: communicationsRegistration,
+            services: [bindActionTestServices(ingestProviderObservationAction, services)],
+          });
+          const result = yield* harness.runtime.runAction({
+            payload: encode(observation),
+            principal: adapterOf(world.tenantId, principalId),
+            registration: ingestProviderObservationAction,
+            transport: { correlationId: key, idempotencyKey: key },
+          });
+          for (const { evidence } of harness.snapshot().committed) {
+            for (const { message } of evidence.outboxMessages) {
+              messages.push(message);
+            }
+          }
+          return result;
+        }),
+      )
       .pipe(Effect.provide(NodeCrypto.layer));
   };
-  const queued = () =>
-    harness
-      .snapshot()
-      .committed.flatMap(({ evidence }) => evidence.outboxMessages.map(({ message }) => message))
-      .filter(({ topic }) => topic === RECORDED_TOPIC);
+  const queued = () => messages.filter(({ topic }) => topic === RECORDED_TOPIC);
   return { issue, queued };
 });
 

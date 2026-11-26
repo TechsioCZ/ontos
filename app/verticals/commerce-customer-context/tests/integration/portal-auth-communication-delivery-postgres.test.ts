@@ -14,6 +14,7 @@ import { NetAddress } from 'effect/net';
 import type { ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -345,11 +346,11 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
   };
   const outage = yield* Ref.make(input.outageCalls);
   const peers = yield* servePeers(revision, outage, tenantId, input.refuse === true);
+  yield* holdTestModuleCredentials({ 'commerce-customer-context': 'fictional-module-api-key' });
   // the worker host's configuration: read when the gateway layer is built AND when each delegation is acquired
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({
       ONTOS_COMMUNICATIONS_API_BASE_URL: peers.origin,
-      ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-module-api-key',
       ONTOS_PRIVACY_API_BASE_URL: peers.origin,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${peers.origin}${SHELL_PREFIX}`,
     }),
