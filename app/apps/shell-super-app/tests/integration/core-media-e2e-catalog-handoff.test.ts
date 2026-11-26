@@ -64,10 +64,10 @@ import {
  * What is substituted, and why (NOT a claim of more than this):
  *  1. CATALOG'S OWN READ AND ADAPTER (`runCatalogDocumentCurrent`, `coreMediaOwnerAvailability`, assignments in
  *     Catalog's tables) do not run here. They are Catalog's private source and a deployment of its own: this test must
- *     not import them, and Catalog's tables are not part of this world. The consumer read stands in for them and
+ *     not import them, and Catalog's tables are not part of this world (the real Catalog server runs against the real
+ *     Shell in `scripts/integration/core-media-catalog-handoff.test.mts`). The consumer read stands in for them and
  *     returns the typed call outcome the Catalog adapter classifies (`Ok` entries, `Forbidden`, `Unavailable`); the
- *     Catalog adapter's mapping of those outcomes is proven against the same SDK types in Catalog's own unit and
- *     integration suites.
+ *     Catalog adapter's mapping of those outcomes is proven against the same SDK types in Catalog's own unit tests.
  *  2. THE CONSUMER'S OWN HOST: the read runs on Core's read test harness (scripted database and gate for the CONSUMER's
  *     own read and its evidence rows), never on Catalog's deployment. Everything downstream of `context.call` is real.
  *  3. THE DELEGATION EXCHANGE: `GatewayDelegation.acquire` (the seam `makeModuleCallRoute` is built over) signs with the
