@@ -183,6 +183,42 @@ export const symmyExecutionRoutineInventoryMatches = (routines: readonly SymmyEx
   );
 };
 
+const verifyDemoMembershipTrigger = Effect.fn('SymmySchema.verifyDemoMembershipTrigger')(function* verifyHook(
+  client: PgClient.PgClient,
+) {
+  const [hook] = yield* client<{ readonly demo_membership_trigger_safe: boolean }>`
+    select exists(
+      select 1
+        from pg_catalog.pg_trigger as trigger_record
+        join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
+        join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+        join pg_catalog.pg_proc as routine on routine.oid = trigger_record.tgfoid
+        join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
+       where namespace.nspname = 'commerce_customer_context'
+         and relation.relname = 'customer_group_definition_source_bindings'
+         and trigger_record.tgname = 'symmy_demo_group_membership_route'
+         and not trigger_record.tgisinternal
+         and trigger_record.tgtype = 21
+         and trigger_record.tgconstraint = 0
+         and trigger_record.tgenabled = 'O'
+         and trigger_record.tgnargs = 0
+         and trigger_record.tgqual is null
+         and trigger_record.tgattr = ''::pg_catalog.int2vector
+         and routine_namespace.nspname = 'symmy_integration'
+         and routine.proname = 'materialize_demo_group_membership_route'
+         and routine.prosecdef
+         and not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
+    ) as demo_membership_trigger_safe
+  `;
+  if (!hook?.demo_membership_trigger_safe) {
+    yield* new SymmySchemaVerificationError({
+      reason: 'Symmy Commerce demo membership trigger is absent or unsafe',
+    });
+  }
+});
+
+export { verifyDemoMembershipTrigger };
+
 const verification = Effect.gen(function* verifySymmySchema() {
   const client = yield* PgClient.PgClient;
   const database = yield* makeWithDefaults({ relations: symmyIntegrationRelations });
@@ -299,6 +335,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
         'Symmy migration journal, route gate, change token or record triggers, or runtime schema privileges mismatch',
     });
   }
+  yield* verifyDemoMembershipTrigger(client);
   yield* verifyRouteEnrollmentRecords(client);
   const routines = yield* client<{
     readonly definer: boolean;
@@ -326,10 +363,11 @@ const adminClientLive = Layer.unwrap(
     Effect.map((connections) => PgClient.layer({ url: Redacted.make(connections.admin.connectionString) })),
   ),
 );
-if (import.meta.main)
+if (import.meta.main) {
   await Effect.runPromise(
     verification.pipe(
       Effect.provide(adminClientLive),
       Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer)),
     ),
   );
+}

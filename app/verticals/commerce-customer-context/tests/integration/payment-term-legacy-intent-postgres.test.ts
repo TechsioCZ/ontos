@@ -142,19 +142,36 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
       stdout: 'pipe',
     },
   );
-  const [status, diagnostics] = yield* Effect.all(
-    [child.exitCode, child.stderr.pipe(Stream.decodeText(), Stream.runCollect), Stream.runDrain(child.stdout)],
+  const collectOutput = Stream.runFold(
+    () => '',
+    (text: string, chunk: string) => (text + chunk).slice(0, 16_384),
+  );
+  const [status, stderr, stdout] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stderr.pipe(Stream.decodeText(), collectOutput),
+      child.stdout.pipe(Stream.decodeText(), collectOutput),
+    ],
     { concurrency: 3 },
   );
   if (Number(status) !== 0) {
-    const text = diagnostics.join('');
+    const redactOutput = (text: string): string =>
+      text
+        .replaceAll(connections.admin.connectionString, '[REDACTED_DATABASE_URL]')
+        .replaceAll(connections.runtime.connectionString, '[REDACTED_DATABASE_URL]')
+        .replaceAll(/postgres(?:ql)?:\/\/[^\s"'<>]+/giu, '[REDACTED_DATABASE_URL]')
+        .slice(0, 8192);
+    const text = redactOutput(stderr);
     const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.sqlState;
     const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.position;
     yield* Effect.logError({
+      command,
       failureClass: 'MIGRATION_CHILD_FAILURE',
       knownLeasedBoundary: '20261019151457_finite-entitlement-cancellation',
       position: position ?? 'UNAVAILABLE',
       sqlState: sqlState ?? 'UNAVAILABLE',
+      stderr: text,
+      stdout: redactOutput(stdout),
     });
   }
   expect(Number(status)).toBe(0);

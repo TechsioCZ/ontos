@@ -101,30 +101,172 @@ it('rejects missing, duplicate, unexpected, and substituted runtime routines', (
   expect(compare(EffectArray.sort(['wrong_runtime_routine', ...sqlOrdered.slice(1)], Order.String))).toBe(false);
 });
 
-it('allows exactly the demo source-binding trigger while continuing to reject any unexpected trigger', () => {
-  const triggers = Schema.decodeUnknownSync(Schema.Array(Schema.String))(
-    JSON.parse(executeDeclarations('EXPECTED_TRIGGER_NAMES')),
+const expectedTriggers = Schema.decodeUnknownSync(Schema.Array(Schema.String))(
+  JSON.parse(executeDeclarations('EXPECTED_TRIGGER_NAMES')),
+);
+const compareTriggers = (actual: readonly string[]): boolean =>
+  Schema.decodeUnknownSync(Schema.Boolean)(
+    JSON.parse(executeDeclarations(`sameStrings(${JSON.stringify(actual)}, EXPECTED_TRIGGER_NAMES)`)),
   );
-  expect(triggers).toHaveLength(48);
-  expect(new Set(triggers).size).toBe(triggers.length);
-  expect(triggers).toEqual(EffectArray.sort(triggers, Order.String));
-  expect(triggers).toContain('symmy_demo_group_membership_route');
-  expect(JSON.parse(executeDeclarations('sameStrings(EXPECTED_TRIGGER_NAMES, EXPECTED_TRIGGER_NAMES)'))).toBe(true);
-  for (const changed of [
-    triggers.filter((trigger) => trigger !== 'symmy_demo_group_membership_route'),
-    EffectArray.sort([...triggers, 'another_demo_trigger'], Order.String),
-    EffectArray.sort([...triggers, 'symmy_demo_group_membership_route'], Order.String),
-  ]) {
-    expect(JSON.parse(executeDeclarations(`sameStrings(${JSON.stringify(changed)}, EXPECTED_TRIGGER_NAMES)`))).toBe(
-      false,
-    );
-  }
-  expect(source).toContain("relation.relname = 'customer_group_definition_source_bindings'");
-  expect(source).toContain("routine_namespace.nspname = 'symmy_integration'");
-  expect(source).toContain("routine.proname = 'materialize_demo_group_membership_route'");
-  expect(source).toContain('trigger_record.tgtype = 21');
-  expect(source).toContain("trigger_record.tgenabled = 'O'");
-  expect(source).toContain("not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')");
-  expect(source).toContain('!row.demo_membership_trigger_safe');
+
+it('requires the exact 47 native Commerce triggers in both installation inventories', () => {
+  expect(expectedTriggers).toHaveLength(47);
+  expect(new Set(expectedTriggers).size).toBe(expectedTriggers.length);
+  expect(expectedTriggers).toEqual(EffectArray.sort(expectedTriggers, Order.String));
+  expect(expectedTriggers).not.toContain('symmy_demo_group_membership_route');
+  expect(compareTriggers(expectedTriggers)).toBe(true);
+  // Both native inventory queries remove only the catalog OID of a completely validated foreign hook.
+  expect(source.match(/trigger_record\.oid not in \(select oid from validated_foreign_triggers\)/gu)).toHaveLength(2);
+  expect(source).toContain('with validated_foreign_triggers as (');
+  expect(source).toContain('select trigger_record.oid');
+  expect(source).toContain('row.trigger_count !== EXPECTED_TRIGGER_NAMES.length');
   expect(source).toContain('!sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES)');
+  expect(source).not.toContain('!row.demo_membership_trigger_safe');
+  expect(source).not.toContain("trigger_record.tgname <> 'symmy_demo_group_membership_route'");
+});
+
+it('rejects missing, duplicate, unexpected and substituted native triggers', () => {
+  for (const trigger of expectedTriggers) {
+    expect(compareTriggers(expectedTriggers.filter((name) => name !== trigger))).toBe(false);
+    expect(compareTriggers(EffectArray.sort([...expectedTriggers, trigger], Order.String))).toBe(false);
+  }
+  for (const extra of ['another_demo_trigger', 'symmy_demo_group_membership_route']) {
+    // An extra hook with the right name but the wrong table/function is not a validated foreign OID.
+    expect(compareTriggers(EffectArray.sort([...expectedTriggers, extra], Order.String))).toBe(false);
+    expect(compareTriggers(EffectArray.sort([extra, ...expectedTriggers.slice(1)], Order.String))).toBe(false);
+  }
+});
+
+const symmySource = readFileSync(
+  new URL('../../../symmy-integration/scripts/verify-db-schema.mts', import.meta.url),
+  'utf-8',
+);
+const symmyParsed = parseSync('symmy-verify-db-schema.mts', symmySource);
+const symmyHookDeclaration = symmyParsed.program.body.find(
+  (entry) =>
+    entry.type === 'VariableDeclaration' &&
+    entry.declarations.some((item) => item.id.type === 'Identifier' && item.id.name === 'verifyDemoMembershipTrigger'),
+);
+const symmyErrorDeclaration = symmyParsed.program.body.find(
+  (entry) => entry.type === 'ClassDeclaration' && entry.id?.name === 'SymmySchemaVerificationError',
+);
+
+it('recognizes only the exact safe foreign hook in Commerce and requires it in Symmy', () => {
+  expect(symmyParsed.errors).toEqual([]);
+  for (const predicate of [
+    "relation.relname = 'customer_group_definition_source_bindings'",
+    "trigger_record.tgname = 'symmy_demo_group_membership_route'",
+    'not trigger_record.tgisinternal',
+    'trigger_record.tgtype = 21',
+    'trigger_record.tgconstraint = 0',
+    "trigger_record.tgenabled = 'O'",
+    'trigger_record.tgnargs = 0',
+    'trigger_record.tgqual is null',
+    "trigger_record.tgattr = ''::pg_catalog.int2vector",
+    "routine_namespace.nspname = 'symmy_integration'",
+    "routine.proname = 'materialize_demo_group_membership_route'",
+    'routine.prosecdef',
+    "not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')",
+    'routine.oid = trigger_record.tgfoid',
+    'relation.oid = trigger_record.tgrelid',
+  ]) {
+    expect(source).toContain(predicate);
+    expect(symmySource).toContain(predicate);
+  }
+  expect(symmySource).toContain("namespace.nspname = 'commerce_customer_context'");
+  expect(symmySource).toContain('yield* verifyDemoMembershipTrigger(client)');
+  expect(symmySource).toContain('!hook?.demo_membership_trigger_safe');
+});
+
+it('accepts the installed safe hook and rejects missing, misbound or disabled hook catalog results', () => {
+  if (symmyHookDeclaration === undefined || symmyErrorDeclaration === undefined) {
+    throw new Error('Missing mandatory Symmy hook verification');
+  }
+  const declarations = stripTypeScriptTypes(
+    [
+      symmySource.slice(symmyErrorDeclaration.start, symmyErrorDeclaration.end),
+      symmySource.slice(symmyHookDeclaration.start, symmyHookDeclaration.end),
+    ].join('\n'),
+  );
+  // PostgreSQL EXISTS rejects absent hooks and definitions that do not match the installed ordinary trigger.
+  const results = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+    import { Effect, Schema } from 'effect';
+    ${declarations}
+    const cases = [
+      [{ demo_membership_trigger_safe: true }],
+      [{ demo_membership_trigger_safe: false }],
+      [],
+    ];
+    const results = await Promise.all(cases.map(rows => Effect.runPromise(
+      verifyDemoMembershipTrigger(() => Effect.succeed(rows)).pipe(
+        Effect.match({ onFailure: () => false, onSuccess: () => true }),
+      ),
+    )));
+    process.stdout.write(JSON.stringify(results));
+  `,
+    ],
+    { encoding: 'utf-8' },
+  );
+  expect(JSON.parse(results)).toEqual([true, false, false]);
+});
+
+it('bounds and redacts both payment-term child diagnostic streams before logging failures', () => {
+  for (const name of ['payment-term-legacy-intent-postgres', 'payment-term-finite-cancellation-postgres']) {
+    const fixtureSource = readFileSync(new URL(`../integration/${name}.test.ts`, import.meta.url), 'utf-8');
+    const collectionStart = fixtureSource.indexOf('  const collectOutput =');
+    const collectionEnd = fixtureSource.indexOf('  const [status, stderr, stdout]', collectionStart);
+    const redactionStart = fixtureSource.indexOf('    const redactOutput =');
+    const redactionEnd = fixtureSource.indexOf('    const text = redactOutput(stderr)', redactionStart);
+    expect(collectionStart).toBeGreaterThan(0);
+    expect(collectionEnd).toBeGreaterThan(collectionStart);
+    expect(redactionStart).toBeGreaterThan(0);
+    expect(redactionEnd).toBeGreaterThan(redactionStart);
+    const declarations = stripTypeScriptTypes(
+      [fixtureSource.slice(collectionStart, collectionEnd), fixtureSource.slice(redactionStart, redactionEnd)].join(
+        '\n',
+      ),
+    );
+    const result = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `
+      import { Effect, Stream } from 'effect';
+      const connections = {
+        admin: { connectionString: 'postgres://admin:admin-secret@db.invalid/test' },
+        runtime: { connectionString: 'postgresql://runtime:runtime-secret@db.invalid/test' },
+      };
+      ${declarations}
+      const url = connections.admin.connectionString;
+      const collected = await Effect.runPromise(Stream.make(
+        'Verifier rejected inventory: ' + url.slice(0, 15),
+        url.slice(15) + ' ' + connections.runtime.connectionString + ' ',
+        'postgresql://another:another-secret@db.invalid/test ' + 'x'.repeat(20_000),
+      ).pipe(collectOutput));
+      const output = redactOutput(collected);
+      process.stdout.write(JSON.stringify({
+        boundedCollection: collected.length === 16_384,
+        boundedOutput: output.length <= 8192,
+        retainsDiagnosis: output.startsWith('Verifier rejected inventory: [REDACTED_DATABASE_URL]'),
+        redacted: !/postgres|secret|db[.]invalid/u.test(output),
+      }));
+    `,
+      ],
+      { encoding: 'utf-8' },
+    );
+    expect(JSON.parse(result)).toEqual({
+      boundedCollection: true,
+      boundedOutput: true,
+      redacted: true,
+      retainsDiagnosis: true,
+    });
+    expect(fixtureSource).toContain('stderr: text');
+    expect(fixtureSource).toContain('stdout: redactOutput(stdout)');
+  }
 });

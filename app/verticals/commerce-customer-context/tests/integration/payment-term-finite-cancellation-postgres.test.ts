@@ -40,6 +40,7 @@ import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
+import { verifyDemoMembershipTrigger } from '../../../symmy-integration/scripts/verify-db-schema.mts';
 import type { RemoveCustomerPaymentTermPayload } from '../../shared/actions/remove-customer-payment-term.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
@@ -391,19 +392,36 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
       stdout: 'pipe',
     },
   );
-  const [status, diagnostics] = yield* Effect.all(
-    [child.exitCode, child.stderr.pipe(Stream.decodeText(), Stream.runCollect), Stream.runDrain(child.stdout)],
+  const collectOutput = Stream.runFold(
+    () => '',
+    (text: string, chunk: string) => (text + chunk).slice(0, 16_384),
+  );
+  const [status, stderr, stdout] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stderr.pipe(Stream.decodeText(), collectOutput),
+      child.stdout.pipe(Stream.decodeText(), collectOutput),
+    ],
     { concurrency: 3 },
   );
   if (Number(status) !== 0) {
-    const text = diagnostics.join('');
+    const redactOutput = (text: string): string =>
+      text
+        .replaceAll(connections.admin.connectionString, '[REDACTED_DATABASE_URL]')
+        .replaceAll(connections.runtime.connectionString, '[REDACTED_DATABASE_URL]')
+        .replaceAll(/postgres(?:ql)?:\/\/[^\s"'<>]+/giu, '[REDACTED_DATABASE_URL]')
+        .slice(0, 8192);
+    const text = redactOutput(stderr);
     const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.sqlState;
     const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.position;
     yield* Effect.logError({
+      command,
       failureClass: 'MIGRATION_CHILD_FAILURE',
       knownLeasedBoundary: '20261019151457_finite-entitlement-cancellation',
       position: position ?? 'UNAVAILABLE',
       sqlState: sqlState ?? 'UNAVAILABLE',
+      stderr: text,
+      stdout: redactOutput(stdout),
     });
   }
   expect(Number(status)).toBe(0);
@@ -1361,3 +1379,142 @@ for (const mode of ['schema-only', 'empty'] as const) {
     60_000,
   );
 }
+
+it.live(
+  'requires the safe Symmy hook on its exact Commerce table in composed storage',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* verifyComposedHook() {
+        const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+        const isolated = yield* makeIsolatedNativeDatabaseFixture({
+          compositionSnapshot: snapshot,
+          mode: 'schema-only',
+          purpose: 'stabilization-1229-payment-entitlement',
+        });
+        const client = yield* PgClient.makeClient({
+          url: Redacted.make(isolated.connections.admin.connectionString),
+        });
+        const verifyCommerce = Effect.fn('FiniteEntitlement.verifyComposedCommerce')(function* verifyCommerce() {
+          const child = yield* ChildProcess.make(
+            'node',
+            [new URL('../../scripts/verify-db-schema.mts', import.meta.url).pathname],
+            {
+              cwd: new URL('../../../../', import.meta.url).pathname,
+              env: {
+                DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+                DATABASE_URL: isolated.connections.runtime.connectionString,
+              },
+              extendEnv: true,
+              stderr: 'pipe',
+              stdin: 'ignore',
+              stdout: 'pipe',
+            },
+          );
+          const collectOutput = Stream.runFold(
+            () => '',
+            (text: string, chunk: string) => (text + chunk).slice(0, 16_384),
+          );
+          const [status, stderr, stdout] = yield* Effect.all(
+            [
+              child.exitCode,
+              child.stderr.pipe(Stream.decodeText(), collectOutput),
+              child.stdout.pipe(Stream.decodeText(), collectOutput),
+            ],
+            { concurrency: 3 },
+          );
+          const diagnostics = (stderr + stdout)
+            .replaceAll(isolated.connections.admin.connectionString, '[REDACTED_DATABASE_URL]')
+            .replaceAll(isolated.connections.runtime.connectionString, '[REDACTED_DATABASE_URL]')
+            .replaceAll(/postgres(?:ql)?:\/\/[^\s"'<>]+/giu, '[REDACTED_DATABASE_URL]')
+            .slice(0, 8192);
+          return { diagnostics, status: Number(status) };
+        });
+        yield* verifyDemoMembershipTrigger(client);
+        const initialCommerce = yield* verifyCommerce();
+        expect(initialCommerce.status, initialCommerce.diagnostics).toBe(0);
+        const [original] = yield* client<{ readonly definition: string }>`
+          select pg_catalog.pg_get_triggerdef(t.oid) as definition
+          from pg_catalog.pg_trigger t
+          where t.tgrelid = 'commerce_customer_context.customer_group_definition_source_bindings'::regclass
+            and t.tgname = 'symmy_demo_group_membership_route'
+        `;
+        if (original === undefined) {
+          yield* Effect.die('Composed fixture is missing the installed Symmy hook');
+        }
+        for (const [index, alteration] of [
+          [
+            `alter table commerce_customer_context.customer_group_definition_source_bindings
+            disable trigger symmy_demo_group_membership_route`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+            `create trigger symmy_demo_group_membership_route after insert or update
+            on commerce_customer_context.customer_group_revisions for each row
+            execute function symmy_integration.materialize_demo_group_membership_route()`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+            `create trigger symmy_demo_group_membership_route after insert or update
+            on commerce_customer_context.customer_group_definition_source_bindings for each row
+            execute function symmy_integration.materialize_demo_group_membership_route('unexpected')`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+            `create trigger symmy_demo_group_membership_route after insert or update
+            on commerce_customer_context.customer_group_definition_source_bindings for each row
+            when (false)
+            execute function symmy_integration.materialize_demo_group_membership_route()`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+            `create trigger symmy_demo_group_membership_route after insert or update of tenant_id
+            on commerce_customer_context.customer_group_definition_source_bindings for each row
+            execute function symmy_integration.materialize_demo_group_membership_route()`,
+          ],
+          [
+            `drop trigger symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`,
+            `create constraint trigger symmy_demo_group_membership_route after insert or update
+            on commerce_customer_context.customer_group_definition_source_bindings
+            deferrable initially deferred for each row
+            execute function symmy_integration.materialize_demo_group_membership_route()`,
+          ],
+        ].entries()) {
+          for (const statement of alteration) {
+            yield* client.unsafe(statement);
+          }
+          const result = yield* verifyDemoMembershipTrigger(client).pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure.reason).toBe('Symmy Commerce demo membership trigger is absent or unsafe');
+          }
+          const commerce = yield* verifyCommerce();
+          if (index === 1) {
+            // Commerce-only remains valid; Symmy alone owns the requirement that the hook exists.
+            expect(commerce.status, commerce.diagnostics).toBe(0);
+          } else {
+            expect(commerce.status, commerce.diagnostics).not.toBe(0);
+            expect(commerce.diagnostics).toContain('Commerce Customer Context database infrastructure is unsafe');
+            expect(commerce.diagnostics).toContain('unexpectedTriggers=[symmy_demo_group_membership_route]');
+          }
+          yield* client`drop trigger if exists symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_definition_source_bindings`;
+          yield* client`drop trigger if exists symmy_demo_group_membership_route
+            on commerce_customer_context.customer_group_revisions`;
+          yield* client.unsafe(original.definition);
+          yield* verifyDemoMembershipTrigger(client);
+          const restoredCommerce = yield* verifyCommerce();
+          expect(restoredCommerce.status, restoredCommerce.diagnostics).toBe(0);
+        }
+      }),
+    ).pipe(Effect.provide(Reactivity.layer), Effect.provide(services)),
+  60_000,
+);

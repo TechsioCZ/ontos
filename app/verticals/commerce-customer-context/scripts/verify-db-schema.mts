@@ -15,7 +15,6 @@ interface VerificationRow {
   readonly append_only_trigger_count: number;
   readonly applicability_constraint_count: number;
   readonly applicability_projection_column_count: number;
-  readonly demo_membership_trigger_safe: boolean;
   readonly exclusion_count: number;
   readonly forced_rls_count: number;
   readonly group_description_column_count: number;
@@ -244,7 +243,6 @@ const EXPECTED_TRIGGER_NAMES = [
   'market_bootstrap_policy_retirement_guard',
   'price_group_assignment_receipt_immutable',
   'purchase_proposal_market_retirement_guard',
-  'symmy_demo_group_membership_route',
 ] as const;
 
 const sameStrings = (actual: readonly string[], expected: readonly string[]): boolean =>
@@ -282,7 +280,29 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
 
     const result = yield* connected
       .unsafe<VerificationRow>(
-        `select
+        `with validated_foreign_triggers as (
+                   select trigger_record.oid
+                     from pg_catalog.pg_trigger as trigger_record
+                     join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
+                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                     join pg_catalog.pg_proc as routine on routine.oid = trigger_record.tgfoid
+                     join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
+                    where namespace.nspname = $1
+                      and relation.relname = 'customer_group_definition_source_bindings'
+                      and trigger_record.tgname = 'symmy_demo_group_membership_route'
+                      and not trigger_record.tgisinternal
+                      and trigger_record.tgtype = 21
+                      and trigger_record.tgconstraint = 0
+                      and trigger_record.tgenabled = 'O'
+                      and trigger_record.tgnargs = 0
+                      and trigger_record.tgqual is null
+                      and trigger_record.tgattr = ''::pg_catalog.int2vector
+                      and routine_namespace.nspname = 'symmy_integration'
+                      and routine.proname = 'materialize_demo_group_membership_route'
+                      and routine.prosecdef
+                      and not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
+                 )
+                 select
                  (select count(*)::integer
                     from information_schema.columns as column_record
                    where column_record.table_schema = $1
@@ -387,7 +407,8 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                     from pg_catalog.pg_trigger as trigger_record
                     join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-                   where namespace.nspname = $1 and not trigger_record.tgisinternal) as trigger_count,
+                   where namespace.nspname = $1 and not trigger_record.tgisinternal
+                     and trigger_record.oid not in (select oid from validated_foreign_triggers)) as trigger_count,
                  (select coalesce(
                            array_agg(trigger_record.tgname::text order by trigger_record.tgname),
                            array[]::text[]
@@ -395,26 +416,8 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                     from pg_catalog.pg_trigger as trigger_record
                     join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-                   where namespace.nspname = $1 and not trigger_record.tgisinternal) as trigger_names,
-                 exists(
-                   select 1
-                     from pg_catalog.pg_trigger as trigger_record
-                     join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
-                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-                     join pg_catalog.pg_proc as routine on routine.oid = trigger_record.tgfoid
-                     join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
-                    where namespace.nspname = $1
-                      and relation.relname = 'customer_group_definition_source_bindings'
-                      and trigger_record.tgname = 'symmy_demo_group_membership_route'
-                      and not trigger_record.tgisinternal
-                      and trigger_record.tgtype = 21
-                      and trigger_record.tgenabled = 'O'
-                      and trigger_record.tgnargs = 0
-                      and routine_namespace.nspname = 'symmy_integration'
-                      and routine.proname = 'materialize_demo_group_membership_route'
-                      and routine.prosecdef
-                      and not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
-                 ) as demo_membership_trigger_safe,
+                   where namespace.nspname = $1 and not trigger_record.tgisinternal
+                     and trigger_record.oid not in (select oid from validated_foreign_triggers)) as trigger_names,
                  (select count(*)::integer
                     from pg_catalog.pg_class as journal
                     join pg_catalog.pg_namespace as namespace on namespace.oid = journal.relnamespace
@@ -475,7 +478,6 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
       row.append_only_trigger_count !== 18,
       row.trigger_count !== EXPECTED_TRIGGER_NAMES.length,
       !sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES),
-      !row.demo_membership_trigger_safe,
       row.journal_count !== 1,
       row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length,
       !sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES),
@@ -504,7 +506,6 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
           `appendOnlyTriggers=${row.append_only_trigger_count}/18, ` +
           `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
           `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +
-          `demoMembershipTriggerSafe=${row.demo_membership_trigger_safe}, ` +
           `journal=${row.journal_count}/1, ` +
           `runtimeRoutines=${row.routine_count}/${EXPECTED_RUNTIME_ROUTINES.length}, ` +
           `missingRoutines=[${missingRoutines.join(',')}], unexpectedRoutines=[${unexpectedRoutines.join(',')}], ` +
