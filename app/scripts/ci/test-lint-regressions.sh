@@ -123,6 +123,24 @@ unsupported_templates() {
   done
   echo 'Unsupported file templates in run and args fail closed before executing the hook.'
 }
+docs_inputs() {
+  for input in non-markdown unterminated empty; do
+    case "$input" in
+      non-markdown) printf 'deleted.md\0deleted.ts\0' >files ;;
+      unterminated) printf 'deleted.md\0unterminated.md' >files ;;
+      empty) : >files ;;
+    esac
+    status=0
+    bash "$selector" docs "$work/files" >docs.out 2>docs.err || status=$?
+    test "$status" -eq 1
+    test ! -s docs.out
+    grep -q 'Docs paths must' docs.err
+  done
+  printf 'deleted.md\0' >files
+  bash "$selector" docs "$work/files" >docs.out
+  test ! -s docs.out
+  echo 'Invalid docs lists fail closed before deletion filtering; all-deleted lists succeed.'
+}
 exclusion_collisions() {
   for tagged in lint global; do
     cat >lefthook.yml <<CONFIG
@@ -149,6 +167,7 @@ case "${1:-all}" in
   quotes) quoted_boundary ;;
   templates) unsupported_templates ;;
   exclusions) exclusion_collisions ;;
-  all) local_skip; no_match; quoted_boundary; unsupported_templates; exclusion_collisions ;;
+  docs) docs_inputs ;;
+  all) local_skip; no_match; quoted_boundary; unsupported_templates; exclusion_collisions; docs_inputs ;;
   *) exit 1 ;;
 esac

@@ -23,7 +23,7 @@ const literal = (node: Expression | Argument | undefined): string | undefined =>
 const markdownModules = (file: string, source: string) => {
   const modules: string[] = [];
   const add = (value: string | undefined) => {
-    if (value !== undefined && /\.mdx?(?:\?.*)?$/u.test(value)) {
+    if (value !== undefined && /\.mdx?(?:[?#]|$)/u.test(value)) {
       modules.push(value);
     }
   };
@@ -56,8 +56,10 @@ const markdownModules = (file: string, source: string) => {
 };
 
 // This fixture is source text, not an import. No tracked source file is exempt from the guard.
+// This guard is a tripwire against an accidental Markdown import, not a defence against deliberate obfuscation.
 const fixture = `
 import './side-effect.md';
+import doc from './guide.md#intro' with { type: 'text' };
 import {
   value
 } from './static.mdx?raw';
@@ -74,8 +76,8 @@ import equals = require('./equals.md');
 type Imported = import('./type.mdx?raw').Value;
 `;
 
-it('detects Markdown modules in import, re-export, require and dynamic import syntax, including queries', () => {
-  expect(markdownModules('fixture.mts', fixture)).toHaveLength(11);
+it('detects Markdown modules in import, re-export, require and dynamic import syntax, including queries and fragments', () => {
+  expect(markdownModules('fixture.mts', fixture)).toHaveLength(12);
   expect(markdownModules('fixture.mts', `const fixture = ${JSON.stringify(fixture)};`)).toEqual([]);
 });
 

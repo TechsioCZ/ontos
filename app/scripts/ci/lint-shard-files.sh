@@ -7,11 +7,14 @@ shard="${1:?lint shard (docs, proof, 1, 2, 3) is required}"
 # An explicit proof row still checks global jobs through lint-files.sh.
 if [[ "$shard" == proof ]]; then exit 0; fi
 if [[ "$shard" == docs ]]; then
+  [[ -s "${2:?the NUL-separated changed-path list is required}" ]] || { echo 'Docs paths must be non-empty.' >&2; exit 1; }
+  while IFS= read -r -d '' file; do [[ "$file" == *.md ]] || { echo 'Docs paths must end in .md.' >&2; exit 1; }; done <"$2"
+  [[ -z "$file" ]] || { echo 'Docs paths must be NUL-terminated.' >&2; exit 1; }
   while IFS= read -r -d '' file; do
     if [[ -f "$file" ]] && git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
       printf '%s\0' "$file"
     fi
-  done <"${2:?the NUL-separated changed-path list is required}"
+  done <"$2"
   exit 0
 fi
 case "$shard" in 1 | 2 | 3) ;; *) echo "Invalid lint shard: $shard" >&2; exit 1 ;; esac

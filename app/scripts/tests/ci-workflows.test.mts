@@ -3220,10 +3220,11 @@ it('selects stage docs only for verified Markdown-only pushes and proof only for
       'app/packages/example/README.md',
       "notes/with 'quotes' and\nnewlines.md",
     ];
-    const docsSnapshot = { ...comparison, changedPaths: markdown };
+    const docsSnapshot = { ...comparison, base: 'b'.repeat(40), changedPaths: markdown };
     expect(shardsFor(JSON.stringify({ comparison: docsSnapshot }), 'push')).toBe('shards=["docs"]');
     expect(readFileSync(path.join(directory, CHANGED_PATHS_FILE), 'utf-8')).toBe(`${markdown.join('\0')}\0`);
     expect(shardsFor(JSON.stringify({ comparison: docsSnapshot }))).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor(JSON.stringify({ comparison: docsSnapshot }), 'push', '')).toBe(WHOLE_TREE_LINT_SHARDS);
     for (const paths of [
       [],
       ['README.MD'],
@@ -3234,7 +3235,7 @@ it('selects stage docs only for verified Markdown-only pushes and proof only for
       ['a.md', 'old.txt'],
       ['a.md\0b.md'],
     ]) {
-      expect(shardsFor(JSON.stringify({ comparison: { ...comparison, changedPaths: paths } }), 'push')).toBe(
+      expect(shardsFor(JSON.stringify({ comparison: { ...docsSnapshot, changedPaths: paths } }), 'push')).toBe(
         WHOLE_TREE_LINT_SHARDS,
       );
     }
@@ -3242,6 +3243,8 @@ it('selects stage docs only for verified Markdown-only pushes and proof only for
       { ...docsSnapshot, ancestor: false },
       { ...docsSnapshot, truncated: true },
       { ...docsSnapshot, base: '' },
+      { ...docsSnapshot, base: head },
+      { ...docsSnapshot, base: `${'b'.repeat(40)}\n` },
       { ...docsSnapshot, changedPaths: null },
     ]) {
       expect(shardsFor(JSON.stringify({ comparison: invalid }), 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
