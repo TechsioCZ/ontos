@@ -10,6 +10,8 @@ import {
 import { PricingChannelIdSchema, PricingMarketIdSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
 import { Schema } from 'effect';
 
+import { symmyOwnerRef } from './owner-ref.ts';
+
 /**
  * Price fields that two public price routes share. Every field reuses the owner schema, so the limits
  * (nine decimals, recognized ISO 4217 currency, exact market id) cannot drift from what Pricing enforces.
@@ -20,8 +22,8 @@ export const symmyPriceFields = {
   currencyCode: PricingCurrencyCodeSchema,
   /** The owner instant accepts `Z` with or without milliseconds and normalizes to milliseconds. */
   effectiveFrom: PriceGroupInstantSchema,
-  productRef: ProductRefSchema,
-  variantRef: VariantRefSchema,
+  productId: ProductRefSchema.fields.resourceId,
+  variantId: VariantRefSchema.fields.resourceId,
 } as const;
 
 export const SymmyPriceCommercialScopeSchema = Schema.Struct({
@@ -30,5 +32,28 @@ export const SymmyPriceCommercialScopeSchema = Schema.Struct({
 });
 export const SymmyPriceUnitBasisSchema = Schema.Struct({
   quantity: PricePositiveDecimalSchema,
-  unitRef: ProductUnitRefSchema,
+  unitId: ProductUnitRefSchema.fields.resourceId,
+});
+
+/** The owner unit basis, with the unit reference built for the tenant of the admitted route. */
+export const symmyOwnerUnitBasis = ({ quantity, unitId }: typeof SymmyPriceUnitBasisSchema.Type, tenantId: string) => ({
+  quantity,
+  unitRef: symmyOwnerRef(ProductUnitRefSchema, tenantId, unitId),
+});
+
+/** One new price as the owner receives it: each id replaced by its reference of the admitted route's tenant. */
+export const symmyOwnerPrice = <
+  Price extends {
+    readonly productId: string;
+    readonly unitBasis: typeof SymmyPriceUnitBasisSchema.Type;
+    readonly variantId: string;
+  },
+>(
+  { productId, unitBasis, variantId, ...price }: Price,
+  tenantId: string,
+) => ({
+  ...price,
+  productRef: symmyOwnerRef(ProductRefSchema, tenantId, productId),
+  unitBasis: symmyOwnerUnitBasis(unitBasis, tenantId),
+  variantRef: symmyOwnerRef(VariantRefSchema, tenantId, variantId),
 });

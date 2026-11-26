@@ -37,4 +37,9 @@ export const priceRef = {
   tenantId,
 };
 export const commercialScope = { channelId: 'B2B', marketId: 'cz-market' };
-export const unitBasis = { quantity: '1', unitRef };
+export const productId = productRef.resourceId;
+export const variantId = variantRef.resourceId;
+export const unitId = unitRef.resourceId;
+export const priceGroupId = priceGroupRef.resourceId;
+export const priceId = priceRef.resourceId;
+export const unitBasis = { quantity: '1', unitId };

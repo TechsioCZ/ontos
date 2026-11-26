@@ -236,7 +236,9 @@ export const makeInternalSyncProducts = (
         name: itemKey,
         variants: [{ identifier: { type: 'sku', value: itemKey }, prices }],
       };
-      return categories === undefined ? product : { ...product, categories };
+      return categories === undefined
+        ? product
+        : { ...product, categoryIds: categories.map(({ resourceId }) => resourceId) };
     }),
 });
 

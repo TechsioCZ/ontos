@@ -563,9 +563,9 @@ it.live(
         });
         const client = yield* HttpClient.HttpClient;
         const headers = { 'x-api-key': Redacted.value(ingressKey.secret) };
-        const postSynchronous = (path: string, idempotencyKey: string, body: JsonBody) =>
-          Effect.gen(function* postSynchronousRoute() {
-            const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${path}`, {
+        const putSynchronous = (path: string, idempotencyKey: string, body: JsonBody) =>
+          Effect.gen(function* putSynchronousRoute() {
+            const response = yield* client.put(`${shell.baseUrl}/api/symmy/v1/${path}`, {
               body: yield* body,
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
@@ -581,20 +581,20 @@ it.live(
             return response;
           });
         const submit = (idempotencyKey: string, rows: readonly GroupRequestRow[]) =>
-          postSynchronous(groupPath, idempotencyKey, groupBody(rows)).pipe(
+          putSynchronous(groupPath, idempotencyKey, groupBody(rows)).pipe(
             Effect.flatMap((response) =>
               response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(groupResponseSchema))),
             ),
           );
         const submitStock = (idempotencyKey: string, rows: readonly StockRequestRow[]) =>
-          postSynchronous(stockPath, idempotencyKey, stockBody(rows)).pipe(
+          putSynchronous(stockPath, idempotencyKey, stockBody(rows)).pipe(
             Effect.flatMap((response) =>
               response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(stockResponseSchema))),
             ),
           );
-        const postStockRaw = (body: JsonBody, idempotencyKey?: string) =>
-          Effect.gen(function* postStockWithoutDiagnostics() {
-            return yield* client.post(`${shell.baseUrl}/api/symmy/v1/${stockPath}`, {
+        const putStockRaw = (body: JsonBody, idempotencyKey?: string) =>
+          Effect.gen(function* putStockWithoutDiagnostics() {
+            return yield* client.put(`${shell.baseUrl}/api/symmy/v1/${stockPath}`, {
               body: yield* body,
               headers: idempotencyKey === undefined ? headers : { ...headers, 'idempotency-key': idempotencyKey },
             });
@@ -640,7 +640,7 @@ it.live(
         expect(groupResult.items[0].effects[0].status).toBe('accepted_change');
         const groupReplay = yield* submit(groupCreateKey, [groupRow]);
         expect(groupReplay).toEqual(groupResult);
-        const deniedGroupWrite = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+        const deniedGroupWrite = yield* client.put(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
           body: yield* groupBody([groupRow]),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_GROUP_REVOKED_WRITER' },
         });
@@ -733,7 +733,7 @@ it.live(
         });
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${productRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(productEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'productsBatch',${internalSyncSource.routeRevision},${yield* json(productPolicy)}::jsonb)`;
-        const early = yield* postStockRaw(stockBody([stockRevision2]), 'INTERNAL_C14_EARLY_STOCK');
+        const early = yield* putStockRaw(stockBody([stockRevision2]), 'INTERNAL_C14_EARLY_STOCK');
         expect(early.status).toBe(503);
         const earlyProblem = yield* early.json.pipe(
           Effect.flatMap((body) =>
@@ -1157,7 +1157,7 @@ it.live(
           Effect.map(([calls]) => calls?.count),
         );
         // Acceptance 4: one unenrolled row rejects the whole request and no owner call is made for either row.
-        const substituted = yield* postStockRaw(
+        const substituted = yield* putStockRaw(
           stockBody([stockRevision2, { ...stockRevision2, itemKey: 'INTERNAL_C14_UNENROLLED_ITEM' }]),
           'INTERNAL_C14_STOCK_UNENROLLED_ROW',
         );
@@ -1179,7 +1179,7 @@ it.live(
           retryable: true,
           status: 503,
         });
-        const unenrolledLocation = yield* postStockRaw(
+        const unenrolledLocation = yield* putStockRaw(
           stockBody([{ ...stockRevision2, locationKey: 'INTERNAL_C14_UNENROLLED_LOCATION' }]),
           'INTERNAL_C14_STOCK_UNENROLLED_LOCATION',
         );
@@ -1200,82 +1200,44 @@ it.live(
           reason: 'LOCATION_NOT_ENROLLED',
           status: 422,
         });
-        yield* Effect.forEach(
-          [
-            {
-              ...stockRevision2,
-              quantity: {
-                ...stockRevision2.quantity,
-                unitRef: { ...stockRevision2.quantity.unitRef, resourceId: randomUUID() },
-              },
-            },
-            {
-              ...stockRevision2,
-              quantity: {
-                ...stockRevision2.quantity,
-                unitRef: { ...stockRevision2.quantity.unitRef, tenantId: randomUUID() },
-              },
-            },
-          ],
-          Effect.fn('InternalC14Stock.refuseForeignUnit')(function* refuseForeignUnit(row, index) {
-            const refused = yield* postStockRaw(stockBody([row]), randomUUID());
-            expect(refused.status).toBe(index === 0 ? 422 : 503);
-            if (index === 0) {
-              const unitProblem = yield* refused.json.pipe(
-                Effect.flatMap((body) =>
-                  decodeInternalSyncProblem({
-                    body,
-                    phase: 'stock-unenrolled-unit',
-                    schema: syncNegativeResponseSchemas.stockInput,
-                    status: refused.status,
-                  }),
-                ),
-              );
-              expect(unitProblem).toMatchObject({
-                itemKey: row.itemKey,
-                locationKey: row.locationKey,
-                reason: 'UNIT_NOT_ENROLLED',
-                status: 422,
-              });
-            } else {
-              const tenantProblem = yield* refused.json.pipe(
-                Effect.flatMap((body) =>
-                  decodeInternalSyncProblem({
-                    body,
-                    phase: 'stock-foreign-unit-tenant',
-                    schema: syncNegativeResponseSchemas.stockSourceUnavailable,
-                    status: refused.status,
-                  }),
-                ),
-              );
-              expect(tenantProblem).toMatchObject({
-                itemKey: row.itemKey,
-                locationKey: row.locationKey,
-                reason: 'TENANT_SCOPE_MISMATCH',
-                retryable: true,
-                status: 503,
-              });
-            }
-          }),
-          { concurrency: 1 },
+        const unenrolledUnit = yield* putStockRaw(
+          stockBody([{ ...stockRevision2, quantity: { ...stockRevision2.quantity, unitId: randomUUID() } }]),
+          randomUUID(),
         );
+        expect(unenrolledUnit.status).toBe(422);
+        const unitProblem = yield* unenrolledUnit.json.pipe(
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-unenrolled-unit',
+              schema: syncNegativeResponseSchemas.stockInput,
+              status: unenrolledUnit.status,
+            }),
+          ),
+        );
+        expect(unitProblem).toMatchObject({
+          itemKey: stockRevision2.itemKey,
+          locationKey: stockRevision2.locationKey,
+          reason: 'UNIT_NOT_ENROLLED',
+          status: 422,
+        });
         expect(yield* importCalls).toBe(0);
         // Acceptance 6 and 5: the key is required, and the retired internal bodies are invalid on the public route.
-        expect((yield* postStockRaw(stockBody([stockRevision2]))).status).toBe(428);
+        expect((yield* putStockRaw(stockBody([stockRevision2]))).status).toBe(428);
         expect(
-          (yield* postStockRaw(
+          (yield* putStockRaw(
             HttpBody.json({ contractVersion: 'INTERNAL_C14', stock: [stockRevision2] }),
             'INTERNAL_C14_STOCK_VERSIONED',
           )).status,
         ).toBe(400);
         expect(
-          (yield* postStockRaw(
+          (yield* putStockRaw(
             HttpBody.json({ stock: [{ ...stockRevision2, reservedQuantity: '1' }] }),
             'INTERNAL_C14_STOCK_RESERVED',
           )).status,
         ).toBe(400);
         expect(
-          (yield* postStockRaw(HttpBody.json({ fixtureId: 'INTERNAL_C14' }), 'INTERNAL_C14_STOCK_FIXTURE')).status,
+          (yield* putStockRaw(HttpBody.json({ fixtureId: 'INTERNAL_C14' }), 'INTERNAL_C14_STOCK_FIXTURE')).status,
         ).toBe(400);
         expect(yield* importCalls).toBe(0);
         yield* fs.writeFileString(stockFaultMarker, 'INTERNAL_C14 transport outage after native Stock commit');
@@ -1353,7 +1315,7 @@ it.live(
         assert.isDefined(nativeReplayInvocation);
         expect(nativeReplayInvocation.action_invocation_id).not.toBe(originalStockAdmission.admission_id);
         // Acceptance 2: the same key with a different figure is a conflict, and only the exact retry reaches the owner.
-        const changedRetry = yield* postStockRaw(
+        const changedRetry = yield* putStockRaw(
           stockBody([{ ...stockRevision2, quantity: { ...stockRevision2.quantity, amount: '13' } }]),
           stockRevision2Key,
         );
@@ -1462,7 +1424,7 @@ it.live(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(nativeGroupSchema))),
           );
         expect(unchangedMeaning).toEqual({ customer_group_id: group.customer_group_id, revision: 2 });
-        const nameOnly = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+        const nameOnly = yield* client.put(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
           body: yield* HttpBody.json({
             customerGroups: [{ code: groupRecordId, name: 'A name alone proves no Group meaning' }],
           }),
@@ -1474,7 +1436,7 @@ it.live(
           ['INTERNAL_C14_GROUP_VERSIONED', { contractVersion: 'INTERNAL_C14', customerGroups: [groupRow] }],
           ['INTERNAL_C14_GROUP_FIXTURE', { fixtureId: 'INTERNAL_C14' }],
         ] as const) {
-          const retired = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+          const retired = yield* client.put(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
             body: yield* HttpBody.json(body),
             headers: { ...headers, 'idempotency-key': idempotencyKey },
           });
@@ -1500,7 +1462,7 @@ it.live(
           ],
         ] as const) {
           yield* setPolicy;
-          const unretained = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+          const unretained = yield* client.put(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
             body: yield* groupBody([
               {
                 ...groupRow,
@@ -1563,7 +1525,7 @@ it.live(
           expect.objectContaining({ owner: inventoryOwner, status: 'accepted_change' }),
         ]);
         expect(yield* submitStock(plainKey, plainRows)).toEqual(plain);
-        expect((yield* postStockRaw(stockBody([{ ...plainRow, revision: '5' }]), plainKey)).status).toBe(409);
+        expect((yield* putStockRaw(stockBody([{ ...plainRow, revision: '5' }]), plainKey)).status).toBe(409);
         const heldKey = 'INTERNAL_C14_STOCK_ROUTE_DEACTIVATED_IN_FLIGHT';
         const heldAssertionId = deriveInternalStockAssertionId(heldKey, 0);
         const heldRows = [stockRow({ amount: '13', revision: '3', sourceReference: 'INTERNAL_C14_STOCK_ASSERTION_3' })];
@@ -1596,7 +1558,7 @@ it.live(
         yield* retryTransport.activate(fixedNativeHeader);
         expect(yield* submitStock(stockRevision2Key, [stockRevision2])).toEqual(stockResult);
         yield* retryTransport.deactivate;
-        const deniedStockWrite = yield* postStockRaw(stockBody(staleRows), 'INTERNAL_C14_STOCK_REVOKED_WRITER');
+        const deniedStockWrite = yield* putStockRaw(stockBody(staleRows), 'INTERNAL_C14_STOCK_REVOKED_WRITER');
         expect(deniedStockWrite.status).toBe(503);
         yield* deniedStockWrite.json.pipe(
           Effect.flatMap((body) =>
@@ -1616,7 +1578,7 @@ it.live(
           values(${replacementStockRouteId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],
             'INTERNAL_C14_STOCK_RECEIVING_MAP_R2','inventoryStockBatch','INTERNAL_C14_STOCK_RECEIVING_R2')`;
         expect(yield* submitStock(stockRevision2Key, [stockRevision2])).toEqual(stockResult);
-        const withdrawnBackend = yield* postStockRaw(
+        const withdrawnBackend = yield* putStockRaw(
           stockBody([stockRevision2]),
           'INTERNAL_C14_STOCK_WITHDRAWN_BACKEND',
         );
@@ -1631,7 +1593,7 @@ it.live(
           tenantId,
         });
         yield* retryTransport.activate(fixedNativeHeader);
-        const cancelledReplay = yield* postStockRaw(stockBody([stockRevision2]), stockRevision2Key);
+        const cancelledReplay = yield* putStockRaw(stockBody([stockRevision2]), stockRevision2Key);
         expect(cancelledReplay.status).toBe(503);
         yield* cancelledReplay.json.pipe(
           Effect.flatMap((body) =>

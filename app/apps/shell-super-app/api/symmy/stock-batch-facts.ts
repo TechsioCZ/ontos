@@ -63,11 +63,8 @@ export const readSymmyStockBatchFacts = Effect.fn('SymmyStockBatch.positionFacts
   if (source.policyRef.tenantId !== routeScope.tenantId) {
     return yield* Effect.fail(sourceUnavailable('TENANT_SCOPE_MISMATCH', rows[0]));
   }
-  // Reject caller errors before acquiring owner authority for any row. A foreign tenant is not an input correction.
+  // Reject caller errors before acquiring owner authority for any row.
   for (const row of rows) {
-    if (row.quantity.unitRef.tenantId !== source.policyRef.tenantId) {
-      return yield* Effect.fail(sourceUnavailable('TENANT_SCOPE_MISMATCH', row));
-    }
     if (row.quantity.unitRef.resourceId !== source.unitRef.resourceId) {
       return yield* Effect.fail(invalidRow('UNIT_NOT_ENROLLED', row));
     }

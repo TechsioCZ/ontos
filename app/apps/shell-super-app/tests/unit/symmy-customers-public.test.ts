@@ -90,11 +90,18 @@ describe('Symmy public customers body', () => {
   it('maps the internal projection to camelCase without markers, cursor or unsupported fields', () => {
     const body = mapSymmyCustomersProjection(projection());
     expect(body).toMatchObject({ count: 3, limit: 50, offset: 1 });
+    const { partyRef: _partyRef, ...ownerParty } = personParty;
     expect(body.customers[0]).toMatchObject({
       id: readId('a'),
-      party: personParty,
-      partyRef,
-      profile: retailProfile,
+      party: { ...ownerParty, partyId },
+      partyId,
+      profile: {
+        profileId,
+        profileKind: 'RETAIL',
+        revision: 1,
+        state: 'ACTIVE',
+        subject: { kind: 'RETAIL', partyId, sellingLegalEntityId: legalEntityId },
+      },
       sourceRecordId: 'source-customer-a',
     });
     expect(body.customers[1]).toMatchObject({
@@ -111,9 +118,67 @@ describe('Symmy public customers body', () => {
       'nextRecordId',
       'source_record_id',
       'business_name',
+      'moduleId',
+      'resourceType',
+      'partyRef',
+      'profileRef',
     ]) {
       expect(json).not.toContain(forbidden);
     }
+  });
+
+  it('names the contact points and a counterparty subject by plain ids', () => {
+    const contactPointId = '77777777-7777-4777-8777-777777777777';
+    const counterpartyId = '88888888-8888-4888-8888-888888888888';
+    const [owner] = projection().customers;
+    const [customer] = mapSymmyCustomersProjection({
+      ...projection(),
+      customers: Schema.decodeUnknownSync(SymmyInternalCustomersProjectionSchema.fields.customers)([
+        {
+          id: owner?.id,
+          party: {
+            ...personParty,
+            contactPoints: [
+              {
+                contactPointRef: {
+                  moduleId: 'party.registry',
+                  resourceId: contactPointId,
+                  resourceType: 'party.registry.party-contact-point',
+                  tenantId,
+                },
+                displayValue: null,
+                normalizedValue: 'petr@example.test',
+                purposes: [],
+                type: 'EMAIL',
+              },
+            ],
+          },
+          partyRef,
+          profile: {
+            ...retailProfile,
+            profileRef: {
+              ...retailProfile.profileRef,
+              kind: 'COUNTERPARTY',
+              resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+            },
+            subject: {
+              counterpartyRef: {
+                moduleId: 'party.registry',
+                resourceId: counterpartyId,
+                resourceType: 'party.registry.counterparty',
+                tenantId,
+              },
+              kind: 'COUNTERPARTY',
+            },
+          },
+          source_record_id: 'source-customer-a',
+        },
+      ]),
+    }).customers;
+    expect(customer?.party?.contactPoints).toMatchObject([{ contactPointId, type: 'EMAIL' }]);
+    expect(customer?.profile).toMatchObject({ profileId, profileKind: 'COUNTERPARTY' });
+    expect(customer?.profile.subject).toEqual({ counterpartyId, kind: 'COUNTERPARTY' });
+    expect(JSON.stringify(customer)).not.toMatch(/moduleId|resourceType/u);
   });
 
   it('leaves an absent party, business name and ICO absent instead of null', () => {
@@ -149,7 +214,7 @@ describe('Symmy public customers body', () => {
 });
 
 describe('Symmy customers query', () => {
-  const names = ['id', 'sourceRecordId', 'partyRef', 'profile', 'party', 'businessName', 'ico'];
+  const names = ['id', 'sourceRecordId', 'partyId', 'profile', 'party', 'businessName', 'ico'];
   const accepted = [
     {},
     { limit: '1' },

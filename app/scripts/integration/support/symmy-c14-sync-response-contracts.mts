@@ -13,7 +13,6 @@ const unavailable = Schema.Union([GatewayUnavailableProblemSchema, SymmyUnavaila
 export const syncNegativeResponseSchemas = {
   stockDependency: SymmyStockDependencyNotReadyProblemSchema,
   stockInput: SymmyStockInputProblemSchema,
-  stockSourceUnavailable: SymmyStockSourceUnavailableProblemSchema,
   unavailable,
 };
 
@@ -23,7 +22,6 @@ const phaseSchema = Schema.Literals([
   'stock-unprovisioned-row',
   'stock-unenrolled-location',
   'stock-unenrolled-unit',
-  'stock-foreign-unit-tenant',
   'group-without-lifecycle-policy',
   'group-unconfigured-lifecycle-policy',
   'stock-revoked-writer',

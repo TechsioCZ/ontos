@@ -219,7 +219,7 @@ export const makeInternalStockRow = (input: {
   businessObservedAt: input.businessObservedAt,
   itemKey: input.itemKey,
   locationKey,
-  quantity: { amount: input.amount, unitRef: input.unitRef },
+  quantity: { amount: input.amount, unitId: input.unitRef.resourceId },
   revision: input.revision,
   sourceReference: input.sourceReference,
 });

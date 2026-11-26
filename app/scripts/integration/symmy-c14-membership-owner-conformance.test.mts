@@ -221,7 +221,7 @@ it.live(
         });
         const client = yield* HttpClient.HttpClient;
         const headers = { 'x-api-key': Redacted.value(fixture.providerKey.secret) };
-        const groupResponse = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/batch`, {
+        const groupResponse = yield* client.put(`${shell.baseUrl}/api/symmy/v1/customer-groups/batch`, {
           body: yield* HttpBody.json({
             customerGroups: [
               {

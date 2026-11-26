@@ -7,10 +7,25 @@ import type { SymmyProductFieldName } from './contract.ts';
 import { SymmyInternalProductsProjectionSchema, SymmyQualifiedReadIdSchema } from './read-projection-contracts.ts';
 import type { SymmyInternalProductsProjection } from './read-projection-contracts.ts';
 
-const productFields = ProductSchema.fields;
+/**
+ * The Catalog product with every reference as its plain id. A variant already carries `variantId`, so only its
+ * product is renamed.
+ */
+const { productRef, variants, ...ownerProductFields } = ProductSchema.fields;
+const variantFields = variants.value.fields;
+const productId = productRef.fields.resourceId;
+const productFields = {
+  ...ownerProductFields,
+  productId,
+  variants: Schema.Array(
+    Schema.Struct({ lifecycle: variantFields.lifecycle, productId, variantId: variantFields.variantId }),
+  ).check(Schema.isMinLength(1)),
+};
+const PublicProductSchema = Schema.Struct(productFields);
+type PublicProduct = typeof PublicProductSchema.Type;
 const itemFields = {
   id: SymmyQualifiedReadIdSchema,
-  product: ProductSchema,
+  product: PublicProductSchema,
   sourceRecordId: CatalogSourceCorrelationSchema.fields.recordId,
   variantSources: Schema.Array(
     Schema.Struct({
@@ -46,7 +61,7 @@ export const SymmyProductsSelectedResponseSchema = Schema.Struct({
           description: Schema.optionalKey(productFields.description),
           lifecycle: Schema.optionalKey(productFields.lifecycle),
           name: Schema.optionalKey(productFields.name),
-          productRef: Schema.optionalKey(productFields.productRef),
+          productId: Schema.optionalKey(productFields.productId),
           revision: Schema.optionalKey(productFields.revision),
           updatedAt: Schema.optionalKey(productFields.updatedAt),
           variants: Schema.optionalKey(productFields.variants),
@@ -64,6 +79,16 @@ export const SymmyProductsSuccessSchema = Schema.Union([
   SymmyProductsSelectedResponseSchema,
 ]);
 
+const mapProduct = ({ productRef: owner, variants: owned, ...product }: Product): PublicProduct => ({
+  ...product,
+  productId: owner.resourceId,
+  variants: owned.map(({ lifecycle, productRef: parent, variantId }) => ({
+    lifecycle,
+    productId: parent.resourceId,
+    variantId,
+  })),
+});
+
 /** `unsupported_fields` is still computed by the projection and is deliberately not exposed. */
 export const mapSymmyProductsProjection = (projection: SymmyInternalProductsProjection): SymmyProductsResponse => ({
   count: projection.count,
@@ -71,7 +96,7 @@ export const mapSymmyProductsProjection = (projection: SymmyInternalProductsProj
   offset: projection.offset,
   products: projection.products.map((item) => ({
     id: item.id,
-    product: item.product,
+    product: mapProduct(item.product),
     sourceRecordId: item.source_record_id,
     variantSources: item.variantSources.map((variant) => ({
       id: variant.id,
@@ -87,14 +112,14 @@ const productKeys = [
   'description',
   'lifecycle',
   'name',
-  'productRef',
+  'productId',
   'revision',
   'updatedAt',
   'variants',
 ] as const;
 const itemKeys = ['sourceRecordId', 'variantSources'] as const;
 /** `product` returns the whole object; otherwise only the named `product.*` keys that the product has. */
-const selectProduct = (product: Product, names: ReadonlySet<SymmyProductFieldName>) => {
+const selectProduct = (product: PublicProduct, names: ReadonlySet<SymmyProductFieldName>) => {
   if (names.has('product')) {
     return product;
   }

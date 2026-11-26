@@ -6,36 +6,20 @@ import { ControlledAttributeValueRefSchema } from '@app/catalog/resources/contro
 import { ProductCategoryRefSchema } from '@app/catalog/resources/product-category';
 import { ProductTypeRefSchema } from '@app/catalog/resources/product-type';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
-import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { MarketRefSchema } from '@app/commerce-market-catalog/resources/market';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/domain/currency-support';
 import { PricingChannelIdSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
-import {
-  PriceNonNegativeDecimalSchema,
-  PricePositiveDecimalSchema,
-} from '@app/pricing-contracts/domain/price-definition';
+import { PriceNonNegativeDecimalSchema } from '@app/pricing-contracts/domain/price-definition';
 import { SymmyProductPlanSizeSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Schema } from 'effect';
 
+import { SymmyPriceUnitBasisSchema } from './price-request-fields.ts';
+
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 const instant = Schema.DateTimeUtcFromString;
-
-/**
- * An owner reference object whose owner schema is not exported: sizes, media documents and the price channel.
- * It keeps the shape every owner reference has, so a bare string is refused. The owner names the exact type later.
- */
-const SymmyOwnerRefSchema = Schema.Struct({
-  moduleId: text(300),
-  resourceId: text(300),
-  resourceType: text(300),
-  tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyOwnerRefTenantId')),
-});
-
-/** The channel is the owner's own closed vocabulary, so any other value is refused here and not at the owner. */
-const SymmyChannelRefSchema = Schema.Struct({ ...SymmyOwnerRefSchema.fields, resourceId: PricingChannelIdSchema });
 
 const localizedFacts = SetVariantLocalizedFactsPayloadSchema.fields;
 const EffectivePeriodSchema = Schema.Struct({
@@ -52,36 +36,40 @@ const LocalizedSchema = Schema.Struct({
 
 const AttributeValueSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('TEXT'), text: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal('CONTROLLED'), valueRef: ControlledAttributeValueRefSchema }),
+  Schema.Struct({ kind: Schema.Literal('CONTROLLED'), valueId: ControlledAttributeValueRefSchema.fields.resourceId }),
   Schema.Struct({ amount: Schema.Finite, kind: Schema.Literal('MEASUREMENT'), unit: text(300) }),
   Schema.Struct({ kind: Schema.Literal('SPECIAL'), state: Schema.Literals(['UNKNOWN', 'NONE', 'NOT_APPLICABLE']) }),
 ]);
 const AttributeSchema = Schema.Struct({
-  attributeDefinitionRef: AttributeDefinitionRefSchema,
+  attributeDefinitionId: AttributeDefinitionRefSchema.fields.resourceId,
   values: Schema.optionalKey(Schema.Array(AttributeValueSchema)),
 });
 
-/** `brandRef` exists only for kind `brand`. */
+/** `brandId` exists only for kind `brand`. */
 const BrandSchema = Schema.Union([
-  Schema.Struct({ brandRef: BrandRefSchema, kind: Schema.Literal('brand') }),
+  Schema.Struct({ brandId: BrandRefSchema.fields.resourceId, kind: Schema.Literal('brand') }),
   Schema.Struct({ kind: Schema.Literals(['unknown', 'confirmed_unbranded']) }),
 ]);
 const ManufacturerSchema = Schema.Struct({
   effectivePeriod: Schema.optionalKey(EffectivePeriodSchema),
   target: Schema.Union([
-    Schema.Struct({ kind: Schema.Literal('PARTY'), partyRef: PartyRefSchema }),
-    Schema.Struct({ kind: Schema.Literal('LEGAL_ENTITY'), legalEntityRef: LegalEntityRefSchema }),
+    Schema.Struct({ kind: Schema.Literal('PARTY'), partyId: PartyRefSchema.fields.resourceId }),
+    Schema.Struct({ kind: Schema.Literal('LEGAL_ENTITY'), legalEntityId: LegalEntityRefSchema.fields.resourceId }),
   ]),
 });
 const MediaSchema = Schema.Struct({
   order: Schema.Finite,
   purpose: text(300),
+  resourceId: text(300),
   resourceKind: Schema.Literals(['MEDIA', 'DOCUMENT']),
-  resourceRef: SymmyOwnerRefSchema,
 });
 const RelationshipSchema = Schema.Struct({
   effectivePeriod: Schema.optionalKey(EffectivePeriodSchema),
-  target: Schema.Union([ProductRefSchema, VariantRefSchema]),
+  /** Exactly one of the two ids: naming both, or neither, matches no member. */
+  target: Schema.Union([
+    Schema.Struct({ productId: ProductRefSchema.fields.resourceId }),
+    Schema.Struct({ variantId: VariantRefSchema.fields.resourceId }),
+  ]),
   type: Schema.Literals(['ACCESSORY_FOR', 'RELATED_PRODUCT', 'SUCCESSOR']),
 });
 
@@ -90,15 +78,15 @@ const PriceSchema = Schema.Struct({
   amount: PriceNonNegativeDecimalSchema,
   commercialScope: Schema.optionalKey(
     Schema.Struct({
-      channelRef: Schema.optionalKey(SymmyChannelRefSchema),
-      commerceMarketRef: Schema.optionalKey(MarketRefSchema),
-      sellingLegalEntityRef: Schema.optionalKey(LegalEntityRefSchema),
+      channelId: Schema.optionalKey(PricingChannelIdSchema),
+      marketId: Schema.optionalKey(MarketRefSchema.fields.resourceId),
+      sellingLegalEntityId: Schema.optionalKey(LegalEntityRefSchema.fields.resourceId),
     }),
   ),
   currencyCode: PricingCurrencyCodeSchema,
   effectiveFrom: Schema.optionalKey(instant),
   priceGroupCode: Schema.optionalKey(text(300)),
-  unitBasis: Schema.optionalKey(Schema.Struct({ quantity: PricePositiveDecimalSchema, unitRef: ProductUnitRefSchema })),
+  unitBasis: Schema.optionalKey(SymmyPriceUnitBasisSchema),
 });
 
 const VariantSchema = Schema.Struct({
@@ -116,7 +104,7 @@ const VariantSchema = Schema.Struct({
 const SymmyProductSchema = Schema.Struct({
   attributes: Schema.optionalKey(Schema.Array(AttributeSchema)),
   brand: Schema.optionalKey(BrandSchema),
-  categories: Schema.optionalKey(Schema.Array(ProductCategoryRefSchema)),
+  categoryIds: Schema.optionalKey(Schema.Array(ProductCategoryRefSchema.fields.resourceId)),
   description: Schema.optionalKey(ProductDescriptionSchema),
   gtin: Schema.optionalKey(GtinSchema),
   identifier: Schema.optionalKey(Schema.Struct({ type: Schema.Literals(['sku', 'ean', 'erpId']), value: text(300) })),
@@ -125,9 +113,9 @@ const SymmyProductSchema = Schema.Struct({
   manufacturer: Schema.optionalKey(ManufacturerSchema),
   media: Schema.optionalKey(Schema.Array(MediaSchema)),
   name: ProductNameSchema,
-  productType: Schema.optionalKey(ProductTypeRefSchema),
+  productTypeId: Schema.optionalKey(ProductTypeRefSchema.fields.resourceId),
   relationships: Schema.optionalKey(Schema.Array(RelationshipSchema)),
-  sizes: Schema.optionalKey(Schema.Array(SymmyOwnerRefSchema)),
+  sizeIds: Schema.optionalKey(Schema.Array(text(300))),
   sku: Schema.optionalKey(text(300)),
   /** The first variant is the initial variant, created together with the product. */
   variants: Schema.NonEmptyArray(VariantSchema),

@@ -77,33 +77,19 @@ export const makeInternalC14ProductRouteTemplate = (input: {
   sourceRouteRevision: internalProductSource.routeRevision,
 });
 
-const catalogRef = (tenantId: string, type: string, resourceId: string) => ({
-  moduleId: catalogModule,
-  resourceId,
-  resourceType: `commerce.catalog.${type}`,
-  tenantId,
-});
-
 /**
  * The public body of the first job: a product with an initial variant (localized text and a price) and a further
- * variant, plus unsupported fields. It stays category-free: Category refs now request real owner assignments, not
+ * variant, plus unsupported fields. It stays category-free: Category ids now request real owner assignments, not
  * unsupported hints, and this Product recovery route enrolls no assignment authority.
  */
-export const makeInternalC14ProductBody = (tenantId: string): Schema.Json => ({
+export const makeInternalC14ProductBody = (): Schema.Json => ({
   products: [
     {
-      attributes: [{ attributeDefinitionRef: catalogRef(tenantId, 'attribute-definition', randomUUID()), values: [] }],
+      attributes: [{ attributeDefinitionId: randomUUID(), values: [] }],
       identifier: { type: 'erpId', value: internalProductSource.productIdentifier },
-      media: [
-        {
-          order: 1,
-          purpose: 'GALLERY',
-          resourceKind: 'MEDIA',
-          resourceRef: catalogRef(tenantId, 'media', randomUUID()),
-        },
-      ],
+      media: [{ order: 1, purpose: 'GALLERY', resourceId: randomUUID(), resourceKind: 'MEDIA' }],
       name: 'INTERNAL_C14 native Product',
-      productType: catalogRef(tenantId, 'product-type', randomUUID()),
+      productTypeId: randomUUID(),
       sku: 'INTERNAL_C14_SKU',
       variants: [
         {

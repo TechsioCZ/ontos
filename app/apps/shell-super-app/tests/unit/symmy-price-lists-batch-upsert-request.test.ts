@@ -2,7 +2,14 @@ import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyPriceListsBatchRequestSchema } from '../../api/symmy/price-lists-batch-upsert-request-contract.ts';
-import { commercialScope, priceGroupRef, productRef, unitBasis, variantRef } from './symmy-price-requests.fixtures.ts';
+import {
+  commercialScope,
+  priceGroupId,
+  productId,
+  productRef,
+  unitBasis,
+  variantId,
+} from './symmy-price-requests.fixtures.ts';
 import type { Json } from './symmy-price-requests.fixtures.ts';
 
 // The HTTP layer decodes with excess properties rejected; the schema must hold under the same options.
@@ -22,9 +29,9 @@ const price = {
   commercialScope,
   currencyCode: 'CZK',
   effectiveFrom: '2026-01-01T00:00:00Z',
-  productRef,
+  productId,
   unitBasis,
-  variantRef,
+  variantId,
 };
 const withList = (extra: Readonly<Record<string, Json>>) => ({ priceLists: [{ ...list, ...extra }] });
 const withPrices = (prices: Json) => withList({ prices });
@@ -117,9 +124,10 @@ describe('Symmy price lists batch upsert request', () => {
       { currencyCode: 'czk' },
       { currencyCode: 'CZ' },
       { currencyCode: 'QQQ' },
-      { productRef: variantRef },
-      { productRef: 'product-1' },
-      { variantRef: productRef },
+      { productId: productRef },
+      { productId: 'product-1' },
+      { variantId: 'variant-1' },
+      { productRef },
       { effectiveFrom: 'soon' },
       { priceRef: { ...productRef } },
       { reason: 'x' },
@@ -146,10 +154,12 @@ describe('Symmy price lists batch upsert request', () => {
     expect(
       accepts(withPrices([{ ...price, commercialScope: { ...commercialScope, sellingLegalEntityId: 'x' } }])),
     ).toBe(false);
-    expect(accepts(withPrices([{ ...price, unitBasis: { quantity: '0', unitRef: unitBasis.unitRef } }]))).toBe(false);
+    expect(accepts(withPrices([{ ...price, unitBasis: { quantity: '0', unitId: unitBasis.unitId } }]))).toBe(false);
     expect(accepts(withPrices([{ ...price, unitBasis: { quantity: '1' } }]))).toBe(false);
-    expect(accepts(withPrices([{ ...price, unitBasis: { unitRef: unitBasis.unitRef } }]))).toBe(false);
-    expect(accepts(withPrices([{ ...price, unitBasis: { quantity: '1', unitRef: priceGroupRef } }]))).toBe(false);
+    expect(accepts(withPrices([{ ...price, unitBasis: { unitId: unitBasis.unitId } }]))).toBe(false);
+    expect(
+      accepts(withPrices([{ ...price, unitBasis: { quantity: '1', unitRef: { resourceId: priceGroupId } } }])),
+    ).toBe(false);
   });
 
   it('refuses null in any field', () => {

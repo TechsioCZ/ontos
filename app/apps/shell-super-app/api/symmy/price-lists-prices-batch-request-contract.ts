@@ -16,9 +16,9 @@ const DefinePriceSchema = Schema.Struct({
   currencyCode: symmyPriceFields.currencyCode,
   effectiveFrom: symmyPriceFields.effectiveFrom,
   operation: Schema.Literal('DEFINE'),
-  productRef: symmyPriceFields.productRef,
+  productId: symmyPriceFields.productId,
   unitBasis: SymmyPriceUnitBasisSchema,
-  variantRef: symmyPriceFields.variantRef,
+  variantId: symmyPriceFields.variantId,
 });
 
 /** A value-only change of the current revision, fenced by the revision the caller last read. */
@@ -27,7 +27,7 @@ const RevisePriceSchema = Schema.Struct({
   currencyCode: symmyPriceFields.currencyCode,
   expectedRevision: Schema.Struct({ revision: PriceRevisionNumberSchema, revisionId: PriceRevisionIdSchema }),
   operation: Schema.Literal('REVISE'),
-  priceRef: PriceRefSchema,
+  priceId: PriceRefSchema.fields.resourceId,
 });
 
 const trimTrailingZeros = (quantity: string) =>
@@ -37,20 +37,20 @@ type PriceItem = typeof DefinePriceSchema.Type | typeof RevisePriceSchema.Type;
 /** The identity a price is written under, so two items for one price are one error rather than a race. */
 const identityOf = (item: PriceItem): string =>
   item.operation === 'REVISE'
-    ? `REVISE:${item.priceRef.resourceId}`
+    ? `REVISE:${item.priceId}`
     : [
         'DEFINE',
-        item.variantRef.resourceId,
+        item.variantId,
         item.currencyCode,
         item.commercialScope.channelId,
         item.commercialScope.marketId,
         trimTrailingZeros(item.unitBasis.quantity),
-        item.unitBasis.unitRef.resourceId,
+        item.unitBasis.unitId,
       ].join(':');
 
 /** The public body of `POST /price-lists/prices/batch`: one price list per request, one to sixteen items. */
 export const SymmyPriceListPricesBatchRequestSchema = Schema.Struct({
-  priceGroupRef: PriceGroupRefSchema,
+  priceGroupId: PriceGroupRefSchema.fields.resourceId,
   prices: Schema.NonEmptyArray(Schema.Union([DefinePriceSchema, RevisePriceSchema])).check(
     Schema.isMaxLength(16),
     Schema.makeFilter((items) =>

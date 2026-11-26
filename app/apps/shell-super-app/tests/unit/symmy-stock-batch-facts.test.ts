@@ -18,6 +18,8 @@ import {
   SymmyStockSourceUnavailableProblemSchema,
 } from '../../api/symmy/contract.ts';
 import { makeSymmyGovernedDispatch } from '../../api/symmy/governed-dispatch.ts';
+import { mapSymmyStockBatchRequest } from '../../api/symmy/stock-batch-public-contract.ts';
+import { SymmyStockBatchRequestSchema } from '../../api/symmy/stock-batch-request-contract.ts';
 import type { SymmyIngressAdmission } from '../../api/symmy/transport.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -72,11 +74,15 @@ const row = (itemKey: string) => ({
   businessObservedAt: '2026-01-01T10:00:00.000Z',
   itemKey,
   locationKey: 'warehouse-1',
-  quantity: { amount: '10', unitRef },
+  quantity: { amount: '10', unitId: unitRef.resourceId },
   revision: '1',
   sourceReference: itemKey,
 });
-const rows = Schema.decodeUnknownSync(SymmyStockRowsSchema)([row('new-A'), row('new-B')]);
+const publicRows = (stock: readonly Schema.Json[]) =>
+  Schema.decodeUnknownSync(SymmyStockBatchRequestSchema)({ stock }).stock;
+const rows = publicRows([row('new-A'), row('new-B')]);
+/** What the owner receives: the same rows with the unit reference built for the route tenant. */
+const ownerRows = mapSymmyStockBatchRequest({ stock: rows }, tenantId);
 const resolved = (itemKey: string) =>
   Schema.decodeUnknownSync(SourceStockPositionResolutionResponseSchema.members[0])({
     _tag: 'RESOLVED',
@@ -204,7 +210,7 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
         Effect.flatMap(Schema.decodeUnknownEffect(syncPayloadSchema)),
       );
       expect(payload.stockFacts).toEqual(
-        rows.map((stockRow) => ({
+        ownerRows.map((stockRow) => ({
           request: {
             customerConfigurationId: source.customerConfigurationId,
             externalScope: source.externalScope,
@@ -216,7 +222,8 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
           resolution: resolved(stockRow.itemKey),
         })),
       );
-      expect(payload.stock).toEqual(rows);
+      expect(payload.stock).toEqual(ownerRows);
+      expect(payload.stock[0]?.quantity.unitRef).toEqual(unitRef);
       // The admitting route has a company; Inventory still receives only Tenant authority.
       expect(h.acquisitions).toEqual([{ audience: 'inventory' }, { audience: 'inventory' }]);
     }),
@@ -225,13 +232,7 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
   it.effect('resolves each distinct ITEM+LOCATION once even when several source revisions name the pair', () =>
     Effect.gen(function* test() {
       const h = harness();
-      yield* h.apply(
-        Schema.decodeUnknownSync(SymmyStockRowsSchema)([
-          row('new-A'),
-          { ...row('new-A'), revision: '2' },
-          row('new-B'),
-        ]),
-      );
+      yield* h.apply(publicRows([row('new-A'), { ...row('new-A'), revision: '2' }, row('new-B')]));
       expect(h.requests.filter((request) => request.url.includes('/reads/'))).toHaveLength(2);
     }),
   );
@@ -256,9 +257,7 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
       expect(payload.stockFacts).toBeUndefined();
       const divergent = harness({ admissionConflict: true, ownerStatus: 503, route: replayRoute });
       expect(
-        yield* divergent
-          .apply(Schema.decodeUnknownSync(SymmyStockRowsSchema)([{ ...row('new-A'), revision: 'changed' }]))
-          .pipe(Effect.flip),
+        yield* divergent.apply(publicRows([{ ...row('new-A'), revision: 'changed' }])).pipe(Effect.flip),
       ).toMatchObject({ status: 409 });
       expect(divergent.acquisitions).toEqual([]);
       expect(divergent.requests).toHaveLength(1);
@@ -286,10 +285,10 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
       expect(
         yield* changed
           .apply(
-            Schema.decodeUnknownSync(SymmyStockRowsSchema)([
+            publicRows([
               {
                 ...row('new-A'),
-                quantity: { amount: '999', unitRef },
+                quantity: { amount: '999', unitId: unitRef.resourceId },
               },
             ]),
           )
@@ -377,14 +376,14 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
             reason: 'UNIT_NOT_ENROLLED',
             row: {
               ...row('new-A'),
-              quantity: { amount: '1', unitRef: { ...unitRef, resourceId: '33333333-3333-4333-8333-333333333334' } },
+              quantity: { amount: '1', unitId: '33333333-3333-4333-8333-333333333334' },
             },
           },
         ],
         ({ reason, row: invalid }) =>
           Effect.gen(function* refuse() {
             const h = harness();
-            const failure = yield* h.apply(Schema.decodeUnknownSync(SymmyStockRowsSchema)([invalid])).pipe(Effect.flip);
+            const failure = yield* h.apply(publicRows([invalid])).pipe(Effect.flip);
             expect(Schema.is(SymmyStockInputProblemSchema)(failure)).toBe(true);
             expect(failure).toMatchObject({
               itemKey: invalid.itemKey,
@@ -418,20 +417,6 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
       expect(Schema.is(SymmyStockSourceUnavailableProblemSchema)(outage)).toBe(true);
       expect(outage).toMatchObject({ reason: 'OWNER_UNAVAILABLE', status: 503 });
       expect(yield* harness({ ownerStatus: 403 }).apply().pipe(Effect.flip)).toMatchObject({ status: 403 });
-      const foreignTenant = harness();
-      expect(
-        yield* foreignTenant
-          .apply(
-            Schema.decodeUnknownSync(SymmyStockRowsSchema)([
-              {
-                ...row('new-A'),
-                quantity: { amount: '1', unitRef: { ...unitRef, tenantId: legalEntityId } },
-              },
-            ]),
-          )
-          .pipe(Effect.flip),
-      ).toMatchObject({ reason: 'TENANT_SCOPE_MISMATCH', status: 503 });
-      expect(foreignTenant.requests).toEqual([]);
     }),
   );
 });

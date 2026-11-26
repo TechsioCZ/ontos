@@ -59,7 +59,7 @@ const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
   nativeSymmyPath(SYMMY_ROUTES.customerGroupCustomersBatch.path),
   { ...symmySubmitOptions, params: symmyCodeParams },
 );
-const customerGroupsBatchEndpoint = HttpApiEndpoint.post('customerGroupsBatch', SYMMY_ROUTES.customerGroupsBatch.path, {
+const customerGroupsBatchEndpoint = HttpApiEndpoint.put('customerGroupsBatch', SYMMY_ROUTES.customerGroupsBatch.path, {
   ...symmyWriteOptions,
   payload: SymmyCustomerGroupsBatchRequestSchema,
   success: SymmyCustomerGroupsBatchResponseSchema,
@@ -68,7 +68,7 @@ const customersBatchEndpoint = HttpApiEndpoint.post('customersBatch', SYMMY_ROUT
   ...symmySubmitOptions,
   payload: SymmyCustomersBatchRequestSchema,
 });
-const inventoryStockBatchEndpoint = HttpApiEndpoint.post('inventoryStockBatch', SYMMY_ROUTES.inventoryStockBatch.path, {
+const inventoryStockBatchEndpoint = HttpApiEndpoint.put('inventoryStockBatch', SYMMY_ROUTES.inventoryStockBatch.path, {
   ...symmyWriteOptions,
   payload: SymmyStockBatchRequestSchema,
   success: SymmyStockBatchResponseSchema,

@@ -11,7 +11,7 @@ import {
 } from '@app/catalog/api/create-product-recovery';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { PriceDefinitionSchema } from '@app/pricing-contracts/domain/price-definition';
-import { ProductActionInvocationIdSchema, ProductSchema } from '@app/catalog/domain/product';
+import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import type { OntosModuleDeploymentContract } from '@app/core-runtime';
@@ -43,6 +43,7 @@ import {
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
+import { SymmyProductsResponseSchema } from '../../apps/shell-super-app/api/symmy/products-public-contract.ts';
 import {
   bootstrapInternalC14SupportedProductPriceFacts,
   makeInternalC14ProductPriceGrant,
@@ -175,7 +176,7 @@ const readProjectionSchema = Schema.Struct({
   products: Schema.Array(
     Schema.Struct({
       id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
-      product: ProductSchema,
+      product: SymmyProductsResponseSchema.fields.products.value.fields.product,
       sourceRecordId: sourceRecordIdSchema,
       variantSources: Schema.Array(
         Schema.Struct({
@@ -630,7 +631,7 @@ it.live(
         expect(setupFacts.unit.unit.resourceId).toBe(proposedUnitId);
         expect(setupFacts.market.marketRef.resourceId).toBe(proposedMarketId);
         const headers = { 'x-api-key': Redacted.value(key.secret) };
-        const payload = makeInternalC14ProductBody(tenantId);
+        const payload = makeInternalC14ProductBody();
         const submit = (idempotencyKey = 'INTERNAL_C14_PRODUCT_JOB', body: Schema.Json = payload) =>
           Effect.gen(function* submitProduct() {
             const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/products/batch`, {
@@ -859,8 +860,9 @@ it.live(
         );
         assert.isOk(product);
         expect(product.id).not.toBe(productRecordId(internalProductSource.productIdentifier));
-        expect(product.product.productRef).toEqual(originalReceipt.productRef);
+        expect(product.product.productId).toBe(originalReceipt.productRef.resourceId);
         expect(product.product.variants).toHaveLength(2);
+        expect(product.product.variants.every(({ productId }) => productId === product.product.productId)).toBe(true);
         expect(
           EffectArray.sort(
             product.variantSources.map(({ sourceRecordId }) => sourceRecordId),

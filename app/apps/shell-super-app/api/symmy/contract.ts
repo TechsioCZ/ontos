@@ -188,7 +188,7 @@ const SymmyRegionFieldNameSchema = Schema.Literals([
   'currencyCode',
   'id',
   'marketCode',
-  'marketRef',
+  'marketId',
   'sourceRecordId',
 ]);
 export type SymmyRegionFieldName = typeof SymmyRegionFieldNameSchema.Type;
@@ -210,7 +210,7 @@ const SymmyProductFieldNameSchema = Schema.Literals([
   'product.description',
   'product.lifecycle',
   'product.name',
-  'product.productRef',
+  'product.productId',
   'product.revision',
   'product.updatedAt',
   'product.variants',
@@ -234,7 +234,7 @@ const SymmyCustomerFieldNameSchema = Schema.Literals([
   'ico',
   'id',
   'party',
-  'partyRef',
+  'partyId',
   'profile',
   'sourceRecordId',
 ]);

@@ -47,6 +47,8 @@ import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyPriceListsResponseSchema } from '../../api/symmy/price-lists-public-contract.ts';
+import { SymmyProductsBatchRequestSchema } from '../../api/symmy/products-batch-request-contract.ts';
+import { SymmyStockBatchRequestSchema } from '../../api/symmy/stock-batch-request-contract.ts';
 import {
   SymmyInternalCustomersProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
@@ -115,12 +117,7 @@ const publicPriceListsBody = {
       code: 'CZ wholesale',
       description: 'Wholesale prices',
       name: 'CZ wholesale',
-      priceGroupRef: {
-        moduleId: 'pricing.price-group-catalog',
-        resourceId: regionsMarketRef.resourceId,
-        resourceType: 'pricing.price-group-catalog.price-group',
-        tenantId: regionsMarketRef.tenantId,
-      },
+      priceGroupId: regionsMarketRef.resourceId,
       startsAt: '2026-01-01T00:00:00.000Z',
     },
   ],
@@ -172,6 +169,16 @@ const productsProjection = Schema.decodeUnknownSync(SymmyInternalProductsProject
   projection: 'products',
   unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],
 });
+const publicProductsReadProduct = {
+  catalogReady: false,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  lifecycle: 'DRAFT',
+  name: 'Native chair',
+  productId: productsRef.resourceId,
+  revision: 1,
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  variants: [{ lifecycle: 'WORK_IN_PROGRESS', productId: productsRef.resourceId, variantId: productsVariantId }],
+};
 const publicProductsReadBody = {
   count: 2,
   limit: 50,
@@ -179,7 +186,7 @@ const publicProductsReadBody = {
   products: [
     {
       id: `~c14r1.${'p'.repeat(43)}`,
-      product: productsNative,
+      product: publicProductsReadProduct,
       sourceRecordId: 'source-product-a',
       variantSources: [
         { id: `~c14r1.${'v'.repeat(43)}`, sourceRecordId: 'source-variant-a', variantId: productsVariantId },
@@ -238,8 +245,18 @@ const publicCustomersReadBody = {
     {
       ico: { _tag: 'ABSENT' },
       id: `~c14r1.${'c'.repeat(43)}`,
-      partyRef: customersPartyRef,
-      profile: customersProfile,
+      partyId: customersPartyRef.resourceId,
+      profile: {
+        profileId: customersProfile.profileRef.resourceId,
+        profileKind: 'RETAIL',
+        revision: 1,
+        state: 'ACTIVE',
+        subject: {
+          kind: 'RETAIL',
+          partyId: customersPartyRef.resourceId,
+          sellingLegalEntityId: customersProfile.subject.sellingLegalEntityRef.resourceId,
+        },
+      },
       sourceRecordId: 'source-customer-a',
     },
   ],
@@ -268,7 +285,7 @@ const publicRegionsBody = {
       currencyCode: 'CZK',
       id: `~c14r1.${'a'.repeat(43)}`,
       marketCode: 'CZ_NATIVE',
-      marketRef: regionsMarketRef,
+      marketId: regionsMarketRef.resourceId,
       sourceRecordId: 'source-region-a',
     },
   ],
@@ -446,10 +463,13 @@ const stockRow = (itemKey: string, observedAt = '2026-01-01T10:00:00Z') => ({
   businessObservedAt: observedAt,
   itemKey,
   locationKey: 'warehouse-1',
-  quantity: { amount: '12.5', unitRef: stockUnitRef },
+  quantity: { amount: '12.5', unitId: stockUnitRef.resourceId },
   revision: 'r1',
   sourceReference: `erp-${itemKey}`,
 });
+/** What the transport hands to the dispatch: the decoded public rows, before any reference is built. */
+const decodedStock = (rows: readonly ReturnType<typeof stockRow>[]) =>
+  Schema.decodeUnknownSync(SymmyStockBatchRequestSchema)({ stock: rows }).stock;
 /** The decoder reads any ISO instant, the owner admission always receives the canonical form. */
 const stockBatchJson = (rows: readonly ReturnType<typeof stockRow>[]) => ({
   body: JSON.stringify({ stock: rows }),
@@ -467,9 +487,9 @@ const priceRow = {
   commercialScope: { channelId: 'B2B', marketId: 'cz-market' },
   currencyCode: 'CZK',
   effectiveFrom: '2026-01-01T00:00:00Z',
-  productRef: priceProductRef,
-  unitBasis: { quantity: '1', unitRef: stockUnitRef },
-  variantRef: priceVariantRef,
+  productId: priceProductRef.resourceId,
+  unitBasis: { quantity: '1', unitId: stockUnitRef.resourceId },
+  variantId: priceVariantRef.resourceId,
 };
 const priceListRow = {
   businessCode: 'CZ_WHOLESALE',
@@ -492,12 +512,6 @@ const canonicalPriceList = {
 };
 
 type SymmyIngressServer = ReturnType<typeof start>;
-interface PublicPriceGroupRef {
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly tenantId: string;
-}
 const definedAt = '2026-01-01T00:00:00.000Z';
 const definePriceRow = { ...priceRow, operation: 'DEFINE' };
 const revisePriceRow = {
@@ -505,21 +519,23 @@ const revisePriceRow = {
   currencyCode: 'CZK',
   expectedRevision: { revision: 1, revisionId: '44444444-4444-4444-8444-444444444444' },
   operation: 'REVISE',
-  priceRef: {
-    moduleId: 'commerce.pricing',
-    resourceId: '33333333-3333-4333-8333-333333333340',
-    resourceType: 'commerce.pricing.price',
-    tenantId: regionsMarketRef.tenantId,
-  },
+  priceId: '33333333-3333-4333-8333-333333333340',
 };
-const priceGroupRefOfBatch = {
-  moduleId: 'pricing.price-group-catalog',
-  resourceId: '50000000-0000-4000-8000-000000000001',
-  resourceType: 'pricing.price-group-catalog.price-group',
-  tenantId: '60000000-0000-4000-8000-000000000001',
+const priceGroupIdOfBatch = '50000000-0000-4000-8000-000000000001';
+/** The DEFINE item as the owner receives it: the same ids as references of the admitted route's tenant. */
+const ownerDefinePriceRow = (tenantId: string) => {
+  const { productId, unitBasis, variantId, ...rest } = priceRow;
+  return {
+    ...rest,
+    effectiveFrom: definedAt,
+    operation: 'DEFINE',
+    productRef: { ...priceProductRef, resourceId: productId, tenantId },
+    unitBasis: { quantity: unitBasis.quantity, unitRef: { ...stockUnitRef, resourceId: unitBasis.unitId, tenantId } },
+    variantRef: { ...priceVariantRef, resourceId: variantId, tenantId },
+  };
 };
 const priceBatchJson = (prices: readonly unknown[]) => ({
-  body: JSON.stringify({ priceGroupRef: priceGroupRefOfBatch, prices }),
+  body: JSON.stringify({ priceGroupId: priceGroupIdOfBatch, prices }),
   headers: { 'content-type': 'application/json' },
 });
 
@@ -536,6 +552,7 @@ const publicProduct = {
   ],
 };
 const publicProductsBody = { products: [publicProduct] };
+const decodedPublicProducts = Schema.decodeUnknownSync(SymmyProductsBatchRequestSchema)(publicProductsBody).products;
 const publicProductRows = [
   {
     identifier: { type: 'sku', value: 'SKU-1' },
@@ -690,7 +707,7 @@ it.effect('accepts the public products body and forwards the rows with their ide
     );
     expect(response.status).toBe(202);
     expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
-    expect(forwarded).toEqual([{ idempotencyKey, products: publicProductRows, route: 'productsBatch' }]);
+    expect(forwarded).toEqual([{ idempotencyKey, products: decodedPublicProducts, route: 'productsBatch' }]);
   }),
 );
 
@@ -928,7 +945,7 @@ it.effect('requires a replay key for versioned synchronous writes before any own
       server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
         body: customerGroupsJson(['group-1']).body,
         headers: { 'content-type': 'application/json', 'x-api-key': validKey },
-        method: 'POST',
+        method: 'PUT',
       }),
     );
     expect(response.status).toBe(428);
@@ -968,7 +985,7 @@ it.effect('refuses internal plans, fixtures and bodies the owner cannot store on
         server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
           body: JSON.stringify(body),
           headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
-          method: 'POST',
+          method: 'PUT',
         }),
       );
       expect(response.status, JSON.stringify(body)).toBe(400);
@@ -1250,27 +1267,25 @@ it.effect(
         const [item] = publicBody.priceLists;
         expect(item?.code).toBe(sourceRecordId);
         assert.isOk(item);
-        const post = (
-          target: SymmyIngressServer,
-          priceGroupRef: PublicPriceGroupRef,
-          key: string,
-          prices = [definePriceRow],
-        ) =>
+        const post = (target: SymmyIngressServer, priceGroupId: string, key: string, prices = [definePriceRow]) =>
           Effect.promise(() =>
             target.request(SYMMY_ROUTES.priceListPricesBatch.path, {
-              body: JSON.stringify({ priceGroupRef, prices }),
+              body: JSON.stringify({ priceGroupId, prices }),
               headers: { 'content-type': 'application/json', 'idempotency-key': key, 'x-api-key': validKey },
               method: 'POST',
             }),
           );
-        const accepted = yield* post(server, item.priceGroupRef, `roundtrip-${sequence}`);
+        const accepted = yield* post(server, item.priceGroupId, `roundtrip-${sequence}`);
         expect(accepted.status).toBe(202);
         expect(yield* Effect.promise(() => accepted.json())).toEqual({ jobId, status: 'queued' });
         expect(admitted).toHaveLength(1);
         const [payload] = admitted;
         expect(payload).toMatchObject({
           idempotencyKey: `roundtrip-${sequence}`,
-          priceBatch: { priceGroupRef: nativePriceGroupRef, prices: [{ ...definePriceRow, effectiveFrom: definedAt }] },
+          priceBatch: {
+            priceGroupRef: nativePriceGroupRef,
+            prices: [ownerDefinePriceRow(nativePriceGroupRef.tenantId)],
+          },
           reviseFacts: [],
           routeKey: 'priceListPricesBatch',
         });
@@ -1279,11 +1294,11 @@ it.effect(
         }
 
         // A list the key may not write to and a list that does not exist answer alike, before any admission.
-        const otherList = { ...nativePriceGroupRef, resourceId: '50000000-0000-4000-8000-0000000000ff' };
+        const otherList = '50000000-0000-4000-8000-0000000000ff';
         const unknownList = yield* post(server, otherList, `roundtrip-other-${sequence}`);
         expect(unknownList.status).toBe(403);
         const otherIssuer = yield* startIssuer('other-authorized-issuer');
-        const crossIssuer = yield* post(otherIssuer, item.priceGroupRef, `roundtrip-cross-${sequence}`);
+        const crossIssuer = yield* post(otherIssuer, item.priceGroupId, `roundtrip-cross-${sequence}`);
         expect(crossIssuer.status).toBe(403);
         expect(yield* Effect.promise(() => crossIssuer.json())).toEqual(
           yield* Effect.promise(() => unknownList.json()),
@@ -1352,7 +1367,7 @@ it.effect('refuses a REVISE item with 422 when the route has no price read sourc
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.priceListPricesBatch.path, {
-        body: JSON.stringify({ priceGroupRef: nativePriceGroupRef, prices: [revisePriceRow] }),
+        body: JSON.stringify({ priceGroupId: nativePriceGroupRef.resourceId, prices: [revisePriceRow] }),
         headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
@@ -1669,7 +1684,7 @@ it.effect('fences the public customer groups on the owner definitions and return
         server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
           body: customerGroupsJson(['bound-group', 'new-group']).body,
           headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
-          method: 'POST',
+          method: 'PUT',
         }),
       );
     const response = yield* post();
@@ -1818,7 +1833,7 @@ it.effect('answers a saved group key from its admission on a still-configured ro
         server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
           body: customerGroupsJson(codes).body,
           headers: { 'content-type': 'application/json', 'idempotency-key': key, 'x-api-key': validKey },
-          method: 'POST',
+          method: 'PUT',
         }),
       );
     const replay = yield* post(['bound-group']);
@@ -1994,16 +2009,16 @@ it.effect('uses each approved route’s declared success status for internal fix
       const isGroups = path === SYMMY_ROUTES.customerGroupsBatch.path;
       const postBody = routeBody(path);
       const init =
-        definition.method === 'POST'
-          ? {
+        definition.method === 'GET'
+          ? { headers: { 'x-api-key': validKey }, method: definition.method }
+          : {
               ...postBody,
               headers:
                 definition.mode === 'durable_job' || isStock || isGroups
                   ? { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey }
                   : { ...fixtureJson.headers, 'x-api-key': validKey },
               method: definition.method,
-            }
-          : { headers: { 'x-api-key': validKey }, method: definition.method };
+            };
       const response = yield* Effect.promise(() => server.request(path, init));
       expect(response.status).toBe(definition.successStatus);
       expect(response.headers.get('content-type')).toContain('application/json');
@@ -2041,20 +2056,23 @@ it.effect('uses each approved route’s declared success status for internal fix
       {
         idempotencyKey,
         route: 'inventoryStockBatch',
-        stock: [stockRow('item-1', '2026-01-01T10:00:00.000Z'), stockRow('item-2', '2026-01-01T10:00:00.000Z')],
+        stock: decodedStock([
+          stockRow('item-1', '2026-01-01T10:00:00.000Z'),
+          stockRow('item-2', '2026-01-01T10:00:00.000Z'),
+        ]),
       },
       { id: jobId, route: 'job' },
       {
         idempotencyKey,
         priceBatch: {
-          priceGroupRef: priceGroupRefOfBatch,
+          priceGroupId: priceGroupIdOfBatch,
           prices: [{ ...definePriceRow, effectiveFrom: definedAt }, revisePriceRow],
         },
         route: 'priceListPricesBatch',
       },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
       { idempotencyKey, priceLists: [canonicalPriceList], route: 'priceListsBatchUpsert' },
-      { idempotencyKey, products: publicProductRows, route: 'productsBatch' },
+      { idempotencyKey, products: decodedPublicProducts, route: 'productsBatch' },
     ]);
   }),
 );
@@ -2094,7 +2112,7 @@ it.effect('serves the public stock batch route with one keyed result per row and
         server.request(SYMMY_ROUTES.inventoryStockBatch.path, {
           ...init,
           headers: { 'content-type': 'application/json', ...headers },
-          method: 'POST',
+          method: 'PUT',
         }),
       );
     const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
@@ -2113,10 +2131,10 @@ it.effect('serves the public stock batch route with one keyed result per row and
       {
         idempotencyKey,
         route: 'inventoryStockBatch',
-        stock: [
+        stock: decodedStock([
           stockRow('item-2', '2026-01-01T10:00:00.000Z'),
           { ...stockRow('item-1', '2026-01-01T10:00:00.000Z'), locationKey: 'warehouse-9' },
-        ],
+        ]),
       },
     ]);
     expect(forwarded[0]).not.toHaveProperty('contractVersion');
@@ -2151,7 +2169,7 @@ it.effect('answers the public stock batch route with 428 without a key and 400 f
         server.request(`${SYMMY_ROUTES.inventoryStockBatch.path}${query}`, {
           body,
           headers: { 'content-type': 'application/json', ...headers },
-          method: 'POST',
+          method: 'PUT',
         }),
       );
     const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
@@ -2164,13 +2182,17 @@ it.effect('answers the public stock batch route with 428 without a key and 400 f
     const [row] = [stockRow('item-1')];
     const { quantity: _quantity, ...withoutQuantity } = row;
     const bodies = [
-      ['a quantity unit that is not an object', { stock: [{ ...row, quantity: { amount: '1', unitRef: 'u' } }] }],
+      ['a unit id that is not a UUID', { stock: [{ ...row, quantity: { amount: '1', unitId: 'u' } }] }],
+      ['a unit reference object', { stock: [{ ...row, quantity: { amount: '1', unitRef: stockUnitRef } }] }],
       ['a row without quantity', { stock: [withoutQuantity] }],
       ['a row with a null field', { stock: [{ ...row, revision: null }] }],
       ['a contractVersion property', { contractVersion: 'INTERNAL_C14', stock: [row] }],
       ['a fixture identity', { fixtureId: 'internal-c14-fixture' }],
-      ['a non-canonical amount', { stock: [{ ...row, quantity: { amount: '12.50', unitRef: stockUnitRef } }] }],
-      ['a numeric amount', { stock: [{ ...row, quantity: { amount: 12, unitRef: stockUnitRef } }] }],
+      [
+        'a non-canonical amount',
+        { stock: [{ ...row, quantity: { amount: '12.50', unitId: stockUnitRef.resourceId } }] },
+      ],
+      ['a numeric amount', { stock: [{ ...row, quantity: { amount: 12, unitId: stockUnitRef.resourceId } }] }],
       ['a reservedQuantity property', { stock: [{ ...row, reservedQuantity: '1' }] }],
       ['an internal plan', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
       ['an unknown property', { stock: [row], unknown: true }],
@@ -2319,7 +2341,7 @@ it.effect('serves the public price batch route at its own path with 202 queued a
       );
     const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
     const batch = (prices: readonly Schema.Json[], extra: Readonly<Record<string, Schema.Json>> = {}) =>
-      JSON.stringify({ priceGroupRef: priceGroupRefOfBatch, prices, ...extra });
+      JSON.stringify({ priceGroupId: priceGroupIdOfBatch, prices, ...extra });
     const accepted = yield* post(batch([definePriceRow, revisePriceRow]), authorized);
     expect(accepted.status).toBe(202);
     const body = yield* Effect.promise(() => accepted.json());
@@ -2332,7 +2354,7 @@ it.effect('serves the public price batch route at its own path with 202 queued a
       {
         idempotencyKey,
         priceBatch: {
-          priceGroupRef: priceGroupRefOfBatch,
+          priceGroupId: priceGroupIdOfBatch,
           prices: [{ ...definePriceRow, effectiveFrom: definedAt }, revisePriceRow],
         },
         route: 'priceListPricesBatch',
@@ -2351,31 +2373,28 @@ it.effect('serves the public price batch route at its own path with 202 queued a
     const { commercialScope: _scope, ...withoutScope } = definePriceRow;
     const { unitBasis: _basis, ...withoutBasis } = definePriceRow;
     const { operation: _operation, ...withoutOperation } = definePriceRow;
-    const { priceRef: _priceRef, ...reviseWithoutRef } = revisePriceRow;
+    const { priceId: _priceId, ...reviseWithoutId } = revisePriceRow;
     const { expectedRevision: _revision, ...reviseWithoutRevision } = revisePriceRow;
-    const { priceGroupRef: _group, ...withoutGroup } = JSON.parse(valid);
+    const { priceGroupId: _group, ...withoutGroup } = JSON.parse(valid);
     const rejected = [
       ['an internal plan', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
       ['a fixture identity', { fixtureId: 'internal-c14-fixture' }],
       ['a contractVersion property', JSON.parse(batch([definePriceRow], { contractVersion: 'INTERNAL_C14' }))],
-      ['no priceGroupRef', withoutGroup],
-      [
-        'a price ref as the priceGroupRef',
-        JSON.parse(batch([definePriceRow], { priceGroupRef: revisePriceRow.priceRef })),
-      ],
+      ['no priceGroupId', withoutGroup],
+      ['a reference object as the priceGroupId', JSON.parse(batch([definePriceRow], { priceGroupId: stockUnitRef }))],
       ['a priceListCode', JSON.parse(batch([definePriceRow], { priceListCode: 'cz' }))],
       ['a code', JSON.parse(batch([definePriceRow], { code: 'cz' }))],
       ['a reason', JSON.parse(batch([{ ...definePriceRow, reason: 'free text' }]))],
       ['a sourceAssertion', JSON.parse(batch([{ ...definePriceRow, sourceAssertion: {} }]))],
-      ['no prices', { priceGroupRef: priceGroupRefOfBatch }],
+      ['no prices', { priceGroupId: priceGroupIdOfBatch }],
       ['an empty prices array', JSON.parse(batch([]))],
       ['seventeen prices', JSON.parse(batch(Array.from({ length: 17 }, () => definePriceRow)))],
       ['no operation', JSON.parse(batch([withoutOperation]))],
       ['another operation', JSON.parse(batch([{ ...definePriceRow, operation: 'RETIRE' }]))],
       ['a DEFINE without a scope', JSON.parse(batch([withoutScope]))],
       ['a DEFINE without a unit basis', JSON.parse(batch([withoutBasis]))],
-      ['a DEFINE with a priceRef', JSON.parse(batch([{ ...definePriceRow, priceRef: revisePriceRow.priceRef }]))],
-      ['a REVISE without a priceRef', JSON.parse(batch([reviseWithoutRef]))],
+      ['a DEFINE with a priceId', JSON.parse(batch([{ ...definePriceRow, priceId: revisePriceRow.priceId }]))],
+      ['a REVISE without a priceId', JSON.parse(batch([reviseWithoutId]))],
       ['a REVISE without an expectedRevision', JSON.parse(batch([reviseWithoutRevision]))],
       [
         'a REVISE with a commercialScope',
@@ -2384,7 +2403,7 @@ it.effect('serves the public price batch route at its own path with 202 queued a
       ['a negative amount', JSON.parse(batch([{ ...definePriceRow, amount: '-1' }]))],
       ['a numeric amount', JSON.parse(batch([{ ...definePriceRow, amount: 25 }]))],
       ['a lower-case currency', JSON.parse(batch([{ ...definePriceRow, currencyCode: 'czk' }]))],
-      ['a variant ref as the productRef', JSON.parse(batch([{ ...definePriceRow, productRef: priceVariantRef }]))],
+      ['a reference object as the productId', JSON.parse(batch([{ ...definePriceRow, productId: priceVariantRef }]))],
       ['two items for the same price', JSON.parse(batch([definePriceRow, definePriceRow]))],
       ['two REVISE items for the same price', JSON.parse(batch([revisePriceRow, revisePriceRow]))],
       ['an unknown property', JSON.parse(batch([definePriceRow], { unknown: true }))],
@@ -2557,14 +2576,14 @@ it.effect('serves the public customers body from its own query', () =>
     }
     const paged = yield* get('?limit=1&offset=1&q=%20ada%20');
     expect(paged.status).toBe(200);
-    for (const fields of ['id', 'sourceRecordId', 'partyRef', 'profile', 'party', 'businessName', 'ico']) {
+    for (const fields of ['id', 'sourceRecordId', 'partyId', 'profile', 'party', 'businessName', 'ico']) {
       expect((yield* get(`?fields=${fields}`)).status, fields).toBe(200);
     }
     expect((yield* get('?fields=ico,ico,party')).status).toBe(200);
     expect(forwarded).toEqual([
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminCustomers' },
       { query: { contractVersion: 'INTERNAL_C14', limit: 1, offset: 1, q: 'ada' }, route: 'adminCustomers' },
-      ...['id', 'sourceRecordId', 'partyRef', 'profile', 'party', 'businessName', 'ico'].map((name) => ({
+      ...['id', 'sourceRecordId', 'partyId', 'profile', 'party', 'businessName', 'ico'].map((name) => ({
         query: { contractVersion: 'INTERNAL_C14', fields: [name] },
         route: 'adminCustomers',
       })),
@@ -2697,7 +2716,7 @@ it.effect('serves the public products body from its own query', () =>
     for (const fields of [
       'sourceRecordId',
       'product',
-      'product.productRef',
+      'product.productId',
       'product.revision',
       'product.lifecycle',
       'product.catalogReady',
@@ -2729,7 +2748,7 @@ it.effect('serves the public products body from its own query', () =>
       count: 2,
       limit: 50,
       offset: 0,
-      products: [{ id: product?.id, product: productsNative }],
+      products: [{ id: product?.id, product: publicProductsReadProduct }],
     });
     expect(forwarded.at(-1)).toEqual({ query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' });
 
@@ -3010,6 +3029,11 @@ it.effect('does not dispatch wrong methods, unrecognized paths or cross-mounted 
     const wrongMethod = yield* Effect.promise(() => server.request(SYMMY_ROUTES.productsBatch.path, { method: 'GET' }));
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.get('allow')).toBe('POST');
+    for (const route of [SYMMY_ROUTES.customerGroupsBatch, SYMMY_ROUTES.inventoryStockBatch]) {
+      const posted = yield* Effect.promise(() => server.request(route.path, { method: 'POST' }));
+      expect(posted.status).toBe(405);
+      expect(posted.headers.get('allow')).toBe('PUT');
+    }
     const extension = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.adminProducts.path, { method: 'PROPFIND' }),
     );
