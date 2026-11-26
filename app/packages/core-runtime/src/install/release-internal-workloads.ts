@@ -22,7 +22,7 @@ import {
 } from '../auth/principal-management.ts';
 import { SystemPrincipalContextResolverFromCoreDatabase } from '../auth/system-principal-context.ts';
 import { registerSystemWorkload } from '../auth/system-workload-registration.ts';
-import { findPostgresFailure } from '../database/postgres-failure.ts';
+import { findPostgresFailure, PostgresDiagnosticSqlStateSchema } from '../database/postgres-failure.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import {
@@ -76,17 +76,6 @@ export const RELEASE_INTERNAL_WORKLOAD_JOB = registerSystemWorkload({
 const NO_CONSTRAINTS: ReadonlySet<string> = new Set();
 const RETIREMENT_REASON = 'The internal workload is no longer wanted here (module, catalogue or company)';
 
-const enrollmentSqlStateSchema = Schema.Literals([
-  '23505',
-  '23514',
-  '42501',
-  '42703',
-  '42P01',
-  '23503',
-  '23502',
-  'P0001',
-  '22P02',
-]);
 const enrollmentConstraintSchema = Schema.Literals([
   'core_principals_platform_role_ck',
   'core_principals_pkey',
@@ -95,12 +84,27 @@ const enrollmentConstraintSchema = Schema.Literals([
 export class ReleaseInternalWorkloadError extends Schema.TaggedError<ReleaseInternalWorkloadError>()(
   'ReleaseInternalWorkloadError',
   {
-    reason: Schema.String,
-    sqlState: Schema.optional(enrollmentSqlStateSchema),
     databaseConstraint: Schema.optional(enrollmentConstraintSchema),
+    reason: Schema.String,
+    sqlState: Schema.optional(PostgresDiagnosticSqlStateSchema),
   },
 ) {}
-const refusal = (reason: string) => new ReleaseInternalWorkloadError({ reason });
+const refusal = (reason: string, cause?: unknown) => {
+  const metadata = findPostgresFailure(cause, ({ code }) => Schema.is(PostgresDiagnosticSqlStateSchema)(code));
+  const sqlState =
+    Option.isSome(metadata) && Schema.is(PostgresDiagnosticSqlStateSchema)(metadata.value.code)
+      ? metadata.value.code
+      : undefined;
+  const databaseConstraint =
+    Option.isSome(metadata) && Schema.is(enrollmentConstraintSchema)(metadata.value.constraint)
+      ? metadata.value.constraint
+      : undefined;
+  const error = new ReleaseInternalWorkloadError({ databaseConstraint, reason, sqlState });
+  if (cause !== undefined) {
+    Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
+  }
+  return error;
+};
 
 /** What one tenant holds after the run, as counts of registrations; never an identifier of a key. */
 export interface ReleaseInternalWorkloadTenantReport {
@@ -255,7 +259,7 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
         } satisfies TenantWorkloadState;
       }),
     )
-    .pipe(Effect.mapError((cause) => refusal(`the tenant could not be read (${cause._tag})`)));
+    .pipe(Effect.mapError((cause) => refusal(`the tenant could not be read (${cause._tag})`, cause)));
 });
 
 /** The tenant's platform release actor, ensured and resolved as a trusted system scope (never minted). */
@@ -267,7 +271,7 @@ const releaseScopeOf = Effect.fn('ReleaseInternalWorkloads.releaseScope')(functi
   const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
-    .pipe(Effect.mapError((cause) => refusal(`the release actor could not be ensured: ${cause.reason}`)));
+    .pipe(Effect.mapError((cause) => refusal(`the release actor could not be ensured: ${cause.reason}`, cause)));
   const resolved = yield* resolver
     .resolve({
       principalId: releaseActorId(tenantId),
@@ -275,7 +279,7 @@ const releaseScopeOf = Effect.fn('ReleaseInternalWorkloads.releaseScope')(functi
       runReference,
       tenantId,
     })
-    .pipe(Effect.mapError((cause) => refusal(`the release actor could not act: ${cause.reason}`)));
+    .pipe(Effect.mapError((cause) => refusal(`the release actor could not act: ${cause.reason}`, cause)));
   return preserveSystemPrincipalContextTrust(resolved, {
     ...resolved,
     correlationId: `release-internal-workloads:${runReference}`,
@@ -283,24 +287,8 @@ const releaseScopeOf = Effect.fn('ReleaseInternalWorkloads.releaseScope')(functi
 });
 
 /** A step's failure, with what failed and the writer's own reason. */
-const stepFailed =
-  (what: string) =>
-  (cause: { readonly reason?: string }): ReleaseInternalWorkloadError => {
-    const metadata = findPostgresFailure(cause, ({ code }) => Schema.is(enrollmentSqlStateSchema)(code));
-    const sqlState =
-      Option.isSome(metadata) && Schema.is(enrollmentSqlStateSchema)(metadata.value.code)
-        ? metadata.value.code
-        : undefined;
-    const databaseConstraint =
-      Option.isSome(metadata) && Schema.is(enrollmentConstraintSchema)(metadata.value.constraint)
-        ? metadata.value.constraint
-        : undefined;
-    return new ReleaseInternalWorkloadError({
-      reason: `${what}: ${cause.reason ?? 'unavailable'}`,
-      sqlState,
-      databaseConstraint,
-    });
-  };
+const stepFailed = (what: string) => (cause: { readonly reason?: string }) =>
+  refusal(`${what}: ${cause.reason ?? 'unavailable'}`, cause);
 
 /** Performs one planned step through Core's own writer for it, as the release actor. */
 /** Core's own workload binding writers, from the surrounding composition. */
@@ -588,42 +576,44 @@ export const registerAdditiveCompanyInternalWorkloads = Effect.fn('ReleaseIntern
   function* registerAdditive(
     database: AccessIntentDatabase,
     input: {
-      readonly tenantId: string;
-      readonly legalEntityId: string;
       readonly declarations: readonly InternalWorkloadDeclaration[];
+      readonly legalEntityId: string;
       readonly runReference: string;
+      readonly tenantId: string;
     },
   ) {
     const state = yield* readTenant(
       input.tenantId,
       input.declarations.map(({ workloadKey }) => workloadKey),
-    ).pipe(Effect.mapError(() => refusal('additive-read-tenant')));
-    if (!state.activeCompanies.has(input.legalEntityId)) return yield* refusal('additive-company-inactive');
-    if (input.declarations.some(({ moduleKey }) => !state.activeModuleKeys.has(moduleKey)))
+    ).pipe(Effect.mapError((cause) => refusal('additive-read-tenant', cause)));
+    if (!state.activeCompanies.has(input.legalEntityId)) {
+      return yield* refusal('additive-company-inactive');
+    }
+    if (input.declarations.some(({ moduleKey }) => !state.activeModuleKeys.has(moduleKey))) {
       return yield* refusal('additive-module-inactive');
+    }
     const plan = planAdditiveCompanyInternalWorkloads(state, input.declarations, input.legalEntityId);
     const scope = yield* releaseScopeOf(input.tenantId, input.runReference).pipe(
-      Effect.mapError(() => refusal('additive-release-scope')),
+      Effect.mapError((cause) => refusal('additive-release-scope', cause)),
     );
     const writers = {
       bindings: yield* AccessWorkloadBindingStore,
       companies: yield* AccessWorkloadCompanyBindingStore,
     };
     const at = yield* DateTime.nowAsDate;
-    for (const unit of plan.units) {
-      for (const step of unit.steps) {
-        yield* performStep(database, writers, scope, step, at).pipe(
-          Effect.mapError(
-            (error) =>
-              new ReleaseInternalWorkloadError({
-                reason: `additive-step-${step.kind}`,
-                sqlState: error.sqlState,
-                databaseConstraint: error.databaseConstraint,
-              }),
-          ),
-        );
-      }
-    }
+    yield* Effect.forEach(
+      plan.units,
+      (unit) =>
+        Effect.forEach(
+          unit.steps,
+          (step) =>
+            performStep(database, writers, scope, step, at).pipe(
+              Effect.mapError((cause) => refusal(`additive-step-${step.kind}`, cause)),
+            ),
+          { concurrency: 1, discard: true },
+        ),
+      { concurrency: 1, discard: true },
+    );
     return { registered: plan.registered, unchanged: plan.unchanged };
   },
 );
