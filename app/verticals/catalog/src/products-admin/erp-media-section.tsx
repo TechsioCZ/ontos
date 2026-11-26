@@ -63,42 +63,41 @@ const readPreview = (item: ProductPageItem, assetId: string) =>
     Effect.mapError((problem: Problem) => describe('Náhled obrázku', problem)),
   );
 
+const UNREADABLE = 'Obrázek nelze načíst (podporované jsou JPEG, PNG a WebP)';
+const fromPromise = <A,>(work: () => Promise<A>) => Effect.tryPromise({ catch: () => UNREADABLE, try: work });
+
 /** One rendition: the picture scaled to fit `edge`, as WebP (JPEG where the browser has no WebP encoder). */
-const encode = async (bitmap: ImageBitmap, edge: number) => {
-  const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = new OffscreenCanvas(width, height);
-  const context = canvas.getContext('2d');
-  if (context === null) {
-    throw new Error('Canvas is unavailable');
-  }
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(bitmap, 0, 0, width, height);
-  let blob = await canvas.convertToBlob({ quality: 0.86, type: 'image/webp' });
-  if (blob.type !== 'image/webp') {
-    blob = await canvas.convertToBlob({ quality: 0.86, type: 'image/jpeg' });
-  }
-  return { contentBase64: Base64.encode(new Uint8Array(await blob.arrayBuffer())), height, width };
-};
+const encode = (bitmap: ImageBitmap, edge: number) =>
+  Effect.gen(function* encodeRendition() {
+    const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext('2d');
+    if (context === null) {
+      return yield* Effect.fail(UNREADABLE);
+    }
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    const webp = yield* fromPromise(() => canvas.convertToBlob({ quality: 0.86, type: 'image/webp' }));
+    const blob =
+      webp.type === 'image/webp'
+        ? webp
+        : yield* fromPromise(() => canvas.convertToBlob({ quality: 0.86, type: 'image/jpeg' }));
+    const bytes = yield* fromPromise(() => blob.arrayBuffer());
+    return { contentBase64: Base64.encode(new Uint8Array(bytes)), height, width };
+  });
 
 const prepareUpload = (file: File) =>
-  Effect.tryPromise({
-    catch: () => 'Obrázek nelze načíst (podporované jsou JPEG, PNG a WebP)',
-    try: async () => {
-      const bitmap = await createImageBitmap(file);
-      try {
-        return {
-          filename: file.name,
-          full: await encode(bitmap, FULL_EDGE),
-          thumbnail: await encode(bitmap, THUMB_EDGE),
-        };
-      } finally {
-        bitmap.close();
-      }
-    },
-  });
+  Effect.acquireUseRelease(
+    fromPromise(() => createImageBitmap(file)),
+    (bitmap) =>
+      Effect.all({ full: encode(bitmap, FULL_EDGE), thumbnail: encode(bitmap, THUMB_EDGE) }, { concurrency: 1 }).pipe(
+        Effect.map((renditions) => ({ filename: file.name, ...renditions })),
+      ),
+    (bitmap) => Effect.sync(() => bitmap.close()),
+  );
 
 const upload = (item: ProductPageItem, current: Current, file: File, reason: string) =>
   Effect.gen(function* uploadImage() {
