@@ -19,11 +19,12 @@
  * and carries no ID of the new project. Only `--resolve` produces the stable config with the assigned IDs.
  */
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parse, stringify } from 'yaml';
+const { parse, stringify } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 import { STABLE_ORIGINS, STABLE_SERVICES, StableConfigError, validateStableConfig } from './config.mjs';
 

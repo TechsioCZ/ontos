@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { parse, stringify } from 'yaml';
+const { parse, stringify } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 import { STABLE_VARIABLES } from './config.mjs';
 import { StableMaterializationError, materializeStableSetup, materializeStableZerops } from './materialize.mjs';

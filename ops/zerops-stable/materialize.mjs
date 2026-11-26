@@ -20,12 +20,13 @@
 //     writes one setup
 // --input defaults to the repository's app/zerops.yaml.
 // Prints a JSON summary (setup, service, service id, path, bytes) on stdout; no value of the config is printed.
+import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { Document, parseDocument } from 'yaml';
+const { Document, parseDocument } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 import { STABLE_SERVICES, STABLE_VARIABLES, StableConfigError, loadStableConfig, validateStableConfig } from './config.mjs';
 

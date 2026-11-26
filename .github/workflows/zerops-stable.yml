@@ -45,10 +45,12 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26.13.1
-      - name: Install the deployment tools
-        run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
+      - name: Install the app workspace dependencies
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile --filter app
       - name: Run the sales-stable tests
-        run: node --test 'ops/zerops-stable/*.test.mjs'
+        run: node --test --test-concurrency=1 'ops/zerops-stable/*.test.mjs'
   pin:
     name: Pin the tag to a commit
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/demo/sales-crm'
@@ -79,8 +81,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26.13.1
-      - name: Install the deployment tools
-        run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
       - name: Inspect the tag against demo/sales-crm
         env:
           TAG: ${{ inputs.tag }}
@@ -116,8 +116,6 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
-      - name: Install the deployment tools
-        run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
       - name: Write the sales-stable config outside the repository
         env:
           STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}

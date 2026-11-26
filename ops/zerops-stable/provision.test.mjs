@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { parse } from 'yaml';
+const { parse } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 import { loadStableConfig, StableConfigError } from './config.mjs';
 import {

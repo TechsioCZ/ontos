@@ -1,7 +1,8 @@
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { parse } from 'yaml';
+const { parse } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 const text = readFileSync(new URL('../../.github/workflows/zerops-stable.yml', import.meta.url), 'utf8');
 const workflow = parse(text);
@@ -9,16 +10,16 @@ const jobs = Object.values(workflow.jobs);
 const steps = jobs.flatMap((job) => job.steps ?? []);
 const runs = steps.map((step) => step.run ?? '');
 
-test('demo pushes test the standalone deployment tools without installing or deploying the app', () => {
+test('demo pushes test the standalone deployment tools using the app dependency lockfile without deploying the app', () => {
   assert.deepEqual(Object.keys(workflow.on).sort(), ['push', 'workflow_dispatch']);
   assert.deepEqual(workflow.on.push.branches, ['demo/sales-crm']);
   for (const source of ['ops/zerops-stable/**', 'app/zerops.yaml', 'app/zerops-import.yaml', 'app/scripts/zerops/push-service.sh']) {
     assert.ok(workflow.on.push.paths.includes(source));
   }
   const testSteps = workflow.jobs.test.steps;
-  assert.ok(testSteps.some((step) => step.run === "node --test 'ops/zerops-stable/*.test.mjs'"));
-  assert.ok(testSteps.some((step) => step.run?.startsWith('npm ci --prefix ops/zerops-stable')));
-  assert.ok(!testSteps.some((step) => step.uses === './.github/actions/install-app'));
+  assert.ok(testSteps.some((step) => step.run === "node --test --test-concurrency=1 'ops/zerops-stable/*.test.mjs'"));
+  assert.ok(testSteps.some((step) => step.uses === './.github/actions/install-app'));
+  assert.doesNotMatch(text, /npm ci|package-lock/u);
 });
 
 test('candidate work is manually dispatched, follows the tooling checks, and never installs a release', () => {
