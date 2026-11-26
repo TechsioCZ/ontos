@@ -1323,6 +1323,8 @@ const buildOwnerAuthorizationTargets = (
   return Object.freeze(targets);
 };
 
+const SOURCE_EXECUTION_REFUSAL_REASON = 'The original source admission no longer permits owner effects';
+
 export const makeActionRuntime = (...construction: ActionRuntimeConstruction): ActionRuntimeService => {
   const [database, repository, permission, operationalScopeResolver, options] = construction;
   const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
@@ -1368,7 +1370,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           createActionTransactionErrorWithCause(
             {
               code: 'action_transaction_failed',
-              reason: 'The original source admission no longer permits owner effects',
+              reason: SOURCE_EXECUTION_REFUSAL_REASON,
             },
             cause,
           ),
@@ -3071,6 +3073,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                     ),
                   );
               }
+              yield* lockRegisteredSourceExecutionFence(transaction, scope).pipe(
+                Effect.mapError((cause) =>
+                  createActionTransactionErrorWithCause(
+                    {
+                      code: 'action_transaction_failed',
+                      reason: SOURCE_EXECUTION_REFUSAL_REASON,
+                    },
+                    cause,
+                  ),
+                ),
+              );
               return yield* snapshot(scoped);
             }).pipe(insideDatabaseTransaction(input.registration.descriptor.actionKey), settlement.capture),
           )
@@ -3480,7 +3493,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 createActionTransactionErrorWithCause(
                   {
                     code: 'action_transaction_failed',
-                    reason: 'The original source admission no longer permits owner effects',
+                    reason: SOURCE_EXECUTION_REFUSAL_REASON,
                   },
                   cause,
                 ),

@@ -6,7 +6,7 @@ import {
   makeApplicationCompositionSnapshotFixture,
   makeModuleContractFixture,
 } from '../../src/testing/module-contract.ts';
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Exit, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
@@ -335,3 +335,70 @@ it.effect('uses the genuine approved owner/build revision instead of the histori
     expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );
+
+it.effect('transforms the genuine prepared services rather than replacing preparation or its factory', () =>
+  Effect.gen(function* transformedPreparedValue() {
+    let factories = 0;
+    const registration = defineAction(
+      lifecycleAction.descriptor,
+      (_payload, context) => Effect.succeed({ total: context.services.total }),
+      (): Effect.Effect<{ readonly total: number }> => Effect.die('Ordinary acquisition is not preparation'),
+      {
+        prepareServices: (payload) =>
+          Effect.succeed(() =>
+            Effect.sync(() => {
+              factories += 1;
+              return { total: payload.amount + 1 };
+            }),
+          ),
+      },
+    );
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(registration),
+      services: [bindActionTestServices(registration, (prepared) => ({ total: prepared.total + 10 }))],
+      tenantPermission: 'allowed',
+    });
+    expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 13 });
+    expect(factories).toBe(1);
+    expect(harness.snapshot().committed).toHaveLength(1);
+  }),
+);
+
+for (const phase of ['preparation', 'factory'] as const) {
+  it.effect(`a service transform cannot hide a failing genuine ${phase}`, () =>
+    Effect.gen(function* failedPreparedService() {
+      let transforms = 0;
+      let handlers = 0;
+      const registration = defineAction(
+        lifecycleAction.descriptor,
+        (_payload, context) => {
+          handlers += 1;
+          return Effect.succeed({ total: context.services.total });
+        },
+        (): Effect.Effect<{ readonly total: number }> => Effect.die('Ordinary acquisition must not run'),
+        {
+          prepareServices: () =>
+            phase === 'preparation'
+              ? Effect.die('Genuine preparation failed')
+              : Effect.succeed((): Effect.Effect<{ readonly total: number }> => Effect.die('Genuine factory failed')),
+        },
+      );
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        ownerRegistration: fixtureOwner(registration),
+        services: [
+          bindActionTestServices(registration, () => {
+            transforms += 1;
+            return { total: 999 };
+          }),
+        ],
+        tenantPermission: 'allowed',
+      });
+      expect(Exit.isFailure(yield* Effect.exit(harness.runtime.runAction({ ...request, registration })))).toBe(true);
+      expect(transforms).toBe(0);
+      expect(handlers).toBe(0);
+      expect(harness.snapshot().committed).toEqual([]);
+    }),
+  );
+}

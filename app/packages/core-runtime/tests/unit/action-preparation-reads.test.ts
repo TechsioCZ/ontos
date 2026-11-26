@@ -1,3 +1,8 @@
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import {
+  RegisteredGatewayWorkloadSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
 import { eq } from 'drizzle-orm';
 import { integer, pgTable, uuid } from 'drizzle-orm/pg-core';
 import { Effect, Exit, Predicate, Schema } from 'effect';
@@ -16,6 +21,7 @@ import { makeActionTestHarness } from '../../src/testing/actions.ts';
 import type { ActionTestPreparationRead } from '../../src/testing/actions.ts';
 import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 
+const admissionId = '60000000-0000-4000-8000-000000000002';
 const table = pgTable('action_preparation_fixture', {
   tenantId: uuid('tenant_id').notNull(),
   value: integer('value').notNull(),
@@ -249,6 +255,81 @@ it.effect('keeps the physical remote-I/O guard inside the original preparation s
       refuseInsideDatabaseTransaction('spicedb', 'preparation-read-fixture').pipe(Effect.as([{ value: 7 }])),
     );
     expect(Exit.isFailure(yield* Effect.exit(harness.runtime.runAction(requestFor(action))))).toBe(true);
+    expect(harness.snapshot().committed).toEqual([]);
+  }),
+);
+
+it.effect('rechecks the source execution fence after admission before the first preparation SELECT', () =>
+  Effect.gen(function* revokedBetweenAdmissionAndSnapshot() {
+    const base = actionFor();
+    const action = defineAction(
+      {
+        ...base.descriptor,
+        accessWorkload: { reason: 'Fixture source admission', workloads: ['test.preparation.source'] },
+      },
+      (_payload, context) => Effect.succeed(context.services.value),
+      (): Effect.Effect<Services> => Effect.die('Original preparation supplies services'),
+      { prepareServices: preparationFor('read') },
+    );
+    const owner = makeTestOperationOwner({ actions: [action], moduleId: ownerKey });
+    const checks: boolean[] = [];
+    let reads = 0;
+    const harness = yield* makeActionTestHarness({
+      ...owner,
+      access: 'allowed',
+      preparationReads: [
+        {
+          execute: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return [{ value: 7 }];
+            }),
+          sql: statement,
+        },
+      ],
+      get sourceExecutionInvocations() {
+        const admitted = checks.length === 0;
+        checks.push(admitted);
+        return admitted ? [{ invocationId: admissionId, tenantId: principal.tenantId }] : [];
+      },
+    });
+    const system = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authContextRef: 'job:preparation-fence:run:1',
+      authMethod: 'system',
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    });
+    const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: admissionId,
+      bindingIncarnation: '60000000-0000-4000-8000-000000000003',
+      declarationKey: `${ownerKey}.record.change`,
+      entrypointKey: `${ownerKey}.change`,
+      jobKey: 'preparation-fence',
+      legalEntityScope: 'optional',
+      originalOwnerBindingIncarnation: '60000000-0000-4000-8000-000000000006',
+      originalPrincipalId: principal.principalId,
+      originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000005',
+      originalWorkloadKey: 'test.source-admit',
+      runReference: admissionId,
+      schemaVersion: '1',
+      sourceAppId: 'test-source',
+      sourceBuildMarker: 'test-build',
+      sourceMode: 'admission',
+      workloadKey: 'test.preparation.source',
+    });
+    const trusted = trustVerifiedGatewayPrincipalContext(
+      system,
+      (yield* owner.snapshot).composition.revision,
+      undefined,
+      undefined,
+      workload,
+    );
+    const failure = yield* harness.runtime.runAction({ ...requestFor(action), principal: trusted }).pipe(Effect.flip);
+    expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+    expect(harness.snapshot().stages).toContain('invocation_prepared');
+    expect(checks.slice(0, 2)).toEqual([true, false]);
+    expect(reads).toBe(0);
+    expect(harness.snapshot().preparationQueries).toEqual([]);
     expect(harness.snapshot().committed).toEqual([]);
   }),
 );
