@@ -21,10 +21,7 @@ import type {
   ManageSymmyRoutesResult,
   SymmyRouteChangeRequest,
 } from '../../shared/actions/manage-symmy-routes.ts';
-import type {
-  SymmyRouteEnrollmentRefusal,
-  SymmyRouteEnrollmentRefused,
-} from '../ops/symmy-route-enrollment-refused.ts';
+import type { SymmyRouteEnrollmentRefused } from '../ops/symmy-route-enrollment-refused.ts';
 import { deactivateSymmyRoute, enableSymmyRoute } from '../ops/symmy-route-enrollment-store.ts';
 import type { SymmyRouteContracts, SymmyRouteEnrollmentAttribution } from '../ops/symmy-route-enrollment-store.ts';
 import { SymmyRouteReferenceSchema } from '../ops/symmy-route-enrollment.ts';
@@ -69,7 +66,7 @@ export const manageSymmyRoutesServices = Effect.fn('ManageSymmyRoutesAction.serv
 });
 type Services = Effect.Success<ReturnType<typeof manageSymmyRoutesServices>>;
 
-const rejected = (refusals: readonly SymmyRouteEnrollmentRefusal[]) =>
+const rejected = (refusals: ManageSymmyRoutesRejected['refusals']) =>
   new ManageSymmyRoutesRejected({
     code: 'route_enrollment_refused',
     reason: 'The Symmy route change was refused; nothing was written',
@@ -152,8 +149,9 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
     operatorRef: `${principalId}@${context.actionInvocationId}`,
     reason: payload.reason,
   };
-  // In order: a read route a write route depends on is enrolled first, and the first refusal rolls all back.
-  const routes = yield* Effect.forEach(
+  // In order: a read route a write route depends on is enrolled first. Every change is decided, so the administrator
+  // sees each refusal at once (the workloads still to grant among them); any refusal rolls every change back.
+  const decided = yield* Effect.forEach(
     payload.changes,
     (change) =>
       applyChange(change, scope, attribution, context.services).pipe(
@@ -173,9 +171,19 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
           }
           return route;
         }),
+        Effect.result,
       ),
     { concurrency: 1 },
   );
+  const failures = decided.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : []));
+  const unavailable = failures.find(({ code }) => code === 'route_enrollment_unavailable');
+  if (unavailable !== undefined) {
+    return yield* unavailable;
+  }
+  if (failures.length > 0) {
+    return yield* rejected(failures.flatMap(({ refusals }) => refusals));
+  }
+  const routes = decided.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `symmy-route-enrollment:${payload.integrationPrincipalId}:${legalEntityId}`,

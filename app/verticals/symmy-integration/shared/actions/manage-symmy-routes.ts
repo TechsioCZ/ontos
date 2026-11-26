@@ -111,7 +111,16 @@ export const ManageSymmyRoutesResultSchema = Schema.Struct({
 });
 export type ManageSymmyRoutesResult = typeof ManageSymmyRoutesResultSchema.Type;
 
-export const ManageSymmyRoutesRefusalSchema = Schema.Struct({ code: Schema.String, detail: Schema.String });
+export const ManageSymmyRoutesRefusalSchema = Schema.Struct({
+  code: Schema.String,
+  detail: Schema.String,
+  /**
+   * On `integration_binding_missing` and `integration_company_registration_missing`: the workloads, any one of which the
+   * integration principal must hold registered for the company. Grant the first of each through
+   * `core.identity.register-integration-workloads`, then repeat the route change.
+   */
+  workloads: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
+});
 
 /** Every refusal of the run, so the administrator sees the whole list at once; nothing was written. */
 export class ManageSymmyRoutesRejected extends Schema.TaggedError<ManageSymmyRoutesRejected>()(

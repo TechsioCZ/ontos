@@ -158,6 +158,39 @@ describe('integration.symmy.manage-symmy-routes', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  it.effect('answers the refusals of every change at once, with the workloads still to grant', () =>
+    Effect.gen(function* everyRefusal() {
+      const { services } = recordingServices();
+      const { outcome } = yield* run(
+        'allowed',
+        {
+          ...services,
+          enable: ({ request }) =>
+            Effect.fail(
+              new SymmyRouteEnrollmentRefused({
+                refusals: [
+                  {
+                    code: 'integration_binding_missing',
+                    detail: `${request.routeKey} needs its workload`,
+                    workloads: [`integration.symmy-${request.routeKey}`],
+                  },
+                ],
+              }),
+            ),
+        },
+        'every-refusal',
+      );
+      const failure = Result.isFailure(outcome) ? outcome.failure : undefined;
+      expect(Schema.is(ManageSymmyRoutesRejected)(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        refusals: [
+          { code: 'integration_binding_missing', workloads: ['integration.symmy-priceLists'] },
+          { code: 'integration_binding_missing', workloads: ['integration.symmy-productsBatch'] },
+        ],
+      });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect('answers every refusal of the enrollment and commits nothing', () =>
     Effect.gen(function* refusedChange() {
       const { services } = recordingServices();
@@ -180,7 +213,8 @@ describe('integration.symmy.manage-symmy-routes', () => {
       expect(Schema.is(ManageSymmyRoutesRejected)(failure)).toBe(true);
       expect(failure).toMatchObject({
         code: 'route_enrollment_refused',
-        refusals: [{ code: 'integration_principal_not_active' }],
+        // Both enables are refused; the disable after them is decided too and rolled back with them.
+        refusals: [{ code: 'integration_principal_not_active' }, { code: 'integration_principal_not_active' }],
       });
       expect(harness.snapshot().committed).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),

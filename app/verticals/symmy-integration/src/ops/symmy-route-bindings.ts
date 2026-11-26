@@ -522,6 +522,7 @@ export const checkSymmyRouteBindings = (input: {
         refusals.push({
           code: 'integration_binding_missing',
           detail: `The integration principal holds none of ${binding.workloads.join(' or ')}, needed for ${binding.purpose}`,
+          workloads: binding.workloads,
         });
       } else if (
         company !== undefined &&
@@ -533,6 +534,7 @@ export const checkSymmyRouteBindings = (input: {
         refusals.push({
           code: 'integration_company_registration_missing',
           detail: `The integration principal ${input.principalId} holds ${holding.map(({ workload }) => workload).join(' and ')}, needed for ${binding.purpose}, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+          workloads: binding.workloads,
         });
       }
       continue;

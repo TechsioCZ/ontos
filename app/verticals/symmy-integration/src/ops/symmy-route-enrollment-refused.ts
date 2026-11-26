@@ -47,6 +47,12 @@ export type SymmyRouteEnrollmentRefusalCode = typeof SymmyRouteEnrollmentRefusal
 const SymmyRouteEnrollmentRefusalSchema = Schema.Struct({
   code: SymmyRouteEnrollmentRefusalCodeSchema,
   detail: Schema.String,
+  /**
+   * On `integration_binding_missing` and `integration_company_registration_missing`: the workloads, any one of which the
+   * integration principal must hold registered for the company. `core.identity.register-integration-workloads` grants
+   * them; the route change is then repeated.
+   */
+  workloads: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
 });
 export type SymmyRouteEnrollmentRefusal = typeof SymmyRouteEnrollmentRefusalSchema.Type;
 
