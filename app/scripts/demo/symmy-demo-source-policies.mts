@@ -501,8 +501,17 @@ const readDemoSourcePolicyInputs = (transaction: CoreTransaction, enrollmentOwne
           exact_identity_key #>> '{unitBasis,unitRef,resourceId}' as unit_id,
           exact_identity_key #>> '{unitBasis,quantity}' as unit_quantity,
           to_char(effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as effective_from
-        from pricing.external_price_source_authority_grants
+        from pricing.external_price_source_authority_grants grant_row
         where tenant_id = ${tenantId}::uuid and legal_entity_id = ${legalEntityId}::uuid
+          -- A standing policy fixes its dimension's start; a later grant (e.g. a staff ERP edit backdated to 2020)
+          -- must not move it, or the re-derived policy overlaps the stored one and the bootstrap conflicts.
+          and not exists (select 1 from pricing.external_price_source_policies policy
+            where policy.tenant_id = grant_row.tenant_id and policy.legal_entity_id = grant_row.legal_entity_id
+              and policy.channel_id = grant_row.exact_identity_key #>> '{commercialScope,channelId}'
+              and policy.market_id = grant_row.exact_identity_key #>> '{commercialScope,marketId}'
+              and policy.currency_code = grant_row.exact_identity_key ->> 'currencyCode'
+              and policy.unit_id::text = grant_row.exact_identity_key #>> '{unitBasis,unitRef,resourceId}'
+              and policy.unit_quantity = (grant_row.exact_identity_key #>> '{unitBasis,quantity}')::numeric)
         union all
         select channel_id, market_id, currency_code, unit_id::text, unit_quantity::text,
           to_char(effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
