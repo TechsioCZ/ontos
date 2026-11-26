@@ -19799,6 +19799,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "integration.symmy.symmy-routes.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "integrations",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.api.symmy-route-requirements",
+            "moduleKey": "integration.symmy",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "integration.symmy.symmy-source-organization-facts.read",
             "kind": "read",
             "modes": [

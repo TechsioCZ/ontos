@@ -12,6 +12,8 @@ import { importJobResourceDescriptor } from './shared/resources/import-job.ts';
 import { manageSymmyRoutesAction } from './src/actions/manage-symmy-routes.action.ts';
 import { SymmyCompanyRoutesApi } from './shared/apis/symmy-company-routes.ts';
 import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
+import { SymmyRouteRequirementsApi } from './shared/apis/symmy-route-requirements.ts';
+import { symmyRouteRequirementsRead } from './src/api/symmy-route-requirements.read.ts';
 import { SymmyJobPrivacyExecutionApi } from './shared/apis/symmy-job-privacy-execution.ts';
 import { symmyJobPrivacyExecutionRead } from './src/api/symmy-job-privacy-execution.read.ts';
 import { SymmyJobStatusApi } from './shared/apis/symmy-job-status.ts';
@@ -219,6 +221,7 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       'symmy-job-privacy-execution': SymmyJobPrivacyExecutionApi,
       'symmy-job-status': SymmyJobStatusApi,
       'symmy-route-context': SymmyRouteContextApi,
+      'symmy-route-requirements': SymmyRouteRequirementsApi,
       'symmy-source-organization-facts': SymmySourceOrganizationFactsApi,
       'symmy-sync-admission': SymmySyncAdmissionApi,
       // </generated-module-manifest-apis>
@@ -242,6 +245,11 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       },
       { apiKey: 'symmy-job-status', operationKey: 'symmyJobStatus.execute', registration: symmyJobStatusRead },
       { apiKey: 'symmy-route-context', operationKey: 'symmyRouteContext.execute', registration: symmyRouteContextRead },
+      {
+        apiKey: 'symmy-route-requirements',
+        operationKey: 'symmyRouteRequirements.execute',
+        registration: symmyRouteRequirementsRead,
+      },
       {
         apiKey: 'symmy-source-organization-facts',
         operationKey: 'symmySourceOrganizationFacts.execute',
