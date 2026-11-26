@@ -2505,7 +2505,11 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       { concurrency: 2 },
     );
     yield* releaseAccessProof;
-    yield* bootstrapStageSymmyDemo.pipe(timedBootStage('host.symmy-demo-bootstrap'));
+    // Hotfix: a failed demo refresh keeps the records an earlier boot applied and never blocks the release.
+    yield* bootstrapStageSymmyDemo.pipe(
+      timedBootStage('host.symmy-demo-bootstrap'),
+      Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
+    );
     const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
