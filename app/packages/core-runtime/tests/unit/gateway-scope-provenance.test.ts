@@ -152,6 +152,173 @@ it('preserves finite Privacy dispatch metadata only with its exact original huma
   expect(Schema.is(RegisteredGatewayPrivacyDispatchSchema)(withoutClaim)).toBe(false);
 });
 
+it('seals a finite Communications dispatch only with its own consumer worker', () => {
+  const governance = '30000000-0000-4000-8000-000000000001';
+  const human = Schema.decodeSync(TrustedPrincipalContextSchema)({ ...context, legalEntityId: governance });
+  const dispatch: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded = {
+    authority: {
+      consumerModuleKey: 'communications.core',
+      originActionKey: 'privacy.core.dispatch-privacy-measure',
+      originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+      producerModuleKey: 'privacy.core',
+      subjectResourceType: 'privacy.core.privacy-measure',
+      targetAccess: 'tenant-scope',
+      topic: 'privacy.measure.dispatched',
+      workerKey: 'communications.core.receive-privacy-measure',
+    },
+    claimId: 'privacy-dispatch-native-claim',
+    deliveryId: '00000000-0000-4000-8000-000000000011',
+    dispatchInvocationId: '00000000-0000-4000-8000-000000000012',
+    domainEventId: '00000000-0000-4000-8000-000000000013',
+    governanceLegalEntityId: governance,
+    handoffHash: 'b'.repeat(64),
+    measureId: 'privacy.core.measure-fixture',
+    messageId: '00000000-0000-4000-8000-000000000014',
+    operation: 'CommunicationsReceipt',
+    principalId: human.principalId,
+    requestHash: 'c'.repeat(64),
+    sourceMode: 'worker',
+    target: {
+      access: 'read',
+      appId: 'communications',
+      declarationKey: 'communications.core.privacy-owner-execution-outcome.read',
+      entrypointKey: 'communications.core.api.privacy-owner-execution-outcome',
+      legalEntityScope: 'optional',
+      moduleId: 'communications.core',
+      schemaVersion: '1',
+    },
+    taskId: 'privacy.core.task-fixture',
+    tenantId: human.tenantId,
+    workerKey: 'communications.core.receive-privacy-measure',
+    workerModuleKey: 'communications.core',
+  };
+  const seal = (metadata: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded) =>
+    trustVerifiedGatewayPrincipalContext(
+      human,
+      compositionRevision,
+      undefined,
+      { appId: 'privacy', buildMarker: 'privacy-fixture-build', principalId: '00000000-0000-4000-8000-000000000010' },
+      undefined,
+      undefined,
+      Schema.decodeSync(RegisteredGatewayPrivacyDispatchSchema)(metadata),
+    );
+  const sealed = readVerifiedGatewayPrivacyDispatch(seal(dispatch));
+  expect(sealed?.operation).toBe('CommunicationsReceipt');
+  expect(sealed?.authority.consumerModuleKey).toBe('communications.core');
+  expect(sealed?.authority.targetAccess).toBe('tenant-scope');
+  // the sealed worker must be the very consumer worker the authority names: Symmy's worker cannot stand in for it
+  expect(() =>
+    seal({
+      ...dispatch,
+      workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
+      workerModuleKey: 'integration.symmy',
+    }),
+  ).toThrow();
+  expect(() => seal({ ...dispatch, workerModuleKey: 'integration.symmy' })).toThrow();
+  expect(() => seal({ ...dispatch, workerKey: 'communications.core.prepare-message-handoff' })).toThrow();
+});
+
+it('seals a Communications continuation only as its own outcome report from its own continuation worker', () => {
+  const governance = '30000000-0000-4000-8000-000000000001';
+  const human = Schema.decodeSync(TrustedPrincipalContextSchema)({ ...context, legalEntityId: governance });
+  const continuationWorker = 'communications.core.report-privacy-owner-outcome';
+  const authority = {
+    consumerModuleKey: 'communications.core',
+    continuation: {
+      actionKey: 'communications.core.record-owner-execution-evidence',
+      topic: 'communications.core.owner-execution-evidence-recorded.v1',
+      workerKey: continuationWorker,
+    },
+    originActionKey: 'privacy.core.dispatch-privacy-measure',
+    originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+    producerModuleKey: 'privacy.core',
+    subjectResourceType: 'privacy.core.privacy-measure',
+    targetAccess: 'delegated-actor',
+    topic: 'privacy.measure.dispatched',
+    workerKey: 'communications.core.receive-privacy-measure',
+  } as const;
+  const dispatch: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded = {
+    authority,
+    claimId: 'privacy-continuation-native-claim',
+    continuationDeliveryId: '00000000-0000-4000-8000-000000000015',
+    deliveryId: '00000000-0000-4000-8000-000000000011',
+    dispatchInvocationId: '00000000-0000-4000-8000-000000000012',
+    domainEventId: '00000000-0000-4000-8000-000000000013',
+    governanceLegalEntityId: governance,
+    handoffHash: 'b'.repeat(64),
+    measureId: 'privacy.core.measure-fixture',
+    messageId: '00000000-0000-4000-8000-000000000014',
+    operation: 'PrivacyOutcome',
+    principalId: human.principalId,
+    requestHash: 'c'.repeat(64),
+    sourceMode: 'continuation',
+    target: {
+      access: 'write',
+      appId: 'privacy',
+      declarationKey: 'privacy.core.owner-execution-outcome.record',
+      entrypointKey: 'privacy.core.record-owner-execution-outcome',
+      legalEntityScope: 'required',
+      moduleId: 'privacy.core',
+      schemaVersion: '1',
+    },
+    taskId: 'privacy.core.task-fixture',
+    tenantId: human.tenantId,
+    workerKey: continuationWorker,
+    workerModuleKey: 'communications.core',
+  };
+  const seal = (metadata: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded) =>
+    trustVerifiedGatewayPrincipalContext(
+      human,
+      compositionRevision,
+      undefined,
+      {
+        appId: 'communications',
+        buildMarker: 'communications-fixture',
+        principalId: '00000000-0000-4000-8000-000000000010',
+      },
+      undefined,
+      undefined,
+      Schema.decodeSync(RegisteredGatewayPrivacyDispatchSchema)(metadata),
+    );
+  const sealed = readVerifiedGatewayPrivacyDispatch(seal(dispatch));
+  expect(sealed?.sourceMode).toBe('continuation');
+  expect(sealed?.continuationDeliveryId).toBe('00000000-0000-4000-8000-000000000015');
+  expect(Object.isFrozen(sealed?.authority.continuation)).toBe(true);
+  // the continuation worker must be the one its derived authority approves, never the take-over worker or Symmy's
+  expect(() => seal({ ...dispatch, workerKey: 'communications.core.receive-privacy-measure' })).toThrow();
+  expect(() =>
+    seal({
+      ...dispatch,
+      workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
+      workerModuleKey: 'integration.symmy',
+    }),
+  ).toThrow();
+  const { continuation: _continuation, ...withoutContinuation } = authority;
+  expect(() => seal({ ...dispatch, authority: withoutContinuation })).toThrow();
+  // a continuation reports exactly one outcome, under its claim and its own delivery
+  const { continuationDeliveryId: _delivery, ...withoutDelivery } = dispatch;
+  const { claimId: _claim, ...withoutClaim } = dispatch;
+  // a worker-mode carrier of the continuation worker is not a continuation: its worker is not the take-over worker
+  expect(() => seal({ ...withoutDelivery, sourceMode: 'worker' })).toThrow();
+  expect(Schema.is(RegisteredGatewayPrivacyDispatchSchema)({ ...withoutDelivery, sourceMode: 'worker' })).toBe(true);
+  for (const invalid of [
+    withoutDelivery,
+    withoutClaim,
+    { ...dispatch, operation: 'CommunicationsReceipt' },
+    { ...dispatch, operation: 'PrivacyEligibility' },
+  ]) {
+    expect(Schema.is(RegisteredGatewayPrivacyDispatchSchema)(invalid)).toBe(false);
+  }
+  // only a continuation names a continuation delivery
+  expect(
+    Schema.is(RegisteredGatewayPrivacyDispatchSchema)({
+      ...dispatch,
+      sourceMode: 'worker',
+      workerKey: 'communications.core.receive-privacy-measure',
+    }),
+  ).toBe(false);
+});
+
 it('keeps Organization governance read provenance on the exact original human company scope only', () => {
   const human = Schema.decodeSync(TrustedPrincipalContextSchema)({
     ...context,

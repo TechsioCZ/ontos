@@ -3,6 +3,8 @@ import { describe, expect, it } from 'effect-rstest';
 import {
   canRetryPrivacyMeasure,
   createPrivacyMeasureDispatch,
+  isSameOwnerExecutionReceipt,
+  OwnerExecutionOutcomeSchema,
   prepareOwnerActionRequest,
   PrivacyMeasureInvariantError,
   recordOwnerExecutionOutcome,
@@ -168,4 +170,22 @@ describe('Privacy Measure owner handoff', () => {
       expect(Schema.is(PrivacyMeasureInvariantError)(yield* Effect.flip(invalid))).toBe(true);
     }),
   );
+});
+
+describe('A second report of an attempt Privacy already holds (R1)', () => {
+  const held = Schema.decodeUnknownSync(OwnerExecutionOutcomeSchema)(outcome('SUCCEEDED'));
+  // the owner stamps every read of its receipt with the read instant: a later read of the same receipt
+  const reread = { ...held, recordedAt: '2026-09-14T11:30:00.000Z' };
+
+  it('is the same fact in either order when only the read instant differs', () => {
+    // a manual pull first, then the owner continuation of the same attempt, and the reverse
+    expect(isSameOwnerExecutionReceipt(held, reread)).toBe(true);
+    expect(isSameOwnerExecutionReceipt(reread, held)).toBe(true);
+  });
+
+  it('is a conflict for any other difference of the receipt', () => {
+    expect(isSameOwnerExecutionReceipt(held, { ...reread, status: 'PARTIAL' })).toBe(false);
+    expect(isSameOwnerExecutionReceipt(held, { ...reread, evidenceRefs: ['proof-2'] })).toBe(false);
+    expect(isSameOwnerExecutionReceipt(held, { ...reread, outcomeId: 'outcome-other' })).toBe(false);
+  });
 });

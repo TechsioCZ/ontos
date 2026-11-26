@@ -23,7 +23,8 @@
     "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PROJECTS": "https://ontos-stage-projects.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PROMOTION": "https://ontos-stage-promotion.bleeding.dev",
-    "ULTRAMODERN_PUBLIC_URL_SYMMY_INTEGRATION": "https://ontos-stage-symmy-integration.bleeding.dev"
+    "ULTRAMODERN_PUBLIC_URL_SYMMY_INTEGRATION": "https://ontos-stage-symmy-integration.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_COMMUNICATIONS": "https://ontos-stage-communications.bleeding.dev"
   },
   "retiredWorkers": [],
   "schemaVersion": 1,
@@ -47,6 +48,7 @@
     "projects",
     "promotion",
     "symmy-integration",
+    "communications",
     "shell-super-app"
   ]
 }

@@ -1,0 +1,196 @@
+import type { ScopedRoutineInvoker } from '@app/core-runtime';
+import { Effect, Option, Schema } from 'effect';
+
+import type { MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import { observationIdOf } from '../domain/history/provider-observation.ts';
+import type { ProviderObservationInput } from '../domain/history/provider-observation.ts';
+import { CONFLICT_RESOLUTION_REASON_CODE } from '../domain/recovery/vocabulary.ts';
+import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
+import { processIntentHandoff, storeUnavailable } from '../handoff/process-intent-handoff.ts';
+import type { ScopedRunner } from '../handoff/process-intent-handoff.ts';
+import { ingestProviderObservation, resolveObservationConflict } from '../history/provider-observations.ts';
+import type { IngestAnswerSchema } from '../history/provider-observations.ts';
+import { StoredIntentFactsSchema } from '../history/stored-intent-facts.ts';
+import type { StoredIntentFacts } from '../history/stored-intent-facts.ts';
+import {
+  workerCloseUnansweredAttemptRoutine,
+  workerReadIntentRoutine,
+} from '../persistence/communications-routines.ts';
+
+/**
+ * Reconciliation of an uncertain external effect (#1403). While an effect is unknown nothing is submitted: the pre-handoff step
+ * skips the intent. What ends the doubt is EVIDENCE that step 22 reconciled, handed over through the one input contract of the
+ * history (`ProviderObservationInput`) and appended as observations. Nothing here deletes or edits anything:
+ *
+ * - the original indeterminate answer stays, and so does every observation; the reconciliation is one more fact;
+ * - a proven ACCEPTANCE ends the doubt the other way: it is recorded, and the next evaluation never repeats the send;
+ * - a proven NON-acceptance lets the SAME intent continue, but only through the next evaluation of the pre-handoff step, which
+ *   asks every Current gate again and needs an approved recovery rule: this flow never begins an attempt;
+ * - a conflict of provider evidence is settled by a RESOLUTION fact appended when a reconciliation of the same attempt arrived
+ *   after it, never by removing the conflict;
+ * - an attempt that was begun and never answered (a crash between the call and its evidence) is closed as an unanswered
+ *   INDETERMINATE once a reconciliation proved non-acceptance, so it can be the basis of a retry; it is never closed otherwise,
+ *   and NEVER while its provider call may still be running (see `callLeaseMs`): such an attempt stays PREPARED and the outcome
+ *   says RECONCILIATION_PENDING, because a late ACCEPTED answer would otherwise meet a closed attempt and a second send.
+ *
+ * Production entry: the Action `ingest-provider-observation` records the Messaging Adapter's evidence and queues a self-outbox
+ * message, and the owner worker `reconcile-provider-evidence` runs `reconcileAndEvaluate` over what is then recorded (its
+ * `evidence` is empty: the Action already appended it). There is no real step 22 yet: the evidence in the tests is the labelled
+ * double. No callback endpoint, scheduler or queue is created here.
+ */
+
+export interface ReconciliationInput {
+  /**
+   * How long after it was prepared an attempt's provider call may still be running: the lease of the owner's Core Outbox worker,
+   * which the step also bounds its call with (`handoff-lease.ts`). Defaults to that lease; only a test that stands for "the
+   * lease has elapsed" passes another value.
+   */
+  readonly callLeaseMs?: number | undefined;
+  /** The evidence step 22 reconciled, each item bound to its own Tenant, intent and attempt. */
+  readonly evidence: readonly ProviderObservationInput[];
+  readonly intentId: typeof MessageIntentIdSchema.Type;
+}
+
+export interface ReconciliationOutcome {
+  /** One answer per observation, in the order given. */
+  readonly answers: readonly (typeof IngestAnswerSchema.Type)['outcome'][];
+  /** Attempts closed as unanswered because a reconciliation proved they were not accepted. */
+  readonly closedAttempts: number;
+  /** Attempts a reconciliation proved not accepted whose provider call may still be running: left PREPARED (RECONCILIATION_PENDING). */
+  readonly pendingAttempts: number;
+  /** Conflicts of provider evidence settled by an appended resolution. */
+  readonly resolvedConflicts: number;
+}
+
+/** The observations that prove an effect: with any of them an unanswered attempt is never closed as "not accepted". */
+const PRESENCE_KINDS: ReadonlySet<string> = new Set(['ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN']);
+
+const CloseAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['CLOSED', 'IN_FLIGHT', 'MISSING', 'NOT_PREPARED']),
+});
+
+const sumOf = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
+
+interface Reconciliation {
+  readonly attemptId: string;
+  readonly observationId: string;
+}
+
+/** Appends a resolution for every unresolved conflict of an attempt that a reconciliation recorded after it settles. */
+const settleConflicts = Effect.fn('Communications.settleConflicts')(function* settle(
+  invoker: ScopedRoutineInvoker,
+  intentId: typeof MessageIntentIdSchema.Type,
+  facts: StoredIntentFacts,
+  reconciliations: readonly Reconciliation[],
+) {
+  const settled = yield* Effect.forEach(
+    facts.conflicts.filter(({ resolvedAt }) => resolvedAt === undefined),
+    (conflict) =>
+      Option.match(Option.fromNullishOr(reconciliations.find(({ attemptId }) => attemptId === conflict.attemptId)), {
+        onNone: () => Effect.succeed(0),
+        onSome: (basis) =>
+          resolveObservationConflict(invoker, {
+            basisObservationId: basis.observationId,
+            conflictId: conflict.conflictId,
+            intentId,
+            reasonCode: CONFLICT_RESOLUTION_REASON_CODE,
+          }).pipe(Effect.map((outcome) => (outcome === 'RESOLVED' ? 1 : 0))),
+      }),
+    { concurrency: 1 },
+  );
+  return sumOf(settled);
+});
+
+/**
+ * Closes an attempt that never recorded an answer, but only when a reconciliation proved it was not accepted AND the database says
+ * its provider call cannot still be running (the lease elapsed since it was prepared). Otherwise it stays PREPARED.
+ */
+const closeUnansweredAttempts = Effect.fn('Communications.closeUnansweredAttempts')(function* close(
+  invoker: ScopedRoutineInvoker,
+  facts: StoredIntentFacts,
+  callLeaseMs: number,
+) {
+  const proven = facts.attempts.filter(({ attemptId, state }) => {
+    const kinds = facts.observations.flatMap((observation) =>
+      observation.attemptId === attemptId ? [observation.kind] : [],
+    );
+    return (
+      state === 'PREPARED' && kinds.includes('NON_ACCEPTANCE_PROVEN') && !kinds.some((kind) => PRESENCE_KINDS.has(kind))
+    );
+  });
+  const outcomes = yield* Effect.forEach(
+    proven,
+    ({ attemptId }) =>
+      invoker.invoke(workerCloseUnansweredAttemptRoutine, [attemptId, callLeaseMs]).pipe(
+        Effect.mapError((cause) => storeUnavailable('The unanswered attempt could not be closed', cause)),
+        Effect.flatMap((rows) =>
+          Schema.decodeUnknownEffect(CloseAnswerSchema)(rows[0]?.result).pipe(
+            Effect.mapError((cause) => storeUnavailable('The unanswered attempt answer was unreadable', cause)),
+          ),
+        ),
+      ),
+    { concurrency: 1 },
+  );
+  return {
+    closedAttempts: outcomes.filter(({ outcome }) => outcome === 'CLOSED').length,
+    pendingAttempts: outcomes.filter(({ outcome }) => outcome === 'IN_FLIGHT').length,
+  };
+});
+
+/** One scoped transaction: append the evidence, settle what the evidence settles, and say what changed. */
+export const reconcileProviderEvidence = Effect.fn('Communications.reconcileProviderEvidence')(function* reconcile(
+  input: ReconciliationInput,
+  scoped: ScopedRunner,
+) {
+  return yield* scoped(
+    Effect.fn('Communications.reconcileInScope')(function* settleInScope(invoker) {
+      const answers = yield* Effect.forEach(
+        input.evidence,
+        (observation) => ingestProviderObservation(invoker, observation),
+        { concurrency: 1 },
+      );
+      // the evidence that the owner bound to this intent and that is, or already was, recorded as a RECONCILIATION
+      const recorded = input.evidence.filter(
+        (observation, index) =>
+          observation.intentId === input.intentId &&
+          observation.evidence.basis === 'RECONCILIATION' &&
+          (answers[index] === 'RECORDED' || answers[index] === 'DUPLICATE'),
+      );
+      const reconciliations = yield* Effect.forEach(
+        recorded,
+        (observation) =>
+          observationIdOf(observation).pipe(
+            Effect.map((observationId): Reconciliation => ({ attemptId: observation.attemptId, observationId })),
+          ),
+        { concurrency: 1 },
+      );
+      const rows = yield* invoker
+        .invoke(workerReadIntentRoutine, [input.intentId])
+        .pipe(Effect.mapError((cause) => storeUnavailable('The Message Intent could not be read', cause)));
+      const facts = yield* Schema.decodeUnknownEffect(StoredIntentFactsSchema)(rows[0]?.result).pipe(
+        Effect.mapError((cause) => storeUnavailable('The Message Intent document was unreadable', cause)),
+      );
+      const { closed, resolvedConflicts } = yield* Effect.all(
+        {
+          closed: closeUnansweredAttempts(invoker, facts, input.callLeaseMs ?? PREPARE_MESSAGE_HANDOFF_LEASE_MS),
+          resolvedConflicts: settleConflicts(invoker, input.intentId, facts, reconciliations),
+        },
+        { concurrency: 1 },
+      );
+      return { answers, ...closed, resolvedConflicts } satisfies ReconciliationOutcome;
+    }),
+  );
+});
+
+/**
+ * Reconciles and then lets the SAME pre-handoff step evaluate the intent again: acceptance proven (nothing is sent), non-acceptance
+ * proven (the same intent continues only if its approved rule and every Current gate allow it), or still unknown (nothing is sent).
+ */
+export const reconcileAndEvaluate = Effect.fn('Communications.reconcileAndEvaluate')(function* reconcileThenEvaluate(
+  input: ReconciliationInput & { readonly tenantId: string },
+  scoped: ScopedRunner,
+) {
+  const reconciliation = yield* reconcileProviderEvidence(input, scoped);
+  const processing = yield* processIntentHandoff({ intentId: input.intentId, tenantId: input.tenantId }, scoped);
+  return { processing, reconciliation };
+});

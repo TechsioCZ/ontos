@@ -1,5 +1,5 @@
 import { OfficialIdentifierInputSchema } from '@app/party-registry/domain/identifier-contracts';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { LegacyIcoInventoryAssertionSchema } from '@app/party-registry/apis/legacy-ico-inventory';
 import { Schema } from 'effect';
 import { CustomerProfileReadRequestSchema } from '../apis/customer-profile-read.ts';

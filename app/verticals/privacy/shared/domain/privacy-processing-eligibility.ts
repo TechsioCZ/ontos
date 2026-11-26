@@ -1,3 +1,15 @@
+import {
+  IntendedProcessingScopeSchema,
+  PrivacyEligibilityDecisionOutcomeSchema,
+  PrivacyInputStateSchema,
+} from '@app/privacy-contracts/domain/privacy-eligibility-evidence';
+import type {
+  IntendedProcessingScope,
+  PrivacyEligibilityAuthoritativeReference,
+  PrivacyEligibilityCurrentnessCondition,
+  PrivacyEligibilityEvidence,
+  PrivacyEligibilityPolicyRevision,
+} from '@app/privacy-contracts/domain/privacy-eligibility-evidence';
 import { Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
@@ -18,32 +30,32 @@ import {
   isPrivacyInstantAtOrBefore,
   PrivacyIsoTimestampSchema,
 } from './privacy-subject.ts';
-import { ProcessingScopeRefSchema } from './privacy-responsibility-assignment.ts';
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 
+export {
+  IntendedProcessingScopeSchema,
+  PrivacyEligibilityAuthoritativeReferenceSchema,
+  PrivacyEligibilityCurrentnessConditionSchema,
+  PrivacyEligibilityEvidenceSchema,
+  PrivacyEligibilityPolicyRevisionSchema,
+  PrivacyInputStateSchema,
+} from '@app/privacy-contracts/domain/privacy-eligibility-evidence';
+export type {
+  IntendedProcessingScope,
+  PrivacyEligibilityAuthoritativeReference,
+  PrivacyEligibilityCurrentnessCondition,
+  PrivacyEligibilityEvidence,
+  PrivacyEligibilityPolicyRevision,
+  PrivacyInputState,
+} from '@app/privacy-contracts/domain/privacy-eligibility-evidence';
+
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const RefList = Schema.Array(Ref).check(Schema.isMaxLength(64));
 const InterventionKinds = Schema.Literals(['OBJECTION', 'RESTRICTION']);
 export const PrivacyInterventionStatusSchema = Schema.Literals(['ACTIVE', 'RESOLVED', 'ABSENT']);
-const PrivacyEligibilityDecisionOutcomeSchema = Schema.Literals(['ALLOWED', 'NOT_ALLOWED', 'INDETERMINATE']);
 
 const privacyApplicabilityAuthorityEquivalent = Schema.toEquivalence(PrivacyApplicabilityAuthoritySchema);
 const privacyApplicabilityScopeEquivalent = Schema.toEquivalence(PrivacyApplicabilityScopeSchema);
 const privacySubjectRefEquivalent = Schema.toEquivalence(PrivacySubjectRefSchema);
-
-/** The complete business identity of the use being checked. Ambient request context is never added. */
-export const IntendedProcessingScopeSchema = Schema.Struct({
-  controllerRef: Ref,
-  dataCategoryRefs: RefList,
-  operation: Ref,
-  processingScopeRef: ProcessingScopeRefSchema,
-  purposeRef: Ref,
-  purposeVersionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyPurposeVersionId'))),
-  recipientRefs: RefList,
-  subjectRef: PrivacySubjectRefSchema,
-});
-export type IntendedProcessingScope = typeof IntendedProcessingScopeSchema.Type;
-
 export const PrivacyInputCurrentnessSchema = Schema.Struct({
   authoritative: Schema.Boolean,
   observedAt: PrivacyIsoTimestampSchema,
@@ -52,9 +64,6 @@ export const PrivacyInputCurrentnessSchema = Schema.Struct({
   validUntil: Schema.optional(PrivacyIsoTimestampSchema),
 });
 export type PrivacyInputCurrentness = typeof PrivacyInputCurrentnessSchema.Type;
-
-export const PrivacyInputStateSchema = Schema.Literals(['CURRENT', 'ABSENT', 'STALE', 'UNAVAILABLE', 'CONFLICT']);
-export type PrivacyInputState = typeof PrivacyInputStateSchema.Type;
 
 export const PrivacyInputResolutionSchema = Schema.Struct({
   currentness: PrivacyInputCurrentnessSchema,
@@ -96,6 +105,57 @@ export const PrivacyProcessingInterventionSchema = Schema.Struct({
   status: PrivacyInterventionStatusSchema,
 });
 export type PrivacyProcessingIntervention = typeof PrivacyProcessingInterventionSchema.Type;
+
+const interventionScopeEquivalent = Schema.toEquivalence(IntendedProcessingScopeSchema);
+const INTERVENTIONS_SOURCE = 'privacy.core.processing-interventions';
+
+/**
+ * The Current objection or restriction of ONE exact intended scope among Privacy's retained interventions of that
+ * processing scope (newest first or in any order), as of `asOf`. The latest record of that kind and exact scope observed at
+ * or before `asOf` is Current; two at the same instant, or a non-authoritative one, cannot be resolved (a non-authoritative
+ * ACTIVE record, so nothing reads it as absent); none at all is an authoritative ABSENT of a complete, empty snapshot.
+ */
+export const currentProcessingIntervention = (
+  interventions: readonly PrivacyProcessingIntervention[],
+  kind: PrivacyProcessingIntervention['kind'],
+  intendedScope: IntendedProcessingScope,
+  asOf: string,
+): PrivacyProcessingIntervention => {
+  const matching = interventions
+    .filter(
+      (intervention) =>
+        intervention.kind === kind &&
+        intervention.currentness.observedAt <= asOf &&
+        interventionScopeEquivalent(intervention.scope, intendedScope),
+    )
+    .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
+  const current = matching.at(0);
+  const sameTime = matching.filter(({ currentness }) => currentness.observedAt === current?.currentness.observedAt);
+  if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
+    return {
+      currentness: { authoritative: false, observedAt: asOf, revision: 'conflict', sourceRef: INTERVENTIONS_SOURCE },
+      interventionRef: `privacy-${kind.toLowerCase()}:unresolved:${intendedScope.processingScopeRef.scopeId}`,
+      kind,
+      scope: intendedScope,
+      status: 'ACTIVE',
+    };
+  }
+  if (current !== undefined) {
+    return current;
+  }
+  return {
+    currentness: {
+      authoritative: true,
+      observedAt: asOf,
+      revision: 'complete-empty-snapshot',
+      sourceRef: INTERVENTIONS_SOURCE,
+    },
+    interventionRef: `privacy-${kind.toLowerCase()}:absent:${intendedScope.processingScopeRef.scopeId}`,
+    kind,
+    scope: intendedScope,
+    status: 'ABSENT',
+  };
+};
 
 export const ProcessingInterventionAuthorityRequestSchema = Schema.Struct({
   interventionRef: Ref,
@@ -308,32 +368,6 @@ export const PrivacyEligibilityOutcomeSchema = Schema.Struct({
 });
 export type PrivacyEligibilityOutcome = typeof PrivacyEligibilityOutcomeSchema.Type;
 
-/** A versioned policy identity retained for historical explanation, never as an authorization token. */
-export const PrivacyEligibilityPolicyRevisionSchema = Schema.Struct({
-  policyRef: Ref,
-  revision: Ref,
-});
-export type PrivacyEligibilityPolicyRevision = typeof PrivacyEligibilityPolicyRevisionSchema.Type;
-
-/** Safe references only. The registry owns the referenced fact and its payload lifecycle. */
-export const PrivacyEligibilityAuthoritativeReferenceSchema = Schema.Struct({
-  kind: Ref,
-  reference: Ref,
-  revision: Ref,
-});
-export type PrivacyEligibilityAuthoritativeReference = typeof PrivacyEligibilityAuthoritativeReferenceSchema.Type;
-
-export const PrivacyEligibilityCurrentnessConditionSchema = Schema.Struct({
-  authoritative: Schema.Boolean,
-  input: Ref,
-  observedAt: PrivacyIsoTimestampSchema,
-  revision: Ref,
-  sourceRef: Ref,
-  state: PrivacyInputStateSchema,
-  validUntil: Schema.optional(PrivacyIsoTimestampSchema),
-});
-export type PrivacyEligibilityCurrentnessCondition = typeof PrivacyEligibilityCurrentnessConditionSchema.Type;
-
 /** A consumer owns this declaration; Privacy never invents a universal freshness window. */
 export const PrivacyEligibilityConsumerContractSchema = Schema.Struct({
   consumerRef: Ref,
@@ -369,18 +403,6 @@ export const PrivacyEligibilityHandoffSchema = Schema.Struct({
   status: Schema.Literals(['PENDING', 'COMPLETED', 'FAILED', 'RECONCILIATION_REQUIRED']),
 });
 export type PrivacyEligibilityHandoff = typeof PrivacyEligibilityHandoffSchema.Type;
-
-/** Durable explainability for one evaluation. It contains no personal-data payload copy. */
-export const PrivacyEligibilityEvidenceSchema = Schema.Struct({
-  authoritativeReferences: Schema.Array(PrivacyEligibilityAuthoritativeReferenceSchema).check(Schema.isMaxLength(64)),
-  currentnessConditions: Schema.Array(PrivacyEligibilityCurrentnessConditionSchema).check(Schema.isMaxLength(8)),
-  evaluatedScope: IntendedProcessingScopeSchema,
-  outcome: PrivacyEligibilityDecisionOutcomeSchema,
-  policyRevisions: Schema.Array(PrivacyEligibilityPolicyRevisionSchema).check(Schema.isMaxLength(16)),
-  reasonCodes: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
-  trustedDecisionTime: PrivacyIsoTimestampSchema,
-});
-export type PrivacyEligibilityEvidence = typeof PrivacyEligibilityEvidenceSchema.Type;
 
 export interface CreatePrivacyEligibilityEvidenceInput {
   readonly authoritativeReferences?: readonly PrivacyEligibilityAuthoritativeReference[] | undefined;
@@ -711,7 +733,8 @@ export const resolvePrivacyEligibilityInputs = (
 export const isReliableCurrentPrivacyInput = (resolution: PrivacyInputResolution): boolean =>
   resolution.state === 'CURRENT';
 
-const consentIsRequired = (basisRef: string): boolean =>
+/** Whether a legal basis reference needs a Current Consent before processing may be ALLOWED. */
+export const consentIsRequired = (basisRef: string): boolean =>
   basisRef === 'legal-basis:consent' || basisRef.endsWith(':consent');
 
 const reliableConsentBlocker = (

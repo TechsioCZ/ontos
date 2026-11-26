@@ -1,4 +1,8 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import {
+  PrivacyBoundedIdSchema as BoundedIdSchema,
+  ProcessingScopeRefSchema,
+} from '@app/privacy-contracts/domain/processing-scope-ref';
 import { Schema } from 'effect';
 
 import { PrivacyResponsibilityAssignmentRefSchema } from '../resources/privacy-responsibility-assignment.ts';
@@ -6,9 +10,6 @@ import { PrivacyPartyRefSchema } from './party-reference.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
 const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-const BoundedIdSchema = Schema.toEncoded(
-  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('PrivacyBoundedId')),
-);
 
 /** Canonical Core identity reference. Kept distinct from PartyRef by design. */
 export const LegalEntityRefSchema = Schema.Struct({
@@ -18,11 +19,8 @@ export const LegalEntityRefSchema = Schema.Struct({
   tenantId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId'))),
 });
 
-export const ProcessingScopeRefSchema = Schema.Struct({
-  scopeId: BoundedIdSchema,
-  scopeType: Schema.Literal('privacy.processing-scope'),
-});
-export type ProcessingScopeRef = typeof ProcessingScopeRefSchema.Type;
+export { ProcessingScopeRefSchema } from '@app/privacy-contracts/domain/processing-scope-ref';
+export type { ProcessingScopeRef } from '@app/privacy-contracts/domain/processing-scope-ref';
 
 const ResponsibilityRoleSchema = Schema.Literals(['CONTROLLER', 'PROCESSOR', 'RECIPIENT']);
 

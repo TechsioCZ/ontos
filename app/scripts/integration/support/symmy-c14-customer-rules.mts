@@ -1,8 +1,8 @@
 import {
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
-} from '@app/privacy/api/source-processing-eligibility';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 
 export const customerIntakeContext = (
   principalId: string,

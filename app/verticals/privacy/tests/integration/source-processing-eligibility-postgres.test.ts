@@ -14,8 +14,8 @@ import {
 } from '../../shared/domain/anti-resurrection.ts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import { antiResurrectionProtections, privacySubjects } from '../../src/database/schema.ts';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
-import { SourceProcessingContextSchema } from '../../shared/apis/source-processing-eligibility.ts';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import {
   PrivacyApplicabilityPolicySchema,
   resolvePrivacyApplicability,

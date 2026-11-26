@@ -1,0 +1,82 @@
+import { Crypto, Effect, Layer } from 'effect';
+
+import { unavailableDocumentLinkOwnerLayer } from '../domain/documents/document-owner.ts';
+import { unavailableMessageHandoffLayer } from '../domain/handoff/message-handoff.ts';
+import { productionCatalogLayer } from '../domain/intake/message-type-catalog.ts';
+import { notEstablishedRecipientLanguageLayer } from '../domain/intake/recipient-language.ts';
+import { undeclaredProcessingScopeLayer } from '../domain/intake/scope-declaration.ts';
+import { unavailableAntiResurrectionProtectionsLayer } from '../domain/retention/anti-resurrection-protections.ts';
+import { portalAuthOwnerPortsOver, portalAuthOwnerTransportLive } from '../integrations/portal-auth-owner.ts';
+import type { PortalAuthOwnerTransport } from '../integrations/portal-auth-owner.ts';
+import {
+  privacyOwnerTransportLive,
+  privacyProcessingEligibilityGateOver,
+} from '../integrations/privacy-eligibility-gate.ts';
+import type { PrivacyOwnerTransport } from '../integrations/privacy-eligibility-gate.ts';
+
+/**
+ * Deadline of one Current-gate check. The domain has no default on purpose: a check that cannot be bounded cannot be wired, and
+ * a check past this deadline fails closed as an unavailable owner. The number is a platform guard so that a hung owner call
+ * cannot hang a decision; no owner approved it (open question for the Core owner).
+ */
+const GATE_CHECK_TIMEOUT = '10 seconds';
+
+/** How each owner is reached; the only thing a composition replaces, never what is asked or how an answer is read. */
+export interface CommunicationsOwnerTransports {
+  readonly portalAuth: PortalAuthOwnerTransport;
+  readonly privacy: PrivacyOwnerTransport;
+}
+
+/**
+ * Every owner port of the decision, over given transports to the owners. The ports are real: the catalog approves the three
+ * Portal Auth types, each ask of Auth and Privacy is made again with fresh authority (never remembered), and every port no owner
+ * has published yet stays the EXPLICIT fail-closed form, so nothing is ever decided or allowed by default or by a missing adapter:
+ * - no owner publishes a trusted recipient language, so none is established and the default `cs` applies;
+ * - Portal Auth, the sole source owner of the approved types, states the current occurrence and recipient endpoint through its
+ *   published Read; a source with no adapter is an unavailable owner;
+ * - no producer declares a Privacy scope (#1396 J: the source producer declares it, and no approved contract field carries it yet),
+ *   so a recipient has no scope and is stopped as an unresolved Privacy context;
+ * - Core Media publishes Current and download Reads, but admits only the caller `catalog`, and no document owner publishes the
+ *   resolution of its document to a Media Asset or the approval of its disclosure, so every document question is unavailable;
+ * - Privacy publishes no protection store for Communications yet, so every Anti-Resurrection question is unavailable and the
+ *   guard refuses (a path that re-materializes removed content must ask it; none exists today).
+ */
+export const communicationsOwnerPortsOver = (transports: CommunicationsOwnerTransports) =>
+  Layer.mergeAll(
+    productionCatalogLayer,
+    notEstablishedRecipientLanguageLayer,
+    portalAuthOwnerPortsOver({ checkTimeout: GATE_CHECK_TIMEOUT }, transports.portalAuth),
+    undeclaredProcessingScopeLayer,
+    privacyProcessingEligibilityGateOver({ checkTimeout: GATE_CHECK_TIMEOUT }, transports.privacy),
+    unavailableDocumentLinkOwnerLayer,
+    unavailableAntiResurrectionProtectionsLayer,
+  );
+
+/** The production composition: both owners are reached through their published Reads with a fresh delegated assertion per ask. */
+export const communicationsProductionOwnerPortsLive = Layer.unwrap(
+  Effect.gen(function* productionOwnerPorts() {
+    const crypto = yield* Crypto.Crypto;
+    return communicationsOwnerPortsOver({
+      portalAuth: portalAuthOwnerTransportLive(crypto),
+      privacy: privacyOwnerTransportLive(crypto),
+    });
+  }),
+);
+
+/**
+ * The ports of the pre-handoff worker: the same decision ports (each asked again, never remembered) plus the handoff
+ * port. Until step 22 provides the Messaging Adapter the handoff is the explicit unavailable form, which answers that
+ * nothing was submitted; no provider adapter and no `EmailDeliveryService` is wired here.
+ */
+export const communicationsWorkerOwnerPortsLive = Layer.mergeAll(
+  communicationsProductionOwnerPortsLive,
+  unavailableMessageHandoffLayer,
+);
+
+/**
+ * The owner port of the public history Reads. No source owner publishes a Read that says whether a principal may see the
+ * history of a profile, a Counterparty or a Storefront (Portal Auth's issuance-source Read is not one), so the production port
+ * is the explicit unavailable form: a history of a source-owned scope is refused as not composed instead of being shown on a
+ * guess, and a Tenant or Legal Entity history needs no source owner.
+ */
+export { unavailableSourceScopeVisibilityLayer as communicationsHistoryReadPortsLive } from '../domain/access/source-visibility.ts';

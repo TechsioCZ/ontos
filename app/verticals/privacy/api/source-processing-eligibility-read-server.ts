@@ -12,7 +12,7 @@ import {
   SourceProcessingEligibilityPolicyConflictProblemSchema,
   SourceProcessingEligibilityPolicyProblemSchema,
   SourceProcessingEligibilityUnavailableProblemSchema,
-} from '../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import { sourceProcessingEligibilityRead } from '../src/api/source-processing-eligibility.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

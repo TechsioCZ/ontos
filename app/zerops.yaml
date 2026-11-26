@@ -49,6 +49,7 @@ zerops:
         - 'app/verticals/promotion'
         - 'app/verticals/payment'
         - 'app/verticals/symmy-integration'
+        - 'app/verticals/communications'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -247,12 +248,16 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
+        COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: ${migrator_COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
+        ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_COMMUNICATIONS_API_BASE_URL: 'http://communications:4120/communications-api'
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1166,6 +1171,60 @@ zerops:
           port: 4119
           path: '/symmy-integration-api/symmy-integration/readiness'
       start: sh -c 'cd app/.zerops/runtime/symmy-integration && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+
+  - setup: 'communications'
+    build:
+      base: 'alpine@3.23'
+      envVariables:
+        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++ libatomic
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm --filter '@app/communications' run build
+        - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm run zerops:materialize --app 'communications' --package '@app/communications' --package-dir 'verticals/communications'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/communications/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/communications/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/communications/node' && cp -a "$HOME/.local/node-26.13.1/bin" "$HOME/.local/node-26.13.1/lib" 'app/.zerops/runtime/communications/node/'
+      deployFiles:
+        - 'app/.zerops/runtime/communications'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4120
+          path: '/communications-api/communications/readiness'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
+      ports:
+        - port: 4120
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
+        PORT: '4120'
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: communications
+        VERTICAL_COMMUNICATIONS_PORT: '4120'
+      healthCheck:
+        httpGet:
+          port: 4120
+          path: '/communications-api/communications/readiness'
+      start: sh -c 'cd app/.zerops/runtime/communications && PATH="$PWD/node/bin:$PATH" exec npm run serve'
   # </generated-vertical-provider-deployments>
 
   - setup: 'shellsuperapp'
@@ -1310,12 +1369,16 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
+        COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: ${migrator_COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
+        ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_COMMUNICATIONS_API_BASE_URL: 'http://communications:4120/communications-api'
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
         OUTBOX_WORKER_HEALTH_PORT: '4101'
@@ -1587,6 +1650,57 @@ zerops:
           path: '/live'
       start: sh -c 'cd app/.zerops/runtime/symmy-integration-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
+  - setup: 'communications-worker'
+    build:
+      base: 'alpine@3.23'
+      envVariables:
+        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++ libatomic
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm run zerops:materialize --app 'communications' --package '@app/communications' --package-dir 'verticals/communications' --worker
+        - mkdir 'app/.zerops/runtime/communications-worker/node' && cp -a "$HOME/.local/node-26.13.1/bin" "$HOME/.local/node-26.13.1/lib" 'app/.zerops/runtime/communications-worker/node/'
+      deployFiles:
+        - 'app/.zerops/runtime/communications-worker'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4120
+          path: '/live'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
+      ports:
+        - port: 4120
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
+        PORT: '4120'
+        OUTBOX_WORKER_HEALTH_PORT: '4120'
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: communications-worker
+      healthCheck:
+        httpGet:
+          port: 4120
+          path: '/live'
+      start: sh -c 'cd app/.zerops/runtime/communications-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
+
   - setup: 'outbox-worker-host'
     build:
       base: 'alpine@3.23'
@@ -1620,13 +1734,16 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
+        COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: ${migrator_COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
         ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_COMMUNICATIONS_API_BASE_URL: 'http://communications:4120/communications-api'
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
+        ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
         ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY}
         ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT}
         ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY}

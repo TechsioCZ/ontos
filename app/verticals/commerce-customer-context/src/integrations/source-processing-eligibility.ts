@@ -2,9 +2,9 @@ import type { OperationalScope } from '@app/core-runtime';
 import {
   SourceProcessingEligibilityResponseSchema,
   SourceProcessingEligibilityRequestSchema,
-} from '@app/privacy/api/source-processing-eligibility';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';

@@ -1,0 +1,31 @@
+{
+  "deliveryUnit": {
+    "appId": "communications",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/communications",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/communications",
+    "version": "0.1.0",
+    "buildMarker": "f8da4cabfbb5119c",
+    "build": "f8da4cabfbb5119c"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 2,
+  "surfaces": {
+    "api": {
+      "appId": "communications",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/communications",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/communications",
+      "version": "0.1.0",
+      "buildMarker": "f8da4cabfbb5119c",
+      "build": "f8da4cabfbb5119c",
+      "surface": "api"
+    }
+  }
+}

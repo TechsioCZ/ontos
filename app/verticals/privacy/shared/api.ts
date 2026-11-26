@@ -14,6 +14,7 @@ import { ApplicabilityDecisionsApi } from './apis/applicability-decisions.ts';
 import { AssignDsrResolverActionApi } from './apis/assign-dsr-resolver-action.ts';
 import { AssignLegalBasisActionApi } from './apis/assign-legal-basis-action.ts';
 import { AssignPrivacyResponsibilityActionApi } from './apis/assign-privacy-responsibility-action.ts';
+import { BindPreVerificationSubjectActionApi } from './apis/bind-pre-verification-subject-action.ts';
 import { ConsentSelfServiceActionApi } from './apis/consent-self-service-action.ts';
 import { CreateDsrCaseActionApi } from './apis/create-dsr-case-action.ts';
 import { CreateNoticeVersionActionApi } from './apis/create-notice-version-action.ts';
@@ -34,6 +35,8 @@ import { OrganizationBusinessApplicabilityApi } from './apis/organization-busine
 import { OrganizationIcoApplicabilityApi } from './apis/organization-ico-applicability.ts';
 import { OrganizationProfileIcoApplicabilityApi } from './apis/organization-profile-ico-applicability.ts';
 import { OwnerInventoryApi } from './apis/owner-inventory.ts';
+import { PreVerificationBindingsApi } from './apis/pre-verification-bindings.ts';
+import { PreVerificationEligibilityApi } from '@app/privacy-contracts/pre-verification-eligibility';
 import { PrivacySubjectsApi } from './apis/privacy-subjects.ts';
 import { ProcessingActivitiesApi } from './apis/processing-activities.ts';
 import { ProcessingEligibilityApi } from './apis/processing-eligibility.ts';
@@ -58,12 +61,13 @@ import { RecordProcessingInterventionActionApi } from './apis/record-processing-
 import { RecordRetentionExceptionActionApi } from './apis/record-retention-exception-action.ts';
 import { ResponsibilityAssignmentsApi } from './apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './apis/retention-rules.ts';
-import { SourceProcessingEligibilityApi } from './apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityApi } from '@app/privacy-contracts/source-processing-eligibility';
 import { TransitionProcessingActivityActionApi } from './apis/transition-processing-activity-action.ts';
 import { UpdateDsrCaseActionApi } from './apis/update-dsr-case-action.ts';
 import { UpsertDsrOwnerTaskActionApi } from './apis/upsert-dsr-owner-task-action.ts';
 import { UpsertRetentionRuleActionApi } from './apis/upsert-retention-rule-action.ts';
 import { UpsertTemporaryDsrExportActionApi } from './apis/upsert-temporary-dsr-export-action.ts';
+import { WithdrawPreVerificationBindingActionApi } from './apis/withdraw-pre-verification-binding-action.ts';
 // </generated-governed-http-api-imports>
 
 export {
@@ -268,6 +272,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(AssignDsrResolverActionApi)
   .addHttpApi(AssignLegalBasisActionApi)
   .addHttpApi(AssignPrivacyResponsibilityActionApi)
+  .addHttpApi(BindPreVerificationSubjectActionApi)
   .addHttpApi(ConsentSelfServiceActionApi)
   .addHttpApi(CreateDsrCaseActionApi)
   .addHttpApi(CreateNoticeVersionActionApi)
@@ -288,6 +293,8 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(OrganizationIcoApplicabilityApi)
   .addHttpApi(OrganizationProfileIcoApplicabilityApi)
   .addHttpApi(OwnerInventoryApi)
+  .addHttpApi(PreVerificationBindingsApi)
+  .addHttpApi(PreVerificationEligibilityApi)
   .addHttpApi(PrivacySubjectsApi)
   .addHttpApi(ProcessingActivitiesApi)
   .addHttpApi(ProcessingEligibilityApi)
@@ -318,6 +325,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(UpsertDsrOwnerTaskActionApi)
   .addHttpApi(UpsertRetentionRuleActionApi)
   .addHttpApi(UpsertTemporaryDsrExportActionApi)
+  .addHttpApi(WithdrawPreVerificationBindingActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
@@ -337,17 +345,8 @@ export const privacyApiContract = {
   readinessPath: '/privacy-api/privacy/readiness',
 } as const;
 
-export {
-  SourceProcessingContextSchema,
-  SourceProcessingIdentitySchema,
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from './apis/source-processing-eligibility.ts';
-export type {
-  SourceProcessingContext,
-  SourceProcessingEligibilityRequest,
-  SourceProcessingEligibilityResponse,
-} from './apis/source-processing-eligibility.ts';
+export { SourceProcessingContextSchema } from './domain/source-processing-context.ts';
+export type { SourceProcessingContext } from './domain/source-processing-context.ts';
 
 export {
   MeasureExecutionEligibilityRequestSchema,

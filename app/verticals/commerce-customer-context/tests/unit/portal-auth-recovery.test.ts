@@ -129,6 +129,10 @@ const makeMemoryRecoveryStore = (
         spentBudgets.set(input.key, counted + 1);
         return true;
       }),
+    locateOtpChallenge: () => Effect.succeed(Option.none()),
+    readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
     // This fixture keeps no reset ledger (`peekPasswordResetLedger` answers none), so there is
     // never a row to claim — the provider stays the authority on the token, as it is in
     // production for a token this realm has no row for.
@@ -596,9 +600,13 @@ const makeClaimingResetLedger = (base: CommercePortalAuthRecoveryStore) => {
         return state === 'dispatched' ? ('already-dispatched' as const) : ('not-pending' as const);
       }),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(ORIGINAL_SUBJECT)),
+    locateOtpChallenge: () => Effect.succeed(Option.none()),
     peekDispatchedPasswordResetLedger: () =>
       Effect.succeed(state === 'dispatched' ? Option.some(binding) : Option.none()),
     peekPasswordResetLedger: () => Effect.succeed(state === 'pending' ? Option.some(binding) : Option.none()),
+    readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
     recordRecoveryReconciliation: (conflict) =>
       Effect.sync(() => {
         recorded.push(conflict);
@@ -684,10 +692,14 @@ it.effect('returns reconciliation-required and never spends the reset token when
     ...fixture.store,
     accountExists: () => Effect.succeed(true),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
+    locateOtpChallenge: () => Effect.succeed(Option.none()),
     peekPasswordResetLedger: () =>
       Effect.succeed(
         Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: RESET_TOKEN_DIGEST }),
       ),
+    readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
     recordRecoveryReconciliation: () => Effect.void,
   };
   return runWithRecovery(provider, store, (service) =>
@@ -725,10 +737,14 @@ it.effect(
           return Option.none<string>();
         }),
       findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
+      locateOtpChallenge: () => Effect.succeed(Option.none()),
       peekEmailVerificationLedger: () =>
         Effect.succeed(
           Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: VERIFICATION_TOKEN_DIGEST }),
         ),
+      readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
       recordRecoveryReconciliation: () => Effect.void,
     };
     return runWithRecovery(successfulProvider(), store, (service) =>
@@ -1321,10 +1337,14 @@ const resetLedgerStore = (
     accountExists: () => Effect.succeed(true),
     consumePasswordResetLedgerWithAudit: (input) => Effect.sync(() => onConsume(input.audit)),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(ORIGINAL_SUBJECT)),
+    locateOtpChallenge: () => Effect.succeed(Option.none()),
     peekPasswordResetLedger: () =>
       Effect.succeed(
         Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: RESET_TOKEN_DIGEST }),
       ),
+    readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+    readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
   }) satisfies CommercePortalAuthRecoveryStore;
 
 it.effect('refuses the password reset when the pre-mutation intent row cannot be written', () => {

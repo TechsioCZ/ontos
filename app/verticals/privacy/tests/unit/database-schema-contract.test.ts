@@ -10,7 +10,9 @@ import {
   PRIVACY_TABLES,
   PRIVACY_GOVERNED_TABLES,
   PRIVACY_INGRESS_TABLE_INVENTORY,
+  PRIVACY_TENANT_SCOPED_TABLE_INVENTORY,
   gatewayAssertionRedemptions,
+  preVerificationBindings,
   antiResurrectionProtections,
   applicabilityDecisions,
   consentDecisions,
@@ -128,17 +130,34 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
 it('enables tenant and legal-entity RLS on every governed Privacy table', () => {
   /* jscpd:ignore-start -- Every owner schema must independently prove the same mandatory tenant and Legal Entity RLS contract. */
   // fallow-ignore-next-line code-duplication -- Mandatory owner-local RLS acceptance loop mirrors the repository contract by design.
+  const tenantScoped = new Set<string>(PRIVACY_TENANT_SCOPED_TABLE_INVENTORY);
   for (const table of PRIVACY_GOVERNED_TABLES) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
-    expect(config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull)).toBe(true);
+    // a Tenant-scoped table keeps the column but leaves it optional; its RLS is proven exact in the next test
+    expect(config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull)).toBe(
+      !tenantScoped.has(config.name),
+    );
     expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
       expect(policy.to).toBe('ontos_runtime');
     }
   }
   /* jscpd:ignore-end */
+});
+
+it('scopes a Tenant-scoped table to the exact, possibly absent, Legal Entity of the operation', () => {
+  const governed = new Set(PRIVACY_GOVERNED_TABLES.map((table) => getTableConfig(table).name));
+  for (const name of PRIVACY_TENANT_SCOPED_TABLE_INVENTORY) {
+    expect(governed.has(name), `${name} must be a governed table`).toBe(true);
+  }
+  const config = getTableConfig(preVerificationBindings);
+  expect(config.columns.some((column) => column.name === 'legal_entity_id' && !column.notNull)).toBe(true);
+  for (const policy of config.policies) {
+    const predicate = [policy.using, policy.withCheck].filter((expression) => expression !== undefined);
+    expect(predicate.length).toBeGreaterThan(0);
+  }
 });
 
 it('keeps pre-tenant redemption evidence separate from governed personal records', () => {

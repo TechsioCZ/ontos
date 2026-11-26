@@ -81,6 +81,7 @@ export {
   tenantRlsPolicies,
 } from '../db/scoped-transaction.ts';
 export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
+export { configureDatabasePool } from '../db/pool-configuration.ts';
 export { PARTY_REGISTRY_REQUEST_IDENTITY, PARTY_REGISTRY_WORKER_IDENTITY } from '../db/database-identity-manifest.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';

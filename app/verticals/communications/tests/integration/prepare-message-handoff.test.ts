@@ -1,0 +1,925 @@
+import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
+import { PgClient } from '@effect/sql-pg';
+import { sql } from 'drizzle-orm';
+import { DateTime, Effect, Exit, Layer, Match, Option, Redacted, Ref } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
+
+import { HandoffStoreUnavailable, processIntentHandoff } from '../../src/handoff/process-intent-handoff.ts';
+import type { HandoffProcessing, ScopedRunner } from '../../src/handoff/process-intent-handoff.ts';
+import {
+  communicationDecisions,
+  communicationRequestConflicts,
+  communicationRequests,
+  deliveryAttempts,
+  intentHandoffStops,
+  messageIntents,
+} from '../../src/database/schema.ts';
+import { attemptIdOf } from '../../src/domain/intake/identity.ts';
+import { workerBeginAttemptRoutine } from '../../src/persistence/communications-routines.ts';
+import {
+  CommunicationRequestIdSchema,
+  DeliveryAttemptIdSchema,
+  MessageIntentIdSchema,
+} from '../../shared/communication-intake.ts';
+import { MessageHandoff, unavailableMessageHandoffLayer } from '../../src/domain/handoff/message-handoff.ts';
+import type { PinnedHandoff } from '../../src/domain/handoff/message-handoff.ts';
+import {
+  deactivateRevision,
+  invalidateRevisionAsUnsafe,
+  resolveTemplatePin,
+} from '../../src/services/template-revision-domain.service.ts';
+import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
+import { SourceStopReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
+import { projectMessageHistoryItem } from '../../src/history/message-history-projection.ts';
+import { FIXTURE_SECONDARY_ROLE, fixtureSlot, fixtureType } from '../unit/support/catalog-fixtures.ts';
+import { privacyAllowed, privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
+import { ORIGINAL_ADDRESS, unusable } from '../unit/support/recipient-fixtures.ts';
+import { historyOf } from '../support/history-world.ts';
+import { companyA, domainFor, fictionalDraft, fixtureTemplateTypes } from '../support/template-fixtures.ts';
+import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
+import { decided, intakeWorld, requestFor, templateBase } from '../support/intake-world.ts';
+import { FIXTURE_SOURCE_MODULE_KEY } from '../support/intake-runner.ts';
+import { actorWith, makeRuntimeDatabase, nativeServices } from '../support/persistence.fixture.ts';
+
+/**
+ * The pre-handoff step of a Message Intent on native PostgreSQL as the runtime role, through the REAL scoped routines the
+ * Outbox worker uses (the worker holds no table access). The owner edges and the Messaging Adapter are labelled test
+ * doubles; the double of the adapter records every call, so "no second external attempt" is a measured fact.
+ */
+
+const setup = (options: Parameters<typeof intakeWorld>[1] = {}) =>
+  makeRuntimeDatabase().pipe(Effect.flatMap((database) => intakeWorld(database, options)));
+
+type World = Effect.Success<ReturnType<typeof setup>>;
+
+const scopedIn =
+  (world: World): ScopedRunner =>
+  (program) =>
+    world.database
+      .inTenant(world.tenantId, (transaction) => program(transaction))
+      .pipe(
+        Effect.mapError((failure) =>
+          Match.value(failure).pipe(
+            Match.tag('HandoffStoreUnavailable', (known) => known),
+            Match.orElse(() => new HandoffStoreUnavailable({ reason: 'test database' })),
+          ),
+        ),
+      );
+
+/** A scoped runner of one delivery: the second scoped program (the evidence) can be made to fail, as a crash would. */
+const runnerFailingAt = (world: World, failingProgram: number): ScopedRunner => {
+  let count = 0;
+  const real = scopedIn(world);
+  return (program) =>
+    Effect.suspend(() => {
+      count += 1;
+      return count === failingProgram
+        ? Effect.fail(new HandoffStoreUnavailable({ reason: 'injected crash before the evidence was recorded' }))
+        : real(program);
+    });
+};
+
+const workerLayers = (world: World, handoff: ReturnType<typeof handoffDouble>, types = world.types) =>
+  Layer.mergeAll(world.portsFor(types), handoff.layer, NodeCrypto.layer);
+
+const step = (
+  world: World,
+  handoff: ReturnType<typeof handoffDouble>,
+  intentId: typeof MessageIntentIdSchema.Type,
+  scoped: ScopedRunner = scopedIn(world),
+  types = world.types,
+) =>
+  processIntentHandoff({ intentId, tenantId: world.tenantId }, scoped).pipe(
+    Effect.provide(workerLayers(world, handoff, types)),
+  );
+
+/** The one decided intent of a request submitted by an operation that runs in this Legal Entity. */
+const decidedIntentIn = Effect.fn('PrepareHandoffTest.decidedIntentIn')(function* decideIn(
+  world: World,
+  legalEntityId: string,
+) {
+  const run = yield* world.runner.submit(
+    world.tenantId,
+    communicationRequest({
+      bindings: [originalRecipient('customer-1')],
+      legalEntityId,
+      occurrenceId: 'fixture-occurrence-le',
+      tenantId: world.tenantId,
+    }),
+    '00000000-0000-4000-8000-0000000000a9',
+    FIXTURE_SOURCE_MODULE_KEY,
+    legalEntityId,
+  );
+  const result = decided(run);
+  const [intent] = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+  if (intent === undefined) {
+    return yield* Effect.die('the fixture request must decide one intent');
+  }
+  return intent.intentId;
+});
+
+const decidedIntent = Effect.fn('PrepareHandoffTest.decidedIntent')(function* decideOne(world: World) {
+  const run = yield* world.runner.submit(world.tenantId, requestFor(world.tenantId));
+  const result = decided(run);
+  const [intent] = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+  if (intent === undefined) {
+    return yield* Effect.die('the fixture request must decide one intent');
+  }
+  return intent.intentId;
+});
+
+const rowsOf = <Row>(
+  world: World,
+  select: (
+    transaction: Parameters<Parameters<World['database']['inTenant']>[1]>[0],
+  ) => Effect.Effect<readonly Row[], unknown>,
+) => world.database.inTenant(world.tenantId, select);
+
+const textOrder = (left: string, right: string) => left.localeCompare(right);
+
+/** The PostgreSQL SQLSTATE of a failure, or `none` when it carries none. */
+const sqlStateOf = (failure: Error) =>
+  Option.match(findPostgresFailure(failure), { onNone: () => 'none', onSome: ({ code }) => code });
+
+const kindOf = (processing: HandoffProcessing) =>
+  processing.kind === 'SKIPPED' ? `${processing.kind}:${processing.reason}` : processing.kind;
+
+describe('Pre-handoff step of a Message Intent (#1401)', () => {
+  it.live(
+    '[AC-01 AC-05] hands the pinned intent off once: ORIGINAL endpoint, pinned revision, evidence bound to the attempt',
+    () =>
+      Effect.gen(function* happyPath() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        const outcome = yield* step(world, handoff, intentId);
+        expect(outcome.kind).toBe('HANDED_OFF');
+        expect(handoff.calls).toHaveLength(1);
+        const [call] = handoff.calls;
+        expect(call).toMatchObject({ intentId, language: 'cs', purpose: 'fixture.single', tenantId: world.tenantId });
+        expect(call?.template).toMatchObject({ language: 'cs', revisionNumber: 1 });
+        // the usable address exists only in memory, as a protected value, for this one call
+        expect(Redacted.value(call?.endpoint.value ?? Redacted.make(''))).toBe(ORIGINAL_ADDRESS);
+        expect(Redacted.isRedacted(call?.endpoint.value)).toBe(true);
+        const [attempt] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(attempt).toMatchObject({ attemptNumber: 1, intentId, state: 'ACCEPTED' });
+        expect(attempt?.attemptId).toBe(call?.attemptId);
+        expect(attempt?.evidence).toMatchObject({ kind: 'ACCEPTED', providerKey: 'fixture-provider' });
+        // no stored table holds the address
+        const everything = JSON.stringify([
+          yield* rowsOf(world, (tx) => tx.select().from(messageIntents)),
+          yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts)),
+        ]);
+        expect(everything).not.toContain(ORIGINAL_ADDRESS);
+        // the Current gates were asked about the ORIGINAL contact only
+        expect(world.recipientAuthority.queries.map((query) => query.contact.contactRef.resourceId)).toEqual([
+          'contact-customer-1',
+          'contact-customer-1',
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-02 S09] a duplicate delivery after the handoff finds the finished attempt and never calls out again',
+    () =>
+      Effect.gen(function* duplicateDelivery() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        expect((yield* step(world, handoff, intentId)).kind).toBe('HANDED_OFF');
+        const again = yield* step(world, handoff, intentId);
+        expect(kindOf(again)).toBe('SKIPPED:ALREADY_FINISHED');
+        expect(handoff.calls).toHaveLength(1);
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('[AC-02 S10] two workers on one intent make at most one external attempt', () =>
+    Effect.gen(function* parallelWorkers() {
+      const world = yield* setup();
+      const handoff = handoffDouble(() =>
+        Effect.yieldNow.pipe(
+          Effect.as({ kind: 'ACCEPTED', providerKey: 'fixture-provider', providerRef: 'r-1' } as const),
+        ),
+      );
+      const intentId = yield* decidedIntent(world);
+      const outcomes = yield* Effect.all([step(world, handoff, intentId), step(world, handoff, intentId)], {
+        concurrency: 2,
+      });
+      expect(handoff.calls).toHaveLength(1);
+      expect(outcomes.map((outcome) => outcome.kind).toSorted()).toEqual(['HANDED_OFF', 'SKIPPED']);
+      expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-02 S12] a crash after the provider call but before the evidence leaves the attempt unresolved: no blind resend',
+    () =>
+      Effect.gen(function* crashAfterCall() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        // program 1 reads and gates, program 2 commits the attempt, the provider is called, program 3 (the evidence) dies: the worker crashed
+        const crashed = yield* Effect.exit(step(world, handoff, intentId, runnerFailingAt(world, 3)));
+        expect(Exit.isFailure(crashed)).toBe(true);
+        expect(handoff.calls).toHaveLength(1);
+        const [prepared] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(prepared).toMatchObject({ state: 'PREPARED' });
+        // Core delivers the message again: the intent stays unresolved and nothing is sent a second time
+        const redelivered = yield* step(world, handoff, intentId);
+        expect(kindOf(redelivered)).toBe('SKIPPED:RECONCILIATION_REQUIRED');
+        expect(handoff.calls).toHaveLength(1);
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-02 S12] an unknown provider result is recorded as INDETERMINATE and a retry makes no new external attempt',
+    () =>
+      Effect.gen(function* unknownResult() {
+        const world = yield* setup();
+        const handoff = handoffDouble(() => Effect.succeed({ kind: 'INDETERMINATE', reason: 'timeout' } as const));
+        const intentId = yield* decidedIntent(world);
+        const first = yield* step(world, handoff, intentId);
+        expect(first).toMatchObject({
+          evidence: { outcome: { kind: 'INDETERMINATE', reason: 'timeout' } },
+          kind: 'HANDED_OFF',
+        });
+        const retry = yield* step(world, handoff, intentId);
+        // an unknown effect is reconciled first, never "finished" and never resent (#1403)
+        expect(kindOf(retry)).toBe('SKIPPED:RECONCILIATION_REQUIRED');
+        expect(handoff.calls).toHaveLength(1);
+        const [attempt] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(attempt).toMatchObject({ state: 'INDETERMINATE' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-02] a provider answer bound to another attempt is never trusted: it is INDETERMINATE and reconciled, not resent',
+    () =>
+      Effect.gen(function* mixedUp() {
+        const world = yield* setup();
+        const calls: PinnedHandoff[] = [];
+        const wrongAttempt = {
+          calls,
+          layer: Layer.succeed(MessageHandoff, {
+            handoff: (message) => {
+              calls.push(message);
+              return Effect.succeed({
+                attemptId: DeliveryAttemptIdSchema.make('00000000-0000-4000-8000-0000000000ff'),
+                intentId: message.intentId,
+                outcome: { kind: 'ACCEPTED', providerKey: 'fixture-provider', providerRef: 'r-x' } as const,
+                tenantId: message.tenantId,
+              });
+            },
+          }),
+        };
+        const intentId = yield* decidedIntent(world);
+        const outcome = yield* step(world, wrongAttempt, intentId);
+        expect(outcome).toMatchObject({
+          evidence: { outcome: { kind: 'INDETERMINATE', reason: 'response_invalid' } },
+          kind: 'HANDED_OFF',
+        });
+        const [attempt] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(attempt).toMatchObject({ state: 'INDETERMINATE' });
+        expect(kindOf(yield* step(world, wrongAttempt, intentId))).toBe('SKIPPED:RECONCILIATION_REQUIRED');
+        expect(calls).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('[AC-08 S08] an ended original endpoint stops the handoff once; no Current contact is ever substituted', () =>
+    Effect.gen(function* endpointEnded() {
+      const world = yield* setup();
+      const handoff = handoffDouble();
+      const intentId = yield* decidedIntent(world);
+      world.recipientAuthority.answers.set('contact-customer-1', unusable('ORIGINAL_ENDPOINT_UNUSABLE'));
+      const outcome = yield* step(world, handoff, intentId);
+      expect(outcome).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'CHANNEL_UNUSABLE', cause: 'ORIGINAL_ENDPOINT_UNUSABLE', proven: true }],
+      });
+      expect(handoff.calls).toEqual([]);
+      expect(
+        world.recipientAuthority.queries.every((query) => query.contact.contactRef.resourceId === 'contact-customer-1'),
+      ).toBe(true);
+      expect(yield* rowsOf(world, (tx) => tx.select().from(intentHandoffStops))).toHaveLength(1);
+      expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+      // a redelivery does not ask again and does not hand anything off
+      expect(kindOf(yield* step(world, handoff, intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-08 I-10] Current Privacy is asked again: NOT_ALLOWED and INDETERMINATE both stop, with distinct reasons',
+    () =>
+      Effect.gen(function* privacyRechecked() {
+        const world = yield* setup({ recipients: ['customer-1'] });
+        const handoff = handoffDouble();
+        const denied = yield* decidedIntent(world);
+        world.privacy.answers.set('customer-1', privacyNotAllowed());
+        expect(yield* step(world, handoff, denied)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'PRIVACY_NOT_ALLOWED', proven: true }],
+        });
+        const other = yield* setup();
+        const unsure = yield* decidedIntent(other);
+        other.privacy.answers.set('customer-1', privacyIndeterminate);
+        expect(yield* step(other, handoff, unsure)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'PRIVACY_INDETERMINATE', proven: false }],
+        });
+        expect(handoff.calls).toEqual([]);
+        // an earlier ALLOWED was never reused: Privacy was asked at the decision AND again at the handoff
+        expect(world.privacy.queries.length).toBeGreaterThanOrEqual(2);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-05 L-13] tightening the Tenant mode from A to B stops a pinned English message without a usable Czech revision',
+    () =>
+      Effect.gen(function* tightening() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        // mode A and a trusted English recipient: the English revision is pinned (A needs no Czech one)
+        yield* world.database.withPorts(world.tenantId, (_templates, policies) =>
+          setLanguageMode(policies, 'A', actorWith('00000000-0000-4000-8000-0000000000a4')),
+        );
+        yield* Ref.set(world.language.ref, { kind: 'trusted', language: 'en' });
+        const intentId = yield* decidedIntent(world);
+        const [stored] = yield* rowsOf(world, (tx) => tx.select().from(messageIntents));
+        expect(stored).toMatchObject({ language: 'en', tenantMode: 'A' });
+        // the Czech revision is retired and the Tenant tightens the mode: English alone is no longer allowed
+        const czech = yield* world.database.withPorts(world.tenantId, (templates) =>
+          resolveTemplatePin(templates, { ...templateBase, language: 'cs' }),
+        );
+        yield* world.database.withPorts(world.tenantId, (templates) =>
+          deactivateRevision(
+            templates,
+            { reason: 'Fictional retirement', revisionId: czech.revisionId },
+            actorWith('00000000-0000-4000-8000-0000000000a6'),
+            fixtureTemplateTypes,
+          ),
+        );
+        yield* world.database.withPorts(world.tenantId, (_templates, policies) =>
+          setLanguageMode(policies, 'B', actorWith('00000000-0000-4000-8000-0000000000a7')),
+        );
+        const outcome = yield* step(world, handoff, intentId);
+        expect(outcome).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'LANGUAGE_GATE', cause: 'czech_revision_required_by_mode_b' }],
+        });
+        expect(handoff.calls).toEqual([]);
+        // the stored pin is untouched by the stop
+        const [after] = yield* rowsOf(world, (tx) => tx.select().from(messageIntents));
+        expect(after).toEqual(stored);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-05 S06] a template revision invalidated as unsafe after the decision blocks the handoff; nothing is upgraded',
+    () =>
+      Effect.gen(function* revisionInvalidated() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        const [stored] = yield* rowsOf(world, (tx) => tx.select().from(messageIntents));
+        yield* world.database.withPorts(world.tenantId, (templates) =>
+          invalidateRevisionAsUnsafe(
+            templates,
+            { reason: 'Fictional unsafe wording', revisionId: stored?.templateRevisionId ?? '' },
+            actorWith('00000000-0000-4000-8000-0000000000a5'),
+            fixtureTemplateTypes,
+          ),
+        );
+        const outcome = yield* step(world, handoff, intentId);
+        expect(outcome).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'TEMPLATE_PIN', cause: 'pinned_template_revision_invalidated_unsafe' }],
+        });
+        expect(handoff.calls).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[#1399 AC-06 R-D1] a revision that needs a value nobody published stops the handoff with its own cause; nothing leaves',
+    () =>
+      Effect.gen(function* missingValue() {
+        // the type publishes `purpose` as a required text value, the Tenant activated a revision that uses it, and no owner
+        // supplies a value to Communications: the message is stopped, never sent with half a sentence
+        const type = fixtureType({
+          placeholderContract: { placeholders: [{ kind: 'text', name: 'purpose', required: true }] },
+        });
+        const world = yield* makeRuntimeDatabase().pipe(
+          Effect.flatMap((database) => intakeWorld(database, { types: [type], withTemplates: false })),
+        );
+        yield* world.database.withPorts(world.tenantId, (templates) =>
+          Effect.gen(function* seed() {
+            const t = domainFor(templates);
+            const prepared = yield* t.prepare(
+              fictionalDraft({
+                ...templateBase,
+                body: '[FICTIONAL TEST COPY] {{purpose}}',
+                optionalPlaceholders: [],
+                requiredPlaceholders: ['purpose'],
+                subject: '[FICTIONAL TEST COPY] subject',
+              }),
+            );
+            yield* t.approve(prepared.revision.revisionId);
+          }),
+        );
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        const outcome = yield* step(world, handoff, intentId, scopedIn(world), world.types);
+        expect(outcome).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'TEMPLATE_CONTENT', cause: 'required_value_missing', proven: true }],
+        });
+        expect(handoff.calls).toEqual([]);
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[R-D7] a Legal Entity request without an own text is handed off with the Tenant-wide revision and records that scope',
+    () =>
+      Effect.gen(function* legalEntityFallback() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntentIn(world, companyA);
+        const [stored] = yield* rowsOf(world, (tx) => tx.select().from(messageIntents));
+        expect(stored).toMatchObject({ language: 'cs' });
+        expect(yield* step(world, handoff, intentId)).toMatchObject({ kind: 'HANDED_OFF' });
+        // the pin names the Tenant-wide scope it was taken from, not the Legal Entity the request ran in
+        expect(handoff.calls[0]?.template).toMatchObject({ scope: { kind: 'tenant' }, source: 'TENANT_REVISION' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('[AC-08] a type that is no longer approved stops; a moved-on source is stale', () =>
+    Effect.gen(function* catalogAndSource() {
+      const world = yield* setup();
+      const handoff = handoffDouble();
+      const removed = yield* decidedIntent(world);
+      expect(yield* step(world, handoff, removed, scopedIn(world), [])).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'TYPE_UNAVAILABLE' }],
+      });
+      const third = yield* setup();
+      const stale = yield* decidedIntent(third);
+      third.source.state.latestRevision = 2;
+      expect(yield* step(third, handoff, stale)).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'SOURCE_STALE' }],
+      });
+      const fourth = yield* setup();
+      const unreachable = yield* decidedIntent(fourth);
+      fourth.source.state.available = false;
+      expect(yield* step(fourth, handoff, unreachable)).toMatchObject({
+        kind: 'STOPPED',
+        reasons: [{ category: 'SOURCE_AUTHORITY_UNAVAILABLE', proven: false }],
+      });
+      expect(handoff.calls).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[R-D15 T3-03] a new revision of the type keeps a pending message valid; only a change of its recipient rule stops it, and never as a recipient fact',
+    () =>
+      Effect.gen(function* catalogRevision() {
+        // a wording-only revision of the approved type: the pinned decision stays valid and the message leaves
+        const reworded = yield* setup();
+        const rewordedIntent = yield* decidedIntent(reworded);
+        const handoff = handoffDouble();
+        expect(
+          yield* step(reworded, handoff, rewordedIntent, scopedIn(reworded), [
+            fixtureType({ meaning: 'A reworded fictional meaning.', revision: 2 }),
+          ]),
+        ).toMatchObject({ kind: 'HANDED_OFF' });
+        expect(handoff.calls).toHaveLength(1);
+
+        // the rule that governed the recipient decision changed: its own non-recipient reason, final, nothing is handed off
+        const changed = yield* setup();
+        const changedIntent = yield* decidedIntent(changed);
+        const stopped = handoffDouble();
+        const otherRole = fixtureType({
+          result: { kind: 'MESSAGE_INTENTS', slots: [fixtureSlot('primary', FIXTURE_SECONDARY_ROLE, 'EXACTLY_ONE')] },
+          revision: 2,
+        });
+        expect(yield* step(changed, stopped, changedIntent, scopedIn(changed), [otherRole])).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'TYPE_RULE_CHANGED', cause: 'RECIPIENT_RULE_CHANGED', proven: true }],
+        });
+        expect(stopped.calls).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-09 ADR-0013] a suppressed or not-sent intent is never processed by the worker; only a pending one is',
+    () =>
+      Effect.gen(function* onlyPending() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        world.privacy.answers.set('customer-1', privacyNotAllowed());
+        const run = yield* world.runner.submit(world.tenantId, requestFor(world.tenantId));
+        const suppressed = decided(run);
+        const [intent] = suppressed.decision.kind === 'MESSAGE_INTENTS' ? suppressed.decision.intents : [];
+        const intentId = intent?.intentId ?? MessageIntentIdSchema.make('00000000-0000-4000-8000-000000000000');
+        expect(run.outbox).toEqual([]);
+        world.privacy.answers.set('customer-1', privacyAllowed);
+        expect(kindOf(yield* step(world, handoff, intentId))).toBe('SKIPPED:NOT_PENDING');
+        expect(handoff.calls).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review a] worker_begin_attempt itself refuses a non-pending intent and a stale number, and never begins twice',
+    () =>
+      Effect.gen(function* beginGuards() {
+        const world = yield* setup();
+        world.privacy.answers.set('customer-1', privacyNotAllowed());
+        const { decision } = decided(yield* world.runner.submit(world.tenantId, requestFor(world.tenantId)));
+        const [suppressed] = decision.kind === 'MESSAGE_INTENTS' ? decision.intents : [];
+        const begin = (intentId: string, attemptNumber: number) =>
+          Effect.gen(function* callBegin() {
+            const attemptId = yield* attemptIdOf(MessageIntentIdSchema.make(intentId), attemptNumber);
+            const rows = yield* world.database.inTenant(world.tenantId, (tx) =>
+              tx.invoke(workerBeginAttemptRoutine, [intentId, attemptId, attemptNumber]),
+            );
+            return rows[0]?.result;
+          });
+        // a SUPPRESSED intent is refused by the routine itself, not only by the worker
+        expect(yield* begin(suppressed?.intentId ?? '', 1)).toEqual({ outcome: 'NOT_PENDING' });
+        expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+        // a pending intent: a number that is not the next one is stale and writes nothing
+        const pending = yield* setup();
+        const pendingId = yield* decidedIntent(pending);
+        const beginPending = (attemptNumber: number) =>
+          Effect.gen(function* callBegin() {
+            const attemptId = yield* attemptIdOf(pendingId, attemptNumber);
+            const rows = yield* pending.database.inTenant(pending.tenantId, (tx) =>
+              tx.invoke(workerBeginAttemptRoutine, [pendingId, attemptId, attemptNumber]),
+            );
+            return rows[0]?.result;
+          });
+        expect(yield* beginPending(2)).toEqual({ outcome: 'STALE' });
+        expect(yield* rowsOf(pending, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+        expect(yield* beginPending(1)).toEqual({ outcome: 'BEGUN' });
+        // a PREPARED attempt, which may have left, blocks every further one
+        expect(yield* beginPending(1)).toEqual({ outcome: 'EXISTS', state: 'PREPARED' });
+        expect(yield* beginPending(2)).toEqual({ outcome: 'EXISTS', state: 'PREPARED' });
+        expect(yield* rowsOf(pending, (tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review b] NOT_ATTEMPTED (no adapter) is its own state and does not burn the intent; a real provider UNAVAILABLE does',
+    () =>
+      Effect.gen(function* noAdapter() {
+        const world = yield* setup();
+        const intentId = yield* decidedIntent(world);
+        // the production composition today: owner ports enabled, no Messaging Adapter (step 22)
+        const calls: PinnedHandoff[] = [];
+        const none = { calls, layer: unavailableMessageHandoffLayer };
+        expect(yield* step(world, none, intentId)).toMatchObject({
+          evidence: { outcome: { kind: 'NOT_ATTEMPTED', reason: 'NO_ADAPTER_CONFIGURED' } },
+          kind: 'HANDED_OFF',
+        });
+        const [first] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(first).toMatchObject({ attemptNumber: 1, state: 'NOT_ATTEMPTED' });
+        // the adapter arrives later: the SAME intent is still sendable, as attempt 2, exactly once
+        const adapter = handoffDouble();
+        expect((yield* step(world, adapter, intentId)).kind).toBe('HANDED_OFF');
+        expect(adapter.calls).toHaveLength(1);
+        const attempts = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
+        expect(
+          attempts.map(({ attemptNumber, state }) => `${String(attemptNumber)}:${state}`).toSorted(textOrder),
+        ).toEqual(['1:NOT_ATTEMPTED', '2:ACCEPTED']);
+        expect(adapter.calls[0]?.attemptId).toBe(attempts.find(({ attemptNumber }) => attemptNumber === 2)?.attemptId);
+        // an answer from a real adapter is final: no third attempt, however often Core delivers again
+        expect(kindOf(yield* step(world, adapter, intentId))).toBe('SKIPPED:ALREADY_FINISHED');
+        expect(adapter.calls).toHaveLength(1);
+
+        // a real provider that could not be used does NOT prove nothing was accepted: that attempt stays final
+        const other = yield* setup();
+        const otherId = yield* decidedIntent(other);
+        const down = handoffDouble(() =>
+          Effect.succeed({ kind: 'UNAVAILABLE', reason: 'provider_unavailable' } as const),
+        );
+        yield* step(other, down, otherId);
+        expect(yield* rowsOf(other, (tx) => tx.select().from(deliveryAttempts))).toMatchObject([
+          { attemptNumber: 1, state: 'UNAVAILABLE' },
+        ]);
+        expect(kindOf(yield* step(other, handoffDouble(), otherId))).toBe('SKIPPED:RECONCILIATION_REQUIRED');
+
+        // after NOT_ATTEMPTED a later Current stop is recordable (nothing ever left), unlike after an attempt that may have
+        const stopped = yield* setup();
+        const stoppedId = yield* decidedIntent(stopped);
+        yield* step(stopped, none, stoppedId);
+        stopped.privacy.answers.set('customer-1', privacyNotAllowed());
+        expect(yield* step(stopped, handoffDouble(), stoppedId)).toMatchObject({ kind: 'STOPPED' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review F3] a stop is recorded per evaluation, as proven or unproven, and a later Current evaluation is representable',
+    () =>
+      Effect.gen(function* stopEvaluations() {
+        const world = yield* setup();
+        const intentId = yield* decidedIntent(world);
+        world.privacy.answers.set('customer-1', privacyIndeterminate);
+        expect(yield* step(world, handoffDouble(), intentId)).toMatchObject({ kind: 'STOPPED' });
+        const [unproven] = yield* rowsOf(world, (tx) => tx.select().from(intentHandoffStops));
+        // an outage of the owner proves nothing against the message: the stop is UNPROVEN and is evaluation 1
+        expect(unproven).toMatchObject({ evaluationSeq: 1, intentId, proven: false });
+        // a prohibition IS a proof
+        const prohibited = yield* setup();
+        const prohibitedId = yield* decidedIntent(prohibited);
+        prohibited.privacy.answers.set('customer-1', privacyNotAllowed());
+        yield* step(prohibited, handoffDouble(), prohibitedId);
+        expect(yield* rowsOf(prohibited, (tx) => tx.select().from(intentHandoffStops))).toMatchObject([
+          { evaluationSeq: 1, proven: true },
+        ]);
+        // a PROVEN stop is final: nothing is retried or handed off (an UNPROVEN one is superseded by the next evaluation,
+        // which the recovery tests prove through the worker itself)
+        expect(kindOf(yield* step(prohibited, handoffDouble(), prohibitedId))).toBe('SKIPPED:ALREADY_STOPPED');
+
+        // the owner connection stands in for the routine that appends a later evaluation. The runtime role can append
+        // nothing, and no row is ever edited or removed.
+        const recordedAt = DateTime.toDateUtc(yield* DateTime.now);
+        const runtimeInsert = yield* Effect.exit(
+          world.database.inTenant(world.tenantId, (tx) =>
+            tx.insert(intentHandoffStops).values({
+              evaluationSeq: 2,
+              intentId,
+              reasons: [],
+              recordedAt,
+              tenantId: world.tenantId,
+            }),
+          ),
+        );
+        expect(Exit.isFailure(runtimeInsert)).toBe(true);
+        const admin = yield* loadDatabaseConnectionPair().pipe(
+          Effect.flatMap(({ admin: connection }) =>
+            PgClient.makeClient({ url: Redacted.make(connection.connectionString) }),
+          ),
+        );
+        const append = (evaluationSeq: number, proven: boolean) =>
+          admin.withTransaction(
+            Effect.gen(function* appendEvaluation() {
+              yield* admin.unsafe(`select set_config('ontos.tenant_id', $1, true)`, [world.tenantId]);
+              yield* admin.unsafe(
+                `insert into communications.intent_handoff_stops (tenant_id, intent_id, evaluation_seq, reasons, recorded_at)
+                 values ($1, $2, $3, $4::jsonb, now())`,
+                [
+                  world.tenantId,
+                  intentId,
+                  evaluationSeq,
+                  JSON.stringify([{ category: 'LATER_EVALUATION', cause: 'FIXTURE', proven }]),
+                ],
+              );
+            }),
+          );
+        yield* append(2, true);
+        const evaluations = yield* rowsOf(world, (tx) => tx.select().from(intentHandoffStops));
+        expect(
+          evaluations
+            .map(({ evaluationSeq, proven }) => `${String(evaluationSeq)}:${String(proven)}`)
+            .toSorted(textOrder),
+        ).toEqual(['1:false', '2:true']);
+        // exactly one row per (intent, evaluation): a repeated evaluation and a non-positive one are refused
+        expect(sqlStateOf(yield* Effect.flip(append(2, false)))).toBe('23505');
+        expect(sqlStateOf(yield* Effect.flip(append(0, false)))).toBe('23514');
+        // and history stays append-only for every role
+        for (const mutation of [
+          `update communications.intent_handoff_stops set evaluation_seq = 3 where tenant_id = '${world.tenantId}'`,
+          `delete from communications.intent_handoff_stops where tenant_id = '${world.tenantId}'`,
+        ]) {
+          const refused = yield* Effect.flip(admin.withTransaction(admin.unsafe(mutation)));
+          expect(sqlStateOf(refused)).toBe('55000');
+        }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('[review f] every scoped routine refuses a Tenant other than the installed one with 42501', () =>
+    Effect.gen(function* tenantGuard() {
+      const world = yield* setup();
+      const intentId = yield* decidedIntent(world);
+      const stranger = '99999999-9999-4999-8999-999999999999';
+      const attemptId = yield* attemptIdOf(intentId, 1);
+      type Tx = Parameters<Parameters<World['database']['inTenant']>[1]>[0];
+      // the routine's own document row, called with an explicit Tenant argument exactly as a forged caller would
+      const call = (tx: Tx, routineCall: ReturnType<typeof sql>) =>
+        tx.select({ result: sql<unknown>`routine.result` }).from(sql`${routineCall} as routine(result)`);
+      const calls = [
+        sql`communications.read_language_policy_snapshot(${stranger}::uuid)`,
+        sql`communications.worker_read_intent(${stranger}::uuid, ${intentId}::uuid)`,
+        sql`communications.worker_read_template_snapshot(${stranger}::uuid, 'fixture.single-message', 'email', 'tenant', null::uuid)`,
+        sql`communications.worker_begin_attempt(${stranger}::uuid, ${intentId}::uuid, ${attemptId}::uuid, 1)`,
+        sql`communications.worker_record_stop(${stranger}::uuid, ${intentId}::uuid, '[]'::jsonb)`,
+        sql`communications.worker_finish_attempt(${stranger}::uuid, ${attemptId}::uuid, 'ACCEPTED', '{}'::jsonb)`,
+      ];
+      for (const routineCall of calls) {
+        const failure = yield* Effect.flip(world.database.inTenant(world.tenantId, (tx) => call(tx, routineCall)));
+        expect(sqlStateOf(failure)).toBe('42501');
+      }
+      // the same call naming the installed Tenant is answered: the guard refuses the Tenant, not the routine
+      const own = yield* world.database.inTenant(world.tenantId, (tx) =>
+        call(tx, sql`communications.worker_read_intent(${world.tenantId}::uuid, ${intentId}::uuid)`),
+      );
+      expect(own).toHaveLength(1);
+      expect(yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts))).toEqual([]);
+      expect(yield* rowsOf(world, (tx) => tx.select().from(intentHandoffStops))).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-11 persistence] after a full run no table of the owner holds an address, a secret or a raw proof, only references and a mask',
+    () =>
+      Effect.gen(function* noSecretsAtRest() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const intentId = yield* decidedIntent(world);
+        expect((yield* step(world, handoff, intentId)).kind).toBe('HANDED_OFF');
+        // a stopped sibling too, so the stop reasons are on disk as well
+        const stopped = yield* setup();
+        const stoppedId = yield* decidedIntent(stopped);
+        stopped.privacy.answers.set('customer-1', privacyNotAllowed());
+        yield* step(stopped, handoffDouble(), stoppedId);
+        // a conflicting duplicate, so its row exists as well
+        yield* world.runner.submit(world.tenantId, requestFor(world.tenantId, ['customer-1', 'customer-2']));
+        for (const run of [world, stopped]) {
+          const everything = JSON.stringify([
+            yield* rowsOf(run, (tx) => tx.select().from(communicationRequests)),
+            yield* rowsOf(run, (tx) => tx.select().from(communicationRequestConflicts)),
+            yield* rowsOf(run, (tx) => tx.select().from(communicationDecisions)),
+            yield* rowsOf(run, (tx) => tx.select().from(messageIntents)),
+            yield* rowsOf(run, (tx) => tx.select().from(deliveryAttempts)),
+            yield* rowsOf(run, (tx) => tx.select().from(intentHandoffStops)),
+          ]);
+          expect(everything).not.toContain(ORIGINAL_ADDRESS);
+          // no address-shaped value at all: the owner's mask is `p***@...` and never matches a usable address
+          expect(everything).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.-]+/u);
+          expect(everything).not.toMatch(/otp|password|secret|token|bearer/iu);
+        }
+        // and the schema itself has no column for one
+        const admin = yield* loadDatabaseConnectionPair().pipe(
+          Effect.flatMap(({ admin: connection }) =>
+            PgClient.makeClient({ url: Redacted.make(connection.connectionString) }),
+          ),
+        );
+        const columns = yield* admin.unsafe<{ readonly column_name: string }>(
+          `select column_name::text from information_schema.columns where table_schema = 'communications' and table_name = any($1::text[])`,
+          [
+            [
+              'communication_requests',
+              'communication_request_conflicts',
+              'communication_decisions',
+              'message_intents',
+              'delivery_attempts',
+              'intent_handoff_stops',
+            ],
+          ],
+        );
+        expect(columns.length).toBeGreaterThan(30);
+        expect(
+          columns
+            .map(({ column_name: name }) => name)
+            .filter((name) => /address|secret|token|otp|password/u.test(name)),
+        ).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+/**
+ * [#1406] A source lifecycle stop is stored as the category `SOURCE_STALE` with the cause that names which fact it was, and the
+ * history, the Read and the source outcome feed show THAT cause: a source that must decide pausing, recovery or only recording
+ * can tell an expired proof from a consumed or a revoked one at the pre-handoff gate, before any attempt exists.
+ */
+describe('A source lifecycle stop is visible under its own reason in the history and the feed (#1406)', () => {
+  const LIFECYCLE_STATES = SourceStopReasonSchema.literals.map((reason) => ({
+    reason,
+    state: `fixture.state.${reason.toLowerCase().replaceAll('_', '-')}`,
+  }));
+  const lifecycleType = () => fixtureType({ ineligibleSourceStates: LIFECYCLE_STATES });
+
+  /** Decides one request of the world through the public intake and returns its single intent. */
+  const decideRequest = Effect.fn('PrepareHandoffTest.decideRequest')(function* decideOne(
+    world: World,
+    request: Parameters<World['runner']['submit']>[1],
+  ) {
+    const result = decided(yield* world.runner.submit(world.tenantId, request));
+    const [intent] = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+    if (intent === undefined) {
+      return yield* Effect.die('the fixture request must decide one intent');
+    }
+    return { intentId: intent.intentId, requestId: CommunicationRequestIdSchema.make(result.requestId) };
+  });
+
+  const stopSeenBySource = Effect.fn('PrepareHandoffTest.stopSeenBySource')(function* seen(
+    world: World,
+    requestId: typeof CommunicationRequestIdSchema.Type,
+  ) {
+    const history = yield* historyOf(world, requestId);
+    const [intent] = history.intents;
+    if (intent === undefined) {
+      return yield* Effect.die('the request decided one intent');
+    }
+    const item = yield* projectMessageHistoryItem(history, intent, { includeEndpointMask: false });
+    return {
+      entries: intent.history.entries.flatMap(({ reasonCodes }) => reasonCodes),
+      feed: history.feed.messages[0],
+      item,
+    };
+  });
+
+  for (const { reason, state } of LIFECYCLE_STATES) {
+    it.live(`${reason}: the specific reason, never only SOURCE_STALE, in the history, the Read and the feed`, () =>
+      Effect.gen(function* lifecycleStop() {
+        const world = yield* setup({ types: [lifecycleType()] });
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideRequest(world, requestFor(world.tenantId));
+        world.source.state.state = state;
+        expect(yield* step(world, handoff, intentId)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'SOURCE_STALE', cause: reason, proven: true }],
+        });
+        expect(handoff.calls).toEqual([]);
+        const seen = yield* stopSeenBySource(world, requestId);
+        expect(seen.entries).toContain(reason);
+        expect(seen.entries).not.toContain('SOURCE_STALE');
+        expect(seen.item.headline.reasonCodes).toEqual([reason]);
+        expect(seen.feed).toMatchObject({ attention: 'FAILURE', reason, status: 'SUPPRESSED' });
+        expect(seen.item.headline.attention).toBe(seen.feed?.attention);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    );
+  }
+
+  it.live('an undeclared ineligible state and a moved-on revision keep their own closed reasons', () =>
+    Effect.gen(function* undeclared() {
+      const handoff = handoffDouble();
+      const generic = yield* setup({ types: [lifecycleType()] });
+      const first = yield* decideRequest(generic, requestFor(generic.tenantId));
+      generic.source.state.state = 'fixture.state.undeclared';
+      yield* step(generic, handoff, first.intentId);
+      expect((yield* stopSeenBySource(generic, first.requestId)).feed).toMatchObject({
+        reason: 'SOURCE_STATE_INELIGIBLE',
+      });
+      const moved = yield* setup({ types: [lifecycleType()] });
+      const second = yield* decideRequest(moved, requestFor(moved.tenantId));
+      moved.source.state.latestRevision = 2;
+      yield* step(moved, handoff, second.intentId);
+      expect((yield* stopSeenBySource(moved, second.requestId)).feed).toMatchObject({
+        reason: 'SOURCE_REVISION_NOT_CURRENT',
+      });
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'a request whose validUntil is already past at intake is decided, then stopped with SOURCE_NO_LONGER_VALID',
+    () =>
+      Effect.gen(function* pastAtIntake() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideRequest(
+          world,
+          communicationRequest({
+            bindings: [originalRecipient('customer-1')],
+            tenantId: world.tenantId,
+            validUntil: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+          }),
+        );
+        expect(yield* step(world, handoff, intentId)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'SOURCE_STALE', cause: 'SOURCE_NO_LONGER_VALID', proven: true }],
+        });
+        // the proof is never handed off, and the source is told the concrete reason, not a generic category
+        expect(handoff.calls).toEqual([]);
+        const seen = yield* stopSeenBySource(world, requestId);
+        expect(seen.feed).toMatchObject({
+          attention: 'FAILURE',
+          reason: 'SOURCE_NO_LONGER_VALID',
+          status: 'SUPPRESSED',
+        });
+        expect(seen.item.headline.reasonCodes).toEqual(['SOURCE_NO_LONGER_VALID']);
+        expect(seen.entries).toContain('SOURCE_NO_LONGER_VALID');
+        // final: a proven stop is never reopened by a later delivery
+        expect(kindOf(yield* step(world, handoff, intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('a validUntil in the future does not stop the message', () =>
+    Effect.gen(function* futureValidUntil() {
+      const world = yield* setup();
+      const handoff = handoffDouble();
+      const { intentId } = yield* decideRequest(
+        world,
+        communicationRequest({
+          bindings: [originalRecipient('customer-1')],
+          tenantId: world.tenantId,
+          validUntil: DateTime.makeUnsafe('2999-01-01T00:00:00.000Z'),
+        }),
+      );
+      expect(kindOf(yield* step(world, handoff, intentId))).toBe('HANDED_OFF');
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});

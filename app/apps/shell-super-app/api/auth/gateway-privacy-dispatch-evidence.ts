@@ -2,23 +2,39 @@ import { recoverSqlTransactionError } from '@app/core-runtime';
 import { AccessDecisionGate, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayPrivacyDispatchSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type { RegisteredGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type {
+  PrivacyDispatchOperation,
+  RegisteredGatewayPrivacyDispatch,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { MeasureExecutionEligibilityRequestSchema } from '@app/privacy/api/measure-execution-eligibility';
 import { RecordOwnerExecutionOutcomePayloadSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
 import type { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import { validatePrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import {
+  OwnerExecutionReceiptRequestSchema,
+  validatePrivacyMeasureHandoff,
+} from '@app/privacy/domain/privacy-measure-handoff';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/privacy/outbox/privacy-measure-dispatched';
-import type { GatewayPrivacyDispatchSubjectSchema } from '@app/shared-contracts';
+import type {
+  GatewayPrivacyDispatchSubjectSchema,
+  PrivacyDispatchConsumer,
+  PrivacyDispatchContinuation,
+} from '@app/shared-contracts';
 import {
   decodeGatewayContextProtectedHeader,
   decodeSupportedGatewayContextClaims,
+  PrivacyDispatchContinuationPayloadSchema,
+  privacyDispatchConsumerOfContinuationWorker,
+  privacyDispatchConsumerOfOperation,
+  privacyDispatchConsumerOfWorker,
+  privacyDispatchContinuationOperation,
   privacyDispatchOperationContract,
+  privacyDispatchOperationFitsConsumer,
 } from '@app/shared-contracts';
 import { ExecuteSymmyRetentionPayloadSchema } from '@app/symmy-integration/api/execute-symmy-retention-action';
 import { SymmyJobPrivacyExecutionRequestSchema } from '@app/symmy-integration/api/symmy-job-privacy-execution';
@@ -46,9 +62,7 @@ const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
 const privacyModule = outboxProducerModuleKey;
 const privacyApp = 'privacy';
 const symmyModule = 'integration.symmy';
-const workerKey = 'integration.symmy.symmy-job-privacy-dispatch';
 const dispatchActionKey = 'privacy.core.dispatch-privacy-measure';
-const receiptRequirementKey = 'privacy.core.requirement.symmy-owner-execution-outcome';
 const rowSchema = Schema.Struct({
   claimActive: Schema.Boolean,
   claimId: Schema.OptionFromNullOr(Schema.NonEmptyString),
@@ -87,25 +101,38 @@ const witnessSchema = Schema.instanceOf(AdmittedPrivacyDispatchValue);
 export const readAdmittedPrivacyDispatch = (witness: AdmittedPrivacyDispatch): Evidence | undefined =>
   Schema.is(witnessSchema)(witness) ? AdmittedPrivacyDispatchValue.read(witness) : undefined;
 
-const isSupportedHandoff = (handoff: Handoff, row: Row): boolean => {
+/** Symmy executes only a DELETE or ANONYMIZE of exactly one of its own job intents. */
+const isSymmyExecutableHandoff = (handoff: Handoff): boolean => {
   const [resource] = handoff.resourceRefs;
   const [content] = handoff.contentScopeRefs;
   const match = /^integration\.symmy\.(?:job|sync-admission):(?<id>[a-fA-F\d-]+)$/u.exec(resource ?? '');
   return (
-    validatePrivacyMeasureHandoff(handoff).length === 0 &&
-    handoff.tenantId === row.tenantId &&
-    handoff.owningCapability === symmyModule &&
     (handoff.kind === 'DELETE' || handoff.kind === 'ANONYMIZE') &&
     handoff.dispositionDecision === handoff.kind &&
     handoff.resourceRefs.length === 1 &&
     handoff.contentScopeRefs.length === 1 &&
     Schema.is(Schema.String.check(Schema.isUUID()))(match?.groups?.['id']) &&
-    content === `${resource}#integration.symmy.job-intent` &&
-    handoff.measureId === row.measureId &&
-    computeCanonicalValueHash(handoff) === computeCanonicalValueHash(row.eventPayload.handoff)
+    content === `${resource}#integration.symmy.job-intent`
   );
 };
+/**
+ * What every consumer shares: a valid handoff of the trusted tenant, addressed to this consumer and identical to the
+ * immutable dispatched event. A consumer's own resource vocabulary is checked by the consumer's own Read, not here, except
+ * for Symmy, whose executing worker acts on the shape this graph attests.
+ */
+export const isSupportedHandoff = (
+  consumer: PrivacyDispatchConsumer,
+  handoff: Handoff,
+  event: { readonly handoff: Handoff; readonly measureId: string; readonly tenantId: string },
+): boolean =>
+  validatePrivacyMeasureHandoff(handoff).length === 0 &&
+  handoff.tenantId === event.tenantId &&
+  handoff.owningCapability === consumer.moduleKey &&
+  (consumer.moduleKey !== symmyModule || isSymmyExecutableHandoff(handoff)) &&
+  handoff.measureId === event.measureId &&
+  computeCanonicalValueHash(handoff) === computeCanonicalValueHash(event.handoff);
 const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(input: {
+  readonly consumer: PrivacyDispatchConsumer;
   readonly deliveryId?: string;
   readonly dispatchInvocationId?: string;
   readonly tenantId: string;
@@ -138,7 +165,7 @@ const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(i
       where i.tenant_id=${input.tenantId}::uuid and i.action_key=${dispatchActionKey} and i.status='succeeded' and ${selection}
         and e.producer_module_key=${privacyModule} and e.subject_module_key=${privacyModule} and e.subject_resource_type='privacy.core.privacy-measure'
         and e.event_type=${outboxTopic} and m.topic=${outboxTopic} and m.producer_module_key=${privacyModule}
-        and d.consumer_module_key=${symmyModule} and d.worker_key=${workerKey}
+        and d.consumer_module_key=${input.consumer.moduleKey} and d.worker_key=${input.consumer.workerKey}
       limit 2`,
           'objects',
         );
@@ -146,7 +173,11 @@ const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(i
           rows,
         ).pipe(Effect.mapError(delegationUnavailable));
         const [row] = parsed;
-        if (parsed.length !== 1 || row === undefined || !isSupportedHandoff(row.messagePayload.handoff, row)) {
+        if (
+          parsed.length !== 1 ||
+          row === undefined ||
+          !isSupportedHandoff(input.consumer, row.messagePayload.handoff, { ...row, handoff: row.eventPayload.handoff })
+        ) {
           return yield* delegationForbidden();
         }
         return row;
@@ -157,29 +188,179 @@ const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(i
       Effect.mapError((cause) => (Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable(cause))),
     );
 });
-const assertWorkerCatalog = (contract: Contract): boolean =>
-  contract.deployment.appId === 'symmy-integration' &&
-  contract.manifest.module.id === symmyModule &&
-  contract.manifest.originatorActions?.includes(dispatchActionKey) === true &&
-  contract.runtime.outboxSubscriptions.some(
+const continuationRowSchema = Schema.Struct({
+  claimActive: Schema.Boolean,
+  claimId: Schema.OptionFromNullOr(Schema.NonEmptyString),
+  deliveryId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyDispatchContinuationDeliveryId')),
+  payload: PrivacyDispatchContinuationPayloadSchema,
+});
+/**
+ * The consumer's own continuation delivery: the consumer's message of its own Action, which a human ran and which
+ * succeeded, delivered to the consumer's own continuation worker in the trusted Tenant. Exactly one row or nothing.
+ */
+const loadContinuationRow = Effect.fn('PrivacyDispatchEvidence.loadContinuation')(function* loadContinuation(input: {
+  readonly consumer: PrivacyDispatchConsumer;
+  readonly continuation: PrivacyDispatchContinuation;
+  readonly deliveryId: string;
+  readonly tenantId: string;
+}) {
+  const database = yield* CoreDatabase;
+  const { consumer, continuation } = input;
+  return yield* database.executor
+    .transaction(
+      Effect.fn('PrivacyDispatchEvidence.continuationTransaction')(function* native(transaction) {
+        yield* transaction.execute(
+          sql`select set_config('ontos.tenant_id',${input.tenantId},true),set_config('ontos.legal_entity_id','',true)`,
+          'objects',
+        );
+        const rows = yield* transaction.execute(
+          sql`
+      select d.outbox_delivery_id as "deliveryId",m.payload_json as "payload",d.claimed_by as "claimId",
+        (d.status='processing' and d.claim_expires_at>now()) as "claimActive"
+      from core.outbox_deliveries d
+      join core.outbox_messages m on m.outbox_message_id=d.outbox_message_id
+      join core.domain_events e on e.domain_event_id=m.domain_event_id and e.tenant_id=m.tenant_id
+      join core.action_invocations i on i.action_invocation_id=e.action_invocation_id and i.tenant_id=m.tenant_id
+      join core.principals p on p.tenant_id=i.tenant_id and p.principal_id=i.principal_id and p.kind='human'
+      join core.tenants t on t.tenant_id=i.tenant_id and t.status='active'
+      where d.outbox_delivery_id=${input.deliveryId}::uuid and m.tenant_id=${input.tenantId}::uuid
+        and i.action_key=${continuation.actionKey} and i.status='succeeded'
+        and e.producer_module_key=${consumer.moduleKey} and m.producer_module_key=${consumer.moduleKey}
+        and m.topic=${continuation.topic} and d.consumer_module_key=${consumer.moduleKey}
+        and d.worker_key=${continuation.workerKey}
+      limit 2`,
+          'objects',
+        );
+        const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(continuationRowSchema), {
+          onExcessProperty: 'error',
+        })(rows).pipe(Effect.mapError(delegationForbidden));
+        const [row] = parsed;
+        if (parsed.length !== 1 || row === undefined) {
+          return yield* delegationForbidden();
+        }
+        return row;
+      }),
+    )
+    .pipe(
+      recoverSqlTransactionError,
+      Effect.mapError((cause) => (Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable(cause))),
+    );
+});
+/** What a worker's deployed contract must say: its app, its module, the Privacy originator and its own subscription. */
+interface WorkerCatalogFacts {
+  readonly appId: string;
+  readonly moduleId: string;
+  readonly originatorActions: readonly string[] | undefined;
+  readonly subscriptions: readonly {
+    readonly consumerModuleKey: string;
+    readonly entrypointKey: string;
+    readonly producerModuleKey: string;
+    readonly topic: string;
+    readonly workerKey: string;
+  }[];
+}
+export const workerCatalogHolds = (facts: WorkerCatalogFacts, consumer: PrivacyDispatchConsumer): boolean =>
+  facts.appId === consumer.appId &&
+  facts.moduleId === consumer.moduleKey &&
+  facts.originatorActions?.includes(dispatchActionKey) === true &&
+  facts.subscriptions.some(
     (subscription) =>
-      subscription.workerKey === workerKey &&
-      subscription.consumerModuleKey === symmyModule &&
+      subscription.workerKey === consumer.workerKey &&
+      subscription.consumerModuleKey === consumer.moduleKey &&
       subscription.producerModuleKey === privacyModule &&
       subscription.topic === outboxTopic &&
-      subscription.entrypoint.entrypointKey === workerKey,
+      subscription.entrypointKey === consumer.workerKey,
   );
-const conditionalAllows = (
-  source: Contract,
+const assertWorkerCatalog = (contract: Contract, consumer: PrivacyDispatchConsumer): boolean =>
+  workerCatalogHolds(
+    {
+      appId: contract.deployment.appId,
+      moduleId: contract.manifest.module.id,
+      originatorActions: contract.manifest.originatorActions,
+      subscriptions: contract.runtime.outboxSubscriptions.map((subscription) => ({
+        consumerModuleKey: subscription.consumerModuleKey,
+        entrypointKey: subscription.entrypoint.entrypointKey,
+        producerModuleKey: subscription.producerModuleKey,
+        topic: subscription.topic,
+        workerKey: subscription.workerKey,
+      })),
+    },
+    consumer,
+  );
+/** What a continuation source's deployed contract must say: the consumer itself, its own Action and its own worker. */
+interface ContinuationCatalogFacts {
+  readonly actions: readonly {
+    readonly access: string;
+    readonly actionKey: string;
+    readonly protectedAction: boolean;
+  }[];
+  readonly appId: string;
+  readonly moduleId: string;
+  readonly subscriptions: WorkerCatalogFacts['subscriptions'];
+}
+export const continuationCatalogHolds = (
+  facts: ContinuationCatalogFacts,
+  consumer: PrivacyDispatchConsumer,
+  continuation: PrivacyDispatchContinuation,
+): boolean =>
+  facts.appId === consumer.appId &&
+  facts.moduleId === consumer.moduleKey &&
+  facts.actions.filter(
+    (action) => action.actionKey === continuation.actionKey && action.access === 'write' && action.protectedAction,
+  ).length === 1 &&
+  facts.subscriptions.filter(
+    (subscription) =>
+      subscription.workerKey === continuation.workerKey &&
+      subscription.consumerModuleKey === consumer.moduleKey &&
+      subscription.producerModuleKey === consumer.moduleKey &&
+      subscription.topic === continuation.topic &&
+      subscription.entrypointKey === continuation.workerKey,
+  ).length === 1;
+const assertContinuationCatalog = (
+  contract: Contract,
+  consumer: PrivacyDispatchConsumer,
+  continuation: PrivacyDispatchContinuation,
+): boolean =>
+  continuationCatalogHolds(
+    {
+      actions: contract.manifest.publicSurface.actions.map((action) => ({
+        access: action.entrypoint.access,
+        actionKey: action.actionKey,
+        protectedAction: action.accessDeclaration !== undefined && action.accessWorkload === undefined,
+      })),
+      appId: contract.deployment.appId,
+      moduleId: contract.manifest.module.id,
+      subscriptions: contract.runtime.outboxSubscriptions.map((subscription) => ({
+        consumerModuleKey: subscription.consumerModuleKey,
+        entrypointKey: subscription.entrypoint.entrypointKey,
+        producerModuleKey: subscription.producerModuleKey,
+        topic: subscription.topic,
+        workerKey: subscription.workerKey,
+      })),
+    },
+    consumer,
+    continuation,
+  );
+/** What the conditional-call check reads of the two deployed contracts. */
+interface ConditionalCallFacts {
+  readonly declarations: readonly {
+    readonly entrypointKey: string;
+    readonly key: string;
+    readonly provider: { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string };
+  }[];
+  readonly moduleId: string;
+}
+export const conditionalCallAllows = (
+  source: ConditionalCallFacts,
   consumerKey: string,
-  destination: Contract,
+  destinationModuleId: string,
   target: ReturnType<typeof privacyDispatchOperationContract>,
   key: string | undefined,
 ): boolean => {
-  if (source.manifest.module.id === destination.manifest.module.id) {
+  if (source.moduleId === destinationModuleId) {
     return key === undefined;
   }
-  const declarations = source.manifest.requirements?.operations.filter((requirement) => requirement.key === key) ?? [];
+  const declarations = source.declarations.filter((requirement) => requirement.key === key);
   const [declaration] = declarations;
   return (
     declarations.length === 1 &&
@@ -190,7 +371,21 @@ const conditionalAllows = (
     declaration.provider.schemaVersion === target.schemaVersion
   );
 };
-const requestHash = Effect.fn('PrivacyDispatchEvidence.requestHash')(function* hash(
+const conditionalAllows = (
+  source: Contract,
+  consumerKey: string,
+  destination: Contract,
+  target: ReturnType<typeof privacyDispatchOperationContract>,
+  key: string | undefined,
+): boolean =>
+  conditionalCallAllows(
+    { declarations: source.manifest.requirements?.operations ?? [], moduleId: source.manifest.module.id },
+    consumerKey,
+    destination.manifest.module.id,
+    target,
+    key,
+  );
+export const requestHash = Effect.fn('PrivacyDispatchEvidence.requestHash')(function* hash(
   operation: Operation,
   handoff: Handoff,
 ) {
@@ -206,6 +401,11 @@ const requestHash = Effect.fn('PrivacyDispatchEvidence.requestHash')(function* h
         receipt.attempt === undefined
           ? { idempotencyKey: handoff.idempotencyKey }
           : { attempt: receipt.attempt, idempotencyKey: handoff.idempotencyKey },
+      ).pipe(Effect.map(computeCanonicalValueHash)),
+    ),
+    Match.tag('CommunicationsReceipt', (receipt) =>
+      Schema.decodeUnknownEffect(OwnerExecutionReceiptRequestSchema)(
+        receipt.attempt === undefined ? { handoff } : { attempt: receipt.attempt, handoff },
       ).pipe(Effect.map(computeCanonicalValueHash)),
     ),
     Match.tag('PrivacyEligibility', () =>
@@ -309,30 +509,44 @@ const verifySource = Effect.fn('PrivacyDispatchEvidence.verifySource')(function*
   }
   return claims;
 });
-const workerOperationAllows = (operation: Operation): boolean =>
-  Match.value(operation).pipe(
-    Match.tag('PrivacyEligibility', () => false),
-    Match.orElse(() => true),
-  );
-const receiptOperationAllows = (operation: Operation): boolean =>
-  Match.value(operation).pipe(
-    Match.tag('SymmyReceipt', () => true),
-    Match.orElse(() => false),
-  );
-const originalOperationFor = (previous: RegisteredGatewayPrivacyDispatch, next: Operation): Option.Option<Operation> =>
-  Match.value(next).pipe(
+export const workerOperationAllows = (
+  consumer: PrivacyDispatchConsumer,
+  operation: PrivacyDispatchOperation,
+): boolean => operation !== 'PrivacyEligibility' && privacyDispatchOperationFitsConsumer(consumer, operation);
+export const receiptOperationAllows = (
+  consumer: PrivacyDispatchConsumer,
+  operation: PrivacyDispatchOperation,
+): boolean => operation === consumer.receiptOperation;
+/** A receipt follows only the outcome its own consumer reported, for exactly that attempt. */
+const outcomeBefore = (
+  consumer: PrivacyDispatchConsumer,
+  previous: PrivacyDispatchOperation,
+  receipt: PrivacyDispatchOperation,
+  attempt: number | undefined,
+): Option.Option<Operation> =>
+  consumer.receiptOperation === receipt && previous === 'PrivacyOutcome' && attempt !== undefined
+    ? Option.some<Operation>({ _tag: 'PrivacyOutcome', attempt })
+    : Option.none<Operation>();
+/** The operation a continuation proves its source to have been: the consumer's own execution, or a reported outcome. */
+export const originalOperationFor = (
+  consumer: PrivacyDispatchConsumer,
+  previous: PrivacyDispatchOperation,
+  next: Operation,
+): Option.Option<Operation> => {
+  if (!privacyDispatchOperationFitsConsumer(consumer, next._tag)) {
+    return Option.none<Operation>();
+  }
+  return Match.value(next).pipe(
     Match.tag('PrivacyEligibility', () =>
-      previous.operation === 'SymmyRetention'
+      previous === 'SymmyRetention' && consumer.executionOperation === 'SymmyRetention'
         ? Option.some<Operation>({ _tag: 'SymmyRetention' })
         : Option.none<Operation>(),
     ),
-    Match.tag('SymmyReceipt', (receipt) =>
-      previous.operation === 'PrivacyOutcome' && receipt.attempt !== undefined
-        ? Option.some<Operation>({ _tag: 'PrivacyOutcome', attempt: receipt.attempt })
-        : Option.none<Operation>(),
-    ),
+    Match.tag('SymmyReceipt', (receipt) => outcomeBefore(consumer, previous, receipt._tag, receipt.attempt)),
+    Match.tag('CommunicationsReceipt', (receipt) => outcomeBefore(consumer, previous, receipt._tag, receipt.attempt)),
     Match.orElse(() => Option.none<Operation>()),
   );
+};
 const sameNativeEvidence = (row: Row, metadata: RegisteredGatewayPrivacyDispatch): boolean =>
   row.tenantId === metadata.tenantId &&
   row.principalId === metadata.principalId &&
@@ -347,7 +561,17 @@ const sameNativeEvidence = (row: Row, metadata: RegisteredGatewayPrivacyDispatch
 const workerClaimMatches = (row: Row, claimId: string): boolean =>
   row.claimActive && Option.contains(row.claimId, claimId);
 
-/** Admits only the fixed Privacy→Symmy dispatch graph from durable native evidence and the original current human. */
+/** The consumer's own worker, subscribed to the Privacy dispatch in the installed catalog, and the consumer it belongs to. */
+const consumerCatalogHolds = (installed: ShellInstalledCatalog, consumer: PrivacyDispatchConsumer): boolean => {
+  const workerContract = installed.contracts.find((contract) => contract.manifest.module.id === consumer.moduleKey);
+  return workerContract !== undefined && assertWorkerCatalog(workerContract, consumer);
+};
+
+/**
+ * Admits only the fixed Privacy→consumer dispatch graph of one approved consumer from durable native evidence and the
+ * original current human. The consumer comes from the proof itself (its worker, or the receipt it reads), never from the
+ * caller's wording, and an operation of another consumer is refused.
+ */
 export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDispatch')(function* admit(input: {
   readonly audience: string;
   readonly binding: GatewayModuleBinding;
@@ -358,12 +582,9 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
   const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
   const approvedTarget = privacyDispatchOperationContract(subject.operation._tag);
   const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
-  const workerContract = installed.contracts.find((contract) => contract.manifest.module.id === symmyModule);
   if (
     source === undefined ||
     destination === undefined ||
-    workerContract === undefined ||
-    !assertWorkerCatalog(workerContract) ||
     input.audience !== approvedTarget.appId ||
     destination.manifest.module.id !== approvedTarget.moduleId ||
     binding.compositionRevision !== installed.composition.revision ||
@@ -382,21 +603,89 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
       Effect.fn('PrivacyDispatchEvidence.worker')(function* worker(
         proof: Extract<Source, { readonly _tag: 'Worker' }>,
       ) {
+        const consumer = privacyDispatchConsumerOfWorker(proof.workerKey);
         if (
-          proof.workerKey !== workerKey ||
-          !assertWorkerCatalog(source) ||
-          !workerOperationAllows(subject.operation)
+          consumer === undefined ||
+          !consumerCatalogHolds(installed, consumer) ||
+          !assertWorkerCatalog(source, consumer) ||
+          !workerOperationAllows(consumer, subject.operation._tag)
         ) {
           return yield* delegationForbidden();
         }
-        const row = yield* loadRow({ deliveryId: proof.deliveryId, tenantId: proof.tenantId });
+        const row = yield* loadRow({ consumer, deliveryId: proof.deliveryId, tenantId: proof.tenantId });
         if (
           !workerClaimMatches(row, proof.claimId) ||
-          !conditionalAllows(source, workerKey, destination, target, subject.operationRequirementKey)
+          !conditionalAllows(source, consumer.workerKey, destination, target, subject.operationRequirementKey)
         ) {
           return yield* delegationForbidden();
         }
-        return { claimId: proof.claimId, row, sourceAccess: 'background' as const, sourceMode: 'worker' as const };
+        return {
+          claimId: proof.claimId,
+          row,
+          sourceAccess: 'background' as const,
+          sourceKey: row.deliveryId,
+          sourceMode: 'worker' as const,
+          worker: { moduleKey: consumer.moduleKey, workerKey: consumer.workerKey },
+        };
+      }),
+    ),
+    Match.tag(
+      'Continuation',
+      Effect.fn('PrivacyDispatchEvidence.recordedContinuation')(function* recordedContinuation(
+        proof: Extract<Source, { readonly _tag: 'Continuation' }>,
+      ) {
+        const consumer = privacyDispatchConsumerOfContinuationWorker(proof.workerKey);
+        const continuation = consumer?.continuation;
+        // A continuation reports exactly one outcome: no other operation has an attempt to join it to.
+        const attempt = Match.value(subject.operation).pipe(
+          Match.tag(privacyDispatchContinuationOperation, (outcome) => Option.some(outcome.attempt)),
+          Match.orElse(() => Option.none<number>()),
+        );
+        if (
+          consumer === undefined ||
+          continuation === undefined ||
+          Option.isNone(attempt) ||
+          subject.operationRequirementKey !== continuation.requirementKey ||
+          !consumerCatalogHolds(installed, consumer) ||
+          !assertContinuationCatalog(source, consumer, continuation)
+        ) {
+          return yield* delegationForbidden();
+        }
+        const recorded = yield* loadContinuationRow({
+          consumer,
+          continuation,
+          deliveryId: proof.deliveryId,
+          tenantId: proof.tenantId,
+        });
+        if (
+          !recorded.claimActive ||
+          !Option.contains(recorded.claimId, proof.claimId) ||
+          recorded.payload.attempt !== attempt.value ||
+          !conditionalAllows(source, continuation.workerKey, destination, target, subject.operationRequirementKey)
+        ) {
+          return yield* delegationForbidden();
+        }
+        // The original dispatch comes from the consumer's own message, which only names it; it is proven natively here.
+        const row = yield* loadRow({
+          consumer,
+          dispatchInvocationId: recorded.payload.dispatchInvocationId,
+          tenantId: proof.tenantId,
+        });
+        if (
+          row.measureId !== recorded.payload.measureId ||
+          row.messagePayload.handoff.taskId !== recorded.payload.taskId
+        ) {
+          return yield* delegationForbidden();
+        }
+        return {
+          claimId: proof.claimId,
+          continuationDeliveryId: recorded.deliveryId,
+          row,
+          sourceAccess: 'background' as const,
+          sourceKey: recorded.deliveryId,
+          sourceMode: 'continuation' as const,
+          worker: { moduleKey: consumer.moduleKey, workerKey: continuation.workerKey },
+        };
       }),
     ),
     Match.tag(
@@ -404,11 +693,14 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
       Effect.fn('PrivacyDispatchEvidence.dispatch')(function* dispatch(
         proof: Extract<Source, { readonly _tag: 'Dispatch' }>,
       ) {
+        const consumer = privacyDispatchConsumerOfOperation(subject.operation._tag);
         if (
+          consumer === undefined ||
+          !consumerCatalogHolds(installed, consumer) ||
           source.deployment.appId !== privacyApp ||
           source.manifest.module.id !== privacyModule ||
-          !receiptOperationAllows(subject.operation) ||
-          subject.operationRequirementKey !== receiptRequirementKey ||
+          !receiptOperationAllows(consumer, subject.operation._tag) ||
+          subject.operationRequirementKey !== consumer.receiptRequirementKey ||
           !conditionalAllows(
             source,
             privacyDispatchOperationContract('PrivacyOutcome').entrypointKey,
@@ -419,11 +711,15 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
         ) {
           return yield* delegationForbidden();
         }
-        const row = yield* loadRow({ dispatchInvocationId: proof.dispatchInvocationId, tenantId: proof.tenantId });
+        const row = yield* loadRow({
+          consumer,
+          dispatchInvocationId: proof.dispatchInvocationId,
+          tenantId: proof.tenantId,
+        });
         if (row.governanceLegalEntityId !== proof.legalEntityId) {
           return yield* delegationForbidden();
         }
-        return { row, sourceAccess: 'read' as const, sourceMode: 'dispatch' as const };
+        return { row, sourceAccess: 'read' as const, sourceKey: row.deliveryId, sourceMode: 'dispatch' as const };
       }),
     ),
     Match.tag(
@@ -434,8 +730,14 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
         const claims = yield* verifySource({ assertion: proof.sourceAssertion, binding, installed });
         const previous = claims.privacyDispatch;
         const previousContract = privacyDispatchOperationContract(previous.operation, previous.target);
-        const originalOperation = originalOperationFor(previous, subject.operation);
+        const consumer = privacyDispatchConsumerOfWorker(previous.workerKey);
+        const originalOperation =
+          consumer === undefined
+            ? Option.none<Operation>()
+            : originalOperationFor(consumer, previous.operation, subject.operation);
         if (
+          consumer === undefined ||
+          !consumerCatalogHolds(installed, consumer) ||
           Option.isNone(originalOperation) ||
           previous.sourceMode !== 'worker' ||
           previous.claimId === undefined ||
@@ -452,7 +754,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
         ) {
           return yield* delegationForbidden();
         }
-        const row = yield* loadRow({ deliveryId: previous.deliveryId, tenantId: previous.tenantId });
+        const row = yield* loadRow({ consumer, deliveryId: previous.deliveryId, tenantId: previous.tenantId });
         if (
           !sameNativeEvidence(row, previous) ||
           !workerClaimMatches(row, previous.claimId) ||
@@ -465,7 +767,14 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
         if ((yield* requestHash(originalOperation.value, row.messagePayload.handoff)) !== previous.requestHash) {
           return yield* delegationForbidden();
         }
-        return { claimId: previous.claimId, row, sourceAccess: previousContract.access, sourceMode: 'worker' as const };
+        return {
+          claimId: previous.claimId,
+          row,
+          sourceAccess: previousContract.access,
+          sourceKey: row.deliveryId,
+          sourceMode: 'worker' as const,
+          worker: { moduleKey: consumer.moduleKey, workerKey: consumer.workerKey },
+        };
       }),
     ),
     Match.exhaustive,
@@ -490,9 +799,17 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
   if (target.schemaVersion !== approvedTarget.schemaVersion) {
     Object.assign(base, { target });
   }
+  if ('continuationDeliveryId' in admittedSource) {
+    Object.assign(base, { continuationDeliveryId: admittedSource.continuationDeliveryId });
+  }
   const metadata =
-    'claimId' in admittedSource
-      ? { ...base, claimId: admittedSource.claimId, workerKey, workerModuleKey: symmyModule }
+    'worker' in admittedSource
+      ? {
+          ...base,
+          claimId: admittedSource.claimId,
+          workerKey: admittedSource.worker.workerKey,
+          workerModuleKey: admittedSource.worker.moduleKey,
+        }
       : base;
   const privacyDispatch = yield* Schema.decodeUnknownEffect(RegisteredGatewayPrivacyDispatchSchema)(metadata).pipe(
     Effect.mapError(delegationForbidden),
@@ -504,6 +821,6 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
     principal: Object.freeze({ ...principal }),
     privacyDispatch: Object.freeze(privacyDispatch),
     sourceAccess: admittedSource.sourceAccess,
-    sourceKey: row.deliveryId,
+    sourceKey: admittedSource.sourceKey,
   });
 });

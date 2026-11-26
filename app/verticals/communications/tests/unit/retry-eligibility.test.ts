@@ -1,0 +1,347 @@
+import { describe, expect, it } from 'effect-rstest';
+
+import { recoveryPolicyOf, resendPolicyOf } from '../../src/domain/catalog/message-type.ts';
+import { assessAttemptHistory, confirmContinuation } from '../../src/domain/recovery/retry-eligibility.ts';
+import type { CurrentGates } from '../../src/domain/recovery/retry-eligibility.ts';
+import { isOwnerUnavailableStop, rejectionClassOf } from '../../src/domain/recovery/vocabulary.ts';
+import { fixtureRecovery, fixtureType } from './support/catalog-fixtures.ts';
+import { ATTEMPT_1, ATTEMPT_2, attempt, conflict, factsOf, observation } from './support/history-fixtures.ts';
+
+/**
+ * [#1403 R-01 R-04 R-05 R-06 AC-01 AC-02 AC-07] Retry eligibility is decided over the append-only history and the approved
+ * recovery rule of the type: only a PROVEN non-acceptance (nothing submitted, a provider refusal, a reconciled non-acceptance)
+ * can lead to another attempt of the same intent; a timeout, an unavailable provider and an indeterminate answer never can.
+ */
+const approved = { kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE', maxAttempts: 3 } as const;
+const none = { kind: 'NONE' } as const;
+const temporary = { reason: 'rate_limited' } as const;
+const cleared: CurrentGates = { kind: 'CLEARED' };
+const attemptIdOf = (number: number) => `22222222-2222-4222-8222-22222222222${String(number)}`;
+const refused = (number: number, prepared: number) =>
+  attempt('REJECTED', { ...temporary, id: attemptIdOf(number), number, prepared });
+const notAttempted = (number: number, prepared: number) =>
+  attempt('NOT_ATTEMPTED', { id: attemptIdOf(number), number, prepared });
+/** The history of a worker that was refused `count` times, each attempt five minutes after the last. */
+const refusedTimes = (count: number) =>
+  factsOf({ attempts: Array.from({ length: count }, (_unused, index) => refused(index + 1, index * 5 + 1)) });
+
+describe('assessAttemptHistory: what the history and the approved rule allow before any gate is asked', () => {
+  it('[S02] an intent with no attempt yet is the first handoff: no recovery rule is involved', () => {
+    expect(assessAttemptHistory(factsOf({}), none)).toEqual({ kind: 'FIRST_ATTEMPT' });
+    expect(assessAttemptHistory(factsOf({}), approved)).toEqual({ kind: 'FIRST_ATTEMPT' });
+  });
+
+  it('an attempt that provably submitted nothing leaves the intent open, with no rule needed', () => {
+    for (const submitted of [attempt('NOT_ATTEMPTED'), attempt('UNAVAILABLE', { reason: 'configuration' })]) {
+      expect(assessAttemptHistory(factsOf({ attempts: [submitted] }), none)).toEqual({
+        basis: { kind: 'PRIOR_NOT_ATTEMPTED' },
+        kind: 'CONTINUE',
+        previousAttemptId: ATTEMPT_1,
+      });
+    }
+  });
+
+  it('[S01 AC-01] a proven TEMPORARY refusal continues the SAME intent when, and only when, the type approved a recovery rule', () => {
+    const facts = factsOf({ attempts: [attempt('REJECTED', temporary)] });
+    expect(assessAttemptHistory(facts, approved)).toEqual({
+      basis: { kind: 'PRIOR_REJECTED' },
+      kind: 'CONTINUE',
+      previousAttemptId: ATTEMPT_1,
+    });
+    // [S03 AC-07] without a rule automatic action halts and says why: it never invents one
+    expect(assessAttemptHistory(facts, none)).toEqual({ attemptId: ATTEMPT_1, code: 'NO_RECOVERY_RULE', kind: 'HALT' });
+  });
+
+  it("[R-13 AC-07] the owner's own approved limit of submitted attempts halts further automatic action", () => {
+    const twice = factsOf({
+      attempts: [
+        attempt('REJECTED', { ...temporary, id: ATTEMPT_1 }),
+        attempt('REJECTED', { ...temporary, id: ATTEMPT_2, number: 2, prepared: 5 }),
+      ],
+    });
+    expect(assessAttemptHistory(twice, { ...approved, maxAttempts: 3 })).toMatchObject({
+      kind: 'CONTINUE',
+      previousAttemptId: ATTEMPT_2,
+    });
+    expect(assessAttemptHistory(twice, { ...approved, maxAttempts: 2 })).toEqual({
+      attemptId: ATTEMPT_2,
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+    // an attempt that submitted nothing is not counted against the owner's limit
+    const withNothingSubmitted = factsOf({
+      attempts: [
+        attempt('NOT_ATTEMPTED'),
+        attempt('REJECTED', { ...temporary, id: ATTEMPT_2, number: 2, prepared: 5 }),
+      ],
+    });
+    expect(assessAttemptHistory(withNothingSubmitted, { ...approved, maxAttempts: 2 })).toMatchObject({
+      kind: 'CONTINUE',
+    });
+  });
+
+  it("[R-13 AC-07] the type's own limit ends a worker that keeps failing: with maxAttempts 2 the third delivery begins nothing, whatever Core still allows", () => {
+    const limit2 = { ...approved, maxAttempts: 2 } as const;
+    // delivery 1: no attempt yet; delivery 2: one refusal, one more attempt is within the limit; delivery 3: the limit is reached
+    expect(assessAttemptHistory(refusedTimes(0), limit2)).toEqual({ kind: 'FIRST_ATTEMPT' });
+    expect(assessAttemptHistory(refusedTimes(1), limit2)).toMatchObject({
+      basis: { kind: 'PRIOR_REJECTED' },
+      kind: 'CONTINUE',
+    });
+    expect(assessAttemptHistory(refusedTimes(2), limit2)).toMatchObject({
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+    // the evaluation counts attempts in the owner's history, never deliveries: a history longer than the limit still halts
+    expect(assessAttemptHistory(refusedTimes(3), limit2)).toMatchObject({
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+  });
+
+  it("[R-13 AC-07] an attempt that submitted nothing opens the intent only while nothing was submitted: after a refusal it never skips the type's limit or its missing rule", () => {
+    const twiceRefusedThenNothingSent = factsOf({ attempts: [refused(1, 1), refused(2, 5), notAttempted(3, 9)] });
+    expect(assessAttemptHistory(twiceRefusedThenNothingSent, { ...approved, maxAttempts: 2 })).toMatchObject({
+      attemptId: attemptIdOf(3),
+      code: 'RECOVERY_LIMIT_REACHED',
+      kind: 'HALT',
+    });
+    expect(assessAttemptHistory(twiceRefusedThenNothingSent, { ...approved, maxAttempts: 3 })).toMatchObject({
+      basis: { kind: 'PRIOR_NOT_ATTEMPTED' },
+      kind: 'CONTINUE',
+    });
+    // a refusal was submitted, so a type without a rule has nothing automatic to continue with
+    const refusedThenNothingSent = factsOf({ attempts: [refused(1, 1), notAttempted(2, 5)] });
+    expect(assessAttemptHistory(refusedThenNothingSent, none)).toMatchObject({
+      attemptId: attemptIdOf(2),
+      code: 'NO_RECOVERY_RULE',
+      kind: 'HALT',
+    });
+  });
+
+  it('[#1403 R-04 R-05] a message the adapter PROVED malformed (provider never asked) is a certain failure: no reconciliation is awaited and nothing is retried automatically, with or without a rule', () => {
+    const facts = factsOf({ attempts: [attempt('MESSAGE_INVALID', { reason: 'invalid_format' })] });
+    for (const policy of [none, approved]) {
+      expect(assessAttemptHistory(facts, policy)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'MESSAGE_INVALID',
+        kind: 'HALT',
+      });
+    }
+    // it is no unknown effect: the guard does not wait for a reconciliation that can never come
+    expect(assessAttemptHistory(facts, approved)).not.toMatchObject({ reason: 'RECONCILIATION_REQUIRED' });
+  });
+
+  it('[R-10 AC-03 R-D10] a refusal that is not classified by an approved rule is INDETERMINATE: it halts, never a final PERMANENT stop', () => {
+    for (const reason of ['provider_rejected', 'something_new', undefined]) {
+      expect(rejectionClassOf(reason)).toBe('INDETERMINATE');
+      const facts = factsOf({ attempts: [attempt('REJECTED', reason === undefined ? {} : { reason })] });
+      // without a recovery rule nothing is automatic, so that is the reason; with one the unclassified refusal is
+      expect(assessAttemptHistory(facts, none)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'NO_RECOVERY_RULE',
+        kind: 'HALT',
+      });
+      expect(assessAttemptHistory(facts, approved)).toEqual({
+        attemptId: ATTEMPT_1,
+        code: 'REFUSAL_UNCLASSIFIED',
+        kind: 'HALT',
+      });
+    }
+    // the provider that names itself a rate limit is the only refusal read as temporary
+    expect(rejectionClassOf('rate_limited')).toBe('TEMPORARY');
+  });
+
+  it('[R-10 AC-03] a refusal that an approved rule classifies as PERMANENT stops for good, whatever the type rule says', () => {
+    const facts = factsOf({ attempts: [attempt('REJECTED', { reason: 'approved_permanent' })] });
+    for (const policy of [none, approved]) {
+      expect(assessAttemptHistory(facts, policy, () => 'PERMANENT')).toMatchObject({
+        attemptId: ATTEMPT_1,
+        kind: 'STOP',
+        reasons: [{ category: 'PERMANENT_REJECTION', cause: 'PROVIDER_REJECTED', proven: true }],
+      });
+    }
+  });
+
+  it('[R-10 AC-03] an unclassified refusal says so even when the limit is also reached: the classification comes first', () => {
+    const facts = factsOf({ attempts: [attempt('REJECTED', { reason: 'provider_rejected' })] });
+    expect(assessAttemptHistory(facts, { ...approved, maxAttempts: 1 })).toMatchObject({
+      code: 'REFUSAL_UNCLASSIFIED',
+      kind: 'HALT',
+    });
+  });
+
+  it('[S04 AC-02 R-05] an unknown effect never leads to another attempt, whatever the rule says: reconcile first', () => {
+    for (const state of ['PREPARED', 'INDETERMINATE', 'UNAVAILABLE'] as const) {
+      expect(assessAttemptHistory(factsOf({ attempts: [attempt(state)] }), approved)).toEqual({
+        kind: 'SKIP',
+        reason: 'RECONCILIATION_REQUIRED',
+      });
+    }
+  });
+
+  it('[S05] an acceptance is never repeated: not an answer, not a reconciliation, not a delivery', () => {
+    expect(assessAttemptHistory(factsOf({ attempts: [attempt('ACCEPTED')] }), approved)).toEqual({
+      kind: 'SKIP',
+      reason: 'ALREADY_FINISHED',
+    });
+    expect(
+      assessAttemptHistory(
+        factsOf({
+          attempts: [attempt('INDETERMINATE')],
+          observations: [observation('ACCEPTANCE_PROVEN', { observed: 10 })],
+        }),
+        approved,
+      ),
+    ).toEqual({ kind: 'SKIP', reason: 'ALREADY_FINISHED' });
+  });
+
+  it('[S06] a reconciled NON-acceptance continues the same intent under the same rule; the unknown answer stays in the history', () => {
+    const proof = observation('NON_ACCEPTANCE_PROVEN', { observed: 10 });
+    const facts = factsOf({ attempts: [attempt('INDETERMINATE')], observations: [proof] });
+    expect(assessAttemptHistory(facts, approved)).toEqual({
+      basis: { kind: 'RECONCILED_NON_ACCEPTANCE', observationId: proof.observationId },
+      kind: 'CONTINUE',
+      previousAttemptId: ATTEMPT_1,
+    });
+    expect(assessAttemptHistory(facts, none)).toEqual({ attemptId: ATTEMPT_1, code: 'NO_RECOVERY_RULE', kind: 'HALT' });
+    // a reconciled non-acceptance after a provider answer that was UNAVAILABLE (5xx) is the same proof
+    expect(
+      assessAttemptHistory(
+        factsOf({ attempts: [attempt('UNAVAILABLE', { reason: 'provider_unavailable' })], observations: [proof] }),
+        approved,
+      ),
+    ).toMatchObject({ kind: 'CONTINUE' });
+  });
+
+  it('[H-07] contradictory evidence and unresolved conflicts of provider evidence are reconciled, never resolved in favour of sending', () => {
+    expect(
+      assessAttemptHistory(
+        factsOf({
+          attempts: [attempt('INDETERMINATE')],
+          observations: [
+            observation('ACCEPTANCE_PROVEN', { observed: 10 }),
+            observation('NON_ACCEPTANCE_PROVEN', { observed: 11 }),
+          ],
+        }),
+        approved,
+      ),
+    ).toEqual({ kind: 'SKIP', reason: 'RECONCILIATION_REQUIRED' });
+    const proof = observation('NON_ACCEPTANCE_PROVEN', { observed: 10 });
+    const withConflict = (settled: ReturnType<typeof conflict>) =>
+      factsOf({ attempts: [attempt('INDETERMINATE')], conflicts: [settled], observations: [proof] });
+    const open = conflict('NON_ACCEPTANCE_PROVEN', { observationId: proof.observationId, observed: 11 });
+    expect(assessAttemptHistory(withConflict(open), approved)).toEqual({
+      kind: 'SKIP',
+      reason: 'RECONCILIATION_REQUIRED',
+    });
+    // a resolution is an appended fact: the conflict stays in the facts and no longer blocks
+    const resolved = conflict('NON_ACCEPTANCE_PROVEN', {
+      observationId: proof.observationId,
+      observed: 11,
+      resolved: 12,
+    });
+    expect(assessAttemptHistory(withConflict(resolved), approved)).toMatchObject({ kind: 'CONTINUE' });
+  });
+});
+
+describe('confirmContinuation: the Current gates asked AGAIN; the begin routines are the binding re-check', () => {
+  const retry = assessAttemptHistory(factsOf({ attempts: [attempt('REJECTED', temporary)] }), approved);
+  const facts = factsOf({ attempts: [attempt('REJECTED', temporary)] });
+
+  it('begins the next attempt of the same intent only when every gate cleared, with the basis that was proven', () => {
+    expect(retry.kind).toBe('CONTINUE');
+    if (retry.kind !== 'CONTINUE') {
+      return;
+    }
+    expect(confirmContinuation(facts, retry, cleared)).toEqual({
+      basis: { kind: 'PRIOR_REJECTED' },
+      kind: 'BEGIN_RETRY',
+      previousAttemptId: ATTEMPT_1,
+    });
+  });
+
+  it('[R-06 AC-03] a gate that stops (Privacy NOT_ALLOWED or INDETERMINATE, an ended endpoint, a stale source) stops with its reasons', () => {
+    const reasons = [{ category: 'PRIVACY_NOT_ALLOWED', cause: 'FIXTURE', proven: true }] as const;
+    if (retry.kind !== 'CONTINUE') {
+      return;
+    }
+    expect(confirmContinuation(facts, retry, { kind: 'STOPPED', reasons })).toEqual({
+      kind: 'STOP',
+      reasons,
+    });
+  });
+
+  it('[R-06] a history that no longer allows a send (an effect now unknown, contradicted or accepted) skips instead of beginning one', () => {
+    const proof = observation('NON_ACCEPTANCE_PROVEN', { observed: 10, recorded: 20 });
+    const reconciled = factsOf({ attempts: [attempt('INDETERMINATE')], observations: [proof] });
+    const assessment = assessAttemptHistory(reconciled, approved);
+    if (assessment.kind !== 'CONTINUE') {
+      expect(assessment.kind).toBe('CONTINUE');
+      return;
+    }
+    expect(confirmContinuation(reconciled, assessment, cleared)).toMatchObject({ kind: 'BEGIN_RETRY' });
+    // the read the verdict is made over changed after the assessment: evidence of an acceptance arrived
+    const contradicted = factsOf({
+      attempts: [attempt('INDETERMINATE')],
+      observations: [proof, observation('ACCEPTANCE_PROVEN', { observed: 30, recorded: 40 })],
+    });
+    expect(confirmContinuation(contradicted, assessment, cleared)).toEqual({
+      kind: 'SKIP',
+      reason: 'RECONCILIATION_REQUIRED',
+    });
+  });
+
+  it('the first attempt of an intent begins with no basis and no previous attempt', () => {
+    expect(confirmContinuation(factsOf({}), { kind: 'FIRST_ATTEMPT' }, cleared)).toEqual({
+      kind: 'BEGIN_FIRST',
+    });
+  });
+});
+
+describe('the approved recovery and resend attributes of a type (platform catalog, no tenant override)', () => {
+  it('[AC-07 AC-10] default to NONE and NOT_ALLOWED: a type that declares nothing never recovers or resends on its own', () => {
+    const plain = fixtureType();
+    expect(recoveryPolicyOf(plain)).toEqual({ kind: 'NONE' });
+    expect(resendPolicyOf(plain)).toBe('NOT_ALLOWED');
+    const approvedType = fixtureType({ recovery: fixtureRecovery(2), resend: 'SOURCE_APPROVED' });
+    expect(recoveryPolicyOf(approvedType)).toEqual({ kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE', maxAttempts: 2 });
+    expect(resendPolicyOf(approvedType)).toBe('SOURCE_APPROVED');
+  });
+
+  it("[AC-07] has no way to express an approved rule without the owner's own limit, or a limit that is not positive", () => {
+    expect(() => fixtureType({ recovery: { kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE' } })).toThrow();
+    expect(() => fixtureType({ recovery: fixtureRecovery(0) })).toThrow();
+    expect(() => fixtureType({ recovery: { kind: 'RETRY_FOREVER' } })).toThrow();
+    expect(() => fixtureType({ resend: 'ANYONE' })).toThrow();
+  });
+});
+
+const reason = (category: string, proven: boolean) => ({ category, cause: 'FIXTURE', proven });
+
+describe('isOwnerUnavailableStop: an owner that could not be asked is the only stop Core is asked to redeliver (#1403 D10)', () => {
+  it('is true for an unproven outage of the source, Privacy, the recipient or the document owner', () => {
+    for (const category of [
+      'DOCUMENT_OWNER_UNAVAILABLE',
+      'PRIVACY_AUTHORITY_UNAVAILABLE',
+      'RECIPIENT_AUTHORITY_UNAVAILABLE',
+      'SOURCE_AUTHORITY_UNAVAILABLE',
+    ]) {
+      expect(isOwnerUnavailableStop([reason(category, false)])).toBe(true);
+    }
+  });
+
+  it('is false for a proven stop, for an owner answer that proves nothing and for no reason at all', () => {
+    expect(isOwnerUnavailableStop([reason('PRIVACY_NOT_ALLOWED', true)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('PRIVACY_INDETERMINATE', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('PRIVACY_ACCESS_DENIED', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([reason('HANDOFF_INDETERMINATE', false)])).toBe(false);
+    expect(isOwnerUnavailableStop([])).toBe(false);
+  });
+
+  it('is false when any reason is proven: a proven stop beside an outage stays final', () => {
+    expect(
+      isOwnerUnavailableStop([reason('PRIVACY_NOT_ALLOWED', true), reason('SOURCE_AUTHORITY_UNAVAILABLE', false)]),
+    ).toBe(false);
+  });
+});

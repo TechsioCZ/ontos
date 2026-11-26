@@ -25,6 +25,7 @@ const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
 const receivers = [
   'catalog',
   'commerce-market-catalog',
+  'communications',
   'inventory',
   'price-group-catalog',
   'storefront-registry',
