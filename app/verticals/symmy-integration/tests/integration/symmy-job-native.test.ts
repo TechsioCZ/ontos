@@ -158,22 +158,32 @@ const prepareArtifact = Effect.fn('SymmyJobNative.prepareArtifact')(function* pr
 });
 
 const migrateOwner = Effect.fn('SymmyJobNative.migrateOwner')(function* migrateOwner(databaseAdminUrl: string) {
-  const migration = yield* ChildProcess.make(
-    'mise',
-    ['exec', '--', 'pnpm', '--filter', '@app/symmy-integration', 'db:migrate'],
-    {
+  // The shipped Symmy history requires Commerce's source binding table even for a fixture-only job.
+  const { password } = new URL(databaseAdminUrl);
+  const secrets = [databaseAdminUrl, password, decodeURIComponent(password)].filter((secret) => secret.length > 0);
+  for (const owner of ['@app/commerce-customer-context', '@app/symmy-integration']) {
+    const migration = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', '--filter', owner, 'db:migrate'], {
       cwd: appRoot,
       env: { APP_ENV_PATH: '/dev/null', DATABASE_ADMIN_URL: databaseAdminUrl },
       extendEnv: true,
       stderr: 'pipe',
       stdout: 'pipe',
-    },
-  );
-  const [status] = yield* Effect.all(
-    [migration.exitCode, Stream.runDrain(migration.stdout), Stream.runDrain(migration.stderr)],
-    { concurrency: 3 },
-  );
-  expect(Number(status)).toBe(0);
+    });
+    const [status, stdout, stderr] = yield* Effect.all(
+      [
+        migration.exitCode,
+        migration.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        migration.stderr.pipe(Stream.decodeText(), Stream.mkString),
+      ],
+      { concurrency: 3 },
+    );
+    let diagnostic = `stderr:\n${stderr}\nstdout:\n${stdout}`;
+    for (const secret of secrets) {
+      diagnostic = diagnostic.replaceAll(secret, '[REDACTED]');
+    }
+    diagnostic = diagnostic.replaceAll(/postgres(?:ql)?:\/\/[^\s"'<>]+/giu, '[REDACTED DATABASE URL]').slice(-8000);
+    expect(Number(status), `${owner} migration failed:\n${diagnostic}`).toBe(0);
+  }
 });
 
 const seedApiKeyPrincipal = Effect.fn('SymmyJobNative.seedPrincipal')(function* seedApiKeyPrincipal(
