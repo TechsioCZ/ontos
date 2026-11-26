@@ -86,7 +86,6 @@ it('keeps every tracked JavaScript and TypeScript source free of Markdown module
     '/usr/bin/git',
     [
       'grep',
-      '-I',
       '-l',
       '-z',
       '-F',
