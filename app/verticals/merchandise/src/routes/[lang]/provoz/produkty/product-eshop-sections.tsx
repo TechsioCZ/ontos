@@ -34,7 +34,7 @@ interface PublicationSectionProps {
 /** Publication, slug and how availability is reported. Editing changes the tab's draft only. */
 export const PublicationSection = ({ canWrite, form, onFormChange, takenSlug }: PublicationSectionProps) => {
   const { t } = useModernI18n();
-  const { published, slug, stockTracked } = form;
+  const { published, slug, sourceBaseProduct, stockTracked } = form;
   const slugTakenNow = takenSlug !== null && takenSlug === slug.trim();
   return (
     <SectionCard title={t('merchandise.ui.publicationAvailability')}>
@@ -56,6 +56,18 @@ export const PublicationSection = ({ canWrite, form, onFormChange, takenSlug }: 
         >
           Zveřejnit v e-shopu
         </Switch>
+        <Switch
+          checked={sourceBaseProduct}
+          disabled={!canWrite}
+          name="sourceBaseProduct"
+          onCheckedChange={(checked: boolean) => onFormChange({ sourceBaseProduct: checked })}
+        >
+          Zobrazit v seznamech e-shopu jako hlavní produkt
+        </Switch>
+        <p className="text-fg-secondary text-sm">
+          Akros a ŠroubShop ve výpisech kategorií a vyhledávání ukazují jen hlavní produkty, dokud je v Prodej › E-shopy
+          zapnuté „Jen hlavní produkty“. Stránka produktu zůstává dostupná přímým odkazem.
+        </p>
         <Switch
           checked={stockTracked}
           disabled={!canWrite}
