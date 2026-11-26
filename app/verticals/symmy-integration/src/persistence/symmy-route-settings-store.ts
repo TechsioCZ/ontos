@@ -14,9 +14,6 @@ import { SymmyJobRetentionPolicySchema } from '../../shared/domain/symmy-job-ret
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { symmyRoutePriceReadSources, symmyRouteRetentionPolicies } from '../db/schema.ts';
 
-/** The statements the settings need of a scoped owner transaction. */
-export type SymmyRouteSettingsTransaction = Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>;
-
 export class SymmyRouteSettingsUnavailable extends Schema.TaggedError<SymmyRouteSettingsUnavailable>()(
   'SymmyRouteSettingsUnavailable',
   { reason: Schema.String },
@@ -48,7 +45,7 @@ const policyOf = (row: RetentionRow) => {
  * which `symmyRetentionPolicyMatchesRoute` matches to a route by its enrolled source.
  */
 export const readSymmyRetentionPolicies = Effect.fn('SymmyRouteSettings.readRetentionPolicies')(function* read(
-  transaction: SymmyRouteSettingsTransaction,
+  transaction: ScopedTransactionExecutor,
   route: { readonly routeId: string; readonly tenantId: string },
 ) {
   const rows = yield* transaction
@@ -69,7 +66,7 @@ export const readSymmyRetentionPolicies = Effect.fn('SymmyRouteSettings.readRete
  * different policy under the same id and revision is refused.
  */
 export const writeSymmyRetentionPolicy = Effect.fn('SymmyRouteSettings.writeRetentionPolicy')(function* write(
-  transaction: SymmyRouteSettingsTransaction,
+  transaction: ScopedTransactionExecutor,
   policy: SymmyJobRetentionPolicy,
 ) {
   const row = {
@@ -113,7 +110,7 @@ const decodeSourceSystem = Schema.decodeUnknownEffect(PriceSourceSystemSchema);
 
 /** The price source system of one `priceLists` read route, when one is set. */
 export const readSymmyPriceReadSource = Effect.fn('SymmyRouteSettings.readPriceReadSource')(function* read(
-  transaction: SymmyRouteSettingsTransaction,
+  transaction: ScopedTransactionExecutor,
   route: { readonly routeId: string; readonly tenantId: string },
 ) {
   const [row] = yield* transaction
@@ -140,7 +137,7 @@ export const readSymmyPriceReadSource = Effect.fn('SymmyRouteSettings.readPriceR
 
 /** Sets the price source system a `priceLists` read route pages its prices from. */
 export const writeSymmyPriceReadSource = Effect.fn('SymmyRouteSettings.writePriceReadSource')(function* write(
-  transaction: SymmyRouteSettingsTransaction,
+  transaction: ScopedTransactionExecutor,
   route: { readonly routeId: string; readonly tenantId: string },
   source: PriceSourceSystem,
 ) {

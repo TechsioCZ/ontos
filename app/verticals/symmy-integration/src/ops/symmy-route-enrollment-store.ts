@@ -90,8 +90,6 @@ import type {
 /** The outstanding jobs and admissions a refusal or receipt lists, of each. */
 const OUTSTANDING_LIMIT = 50;
 
-/** The statements a change needs of the Action's scoped owner transaction. */
-export type SymmyRouteEnrollmentTransaction = Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>;
 type RouteRow = typeof symmyJobRoutes.$inferSelect;
 
 export const SymmyRouteEnrollmentReceiptSchema = Schema.Struct({
@@ -158,7 +156,7 @@ const isRefused = Schema.is(SymmyRouteEnrollmentRefused);
 
 /** The Core facts the route depends on, each read through its owner's exported reader. */
 const coreRefusals = Effect.fn('SymmyRouteEnrollment.coreRefusals')(function* coreRefusals(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   request: SymmyRouteEnrollmentRequest,
   moduleKeys: readonly string[],
 ) {
@@ -199,7 +197,7 @@ const codeMatch = (routeCode: string | undefined) =>
  * The enrollment lock of the route's Tenant, principal and source family, held until the transaction ends. Drizzle has
  * no advisory-lock builder, so the lock is selected from a one-row anchor (the Tax scope lock precedent).
  */
-const lockEnrollment = (transaction: SymmyRouteEnrollmentTransaction, reference: SymmyRouteReference) =>
+const lockEnrollment = (transaction: ScopedTransactionExecutor, reference: SymmyRouteReference) =>
   transaction
     .select({ locked: sql`pg_advisory_xact_lock(hashtextextended(${symmyRouteEnrollmentLockKey(reference)}, 0))` })
     .from(sql`(values (1)) as symmy_route_enrollment_lock(anchor)`)
@@ -208,7 +206,7 @@ const lockEnrollment = (transaction: SymmyRouteEnrollmentTransaction, reference:
 const RowLockSchema = Schema.Literals(['share', 'update']);
 type RowLock = typeof RowLockSchema.Type;
 /** The route of one kind and code for the reference's Tenant, principal and company. */
-const readSelector = (transaction: SymmyRouteEnrollmentTransaction, reference: SymmyRouteReference, lock: RowLock) =>
+const readSelector = (transaction: ScopedTransactionExecutor, reference: SymmyRouteReference, lock: RowLock) =>
   transaction
     .select()
     .from(symmyJobRoutes)
@@ -240,7 +238,7 @@ const routeIs = (route: TenantRoute) =>
   and(eq(symmyJobRoutes.tenantId, route.tenantId), eq(symmyJobRoutes.routeId, route.routeId));
 
 /** The route id in its own Tenant: another Tenant's route is never read, locked or named. */
-const readRouteId = (transaction: SymmyRouteEnrollmentTransaction, route: TenantRoute, lock: RowLock) =>
+const readRouteId = (transaction: ScopedTransactionExecutor, route: TenantRoute, lock: RowLock) =>
   transaction
     .select()
     .from(symmyJobRoutes)
@@ -253,7 +251,7 @@ const readRouteId = (transaction: SymmyRouteEnrollmentTransaction, route: Tenant
     );
 
 /** The principal's active routes of this kind and of the kinds sharing its source, held for this transaction. */
-const readRelatedRoutes = (transaction: SymmyRouteEnrollmentTransaction, request: SymmyRouteEnrollmentRequest) =>
+const readRelatedRoutes = (transaction: ScopedTransactionExecutor, request: SymmyRouteEnrollmentRequest) =>
   transaction
     .select()
     .from(symmyJobRoutes)
@@ -274,7 +272,7 @@ const readRelatedRoutes = (transaction: SymmyRouteEnrollmentTransaction, request
  * admissions a replacement keeps are not read.
  */
 const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(function* outstandingWork(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   route: TenantRoute,
   admissionsOfRoute: 'kept' | 'outstanding' = 'outstanding',
 ) {
@@ -335,7 +333,7 @@ const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(functi
 type AppliedWrite = Extract<SymmyRouteEnrollmentWrite, { readonly kind: 'insert' | 'replace' }>;
 
 const writeRoute = Effect.fn('SymmyRouteEnrollment.writeRoute')(function* writeRoute(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   request: SymmyRouteEnrollmentRequest,
   write: AppliedWrite,
 ) {
@@ -390,7 +388,7 @@ const recordedWrite = (
  * the change's transaction: a record that cannot be written rolls the change back.
  */
 const recordChange = (
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   attribution: SymmyRouteEnrollmentAttribution,
   recorded: RecordedChange,
 ) =>
@@ -401,7 +399,7 @@ const recordChange = (
 
 /** The bindings, Core facts and sibling routes a route depends on: none of them decides a deactivation. */
 const routeChecks = Effect.fn('SymmyRouteEnrollment.routeChecks')(function* routeChecks(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   input: {
     readonly inventory: SymmyRouteInventory;
     readonly plan: Pick<SymmyRouteBindingPlan, 'bindings' | 'moduleKeys'>;
@@ -458,7 +456,7 @@ const writtenOutcome = { insert: 'enrolled', replace: 'replaced' } as const;
 
 /** The retention row the route's lifecycle policy names and the price read source of a priceLists route. */
 const writeRouteSettings = Effect.fn('SymmyRouteEnrollment.writeSettings')(function* writeSettings(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   request: SymmyRouteEnrollmentRequest,
   data: SymmyRouteEnableData,
 ) {
@@ -489,7 +487,7 @@ const writeRouteSettings = Effect.fn('SymmyRouteEnrollment.writeSettings')(funct
  * the Core facts and sibling routes it depends on, under the enrollment lock.
  */
 export const applySymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.apply')(function* applyEnrollment(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   input: SymmyRouteEnableData & {
     readonly attribution: SymmyRouteEnrollmentAttribution;
     readonly change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
@@ -565,7 +563,7 @@ export const applySymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.apply')
  * on; under the enrollment lock, the decided change, the write, its read-back and its record.
  */
 export const enableSymmyRoute = Effect.fn('SymmyRouteEnrollment.enable')(function* enableSymmyRoute(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   input: SymmyRouteEnableData & {
     readonly attribution: SymmyRouteEnrollmentAttribution;
     readonly change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
@@ -601,7 +599,7 @@ export const enableSymmyRoute = Effect.fn('SymmyRouteEnrollment.enable')(functio
  * holds, and its receipt lists the work it strands.
  */
 export const deactivateSymmyRoute = Effect.fn('SymmyRouteEnrollment.deactivate')(function* deactivateSymmyRoute(
-  transaction: SymmyRouteEnrollmentTransaction,
+  transaction: ScopedTransactionExecutor,
   input: {
     readonly attribution: SymmyRouteEnrollmentAttribution;
     readonly expectedChangeToken: number;

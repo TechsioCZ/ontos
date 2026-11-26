@@ -148,10 +148,7 @@ export const symmyExecutorWorkloadsInUse = (
  * Serializes every change of the Tenant's executor workloads, held until the transaction ends. The Action takes it
  * before any route enrollment lock, so the order is always this lock, then the enrollment locks.
  */
-export const lockSymmyExecutorWorkloads = (
-  transaction: Pick<ScopedTransactionExecutor, 'select'>,
-  tenantId: string,
-) => {
+export const lockSymmyExecutorWorkloads = (transaction: ScopedTransactionExecutor, tenantId: string) => {
   const lockKey = `integration.symmy.executor-workloads:${tenantId}`;
   return transaction
     .select({ locked: sql`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))` })

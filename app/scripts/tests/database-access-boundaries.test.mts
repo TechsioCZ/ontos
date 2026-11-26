@@ -607,6 +607,7 @@ it.live('proves actual scoped Core facts and owner recovery without returning th
       'packages/core-runtime/src/access/enforcement/index.ts',
       'packages/core-runtime/src/access/enforcement/workload-admission.ts',
       'packages/core-runtime/src/access/enforcement/selected-workload-decision-seal.ts',
+      'packages/core-runtime/src/actions/canonical-value-hash.ts',
       'packages/core-runtime/src/actions/current-invocation.ts',
       'packages/core-runtime/src/access/workloads/original-action-invocation.ts',
       'packages/core-runtime/src/access/workloads/source-execution-fence.ts',
@@ -623,6 +624,7 @@ it.live('proves actual scoped Core facts and owner recovery without returning th
       'verticals/symmy-integration/src/auth/symmy-job-operation-factory.ts',
       'verticals/symmy-integration/src/persistence/symmy-job-store.ts',
       'verticals/symmy-integration/src/persistence/symmy-job-execution-store.ts',
+      'verticals/symmy-integration/src/persistence/symmy-route-settings-store.ts',
     ];
     for (const relative of actualFiles) {
       const source = yield* Effect.promise(() =>
