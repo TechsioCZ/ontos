@@ -133,13 +133,11 @@ export function getVariantRangeFilters(
         const explicit = variant.parameters.find((parameter) =>
           dimension.aliases.includes(normalize(parameter.label)),
         );
-        // Conflicting or differently scaled feed data must not silently become a filter.
-        if (
-          explicit &&
-          (numberFromText(explicit.value) !== parsedValue ||
-            (explicit.unit && normalize(explicit.unit) !== "mm"))
-        )
-          return null;
+        // The parameter staff edit in OntOS wins over the label; another unit must not silently become a filter.
+        if (explicit) {
+          if (explicit.unit && normalize(explicit.unit) !== "mm") return null;
+          return numberFromText(explicit.value);
+        }
         return parsedValue;
       });
       const filter = makeFilter(dimension.id, `${dimension.label} (mm)`, variants, values);
