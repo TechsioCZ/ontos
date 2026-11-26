@@ -20,6 +20,11 @@ export type SymmyRouteRequirementsRequest = typeof SymmyRouteRequirementsRequest
 export const SymmyRouteRequirementSchema = Schema.Struct({
   /** One workload of each integration binding the principal does not hold registered for the company yet. */
   integrationWorkloads: Schema.Array(Schema.String.pipe(Schema.brand('SymmyIntegrationWorkloadKey'))),
+  /**
+   * What the route needs that no registration fixes: an operation the installed composition does not publish or a call
+   * it does not declare, or an invalid change. The Action refuses the same.
+   */
+  refusals: Schema.Array(Schema.Struct({ code: Schema.String, detail: Schema.String })),
   routeCode: Schema.optionalKey(Schema.String),
   routeKey: SymmyManagedRouteKeySchema,
 });

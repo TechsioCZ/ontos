@@ -68,7 +68,8 @@ export const symmyRouteRequirementsServices = Effect.fn('SymmyRouteRequirements.
     change: typeof SymmyRouteEnableSchema.Type,
   ) {
     const none: readonly string[] = [];
-    const entry = { integrationWorkloads: none, routeKey: change.routeKey };
+    const noRefusals: readonly { readonly code: string; readonly detail: string }[] = [];
+    const entry = { integrationWorkloads: none, refusals: noRefusals, routeKey: change.routeKey };
     if (change.routeCode !== undefined) {
       Object.assign(entry, { routeCode: change.routeCode });
     }
@@ -78,16 +79,23 @@ export const symmyRouteRequirementsServices = Effect.fn('SymmyRouteRequirements.
     });
     const inventory = symmyRouteInventoryOf(change.routeKey);
     // A change the Action would refuse as invalid needs nothing registered; the Action names why.
-    if (Result.isFailure(request) || Option.isNone(inventory)) {
-      return entry;
+    if (Result.isFailure(request)) {
+      return { ...entry, refusals: [{ code: 'invalid_request', detail: request.failure.message }] };
+    }
+    if (Option.isNone(inventory)) {
+      return {
+        ...entry,
+        refusals: [{ code: 'route_not_inventoried', detail: `${change.routeKey} is not a Symmy route` }],
+      };
     }
     const company = request.success.legalEntityId;
-    const bindings = deriveSymmyRouteBindings({
+    const plan = deriveSymmyRouteBindings({
       companyScoped: company !== undefined,
       contracts: catalog.contracts,
       enrolled: symmyEnrolledInventory(inventory.value, request.success.configuration),
       inventory: inventory.value,
-    }).bindings.filter(({ identity }) => identity === 'integration');
+    });
+    const bindings = plan.bindings.filter(({ identity }) => identity === 'integration');
     const holders = new Map(
       yield* Effect.forEach(
         [...new Set(bindings.flatMap(({ workloads }) => workloads))],
@@ -122,6 +130,7 @@ export const symmyRouteRequirementsServices = Effect.fn('SymmyRouteRequirements.
           ),
         ),
       ],
+      refusals: plan.refusals.map(({ code, detail }) => ({ code, detail })),
     };
   });
   return {
