@@ -4,7 +4,13 @@ import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import type { MediaByteSourceOffer } from '../../src/media/byte-source-contract.ts';
-import { MediaForbidden, MediaIngestUncertain, MediaIntegrityFailed } from '../../src/media/errors.ts';
+import {
+  MediaForbidden,
+  MediaIngestUncertain,
+  MediaIntegrityFailed,
+  mediaUnavailable,
+} from '../../src/media/errors.ts';
+import type { MediaUnavailable } from '../../src/media/errors.ts';
 import { confirmAssetRequest, ingestMediaBytes, parseContentLength } from '../../src/media/ingest.ts';
 import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { ObjectStorage, ObjectStorageNetworkError } from '../../src/media/object-storage.ts';
@@ -77,8 +83,20 @@ const sealedContent = Schema.decodeUnknownSync(
   Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema }),
 )({ byteSize: content.byteLength, contentSha256: digestOf(content) });
 
-/** What the real confirm Action answers for a row that is already sealed: it follows the row, whatever the evidence. */
+/** The sealed row's answer. */
 const followsSealedRow = Effect.succeed<ConfirmResult>({ ...sealedContent, mediaAssetRef, processingStatus: 'ready' });
+
+/** What the real confirm Action answers for a row past `uploaded`: it follows the row, whatever the evidence. */
+const followRow = (processingStatus: string): Effect.Effect<ConfirmResult, MediaIntegrityFailed | MediaUnavailable> => {
+  if (processingStatus === 'ready') {
+    return followsSealedRow;
+  }
+  return Effect.fail(
+    processingStatus === 'failed'
+      ? new MediaIntegrityFailed({ code: 'media_integrity_failed', reason: 'failed' })
+      : mediaUnavailable('The asset changed state while it was being confirmed'),
+  );
+};
 
 const setup = Effect.fn('IngestTest.setup')(function* setup() {
   const storage = yield* makeInMemoryObjectStorage();
@@ -100,21 +118,27 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
       readonly selectedLegalEntityId?: string | undefined;
       readonly storageOverride?: typeof storage.service;
     } = {},
-  ) =>
-    ingestMediaBytes({
+  ) => {
+    const sealedAnswer: Effect.Effect<ConfirmResult, MediaForbidden | MediaIntegrityFailed | MediaUnavailable> =
+      options.sealedDecision ?? followRow(options.asset?.processingStatus ?? 'uploaded');
+    return ingestMediaBytes({
       asset: options.asset ?? reserved(),
       body: options.body ?? pieces(content),
-      confirm: (verification) =>
+      confirm: (
+        verification,
+      ): Effect.Effect<
+        ConfirmResult,
+        MediaForbidden | MediaIngestUncertain | MediaIntegrityFailed | MediaUnavailable
+      > =>
         (options.asset?.processingStatus ?? 'uploaded') === 'uploaded'
           ? confirm(verification)
-          : Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(
-              Effect.andThen(options.sealedDecision ?? followsSealedRow),
-            ),
+          : Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(Effect.andThen(sealedAnswer)),
       contentLength: lengthOf(options.contentLength),
       mediaAssetRef,
       principalId: options.principalId ?? reserving,
       selectedLegalEntityId: options.selectedLegalEntityId,
     }).pipe(Effect.provideService(ObjectStorage, options.storageOverride ?? storage.service));
+  };
   const callsOf = storage.calls.pipe(Effect.map((calls) => calls.map(({ operation }) => operation)));
   return { callsOf, confirms: Ref.get(confirms), ingest, storage };
 });
