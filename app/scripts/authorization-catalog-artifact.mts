@@ -10,7 +10,13 @@ import {
   AccessCatalogDescriptorSchema,
   AccessCatalogModuleSchema,
 } from '../packages/core-runtime/src/access/catalog/module-schema.ts';
-import { AccessActorSchema, WorkloadKeySchema } from '../packages/core-runtime/src/authorization/access-declaration.ts';
+import {
+  HostBoundRightsActorSchema,
+  RECEIVING_HOST_CALLER_BINDING,
+  StaticAccessActorSchema,
+  WorkloadKeySchema,
+  isGovernedReadCarrier,
+} from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import type { WorkloadKey } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { loadStageAccessModules } from './stage-access-catalog.mts';
 import type { StageAccessCatalogError } from './stage-access-catalog.mts';
@@ -58,21 +64,37 @@ export interface RegisteredWorkloadCallSource {
 }
 
 /**
- * The module caller a descriptor pins (D5): core's own `accessActor` fields, so a hand-edited artifact with an
- * empty, repeated or malformed caller list is refused. Core's descriptor decoder would strip `actor`, so the
- * artifact decodes with this schema instead.
+ * The caller policy a descriptor pins (D5), without its review prose. Only the explicit receiving-host variant
+ * has no callers; static callers remain non-empty, unique and well-formed.
  */
-const ArtifactActorSchema = Schema.Struct({
-  callers: AccessActorSchema.fields.callers,
-  subject: AccessActorSchema.fields.subject,
-  subjectWorkloadCallers: AccessActorSchema.fields.subjectWorkloadCallers,
-  subjectWorkloads: AccessActorSchema.fields.subjectWorkloads,
-});
+const ArtifactActorSchema = Schema.Union([
+  // Keep the field order of the committed static representation.
+  Schema.Struct({
+    callerBinding: StaticAccessActorSchema.fields.callerBinding,
+    callers: StaticAccessActorSchema.fields.callers,
+    subject: StaticAccessActorSchema.fields.subject,
+    subjectWorkloadCallers: StaticAccessActorSchema.fields.subjectWorkloadCallers,
+    subjectWorkloads: StaticAccessActorSchema.fields.subjectWorkloads,
+  }),
+  Schema.Struct({
+    callerBinding: HostBoundRightsActorSchema.fields.callerBinding,
+    callers: HostBoundRightsActorSchema.fields.callers,
+    subject: HostBoundRightsActorSchema.fields.subject,
+    subjectWorkloadCallers: HostBoundRightsActorSchema.fields.subjectWorkloadCallers,
+    subjectWorkloads: HostBoundRightsActorSchema.fields.subjectWorkloads,
+  }),
+]);
 
 export const AccessCatalogArtifactDescriptorSchema = Schema.Struct({
   ...AccessCatalogDescriptorSchema.fields,
   actor: Schema.optionalKey(ArtifactActorSchema),
-});
+}).check(
+  Schema.makeFilter((descriptor) =>
+    descriptor.actor?.callerBinding === RECEIVING_HOST_CALLER_BINDING && !isGovernedReadCarrier(descriptor.entrypoint)
+      ? 'A receiving-host actor requires a governed read'
+      : undefined,
+  ),
+);
 export type AccessCatalogArtifactDescriptor = typeof AccessCatalogArtifactDescriptorSchema.Type;
 
 export const AccessCatalogArtifactModulesSchema = Schema.Array(
@@ -120,6 +142,9 @@ type ArtifactActor = NonNullable<AccessCatalogArtifactDescriptor['actor']>;
 
 /** One module caller in canonical order: callers and workload subjects by key, absent when not declared. */
 const sortedActorOf = (actor: ArtifactActor): ArtifactActor => {
+  if (actor.callerBinding === RECEIVING_HOST_CALLER_BINDING) {
+    return actor;
+  }
   const callers = EffectArray.sort(actor.callers, Order.make(compareText));
   if (actor.subjectWorkloads === undefined) {
     return { callers, subject: actor.subject };
@@ -213,7 +238,9 @@ export const declaredDelegatedCallers = (
   sortedBy(
     new Set([
       ...modules.flatMap(({ descriptors }) =>
-        descriptors.flatMap(({ actor }) => (actor === undefined ? [] : actor.callers)),
+        descriptors.flatMap(({ actor }) =>
+          actor === undefined || actor.callerBinding === RECEIVING_HOST_CALLER_BINDING ? [] : actor.callers,
+        ),
       ),
       ...registeredCallers,
     ]),

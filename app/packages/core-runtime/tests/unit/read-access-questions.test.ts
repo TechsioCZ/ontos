@@ -15,6 +15,7 @@ import {
 } from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput, AccessFieldGroupInput } from '../../src/authorization/access-declaration.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import {
@@ -22,8 +23,15 @@ import {
   MAX_ACCESS_QUESTIONS,
   materializeAccessQuestions,
 } from '../../src/reads/access-questions.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import { ReadPermissionUnavailable } from '../../src/reads/errors.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { canList, canRun, canSeeFields } from '../../src/sdk/read.ts';
 import type { AccessQuestions, AccessQuestionTarget } from '../../src/sdk/read.ts';
+import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
+import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 /**
  * The access lane of the execution kernel: extra access questions are descriptor data, refused at
@@ -210,7 +218,125 @@ const refusal = (questions: AccessQuestions, read = ownRead): string => {
 const manyQuestions = (count: number): AccessQuestions =>
   Object.fromEntries(Array.from({ length: count }, (_, index) => [`q${index}`, canRun(applyAction)]));
 
+it.effect('uses the validated Read registration and its static actor throughout admission', () =>
+  Effect.gen(function* captureReadRegistration() {
+    const defineProtectedRead = (key: string, caller: string) =>
+      defineRead(
+        {
+          accessActor: { callers: [caller], reason: 'The module relays the requester', subject: 'rights' },
+          accessDeclaration: declaration(key),
+          accessKind: 'detail',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: key,
+            moduleKey: MODULE,
+            role: 'api',
+          }),
+          evidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.v1` },
+          inputSchema: Schema.Struct({}),
+          legalEntityScope: 'required',
+          owningModuleKey: MODULE,
+          policies: [],
+          readKey: key,
+          resultSchema: Schema.Struct({}),
+          schemaVersion: '1',
+        },
+        () => Effect.die('The unavailable gate must prevent handler execution'),
+        () => Effect.succeed({}),
+      );
+    const first = defineProtectedRead(OWN_READ_KEY, 'catalog');
+    const other = defineProtectedRead(RECORDS_READ_KEY, 'pricing');
+    const { calls, gate } = recordingGate({
+      decisions: { [OWN_READ_KEY]: 'UNAVAILABLE', [RECORDS_READ_KEY]: 'UNAVAILABLE' },
+    });
+    const executor = yield* makeTestDatabase(() => Effect.die('Admission must not use the database'));
+    const { ownerRegistration } = makeTestOperationOwner({ moduleId: MODULE });
+    const runtime = makeReadRuntime(
+      { executor },
+      openModuleEntrypointGateway,
+      { resolve: () => Effect.succeed(scope) },
+      {
+        legalEntities: () => Effect.succeed([]),
+        modules: () => Effect.succeed([]),
+        resources: () => Effect.succeed([]),
+        tenants: () => Effect.succeed([]),
+      },
+      { accessDecision: gate, databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, ownerRegistration },
+    );
+    let registrationReads = 0;
+    const failure = yield* Effect.flip(
+      runtime.runRead({
+        input: {},
+        principal: scope,
+        get registration() {
+          registrationReads += 1;
+          return registrationReads === 1 ? first : other;
+        },
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(failure).toBeInstanceOf(ReadPermissionUnavailable);
+    expect(calls).toMatchObject([
+      {
+        input: { carrier: { accessActor: first.descriptor.accessActor, accessDeclaration: { key: OWN_READ_KEY } } },
+        method: 'decide',
+      },
+    ]);
+    expect(registrationReads).toBe(1);
+  }),
+);
+
 describe('materializeAccessQuestions', () => {
+  it('retains the unresolved host binding on field questions instead of creating an ordinary empty actor', () => {
+    const hostRead = target(`${MODULE}.api.host-records`, {
+      accessActor: {
+        callerBinding: 'receiving-host',
+        callers: [],
+        reason: 'Only the receiving host binds delegated callers',
+        subject: 'rights',
+      },
+      accessDeclaration: declaration(RECORDS_READ_KEY),
+      accessFieldGroups: [restrictedGroup()],
+    });
+    const [question] = materializeAccessQuestions(ownRead, {
+      restricted: canSeeFields(hostRead, RESTRICTED_KEY),
+    });
+    expect(question).toMatchObject({
+      carrier: {
+        accessActor: {
+          callerBinding: 'receiving-host',
+          callers: [],
+          subject: 'rights',
+        },
+      },
+      kind: 'field',
+    });
+  });
+
+  it('uses the first descriptor for the carrier, field group and parent of a field question', () => {
+    let descriptorReads = 0;
+    const [field] = materializeAccessQuestions(ownRead, {
+      restricted: canSeeFields(
+        {
+          get descriptor() {
+            descriptorReads += 1;
+            return descriptorReads === 1 ? recordsRead.descriptor : ownReadTarget.descriptor;
+          },
+        },
+        RESTRICTED_KEY,
+      ),
+    });
+    expect(descriptorReads).toBe(1);
+    expect(field).toMatchObject({
+      carrier: {
+        accessDeclaration: { key: RESTRICTED_KEY },
+        entrypoint: { entrypointKey: recordsRead.descriptor.entrypoint.entrypointKey },
+      },
+      parentRead: { capability: { capabilityKey: RECORDS_READ_KEY } },
+    });
+  });
+
   it('turns every question into the gate question it asks', () => {
     const [assign, restricted, rows] = materializeAccessQuestions(ownRead, {
       assign: canRun(assignAction),

@@ -1,3 +1,4 @@
+import { symmyHistoricalAdmission } from '../symmy/native-evidence-policy.ts';
 import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
 
 import { outboxProducerModuleKey, outboxTopic } from '@app/symmy-integration/outbox/integration-symmy-job-admitted-v1';
@@ -133,6 +134,7 @@ export const admitRegisteredGatewayRecovery = Effect.fn('GatewayDelegation.admit
     return yield* (yield* GatewayNativeEvidence).admitRecovery({
       binding,
       destination,
+      historical: symmyHistoricalAdmission,
       originalAction,
       recoveryOf: rule.recoveryOf,
       rule,

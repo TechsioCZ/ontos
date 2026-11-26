@@ -223,7 +223,9 @@ export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.adm
     }
     const admitted = yield* (yield* GatewayNativeEvidence).admitAssertion({
       binding,
+      destination,
       rule,
+      source,
       sourceAccess,
       sourcePrincipal,
       subject,

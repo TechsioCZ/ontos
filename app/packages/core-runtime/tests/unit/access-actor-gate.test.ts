@@ -9,9 +9,9 @@ import {
 import type { VerifiedGatewayActor } from '../../src/auth/system-principal-context-provenance.ts';
 import { decodeAccessActor, decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type {
-  AccessActorInput,
   AccessDeclaration,
   AccessDeclarationInput,
+  StaticAccessActorSchema,
 } from '../../src/authorization/access-declaration.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -59,7 +59,9 @@ const declarationOf = (): AccessDeclaration =>
     ACTION_OWNER,
   );
 
-const actorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
+type StaticActorOverrides = Partial<typeof StaticAccessActorSchema.Encoded>;
+
+const actorDeclaration = (overrides: StaticActorOverrides = {}) =>
   Result.getOrThrow(
     decodeAccessActor(
       {
@@ -83,7 +85,7 @@ const callerOf = (appId: string): VerifiedGatewayActor => ({
 const workloadPrincipal = uid(80);
 const storefront = 'commerce.storefront-client';
 
-const workloadActorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
+const workloadActorDeclaration = (overrides: StaticActorOverrides = {}) =>
   actorDeclaration({ subjectWorkloads: [storefront], ...overrides });
 
 /** A registry that binds `keys` to one principal; any other principal holds no binding. */

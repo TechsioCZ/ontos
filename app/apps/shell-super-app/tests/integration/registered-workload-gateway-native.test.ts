@@ -1,4 +1,6 @@
 import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
+import { GatewayNativeRoutePolicy } from '../../api/auth/gateway-native-route-policy.ts';
+import { symmyNativeRoutePolicy } from '../../api/symmy/native-evidence-policy.ts';
 import {
   LegalEntityContextLive,
   ActiveApplicationCompositionService,
@@ -1135,6 +1137,7 @@ it.live(
           ),
         );
         const services = Layer.mergeAll(
+          Layer.succeed(GatewayNativeRoutePolicy, symmyNativeRoutePolicy),
           LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
           GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime))),
           Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime, companyTenants)),

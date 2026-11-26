@@ -36,6 +36,10 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  executorEnrollments: [
+    { uses: ['admission', 'assertion', 'recovery'], workloadKey: 'party.registry.source-write' },
+    { uses: ['assertion', 'recovery'], workloadKey: 'party.registry.source-read' },
+  ],
   originatorActions: partyRegistryOriginatorActions,
   publicSurface: {
     ...partyRegistryRuntimeManifest.publicSurface,

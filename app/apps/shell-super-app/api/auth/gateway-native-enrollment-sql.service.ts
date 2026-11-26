@@ -1,21 +1,9 @@
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { sql } from 'drizzle-orm';
 
-const customerChainWorkloads: ReadonlySet<string> = new Set([
-  'party.registry.source-write',
-  'party.registry.source-read',
-  'commerce.customer-context.source-write',
-  'commerce.customer-context.source-read',
-  'commerce.customer-context.organization-ico-facts.read',
-  'privacy.core.source-processing-check',
-  'privacy.core.organization-business-check',
-  'privacy.core.organization-profile-ico-check',
-  'integration.symmy.source-organization-facts.read',
-  'pricing.price-group-catalog.source-read',
-]);
-
 /** Installed registered-call rules still constrain every edge; this only identifies its actual enrolled executor. */
 export const registeredAssertionPrincipalEligibility = (input: {
+  readonly enrollmentMode: 'system' | 'system-or-canonical-company-service';
   readonly legalEntityId?: string | undefined;
   readonly side: 'receiver' | 'source';
   readonly tenantId: string;
@@ -33,7 +21,7 @@ export const registeredAssertionPrincipalEligibility = (input: {
       and legacy_binding.workload_key=${input.workloadKey} and legacy_binding.status='active'
   )`;
   const legacy = sql`(${principal}.kind='system' and ${systemCount}=1)`;
-  if (input.legalEntityId === undefined || !customerChainWorkloads.has(input.workloadKey)) {
+  if (input.legalEntityId === undefined || input.enrollmentMode !== 'system-or-canonical-company-service') {
     return legacy;
   }
   const principalId = internalWorkloadPrincipalId({
@@ -58,6 +46,7 @@ export const registeredAssertionPrincipalEligibility = (input: {
 
 /** Recovery uses the same native executor selection as fresh registered calls; it does not adopt arbitrary services. */
 export const registeredRecoveryReceiverStatement = (input: {
+  readonly enrollmentMode: 'system' | 'system-or-canonical-company-service';
   readonly legalEntityId?: string | undefined;
   readonly tenantId: string;
   readonly workloadKey: string;

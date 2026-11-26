@@ -59,15 +59,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       expect(hosted).not.toMatch(/resolveTenantContext|cookie|setCookie|session/iu);
       // The principal comes from the verified assertion; the audience is the Shell app id, never a request value.
       expect(hosted).toContain('bindGatewayPrincipalVerifier(SHELL_HOST_APP_ID');
-      expect(hosted).toContain('verifyAndRedeem');
+      expect(hosted).toContain('principalVerifier.verifyAndRedeem(authorization');
+      expect(hosted).toContain('authenticateHostedOperationPrincipal(authorization).pipe(');
       const index = codeOf(yield* readApp('api/index.ts'));
-      const start = index.indexOf("HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations'");
-      const end = index.indexOf('const coreMediaObjectStorageLive');
-      expect(start).toBeGreaterThan(0);
-      const handler = index.slice(start, end);
-      expect(handler).toContain('authenticatePrincipal: authenticateHostedOperation');
+      const handlerStart = index.indexOf('export const hostedAssetCurrent =');
+      const groupStart = index.indexOf("HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations'");
+      const groupEnd = index.indexOf('\n);', groupStart);
+      expect(handlerStart).toBeGreaterThanOrEqual(0);
+      expect(groupStart).toBeGreaterThan(handlerStart);
+      expect(groupEnd).toBeGreaterThan(groupStart);
+
+      const routeGroup = index.slice(groupStart, groupEnd);
+      expect(routeGroup).toContain("handlers.handle('assetCurrent', hostedAssetCurrent)");
+
+      const handler = index.slice(handlerStart, groupStart);
+      expect(handler).toContain('const { headers } = input.request');
+      expect(handler).toMatch(
+        /const \{ installed, principal \} = yield\* authenticateHostedOperation\(\s*Redacted\.make\(headers\['authorization'\]\)/u,
+      );
+      expect(handler).toContain('const handler = makeGovernedReadHttpHandler(');
+      expect(handler).toContain('authenticatePrincipal: () => Effect.succeed(principal)');
       expect(handler).toContain('registration: assetCurrentRead');
-      expect(handler).not.toMatch(/resolveTenantContext|AuthenticationService|cookie/iu);
+      expect(handler).toContain('Effect.provideContext(handler(input), readRuntime)');
+      expect(index.slice(handlerStart, groupEnd)).not.toMatch(/AuthenticationService|cookie|session|tenant/iu);
     }),
   );
 

@@ -302,7 +302,7 @@ const isActionCarrier = (owner: AccessDeclarationOwner): boolean =>
  * contributions (navigation, components, search), write surfaces and every unprotected entrypoint
  * are never a governed read.
  */
-const isGovernedReadCarrier = (owner: AccessDeclarationOwner): boolean =>
+export const isGovernedReadCarrier = (owner: AccessDeclarationOwner): boolean =>
   owner.authorization.kind === 'protected' &&
   (owner.role === 'api' || owner.role === 'report') &&
   (owner.access === 'read' || owner.access === 'historical_read');
@@ -664,7 +664,8 @@ const TopologyAppIdSchema = Schema.String.check(
  * `subjectWorkloads` is admitted by its binding on either mode. `workload` admits only those registered
  * workload subjects, never a person, and carries no human capability. Only governs calls that carry `act`.
  */
-export const AccessActorSchema = Schema.Struct({
+export const StaticAccessActorSchema = Schema.Struct({
+  callerBinding: Schema.optionalKey(Schema.Never),
   /** The calling topology apps; at least one, never repeated. */
   callers: Schema.NonEmptyArray(TopologyAppIdSchema).check(Schema.isUnique()),
   /** Why modules call this carrier; the only human-readable field. */
@@ -700,6 +701,18 @@ export const AccessActorSchema = Schema.Struct({
       : undefined,
   ),
 );
+export const RECEIVING_HOST_CALLER_BINDING = 'receiving-host';
+export const HostBoundRightsActorSchema = Schema.Struct({
+  callerBinding: Schema.Literal(RECEIVING_HOST_CALLER_BINDING),
+  callers: Schema.Tuple([]),
+  reason: Schema.String.check(Schema.isMaxLength(400), Schema.isMinLength(1), Schema.isTrimmed()),
+  subject: Schema.Literal('rights'),
+  subjectWorkloadCallers: Schema.optionalKey(Schema.Never),
+  subjectWorkloads: Schema.optionalKey(Schema.Never),
+});
+
+/** A host-bound actor admits no module until the receiving runtime binds the original Core read. */
+export const AccessActorSchema = Schema.Union([StaticAccessActorSchema, HostBoundRightsActorSchema]);
 /** A decoded actor declaration; `decodeAccessActor` returns it frozen. */
 export type AccessActor = typeof AccessActorSchema.Type;
 export type AccessActorInput = typeof AccessActorSchema.Encoded;
@@ -725,19 +738,24 @@ export const decodeAccessActor = <Input>(
   decodeAccessActorFields(input).pipe(
     Result.mapError((issue) => invalidDeclaration(`accessActor: ${issue.message}`)),
     Result.map((actor): AccessActor =>
-      Object.freeze(
-        withOptional(
-          withOptional(
-            { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
-            'subjectWorkloads',
-            actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+      actor.callerBinding === RECEIVING_HOST_CALLER_BINDING
+        ? Object.freeze({ ...actor, callers: Object.freeze(actor.callers) })
+        : Object.freeze(
+            withOptional(
+              withOptional(
+                { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
+                'subjectWorkloads',
+                actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+              ),
+              'subjectWorkloadCallers',
+              actor.subjectWorkloadCallers === undefined ? undefined : Object.freeze(actor.subjectWorkloadCallers),
+            ),
           ),
-          'subjectWorkloadCallers',
-          actor.subjectWorkloadCallers === undefined ? undefined : Object.freeze(actor.subjectWorkloadCallers),
-        ),
-      ),
     ),
     Result.flatMap((actor) => {
+      if (actor.callerBinding === RECEIVING_HOST_CALLER_BINDING && !isGovernedReadCarrier(owner)) {
+        return Result.fail(invalidDeclaration('accessActor receiving-host binding requires a governed read'));
+      }
       const reason = accessActorEntrypointIssue(owner);
       return reason === undefined ? Result.succeed(actor) : Result.fail(invalidDeclaration(reason));
     }),

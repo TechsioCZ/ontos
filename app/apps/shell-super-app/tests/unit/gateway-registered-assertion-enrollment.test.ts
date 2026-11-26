@@ -1,3 +1,10 @@
+import { OntosRegisteredWorkloadCallSchema } from '@app/core-runtime';
+import {
+  OntosSerializedModuleManifestSchema,
+  resolveReceiverExecutorEnrollment,
+} from '@app/core-runtime/modules/manifest';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { Option, Schema } from 'effect';
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
@@ -19,11 +26,63 @@ const sourceWriters = [
   'pricing.price-group-catalog.source-read',
 ];
 
+const decodeEnrollment = Schema.decodeUnknownSync(
+  Schema.Struct({
+    executorEnrollments: OntosSerializedModuleManifestSchema.fields.executorEnrollments,
+  }),
+);
+
+const exactAssertionEnrollment = (workloadKey: string, companyEnrolled: boolean) => {
+  const moduleId = companyEnrolled ? workloadKey.split('.').slice(0, 2).join('.') : 'example.receiver';
+  const receiver = makeModuleContractFixture({ appId: 'enrollment-test', moduleId });
+  const registeredWorkloadKey = 'example.receiver.registered';
+  const declaredWorkload = companyEnrolled ? workloadKey : registeredWorkloadKey;
+  const declarationKey = `${moduleId}.source.read`;
+  const entrypointKey = `${moduleId}.api.source`;
+  const operation = Schema.decodeUnknownSync(OntosRegisteredWorkloadCallSchema)({
+    audience: receiver.deployment.appId,
+    declarationKey,
+    entrypointKey,
+    jobKey: 'example.receiver.job',
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: 'example.sender.registered',
+    workloadKey,
+  });
+  return resolveReceiverExecutorEnrollment(
+    {
+      ...receiver,
+      manifest: {
+        ...receiver.manifest,
+        ...decodeEnrollment({ executorEnrollments: companyEnrolled ? [{ uses: ['assertion'], workloadKey }] : [] }),
+        publicSurface: {
+          ...receiver.manifest.publicSurface,
+          operationContracts: [
+            {
+              entrypoint: { entrypointKey },
+              schemaVersion: '1',
+              workloadCarrier: { declarationKey, workloads: [declaredWorkload] },
+            },
+          ],
+        },
+      },
+    },
+    operation,
+    'assertion',
+  );
+};
+
 it('admits only canonical company platform writers for both sides and both source-write workloads', () => {
   for (const side of ['source', 'receiver'] as const) {
     for (const workloadKey of sourceWriters) {
       const query = new PgDialect().sqlToQuery(
-        registeredAssertionPrincipalEligibility({ legalEntityId, side, tenantId, workloadKey }),
+        registeredAssertionPrincipalEligibility({
+          enrollmentMode: Option.getOrThrow(exactAssertionEnrollment(workloadKey, true)).enrollmentMode,
+          legalEntityId,
+          side,
+          tenantId,
+          workloadKey,
+        }),
       );
       const principal = side === 'source' ? 'source_principal' : 'receiver_principal';
       const binding = side === 'source' ? 'current_source' : 'receiver';
@@ -48,13 +107,24 @@ it('admits only canonical company platform writers for both sides and both sourc
 
 it('keeps unrelated workloads and company-less requests strictly unique-SYSTEM only', () => {
   for (const side of ['source', 'receiver'] as const) {
+    for (const workloadKey of ['integration.symmy.execute-symmy-job', 'privacy.core.unregistered-check']) {
+      expect(Option.isNone(exactAssertionEnrollment(workloadKey, false))).toBe(true);
+    }
     for (const input of [
-      { legalEntityId, workloadKey: 'integration.symmy.execute-symmy-job' },
-      { legalEntityId, workloadKey: 'privacy.core.unregistered-check' },
-      { workloadKey: 'party.registry.source-write' },
-      { workloadKey: 'commerce.customer-context.source-write' },
+      { companyEnrolled: false, legalEntityId, workloadKey: 'example.receiver.registered' },
+      { companyEnrolled: true, workloadKey: 'party.registry.source-write' },
+      { companyEnrolled: true, workloadKey: 'commerce.customer-context.source-write' },
     ]) {
-      const query = new PgDialect().sqlToQuery(registeredAssertionPrincipalEligibility({ side, tenantId, ...input }));
+      const { companyEnrolled, ...principal } = input;
+      const enrollment = Option.getOrThrow(exactAssertionEnrollment(principal.workloadKey, companyEnrolled));
+      const query = new PgDialect().sqlToQuery(
+        registeredAssertionPrincipalEligibility({
+          ...principal,
+          enrollmentMode: enrollment.enrollmentMode,
+          side,
+          tenantId,
+        }),
+      );
       expect(query.sql).toContain("kind='system'");
       expect(query.sql).toContain(')=1');
       expect(query.sql).not.toContain("kind='service'");
@@ -67,7 +137,13 @@ it('binds service selection to the requested company rather than another company
   const workloadKey = 'party.registry.source-write';
   const otherCompany = '10000000-0000-4000-8000-000000000003';
   const query = new PgDialect().sqlToQuery(
-    registeredAssertionPrincipalEligibility({ legalEntityId, side: 'source', tenantId, workloadKey }),
+    registeredAssertionPrincipalEligibility({
+      enrollmentMode: Option.getOrThrow(exactAssertionEnrollment(workloadKey, true)).enrollmentMode,
+      legalEntityId,
+      side: 'source',
+      tenantId,
+      workloadKey,
+    }),
   );
   expect(query.params).not.toContain(otherCompany);
   expect(query.params).not.toContain(

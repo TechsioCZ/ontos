@@ -27,6 +27,11 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  executorEnrollments: [
+    { uses: ['assertion', 'recovery'], workloadKey: 'privacy.core.source-processing-check' },
+    { uses: ['assertion', 'recovery'], workloadKey: 'privacy.core.organization-business-check' },
+    { uses: ['assertion', 'recovery'], workloadKey: 'privacy.core.organization-profile-ico-check' },
+  ],
   originatorActions: ['privacy.core.dispatch-privacy-measure'],
   publicSurface: {
     ...privacyRuntimeManifest.publicSurface,

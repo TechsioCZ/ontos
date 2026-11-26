@@ -305,6 +305,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  executorEnrollments: [
+    { uses: ['admission', 'assertion', 'recovery'], workloadKey: 'commerce.customer-context.source-write' },
+    { uses: ['assertion', 'recovery'], workloadKey: 'commerce.customer-context.source-read' },
+    { uses: ['assertion', 'recovery'], workloadKey: 'commerce.customer-context.organization-ico-facts.read' },
+  ],
   module: {
     description: 'Commerce Customer Context business capability.',
     displayName: 'Commerce Customer Context',

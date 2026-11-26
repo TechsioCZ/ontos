@@ -1,4 +1,3 @@
-import type { GatewayPrivacyDispatchRow } from './gateway-native-evidence.service.ts';
 import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
 
 import { AccessDecisionGate, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
@@ -8,9 +7,14 @@ import type { RegisteredGatewayPrivacyDispatch } from '@app/core-runtime/auth/sy
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { MeasureExecutionEligibilityRequestSchema } from '@app/privacy/api/measure-execution-eligibility';
 import { RecordOwnerExecutionOutcomePayloadSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
+import { validatePrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 
-import { outboxProducerModuleKey, outboxTopic } from '@app/privacy/outbox/privacy-measure-dispatched';
+import {
+  OutboxPayloadSchema as PrivacyOutboxPayloadSchema,
+  outboxProducerModuleKey,
+  outboxTopic,
+} from '@app/privacy/outbox/privacy-measure-dispatched';
 import type { GatewayPrivacyDispatchSubjectSchema } from '@app/shared-contracts';
 import {
   decodeGatewayContextProtectedHeader,
@@ -67,13 +71,57 @@ const witnessSchema = Schema.instanceOf(AdmittedPrivacyDispatchValue);
 export const readAdmittedPrivacyDispatch = (witness: AdmittedPrivacyDispatch): Evidence | undefined =>
   Schema.is(witnessSchema)(witness) ? AdmittedPrivacyDispatchValue.read(witness) : undefined;
 
-type Row = GatewayPrivacyDispatchRow;
+const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
+const rowSchema = Schema.Struct({
+  claimActive: Schema.Boolean,
+  claimId: Schema.OptionFromNullOr(Schema.NonEmptyString),
+  deliveryId: metadataFields.deliveryId,
+  dispatchInvocationId: metadataFields.dispatchInvocationId,
+  domainEventId: metadataFields.domainEventId,
+  eventPayload: PrivacyOutboxPayloadSchema,
+  governanceLegalEntityId: metadataFields.governanceLegalEntityId,
+  measureId: metadataFields.measureId,
+  messageId: metadataFields.messageId,
+  messagePayload: PrivacyOutboxPayloadSchema,
+  principalId: metadataFields.principalId,
+  tenantId: metadataFields.tenantId,
+});
+type Row = typeof rowSchema.Type;
+const isSupportedHandoff = (handoff: Handoff, row: Row): boolean => {
+  const [resource] = handoff.resourceRefs;
+  const [content] = handoff.contentScopeRefs;
+  const match = /^integration\.symmy\.(?:job|sync-admission):(?<id>[a-fA-F\d-]+)$/u.exec(resource ?? '');
+  return (
+    validatePrivacyMeasureHandoff(handoff).length === 0 &&
+    handoff.tenantId === row.tenantId &&
+    handoff.owningCapability === symmyModule &&
+    (handoff.kind === 'DELETE' || handoff.kind === 'ANONYMIZE') &&
+    handoff.dispositionDecision === handoff.kind &&
+    handoff.resourceRefs.length === 1 &&
+    handoff.contentScopeRefs.length === 1 &&
+    Schema.is(Schema.String.check(Schema.isUUID()))(match?.groups?.['id']) &&
+    content === `${resource}#integration.symmy.job-intent` &&
+    handoff.measureId === row.measureId &&
+    computeCanonicalValueHash(handoff) === computeCanonicalValueHash(row.eventPayload.handoff)
+  );
+};
+
+const privacyDispatchContract = {
+  actionKey: dispatchActionKey,
+  consumerModuleId: symmyModule,
+  producerModuleId: privacyModule,
+  resourceType: 'privacy.core.privacy-measure',
+  topic: outboxTopic,
+  workerKey,
+};
 const loadRow = Effect.fn('GatewayNativeEvidence.loadPrivacyDispatchRow')(function* load(input: {
   readonly deliveryId?: string;
   readonly dispatchInvocationId?: string;
   readonly tenantId: string;
 }) {
-  return yield* (yield* GatewayNativeEvidence).loadPrivacyDispatchRow(input);
+  return yield* (yield* GatewayNativeEvidence).loadDispatchRow(input, privacyDispatchContract, rowSchema, (row) =>
+    isSupportedHandoff(row.messagePayload.handoff, row),
+  );
 });
 
 const assertWorkerCatalog = (contract: Contract): boolean =>

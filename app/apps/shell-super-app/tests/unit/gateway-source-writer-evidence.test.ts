@@ -1,3 +1,4 @@
+import { GatewayNativeEvidence } from '../../api/auth/gateway-native-evidence.ts';
 import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import { buildApplicationCompositionCatalog, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
@@ -20,23 +21,27 @@ const receiverIncarnation = '10000000-0000-4000-8000-000000000006';
 const invocationId = '10000000-0000-4000-8000-000000000005';
 const workerKey = 'integration.symmy.execute-symmy-job';
 const actionKey = 'integration.symmy.admit-symmy-job';
-const entrypointKey = 'party.registry.api.source-write';
-const declarationKey = 'party.registry.source-write';
 const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
   claim?: boolean;
   company?: boolean;
   expectedPrincipalId?: string;
   originalCompany?: string;
+  receiverOperation?: 'ambiguous' | 'mismatched';
   service?: boolean;
   systems?: number;
   workloadKey: string;
 }) {
+  const receiverModule =
+    input.workloadKey === 'commerce.customer-context.source-write' ? 'commerce.customer-context' : 'party.registry';
+  const receiverApp = receiverModule === 'party.registry' ? 'party-registry' : 'commerce-customer-context';
+  const entrypointKey = `${receiverModule}.api.source-write`;
+  const declarationKey = `${receiverModule}.source-write`;
   const source = makeModuleContractFixture({
     appId: 'symmy-integration',
     moduleId: 'integration.symmy',
     originatorActions: [actionKey],
   });
-  const receiver = makeModuleContractFixture({ appId: 'party-registry', moduleId: 'party.registry' });
+  const receiver = makeModuleContractFixture({ appId: receiverApp, moduleId: receiverModule });
   const snapshot = yield* makeCompositionSnapshot([
     {
       ...source,
@@ -65,7 +70,7 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
         },
         requirements: {
           coreCapabilities: [],
-          intrinsic: [{ moduleId: 'party.registry', requiredOperations: [{ entrypointKey, schemaVersion: '1' }] }],
+          intrinsic: [{ moduleId: receiverModule, requiredOperations: [{ entrypointKey, schemaVersion: '1' }] }],
           operations: [],
           schemaVersion: '1',
         },
@@ -75,21 +80,26 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
       ...receiver,
       manifest: {
         ...receiver.manifest,
+        executorEnrollments:
+          input.workloadKey === declarationKey
+            ? [{ uses: ['admission', 'assertion', 'recovery'], workloadKey: input.workloadKey }]
+            : [],
         publicSurface: {
           ...receiver.manifest.publicSurface,
-          api: [{ key: 'party.registry.api.source', operationKeys: ['write.execute'] }],
+          api: [{ key: `${receiverModule}.api.source`, operationKeys: ['write.execute'] }],
           operationContracts: [
             {
-              apiKey: 'party.registry.api.source',
+              apiKey: `${receiverModule}.api.source`,
               entrypoint: defineTenantModuleEntrypoint({
                 access: 'read',
                 authorization: { kind: 'protected' },
                 entrypointKey,
-                moduleKey: 'party.registry',
+                moduleKey: receiverModule,
                 role: 'api',
               }),
               operationKey: 'write.execute',
               schemaVersion: '1',
+              workloadCarrier: { declarationKey, workloads: [input.workloadKey] },
             },
           ],
         },
@@ -102,7 +112,7 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
     providerKeyId: 'symmy-test-key',
     registeredWorkloads: [
       {
-        audience: 'party-registry',
+        audience: receiverApp,
         declarationKey,
         entrypointKey,
         jobKey: workerKey,
@@ -189,12 +199,43 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
       ).pipe(Layer.provide(Reactivity.layer)),
     ),
   );
-  const result = yield* admitRegisteredGatewayWorkload({
-    audience: 'party-registry',
-    binding,
-    installed: { ...catalog, composition: snapshot.composition },
-    subject,
-  }).pipe(Effect.provide(GatewayNativeEvidenceLive.pipe(Layer.provide(database))), Effect.result);
+  const admit = Effect.gen(function* admitFromCatalog() {
+    if (input.receiverOperation === undefined) {
+      return yield* admitRegisteredGatewayWorkload({
+        audience: receiverApp,
+        binding,
+        installed: { ...catalog, composition: snapshot.composition },
+        subject,
+      });
+    }
+    const destination = catalog.contracts.find((contract) => contract.deployment.appId === receiverApp);
+    const sourceContract = catalog.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+    const rule = binding.registeredWorkloads?.[0];
+    const operation = destination?.manifest.publicSurface.operationContracts?.[0];
+    if (destination === undefined || sourceContract === undefined || rule === undefined || operation === undefined) {
+      return yield* Effect.die('Expected exact contracts for the source and receiver');
+    }
+    return yield* (yield* GatewayNativeEvidence).admitWorkload({
+      binding,
+      destination:
+        input.receiverOperation === 'ambiguous'
+          ? {
+              ...destination,
+              manifest: {
+                ...destination.manifest,
+                publicSurface: { ...destination.manifest.publicSurface, operationContracts: [operation, operation] },
+              },
+            }
+          : destination,
+      rule: input.receiverOperation === 'mismatched' ? { ...rule, schemaVersion: '2' } : rule,
+      source: sourceContract,
+      subject,
+    });
+  });
+  const result = yield* admit.pipe(
+    Effect.provide(GatewayNativeEvidenceLive.pipe(Layer.provide(database))),
+    Effect.result,
+  );
   return { principalId, queries, result };
 });
 
@@ -278,6 +319,23 @@ it.effect('preserves SYSTEM precedence and refuses ambiguity, unrelated jobs, te
       if ('systems' in input || 'company' in input || 'workloadKey' in input || 'claim' in input) {
         expect(actual.queries.some((q) => q.sql.includes("p.kind = 'service'"))).toBe(false);
       }
+    }
+  }),
+);
+
+it.effect('refuses mismatched or ambiguous receiving operations even with an active SYSTEM', () =>
+  Effect.gen(function* refuseInvalidReceiver() {
+    for (const receiverOperation of ['mismatched', 'ambiguous'] as const) {
+      const { queries, result } = yield* run({
+        receiverOperation,
+        systems: 1,
+        workloadKey: 'party.registry.source-write',
+      });
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { code: 'forbidden', reason: 'registered_operation_refused' },
+      });
+      expect(queries.some((query) => query.sql.includes('core.access_workload_bindings'))).toBe(false);
     }
   }),
 );

@@ -1,8 +1,10 @@
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocket } from '@effect/platform-node';
-import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Ref, Result, Schema, Stream } from 'effect';
+import { Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, Schema, Stream } from 'effect';
 import { Socket } from 'effect/socket';
 import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
+import { GatewayContextResponseSchema } from '@app/shared-contracts';
+import { GatewayIssuer } from '../../api/auth/gateway-issuer-service.ts';
 
 import type { ShellNativeRequestDiagnosticSchema } from '../fixtures/api-key-gateway-native.ts';
 import {
@@ -35,6 +37,10 @@ import {
   openShellNativePrivateChannel,
   observeShellNativeRequestDispatch,
   describeShellNativeIssuerFailure,
+  observeProductionIssuer,
+  inspectShellNativeIssuerContract,
+  ShellNativeIssuerContractFailureSchema,
+  decodeShellNativeChildDiagnostic,
 } from '../fixtures/api-key-gateway-native.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import {
@@ -356,6 +362,154 @@ it('limits issuer diagnostics to bounded native statuses and existing problem ta
     expect(Result.isFailure(decode(invalid))).toBe(true);
   }
 });
+
+it.effect('preserves all production issuer methods, exact Symmy forwarding and ordinary issue observations', () =>
+  Effect.scoped(
+    Effect.gen(function* observeCompleteIssuerContract() {
+      // Contract-only data: no test assertion or credential is accepted by an owner service.
+      const response = yield* Schema.decodeUnknownEffect(GatewayContextResponseSchema)({
+        apiBaseUrl: '/symmy-api',
+        compositionRevision: 'a'.repeat(64),
+        expiresAt: 1_900_000_000,
+        token: 'contract-only-token',
+      });
+      const failure = new GatewayIssuerError({
+        code: 'gateway_issuer_unavailable',
+        reason: 'contract-only-failure',
+        stage: 'signing',
+      });
+      const failOrdinaryIssue = yield* Ref.make(false);
+      const symmyInputs: object[] = [];
+      const symmyEffect = Effect.succeed(response);
+      const actual = GatewayIssuer.of({
+        issue: () =>
+          Ref.get(failOrdinaryIssue).pipe(
+            Effect.flatMap((fail) => (fail ? Effect.fail(failure) : Effect.succeed(response))),
+          ),
+        issueDocument: () => Effect.succeed([]),
+        issueSymmy: (input) => {
+          symmyInputs.push(input);
+          return symmyEffect;
+        },
+      });
+      const outcomes = yield* Ref.make<
+        readonly (typeof ShellNativeIssuerDiagnosticsResponseSchema.Type.outcomes)[number][]
+      >([]);
+      const context = yield* Layer.build(
+        observeProductionIssuer(outcomes).pipe(Layer.provide(Layer.succeed(GatewayIssuer, actual))),
+      );
+      const observed = yield* GatewayIssuer.pipe(Effect.provideContext(context));
+      expect(observed.issue).toBeTypeOf('function');
+      expect(observed.issueDocument).toBeTypeOf('function');
+      expect(observed.issueSymmy).toBeTypeOf('function');
+      expect(observed.issueDocument).toBe(actual.issueDocument);
+      expect(observed.issueSymmy).toBe(actual.issueSymmy);
+      const input = {
+        compositionRevision: response.compositionRevision,
+        principal: { id: 'contract-only-person' },
+        principalKind: 'non-human',
+      };
+      expect(observed.issueSymmy(input)).toBe(symmyEffect);
+      expect(symmyInputs).toHaveLength(1);
+      expect(symmyInputs[0]).toBe(input);
+      expect(yield* observed.issueSymmy(input)).toBe(response);
+      expect(yield* Ref.get(outcomes)).toEqual([]);
+      expect(yield* observed.issue({ ...input, audience: 'privacy' })).toBe(response);
+      yield* Ref.set(failOrdinaryIssue, true);
+      expect(yield* observed.issue({ ...input, audience: 'privacy' }).pipe(Effect.flip)).toBe(failure);
+      expect(yield* Ref.get(outcomes)).toEqual([
+        { audience: 'privacy', outcome: 'success' },
+        { audience: 'privacy', code: 'gateway_issuer_unavailable', outcome: 'signing' },
+      ]);
+    }),
+  ),
+);
+
+const callable = () => Effect.die('Contract inspection must never invoke an issuer');
+
+it.effect('identifies each missing issuer capability using only its method and assembly phase', () =>
+  Effect.gen(function* inspectMalformedIssuerAssembly() {
+    const cases = [
+      { issuer: { issueDocument: callable, issueSymmy: callable }, method: 'issue' },
+      { issuer: { issue: callable, issueSymmy: callable }, method: 'issueDocument' },
+      { issuer: { issue: callable, issueDocument: callable }, method: 'issueSymmy' },
+    ];
+    for (const { issuer, method } of cases) {
+      for (const phase of ['production', 'observed'] as const) {
+        const diagnostic = Option.getOrThrow(inspectShellNativeIssuerContract(issuer, phase));
+        expect(Schema.is(ShellNativeIssuerContractFailureSchema)(diagnostic)).toBe(true);
+        expect(diagnostic.method).toBe(method);
+        expect(diagnostic.phase).toBe(phase);
+        const line = yield* Schema.encodeEffect(Schema.fromJsonString(ShellNativeIssuerContractFailureSchema))(
+          diagnostic,
+        );
+        expect(line.length).toBeLessThan(128);
+        expect(yield* decodeShellNativeChildDiagnostic(line)).toEqual(diagnostic);
+      }
+    }
+    expect(
+      Option.isNone(
+        inspectShellNativeIssuerContract(
+          { issue: callable, issueDocument: callable, issueSymmy: callable },
+          'observed',
+        ),
+      ),
+    ).toBe(true);
+  }),
+);
+
+it.effect('fails malformed fixture setup with only the closed missing-method diagnostic on private stderr', () =>
+  Effect.scoped(
+    Effect.gen(function* failMalformedIssuerSetup() {
+      const stderr = rstest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      yield* Effect.addFinalizer(() => Effect.sync(() => stderr.mockRestore()));
+      const actual = GatewayIssuer.of({ issue: callable, issueDocument: callable, issueSymmy: callable });
+      // Model a runtime-assembled test service with a missing member, without a cast hiding the contract.
+      Reflect.deleteProperty(actual, 'issueSymmy');
+      const outcomes = yield* Ref.make<
+        readonly (typeof ShellNativeIssuerDiagnosticsResponseSchema.Type.outcomes)[number][]
+      >([]);
+      const exit = yield* Layer.build(
+        observeProductionIssuer(outcomes).pipe(Layer.provide(Layer.succeed(GatewayIssuer, actual))),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stderr).toHaveBeenCalledTimes(1);
+      const line = yield* Schema.decodeUnknownEffect(Schema.String)(stderr.mock.calls[0]?.[0]);
+      expect(line.length).toBeLessThan(128);
+      const diagnostic = yield* decodeShellNativeChildDiagnostic(line);
+      expect(Schema.is(ShellNativeIssuerContractFailureSchema)(diagnostic)).toBe(true);
+      expect(diagnostic).toEqual(expect.objectContaining({ method: 'issueSymmy', phase: 'production' }));
+      expect(Object.keys(diagnostic)).toEqual(['_tag', 'method', 'phase']);
+      expect(yield* Ref.get(outcomes)).toEqual([]);
+    }),
+  ),
+);
+
+it.effect('decodes closed child events but rejects raw stderr, private fields and unbounded diagnostics', () =>
+  Effect.gen(function* decodePrivateIssuerDiagnostic() {
+    const diagnostic = { _tag: 'issuer-contract-failure', method: 'issueSymmy', phase: 'observed' };
+    const json = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+    const decoded = yield* decodeShellNativeChildDiagnostic(json(diagnostic));
+    expect(Schema.is(ShellNativeIssuerContractFailureSchema)(decoded)).toBe(true);
+    expect(decoded).toEqual(expect.objectContaining({ method: 'issueSymmy', phase: 'observed' }));
+    expect(yield* decodeShellNativeChildDiagnostic(json({ stage: 'composing_runtime' }))).toEqual({
+      stage: 'composing_runtime',
+    });
+    for (const line of [
+      'TypeError: private-request-data',
+      '{',
+      json({ ...diagnostic, method: 'caller-selected' }),
+      json({ ...diagnostic, phase: 'caller-selected' }),
+      json({ ...diagnostic, secret: 'credential' }),
+      json({ ...diagnostic, cause: { request: 'private-request-data' } }),
+      json({ ...diagnostic, stage: 'defect' }),
+      json({ secret: 'credential', stage: 'entry' }),
+      json(diagnostic) + ' '.repeat(2048),
+    ]) {
+      expect(Result.isFailure(yield* decodeShellNativeChildDiagnostic(line).pipe(Effect.result))).toBe(true);
+    }
+  }),
+);
 
 it('keeps direct issuer observations finite and excludes credential or claim data', () => {
   const decode = Schema.decodeUnknownResult(ShellNativeIssuerDiagnosticsResponseSchema, { onExcessProperty: 'error' });

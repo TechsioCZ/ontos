@@ -1,5 +1,12 @@
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import {
+  CoreReadReceiverBindings,
+  captureCoreReadReceiverBindings,
+  resolveCoreReadReceiverActor,
+  resolveCoreReadAccessQuestions,
+} from './receiver-bindings.ts';
+import type { CoreReadReceiverBindingRegistry } from './receiver-bindings.ts';
+import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayWorkload,
@@ -37,7 +44,7 @@ import { KernelTransactionsLive } from '../execution/transaction.ts';
 import { ModuleOperationRouteSchema, RequestExecutionSchema } from '../sdk/index.ts';
 import type { RequestExecution } from '../sdk/index.ts';
 import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
-import { answerAccessQuestions } from './access-questions.ts';
+import { answerAccessQuestions, readFieldGroupActor } from './access-questions.ts';
 import { ReadRunEvidenceLive } from './run-evidence-live.ts';
 import { executeRunFormRead, preserveFailureCause, sanitizeReadHandlerFailure } from './run-form.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
@@ -202,6 +209,7 @@ export interface ReadRuntimeOptions {
    * resolution; without it every legacy target keeps its legacy relation check.
    */
   readonly principalKinds?: AccessPrincipalKinds;
+  readonly receiverBindings?: CoreReadReceiverBindingRegistry | undefined;
   readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
 
@@ -1272,6 +1280,7 @@ const readRuntimeFromDependencies = <
   options: ReadRuntimeOptions,
 ) => {
   const shellSystemReads = captureShellSystemReadRegistrations(options.shellSystemReads);
+  const receiverBindings = captureCoreReadReceiverBindings(options.receiverBindings);
   const withReadExecution: typeof withModuleOperationExecution = (input, effect) =>
     isBoundShellSystemRead(input.registration, shellSystemReads)
       ? withoutModuleOperationExecution(effect)
@@ -1307,13 +1316,15 @@ const readRuntimeFromDependencies = <
     >;
     readonly transport: unknown;
   }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
-    if (!isReadRegistration(input.registration)) {
+    const { registration } = input;
+    if (!isReadRegistration(registration)) {
       return yield* new ReadHandlerUnavailable({
         code: 'read_handler_unavailable',
         reason: 'The Read registration is unavailable',
       });
     }
-    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
+    const { descriptor } = registration;
+    const decodedInput = yield* Schema.decodeUnknownEffect(descriptor.inputSchema, {
       onExcessProperty: 'error',
     })(input.input).pipe(
       Effect.mapError((parseIssue) =>
@@ -1326,10 +1337,7 @@ const readRuntimeFromDependencies = <
         ),
       ),
     );
-    const queryHash = yield* computeReadQueryHash(
-      input.registration.descriptor.evidencePolicy.captureMode,
-      decodedInput,
-    );
+    const queryHash = yield* computeReadQueryHash(descriptor.evidencePolicy.captureMode, decodedInput);
     // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve deterministic validation failure ordering: query normalization must fail before trusted-principal decoding.
     const principal = yield* decodeTrustedPrincipalContext(input.principal).pipe(
       Effect.filterOrFail(
@@ -1352,18 +1360,18 @@ const readRuntimeFromDependencies = <
     );
     yield* requireOrganizationProcessingReadInput({
       decodedInput,
-      entrypointKey: input.registration.descriptor.entrypoint.entrypointKey,
+      entrypointKey: descriptor.entrypoint.entrypointKey,
       principal,
-      requestPurpose: input.registration.descriptor.accessWorkload?.requestPurpose,
-      schemaVersion: input.registration.descriptor.schemaVersion,
+      requestPurpose: descriptor.accessWorkload?.requestPurpose,
+      schemaVersion: descriptor.schemaVersion,
     });
     const organizationRead = readVerifiedGatewayOrganizationGovernanceRead(principal);
     if (organizationRead !== undefined) {
       const expected = organizationRead.target;
       const hash = yield* computeRequiredReadQueryHash(decodedInput);
       if (
-        expected.entrypointKey !== input.registration.descriptor.entrypoint.entrypointKey ||
-        expected.schemaVersion !== input.registration.descriptor.schemaVersion ||
+        expected.entrypointKey !== descriptor.entrypoint.entrypointKey ||
+        expected.schemaVersion !== descriptor.schemaVersion ||
         hash !== organizationRead.requestHash
       ) {
         return yield* new ReadInputValidationError({
@@ -1378,8 +1386,8 @@ const readRuntimeFromDependencies = <
       const hash = yield* computeRequiredReadQueryHash(decodedInput);
       if (
         expected.access !== 'read' ||
-        expected.entrypointKey !== input.registration.descriptor.entrypoint.entrypointKey ||
-        expected.schemaVersion !== input.registration.descriptor.schemaVersion ||
+        expected.entrypointKey !== descriptor.entrypoint.entrypointKey ||
+        expected.schemaVersion !== descriptor.schemaVersion ||
         hash !== privacyDispatch.requestHash
       ) {
         return yield* new ReadInputValidationError({
@@ -1389,10 +1397,7 @@ const readRuntimeFromDependencies = <
       }
     }
     const nativeReadHash = readVerifiedGatewayRouteScope(principal)?.nativeReadReceiver?.requestHash;
-    if (
-      nativeReadHash !== undefined &&
-      nativeReadHash !== (yield* computeRequiredReadQueryHash(decodedInput))
-    ) {
+    if (nativeReadHash !== undefined && nativeReadHash !== (yield* computeRequiredReadQueryHash(decodedInput))) {
       return yield* new ReadInputValidationError({
         code: 'read_input_invalid',
         reason: 'Native route authority does not match the exact Read request',
@@ -1421,7 +1426,7 @@ const readRuntimeFromDependencies = <
       ),
     );
     stage('input_decoded');
-    const { descriptor } = input.registration;
+    const accessActor = resolveCoreReadReceiverActor(registration, receiverBindings);
     const usesAccessGate = descriptor.entrypoint.authorization.kind === 'protected';
     /**
      * The registered, decoded carriers of this read: definition time already decoded, validated and
@@ -1429,7 +1434,7 @@ const readRuntimeFromDependencies = <
      * carrier is answered by the gate's own `deny.declaration_missing`, never by an implicit allow
      * (O62).
      */
-    // An absent carrier stays absent, so the gate sees exactly what the descriptor declares (O59, D5).
+    // An absent carrier stays absent. Only an explicit host-bound actor receives the host's captured callers.
     const accessCarrier: GateInput['carrier'] = withOptional(
       withOptional(
         withOptional(
@@ -1441,7 +1446,7 @@ const readRuntimeFromDependencies = <
         descriptor.accessWorkload,
       ),
       'accessActor',
-      descriptor.accessActor,
+      accessActor,
     );
     /**
      * A field group is always decided on rights (D6, O17). An `identity` read admits its relayed subject
@@ -1449,14 +1454,7 @@ const readRuntimeFromDependencies = <
      * for the field capability. A workload subject holds no field grant, so the groups name no workload
      * subject and its governed fields are projected out, whichever mode admitted it to the read.
      */
-    const fieldGroupActor =
-      descriptor.accessActor === undefined
-        ? undefined
-        : Object.freeze({
-            callers: descriptor.accessActor.callers,
-            reason: descriptor.accessActor.reason,
-            subject: 'rights' as const,
-          });
+    const fieldGroupActor = readFieldGroupActor(accessActor);
 
     /** The legacy resolution of a read still on a legacy kind; removed with those kinds (C03b). */
     const prepareLegacyReadAuthorization = Effect.fn('ReadRuntime.prepareLegacyReadAuthorization')(
@@ -1465,7 +1463,7 @@ const readRuntimeFromDependencies = <
         scope: OperationalScope,
       ): Effect.fn.Return<LegacyReadAuthorization, ReadCoreError> {
         const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
-          input.registration,
+          registration,
           legacyInput,
           scope,
         );
@@ -1473,7 +1471,7 @@ const readRuntimeFromDependencies = <
         const resourcePermissionTarget = yield* resolveReadResourcePermissionTarget(
           legacyInput,
           scope,
-          getReadResourcePermissionTargetResolver(input.registration),
+          getReadResourcePermissionTargetResolver(registration),
         );
         const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Object.freeze([
           ...(permissionTarget.kind === 'any_of' ? permissionTarget.targets : [permissionTarget]).map((target) =>
@@ -1663,7 +1661,7 @@ const readRuntimeFromDependencies = <
         // connection row and both the agent and the operator that row names must act there. It holds no legacy tuple.
         const { legalEntityId } = readScope;
         if (
-          input.registration.descriptor.readKey !== agentProposalQueueReadKey ||
+          descriptor.readKey !== agentProposalQueueReadKey ||
           accessDecision === undefined ||
           legalEntityId === undefined ||
           readScope.connection?.agentConnection === undefined
@@ -1690,7 +1688,7 @@ const readRuntimeFromDependencies = <
               contextAccess,
               readScope,
               legacy.permissionTarget,
-              input.registration.descriptor.legalEntityScope === 'forbidden',
+              descriptor.legalEntityScope === 'forbidden',
             );
         const resourcePermissionDecision: PermissionDecision = Option.isSome(legacy.resourcePermissionTarget)
           ? yield* checkAtomicPermissionTarget(
@@ -1708,7 +1706,7 @@ const readRuntimeFromDependencies = <
         const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
           contextAccess,
           readScope,
-          input.registration.descriptor,
+          descriptor,
           canonicalPermissionTarget(legacy.permissionTarget),
           permissionDecision,
         );
@@ -1730,7 +1728,7 @@ const readRuntimeFromDependencies = <
           ? yield* loadModuleOperationAdmission(
               options.applicationComposition,
               options.expectedDeployment,
-              input.registration,
+              registration,
               principal,
               options.ownerRegistration,
               shellSystemReads,
@@ -1741,7 +1739,7 @@ const readRuntimeFromDependencies = <
         return yield* unavailableReadComposition();
       }
       if (admission?.catalog !== undefined) {
-        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
+        yield* validateBoundOperationOwner(registration, admission.catalog, options.ownerRegistration).pipe(
           Effect.mapError(unavailableReadComposition),
         );
       }
@@ -1757,7 +1755,7 @@ const readRuntimeFromDependencies = <
         gateAuthorization: ReadGateAuthorization,
         readScope: OperationalScope,
       ): Effect.fn.Return<AccessAnswers<AccessQuestions> | undefined, ReadPermissionUnavailable> {
-        const accessQuestions = getReadAccessQuestions(input.registration);
+        const accessQuestions = getReadAccessQuestions(registration);
         if (accessQuestions.length === 0) {
           return undefined;
         }
@@ -1774,7 +1772,7 @@ const readRuntimeFromDependencies = <
           gate: accessDecision,
           now: decidedAt,
           own: withOptional({ decision: mainAccessDecision }, 'listAccess', gateAuthorization.listAccess),
-          questions: accessQuestions,
+          questions: resolveCoreReadAccessQuestions(accessQuestions, receiverBindings),
           scope: readScope,
         });
       },
@@ -1792,8 +1790,8 @@ const readRuntimeFromDependencies = <
           {
             capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
             operation: 'read' as const,
-            operationKey: input.registration.descriptor.readKey,
-            owningModuleKey: input.registration.descriptor.owningModuleKey,
+            operationKey: descriptor.readKey,
+            owningModuleKey: descriptor.owningModuleKey,
             scope: readScope,
             targets: ownerAuthorizationTargets,
           },
@@ -1826,7 +1824,7 @@ const readRuntimeFromDependencies = <
         buildKernel.pipe(
           Effect.flatMap((kernel) =>
             executeRunFormRead(
-              input.registration,
+              registration,
               withOptional(
                 withOptional(
                   {
@@ -1845,7 +1843,7 @@ const readRuntimeFromDependencies = <
                           loadCatalog: operationCatalogLoader(operationAuthority, admitted.executionRevision),
                           ownerRegistration: options.ownerRegistration,
                           phase: 'execution',
-                          registration: input.registration,
+                          registration,
                           revision: admitted.executionRevision,
                           scope: admitted.scope,
                         },
@@ -1881,7 +1879,7 @@ const readRuntimeFromDependencies = <
           withOptionalProperty(
             {
               correlationId: transport.correlationId,
-              legalEntityScope: input.registration.descriptor.legalEntityScope,
+              legalEntityScope: descriptor.legalEntityScope,
               principal,
             },
             transport.traceId !== undefined,
@@ -1899,10 +1897,10 @@ const readRuntimeFromDependencies = <
       // The descriptor decides which authority answers (O62, O68): a v2 carrier is decided by the one
       // access gate, and a descriptor still on a legacy kind keeps the legacy checks until C05 moves it.
       const accessTarget = usesAccessGate
-        ? yield* resolveReadAccessTarget(decodedInput, scope, getReadAccessTargetResolver(input.registration))
+        ? yield* resolveReadAccessTarget(decodedInput, scope, getReadAccessTargetResolver(registration))
         : Option.none<AccessRecordTarget>();
       const accessOwnerFacts = usesAccessGate
-        ? yield* resolveReadOwnerFacts(decodedInput, scope, getReadOwnerFactsResolver(input.registration))
+        ? yield* resolveReadOwnerFacts(decodedInput, scope, getReadOwnerFactsResolver(registration))
         : Option.none<OwnerAccessFacts>();
       const legacyAuthorization = usesAccessGate
         ? Option.none<LegacyReadAuthorization>()
@@ -1917,16 +1915,12 @@ const readRuntimeFromDependencies = <
         ? legacyAuthorization.value.permissionTargetMetadata
         : accessTargetMetadata(descriptor.accessDeclaration, accessTarget);
       const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
-        input.registration,
+        registration,
         principal,
         { ...options, shellSystemReads },
       ).pipe(Effect.mapError(unavailableReadComposition));
-      const snapshot = yield* gateway.prepareSnapshot(
-        scope,
-        [input.registration.descriptor.entrypoint],
-        intrinsicDependencies,
-      );
-      yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
+      const snapshot = yield* gateway.prepareSnapshot(scope, [descriptor.entrypoint], intrinsicDependencies);
+      yield* gateway.check(snapshot, descriptor.entrypoint);
       stage('module_state_checked');
 
       const gateAuthorization: ReadGateAuthorization = usesAccessGate
@@ -1946,21 +1940,21 @@ const readRuntimeFromDependencies = <
           executor,
           withOptionalProperty(
             {
-              accessKind: input.registration.descriptor.accessKind,
-              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              accessKind: descriptor.accessKind,
+              captureMode: descriptor.evidencePolicy.captureMode,
               outcome: 'denied',
               outcomeCode: usesAccessGate ? 'access_denied' : 'spicedb_permission_denied',
               outcomeStage: 'authz',
-              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+              policyKey: descriptor.evidencePolicy.policyKey,
             },
             queryHash !== undefined,
             'queryHash',
             queryHash,
             {
-              readKey: input.registration.descriptor.readKey,
+              readKey: descriptor.readKey,
               resultCount: 0,
               scope,
-              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              servingModuleKey: descriptor.owningModuleKey,
               ...permissionTargetMetadata,
             },
           ),
@@ -1980,18 +1974,18 @@ const readRuntimeFromDependencies = <
       }
       const admittedCompositionRevision = yield* admitReadComposition(earlyCompositionRevision);
       const executionRevision = admittedCompositionRevision ?? '';
-      const policies = getReadPolicyImplementations(input.registration);
+      const policies = getReadPolicyImplementations(registration);
       yield* withReadExecution(
         {
           loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
           ownerRegistration: options.ownerRegistration,
           phase: 'execution',
-          registration: input.registration,
+          registration,
           revision: executionRevision,
           scope,
         },
         Effect.forEach(
-          input.registration.descriptor.policies.entries(),
+          descriptor.policies.entries(),
           ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
             const policy = policies[index];
             if (policy === undefined) {
@@ -2068,7 +2062,7 @@ const readRuntimeFromDependencies = <
       // Only now, with the read's own decision ALLOWED (and its policies passed), Core asks the
       // descriptor's extra access questions.
       const accessAnswers = yield* answerReadAccessQuestions(gateAuthorization, scope);
-      if (getReadRun(input.registration) !== undefined) {
+      if (getReadRun(registration) !== undefined) {
         // Admitted, and no transaction is held here: the governed admission fence already committed, so
         // `run` starts with no transaction or composition lock open across its module code.
         return yield* executeRunForm({
@@ -2084,7 +2078,7 @@ const readRuntimeFromDependencies = <
 
       const trustedSettlement = makeReadSettlementRecovery();
       const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
-        sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
+        sanitizeReadHandlerFailure(getReadDomainErrorSchema(registration), failure),
       );
       /**
        * A short, admitted, scoped, guarded owner transaction for `finish`: an evaluation that
@@ -2134,9 +2128,9 @@ const readRuntimeFromDependencies = <
       const authorizedReadProgram = Effect.gen(function* executeAuthorizedRead() {
         // Owner `prepare`: SpiceDB grants and other remote calls, before any transaction exists, so a
         // slow authorization round trip never holds a pooled connection. It yields the transaction step.
-        const loadWith = yield* Effect.suspend(() =>
-          getReadStages(input.registration)(decodedInput, ownerStepsContext),
-        ).pipe(sanitizeOwnerFailure);
+        const loadWith = yield* Effect.suspend(() => getReadStages(registration)(decodedInput, ownerStepsContext)).pipe(
+          sanitizeOwnerFailure,
+        );
         let closeWorkloadAdmission: (() => void) | undefined;
         const readTransactionBody = Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBodyEffect(
           transaction: CoreTransaction,
@@ -2166,8 +2160,8 @@ const readRuntimeFromDependencies = <
                         capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
                         operation: 'read' as const,
                         operationAt,
-                        operationKey: input.registration.descriptor.readKey,
-                        owningModuleKey: input.registration.descriptor.owningModuleKey,
+                        operationKey: descriptor.readKey,
+                        owningModuleKey: descriptor.owningModuleKey,
                         scope,
                         targets: ownerAuthorizationTargets,
                       },
@@ -2187,8 +2181,8 @@ const readRuntimeFromDependencies = <
           );
           const ownerAuthorization = yield* ownerAuthorizationFromExit({
             capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
-            operationKey: input.registration.descriptor.readKey,
-            owningModuleKey: input.registration.descriptor.owningModuleKey,
+            operationKey: descriptor.readKey,
+            owningModuleKey: descriptor.owningModuleKey,
           })(ownerAuthorizationExit);
           if (ownerAuthorization.decision === 'denied') {
             // The gate and "Proč?" cannot see an owner rule, so the refusal names the owner's reason codes.
@@ -2214,7 +2208,7 @@ const readRuntimeFromDependencies = <
               reason: 'Owner-local Read authorization is temporarily unavailable',
             });
           }
-          const services = yield* getReadServiceFactory(input.registration)(
+          const services = yield* getReadServiceFactory(registration)(
             scoped,
             scope,
             admittedCompositionRevision,
@@ -2255,7 +2249,7 @@ const readRuntimeFromDependencies = <
         // propagate untouched; only the owner's after-commit step is sanitized as an owner failure.
         const finish = yield* transactionResult;
         const handlerResult = yield* finish.pipe(sanitizeOwnerFailure);
-        const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
+        const result = yield* Schema.decodeUnknownEffect(Schema.toType(descriptor.resultSchema), {
           onExcessProperty: 'error',
         })(handlerResult.result).pipe(
           Effect.mapError((parseIssue) =>
@@ -2269,14 +2263,14 @@ const readRuntimeFromDependencies = <
           ),
         );
         stage('result_decoded');
-        const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
+        const resultPermissionResolver = getReadResultPermissionTargetResolver(registration);
         if (resultPermissionResolver !== undefined && permissionTarget !== undefined) {
           // Legacy result filtering; a v2 row-scoped read applies the gate's list predicate in its
           // own query instead (O25), so this path belongs to the legacy kinds only (C03b).
           yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
         }
         const evidence = yield* validateReadEvidenceMetadata(
-          input.registration.descriptor.evidencePolicy.captureMode,
+          descriptor.evidencePolicy.captureMode,
           handlerResult.evidence,
         );
         // The governed read committed with the connection back in the pool, so the allowed evidence
@@ -2287,18 +2281,18 @@ const readRuntimeFromDependencies = <
             withOptionalProperty(
               withOptionalProperty(
                 {
-                  accessKind: input.registration.descriptor.accessKind,
-                  captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                  accessKind: descriptor.accessKind,
+                  captureMode: descriptor.evidencePolicy.captureMode,
                   outcome: 'allowed',
                   outcomeCode: 'read_allowed',
                   outcomeStage: 'evidence',
-                  policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+                  policyKey: descriptor.evidencePolicy.policyKey,
                 },
                 queryHash !== undefined,
                 'queryHash',
                 queryHash,
                 {
-                  readKey: input.registration.descriptor.readKey,
+                  readKey: descriptor.readKey,
                   resultCount: evidence.resultCount,
                 },
               ),
@@ -2312,7 +2306,7 @@ const readRuntimeFromDependencies = <
             evidence.resultFingerprintSchema,
             {
               scope,
-              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              servingModuleKey: descriptor.owningModuleKey,
               ...permissionTargetMetadata,
             },
           ),
@@ -2322,11 +2316,7 @@ const readRuntimeFromDependencies = <
         stage('evidence_persisted');
         // The complete payload was decoded, validated and hashed by its owner above; the caller
         // receives the projection of the field groups it may read (O17).
-        const projected = projectReadResultFields(
-          result,
-          gateAuthorization.deniedFieldPaths,
-          input.registration.descriptor.resultSchema,
-        );
+        const projected = projectReadResultFields(result, gateAuthorization.deniedFieldPaths, descriptor.resultSchema);
         if (Option.isNone(projected)) {
           return yield* new ReadPermissionUnavailable({
             code: 'read_permission_unavailable',
@@ -2341,7 +2331,7 @@ const readRuntimeFromDependencies = <
             loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
             ownerRegistration: options.ownerRegistration,
             phase: 'execution',
-            registration: input.registration,
+            registration,
             revision: executionRevision,
             scope,
           },
@@ -2362,21 +2352,21 @@ const readRuntimeFromDependencies = <
           executor,
           withOptionalProperty(
             {
-              accessKind: input.registration.descriptor.accessKind,
-              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              accessKind: descriptor.accessKind,
+              captureMode: descriptor.evidencePolicy.captureMode,
               outcome: 'denied',
               outcomeCode: 'read_permission_denied',
               outcomeStage: 'authz',
-              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+              policyKey: descriptor.evidencePolicy.policyKey,
             },
             queryHash !== undefined,
             'queryHash',
             queryHash,
             {
-              readKey: input.registration.descriptor.readKey,
+              readKey: descriptor.readKey,
               resultCount: 0,
               scope,
-              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              servingModuleKey: descriptor.owningModuleKey,
               ...permissionTargetMetadata,
             },
           ),
@@ -2482,6 +2472,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   const accessDecision = yield* bindLiveAccessGate;
   const principalKinds = yield* AccessPrincipalKindSource;
   const moduleCallRoute = yield* Effect.serviceOption(ModuleCallRoute);
+  const receiverBindings = yield* Effect.serviceOption(CoreReadReceiverBindings);
   return {
     accessDecision,
     contextAccess,
@@ -2493,6 +2484,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
       ? ownerAuthorizationOverlay.value
       : failClosedOwnerAuthorizationOverlay,
     principalKinds,
+    receiverBindings: Option.getOrUndefined(receiverBindings),
     scopeResolver,
   };
 });
@@ -2511,6 +2503,7 @@ export const ReadRuntimeLive = Layer.effect(
         moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
+        receiverBindings,
         scopeResolver,
       }) =>
         readRuntimeFromDependencies(
@@ -2519,7 +2512,7 @@ export const ReadRuntimeLive = Layer.effect(
           scopeResolver,
           contextAccess,
           withOptional(
-            { accessDecision, databaseIdentities, ownerAuthorizationOverlay, principalKinds },
+            { accessDecision, databaseIdentities, ownerAuthorizationOverlay, principalKinds, receiverBindings },
             'moduleCallRoute',
             Option.getOrUndefined(moduleCallRoute),
           ),
@@ -2550,6 +2543,7 @@ export const makeReadRuntimeLive = (
         moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
+        receiverBindings,
         scopeResolver,
       } = yield* readRuntimeDependencies;
       const shellSystemReads =
@@ -2562,6 +2556,7 @@ export const makeReadRuntimeLive = (
           expectedDeployment,
           ownerAuthorizationOverlay,
           principalKinds,
+          receiverBindings,
         },
         'moduleCallRoute',
         Option.getOrUndefined(moduleCallRoute),

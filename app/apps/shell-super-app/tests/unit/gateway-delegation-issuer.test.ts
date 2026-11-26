@@ -1,4 +1,6 @@
 import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
+import { GatewayNativeRoutePolicy } from '../../api/auth/gateway-native-route-policy.ts';
+import { symmyNativeRoutePolicy } from '../../api/symmy/native-evidence-policy.ts';
 import type {
   GatewayContextV2ClaimsSchema,
   GatewayRefusalReason,
@@ -584,6 +586,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
         }),
       ),
       Effect.provide(GatewayNativeEvidenceLive.pipe(Layer.provide(coreDatabase))),
+      Effect.provideService(GatewayNativeRoutePolicy, symmyNativeRoutePolicy),
       Effect.provide(
         Layer.mock(AccessDecisionGate, {
           decide: () => Effect.die('Legacy delegation unexpectedly requested Privacy dispatch authority'),

@@ -2416,8 +2416,8 @@ describe('closes strict scalar observations and rejects computed evaluator capab
   ]);
 });
 
-describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
-  const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
+describe('uses the owning Shell runtime Layer and rejects direct composition constructor imports', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
   const owner = nodePath.join(directory, 'app/apps/shell-super-app');
   // The API root and every module its transport Layer imports: the Shell-owned routes, live changes and the MCP endpoint.
   for (const file of [
@@ -2440,6 +2440,17 @@ describe('proves the actual Shell API composition factory from current owner sou
       processImports,
       "import { makeShellAuthenticationApiRuntime } from '../../api/index.ts'; void makeShellAuthenticationApiRuntime;",
       directRunMain,
+    ].join('\n'),
+  );
+  reject(consumer, [
+    { message: serviceConstructorMessage.replace('makeCustomerSchema', 'makeShellAuthenticationApiRuntime') },
+  ]);
+  write(
+    consumer,
+    [
+      processImports,
+      "import { ShellAuthenticationApiRuntime, ShellAuthenticationApiRuntimeConfiguration, ShellAuthenticationApiRuntimeLive, shellProductionRuntimeArguments } from '../../api/index.ts';",
+      'NodeRuntime.runMain(ShellAuthenticationApiRuntime.pipe(Effect.provide(ShellAuthenticationApiRuntimeLive), Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, shellProductionRuntimeArguments), Effect.asVoid));',
     ].join('\n'),
   );
   accept(consumer);
@@ -3001,9 +3012,12 @@ it('proves the actual Party Match Decision ResourceRef builder', () => {
   ).toBe(true);
 });
 
-ruleTester.run('accepts the actual Shell native child composition root', serviceRule, {
+ruleTester.run('accepts the actual Shell native child composition roots', serviceRule, {
   invalid: [],
-  valid: [repositoryCase('apps/shell-super-app/tests/support/api-key-gateway-native-child.ts')],
+  valid: [
+    'apps/shell-super-app/tests/support/api-key-gateway-native-child.ts',
+    'apps/shell-super-app/tests/support/tenant-party-shell-http.ts',
+  ].map(repositoryCase),
 });
 
 const pricingRouteInputs = repositoryCase('scripts/integration/support/symmy-c14-pricing-routes-inputs.mts');

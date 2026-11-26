@@ -1,43 +1,36 @@
+import { resolveReceiverExecutorEnrollment } from '@app/core-runtime/modules/manifest';
+import type {
+  DispatchContract,
+  DispatchSelection,
+  GatewayNativeEvidenceOperations,
+  NativeAssertionInput,
+  NativeRecoveryInput,
+  NativeWorkloadInput,
+  OriginalAction,
+  RecoverySource,
+  RouteSourceWorkloads,
+  WorkloadSubject,
+} from './gateway-native-evidence.ts';
 import { OntosModuleIdSchema, recoverSqlTransactionError } from '@app/core-runtime';
-import type { ModuleEntrypointAccess } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
-import {
-  RegisteredGatewayWorkloadSchema,
-  RegisteredGatewayPrivacyDispatchSchema,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type {
   RegisteredGatewayWorkload,
   RegisteredGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import {
-  OutboxPayloadSchema as PrivacyOutboxPayloadSchema,
-  outboxProducerModuleKey as privacyModule,
-  outboxTopic as privacyOutboxTopic,
-} from '@app/privacy/outbox/privacy-measure-dispatched';
-import { validatePrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import {
-  OutboxPayloadSchema,
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '@app/symmy-integration/outbox/integration-symmy-job-admitted-v1';
-import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Effect, Layer, Match, Option, Schema } from 'effect';
+import { Effect, Layer, Match, Option, Predicate, Schema } from 'effect';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
-import type { GatewayDelegationRequestPayload } from './gateway-delegation-issuer.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import {
   gatewayRegisteredAdmissionOperationContractAllows,
   gatewayRegisteredWorkerOperationContractAllows,
 } from './gateway-delegation-policy.ts';
-import type { GatewayModuleBinding, GatewayRegisteredWorkloadRule } from './gateway-delegation-policy.ts';
-import type { RouteScopeFacts } from './gateway-symmy-route-proof.ts';
+import type { GatewayRegisteredWorkloadRule } from './gateway-delegation-policy.ts';
 import type { PaymentRouteWorkload } from './gateway-payment-route-errors.ts';
 import { PaymentRouteWorkloadSchema, forbidden, unavailable } from './gateway-payment-route-errors.ts';
 import {
@@ -47,12 +40,6 @@ import {
 import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
 
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
-type OriginalAction = InstalledContract['manifest']['publicSurface']['actions'][number];
-type RecoverySubject = Extract<GatewayDelegationRequestPayload['subject'], { readonly _tag: 'RegisteredRecovery' }>;
-type RecoverySource = RecoverySubject['source'];
-type AssertionSubject = Extract<GatewayDelegationRequestPayload['subject'], { readonly _tag: 'RegisteredAssertion' }>;
-type Route = typeof SymmyRouteContextResponseSchema.Type;
-type SourcePurpose = RouteScopeFacts['sourcePurpose'];
 const paymentSourceWorkload = 'payment.source-ingress';
 /** Payment admission needs both its ingress workload and current source-owner authority, even after ingress. */
 const originalPaymentAuthority = (principal: 'p' | 'original', workload: SQL) => {
@@ -328,7 +315,7 @@ const makeValidatePaymentRoutePrincipal = (database: CoreDatabase['Service']) =>
 const makeValidateRoutePrincipal = (database: CoreDatabase['Service']) => {
   const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(function* validatePrincipal(
     candidate: TrustedPrincipalContext,
-    sourcePurpose: SourcePurpose,
+    source: RouteSourceWorkloads,
   ) {
     const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(candidate).pipe(
       Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
@@ -362,7 +349,7 @@ const makeValidateRoutePrincipal = (database: CoreDatabase['Service']) => {
       where p.tenant_id=${principal.tenantId}::uuid and p.principal_id=${principal.principalId}::uuid
         and p.kind='integration' and p.status='active'
         and exists(select 1 from core.access_workload_bindings w where w.tenant_id=p.tenant_id and w.principal_id=p.principal_id
-          and w.status='active' and (w.workload_key='integration.symmy-admit' or (${sourcePurpose}='read' and w.workload_key='integration.symmy-poll')))
+          and w.status='active' and (w.workload_key=${source.preferred} or w.workload_key=${source.secondary ?? null}))
       limit 2`,
             'objects',
           );
@@ -382,41 +369,42 @@ const makeSelectNativeReadReceiver = (database: CoreDatabase['Service']) => {
   const nativeReadRowSchema = Schema.Struct({
     bindingIncarnation: Schema.String.check(Schema.isUUID()),
     originalWorkloadBindingIncarnation: Schema.String.check(Schema.isUUID()),
-    originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+    originalWorkloadKey: RegisteredGatewayWorkloadSchema.fields.workloadKey,
     principalId: TrustedPrincipalContextSchema.fields.principalId,
   });
   const selectNativeReadReceiver = Effect.fn('SymmyRouteScope.selectNativeReadReceiver')(function* select(
-    facts: RouteScopeFacts,
-    route: Route,
+    principal: TrustedPrincipalContext,
+    legalEntityId: string | undefined,
     workloadKey: string,
+    source: RouteSourceWorkloads,
   ) {
     const systemCount = sql`(
     select count(*) from core.access_workload_bindings sb
     join core.principals sp on sp.tenant_id=sb.tenant_id and sp.principal_id=sb.principal_id
       and sp.kind='system' and sp.status='active'
-    where sb.tenant_id=${facts.principal.tenantId}::uuid and sb.workload_key=${workloadKey} and sb.status='active'
+    where sb.tenant_id=${principal.tenantId}::uuid and sb.workload_key=${workloadKey} and sb.status='active'
   )`;
     const service =
-      route.legalEntityId === undefined
+      legalEntityId === undefined
         ? sql`false`
         : sql`
     receiver.kind='service' and receiver.platform_role='internal_workload'
     and receiver.principal_id=${internalWorkloadPrincipalId({
-      legalEntityId: route.legalEntityId,
-      tenantId: facts.principal.tenantId,
+      legalEntityId,
+      tenantId: principal.tenantId,
       workloadKey,
     })}::uuid
     and exists (
       select 1 from core.access_workload_company_bindings cb
       join core.legal_entities le on le.tenant_id=cb.tenant_id and le.legal_entity_id=cb.legal_entity_id and le.status='active'
       where cb.tenant_id=b.tenant_id and cb.workload_binding_id=b.binding_id and cb.status='active'
-        and cb.legal_entity_id=${route.legalEntityId}::uuid
+        and cb.legal_entity_id=${legalEntityId}::uuid
     )`;
     const rows = yield* database.executor
       .transaction(
         Effect.fn('SymmyRouteScope.nativeReadEvidence')(function* nativeReadEvidence(transaction) {
           yield* transaction.execute(
-            sql`select set_config('ontos.tenant_id', ${facts.principal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
+            sql`select set_config('ontos.tenant_id', ${principal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
             'objects',
           );
           return yield* transaction.execute(
@@ -427,28 +415,28 @@ const makeSelectNativeReadReceiver = (database: CoreDatabase['Service']) => {
         from core.access_workload_bindings b
         join core.tenants t on t.tenant_id=b.tenant_id and t.status='active'
         join core.principals receiver on receiver.tenant_id=b.tenant_id and receiver.principal_id=b.principal_id and receiver.status='active'
-        join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${facts.principal.principalId}::uuid
+        join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${principal.principalId}::uuid
           and original.kind='integration' and original.status='active'
         join core.principal_auth_bindings original_auth on original_auth.tenant_id=original.tenant_id
           and original_auth.principal_id=original.principal_id
-          and original_auth.principal_auth_binding_id=${facts.principal.authBindingId}::uuid
+          and original_auth.principal_auth_binding_id=${principal.authBindingId}::uuid
           and original_auth.status='active' and original_auth.revoked_at is null
           and original_auth.provider='better_auth' and original_auth.subject_type='api_key'
-          and original_auth.provider_subject_id=${facts.principal.authContextRef?.slice('better-auth-api-key:'.length) ?? ''}
-          and original_auth.authentication_namespace_id=${facts.principal.authenticationNamespaceId ?? ''}
+          and original_auth.provider_subject_id=${principal.authContextRef?.slice('better-auth-api-key:'.length) ?? ''}
+          and original_auth.authentication_namespace_id=${principal.authenticationNamespaceId ?? ''}
         join core.access_workload_bindings original_binding on original_binding.tenant_id=original.tenant_id
           and original_binding.principal_id=original.principal_id and original_binding.status='active'
-          and (original_binding.workload_key='integration.symmy-admit' or (
-            ${facts.sourcePurpose}='read' and original_binding.workload_key='integration.symmy-poll'
+          and (original_binding.workload_key=${source.preferred} or (
+            original_binding.workload_key=${source.secondary ?? null}
             and not exists(select 1 from core.access_workload_bindings preferred
               where preferred.tenant_id=original.tenant_id and preferred.principal_id=original.principal_id
-                and preferred.workload_key='integration.symmy-admit' and preferred.status='active')
+                and preferred.workload_key=${source.preferred} and preferred.status='active')
           ))
-        where b.tenant_id=${facts.principal.tenantId}::uuid and b.workload_key=${workloadKey} and b.status='active'
+        where b.tenant_id=${principal.tenantId}::uuid and b.workload_key=${workloadKey} and b.status='active'
           and ((receiver.kind='system' and ${systemCount}=1) or (${systemCount}=0 and ${service}))
-          and (${route.legalEntityId ?? null}::uuid is null or exists(
+          and (${legalEntityId ?? null}::uuid is null or exists(
             select 1 from core.legal_entities company where company.tenant_id=t.tenant_id
-              and company.legal_entity_id=${route.legalEntityId ?? null}::uuid and company.status='active'))
+              and company.legal_entity_id=${legalEntityId ?? null}::uuid and company.status='active'))
         limit 2`,
             'objects',
           );
@@ -473,53 +461,16 @@ const makeSelectNativeReadReceiver = (database: CoreDatabase['Service']) => {
   return selectNativeReadReceiver;
 };
 
-const makeLoadPrivacyDispatchRow = (database: CoreDatabase['Service']) => {
-  const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
-  const dispatchActionKey = 'privacy.core.dispatch-privacy-measure';
-  const symmyModule = 'integration.symmy';
-  const workerKey = 'integration.symmy.symmy-job-privacy-dispatch';
-  type Handoff = typeof PrivacyMeasureHandoffSchema.Type;
-  const rowSchema = Schema.Struct({
-    claimActive: Schema.Boolean,
-    claimId: Schema.OptionFromNullOr(Schema.NonEmptyString),
-    deliveryId: metadataFields.deliveryId,
-    dispatchInvocationId: metadataFields.dispatchInvocationId,
-    domainEventId: metadataFields.domainEventId,
-    eventPayload: PrivacyOutboxPayloadSchema,
-    governanceLegalEntityId: metadataFields.governanceLegalEntityId,
-    measureId: metadataFields.measureId,
-    messageId: metadataFields.messageId,
-    messagePayload: PrivacyOutboxPayloadSchema,
-    principalId: metadataFields.principalId,
-    tenantId: metadataFields.tenantId,
-  });
-  type Row = typeof rowSchema.Type;
-  const isSupportedHandoff = (handoff: Handoff, row: Row): boolean => {
-    const [resource] = handoff.resourceRefs;
-    const [content] = handoff.contentScopeRefs;
-    const match = /^integration\.symmy\.(?:job|sync-admission):(?<id>[a-fA-F\d-]+)$/u.exec(resource ?? '');
-    return (
-      validatePrivacyMeasureHandoff(handoff).length === 0 &&
-      handoff.tenantId === row.tenantId &&
-      handoff.owningCapability === symmyModule &&
-      (handoff.kind === 'DELETE' || handoff.kind === 'ANONYMIZE') &&
-      handoff.dispositionDecision === handoff.kind &&
-      handoff.resourceRefs.length === 1 &&
-      handoff.contentScopeRefs.length === 1 &&
-      Schema.is(Schema.String.check(Schema.isUUID()))(match?.groups?.['id']) &&
-      content === `${resource}#integration.symmy.job-intent` &&
-      handoff.measureId === row.measureId &&
-      computeCanonicalValueHash(handoff) === computeCanonicalValueHash(row.eventPayload.handoff)
-    );
-  };
-  const loadPrivacyDispatchRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(input: {
-    readonly deliveryId?: string;
-    readonly dispatchInvocationId?: string;
-    readonly tenantId: string;
-  }) {
+const makeLoadDispatchRow = (database: CoreDatabase['Service']) => {
+  const loadDispatchRow = Effect.fn('GatewayNativeEvidence.loadDispatchRow')(function* load<A, I>(
+    input: DispatchSelection,
+    contract: DispatchContract,
+    schema: Schema.Codec<A, I>,
+    admits: (row: A) => boolean,
+  ) {
     return yield* database.executor
       .transaction(
-        Effect.fn('PrivacyDispatchEvidence.nativeTransaction')(function* native(transaction) {
+        Effect.fn('GatewayNativeEvidence.dispatchTransaction')(function* native(transaction) {
           yield* transaction.execute(
             sql`select set_config('ontos.tenant_id',${input.tenantId},true),set_config('ontos.legal_entity_id','',true)`,
             'objects',
@@ -541,18 +492,18 @@ const makeLoadPrivacyDispatchRow = (database: CoreDatabase['Service']) => {
       join core.domain_events e on e.tenant_id=i.tenant_id and e.action_invocation_id=i.action_invocation_id and e.legal_entity_id=i.legal_entity_id
       join core.outbox_messages m on m.tenant_id=e.tenant_id and m.domain_event_id=e.domain_event_id
       join core.outbox_deliveries d on d.outbox_message_id=m.outbox_message_id
-      where i.tenant_id=${input.tenantId}::uuid and i.action_key=${dispatchActionKey} and i.status='succeeded' and ${selection}
-        and e.producer_module_key=${privacyModule} and e.subject_module_key=${privacyModule} and e.subject_resource_type='privacy.core.privacy-measure'
-        and e.event_type=${privacyOutboxTopic} and m.topic=${privacyOutboxTopic} and m.producer_module_key=${privacyModule}
-        and d.consumer_module_key=${symmyModule} and d.worker_key=${workerKey}
+      where i.tenant_id=${input.tenantId}::uuid and i.action_key=${contract.actionKey} and i.status='succeeded' and ${selection}
+        and e.producer_module_key=${contract.producerModuleId} and e.subject_module_key=${contract.producerModuleId} and e.subject_resource_type=${contract.resourceType}
+        and e.event_type=${contract.topic} and m.topic=${contract.topic} and m.producer_module_key=${contract.producerModuleId}
+        and d.consumer_module_key=${contract.consumerModuleId} and d.worker_key=${contract.workerKey}
       limit 2`,
             'objects',
           );
-          const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(rowSchema), { onExcessProperty: 'error' })(
+          const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(schema), { onExcessProperty: 'error' })(
             rows,
           ).pipe(Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
           const [row] = parsed;
-          if (parsed.length !== 1 || row === undefined || !isSupportedHandoff(row.messagePayload.handoff, row)) {
+          if (parsed.length !== 1 || row === undefined || !admits(row)) {
             return yield* delegationForbidden('privacy_dispatch_not_admitted')();
           }
           return row;
@@ -568,14 +519,62 @@ const makeLoadPrivacyDispatchRow = (database: CoreDatabase['Service']) => {
       );
   });
 
-  return loadPrivacyDispatchRow;
+  return loadDispatchRow;
+};
+
+const requireReceiverEnrollment = (
+  receiver: InstalledContract,
+  operation: Parameters<typeof resolveReceiverExecutorEnrollment>[1],
+  use: Parameters<typeof resolveReceiverExecutorEnrollment>[2],
+) =>
+  Option.match(resolveReceiverExecutorEnrollment(receiver, operation, use), {
+    onNone: delegationForbidden('registered_operation_refused'),
+    onSome: Effect.succeed,
+  });
+
+const sourceActionKeyOf = (subject: WorkloadSubject): Option.Option<string> =>
+  Match.value(subject).pipe(
+    Match.tag('RegisteredWorkload', Option.none<string>),
+    Match.tag('RegisteredAdmission', (admission) => Option.some(admission.sourceActionKey)),
+    Match.exhaustive,
+  );
+const runReferenceOf = (subject: WorkloadSubject): string =>
+  Match.value(subject).pipe(
+    Match.tag('RegisteredWorkload', (worker) => worker.deliveryId),
+    Match.tag('RegisteredAdmission', (admission) => admission.actionInvocationId),
+    Match.exhaustive,
+  );
+
+const admissionAuthContextMatches = (subject: WorkloadSubject, authContextRef: string | undefined): boolean =>
+  Match.value(subject).pipe(
+    Match.tag('RegisteredWorkload', () => true),
+    Match.tag(
+      'RegisteredAdmission',
+      (admission) =>
+        admission.expectedAuthContextRef === undefined || admission.expectedAuthContextRef === authContextRef,
+    ),
+    Match.exhaustive,
+  );
+
+const completeWorkload = (
+  subject: WorkloadSubject,
+  moduleKey: string,
+  workload: RegisteredGatewayWorkload,
+): RegisteredGatewayWorkload => {
+  const scoped = subject.legalEntityId === undefined ? workload : { ...workload, legalEntityId: subject.legalEntityId };
+  return Match.value(subject).pipe(
+    Match.tag('RegisteredWorkload', (worker) => ({
+      ...scoped,
+      claimId: worker.claimId,
+      workerKey: worker.workerKey,
+      workerModuleKey: moduleKey,
+    })),
+    Match.tag('RegisteredAdmission', () => scoped),
+    Match.exhaustive,
+  );
 };
 
 const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
-  type WorkloadSubject = Extract<
-    GatewayDelegationRequestPayload['subject'],
-    { readonly _tag: 'RegisteredWorkload' | 'RegisteredAdmission' }
-  >;
   type WorkerSubject = Extract<WorkloadSubject, { readonly _tag: 'RegisteredWorkload' }>;
   const workloadFields = RegisteredGatewayWorkloadSchema.fields;
   const actionKeySchema = Schema.NonEmptyString.pipe(
@@ -611,18 +610,6 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
   });
   type OriginalRow = typeof originalRowSchema.Type;
   type SourceContract = ShellInstalledCatalog['contracts'][number];
-  const sourceActionKeyOf = (subject: WorkloadSubject): Option.Option<string> =>
-    Match.value(subject).pipe(
-      Match.tag('RegisteredWorkload', Option.none<string>),
-      Match.tag('RegisteredAdmission', (admission) => Option.some(admission.sourceActionKey)),
-      Match.exhaustive,
-    );
-  const runReferenceOf = (subject: WorkloadSubject): string =>
-    Match.value(subject).pipe(
-      Match.tag('RegisteredWorkload', (worker) => worker.deliveryId),
-      Match.tag('RegisteredAdmission', (admission) => admission.actionInvocationId),
-      Match.exhaustive,
-    );
   const originalIsAllowed = (
     original: OriginalRow,
     source: SourceContract,
@@ -639,43 +626,7 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
       )
     );
   };
-  const admissionAuthContextMatches = (subject: WorkloadSubject, authContextRef: string | undefined): boolean =>
-    Match.value(subject).pipe(
-      Match.tag('RegisteredWorkload', () => true),
-      Match.tag(
-        'RegisteredAdmission',
-        (admission) =>
-          admission.expectedAuthContextRef === undefined || admission.expectedAuthContextRef === authContextRef,
-      ),
-      Match.exhaustive,
-    );
-
-  const completeWorkload = (
-    subject: WorkloadSubject,
-    moduleKey: string,
-    workload: RegisteredGatewayWorkload,
-  ): RegisteredGatewayWorkload => {
-    const scoped =
-      subject.legalEntityId === undefined ? workload : { ...workload, legalEntityId: subject.legalEntityId };
-    return Match.value(subject).pipe(
-      Match.tag('RegisteredWorkload', (worker) => ({
-        ...scoped,
-        claimId: worker.claimId,
-        workerKey: worker.workerKey,
-        workerModuleKey: moduleKey,
-      })),
-      Match.tag('RegisteredAdmission', () => scoped),
-      Match.exhaustive,
-    );
-  };
-
-  const admitWorkload = Effect.fn('GatewayNativeEvidence.admitWorkload')(function* admit(input: {
-    readonly binding: GatewayModuleBinding;
-    readonly destination: InstalledContract;
-    readonly rule: GatewayRegisteredWorkloadRule;
-    readonly source: InstalledContract;
-    readonly subject: WorkloadSubject;
-  }) {
+  const admitWorkload = Effect.fn('GatewayNativeEvidence.admitWorkload')(function* admit(input: NativeWorkloadInput) {
     const { binding, destination, rule, source, subject } = input;
     return yield* database.executor
       .transaction(
@@ -731,6 +682,7 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
             ),
             Match.exhaustive,
           );
+          const enrollment = yield* requireReceiverEnrollment(destination, rule, 'admission');
           let systems = yield* transaction
             .execute(
               sql`
@@ -755,8 +707,7 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
           if (
             systems.length === 0 &&
             subject.legalEntityId !== undefined &&
-            (rule.workloadKey === 'party.registry.source-write' ||
-              rule.workloadKey === 'commerce.customer-context.source-write')
+            enrollment.enrollmentMode === 'system-or-canonical-company-service'
           ) {
             const principalId = internalWorkloadPrincipalId({
               legalEntityId: subject.legalEntityId,
@@ -917,15 +868,16 @@ const makeAdmitWorkload = (database: CoreDatabase['Service']) => {
 };
 
 const makeAdmitAssertion = (database: CoreDatabase['Service']) => {
-  const admitAssertion = Effect.fn('GatewayNativeEvidence.admitAssertion')(function* admit(input: {
-    readonly binding: GatewayModuleBinding;
-    readonly rule: GatewayRegisteredWorkloadRule;
-    readonly sourceAccess: ModuleEntrypointAccess;
-    readonly sourcePrincipal: TrustedPrincipalContext;
-    readonly subject: AssertionSubject;
-    readonly workload: RegisteredGatewayWorkload;
-  }) {
-    const { binding, rule, sourceAccess, sourcePrincipal, subject, workload } = input;
+  const admitAssertion = Effect.fn('GatewayNativeEvidence.admitAssertion')(function* admit(
+    input: NativeAssertionInput,
+  ) {
+    const { binding, destination, rule, source, sourceAccess, sourcePrincipal, subject, workload } = input;
+    const receiverEnrollment = yield* requireReceiverEnrollment(destination, rule, 'assertion');
+    const sourceEnrollment = yield* requireReceiverEnrollment(
+      source,
+      { ...workload, audience: source.deployment.appId },
+      'assertion',
+    );
     return yield* database.executor
       .transaction(
         Effect.fn('GatewayDelegation.registeredAssertionEvidence')(function* evidence(transaction) {
@@ -958,6 +910,7 @@ const makeAdmitAssertion = (database: CoreDatabase['Service']) => {
         ${originalAuthority}
         where receiver.tenant_id=${sourcePrincipal.tenantId}::uuid and receiver.workload_key=${rule.workloadKey} and receiver.status='active'
           and ${registeredAssertionPrincipalEligibility({
+            enrollmentMode: receiverEnrollment.enrollmentMode,
             side: 'receiver',
             tenantId: sourcePrincipal.tenantId,
             workloadKey: rule.workloadKey,
@@ -965,6 +918,7 @@ const makeAdmitAssertion = (database: CoreDatabase['Service']) => {
             legalEntityId: workload.legalEntityId,
           })}
           and ${registeredAssertionPrincipalEligibility({
+            enrollmentMode: sourceEnrollment.enrollmentMode,
             legalEntityId: workload.legalEntityId,
             side: 'source',
             tenantId: sourcePrincipal.tenantId,
@@ -1085,15 +1039,7 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
           workerKey: OntosModuleIdSchema,
         }),
       ),
-      historicalEvidence: Schema.optionalKey(
-        Schema.Struct({
-          eventPayload: OutboxPayloadSchema,
-          messagePayload: OutboxPayloadSchema,
-          subjectResourceId: OutboxPayloadSchema.fields.jobId,
-          subjectResourceType: Schema.Literal('integration.symmy.import-job'),
-          topic: Schema.Literal(outboxTopic),
-        }),
-      ),
+      historicalEvidence: Schema.optionalKey(Schema.Json),
       legalEntityId: Schema.OptionFromNullOr(legalEntityIdSchema),
       principalId: TrustedPrincipalContextSchema.fields.principalId,
     }),
@@ -1107,21 +1053,6 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
   );
 
   type SourceRow = (typeof sourceRowsSchema.Type)[number];
-
-  const historicalAdmissionMatches = (row: SourceRow, proof: RecoverySource): boolean =>
-    Match.value(proof).pipe(
-      Match.tag('HistoricalDelivery', () => {
-        const evidence = row.historicalEvidence;
-        return (
-          evidence !== undefined &&
-          evidence.eventPayload.jobId === evidence.messagePayload.jobId &&
-          evidence.eventPayload.jobId === evidence.subjectResourceId
-        );
-      }),
-      Match.tag('Worker', () => true),
-      Match.tag('Admission', () => true),
-      Match.exhaustive,
-    );
 
   const conditionalRecoveryContractAllows = (input: {
     readonly admission: SourceRow;
@@ -1191,16 +1122,8 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
     return Option.isSome(requiredCompany) && proof.legalEntityId === requiredCompany.value;
   };
 
-  const admitRecovery = Effect.fn('GatewayNativeEvidence.admitRecovery')(function* admit(input: {
-    readonly binding: GatewayModuleBinding;
-    readonly destination: InstalledContract;
-    readonly originalAction: OriginalAction;
-    readonly recoveryOf: NonNullable<GatewayRegisteredWorkloadRule['recoveryOf']>;
-    readonly rule: GatewayRegisteredWorkloadRule;
-    readonly source: InstalledContract;
-    readonly subject: RecoverySubject;
-  }) {
-    const { binding, destination, originalAction, recoveryOf, rule, source, subject } = input;
+  const admitRecovery = Effect.fn('GatewayNativeEvidence.admitRecovery')(function* admit(input: NativeRecoveryInput) {
+    const { binding, destination, historical, originalAction, recoveryOf, rule, source, subject } = input;
     const runReference = recoveryRunReference(subject.source);
     return yield* database.executor
       .transaction(
@@ -1240,9 +1163,9 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
           join core.action_invocations i on i.tenant_id=m.tenant_id and i.action_invocation_id=e.action_invocation_id and i.status='succeeded'
           join core.principals p on p.tenant_id=i.tenant_id and p.principal_id=i.principal_id and p.kind='integration'
           where d.outbox_delivery_id=${delivery.deliveryId}::uuid and d.worker_key=${delivery.workerKey}
-            and d.consumer_module_key=${outboxProducerModuleKey} and m.producer_module_key=${outboxProducerModuleKey}
-            and e.producer_module_key=${outboxProducerModuleKey} and e.subject_module_key=${outboxProducerModuleKey}
-            and m.topic=${outboxTopic} and e.event_type=${outboxTopic}
+            and d.consumer_module_key=${historical.moduleId} and m.producer_module_key=${historical.moduleId}
+            and e.producer_module_key=${historical.moduleId} and e.subject_module_key=${historical.moduleId}
+            and m.topic=${historical.topic} and e.event_type=${historical.topic}
             and m.tenant_id=${delivery.tenantId}::uuid and e.legal_entity_id is not distinct from i.legal_entity_id
           limit 2`,
             ),
@@ -1266,12 +1189,20 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
               ),
             ),
           );
+          const checks = yield* Effect.forEach(
+            admissions,
+            (row) =>
+              row.historicalEvidence === undefined
+                ? Effect.succeed(!Predicate.isTagged(proof, 'HistoricalDelivery'))
+                : historical.agrees(row.historicalEvidence),
+            { concurrency: 1 },
+          );
           const [admission] = admissions;
           if (
             admissions.length !== 1 ||
             admission === undefined ||
             !sourceAdmissionIsDeclared(admission, source, proof) ||
-            !historicalAdmissionMatches(admission, proof) ||
+            checks[0] !== true ||
             !recoveryCompanyMatches(originalAction, admission, proof, rule)
           ) {
             return yield* delegationForbidden('workload_source_not_admitted')();
@@ -1315,9 +1246,11 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
           if (originals.length !== 1 || original === undefined) {
             return yield* delegationForbidden('recovery_original_unmatched')();
           }
+          const enrollment = yield* requireReceiverEnrollment(destination, rule, 'recovery');
           const systems = yield* transaction
             .execute(
               registeredRecoveryReceiverStatement({
+                enrollmentMode: enrollment.enrollmentMode,
                 legalEntityId: proof.legalEntityId,
                 tenantId: proof.tenantId,
                 workloadKey: rule.workloadKey,
@@ -1390,20 +1323,6 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
   return admitRecovery;
 };
 
-export type GatewayPrivacyDispatchRow = Effect.Success<ReturnType<ReturnType<typeof makeLoadPrivacyDispatchRow>>>;
-
-export interface GatewayNativeEvidenceOperations {
-  readonly admitAssertion: ReturnType<typeof makeAdmitAssertion>;
-  readonly admitRecovery: ReturnType<typeof makeAdmitRecovery>;
-  readonly admitWorkload: ReturnType<typeof makeAdmitWorkload>;
-  readonly loadPrivacyDispatchRow: ReturnType<typeof makeLoadPrivacyDispatchRow>;
-  readonly selectNativeReadReceiver: ReturnType<typeof makeSelectNativeReadReceiver>;
-  readonly selectOnwardNativeReadReceiver: ReturnType<typeof makeSelectOnwardNativeReadReceiver>;
-  readonly validateCurrentHuman: ReturnType<typeof makeValidateCurrentHuman>;
-  readonly validatePaymentRoutePrincipal: ReturnType<typeof makeValidatePaymentRoutePrincipal>;
-  readonly validateRoutePrincipal: ReturnType<typeof makeValidateRoutePrincipal>;
-}
-
 /** Captures database custody once. Operations expose only fixed native admission facts. */
 export const GatewayNativeEvidenceLive = Layer.effect(
   GatewayNativeEvidence,
@@ -1413,7 +1332,7 @@ export const GatewayNativeEvidenceLive = Layer.effect(
       admitAssertion: makeAdmitAssertion(database),
       admitRecovery: makeAdmitRecovery(database),
       admitWorkload: makeAdmitWorkload(database),
-      loadPrivacyDispatchRow: makeLoadPrivacyDispatchRow(database),
+      loadDispatchRow: makeLoadDispatchRow(database),
       selectNativeReadReceiver: makeSelectNativeReadReceiver(database),
       selectOnwardNativeReadReceiver: makeSelectOnwardNativeReadReceiver(database),
       validateCurrentHuman: makeValidateCurrentHuman(database),

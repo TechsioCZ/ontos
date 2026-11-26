@@ -2,6 +2,7 @@ import { Array as EffectArray, Effect, FileSystem, Order, Path, Redacted, Result
 import type { PlatformError } from 'effect/PlatformError';
 
 import {
+  RECEIVING_HOST_CALLER_BINDING,
   collectAccessCatalog,
   decodeAccessDeclaration,
   decodeAccessFieldGroups,
@@ -11,6 +12,8 @@ import type {
   AccessActor,
   AccessCatalogDescriptor,
   AccessCatalogModule,
+  HostBoundRightsActorSchema,
+  StaticAccessActorSchema,
   WorkloadKey,
 } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/module-entrypoint.ts';
@@ -105,18 +108,16 @@ const entrypointOf = (carrier: ScannedCarrier) => {
 
 const carrierRef = (carrier: ScannedCarrier): string => `${carrier.file}: ${carrier.entrypoint.entrypointKey}`;
 
-/** The module caller of a descriptor, as the pinned artifact records it (D5): callers and subject only. */
-export interface StageAccessActor {
-  readonly callers: readonly string[];
-  readonly subject: AccessActor['subject'];
-  /** The callers that may bring such a workload subject, when narrower than every caller. */
-  readonly subjectWorkloadCallers?: readonly string[];
-  /** The workload keys that may stand as the subject of an identity call (workload subject), when declared. */
-  readonly subjectWorkloads?: readonly string[];
-}
+/** The caller policy a descriptor pins (D5): the decoded actor without the review prose. */
+export type StageAccessActor =
+  | Omit<typeof HostBoundRightsActorSchema.Type, 'reason'>
+  | Omit<typeof StaticAccessActorSchema.Type, 'reason'>;
 
 /** The module caller of a descriptor as the pinned artifact records it: the decoded carrier, minus its reason. */
 const stageActorOf = (actor: AccessActor): StageAccessActor => {
+  if (actor.callerBinding === RECEIVING_HOST_CALLER_BINDING) {
+    return { callerBinding: actor.callerBinding, callers: actor.callers, subject: actor.subject };
+  }
   if (actor.subjectWorkloads === undefined) {
     return { callers: actor.callers, subject: actor.subject };
   }

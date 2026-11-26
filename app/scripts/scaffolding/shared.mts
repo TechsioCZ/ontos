@@ -1717,7 +1717,7 @@ export const validRuntimeDeclarationViews = (
       manifest,
       manifestName,
       ['activation', 'publicSurface'],
-      ['originatorActions', 'registeredWorkloadCalls', 'systemWorkloads'],
+      ['executorEnrollments', 'originatorActions', 'registeredWorkloadCalls', 'systemWorkloads'],
     ),
     ownerObjectView(
       fullPublicSurface,

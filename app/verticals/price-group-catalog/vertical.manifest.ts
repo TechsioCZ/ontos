@@ -36,6 +36,7 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  executorEnrollments: [{ uses: ['assertion', 'recovery'], workloadKey: 'pricing.price-group-catalog.source-read' }],
   module: {
     description: 'Price Group Catalog business capability.',
     displayName: 'Price Group Catalog',

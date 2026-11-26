@@ -10,7 +10,14 @@ const workloadKey = 'party.registry.source-read';
 const dialect = new PgDialect();
 
 it('selects recovery readers by the exact canonical company SERVICE only when no active legacy SYSTEM exists', () => {
-  const query = dialect.sqlToQuery(registeredRecoveryReceiverStatement({ legalEntityId, tenantId, workloadKey }));
+  const query = dialect.sqlToQuery(
+    registeredRecoveryReceiverStatement({
+      enrollmentMode: 'system-or-canonical-company-service',
+      legalEntityId,
+      tenantId,
+      workloadKey,
+    }),
+  );
   expect(query.sql).toContain("receiver_principal.status='active'");
   expect(query.sql).toContain("receiver.status='active'");
   expect(query.sql).toContain("t.status='active'");
@@ -29,8 +36,8 @@ it('selects recovery readers by the exact canonical company SERVICE only when no
 
 it('never selects arbitrary SERVICE readers for an unknown workload or a missing company', () => {
   for (const input of [
-    { legalEntityId, tenantId, workloadKey: 'unrelated.owner.read' },
-    { tenantId, workloadKey },
+    { enrollmentMode: 'system' as const, legalEntityId, tenantId, workloadKey: 'unrelated.owner.read' },
+    { enrollmentMode: 'system-or-canonical-company-service' as const, tenantId, workloadKey },
   ]) {
     const query = dialect.sqlToQuery(registeredRecoveryReceiverStatement(input));
     expect(query.sql).toContain("receiver_principal.kind='system'");

@@ -1,5 +1,10 @@
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
-import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
+import {
+  ShellAuthenticationApiRuntime,
+  ShellAuthenticationApiRuntimeConfiguration,
+  ShellAuthenticationApiRuntimeLive,
+  shellProductionRuntimeArguments,
+} from '../../api/index.ts';
 import {
   ChangeSystemWorkloadEnrollmentPayloadSchema,
   shellAuthenticationApiContract,
@@ -56,7 +61,7 @@ import { shellAuthenticationFrameworkLive } from './shell-authentication.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
 import { CoreDatabase } from '@app/core-runtime/db/client';
-import { GatewayIssuer, GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
+import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseObserver } from '../../api/auth/gateway-release-diagnostic.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
@@ -80,9 +85,8 @@ import {
   ShellNativeIssuerDiagnosticsCommandSchema,
   ShellNativeRequestDiagnosticsCommandSchema,
   ShellNativeReleaseDiagnosticsCommandSchema,
-  ShellNativeModuleAppIdSchema,
   observeShellNativeRequestDispatch,
-  describeShellNativeIssuerFailure,
+  observeProductionIssuer,
   ShellNativeStartupEventSchema,
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyBoundCommandSchema,
@@ -93,6 +97,7 @@ import {
   ShellNativeRefusalSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
+  ShellNativeModuleAppIdSchema,
   ShellNativeGatewayDiagnosticSchema,
   ShellNativeIssuerDiagnosticSchema,
   ShellNativeRequestDiagnosticSchema,
@@ -133,31 +138,6 @@ const startupStage = (stage: typeof ShellNativeStartupStageSchema.Type) =>
   Schema.encodeEffect(Schema.fromJsonString(ShellNativeStartupEventSchema))({ stage }).pipe(
     Effect.flatMap((line) => Effect.sync(() => process.stderr.write(`${line}\n`))),
     Effect.asVoid,
-  );
-
-const appendIssuerOutcome = (
-  outcomes: Ref.Ref<readonly (typeof ShellNativeIssuerDiagnosticSchema.Type)[]>,
-  outcome: typeof ShellNativeIssuerDiagnosticSchema.Type,
-) => Ref.update(outcomes, (previous) => [...previous, outcome].slice(-32));
-
-const observeProductionIssuer = (outcomes: Ref.Ref<readonly (typeof ShellNativeIssuerDiagnosticSchema.Type)[]>) =>
-  Layer.effect(
-    GatewayIssuer,
-    Effect.gen(function* observeActualProductionIssuer() {
-      const actual = yield* GatewayIssuer;
-      return GatewayIssuer.of({
-        issue: (input) => {
-          const audience = Schema.is(ShellNativeModuleAppIdSchema)(input.audience) ? input.audience : 'other';
-          return actual.issue(input).pipe(
-            Effect.tap(() => appendIssuerOutcome(outcomes, { audience, outcome: 'success' })),
-            Effect.tapError((failure) =>
-              appendIssuerOutcome(outcomes, { audience, ...describeShellNativeIssuerFailure(failure) }),
-            ),
-          );
-        },
-        issueDocument: actual.issueDocument,
-      });
-    }),
   );
 
 const sendPrivate = Effect.fn('ShellNativeChild.sendPrivate')(function* sendPrivate(
@@ -327,21 +307,27 @@ const serve = Effect.scoped(
     );
     const [productionAuthentication, productionIssuer, ...productionArguments] = shellProductionRuntimeArguments;
     const observedProductionIssuer = observeProductionIssuer(issuerOutcomes).pipe(Layer.provide(productionIssuer));
-    const runtime = productionGate
-      ? makeShellAuthenticationApiRuntime(productionAuthentication, observedProductionIssuer, ...productionArguments)
-      : makeShellAuthenticationApiRuntime(
-          runtimeAuthentication,
-          issuer,
-          TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
-          undefined,
-          false,
-          // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
-          Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
-          undefined,
-          undefined,
-          undefined,
-          accessGate,
-        );
+    const runtimeConfiguration = ShellAuthenticationApiRuntimeConfiguration.of(
+      productionGate
+        ? [productionAuthentication, observedProductionIssuer, ...productionArguments]
+        : [
+            runtimeAuthentication,
+            issuer,
+            TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
+            undefined,
+            false,
+            // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
+            Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
+            undefined,
+            undefined,
+            undefined,
+            accessGate,
+          ],
+    );
+    const runtime = yield* ShellAuthenticationApiRuntime.pipe(
+      Effect.provide(ShellAuthenticationApiRuntimeLive),
+      Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, runtimeConfiguration),
+    );
     const observedRuntime = productionGate
       ? {
           api: runtime.api,

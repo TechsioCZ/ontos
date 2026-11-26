@@ -14,9 +14,11 @@ import { ModuleKeySchema } from '@app/core-runtime/access/ids';
 
 import {
   AUTHORIZATION_CATALOG_ARTIFACT_PATH,
+  AccessCatalogArtifactDescriptorSchema,
   AccessCatalogArtifactModulesSchema,
   AccessCatalogArtifactSchema,
   checkAccessCatalogArtifact,
+  declaredDelegatedCallers,
   readAccessCatalogArtifact,
   readAccessCatalogArtifactDocument,
   renderAccessCatalogArtifact,
@@ -26,6 +28,10 @@ import {
 import { decodeTopologyCallerAppIds } from '../authorization-catalog.mts';
 import { loadStageAccessModules, stageAccessModulesFromSources } from '../stage-access-catalog.mts';
 
+const RECEIVING_HOST = 'receiving-host';
+const STATIC_CALLERS_SOURCE = "'commerce-order', 'catalog'";
+const CATALOG_APP_ID = 'catalog';
+const STATIC_CALLER_APP_IDS = [CATALOG_APP_ID, 'commerce-order'];
 const REPORT_SCRIPT = fileURLToPath(new URL('../authorization-catalog-report.mts', import.meta.url));
 const CHECKOUT_TOPOLOGY = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
 /** The callers this checkout's topology declares, read the way the bootstrap reads them. */
@@ -342,11 +348,11 @@ it.effect('refuses an artifact whose schema version is unknown', () =>
 it.effect('pins the module callers of a declared carrier with sorted callers', () =>
   Effect.gen(function* pinsCallers() {
     const rendered = yield* renderSources([
-      { file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") },
+      { file: ACTOR_ACTION_FILE, source: actorActionSource(STATIC_CALLERS_SOURCE) },
     ]);
     const parsed = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(rendered);
     expect(parsed.modules[0]?.descriptors[0]?.actor).toStrictEqual({
-      callers: ['catalog', 'commerce-order'],
+      callers: STATIC_CALLER_APP_IDS,
       subject: 'identity',
     });
     // The reason is prose for reviewers, so the artifact pins the callers and the subject only.
@@ -431,7 +437,7 @@ it.effect(
 it.effect('refuses a hand-edited artifact whose module callers are empty or repeated', () =>
   Effect.gen(function* refusesMalformedCallers() {
     const rendered = yield* renderSources([
-      { file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") },
+      { file: ACTOR_ACTION_FILE, source: actorActionSource(STATIC_CALLERS_SOURCE) },
     ]);
     for (const callers of ['[]', '["catalog", "catalog"]']) {
       yield* withTempRoot((root) =>
@@ -570,4 +576,65 @@ it.effect('retains mutation-only owner files as imported declaration custody evi
       expect((yield* loadStageAccessModules(root)).modules).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const HOST_READ_FILE = 'packages/core-runtime/src/reads/host-test.ts';
+const HOST_READ_SOURCE =
+  "export const hostRead = defineRead({\n  accessActor: {\n    callerBinding: 'receiving-host', callers: [], subject: 'rights',\n    reason: 'The receiving host binds reviewed callers',\n  },\n  accessDeclaration: {\n    key: 'core.media.asset-current.read', kind: 'read', modes: ['run'],\n    placement: { group: 'media', level: 'basic' }, risk: 'routine', selectors: [],\n  },\n  readKey: 'core.media.api.asset-current', schemaVersion: '1',\n  entrypoint: defineSystemModuleEntrypoint({\n    access: 'read', authorization: { kind: 'protected' },\n    entrypointKey: 'core.media.api.asset-current', moduleKey: 'core.media', role: 'api',\n  }),\n}, handler);";
+
+it.effect('round-trips a host-bound rights declaration without minting any credential caller', () =>
+  Effect.gen(function* hostBoundArtifact() {
+    const modules = yield* modulesOf([{ file: HOST_READ_FILE, source: HOST_READ_SOURCE }]);
+    expect(modules[0]?.descriptors[0]?.actor).toEqual({
+      callerBinding: RECEIVING_HOST,
+      callers: [],
+      subject: 'rights',
+    });
+    expect(declaredDelegatedCallers(modules)).toEqual([]);
+    const rendered = yield* renderAccessCatalogArtifact(modules, []);
+    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AccessCatalogArtifactSchema))(rendered);
+    expect(decoded.modules).toEqual(sortAccessCatalogModules(modules));
+    expect(yield* renderAccessCatalogArtifact(decoded.modules, decoded.declaredWorkloadKeys)).toBe(rendered);
+    const staticModules = yield* modulesOf([
+      { file: ACTOR_ACTION_FILE, source: actorActionSource(STATIC_CALLERS_SOURCE) },
+    ]);
+    expect(declaredDelegatedCallers([...modules, ...staticModules])).toEqual(STATIC_CALLER_APP_IDS);
+  }),
+);
+
+it.effect('rejects host-bound actors on non-read carriers or with static or workload admission', () =>
+  Effect.gen(function* malformedHostedArtifact() {
+    const modules = yield* modulesOf([{ file: HOST_READ_FILE, source: HOST_READ_SOURCE }]);
+    const rendered = yield* renderAccessCatalogArtifact(modules, []);
+    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AccessCatalogArtifactSchema))(rendered);
+    for (const actor of [
+      { callerBinding: RECEIVING_HOST, callers: [CATALOG_APP_ID], subject: 'rights' },
+      { callerBinding: RECEIVING_HOST, callers: [], subject: 'identity' },
+      { callerBinding: RECEIVING_HOST, callers: [], subject: 'workload' },
+      { callerBinding: RECEIVING_HOST, callers: [], subject: 'rights', subjectWorkloads: ['demo.import'] },
+      { callerBinding: RECEIVING_HOST, callers: [], subject: 'rights', subjectWorkloadCallers: ['catalog'] },
+      { callers: [], subject: 'rights' },
+    ]) {
+      const malformed = {
+        ...decoded,
+        modules: decoded.modules.map((module) => ({
+          ...module,
+          descriptors: module.descriptors.map((descriptor) => ({ ...descriptor, actor })),
+        })),
+      };
+      expect(Result.isFailure(Schema.decodeUnknownResult(AccessCatalogArtifactSchema)(malformed))).toBe(true);
+    }
+    const actions = yield* modulesOf([{ file: ACTOR_ACTION_FILE, source: actorActionSource(STATIC_CALLERS_SOURCE) }]);
+    const action = actions[0]?.descriptors[0];
+    const hostedActor = decoded.modules[0]?.descriptors[0]?.actor;
+    expect(action).toBeDefined();
+    expect(hostedActor?.callerBinding).toBe(RECEIVING_HOST);
+    const refused = Schema.decodeUnknownResult(AccessCatalogArtifactDescriptorSchema)({
+      ...action,
+      actor: hostedActor,
+    });
+    expect(Result.isFailure(refused) ? refused.failure.message : undefined).toContain(
+      'A receiving-host actor requires a governed read',
+    );
+  }),
 );

@@ -31,11 +31,13 @@ import {
 import {
   acquireSymmyRouteScopeProof,
   readSymmyRouteScope,
-  requiresSymmyPriceGroupRouteProof,
+  decideSymmyOwnerRouteAdmission,
 } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
+import { GatewayNativeRoutePolicy } from './auth/gateway-native-route-policy.ts';
+import { symmyNativeRoutePolicy } from './symmy/native-evidence-policy.ts';
 import { GatewayNativeEvidenceLive } from './auth/gateway-native-evidence.service.ts';
 import { PlatformWorkloadKeyAdmission } from './auth/platform-workload-key-admission.ts';
 import { PlatformWorkloadKeyAdmissionLive } from './auth/platform-workload-key-admission.service.ts';
@@ -57,6 +59,7 @@ import type {
 
 import {
   makeActionRuntimeLive,
+  ActionTransportMetadataSchema,
   AgentLifecycleAuthorityLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
@@ -83,6 +86,7 @@ import {
   OAuthGrantRegistryLive,
   PrincipalResolver,
   PrincipalResolverLive,
+  CoreReadReceiverBindings,
   ReadRuntime,
   ReadRuntimeLive,
   selfApiKeyBindingsRead,
@@ -460,13 +464,18 @@ import type {
 } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
 import { logRequestServicesFailure } from './request-service-diagnostics.ts';
+import { ShellAuthenticationApiRuntimeConfiguration } from './shell-authentication-api-runtime-configuration.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
 import { CapturedShellCompositionCatalog, narrowToCapturedRelease } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
+import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
-import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
-import { authenticateHostedOperation, hostedOperationProblems } from './core-hosted-operations.ts';
+import {
+  authenticateHostedOperation,
+  coreHostedReadReceiverBindings,
+  hostedOperationProblems,
+} from './core-hosted-operations.ts';
 import { ShellGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.service.ts';
 import {
   ShellGovernedReads,
@@ -2979,17 +2988,19 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     readonly audience: string;
     readonly legalEntityId?: string;
   }) {
-    if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
-      return yield* Effect.fail(gatewayForbiddenProblem());
-    }
-    const nativePriceGroupRead = requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience);
-    if (input.legalEntityId === undefined && input.audience !== 'inventory' && !nativePriceGroupRead) {
+    const routeAdmission = decideSymmyOwnerRouteAdmission(selectedRoute, input);
+    if (routeAdmission.kind === 'unscoped') {
       return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
     }
-    if (selectedRoute === undefined) {
+    if (routeAdmission.kind === 'refused') {
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
-    const proof = yield* acquireSymmyIngressRouteProof(rawKey, request, admission.compositionRevision, selectedRoute);
+    const proof = yield* acquireSymmyIngressRouteProof(
+      rawKey,
+      request,
+      admission.compositionRevision,
+      routeAdmission.routeRequest,
+    );
     return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision, proof);
   });
   return {
@@ -4509,16 +4520,49 @@ const coreMediaUploadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'c
  * the only Shell route that reads one; `authenticateHostedOperation` verifies, redeems it once and requires that the
  * calling module's installed release declares exactly this operation, and the read then runs as the requester.
  */
-const coreHostedOperationsGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations', (handlers) =>
-  handlers.handle(
-    'assetCurrent',
-    makeGovernedReadHttpHandler({
+export const hostedAssetCurrent = Effect.fn('CoreHostedOperation.handle')(function* hostedCurrent(input: {
+  readonly payload: typeof assetCurrentRead.descriptor.inputSchema.Type;
+  readonly request: Pick<HttpServerRequest.HttpServerRequest, 'headers'>;
+}) {
+  const { headers } = input.request;
+  // Validate before spending the assertion: the governed handler is entered only after caller admission.
+  const correlationId = headers['x-correlation-id'];
+  if (
+    correlationId === undefined ||
+    correlationId.trim().length === 0 ||
+    Result.isFailure(Schema.decodeUnknownResult(ActionTransportMetadataSchema.fields.correlationId)(correlationId))
+  ) {
+    return yield* Effect.fail(hostedOperationProblems.invalid());
+  }
+  return yield* Effect.gen(function* runHostedCurrent() {
+    const { installed, principal } = yield* authenticateHostedOperation(
+      Redacted.make(headers['authorization']),
+      hostedOperationProblems,
+    );
+    const handler = makeGovernedReadHttpHandler({
       audience: SHELL_HOST_APP_ID,
-      authenticatePrincipal: authenticateHostedOperation,
+      authenticatePrincipal: () => Effect.succeed(principal),
       problems: hostedOperationProblems,
       registration: assetCurrentRead,
-    }),
-  ),
+    });
+    // Build a request-local layer from the checked snapshot, never the unbound boot instance.
+    const readRuntime = yield* Layer.build(Layer.fresh(ReadRuntimeLive)).pipe(
+      Effect.provideService(CoreReadReceiverBindings, coreHostedReadReceiverBindings(installed)),
+    );
+    return yield* Effect.provideContext(handler(input), readRuntime);
+  }).pipe(
+    Effect.scoped,
+    recoverUnexpectedDefect(
+      input.request,
+      'Unexpected hosted Core read defect',
+      () => Effect.fail(hostedOperationProblems.internal()),
+      (cause) => ({ reasons: cause.reasons.map((reason) => reason._tag) }),
+    ),
+  );
+});
+
+const coreHostedOperationsGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations', (handlers) =>
+  handlers.handle('assetCurrent', hostedAssetCurrent),
 );
 
 /**
@@ -4656,7 +4700,6 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
-const failShellStartup = flow(Layer.tapCause(logRequestServicesFailure), Layer.orDie);
 
 /** A suite may pin the Shell's own read authority; production reads the active composition. */
 const shellReadAuthorityLayerFor = (shellReadAuthority: ActiveApplicationCompositionServiceContract | undefined) =>
@@ -4693,21 +4736,23 @@ export const issueShellSearchProviderAssertion = Effect.fn('ShellSearch.issuePro
 const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
   makeTenantModuleStateService({ executor: transaction });
 
-type ShellAuthenticationApiRuntimeArguments = readonly [
+export type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
   issuerLayer: ShellGatewayIssuerLayer,
-  moduleStateLayer?: ShellModuleStateLayer,
+  moduleStateLayer?: ShellModuleStateLayer | undefined,
   loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError> | undefined,
-  enableInstalledOutboxMatcher?: boolean,
-  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
-  resourceGateways?: ShellResourceGateways,
-  scopedModuleStateFactory?: ShellScopedModuleStateFactory,
-  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
+  enableInstalledOutboxMatcher?: boolean | undefined,
+  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>> | undefined,
+  resourceGateways?: ShellResourceGateways | undefined,
+  scopedModuleStateFactory?: ShellScopedModuleStateFactory | undefined,
+  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer | undefined,
   /** The access gate this composition asks; a suite supplies a scripted one (never a production default). */
-  accessDecisionLayer?: ShellAccessDecisionLayer,
-  shellReadAuthority?: ActiveApplicationCompositionServiceContract,
-  runtimeDatabase?: DatabaseConnectionPair,
+  accessDecisionLayer?: ShellAccessDecisionLayer | undefined,
+  shellReadAuthority?: ActiveApplicationCompositionServiceContract | undefined,
+  runtimeDatabase?: DatabaseConnectionPair | undefined,
 ];
+
+export { ShellAuthenticationApiRuntimeConfiguration } from './shell-authentication-api-runtime-configuration.ts';
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
@@ -4808,8 +4853,7 @@ export const makeShellAuthenticationApiRuntime = (
       : Layer.succeed(ShellInstalledModuleCatalog, {
           load: loadInstalledModuleCatalog,
         });
-  const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(selectedModuleStateLayer));
-  const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
+  const moduleGatesLive = ModuleEntrypointGatewayLive.pipe(Layer.provideMerge(ModuleStateGateLive));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
     Layer.provide(
       Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive, contextAccessLayer, accessEnforcementLive),
@@ -4818,8 +4862,7 @@ export const makeShellAuthenticationApiRuntime = (
   const sharedOperationLayers = Layer.mergeAll(
     runtimeCorePersistenceLive,
     contextAccessLayer,
-    moduleStateGateLayer,
-    moduleEntrypointGatewayLayer,
+    moduleGatesLive.pipe(Layer.provide(selectedModuleStateLayer)),
     operationalScopeResolverLayer,
   );
   // The one read runtime: the canonical access gate's decisions join the read's own transaction, and the Shell's
@@ -5138,11 +5181,6 @@ export const makeShellAuthenticationApiRuntime = (
     accessAdminApprovalsGroupLive,
     accessAdminExplainGroupLive,
   );
-  const delegationScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive, contextAccessLayer, accessEnforcementLive),
-    ),
-  );
   const delegationLedgerLayer = GatewayDelegationExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
@@ -5157,16 +5195,17 @@ export const makeShellAuthenticationApiRuntime = (
   const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
   );
-  // The Core operations this host serves to modules: the object store, the verifier of the Shell-audience assertion,
-  // its single-use redemption in the Shell's own private store, and the approved release it is checked against.
+  // Use the shared, already-built AuthDatabase and tenant module state without exposing the hosted route's
+  // redemption service or gates to other routes. The hosted read keeps its selected composition authority.
   const coreHostedOperationsHandlersLive = coreHostedOperationsGroupLive.pipe(
     Layer.provide(
       Layer.mergeAll(
         coreMediaObjectStorageLive,
         GatewayPrincipalVerifierLive,
-        ShellGatewayAssertionRedemptionLive.pipe(Layer.provide(runtimeAuthPersistenceLive)),
+        ShellGatewayAssertionRedemptionLive,
         shellReadAuthorityLayer,
         moduleCatalogLayer,
+        moduleGatesLive,
       ),
     ),
   );
@@ -5186,10 +5225,11 @@ export const makeShellAuthenticationApiRuntime = (
     identityDeniedAuditLayer,
     staffAccountProviderLayer,
     runtimeCorePersistenceLive,
-    delegationScopeResolverLayer,
+    operationalScopeResolverLayer,
     delegationLedgerLayer,
     originatorEvidenceLayer,
     nativeGatewayEvidenceLayer,
+    Layer.succeed(GatewayNativeRoutePolicy, symmyNativeRoutePolicy),
     moduleCredentialEnrolmentLayer,
     GatewayDelegationVerificationLive,
     authenticationLayer,
@@ -5252,6 +5292,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provideMerge(compositionSourceLive),
     Layer.provideMerge(Reactivity.layer),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.tapCause(logRequestServicesFailure),
+    Layer.orDie,
   );
 
   // Shell-owned routes outside the HTTP API resolve their request services from the same memoized instances as the
@@ -5378,12 +5420,7 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
-  ).pipe(
-    Layer.provide(apiServicesLive),
-    Layer.provide(shellSearchNoStoreLayer),
-    Layer.provide(NoServerTimingLive),
-    failShellStartup,
-  );
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
@@ -5400,10 +5437,19 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.provide(SymmyDocsLive),
       Layer.provide(shellTransportServicesLive),
       Layer.provide(apiServicesLive),
-      failShellStartup,
     ),
   });
 };
+
+export class ShellAuthenticationApiRuntime extends Context.Service<
+  ShellAuthenticationApiRuntime,
+  ReturnType<typeof makeShellAuthenticationApiRuntime>
+>()('@app/shell-super-app/api/ShellAuthenticationApiRuntime') {}
+
+export const ShellAuthenticationApiRuntimeLive = Layer.effect(
+  ShellAuthenticationApiRuntime,
+  ShellAuthenticationApiRuntimeConfiguration.pipe(Effect.map((args) => makeShellAuthenticationApiRuntime(...args))),
+);
 
 /**
  * The production Shell runtime arguments without the access gate. The default export appends the

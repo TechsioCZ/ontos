@@ -26,6 +26,8 @@ import type { OntosExternalIdentityProviderInput } from '../auth/external-identi
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
 import { OntosRegisteredWorkloadCallsSchema } from './registered-workload-calls.ts';
 import type { OntosRegisteredWorkloadCallInput } from './registered-workload-calls.ts';
+import { executorEnrollmentsIssue, OntosExecutorEnrollmentsSchema } from './executor-enrollment.ts';
+import type { OntosExecutorEnrollmentInput } from './executor-enrollment.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
@@ -294,6 +296,8 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
 
 export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
+  /** Receiver-owned executor selection policy. An absent workload/use remains SYSTEM-only. */
+  executorEnrollments: Schema.optionalKey(OntosExecutorEnrollmentsSchema),
   module: OntosModuleIdentitySchema,
   /**
    * The Action keys whose recorded invocations this module may act for when it delegates an Originator
@@ -319,6 +323,7 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
     const pageIssue = shellSearchPresentationPageIssue(manifest.publicSurface.shellContributions);
     return (
       pageIssue ??
+      executorEnrollmentsIssue(manifest) ??
       installsWithIssue(manifest.module.id, manifest.activation.installsWith) ??
       shellSearchPresentationBindingIssue(manifest.publicSurface.shellContributions, {
         moduleId: manifest.module.id,
@@ -408,6 +413,7 @@ export interface OntosAuthoredPublicSurface {
 
 export interface OntosModuleManifestInput {
   readonly activation: OntosModuleActivation;
+  readonly executorEnrollments?: readonly OntosExecutorEnrollmentInput[];
   readonly module: OntosModuleIdentity;
   /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
   readonly originatorActions?: readonly string[];
@@ -423,7 +429,10 @@ export interface OntosModuleManifestInput {
 }
 
 /** Owner-authored backend declaration consumed by the existing runtime registration, without UI values. */
-export type OntosRuntimeManifestInput = Pick<OntosModuleManifestInput, 'module' | 'requirements'> & {
+export type OntosRuntimeManifestInput = Pick<
+  OntosModuleManifestInput,
+  'executorEnrollments' | 'module' | 'requirements'
+> & {
   readonly publicSurface: Pick<
     OntosAuthoredPublicSurface,
     'actions' | 'api' | 'operationContracts' | 'shellContributions'
@@ -559,6 +568,19 @@ export const projectOntosModuleOperationContracts = (
   if (issue !== undefined) {
     throw invalidManifest(issue);
   }
+  if (manifest.executorEnrollments !== undefined) {
+    const enrollmentIssue = executorEnrollmentsIssue({
+      executorEnrollments: exactDecode(OntosExecutorEnrollmentsSchema, manifest.executorEnrollments),
+      module: manifest.module,
+      publicSurface: {
+        actions: manifest.publicSurface.actions.map(({ descriptor }) => descriptor),
+        operationContracts: contracts,
+      },
+    });
+    if (enrollmentIssue !== undefined) {
+      throw invalidManifest(enrollmentIssue);
+    }
+  }
   return Object.freeze(
     contracts
       .map((contract) => freezePlain({ ...contract, entrypoint: { ...contract.entrypoint } }))
@@ -592,6 +614,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
     input,
     [
       'activation',
+      'executorEnrollments',
       'module',
       'originatorActions',
       'publicSurface',
@@ -710,6 +733,13 @@ const declaredSystemWorkloads = (
   );
   return declared;
 };
+
+const serializedExecutorEnrollments = (declarations: readonly OntosExecutorEnrollmentInput[] | undefined) =>
+  declarations === undefined
+    ? undefined
+    : {
+        executorEnrollments: freezePlain(exactDecode(OntosExecutorEnrollmentsSchema, declarations)),
+      };
 
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
@@ -915,6 +945,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       registeredWorkloadCalls: Object.freeze(registeredWorkloadCalls.map((call) => freezePlain({ ...call }))),
     });
   }
+  Object.assign(manifest, serializedExecutorEnrollments(input.executorEnrollments));
   if (input.systemWorkloads !== undefined) {
     Object.assign(manifest, { systemWorkloads: Object.freeze(systemWorkloads) });
   }
@@ -923,3 +954,5 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
 
 export const decodeOntosModuleDeploymentContract = <Value>(value: Value): OntosModuleDeploymentContract =>
   exactDecode(OntosModuleDeploymentContractSchema, value);
+
+export { resolveReceiverExecutorEnrollment } from './executor-enrollment.ts';

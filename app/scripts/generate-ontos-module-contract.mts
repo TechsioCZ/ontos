@@ -572,6 +572,9 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       originatorActions: owner.manifest.originatorActions ?? [],
       publicSurface,
     };
+    if (owner.manifest.executorEnrollments !== undefined) {
+      Object.assign(manifest, { executorEnrollments: owner.manifest.executorEnrollments });
+    }
     if (safeRuntime.requirements !== undefined) {
       Object.assign(manifest, { requirements: safeRuntime.requirements });
     }

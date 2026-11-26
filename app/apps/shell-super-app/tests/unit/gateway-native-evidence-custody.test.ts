@@ -1,4 +1,11 @@
-import { OntosRegisteredWorkloadCallSchema } from '@app/core-runtime';
+import {
+  buildApplicationCompositionCatalog,
+  defineTenantModuleEntrypoint,
+  OntosRegisteredWorkloadCallSchema,
+} from '@app/core-runtime';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { symmyRouteSourceWorkloads } from '../../api/symmy/native-evidence-policy.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -53,10 +60,12 @@ it.effect('captures native custody, rechecks revocation on each call, and expose
     const admitted: Effect.Effect<
       typeof TrustedPrincipalContextSchema.Type,
       Effect.Error<ReturnType<typeof native.validateRoutePrincipal>>
-    > = (native satisfies DatabaseFreeOperations).validateRoutePrincipal(principal, 'admit');
+    > = (native satisfies DatabaseFreeOperations).validateRoutePrincipal(principal, symmyRouteSourceWorkloads('admit'));
     expect(yield* admitted).toEqual(principal);
     active = false;
-    const revoked = yield* native.validateRoutePrincipal(principal, 'admit').pipe(Effect.flip);
+    const revoked = yield* native
+      .validateRoutePrincipal(principal, symmyRouteSourceWorkloads('admit'))
+      .pipe(Effect.flip);
     expect(revoked).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     expect(reads).toBe(2);
   }).pipe(Effect.scoped),
@@ -108,7 +117,41 @@ it.effect('rechecks original Payment source authority independently of the recei
       sourceBuildMarker: 'payment-build',
       sourceMode: 'admission',
     });
+    const payment = makeModuleContractFixture({ appId: 'payment', moduleId: 'payment.core' });
+    const operation = {
+      apiKey: 'payment.core.api.source',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'protected' },
+        entrypointKey: rule.entrypointKey,
+        moduleKey: 'payment.core',
+        role: 'api',
+      }),
+      operationKey: 'source.submit',
+      schemaVersion: rule.schemaVersion,
+      workloadCarrier: { declarationKey: rule.declarationKey, workloads: [rule.workloadKey] },
+    };
+    const installed = yield* makeCompositionSnapshot([
+      {
+        ...payment,
+        manifest: {
+          ...payment.manifest,
+          publicSurface: {
+            ...payment.manifest.publicSurface,
+            api: [{ key: operation.apiKey, operationKeys: [operation.operationKey] }],
+            operationContracts: [operation],
+          },
+        },
+      },
+    ]);
+    const catalog = yield* buildApplicationCompositionCatalog(installed.composition);
+    const [contract] = catalog.contracts;
+    if (contract === undefined) {
+      yield* Effect.die('Expected a Payment release in the installed catalog');
+      return;
+    }
     const statements: string[] = [];
+    let systemActive = false;
     const connection = testSqlConnection((statement, parameters) => {
       if (statement.includes('from core.access_workload_bindings receiver')) {
         statements.push(statement);
@@ -124,6 +167,9 @@ it.effect('rechecks original Payment source authority independently of the recei
           'payment.source-ingress',
         ]);
         expect(parameters).toContain(workload.originalPrincipalId);
+        return Effect.succeed(
+          systemActive ? [{ bindingIncarnation: incarnation, ownerBindingIncarnation: incarnation, principalId }] : [],
+        );
       }
       return Effect.succeed([]);
     });
@@ -138,7 +184,9 @@ it.effect('rechecks original Payment source authority independently of the recei
         native
           .admitAssertion({
             binding,
+            destination: contract,
             rule,
+            source: contract,
             sourceAccess: 'write',
             sourcePrincipal: principal,
             subject,
@@ -154,6 +202,43 @@ it.effect('rechecks original Payment source authority independently of the recei
           ),
       { concurrency: 1 },
     );
+    expect(statements).toHaveLength(2);
+
+    systemActive = true;
+    const input = {
+      binding,
+      destination: contract,
+      rule,
+      source: contract,
+      sourceAccess: 'write' as const,
+      sourcePrincipal: principal,
+      subject,
+      workload,
+    };
+    const installedOperation = contract.manifest.publicSurface.operationContracts?.[0];
+    if (installedOperation === undefined) {
+      yield* Effect.die('Expected the installed Payment operation');
+      return;
+    }
+    const ambiguous = {
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        publicSurface: {
+          ...contract.manifest.publicSurface,
+          operationContracts: [installedOperation, installedOperation],
+        },
+      },
+    };
+    for (const invalid of [
+      { ...input, rule: { ...rule, schemaVersion: '2' } },
+      { ...input, destination: ambiguous },
+      { ...input, workload: { ...workload, schemaVersion: '2' } },
+      { ...input, source: ambiguous },
+    ]) {
+      const refusal = yield* Effect.flip(native.admitAssertion(invalid));
+      expect(refusal).toMatchObject({ code: 'forbidden', reason: 'registered_operation_refused' });
+    }
     expect(statements).toHaveLength(2);
   }).pipe(Effect.scoped),
 );

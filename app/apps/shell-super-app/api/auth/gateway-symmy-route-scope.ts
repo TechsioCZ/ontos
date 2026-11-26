@@ -1,3 +1,4 @@
+import { symmyIntakeReadWorkload, symmyRouteSourceWorkloads } from '../symmy/native-evidence-policy.ts';
 import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -49,6 +50,29 @@ export const requiresSymmyPriceGroupRouteProof = (
 ): boolean =>
   audience === priceGroupAudience &&
   (routeKey === 'priceLists' || routeKey === 'priceListPricesBatch' || routeKey === 'productsBatch');
+
+type SymmyOwnerRouteAdmission =
+  | { readonly kind: 'refused' }
+  | { readonly kind: 'unscoped' }
+  | { readonly kind: 'route-proof'; readonly routeRequest: RouteRequest };
+
+/** The integration owns which owner calls require its already-selected route; hosts only execute that decision. */
+export const decideSymmyOwnerRouteAdmission = (
+  selectedRoute: RouteRequest | undefined,
+  input: { readonly audience: string; readonly legalEntityId?: string },
+): SymmyOwnerRouteAdmission => {
+  if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
+    return { kind: 'refused' };
+  }
+  if (
+    input.legalEntityId === undefined &&
+    input.audience !== 'inventory' &&
+    !requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience)
+  ) {
+    return { kind: 'unscoped' };
+  }
+  return selectedRoute === undefined ? { kind: 'refused' } : { kind: 'route-proof', routeRequest: selectedRoute };
+};
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
 
 const nativeReadOperations = [
@@ -114,7 +138,12 @@ const selectNativeReadReceiver = Effect.fn('GatewayNativeEvidence.selectNativeRe
   route: Route,
   workloadKey: string,
 ) {
-  return yield* (yield* GatewayNativeEvidence).selectNativeReadReceiver(facts, route, workloadKey);
+  return yield* (yield* GatewayNativeEvidence).selectNativeReadReceiver(
+    facts.principal,
+    route.legalEntityId,
+    workloadKey,
+    symmyRouteSourceWorkloads(facts.sourcePurpose),
+  );
 });
 
 /** The intake handoff uses the same current native enrollment proof, never an invocation-shaped substitute. */
@@ -127,11 +156,7 @@ export const selectSymmyIntakePrivacyReceiver = Effect.fn('SymmyRouteScope.selec
     ) {
       return yield* delegationForbidden('symmy_route_not_admitted')();
     }
-    return yield* selectNativeReadReceiver(
-      facts,
-      yield* readSymmyRouteScope(proof),
-      'privacy.core.source-processing-check',
-    );
+    return yield* selectNativeReadReceiver(facts, yield* readSymmyRouteScope(proof), symmyIntakeReadWorkload);
   },
 );
 /**

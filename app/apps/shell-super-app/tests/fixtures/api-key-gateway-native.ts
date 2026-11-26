@@ -53,6 +53,8 @@ import { OwnedAuthRuntimeContract, OwnedAuthRuntimeContractLive } from '../suppo
 import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-runtime.ts';
 import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
+import { GatewayIssuer } from '../../api/auth/gateway-issuer-service.ts';
+import type { GatewayIssuerService } from '../../api/auth/gateway-issuer-service.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
 import {
   ChangeSystemWorkloadEnrollmentPayloadSchema,
@@ -136,6 +138,54 @@ export const ShellNativeStartupStageSchema = Schema.Literals([
   'defect',
 ]);
 export const ShellNativeStartupEventSchema = Schema.Struct({ stage: ShellNativeStartupStageSchema });
+const ShellNativeIssuerMethodSchema = Schema.Literals(['issue', 'issueDocument', 'issueSymmy']);
+const ShellNativeIssuerAssemblyPhaseSchema = Schema.Literals(['production', 'observed']);
+export const ShellNativeIssuerContractFailureSchema = Schema.TaggedStruct('issuer-contract-failure', {
+  method: ShellNativeIssuerMethodSchema,
+  phase: ShellNativeIssuerAssemblyPhaseSchema,
+});
+const ShellNativeChildDiagnosticSchema = Schema.Union([
+  ShellNativeStartupEventSchema,
+  ShellNativeIssuerContractFailureSchema,
+]);
+/** Decode only closed, bounded fixture events; arbitrary stderr is never diagnostic data. */
+export const decodeShellNativeChildDiagnostic = (line: string) =>
+  Schema.decodeUnknownEffect(Schema.String.check(Schema.isMaxLength(2048)))(line).pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(Schema.fromJsonString(ShellNativeChildDiagnosticSchema), {
+        onExcessProperty: 'error',
+      }),
+    ),
+  );
+/** Inspect only required method capabilities, never issuer inputs, credentials or failure causes. */
+export const inspectShellNativeIssuerContract = (
+  issuer: Partial<GatewayIssuerService>,
+  phase: typeof ShellNativeIssuerAssemblyPhaseSchema.Type,
+) =>
+  Option.fromUndefinedOr(
+    ShellNativeIssuerMethodSchema.literals.find((method) => !Predicate.isFunction(issuer[method])),
+  ).pipe(
+    Option.map((method): typeof ShellNativeIssuerContractFailureSchema.Type => ({
+      _tag: 'issuer-contract-failure',
+      method,
+      phase,
+    })),
+  );
+const requireShellNativeIssuerContract = (
+  issuer: Partial<GatewayIssuerService>,
+  phase: typeof ShellNativeIssuerAssemblyPhaseSchema.Type,
+) =>
+  Effect.gen(function* requireIssuerContract() {
+    const failure = inspectShellNativeIssuerContract(issuer, phase);
+    if (Option.isSome(failure)) {
+      const line = yield* Schema.encodeEffect(Schema.fromJsonString(ShellNativeIssuerContractFailureSchema))(
+        failure.value,
+      );
+      yield* Effect.sync(() => process.stderr.write(`${line}\n`));
+      return yield* Effect.die(new ApiKeyGatewayNativeFixtureError({ reason: 'Shell native issuer contract failure' }));
+    }
+    return yield* Effect.void;
+  }).pipe(Effect.orDie);
 export const ShellNativeIssueCommandSchema = Schema.TaggedStruct('issue', {
   issuerPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   principalId: PrincipalIdSchema,
@@ -267,6 +317,36 @@ export const describeShellNativeIssuerFailure = (failure: GatewayIssuerError) =>
     outcome: failure.stage,
   };
 };
+const appendIssuerOutcome = (
+  outcomes: Ref.Ref<readonly (typeof ShellNativeIssuerDiagnosticSchema.Type)[]>,
+  outcome: typeof ShellNativeIssuerDiagnosticSchema.Type,
+) => Ref.update(outcomes, (previous) => [...previous, outcome].slice(-32));
+/** The fixture owns the observation Layer; all production issuer methods remain available. */
+export const observeProductionIssuer = (
+  outcomes: Ref.Ref<readonly (typeof ShellNativeIssuerDiagnosticSchema.Type)[]>,
+) =>
+  Layer.effect(
+    GatewayIssuer,
+    Effect.gen(function* observeActualProductionIssuer() {
+      const actual = yield* GatewayIssuer;
+      yield* requireShellNativeIssuerContract(actual, 'production');
+      const observed = GatewayIssuer.of({
+        issue: (input) => {
+          const audience = Schema.is(ShellNativeModuleAppIdSchema)(input.audience) ? input.audience : 'other';
+          return actual.issue(input).pipe(
+            Effect.tap(() => appendIssuerOutcome(outcomes, { audience, outcome: 'success' })),
+            Effect.tapError((failure) =>
+              appendIssuerOutcome(outcomes, { audience, ...describeShellNativeIssuerFailure(failure) }),
+            ),
+          );
+        },
+        issueDocument: actual.issueDocument,
+        issueSymmy: actual.issueSymmy,
+      });
+      yield* requireShellNativeIssuerContract(observed, 'observed');
+      return observed;
+    }),
+  );
 export const ShellNativeIssuerDiagnosticsCommandSchema = Schema.TaggedStruct(issuerDiagnosticsTag, {});
 export const ShellNativeIssuerDiagnosticsResponseSchema = Schema.TaggedStruct(issuerDiagnosticsTag, {
   outcomes: Schema.Array(ShellNativeIssuerDiagnosticSchema).check(Schema.isMaxLength(32)),
@@ -885,14 +965,18 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         Stream.decodeText(),
         Stream.splitLines,
         Stream.runForEach((line) =>
-          Schema.decodeUnknownEffect(Schema.fromJsonString(ShellNativeStartupEventSchema), {
-            onExcessProperty: 'error',
-          })(line.slice(0, 2048)).pipe(
-            Effect.flatMap(({ stage }) =>
-              Ref.set(latestStage, stage).pipe(
-                Effect.andThen(Effect.logInfo('Shell native fixture startup', { stage })),
-              ),
-            ),
+          decodeShellNativeChildDiagnostic(line).pipe(
+            Effect.flatMap((event) => {
+              if (Schema.is(ShellNativeIssuerContractFailureSchema)(event)) {
+                const { method, phase } = event;
+                return Ref.set(childFailure, `issuer-contract-failure:${phase}:${method}`).pipe(
+                  Effect.andThen(Effect.logWarning('Shell native fixture issuer contract failure', { method, phase })),
+                );
+              }
+              return Ref.set(latestStage, event.stage).pipe(
+                Effect.andThen(Effect.logInfo('Shell native fixture startup', { stage: event.stage })),
+              );
+            }),
             Effect.catch(() => {
               const classification = [
                 'ERR_MODULE_NOT_FOUND',

@@ -15851,9 +15851,8 @@
             "scope": "system"
           },
           "actor": {
-            "callers": [
-              "catalog"
-            ],
+            "callerBinding": "receiving-host",
+            "callers": [],
             "subject": "rights"
           }
         },

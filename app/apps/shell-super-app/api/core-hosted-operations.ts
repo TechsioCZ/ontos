@@ -1,7 +1,11 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { isShellHostedCoreProvider } from '@app/core-runtime';
-import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
+import { assetCurrentRead, makeCoreReadReceiverBindings } from '@app/core-runtime';
+import type { CoreReadReceiverBindingRegistry } from '@app/core-runtime';
+import {
+  readVerifiedGatewayActor,
+  readVerifiedGatewayCompositionRevision,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { SHELL_HOST_APP_ID, coreOperations } from '@app/core-runtime/sdk/core';
 import {
   ActionPrincipalScopeErrorSchema,
   ActionPrincipalUnavailableErrorSchema,
@@ -22,6 +26,7 @@ import {
   CoreHostedOperationPolicyProblemSchema,
   CoreHostedOperationUnavailableProblemSchema,
 } from '../shared/core-hosted-operations.ts';
+import type { ShellInstalledCatalog } from './modules/installed-module-catalog.ts';
 import { ShellInstalledModuleCatalog } from './modules/installed-module-catalog.ts';
 
 /*
@@ -45,12 +50,30 @@ const unauthorized = () =>
     ActionPrincipalScopeErrorSchema.make({ reason: 'The Bearer assertion was not issued for this operation' }),
   );
 
-/**
- * The calling module of a verified assertion and what its own installed release declares: a requirement on one of
- * the Shell-hosted operations that relays the requester. Anything else is not authorized to call this endpoint.
- */
-const callingModuleDeclaresHostedOperation = Effect.fn('CoreHostedOperation.authorizeCaller')(
-  function* callingModuleDeclaresHostedOperation(actor: { readonly appId: string; readonly buildMarker: string }) {
+const declaresCurrent = ({ manifest }: ShellInstalledCatalog['contracts'][number]): boolean =>
+  manifest.requirements?.operations.some(
+    ({ callers, provider }) =>
+      callers?.length === 1 &&
+      callers[0]?.kind === 'person' &&
+      provider.moduleId === coreOperations.assetCurrent.provider.moduleId &&
+      provider.entrypointKey === coreOperations.assetCurrent.provider.entrypointKey &&
+      provider.schemaVersion === coreOperations.assetCurrent.provider.schemaVersion,
+  ) === true;
+
+/** Only the reviewed composition may nominate callers of the original Core Current registration. */
+export const coreHostedReadReceiverBindings = (installed: ShellInstalledCatalog): CoreReadReceiverBindingRegistry => {
+  const [first, ...rest] = installed.contracts.flatMap((contract) =>
+    declaresCurrent(contract) ? [contract.deployment.appId] : [],
+  );
+  return makeCoreReadReceiverBindings(
+    first === undefined ? [] : [{ callers: [first, ...rest], registration: assetCurrentRead }],
+  );
+};
+const loadAuthorizedHostedCatalog = Effect.fn('CoreHostedOperation.authorizeCaller')(
+  function* loadAuthorizedHostedCatalog(
+    actor: { readonly appId: string; readonly buildMarker: string },
+    compositionRevision: string | undefined,
+  ) {
     const catalog = yield* ShellInstalledModuleCatalog;
     const installed = yield* catalog.load.pipe(
       Effect.catchTag('InstalledModuleCatalogUnavailableError', () =>
@@ -60,13 +83,11 @@ const callingModuleDeclaresHostedOperation = Effect.fn('CoreHostedOperation.auth
     const contract = installed.contracts.find(
       ({ deployment }) => deployment.appId === actor.appId && deployment.buildMarker === actor.buildMarker,
     );
-    const declares =
-      contract?.manifest.requirements?.operations.some(
-        (requirement) =>
-          requirement.callers?.some((caller) => caller.kind === 'person') === true &&
-          isShellHostedCoreProvider(requirement.provider),
-      ) === true;
-    return yield* declares ? Effect.void : unauthorized();
+    return yield* compositionRevision === installed.composition.revision &&
+    contract !== undefined &&
+    declaresCurrent(contract)
+      ? Effect.succeed(installed)
+      : unauthorized();
   },
 );
 
@@ -79,8 +100,8 @@ export const authenticateHostedOperationPrincipal = Effect.fn('CoreHostedOperati
     if (actor === undefined) {
       return yield* unauthorized();
     }
-    yield* callingModuleDeclaresHostedOperation(actor);
-    return principal;
+    const installed = yield* loadAuthorizedHostedCatalog(actor, readVerifiedGatewayCompositionRevision(principal));
+    return { installed, principal };
   },
 );
 

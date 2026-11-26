@@ -15,7 +15,7 @@ import type { ListAccessResolution } from '../access/decision/engine.ts';
 import { withOptional } from '../access/decision/optional.ts';
 import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
 import type { GateCarrier, GateInput, ListGateInput } from '../access/enforcement/contract.ts';
-import { AccessFieldGroupSchema } from '../authorization/access-declaration.ts';
+import { AccessFieldGroupSchema, RECEIVING_HOST_CALLER_BINDING } from '../authorization/access-declaration.ts';
 import type { AccessDeclaration, AccessFieldGroup } from '../authorization/access-declaration.ts';
 import type { BoundAccessGate } from '../operations/access-gate.ts';
 import type {
@@ -30,6 +30,42 @@ import type {
 } from '../sdk/read.ts';
 import { ReadDefinitionInvariantError } from './read-definition-invariant-error.ts';
 import type { AnswerAccessQuestions, MaterializeAccessQuestions, MaterializedAccessQuestion } from './sdk-contract.ts';
+
+const accessQuestionMint = Symbol('RegisteredAccessQuestion');
+
+/** Immutable question custody; matching carrier strings never proves a target registration's identity. */
+class RegisteredAccessQuestion implements MaterializedAccessQuestion {
+  readonly carrier: MaterializedAccessQuestion['carrier'];
+  readonly kind: MaterializedAccessQuestion['kind'];
+  readonly legalEntityScope: MaterializedAccessQuestion['legalEntityScope'];
+  readonly name: string;
+  readonly parentRead?: ParentReadRequirement;
+  readonly sameAsOwnDecision: boolean;
+  readonly #target: AccessQuestionTarget;
+
+  constructor(question: MaterializedAccessQuestion, target: AccessQuestionTarget, mint: typeof accessQuestionMint) {
+    if (mint !== accessQuestionMint) {
+      throw new ReadDefinitionInvariantError({ message: 'A registered access question must be materialized by Core' });
+    }
+    this.carrier = question.carrier;
+    this.kind = question.kind;
+    this.legalEntityScope = question.legalEntityScope;
+    this.name = question.name;
+    this.sameAsOwnDecision = question.sameAsOwnDecision;
+    if (question.parentRead !== undefined) {
+      this.parentRead = question.parentRead;
+    }
+    this.#target = target;
+    Object.freeze(this);
+  }
+
+  static targetOf(question: MaterializedAccessQuestion): AccessQuestionTarget | undefined {
+    return #target in question ? question.#target : undefined;
+  }
+}
+
+Object.freeze(RegisteredAccessQuestion.prototype);
+Object.freeze(RegisteredAccessQuestion);
 
 /** A read asks at most this many extra questions: each one is a gate decision on its request path. */
 export const MAX_ACCESS_QUESTIONS = 16;
@@ -90,25 +126,27 @@ const sameCarrier = (left: GateCarrier, right: GateCarrier): boolean =>
  * callers on the group but decides the subject's own grants, exactly as the read runtime decides a read's
  * own field groups.
  */
-const fieldGroupActorOf = (actor: GateCarrier['accessActor']): GateCarrier['accessActor'] =>
-  actor === undefined ? undefined : Object.freeze({ callers: actor.callers, reason: actor.reason, subject: 'rights' });
+export const readFieldGroupActor = (actor: GateCarrier['accessActor']): GateCarrier['accessActor'] =>
+  actor === undefined || actor.callerBinding === RECEIVING_HOST_CALLER_BINDING
+    ? actor
+    : Object.freeze({ callers: actor.callers, reason: actor.reason, subject: 'rights' });
 
 const fieldQuestionOf = (
   name: string,
-  question: Extract<AccessQuestion, { readonly kind: 'can_see_fields' }>,
+  descriptor: AccessQuestionTarget['descriptor'],
+  groupKey: string,
   carrier: GateCarrier,
 ): MaterializedAccessQuestion => {
-  const { descriptor } = question.target;
   const parent = descriptor.accessDeclaration;
   if (parent === undefined) {
     return refuseAccessQuestions(
       `Access question ${name}: can_see_fields needs a target with an accessDeclaration, the parent read of its field groups`,
     );
   }
-  const group: unknown = (descriptor.accessFieldGroups ?? []).find((candidate) => candidate.key === question.groupKey);
+  const group: unknown = (descriptor.accessFieldGroups ?? []).find((candidate) => candidate.key === groupKey);
   if (group === undefined || !isAccessFieldGroup(group)) {
     return refuseAccessQuestions(
-      `Access question ${name}: ${descriptor.entrypoint.entrypointKey} declares no field group ${question.groupKey}`,
+      `Access question ${name}: ${descriptor.entrypoint.entrypointKey} declares no field group ${groupKey}`,
     );
   }
   if (parent.selectors.length > 0) {
@@ -122,7 +160,7 @@ const fieldQuestionOf = (
       withOptional(
         { ...carrier, accessDeclaration: fieldGroup },
         'accessActor',
-        fieldGroupActorOf(descriptor.accessActor),
+        readFieldGroupActor(descriptor.accessActor),
       ),
     ),
     kind: 'field',
@@ -137,8 +175,8 @@ const materializeAccessQuestion = (
   read: Parameters<MaterializeAccessQuestions>[0],
   name: string,
   question: AccessQuestion,
+  descriptor: AccessQuestionTarget['descriptor'],
 ): MaterializedAccessQuestion => {
-  const { descriptor } = question.target;
   if (descriptor.entrypoint.moduleKey !== read.moduleKey) {
     return refuseAccessQuestions(
       `Access question ${name}: ${descriptor.entrypoint.entrypointKey} belongs to ${descriptor.entrypoint.moduleKey}, not to the asking read's module ${read.moduleKey}; a read asks only about its own module's operations`,
@@ -151,7 +189,7 @@ const materializeAccessQuestion = (
   }
   const carrier = targetCarrierOf(descriptor);
   if (question.kind === 'can_see_fields') {
-    return fieldQuestionOf(name, question, carrier);
+    return fieldQuestionOf(name, descriptor, question.groupKey, carrier);
   }
   const declaration = descriptor.accessDeclaration;
   const kind: MaterializedAccessQuestion['kind'] = question.kind === 'can_run' ? 'decide' : 'list';
@@ -166,6 +204,8 @@ const materializeAccessQuestion = (
     legalEntityScope: descriptor.legalEntityScope,
     name,
     sameAsOwnDecision:
+      carrier.accessActor?.callerBinding !== RECEIVING_HOST_CALLER_BINDING &&
+      read.carrier.accessActor?.callerBinding !== RECEIVING_HOST_CALLER_BINDING &&
       sameCarrier(read.carrier, carrier) &&
       descriptor.legalEntityScope === read.legalEntityScope &&
       (kind === 'decide' || ROW_SCOPED_READ_ACCESS_KINDS.has(read.accessKind)),
@@ -190,8 +230,20 @@ export const materializeAccessQuestions: MaterializeAccessQuestions = (read, que
       `A read asks at most ${MAX_ACCESS_QUESTIONS} access questions; this one asks ${entries.length}`,
     );
   }
-  return Object.freeze(entries.map(([name, question]) => materializeAccessQuestion(read, name, question)));
+  return Object.freeze(
+    entries.map(([name, question]) => {
+      const { target } = question;
+      const materialized = materializeAccessQuestion(read, name, question, target.descriptor);
+      return materialized.carrier.accessActor?.callerBinding === RECEIVING_HOST_CALLER_BINDING
+        ? new RegisteredAccessQuestion(materialized, target, accessQuestionMint)
+        : materialized;
+    }),
+  );
 };
+
+/** Original target custody for trusted runtime binding; absent on forged materialized questions. */
+export const readAccessQuestionTarget = (question: MaterializedAccessQuestion): AccessQuestionTarget | undefined =>
+  RegisteredAccessQuestion.targetOf(question);
 
 type AccessAnswer = AccessAnswerOf<AccessQuestion>;
 type AnswerAccessQuestionsInput = Parameters<AnswerAccessQuestions>[0];

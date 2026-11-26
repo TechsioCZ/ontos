@@ -186,6 +186,9 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  executorEnrollments: [
+    { uses: ['assertion', 'recovery'], workloadKey: 'integration.symmy.source-organization-facts.read' },
+  ],
   module: {
     description: 'Durable admission and authorized status for scoped integration fixtures.',
     displayName: 'Symmy Integration',
