@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "kind": "ontos.stable.verification-manifest",
+  "projectId": "STABLEproject000000000",
+  "accounts": {
+    "staffSales": {
+      "email": "sales.verification@ontos.example.com",
+      "password": "REPLACE-WITH-PRIVATE-PASSWORD",
+      "tenantId": "00000000-0000-4000-8000-0000000000a0",
+      "legalEntityId": "00000000-0000-4000-8000-0000000000a1",
+      "expectedModuleIds": [
+        "demo.crm",
+        "demo.sales-pipeline"
+      ]
+    },
+    "tenantSwitcher": {
+      "email": "tenants.verification@ontos.example.com",
+      "password": "REPLACE-WITH-PRIVATE-PASSWORD",
+      "allowedTenantId": "00000000-0000-4000-8000-0000000000a0",
+      "deniedTenantId": "00000000-0000-4000-8000-000000000001"
+    },
+    "customer": {
+      "email": "control-inbox@verify.ontos.example.com",
+      "password": "REPLACE-WITH-PRIVATE-PASSWORD",
+      "tenantId": "00000000-0000-4000-8000-000000000001"
+    },
+    "erpOperator": {
+      "email": "erp.verification@ontos.example.com",
+      "password": "REPLACE-WITH-PRIVATE-PASSWORD",
+      "legalEntityId": "00000000-0000-4000-8000-0000000000b1"
+    },
+    "mcp": {
+      "email": "mcp.verification@ontos.example.com",
+      "password": "REPLACE-WITH-PRIVATE-PASSWORD",
+      "principalId": "00000000-0000-4000-8000-0000000000c2",
+      "legalEntityId": "00000000-0000-4000-8000-0000000000c1"
+    }
+  },
+  "erp": {
+    "apiKey": "REPLACE-WITH-THE-VERIFICATION-TENANT-SYMMY-KEY",
+    "legalEntityId": "00000000-0000-4000-8000-0000000000b1",
+    "input": {
+      "commercialScope": {
+        "channelId": "B2C",
+        "marketId": "00000000-0000-4000-8000-0000000000b2"
+      },
+      "currencyCode": "CZK",
+      "locationKey": "VERIFICATION-SKLAD-1",
+      "unitRef": {
+        "moduleId": "commerce.catalog",
+        "resourceId": "00000000-0000-4000-8000-0000000000b3",
+        "resourceType": "commerce.catalog.product-unit",
+        "tenantId": "00000000-0000-4000-8000-0000000000b0"
+      }
+    },
+    "stockSource": {
+      "customerConfigurationId": "verification",
+      "externalScope": "verification",
+      "issuer": {
+        "backendId": "verification-erp",
+        "backendKind": "external_business_system"
+      },
+      "namespace": "verification-erp"
+    },
+    "expectedOrderIds": [
+      "REPLACE-WITH-A-SEEDED-VERIFICATION-ORDER-ID"
+    ]
+  },
+  "controlInbox": {
+    "address": "control-inbox@verify.ontos.example.com",
+    "api": "mailpit",
+    "apiOrigin": "https://inbox.verify.ontos.example.com",
+    "authorization": "Bearer REPLACE-WITH-INBOX-API-TOKEN"
+  },
+  "mutations": [
+    {
+      "id": "erp-synthetic-import",
+      "tenantId": "00000000-0000-4000-8000-0000000000b0"
+    },
+    {
+      "id": "control-email",
+      "recipient": "control-inbox@verify.ontos.example.com"
+    },
+    {
+      "id": "mcp-task-proposal",
+      "account": "mcp.verification@ontos.example.com"
+    }
+  ]
+}
