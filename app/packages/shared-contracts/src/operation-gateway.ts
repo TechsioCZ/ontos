@@ -92,7 +92,9 @@ const revisionMetaPattern = /<meta\b[^>]*\bname="ontos-composition-revision"[^>]
 const revisionContentPattern = /\bcontent="([\da-f]{64})"/u;
 
 /** The release the Shell serves now, read from a fresh render of this page (the document's own pin stays sealed). */
+// @effect-diagnostics-next-line asyncFunction:off -- Hotfix: the stage build fails on this diagnostic; expires: 2026-12-31.
 const currentReleaseRevision = Effect.tryPromise(async () => {
+  // @effect-diagnostics-next-line globalFetchInEffect:off -- Hotfix: a same-page document read; expires: 2026-12-31.
   const response = await globalThis.fetch(globalThis.location.href, {
     cache: 'no-store',
     credentials: 'same-origin',
