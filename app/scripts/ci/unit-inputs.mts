@@ -550,7 +550,8 @@ const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: 
   if (graph.owningPackage(filepath) !== undefined) {
     return 'other-package' as const;
   }
-  if (filepath.startsWith('app/scripts/')) {
+  // Operator scripts enter a build only when its driver or included code reaches them.
+  if (filepath.startsWith('app/scripts/') || filepath.startsWith('ops/zerops-stable/')) {
     return UNUSED_SCRIPT;
   }
   return NON_BUILD_PATHS.some((entry) => entry.pattern.test(filepath)) ? ('non-build' as const) : ('input' as const);
