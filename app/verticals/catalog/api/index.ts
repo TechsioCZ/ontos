@@ -78,6 +78,7 @@ import { bindInitialVariantSourceRecoveryReadApiLive } from './bind-initial-vari
 import { brandCurrentReadApiLive } from './brand-current-read-server.ts';
 import { brandHistoryReadApiLive } from './brand-history-read-server.ts';
 import { catalogDocumentCurrentReadApiLive } from './catalog-document-current-read-server.ts';
+import { catalogMediaContentReadApiLive } from './catalog-media-content-read-server.ts';
 import { catalogMediaCurrentReadApiLive } from './catalog-media-current-read-server.ts';
 import { catalogSourceProductPageReadApiLive } from './catalog-source-product-page-read-server.ts';
 import { catalogSourceProductsReadApiLive } from './catalog-source-products-read-server.ts';
@@ -468,6 +469,7 @@ export const makeCatalogApiRuntime = (
     brandCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     brandHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogDocumentCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    catalogMediaContentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogMediaCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogSourceProductPageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogSourceProductsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

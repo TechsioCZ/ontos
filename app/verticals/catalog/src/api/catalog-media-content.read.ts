@@ -1,0 +1,139 @@
+// Governed delivery of one Catalog product image: the bytes of a Core Media Asset that an ACTIVE MEDIA assignment of a
+// DRAFT or ACTIVE Product names. Staff hold the read grant; the registered Storefront BFF is admitted as its workload.
+import type { OperationalScope, ReadLoadContext, ScopedTransactionExecutor } from '@app/core-runtime';
+import {
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  defineRead,
+  defineTenantModuleEntrypoint,
+  readLinkedMediaRendition,
+} from '@app/core-runtime';
+import { and, eq } from 'drizzle-orm';
+import { Effect, Option } from 'effect';
+
+import {
+  CatalogMediaContentRequestSchema,
+  CatalogMediaContentResponseSchema,
+} from '../../shared/apis/catalog-media-content.ts';
+import type { CatalogMediaContentRequest } from '../../shared/apis/catalog-media-content.ts';
+import { products } from '../database/schema.ts';
+import { CATALOG_MEDIA_OWNER_MODULE, catalogMediaLinkTarget } from '../persistence/catalog-media-content.ts';
+import type { CatalogMediaReads } from '../persistence/catalog-media-reads.ts';
+import { catalogMediaReadsForScope } from '../persistence/catalog-media-reads.ts';
+
+const readKey = 'commerce.catalog.api.catalog-media-content';
+const moduleKey = 'commerce.catalog';
+
+interface Services {
+  readonly media: CatalogMediaReads;
+  readonly transaction: ScopedTransactionExecutor;
+}
+
+const entrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'protected' },
+  entrypointKey: readKey,
+  moduleKey,
+  role: 'api',
+});
+
+const unavailable = (cause: unknown) => {
+  const error = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'Catalog product images are temporarily unavailable',
+  });
+  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+  return error;
+};
+
+const notFound = () => new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Image not found' });
+
+const loadContent = Effect.fn('CatalogMediaContentRead.load')(function* loadContent(
+  input: CatalogMediaContentRequest,
+  scope: OperationalScope,
+  services: Services,
+) {
+  const { productRef } = input;
+  if (productRef.tenantId !== scope.tenantId) {
+    return yield* notFound();
+  }
+  const rows = yield* services.transaction
+    .select({ lifecycle: products.lifecycleState })
+    .from(products)
+    .where(and(eq(products.tenantId, scope.tenantId), eq(products.productId, productRef.resourceId)))
+    .pipe(Effect.mapError(unavailable));
+  const lifecycle = rows[0]?.lifecycle;
+  // The storefront pages DRAFT and ACTIVE Products only, so only their images are served.
+  if (lifecycle !== 'DRAFT' && lifecycle !== 'ACTIVE') {
+    return yield* notFound();
+  }
+  const current = yield* services.media.current(productRef).pipe(Effect.mapError(unavailable));
+  const assigned =
+    Option.isSome(current) &&
+    current.value.ordered.some(
+      ({ resourceRef }) =>
+        resourceRef.moduleId === CATALOG_MEDIA_OWNER_MODULE && resourceRef.resourceId === input.assetId,
+    );
+  if (!assigned) {
+    return yield* notFound();
+  }
+  const image = yield* readLinkedMediaRendition(services.transaction, {
+    mediaAssetId: input.assetId,
+    rendition: input.rendition,
+    target: catalogMediaLinkTarget(productRef.resourceId),
+  }).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(image)) {
+    return yield* notFound();
+  }
+  return {
+    evidence: {
+      resultCount: 1,
+      resultFingerprintHash: image.value.contentSha256,
+      resultFingerprintSchema: 'core.media.rendition-sha256.v1',
+      targetResource: { resourceId: image.value.mediaAssetId, resourceType: 'media_asset' },
+    },
+    result: {
+      contentBase64: image.value.contentBase64,
+      contentSha256: image.value.contentSha256,
+      mimeType: image.value.mimeType,
+    },
+  };
+});
+
+export const catalogMediaContentRead = defineRead(
+  {
+    accessDeclaration: {
+      key: 'commerce.catalog.api-catalog-media-content.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-media', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
+    accessKind: 'detail',
+    accessWorkload: {
+      reason: 'The registered Storefront BFF shows the images of the DRAFT and ACTIVE Catalog Products it pages',
+      workloads: ['commerce.storefront-client'],
+    },
+    entrypoint,
+    evidencePolicy: {
+      captureMode: 'hash_only',
+      policyKey: `${readKey}.evidence.v1`,
+    },
+    inputSchema: CatalogMediaContentRequestSchema,
+    legalEntityScope: 'required',
+    owningModuleKey: moduleKey,
+    policies: [],
+    readKey,
+    resultSchema: CatalogMediaContentResponseSchema,
+    schemaVersion: '1',
+  },
+  {
+    load: (input, context: ReadLoadContext<Services>) => loadContent(input, context.scope, context.services),
+  },
+  (transaction, scope) =>
+    Effect.succeed({
+      media: catalogMediaReadsForScope(transaction, scope),
+      transaction,
+    }),
+);

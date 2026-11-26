@@ -3,7 +3,15 @@
 // @ontos-action-slug assign-catalog-media
 import type { ActionHandlerContext, ReadServiceFactory } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  ActionTransactionError,
+  defineAction,
+  defineTenantModuleEntrypoint,
+  storeLinkedMediaImage,
+} from '@app/core-runtime';
+import { CatalogPersistenceUnavailable } from '../persistence/errors.ts';
+import { CATALOG_MEDIA_OWNER_MODULE, catalogMediaLinkTarget } from '../persistence/catalog-media-content.ts';
+import { CatalogMediaConflict } from './catalog-media-conflict.ts';
 
 import { AssignCatalogMediaPayloadSchema, CatalogMediaChangeResultSchema } from '../../shared/actions/catalog-media.ts';
 import type { AssignCatalogMediaPayload } from '../../shared/actions/catalog-media.ts';
@@ -39,6 +47,11 @@ const assignCatalogMediaSnapshotServiceFactory = (
           actionInvocationId: string,
           result: typeof CatalogMediaChangeResultSchema.Type,
         ) => Effect.Effect<void, ActionTransactionError>;
+        readonly storeImage: (
+          input: AssignCatalogMediaPayload,
+          actionInvocationId: string,
+          principalId: string,
+        ) => Effect.Effect<void, CatalogPersistenceUnavailable | CatalogMediaConflict>;
       } => ({
         ...services,
         captureResult: (actionInvocationId: string, result: typeof CatalogMediaChangeResultSchema.Type) =>
@@ -58,6 +71,27 @@ const assignCatalogMediaSnapshotServiceFactory = (
               return error;
             }),
           ),
+        storeImage: (input: AssignCatalogMediaPayload, actionInvocationId: string, principalId: string) =>
+          input.upload === undefined
+            ? Effect.void
+            : storeLinkedMediaImage(transaction, {
+                actionInvocationId,
+                ingestionSource: 'user',
+                mediaAssetId: input.resourceRef.resourceId,
+                principalId,
+                target: catalogMediaLinkTarget(input.subjectRef.resourceId),
+                upload: input.upload,
+              }).pipe(
+                Effect.asVoid,
+                Effect.mapError((failure) =>
+                  failure._tag === 'MediaUploadRejected'
+                    ? new CatalogMediaConflict({ code: 'catalog_media_conflict', reason: failure.reason })
+                    : new CatalogPersistenceUnavailable({
+                        code: 'catalog_persistence_unavailable',
+                        reason: 'Catalog image storage is temporarily unavailable',
+                      }),
+                ),
+              ),
       }),
     ),
   );
@@ -79,11 +113,28 @@ const captureAssignCatalogMediaResult = ({
 
 export type { AssignCatalogMediaPayload } from '../../shared/actions/catalog-media.ts';
 
+type AssignServices = ReturnType<typeof catalogMediaPersistenceForScope> & {
+  readonly storeImage: (
+    input: AssignCatalogMediaPayload,
+    actionInvocationId: string,
+    principalId: string,
+  ) => Effect.Effect<void, CatalogPersistenceUnavailable | CatalogMediaConflict>;
+};
+
 const handleAssignCatalogMedia = Effect.fn('AssignCatalogMediaAction.handle')(function* handleAssignCatalogMediaEffect(
   payload: AssignCatalogMediaPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, ReturnType<typeof catalogMediaPersistenceForScope>>,
+  context: ActionHandlerContext<Readonly<Record<string, never>>, AssignServices>,
 ) {
   yield* checkCatalogMediaScope(context.scope.tenantId, payload.subjectRef, payload.resourceRef.tenantId);
+  if (payload.upload !== undefined) {
+    if (payload.resourceRef.moduleId !== CATALOG_MEDIA_OWNER_MODULE) {
+      return yield* new CatalogMediaConflict({
+        code: 'catalog_media_conflict',
+        reason: 'An uploaded image is stored as a Core Media asset',
+      });
+    }
+    yield* context.services.storeImage(payload, context.actionInvocationId, context.scope.principalId);
+  }
   const outcome = yield* context.services.assign({
     ...payload,
     actionInvocationId: context.actionInvocationId,

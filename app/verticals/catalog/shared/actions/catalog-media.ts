@@ -1,3 +1,4 @@
+import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
 import { Schema } from 'effect';
 
 import {
@@ -28,6 +29,8 @@ export const AssignCatalogMediaPayloadSchema = Schema.Struct({
   purpose: CatalogMediaPurposeSchema,
   resourceKind: CatalogMediaResourceKindSchema,
   resourceRef: CatalogDocumentResourceRefSchema,
+  /** An image uploaded with the assignment: Core Media stores it as the asset `resourceRef` names (core.media). */
+  upload: Schema.optionalKey(MediaImageUploadSchema),
 }).check(
   Schema.makeFilter(({ resourceRef, subjectRef }) =>
     subjectRef.tenantId === resourceRef.tenantId

@@ -550,6 +550,7 @@ export const catalogMcpContribution = defineOntosMcpContribution({
         en: 'Current catalog documents',
       },
     },
+    'catalog-media-content': 'hidden',
     'catalog-media-current': {
       title: {
         cs: 'Aktuální média katalogu',

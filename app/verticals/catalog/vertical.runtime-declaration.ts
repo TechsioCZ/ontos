@@ -37,6 +37,8 @@ import { AssortmentSetCompositionV1Api } from './shared/apis/assortment-set-comp
 import { BrandCurrentApi } from './shared/apis/brand-current.ts';
 import { BrandHistoryApi } from './shared/apis/brand-history.ts';
 import { CatalogDocumentCurrentApi } from './shared/apis/catalog-document-current.ts';
+import { CatalogMediaContentApi } from './shared/apis/catalog-media-content.ts';
+import { catalogMediaContentRead } from './src/api/catalog-media-content.read.ts';
 import { CatalogMediaCurrentApi } from './shared/apis/catalog-media-current.ts';
 import { CatalogSourceResolutionApi } from './shared/apis/catalog-source-resolution.ts';
 import { changeLocalOverrideAction } from './src/actions/change-local-override.action.ts';
@@ -399,6 +401,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'brand-current': BrandCurrentApi,
       'brand-history': BrandHistoryApi,
       'catalog-document-current': CatalogDocumentCurrentApi,
+      'catalog-media-content': CatalogMediaContentApi,
       'catalog-media-current': CatalogMediaCurrentApi,
       'catalog-source-product-page': CatalogSourceProductPageApi,
       'catalog-source-products': CatalogSourceProductsApi,
@@ -690,6 +693,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: catalogSourceProductsRead,
       },
       { apiKey: 'product-page', operationKey: 'productPage.execute', registration: productPageRead },
+      {
+        apiKey: 'catalog-media-content',
+        operationKey: 'catalogMediaContent.execute',
+        registration: catalogMediaContentRead,
+      },
       // </generated-module-manifest-operation-contracts>
     ],
     shellContributions: {
@@ -865,6 +873,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     catalogSourceProductPageRead,
     catalogSourceProductsRead,
     productPageRead,
+    catalogMediaContentRead,
     // </generated-module-registration-reads>
   ],
 };

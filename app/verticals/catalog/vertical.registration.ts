@@ -25,6 +25,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
       'brand-current': () => import('./src/api/brand-current-client.ts'),
       'brand-history': () => import('./src/api/brand-history-client.ts'),
       'catalog-document-current': () => import('./src/api/catalog-document-current-client.ts'),
+      'catalog-media-content': () => import('./src/api/catalog-media-content-client.ts'),
       'catalog-media-current': () => import('./src/api/catalog-media-current-client.ts'),
       'catalog-source-product-page': () => import('./src/api/catalog-source-product-page-client.ts'),
       'catalog-source-products': () => import('./src/api/catalog-source-products-client.ts'),

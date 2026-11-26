@@ -38,7 +38,11 @@ export interface CatalogProductPage {
     readonly lifecycle: string;
     readonly localized: Localized;
     readonly categories: readonly { readonly name?: unknown }[];
-    readonly media: readonly unknown[];
+    /** Current Catalog media assignments, main first; a `core.media` resource is an uploaded image. */
+    readonly media: readonly {
+      readonly assignment?: { readonly resourceRef?: Partial<OwnerRef> };
+      readonly ownerAvailability?: string;
+    }[];
     readonly variants: readonly {
       readonly variantRef: OwnerRef;
       readonly lifecycle: string;
@@ -237,6 +241,25 @@ const pricesByVariant = (prices: CatalogPagePrices | undefined): Map<string, Erp
   return found;
 };
 
+const ASSET_ID = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u;
+
+/** The main uploaded image (served by /novinky-z-erp/obrazky through Catalog's image read), else the placeholder. */
+const erpImageOf = (
+  productRef: OwnerRef,
+  media: CatalogProductPage["items"][number]["media"],
+  name: string,
+): { imageSrc: string; imageAlt: string } => {
+  const asset = media
+    .map(({ assignment }) => assignment?.resourceRef)
+    .find((ref) => ref?.moduleId === "core.media" && ASSET_ID.test(ref.resourceId ?? ""));
+  if (asset?.resourceId === undefined || !ASSET_ID.test(productRef.resourceId))
+    return { imageSrc: imagePlaceholder, imageAlt: erpCopy.noImage(name) };
+  return {
+    imageSrc: `/novinky-z-erp/obrazky/${productRef.resourceId}/${asset.resourceId}?tenant=${encodeURIComponent(productRef.tenantId)}`,
+    imageAlt: name,
+  };
+};
+
 /** The products of one Catalog page with each shown variant's ERP price and stock. */
 export function toErpProducts(
   page: CatalogProductPage,
@@ -281,9 +304,7 @@ export function toErpProducts(
         categories: item.categories.flatMap(({ name: category }) =>
           typeof category === "string" ? [category] : [],
         ),
-        // The Catalog media assignments name Core Media assets no admitted storefront read serves yet.
-        imageSrc: imagePlaceholder,
-        imageAlt: erpCopy.noImage(name),
+        ...erpImageOf(item.productRef, item.media, name),
         variants,
       },
     ];

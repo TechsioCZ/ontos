@@ -39,6 +39,7 @@ import { executeSetVariantLocalizedFacts } from '../api/set-variant-localized-fa
 import { executeUpdateProduct } from '../api/update-product-action-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { requestId } from './browser-crypto.ts';
+import { ErpMediaSection } from './erp-media-section.tsx';
 import { productListData, variantFiguresData } from './page-data.ts';
 
 type Lifecycle = ProductPageItem['lifecycle'];
@@ -492,6 +493,7 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
             );
           })}
         </fieldset>
+        <ErpMediaSection item={item} reason={draft.reason} />
         <label className="flex flex-col gap-50 text-sm" htmlFor="catalog-product-edit-reason">
           <span className="font-medium">Důvod změny</span>
           <Input
@@ -503,7 +505,7 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
           />
         </label>
         <p className="text-fg-secondary text-xs">
-          Obrázky, cenu a sklad zde upravit nelze: cena a sklad patří modulům Ceny a Sklad.
+          Obrázek se ukládá hned po výběru souboru. Cenu a sklad upravíte u varianty (Cena a sklad).
         </p>
         {failure !== null && (
           <StatusText showIcon status="error">

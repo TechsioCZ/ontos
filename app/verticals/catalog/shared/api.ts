@@ -31,6 +31,7 @@ import { BindInitialVariantSourceRecoveryApi } from './apis/bind-initial-variant
 import { BrandCurrentApi } from './apis/brand-current.ts';
 import { BrandHistoryApi } from './apis/brand-history.ts';
 import { CatalogDocumentCurrentApi } from './apis/catalog-document-current.ts';
+import { CatalogMediaContentApi } from './apis/catalog-media-content.ts';
 import { CatalogMediaCurrentApi } from './apis/catalog-media-current.ts';
 import { CatalogSourceProductPageApi } from './apis/catalog-source-product-page.ts';
 import { CatalogSourceProductsApi } from './apis/catalog-source-products.ts';
@@ -268,6 +269,7 @@ type CatalogApiGroups = GroupsOf<
   | typeof BrandCurrentApi
   | typeof BrandHistoryApi
   | typeof CatalogDocumentCurrentApi
+  | typeof CatalogMediaContentApi
   | typeof CatalogMediaCurrentApi
   | typeof CatalogSourceProductPageApi
   | typeof CatalogSourceResolutionApi
@@ -482,6 +484,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(BrandCurrentApi)
   .addHttpApi(BrandHistoryApi)
   .addHttpApi(CatalogDocumentCurrentApi)
+  .addHttpApi(CatalogMediaContentApi)
   .addHttpApi(CatalogMediaCurrentApi)
   .addHttpApi(CatalogSourceProductPageApi)
   .addHttpApi(CatalogSourceProductsApi)
@@ -854,6 +857,14 @@ export const catalogPublicOperationContracts = {
     authorityBundle: 'CATALOG_READER',
     businessTarget: 'catalog-document',
     permission: 'commerce.catalog.read.catalog-document-current',
+    scope: 'tenant',
+    version: '1',
+  },
+  'commerce.catalog.api.catalog-media-content': {
+    accessKind: 'read',
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: 'catalog-media',
+    permission: 'commerce.catalog.read.media-content',
     scope: 'tenant',
     version: '1',
   },
@@ -2518,6 +2529,7 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.read.product-brand-history',
     'commerce.catalog.read.product-detail',
     'commerce.catalog.read.product-page',
+    'commerce.catalog.read.media-content',
     'commerce.catalog.read.product-variant-snapshot',
     'commerce.catalog.read.pricing-purpose-equivalence',
     'commerce.catalog.read.effective-attribute-values-current',
