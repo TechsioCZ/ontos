@@ -2,6 +2,7 @@ import { HttpApi } from 'effect/http-api';
 // TEST process driver; the registration, gateway and Core matching/ACK are real.
 import {
   ApplicationCompositionAuthorityError,
+  ActiveApplicationCompositionUnavailableError,
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
   CorePersistenceLive,
@@ -10,6 +11,7 @@ import {
   extractVerticalRuntimeSafeDescriptors,
   canonicalOntosPublicApiKey,
   narrowActiveApplicationComposition,
+  ModuleOperationRequirementError,
   OntosActionContractSchema,
   OntosApiContractSchema,
   OntosOperationContractSchema,
@@ -19,8 +21,9 @@ import {
   OutboxRuntime,
   OutboxRuntimeLive,
   OutboxWorkerDescriptorError,
+  PersistenceFailure,
 } from '@app/core-runtime';
-import type { ActiveApplicationCompositionUnavailableError, OutboxCycleError } from '@app/core-runtime';
+import type { OutboxCycleError } from '@app/core-runtime';
 import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto, NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
@@ -99,6 +102,7 @@ const workerMessageSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('failed'),
     code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+    phase: Schema.Literals(['startup', 'matching', 'claim']),
     reasonCode: Schema.Literals(['native-claim-admission', 'other']),
     diagnostic: Schema.Array(Schema.Struct({ tag: Schema.String, code: Schema.String, reason: Schema.String })),
   }),
@@ -153,6 +157,20 @@ const publicFailureReasons = new Set([
   'The complete Application Composition subscription catalog is unavailable',
   'The genuine hosted worker cycle failed',
 ]);
+const publicFailureSchema = Schema.Union([
+  ApplicationCompositionAuthorityError,
+  ActiveApplicationCompositionUnavailableError,
+  ModuleOperationRequirementError,
+  OutboxWorkerDescriptorError,
+  Schema.instanceOf(PersistenceFailure),
+  PrivacyCompletionWorkerFailure,
+]);
+const publicFailureCodes = new Set([
+  'application_composition_authority_unavailable',
+  'module_operation_requirement_unavailable',
+  'module_operation_requirement_unsatisfied',
+  'outbox_worker_descriptor_invalid',
+]);
 const failureDiagnostic = (cause: unknown) => {
   const diagnostic: { tag: string; code: string; reason: string }[] = [];
   let current = cause;
@@ -161,15 +179,13 @@ const failureDiagnostic = (cause: unknown) => {
     if (Option.isNone(declared)) {
       break;
     }
-    const { _tag, code, reason } = declared.value;
+    const { code, reason } = declared.value;
+    const known = Schema.decodeUnknownOption(publicFailureSchema)(current);
     diagnostic.push({
-      tag: _tag,
-      code: code ?? 'not-declared',
-      // Only declared machine reasons and these exact public constants may leave the child.
-      reason:
-        reason !== undefined && (publicFailureReasons.has(reason) || /^[A-Za-z][A-Za-z0-9_]{0,95}$/u.test(reason))
-          ? reason
-          : 'redacted-unclassified-reason',
+      tag: Option.isSome(known) ? known.value._tag : 'unclassified',
+      code: code !== undefined && publicFailureCodes.has(code) ? code : 'not-declared',
+      // Only these exact public constants may leave the child, never arbitrary identifier-like private text.
+      reason: reason !== undefined && publicFailureReasons.has(reason) ? reason : 'redacted-unclassified-reason',
     });
     current = declared.value.cause;
   }
@@ -184,6 +200,7 @@ const ownsWorkerConnection = (address: URL, database: string, user: string) =>
   address.pathname === `/${database}` &&
   decodeURIComponent(address.username) === user;
 
+let failurePhase: 'startup' | 'matching' | 'claim' = 'startup';
 const run = Effect.scoped(
   Effect.gen(function* completionWorker() {
     const unexpectedAdmin = yield* Config.Redacted('DATABASE_ADMIN_URL').pipe(Config.option);
@@ -360,7 +377,9 @@ const run = Effect.scoped(
               ),
             );
           }
+          failurePhase = 'matching';
           const matched = yield* actualRuntime.matchMessages({ compositionRevision: cycleInput.compositionRevision });
+          failurePhase = 'claim';
           const cycle = yield* actualRuntime.runCycle({
             ...cycleInput,
             now: DateTime.toDateUtc(DateTime.addDuration(yield* DateTime.now, advance)),
@@ -448,9 +467,14 @@ const program = process.argv.includes('--describe')
                 ? 'composition-unavailable'
                 : 'worker-unavailable',
             reasonCode: failureReasonCode(cause),
+            phase: failurePhase,
             diagnostic: failureDiagnostic(cause),
             type: 'failed',
-          }).pipe(Effect.andThen(Effect.fail(cause))),
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(new PrivacyCompletionWorkerFailure({ reason: 'The genuine hosted worker cycle failed' })),
+            ),
+          ),
         onSuccess: () => Effect.void,
       }),
     );
