@@ -99,6 +99,10 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
   for (const directory of rootLevelPackageDirectories) {
     const storefront = plan(`app/${directory}/src/app/page.tsx`);
     expect(storefront.mode, directory).toBe('scoped');
+    expect(storefront.reason).toContain(
+      'the three whole-tree lint slices, the lint rule tests and the repository policy run',
+    );
+    expect(storefront.reason).not.toContain('lint of the changed files');
     expect(storefront.affectedPackages, directory).toEqual([directory]);
     // The typecheck, Rstest tooling and native tooling rows; no builds or integration jobs.
     expect(names(storefront.source), directory).toEqual([TYPECHECK, ...STAGE_ROWS]);

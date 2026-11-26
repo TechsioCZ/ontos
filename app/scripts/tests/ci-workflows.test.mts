@@ -1776,18 +1776,22 @@ it('prints all failing hook chunks and later fixes without changing the index', 
   const output = execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/test-lint-files.sh', import.meta.url))], {
     cwd: fileURLToPath(new URL('../../../', import.meta.url)),
     encoding: 'utf-8',
+    timeout: 60_000,
   });
   expect(output).toContain('after 24/24; both exit 1');
   expect(output).toContain('index unchanged; exit 1');
+  expect(output).toContain('Earlier job failure and later auto-fix both printed; index unchanged; exit 1.');
   const regressions = execFileSync(
     '/bin/bash',
     [fileURLToPath(new URL('../ci/test-lint-regressions.sh', import.meta.url))],
     {
       encoding: 'utf-8',
+      timeout: 60_000,
     },
   );
   expect(regressions).toContain('every quoted path reported through run, args and both');
   expect(regressions).toContain('Unsupported file templates');
+  expect(regressions).toContain('Global-name/tag collisions fail closed before any job executes.');
 });
 
 it('runs whole-tree lint without a comparison artifact and keeps proof rows global-only', () => {
@@ -3153,19 +3157,6 @@ it('proves the pinned formatter and linter configuration inputs on unchanged fil
   );
   expect(output).toContain('change unchanged-file results; .ignore does not');
 });
-
-for (const [script, proof] of [
-  ['test-lint-files.sh', 'Earlier job failure and later auto-fix both printed; index unchanged; exit 1.'],
-  ['test-lint-regressions.sh', 'Global-name/tag collisions fail closed before any job executes.'],
-]) {
-  it(`runs the real hook regression proof ${script} in the repository tooling suite`, () => {
-    const output = execFileSync('/bin/bash', [fileURLToPath(new URL(`../ci/${script}`, import.meta.url))], {
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
-    expect(output).toContain(proof);
-  });
-}
 
 it('selects stage docs only for verified Markdown-only pushes and proof only for exact verified dispatches', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];

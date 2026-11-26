@@ -31,6 +31,9 @@ it.effect('reads every row of the real verdict table', () =>
     // Every row of the document is a rule: none is dropped.
     expect(rules.map(({ id }) => id)).toEqual(rows.map((line) => line.split('|')[1]?.trim()));
     expect(rules.length).toBeGreaterThan(0);
+    const gates = rules.filter(({ globs }) => globs.includes('.github/workflows/ultramodern-workspace-gates.yml'));
+    expect(gates.map(({ id }) => id)).toEqual(['V1']);
+    expect(gates[0]?.rule).toContain('whole-tree format-and-lint');
     for (const rule of rules) {
       expect(rule.rule.length, rule.id).toBeGreaterThan(0);
       expect(rule.globs.length === 0, rule.id).toBe(rule.kinds.length === 0);

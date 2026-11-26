@@ -715,7 +715,7 @@ After any failed rehearsal or rollout:
 4. fix the entire failure class and add a regression test;
 5. rebuild once and rerun the ordered gates from the beginning.
 
-Use the CI provider's rerun or manual dispatch for a genuine retry. Do not create empty commits to retrigger a pipeline.
+For Zerops Stage Deploy, re-run **all jobs** with `gh run rerun <run id>` (without `--failed`), or dispatch the workflow on the current head. A full rerun replans as a retry and deploys every service. Both delivery jobs refuse a plan from an earlier attempt before downloading unit archives or changing stage. Do not create empty commits to retrigger a pipeline.
 
 ## Historical release evidence
 

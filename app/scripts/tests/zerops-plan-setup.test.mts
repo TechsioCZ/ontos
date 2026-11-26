@@ -399,7 +399,7 @@ interface HistoryFixture {
   readonly mutations: readonly RunMutation[];
   readonly runs: readonly ReturnType<typeof run>[];
 }
-const planWith = (history: HistoryFixture) =>
+const planWith = (history: HistoryFixture, runAttempt = '1') =>
   Effect.gen(function* realPlanner() {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
@@ -413,7 +413,7 @@ const planWith = (history: HistoryFixture) =>
         env: {
           GITHUB_EVENT_NAME: 'push',
           GITHUB_OUTPUT: path.join(directory, 'outputs'),
-          GITHUB_RUN_ATTEMPT: '1',
+          GITHUB_RUN_ATTEMPT: runAttempt,
           GITHUB_RUN_NUMBER: '20',
           GITHUB_SHA: head,
         },
@@ -431,6 +431,79 @@ const changing = (changedPaths: readonly string[]) => ({
   ...greenBase,
   comparison: { ancestor: true, base: BASE, changedPaths, truncated: false },
 });
+
+for (const jobName of ['deliver', 'deliver_app']) {
+  it.effect(`refuses ${jobName} from an earlier plan attempt before artifacts or stage mutations`, () =>
+    Effect.gen(function* freshDeliveryPlan() {
+      const fs = yield* FileSystem.FileSystem;
+      const Step = Schema.Struct({
+        env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        name: Schema.String,
+        run: Schema.optionalKey(Schema.String),
+        uses: Schema.optionalKey(Schema.String),
+      });
+      const { jobs: workflowJobs } = Schema.decodeUnknownSync(
+        Schema.Struct({
+          jobs: Schema.Record(
+            Schema.String,
+            Schema.Struct({
+              outputs: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+              steps: Schema.Array(Step),
+            }),
+          ),
+        }),
+      )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+      expect(workflowJobs.plan?.outputs?.run_attempt).toBe(`\${{ github.run_attempt }}`);
+      const steps = workflowJobs[jobName]?.steps ?? [];
+      const guard = steps.findIndex(({ name }) => name === 'Refuse a delivery planned in another run attempt');
+      expect(guard).toBeGreaterThanOrEqual(0);
+      expect(guard).toBeLessThan(
+        steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true),
+      );
+      expect(guard).toBeLessThan(steps.findIndex(({ name }) => name === MUTATION_MARKER));
+      const step = steps[guard];
+      expect(step?.env?.PLAN_RUN_ATTEMPT).toBe(`\${{ needs.plan.outputs.run_attempt }}`);
+      const script = step?.run;
+      if (script === undefined) {
+        expect.fail('Missing delivery attempt guard');
+      }
+      for (const [planned, current, allowed] of [
+        ['1', '1', true],
+        ['1', '2', false],
+        ['', '2', false],
+        ['2', '2', true],
+      ] as const) {
+        const result = yield* collectToolingProcess(
+          ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', script], {
+            env: { GITHUB_RUN_ATTEMPT: current, GITHUB_RUN_ID: '2468', PLAN_RUN_ATTEMPT: planned },
+            extendEnv: true,
+          }),
+        );
+        expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
+        if (!allowed) {
+          expect(result.stdout).toContain('gh run rerun 2468 (without --failed)');
+          expect(result.stdout).toContain('dispatch the workflow on the current head');
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.live('replans a full rerun as a retry: a storefront-only first attempt becomes every service', () =>
+  Effect.gen(function* fullRerun() {
+    const history = changing(['app/akros-storefront/src/app/page.tsx']);
+    const first = yield* planWith(history);
+    expect(first.plan.full).toBe(false);
+    expect(first.plan.services).toEqual(['storefront', 'shop']);
+    const retry = yield* planWith(history, '2');
+    expect(retry.plan.full).toBe(true);
+    expect(retry.plan.services).toEqual(['app', 'storefront', 'shop', 'n1']);
+    expect(retry.plan.reasons).toContain('a re-run attempt deploys every service');
+    for (const service of ['app', 'storefront', 'shop', 'n1', 'full']) {
+      expect(retry.outputs).toContain(`${service}=true\n`);
+    }
+  }),
+);
 
 it.live('executes the real planner: an unreadable comparison deploys every service', () =>
   Effect.gen(function* unreadableComparison() {

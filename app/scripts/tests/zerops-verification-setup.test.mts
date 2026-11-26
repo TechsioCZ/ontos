@@ -19,6 +19,7 @@ const SAVE = 'Save the pinned verification browsers';
 const PROVE_KEPT_APP = 'Prove the live app while the storefronts deploy';
 const PROVE_LIVE_APP = 'Prove the live app';
 const FINISH_PROOFS = 'Verify every service and finish the proofs';
+const INSTALL_WORKSPACE = 'Set up the toolchain and install the app workspace';
 const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
 const PROOFS_FINISH = 'bash scripts/zerops/stage-proofs.sh finish';
 const PROOFS_SCRIPT = path.resolve(import.meta.dirname, '../zerops/stage-proofs.sh');
@@ -97,7 +98,8 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
       expect(step.env).toBeUndefined();
     }
     const index = (name: string) => steps.findIndex((step) => step.name === name);
-    expect(index(RESTORE)).toBeGreaterThan(index('Install the app workspace'));
+    expect(index(INSTALL_WORKSPACE)).toBeGreaterThanOrEqual(0);
+    expect(index(RESTORE)).toBeGreaterThan(index(INSTALL_WORKSPACE));
     // After the last upload: the browser downloads never share the runner's bandwidth with one.
     expect(index(BROWSER_CACHE)).toBeGreaterThan(index('Push the N1 storefront'));
     expect(index(RESTORE)).toBeGreaterThan(index(BROWSER_CACHE));
@@ -566,9 +568,10 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
 it.effect('installs the whole workspace once and bypasses pre-run verification for every pnpm command it runs', () =>
   Effect.gen(function* completeVerificationSetup() {
     const steps = yield* readDelivery;
-    expect(steps.find((step) => step.name === 'Install the app workspace')?.run).toBe(
-      'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
-    );
+    const install = steps.filter((step) => step.uses === './.github/actions/install-app');
+    expect(install).toHaveLength(1);
+    expect(install[0]?.with?.['install-args']).toBe('--trust-lockfile');
+    expect(install[0]?.if).toBeUndefined();
     for (const step of steps) {
       for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
         if (invocation.groups?.arguments?.startsWith('install ') === true) {
