@@ -163,7 +163,8 @@ export const confirmVariantCombinationAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    // Optional, like update-product: staff run it from the ERP product editor with their company selected.
+    legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
     payloadSchema: ConfirmVariantCombinationPayloadSchema,
     policies: [],
