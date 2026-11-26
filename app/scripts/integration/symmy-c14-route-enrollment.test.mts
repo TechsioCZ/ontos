@@ -190,8 +190,10 @@ it.live(
         yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale) values(${tenantId},'INTERNAL_C14 route enrollment',${slug},'active','en')`;
         const legalEntityId = randomUUID();
         yield* admin`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${legalEntityId},${tenantId},'INTERNAL_C14 enrolled company','CZ','INTERNAL_C14','active')`;
-        for (const module of snapshot.composition.modules) {
-          yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
+        // `core.identity` owns the enrollment capability: the access gate offers a capability only while the Tenant's
+        // owning module is installed, as the stage bootstrap does for every Tenant.
+        for (const moduleId of ['core.identity', ...snapshot.composition.modules.map((module) => module.moduleId)]) {
+          yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${moduleId},'active')`;
         }
         const issuer = yield* seedPrincipal(admin, tenantId, 'human');
         yield* bindAuth(admin, issuer, 'user', shell.providerUserId);
