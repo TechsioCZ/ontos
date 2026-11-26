@@ -143,7 +143,8 @@ const salesTermsDraftOf = (product: ProductRecord): SalesTermsDraft => ({
     product.originalPriceMinor === undefined || product.originalPriceMinor === 0
       ? ''
       : czkText(product.originalPriceMinor),
-  packageText: product.packageQuantity === undefined ? '' : String(product.packageQuantity),
+  packageText:
+    product.packageQuantity === undefined || product.packageQuantity <= 0 ? '' : String(product.packageQuantity),
   sourceUnit: product.sourceUnit ?? '',
   tiers: tierDraftsOf(product.priceTiers),
 });
@@ -193,8 +194,9 @@ const salesTermsPatchOf = (
   if (minimum !== parseQuantityText(confirmed.minimumText)) {
     patch.minimumQuantity = minimum;
   }
-  const packageQuantity = parseQuantityText(draft.packageText);
-  if (packageQuantity !== null && packageQuantity !== parseQuantityText(confirmed.packageText)) {
+  // An emptied package sends 0 (no package): the owner treats only a positive package as a step.
+  const packageQuantity = draft.packageText.trim() === '' ? 0 : parseQuantityText(draft.packageText);
+  if (packageQuantity !== null && packageQuantity !== (parseQuantityText(confirmed.packageText) ?? 0)) {
     patch.packageQuantity = packageQuantity;
   }
   const tiers = priceTiersOf(draft.tiers);
