@@ -674,6 +674,73 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
     }).pipe(Effect.scoped),
   );
 
+  // L1429-BDD "Externí URL bez přijetí bytes", L1429-F10, L1429-H10, L1432-BR-13
+  suite.effect(
+    'never makes a usable asset of an external URL whose bytes were not received: it stays unconfirmed, unverified and not Current',
+    () =>
+      Effect.gen(function* externalUrlOnly() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const externalSourceRef = 'https://files.supplier.example/catalogue/brochure.pdf';
+        // The bytes the external provider holds. The caller states their size and digest truthfully, and sends none.
+        const bytes = bytesOf('held by the external provider only');
+        const reservation = yield* reserveAsset(harness, world, world.human, bytes, {
+          key: 'external',
+          overrides: { externalSourceRef, ingestionSource: 'user' },
+        });
+        const { resourceId: mediaAssetId } = reservation.mediaAssetRef;
+        expect(reservation.processingStatus).toBe('uploaded');
+        const reserved = yield* harness.requiredRowOf(world.tenantId, mediaAssetId);
+        const storageKey = deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId });
+        // The URL is recorded as a note about where the file came from, and as nothing more.
+        expect(reserved).toMatchObject({
+          external_source_ref: externalSourceRef,
+          processing_status: 'uploaded',
+          sealed_at: null,
+          storage_key: storageKey,
+        });
+
+        // Confirming reads the object store back under Core's own key. Nothing was fetched from the URL into it.
+        const verification = yield* verifyStoredMediaObject({
+          expected: { byteSize: bytes.byteLength, contentSha256: digestOf(bytes) },
+          storageKey,
+          storageProvider: reserved.storage_provider,
+        }).pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+        expect(verification).toMatchObject({ outcome: 'unverifiable', reason: 'object_missing' });
+        const confirm = yield* Effect.exit(
+          harness
+            .runtimeFor(world.human)
+            .runAction({
+              payload: { mediaAssetRef: reservation.mediaAssetRef },
+              principal: principalOf(world, world.human),
+              registration: confirmAssetAction,
+              transport: transportOf('external-confirm'),
+            })
+            .pipe(Effect.provideService(StoredMediaObjectVerification, verification)),
+        );
+        expect(failureTagOf(confirm)).toBe('MediaIngestUncertain');
+        expect(yield* harness.requiredRowOf(world.tenantId, mediaAssetId)).toEqual(reserved);
+        expect(Option.isNone(yield* harness.storage.peek(storageKey))).toBe(true);
+
+        // No consumer is told it can use it: not Current, and no size or digest is presented as proven.
+        const current = yield* harness.currentOf(world, [mediaAssetId]);
+        expect(current.entries.map(({ kind }) => kind)).toEqual(['CURRENT_UNVERIFIED']);
+        const metadata = yield* harness.metadataOf(world, mediaAssetId);
+        expect(metadata).toMatchObject({ contentVerified: false, processingStatus: 'uploaded' });
+        expect(metadata).not.toHaveProperty('byteSize');
+        expect(metadata).not.toHaveProperty('contentSha256');
+
+        // The control: the same URL with the bytes actually received is an asset of its own, and only that one.
+        const own = yield* uploadFlow(harness, world, world.human, bytes, {
+          key: 'external-own-copy',
+          overrides: { externalSourceRef, ingestionSource: 'user' },
+        });
+        expect(own.confirmed.processingStatus).toBe('ready');
+        expect(own.mediaAssetId).not.toBe(mediaAssetId);
+        expect(yield* harness.requiredRowOf(world.tenantId, mediaAssetId)).toEqual(reserved);
+      }).pipe(Effect.scoped),
+  );
+
   // L1433-F6, L1433-BDD-10, L1433-BDD-11: a row that is not `uploaded` is never sealed by a confirm, whatever it reads back
   suite.effect(
     'never seals a scanning or failed asset: a confirm with matching bytes changes nothing and is refused',
