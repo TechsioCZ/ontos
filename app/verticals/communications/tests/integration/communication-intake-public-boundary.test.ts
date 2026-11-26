@@ -1,5 +1,6 @@
 import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -12,6 +13,7 @@ import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communicat
 import { scopeKey } from '../../src/domain/recipient/original-binding.ts';
 import type { ResendOriginalFacts } from '../../src/domain/recovery/resend-admission.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
+import { asSourceWorker } from '../support/source-worker-principal.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import {
@@ -46,27 +48,30 @@ import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts'
  */
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
-// The scripted harness decides access for the protected Action; a registered-workload principal needs the verified
-// gateway provenance of a live Shell issuer, which this in-process boundary does not have (reported, not claimed).
+// Access is scripted, while the caller carries the same sealed workload provenance Core reads in production.
 const sourceWorkload = {
-  authBindingId: '99999999-9999-4999-8999-999999999999',
-  authContextRef: 'better-auth-session:fixture-source',
-  authMethod: 'session' as const,
+  authContextRef: 'job:fixture-source:run:1',
+  authMethod: 'system' as const,
   principalId: '77777777-7777-4777-8777-777777777777',
   tenantId,
 };
 const encode = Schema.encodeSync(SubmitCommunicationRequestPayloadSchema);
+const requestLookupSql = [
+  'select "action_invocation_id", "fingerprint", "identity_key", "occurrence_id", "occurrence_revision", "payload", "purpose", "received_at"::text, "request_id", "scope_key", "source_module", "tenant_id"',
+  'from "communications"."communication_requests"',
+  'where (("communications"."communication_requests"."tenant_id" = $1) and ("communications"."communication_requests"."identity_key" = $2))',
+].join(' ');
 
 /**
- * The harness scripts access, so it cannot carry the sealed gateway provenance of a registered source worker, and
- * Core's own scope installer is not reachable from it. The calling module is therefore bound as the Action's typed
- * `sourceCaller` service, exactly the seam production binds from the verified scope (`sourceCallerOf`, proved against
- * the real provenance carrier in `source-caller.test.ts` and the native intake suite).
+ * The real preparation reads an exactly scripted empty request snapshot and gathers owner facts. The service binding
+ * keeps those prepared facts and replaces only the committing stores. Workload provenance is sealed by the source
+ * fixture, not cryptographically issued by a live Shell; that boundary is covered by the native HTTP suite.
  */
 const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorld(
   types = [fixtureType()],
   callerModule = 'fixture.source',
   originals: Parameters<typeof makeInMemoryResendPort>[0] = {},
+  sourceExecutionAdmitted = true,
 ) {
   const templates = makeInMemoryTemplatePort();
   yield* seedLanguages(templates.port, ['cs', 'en'], {
@@ -76,18 +81,24 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   const intake = inMemoryIntakePort();
   const policies = makeInMemoryLanguagePolicyPort();
   const resend = makeInMemoryResendPort(originals);
+  const owner = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: communicationsRegistration });
   const harness = yield* makeActionTestHarness({
+    ...owner,
     access: 'allowed',
     ownerRegistration: communicationsRegistration,
+    preparationReads: [{ execute: () => Effect.succeed([]), sql: requestLookupSql }],
     services: [
-      bindActionTestServices(submitCommunicationRequestAction, {
+      bindActionTestServices(submitCommunicationRequestAction, (prepared) => ({
+        ...prepared,
         intake: intake.port,
         policies: policies.port,
         resend: resend.port,
         sourceCaller: { isClaimedSource: (claimed: string) => claimed === callerModule },
         templates: templates.port,
-      }),
+      })),
     ],
+    sourceExecutionInvocations:
+      sourceExecutionAdmitted === true ? [{ invocationId: '60000000-0000-4000-8000-000000000002', tenantId }] : [],
   });
   const privacy = privacyOwnerDouble({
     'approver-1': privacyAllowed,
@@ -113,7 +124,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
     harness.runtime
       .runAction({
         payload: encode(request),
-        principal: sourceWorkload,
+        principal: asSourceWorker(sourceWorkload, callerModule, owner.snapshot.composition.revision),
         registration: submitCommunicationRequestAction,
         transport: { correlationId: key, idempotencyKey: key },
       })
@@ -123,7 +134,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
     harness.runtime
       .runAction({
         payload,
-        principal: sourceWorkload,
+        principal: asSourceWorker(sourceWorkload, callerModule, owner.snapshot.composition.revision),
         registration: submitCommunicationRequestAction,
         transport: { correlationId: key, idempotencyKey: key },
       })
@@ -200,6 +211,17 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
 });
 
 describe('Communication Request intake over the public Action boundary (#1401, AC-01)', () => {
+  it.effect('a revoked source execution cannot prepare a decision or queue an intent', () =>
+    Effect.gen(function* revokedSourceExecution() {
+      const t = yield* world([fixtureType()], 'fixture.source', {}, false);
+      yield* Effect.flip(
+        t.issue(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }), 'revoked-source'),
+      );
+      expect(t.intake.stored.size).toBe(0);
+      expect(t.harness.snapshot().preparationQueries).toEqual([]);
+      expect(t.harness.snapshot().committed).toEqual([]);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
   it.effect(
     '[AC-01 S01 S03] a source request yields 0, 1 and N messages with stable identities; an event alone creates nothing',
     () =>

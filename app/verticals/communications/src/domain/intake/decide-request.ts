@@ -25,7 +25,7 @@ import type {
   ResendRefusal,
   SourceUnresolvedReason,
 } from '../catalog/vocabulary.ts';
-import type { LanguagePolicySnapshot, NotSentReason } from '../language/vocabulary.ts';
+import type { LanguagePolicySnapshot, NotSentReason, RecipientLanguageContext } from '../language/vocabulary.ts';
 import { assessPrivacyEligibility, PrivacyAssessment, privacyEvidenceOf } from '../privacy/assess-privacy.ts';
 import type { PrivacyAssessmentCase } from '../privacy/assess-privacy.ts';
 import type { ProcessingScope } from '../privacy/processing-scope.ts';
@@ -264,6 +264,7 @@ const LANGUAGE_STOP_REASON = {
 interface Candidate {
   readonly asked: AskedRecipient | undefined;
   readonly candidate: MessageIntentCandidate;
+  readonly language: RecipientLanguageContext | undefined;
 }
 
 const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
@@ -271,7 +272,7 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
   type: TransactionalMessageType,
   stores: DecisionStores,
   policy: Option.Option<LanguagePolicySnapshot>,
-  { asked, candidate }: Candidate,
+  { asked, candidate, language: recipientLanguage }: Candidate,
 ) {
   const { identity } = candidate;
   const intentKey = intentKeyOf(requestIdentityKeyOf(input.request), identity);
@@ -312,7 +313,9 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
   if (base.endpoint.value.channel !== 'email') {
     return stopped('CHANNEL_NOT_SUPPORTED');
   }
-  const recipientLanguage = yield* (yield* RecipientLanguageAuthority).languageOf(original);
+  if (recipientLanguage === undefined) {
+    return yield* unavailable('An eligible recipient has no prepared language authority');
+  }
   const language = yield* decideMessageLanguageUnderPolicy(stores.templates, policy.value, {
     base: { channel: 'email', messageType: type.typeId, scope: templateScopeOf(input.request) },
     // The type's own owner declaration: the one language it requires, else both, where the choice is Communications'.
@@ -344,13 +347,11 @@ const eligibleCandidatesOf = (candidates: readonly MessageIntentCandidate[]) =>
   candidates.filter(({ recipient }) => RecipientDecision.$is('Eligible')(recipient));
 
 /**
- * Decide one request. Fails only with `CommunicationDecisionUnavailable` (a fact that cannot be established now, or a
- * store failure surfaced as the same retryable fact); an unreachable recipient or Privacy owner is NOT such a failure
- * but a recorded, reasoned stop of the one concrete message it concerns.
+ * Gather source, recipient, Privacy and language authority before SQL. Resend eligibility and owner-local settings
+ * are decided later from the committing transaction; these facts contain no transaction-bound service.
  */
-export const decideRequest = Effect.fn('Communications.decideRequest')(function* decideRequestOf(
+export const prepareRequest = Effect.fn('Communications.prepareRequest')(function* prepareRequestOf(
   request: CommunicationRequest,
-  stores: DecisionStores,
 ) {
   const [input, requestId] = yield* Effect.all([decodeIntakeInput(request), requestIdOf(request)], {
     concurrency: 2,
@@ -359,20 +360,13 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
   const catalog = yield* MessageTypeCatalog;
   const evaluator = yield* CommunicationDecisionService;
   const typeOption = catalog.byPurpose(input.decisionRequest.purpose);
-  const { resendRefusal, source: reading } = yield* Effect.all(
-    {
-      resendRefusal: resendRefusalFor(request, ownedType(typeOption, input.decisionRequest), stores),
-      source: factsFor(input.decisionRequest, typeOption),
-    },
-    { concurrency: 2 },
-  );
+  const reading = yield* factsFor(input.decisionRequest, typeOption);
   const { source } = reading;
   const evaluate = (recipients: readonly RecipientFact[]) =>
     evaluator
       .decide(input.decisionRequest, {
         recipients,
         source,
-        ...Option.match(resendRefusal, { onNone: () => ({}), onSome: (refusal) => ({ resendRefusal: refusal }) }),
         ...Option.match(reading.unresolved, {
           onNone: () => ({}),
           onSome: (sourceUnresolved) => ({ sourceUnresolved }),
@@ -388,14 +382,7 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
   const needsRecipients =
     CommunicationOutcome.$is('NoMessage')(probe.outcome) && probe.outcome.reason === 'RECIPIENT_AUTHORITY_MISSING';
   if (!needsRecipients || Option.isNone(type)) {
-    return {
-      decision: probe,
-      decisionId,
-      intents: [],
-      languagePolicy: Option.none(),
-      request,
-      requestId,
-    } satisfies DecisionPlan;
+    return { asked: [], decisionId, input, languages: [], reading, requestId, typeOption };
   }
   const evaluatedRecipients = yield* assessRecipients({
     bindings: input.bindings,
@@ -412,6 +399,77 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
         : askPrivacy(input, type.value, evaluated),
     { concurrency: OWNER_CALL_CONCURRENCY },
   );
+  const decision = yield* evaluate(
+    asked.map(({ evaluated, privacy }) =>
+      recipientFactOf(evaluated.assessment, input.decisionRequest, privacyEvidenceOf(privacy)),
+    ),
+  );
+  const eligible = CommunicationOutcome.$match(decision.outcome, {
+    Candidates: ({ candidates }) => eligibleCandidatesOf(candidates),
+    NoMessage: (): readonly MessageIntentCandidate[] => [],
+  });
+  const languages = yield* Effect.forEach(
+    asked.filter(({ evaluated }) =>
+      eligible.some(
+        ({ identity }) =>
+          recipientKey(identity.slotKey, identity.recipient) ===
+          recipientKey(evaluated.assessment.subject.slotKey, evaluated.assessment.subject.binding.recipientRef),
+      ),
+    ),
+    Effect.fn('Communications.prepareRecipientLanguage')(function* recipientLanguage({ evaluated }: AskedRecipient) {
+      const { binding } = evaluated.assessment.subject;
+      const language = yield* (yield* RecipientLanguageAuthority).languageOf(binding);
+      return {
+        key: recipientKey(evaluated.assessment.subject.slotKey, binding.recipientRef),
+        language,
+      };
+    }),
+    { concurrency: OWNER_CALL_CONCURRENCY },
+  );
+  return { asked, decisionId, input, languages, reading, requestId, typeOption };
+});
+
+export type PreparedRequest = Effect.Success<ReturnType<typeof prepareRequest>>;
+
+/** Only owner-local reads remain: resend, language policy and active templates use the committing transaction. */
+export const decidePreparedRequest = Effect.fn('Communications.decidePreparedRequest')(function* decidePrepared(
+  prepared: PreparedRequest,
+  stores: DecisionStores,
+) {
+  const { asked, decisionId, input, languages, reading, requestId, typeOption } = prepared;
+  const { request } = input;
+  const evaluator = yield* CommunicationDecisionService;
+  const resendRefusal = yield* resendRefusalFor(request, ownedType(typeOption, input.decisionRequest), stores);
+  const evaluate = (recipients: readonly RecipientFact[]) =>
+    evaluator
+      .decide(input.decisionRequest, {
+        recipients,
+        source: reading.source,
+        ...Option.match(resendRefusal, { onNone: () => ({}), onSome: (refusal) => ({ resendRefusal: refusal }) }),
+        ...Option.match(reading.unresolved, {
+          onNone: () => ({}),
+          onSome: (sourceUnresolved) => ({ sourceUnresolved }),
+        }),
+      })
+      .pipe(
+        Effect.mapError((mismatch) => unavailable('Facts of another occurrence or tenant were supplied', mismatch)),
+      );
+  const probe = yield* evaluate([]);
+  const type = ownedType(typeOption, input.decisionRequest);
+  if (
+    !CommunicationOutcome.$is('NoMessage')(probe.outcome) ||
+    probe.outcome.reason !== 'RECIPIENT_AUTHORITY_MISSING' ||
+    Option.isNone(type)
+  ) {
+    return {
+      decision: probe,
+      decisionId,
+      intents: [],
+      languagePolicy: Option.none(),
+      request,
+      requestId,
+    } satisfies DecisionPlan;
+  }
   const decision = yield* evaluate(
     asked.map(({ evaluated, privacy }) =>
       recipientFactOf(evaluated.assessment, input.decisionRequest, privacyEvidenceOf(privacy)),
@@ -436,8 +494,19 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
             recipientKey(candidate.identity.slotKey, candidate.identity.recipient),
         ),
         candidate,
+        language: languages.find(
+          ({ key }) => key === recipientKey(candidate.identity.slotKey, candidate.identity.recipient),
+        )?.language,
       }),
     { concurrency: 1 },
   );
   return { decision, decisionId, intents, languagePolicy: policy, request, requestId } satisfies DecisionPlan;
+});
+
+/** A non-transactional decision entrypoint for callers that already own their persistence boundary. */
+export const decideRequest = Effect.fn('Communications.decideRequest')(function* decideRequestOf(
+  request: CommunicationRequest,
+  stores: DecisionStores,
+) {
+  return yield* decidePreparedRequest(yield* prepareRequest(request), stores);
 });

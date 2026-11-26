@@ -1,4 +1,4 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ActionHandlerContext, ScopedTransactionExecutor } from '@app/core-runtime';
 import { createActionCollector } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
@@ -18,9 +18,9 @@ import type { ProcessingEligibilityGate } from '../../src/domain/privacy/eligibi
 import type { RecipientCurrentGate } from '../../src/domain/recipient/current-gate.ts';
 import {
   handleSubmitCommunicationRequest,
+  prepareSubmitCommunicationRequestServices,
   submitCommunicationRequestAction,
 } from '../../src/actions/submit-communication-request.action.ts';
-import { communicationIntakeService } from '../../src/services/communication-intake.service.ts';
 import type { makeRuntimeDatabase } from './persistence.fixture.ts';
 import { asSourceWorker } from './source-worker-principal.ts';
 
@@ -74,6 +74,7 @@ const runHandler = Effect.fn('CommunicationIntakeTest.runHandler')(function* run
   invocationId: string,
   callerModule: string,
   legalEntityId: string | undefined,
+  factory: Effect.Success<ReturnType<typeof prepareSubmitCommunicationRequestServices>>,
 ) {
   const scope = yield* principalOf(tenantId, callerModule, legalEntityId);
   const collector = createActionCollector(
@@ -83,7 +84,7 @@ const runHandler = Effect.fn('CommunicationIntakeTest.runHandler')(function* run
     undefined,
     COMPOSITION_REVISION,
   );
-  const services = yield* communicationIntakeService(transaction, scope);
+  const services = yield* factory(transaction, scope, COMPOSITION_REVISION);
   const context: ActionHandlerContext<
     typeof submitCommunicationRequestAction.descriptor.domainEvents,
     typeof services
@@ -112,6 +113,14 @@ const runHandler = Effect.fn('CommunicationIntakeTest.runHandler')(function* run
  * scoped-transaction installer, exactly as the Action runtime calls it. Only the Action's own collector is in-process, so
  * the outbox messages it collects can be read back. Other owners are the labelled doubles of `intake-fixtures.ts`.
  */
+const preparationSqlUnavailable = () =>
+  Effect.fail(
+    new ActionTransactionError({
+      code: 'action_transaction_failed',
+      reason: 'The intake preparation transaction failed',
+    }),
+  );
+
 export const intakeRunnerOver = (database: RuntimeDatabase, ownerPorts: IntakeOwnerPorts) => ({
   submit: (
     tenantId: string,
@@ -120,9 +129,17 @@ export const intakeRunnerOver = (database: RuntimeDatabase, ownerPorts: IntakeOw
     callerModule = FIXTURE_SOURCE_MODULE_KEY,
     legalEntityId?: string,
   ): Effect.Effect<IntakeRun, unknown> =>
-    database
-      .inTenant(tenantId, (transaction) =>
-        runHandler(transaction, tenantId, request, invocationId, callerModule, legalEntityId),
-      )
-      .pipe(Effect.provide(ownerPorts)),
+    Effect.gen(function* submit() {
+      const scope = yield* principalOf(tenantId, callerModule, legalEntityId);
+      const factory = yield* prepareSubmitCommunicationRequestServices(request, {
+        actionInvocationId: invocationId,
+        compositionRevision: COMPOSITION_REVISION,
+        scope,
+        transaction: (use) =>
+          database.inTenant(tenantId, use).pipe(Effect.catchTag('SqlError', preparationSqlUnavailable)),
+      });
+      return yield* database.inTenant(tenantId, (transaction) =>
+        runHandler(transaction, tenantId, request, invocationId, callerModule, legalEntityId, factory),
+      );
+    }).pipe(Effect.provide(ownerPorts)),
 });

@@ -1,10 +1,14 @@
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationOutcome } from '../../src/domain/catalog/decision.ts';
 import { IntentStopReasonSchema, SourceUnresolvedReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
-import { decideRequest } from '../../src/domain/intake/decide-request.ts';
+import { decideRequest, prepareRequest, decidePreparedRequest } from '../../src/domain/intake/decide-request.ts';
 import type { DecisionPlan } from '../../src/domain/intake/plan.ts';
 import { SourceOccurrenceAuthority } from '../../src/domain/intake/source-authority.ts';
 import { SourceOccurrenceUnavailable } from '../../src/domain/intake/source-authority-errors.ts';
@@ -44,6 +48,7 @@ interface Setup {
   /** Whether a producer declares the Privacy scope of each recipient; default yes. */
   readonly scopeDeclared?: boolean;
   readonly sourceAuthority?: Layer.Layer<SourceOccurrenceAuthority>;
+  readonly transactionGuard?: boolean;
   readonly type?: ReturnType<typeof fixtureType>;
 }
 
@@ -63,13 +68,24 @@ const run = (setup: Setup = {}) =>
     const privacy = privacyOwnerDouble(Object.fromEntries(recipients.map((id) => [id, privacyAllowed])));
     const scope = scopeDeclarationDouble();
     scope.state.declared = setup.scopeDeclared ?? true;
-    const decide = decideRequest(
-      communicationRequest({ bindings: recipients.map((id) => originalRecipient(id)), purpose: type.purpose }),
-      {
-        policies: makeInMemoryLanguagePolicyPort().port,
-        resend: makeInMemoryResendPort().port,
-        templates: templates.port,
-      },
+    const request = communicationRequest({
+      bindings: recipients.map((id) => originalRecipient(id)),
+      purpose: type.purpose,
+    });
+    const stores = {
+      policies: makeInMemoryLanguagePolicyPort().port,
+      resend: makeInMemoryResendPort().port,
+      templates: templates.port,
+    };
+    const decide = (
+      setup.transactionGuard === true
+        ? Effect.gen(function* stagedDecision() {
+            const prepared = yield* prepareRequest(request);
+            return yield* decidePreparedRequest(prepared, stores).pipe(
+              insideDatabaseTransaction('communications.core.submit-communication-request'),
+            );
+          })
+        : decideRequest(request, stores)
     ).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -100,6 +116,27 @@ const unresolvedSource = (reason: SourceOccurrenceUnavailable['reason']) =>
   Layer.succeed(SourceOccurrenceAuthority, { read: () => Effect.fail(new SourceOccurrenceUnavailable({ reason })) });
 
 describe('A source owner that states nothing is a durable not-sent outcome (#1401 I-07, #1400 LC-05)', () => {
+  it.effect('prepares owner facts before the guarded SQL decision and queues an eligible intent', () => {
+    const source = sourceAuthorityDouble();
+    const guarded = Layer.effect(
+      SourceOccurrenceAuthority,
+      SourceOccurrenceAuthority.pipe(
+        Effect.map((authority) => ({
+          read: (request) =>
+            refuseInsideDatabaseTransaction('module-transport', 'communication-source').pipe(
+              Effect.andThen(authority.read(request)),
+            ),
+        })),
+      ),
+    ).pipe(Layer.provide(source.layer));
+    return Effect.gen(function* stagedOwnerFacts() {
+      const { plan } = yield* run({ sourceAuthority: guarded, transactionGuard: true });
+      expect(plan.intents).toHaveLength(1);
+      expect(plan.intents[0]?.status).toBe('PENDING_HANDOFF');
+      expect(source.state.reads).toBe(1);
+    });
+  });
+
   it.effect(
     'an owner that answers nothing about the occurrence decides it as NO_MESSAGE SOURCE_OCCURRENCE_UNKNOWN and asks no recipient or Privacy owner',
     () =>

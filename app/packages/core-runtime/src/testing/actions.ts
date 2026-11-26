@@ -1,7 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Crypto, DateTime, Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Effect, flow, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -182,6 +182,12 @@ class ActionTestServiceBindingValue implements ActionTestServiceBinding {
 }
 
 const isActionTestServiceBindingValue = Schema.is(Schema.instanceOf(ActionTestServiceBindingValue));
+type ActionTestServiceTransform = <Services>(services: Services) => Services;
+const isActionServiceTransform = Schema.is(
+  Schema.declare<ActionTestServiceTransform>((value): value is ActionTestServiceTransform =>
+    Predicate.isFunction(value),
+  ),
+);
 
 export const bindActionTestServices = <
   Payload extends Schema.ConstraintDecoder<unknown>,
@@ -193,7 +199,7 @@ export const bindActionTestServices = <
   Requirements,
 >(
   registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
-  services: NoInfer<Services>,
+  services: NoInfer<Services> | ((prepared: NoInfer<Services>) => NoInfer<Services>),
 ): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
 
 export interface ActionTestHarnessOptions extends Pick<
@@ -233,6 +239,11 @@ export interface ActionTestHarnessOptions extends Pick<
   readonly resourcePermission?: ContextAccessDecision;
   readonly scope?: 'active' | 'denied' | 'unavailable';
   readonly services?: readonly ActionTestServiceBinding[];
+  /** Explicit source Action receipts whose execution fence the scripted database still admits. */
+  readonly sourceExecutionInvocations?: readonly {
+    readonly invocationId: string;
+    readonly tenantId: string;
+  }[];
   readonly tenantPermission?: ContextAccessDecision;
   /** PostgreSQL's `transaction_timestamp()`, a clock apart from the Effect clock. Defaults to the epoch. */
   readonly transactionTime?: () => Date;
@@ -512,6 +523,21 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         );
       } else if (SESSION_SCOPE_STATEMENTS.has(statement) || statement === READ_GATEWAY_SCOPE_SQL) {
         return yield* scopeStatementRows(scope, statement, values);
+      } else if (statement === 'select trust.lock_source_execution_fence($1::uuid, $2::uuid) as allowed') {
+        const [tenantId, invocationId] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.String, Schema.String]),
+        )(values);
+        return {
+          rows: [
+            {
+              allowed:
+                tenantId === scope.tenantId &&
+                (options.sourceExecutionInvocations ?? []).some(
+                  (row) => row.tenantId === tenantId && row.invocationId === invocationId,
+                ),
+            },
+          ],
+        };
       } else if (statement === 'select transaction_timestamp() as operation_at') {
         return {
           rows: [{ operation_at: transactionTime() }],
@@ -668,7 +694,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         bindings.set(stored.registration, stored.services);
       }
     }
-    const resolveServiceFactory: typeof getActionServiceFactory = <
+    const resolveServiceFactory = <
       PayloadSchema extends Schema.ConstraintDecoder<unknown>,
       ResultSchema extends Schema.ConstraintDecoder<unknown>,
       DomainErrorSchema extends Schema.ConstraintDecoder<{
@@ -692,7 +718,11 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       if (!bindings.has(registration)) {
         return getActionServiceFactory(registration);
       }
-      return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
+      const binding = bindings.get(registration);
+      if (isActionServiceTransform(binding)) {
+        return flow(getActionServiceFactory(registration), Effect.map(binding));
+      }
+      return () => Schema.decodeUnknownEffect(Schema.Any)(binding).pipe(Effect.orDie);
     };
     const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
     const mandateOptions: Pick<ActionRuntimeOptions, 'mandateDispatch'> =
@@ -728,11 +758,16 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         return (payload, context) =>
           preparation(payload, context).pipe(
             Effect.updateService(ActionTestPreparationScope, () => Option.some(context.scope)),
-            Effect.map((prepared) =>
-              bindings.has(registration)
-                ? Object.assign(resolveServiceFactory(registration), { [originalActionPreparationFactory]: prepared })
-                : prepared,
-            ),
+            Effect.map((prepared) => {
+              if (!bindings.has(registration)) {
+                return prepared;
+              }
+              const binding = bindings.get(registration);
+              const substituted = isActionServiceTransform(binding)
+                ? flow(prepared, Effect.map(binding))
+                : resolveServiceFactory(registration);
+              return Object.assign(substituted, { [originalActionPreparationFactory]: prepared });
+            }),
           );
       },
     };
