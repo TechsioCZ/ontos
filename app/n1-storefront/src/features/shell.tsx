@@ -142,14 +142,19 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
               </Header.ActionItem>
             </div>
             <Header.ActionItem className="flex items-center">
-              <Link aria-label={d.favorites} as={NextLink} href={`/${locale}/oblibene`}>
+              <Link
+                aria-label={d.favorites}
+                as={NextLink}
+                className="flex items-center"
+                href={`/${locale}/oblibene`}
+              >
                 <Image
                   alt=""
                   as={NextImage}
-                  height={24}
+                  height={28}
                   size="custom"
                   src="/brand/heart.svg"
-                  width={24}
+                  width={28}
                 />
               </Link>
             </Header.ActionItem>
