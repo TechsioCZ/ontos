@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import { symmyExecutionRoutineInventoryMatches } from '../../verticals/symmy-integration/scripts/verify-db-schema.mts';
+import { symmyExecutionRoutineMismatches } from '../../verticals/symmy-integration/scripts/verify-db-schema.mts';
 import type { SymmyExecutionRoutineFacts } from '../../verticals/symmy-integration/scripts/verify-db-schema.mts';
 
 const privateRoutines = new Set([
@@ -12,8 +12,15 @@ const privateRoutines = new Set([
   'publish_route_execution_gate',
   'symmy_original_route_active',
 ]);
+// The route triggers run as the table owner so the runtime role can write route rows.
 const invokerRoutines = new Set([...privateRoutines, 'symmy_source_selector_code', 'pin_symmy_fixture_plan']);
-invokerRoutines.delete('materialize_demo_group_membership_route');
+for (const definer of [
+  'materialize_demo_group_membership_route',
+  'advance_route_change_token',
+  'publish_route_execution_gate',
+]) {
+  invokerRoutines.delete(definer);
+}
 
 // Actual migrated catalog observed on stage: no connection or credentials are needed for this regression.
 const routines: readonly SymmyExecutionRoutineFacts[] = `
@@ -40,34 +47,32 @@ symmy_original_route_active symmy_source_selector_code
 
 it('accepts the real 32-routine migration inventory including the private definer materialization trigger', () => {
   expect(routines).toHaveLength(32);
-  expect(symmyExecutionRoutineInventoryMatches(routines)).toBe(true);
+  expect(symmyExecutionRoutineMismatches(routines)).toEqual([]);
 });
 
-it('rejects broadened execution, unsafe settings or altered security mode on the materialization trigger', () => {
-  for (const mutation of [
-    { public_execute: true },
-    { runtime_execute: true },
-    { safe_settings: false },
-    { definer: false },
-  ]) {
-    expect(
-      symmyExecutionRoutineInventoryMatches(
-        routines.map((routine) =>
-          routine.name === 'materialize_demo_group_membership_route' ? { ...routine, ...mutation } : routine,
+it('names broadened execution, unsafe settings or altered security mode on the definer triggers', () => {
+  for (const [mutation, mismatch] of [
+    [{ public_execute: true }, 'PUBLIC may execute it'],
+    [{ runtime_execute: true }, 'runtime_execute is true, expected false'],
+    [{ safe_settings: false }, 'search_path or row_security setting is missing'],
+    [{ definer: false }, 'security definer is false, expected true'],
+  ] as const) {
+    for (const name of ['materialize_demo_group_membership_route', 'publish_route_execution_gate']) {
+      expect(
+        symmyExecutionRoutineMismatches(
+          routines.map((routine) => (routine.name === name ? { ...routine, ...mutation } : routine)),
         ),
-      ),
-    ).toBe(false);
+      ).toEqual([`routine ${name}: ${mismatch}`]);
+    }
   }
 });
 
 it('still rejects missing routines, extra routines and duplicate overloads', () => {
   expect(
-    symmyExecutionRoutineInventoryMatches(
-      routines.filter(({ name }) => name !== 'materialize_demo_group_membership_route'),
-    ),
-  ).toBe(false);
+    symmyExecutionRoutineMismatches(routines.filter(({ name }) => name !== 'materialize_demo_group_membership_route')),
+  ).not.toEqual([]);
   expect(
-    symmyExecutionRoutineInventoryMatches([
+    symmyExecutionRoutineMismatches([
       ...routines,
       {
         definer: true,
@@ -77,10 +82,10 @@ it('still rejects missing routines, extra routines and duplicate overloads', () 
         safe_settings: true,
       },
     ]),
-  ).toBe(false);
+  ).not.toEqual([]);
   const [first] = routines;
   if (first === undefined) {
     throw new Error('missing catalog fixture');
   }
-  expect(symmyExecutionRoutineInventoryMatches([...routines, first])).toBe(false);
+  expect(symmyExecutionRoutineMismatches([...routines, first])).not.toEqual([]);
 });

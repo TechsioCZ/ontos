@@ -172,7 +172,7 @@ export interface SymmyExecutionRoutineFacts {
 }
 
 /** Exact migrated routines and each routine's native execution boundary; no extra or insecure routine is admitted. */
-export const symmyExecutionRoutineInventoryMatches = (routines: readonly SymmyExecutionRoutineFacts[]): boolean => {
+export const symmyExecutionRoutineMismatches = (routines: readonly SymmyExecutionRoutineFacts[]): readonly string[] => {
   const routineNames = [
     'advance_route_change_token',
     'can_execute_symmy_job_effect',
@@ -207,36 +207,44 @@ export const symmyExecutionRoutineInventoryMatches = (routines: readonly SymmyEx
     'symmy_original_route_active',
     'symmy_source_selector_code',
   ];
-  return !(
-    routines.length !== routineNames.length ||
-    routines.some(
-      (routine, index) =>
-        routine.name !== routineNames[index] ||
-        routine.public_execute ||
-        !routine.safe_settings ||
-        routine.runtime_execute !==
-          ![
-            'materialize_demo_group_membership_route',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name) ||
-        routine.definer !==
-          ![
-            'symmy_source_selector_code',
-            'pin_symmy_fixture_plan',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name),
-    )
-  );
+  // Trigger and fixture routines the runtime role never calls directly.
+  const privateRoutines = new Set([
+    'advance_route_change_token',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'materialize_demo_group_membership_route',
+    'publish_route_execution_gate',
+    'symmy_original_route_active',
+  ]);
+  const invokerRoutines = new Set([
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'pin_symmy_fixture_plan',
+    'symmy_original_route_active',
+    'symmy_source_selector_code',
+  ]);
+  const actualNames = routines.map((routine) => routine.name);
+  const inventory =
+    actualNames.join(',') === routineNames.join(',')
+      ? []
+      : [`routines: expected ${routineNames.join(', ')}`, `routines: actual ${actualNames.join(', ')}`];
+  return [
+    ...inventory,
+    ...routines.flatMap((routine) => [
+      ...(routine.public_execute ? [`routine ${routine.name}: PUBLIC may execute it`] : []),
+      ...(routine.safe_settings ? [] : [`routine ${routine.name}: search_path or row_security setting is missing`]),
+      ...(routine.runtime_execute === !privateRoutines.has(routine.name)
+        ? []
+        : [
+            `routine ${routine.name}: runtime_execute is ${routine.runtime_execute}, expected ${!routine.runtime_execute}`,
+          ]),
+      ...(routine.definer === !invokerRoutines.has(routine.name)
+        ? []
+        : [`routine ${routine.name}: security definer is ${routine.definer}, expected ${!routine.definer}`]),
+    ]),
+  ];
 };
 
 const verifyDemoMembershipTrigger = Effect.fn('SymmySchema.verifyDemoMembershipTrigger')(function* verifyHook(
@@ -379,8 +387,11 @@ const verification = Effect.gen(function* verifySymmySchema() {
     from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'symmy_integration' order by p.proname
   `;
-  if (!symmyExecutionRoutineInventoryMatches(routines)) {
-    yield* new SymmySchemaVerificationError({ reason: 'Symmy execution routine inventory or runtime grants mismatch' });
+  const routineMismatches = symmyExecutionRoutineMismatches(routines);
+  if (routineMismatches.length > 0) {
+    yield* new SymmySchemaVerificationError({
+      reason: ['Symmy execution routine inventory or runtime grants mismatch', ...routineMismatches].join('\n'),
+    });
   }
 });
 
