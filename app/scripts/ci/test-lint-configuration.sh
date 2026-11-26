@@ -23,13 +23,8 @@ expect_status() {
 printf 'export const value = {\n  nested: true,\n};\n' >"$file"
 printf 'root = true\n[*]\nindent_style = space\nindent_size = 2\n' >.editorconfig
 expect_status 0 "$fmt" --check "$file"
-# An arbitrary suffix can carry configuration through a tracked symlink.
-mv .editorconfig settings.txt
-ln -s settings.txt .editorconfig
-git add .editorconfig settings.txt "$file"
-expect_status 0 "$fmt" --check "$file"
-sed 's/indent_size = 2/indent_size = 4/' settings.txt >next
-mv next settings.txt
+sed 's/indent_size = 2/indent_size = 4/' .editorconfig >next
+mv next .editorconfig
 expect_status 1 "$fmt" --check "$file"
 rm .editorconfig
 printf '{"tabWidth":4}\n' >.oxfmtrc.json

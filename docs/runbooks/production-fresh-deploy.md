@@ -31,12 +31,15 @@ Zerops pricing for the services in `app/zerops-import.yaml` before you create an
    service IDs. Keep planning and unit builds parallel with lint, but require lint success before either
    delivering job can sync secrets or push. Red lint means stage was not changed by that run, even if
    its builds succeeded. Fix the findings and push again; the verified base has not advanced.
-   When lint is selected, stage and gates use the same three whole-tree slices through `lint-app`,
-   `lint-shard-files.sh` and `lint-files.sh`, even when the delivery plan narrows other gates.
-   The gates workflow retains its separate repository-root documentation no-op classification.
-   Unknown history also requires whole-tree lint. Stage alone selects one global-check `proof` row
-   for a recovery dispatch of the exact verified SHA with an ancestor, untruncated, empty comparison
-   snapshot, and still delivers every service. The lint job needs no comparison artifact.
+   Code pushes lint the whole tree before delivery, through three slices of `lint-app`,
+   `lint-shard-files.sh` and `lint-files.sh`. Markdown-only pushes lint just those files, plus the
+   global check once. This requires a complete, non-empty, verified ancestor diff in which every
+   changed path ends in `.md`, case-sensitive. Deleted files are dropped. Unknown, divergent,
+   malformed or possibly truncated comparisons require whole-tree lint.
+   A manual dispatch of the already verified commit runs the global check only, using an ancestor,
+   untruncated, empty comparison with that exact SHA as its base, and still delivers every service.
+   Only the Markdown-only lint row downloads the changed-path artifact. The gates keep their
+   whole-tree lint rows and separate repository-root documentation no-op classification.
 3. Import the services from `app/zerops-import.yaml` into a new Zerops project.
 4. As a human operator, create the identity secrets on `app` and the `spicedb` secrets on `spicedb`.
 5. Route the custom domain to the `app` service.

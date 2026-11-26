@@ -56,6 +56,7 @@ const TYPECHECK_COMMAND = 'pnpm typecheck';
 const PREPROPOSAL_PREFIX = 'whole:preproposal-';
 const PRECOMMIT_COMMAND = 'run pre-commit --files-from-stdin --no-auto-install';
 const CLEAN_TREE_COMMAND = 'git diff --exit-code HEAD';
+const CHANGED_PATHS_FILE = 'changed-paths';
 const LINT_ACTION = './.github/actions/lint-app';
 const LINT_SELECTION = fileURLToPath(new URL('../ci/lint-shard-files.sh', import.meta.url));
 const LINT_RUN = readFileSync(new URL('../ci/lint-files.sh', import.meta.url), 'utf-8');
@@ -1811,6 +1812,32 @@ it('runs whole-tree lint without a comparison artifact and keeps proof rows glob
   }
 });
 
+it('selects exactly the tracked surviving Markdown paths for the docs row with literal NUL-separated names', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-docs-'));
+  const deleted = 'deleted.md';
+  const files = ['README.md', "app/docs/quote's and\nnewline.md", 'app/packages/one/README.md'];
+  try {
+    execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
+    for (const file of [...files, deleted]) {
+      mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+      writeFileSync(path.join(directory, file), '# Documentation\n');
+    }
+    execFileSync(NATIVE_GIT, ['add', '.'], { cwd: directory });
+    rmSync(path.join(directory, deleted));
+    writeFileSync(path.join(directory, 'untracked.md'), '# Untracked\n');
+    const list = path.join(directory, 'paths');
+    writeFileSync(list, `${[...files, deleted, 'untracked.md'].join('\0')}\0`);
+    expect(execFileSync('/bin/bash', [LINT_SELECTION, 'docs', list], { cwd: directory, encoding: 'utf-8' })).toBe(
+      `${files.join('\0')}\0`,
+    );
+    writeFileSync(list, 'deleted.md\0');
+    expect(execFileSync('/bin/bash', [LINT_SELECTION, 'docs', list], { cwd: directory, encoding: 'utf-8' })).toBe('');
+    expect(() => execFileSync('/bin/bash', [LINT_SELECTION, 'docs'], { cwd: directory, stdio: 'pipe' })).toThrow();
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 it('runs the compiler and generators in their source rows, and joins background work unconditionally', () => {
   const source = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
   for (const command of [TYPECHECK_COMMAND, 'pnpm lint:effect-diagnostics', 'pnpm test:generation']) {
@@ -3140,7 +3167,7 @@ for (const [script, proof] of [
   });
 }
 
-it('selects stage proof only for a manual dispatch with an exact verified complete empty snapshot', () => {
+it('selects stage docs only for verified Markdown-only pushes and proof only for exact verified dispatches', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   expect(plan?.outputs?.['lint-shards']).toBeUndefined();
   expect(
@@ -3163,6 +3190,7 @@ it('selects stage proof only for a manual dispatch with an exact verified comple
     }
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', choose], {
       env: {
+        CHANGED_PATHS: path.join(directory, CHANGED_PATHS_FILE),
         COMPARISON_SNAPSHOT: history,
         GITHUB_EVENT_NAME: event,
         GITHUB_OUTPUT: output,
@@ -3195,7 +3223,42 @@ it('selects stage proof only for a manual dispatch with an exact verified comple
     for (const malformed of [undefined, '', 'not JSON', '{}']) {
       expect(shardsFor(malformed)).toBe(WHOLE_TREE_LINT_SHARDS);
     }
-    // The native-binary regressions prove why even regular Markdown requires all slices.
+    const markdown = [
+      'README.md',
+      'app/docs/a.md',
+      'app/packages/example/README.md',
+      "notes/with 'quotes' and\nnewlines.md",
+    ];
+    const docsSnapshot = { ...comparison, changedPaths: markdown };
+    expect(shardsFor(JSON.stringify({ comparison: docsSnapshot }), 'push')).toBe('shards=["docs"]');
+    expect(readFileSync(path.join(directory, CHANGED_PATHS_FILE), 'utf-8')).toBe(`${markdown.join('\0')}\0`);
+    expect(shardsFor(JSON.stringify({ comparison: docsSnapshot }))).toBe(WHOLE_TREE_LINT_SHARDS);
+    for (const paths of [
+      [],
+      ['README.MD'],
+      ['guide.mdx'],
+      ['README.md', 'code.ts'],
+      ['docs/no-suffix'],
+      [null],
+      ['a.md', 'old.txt'],
+      ['a.md\0b.md'],
+    ]) {
+      expect(shardsFor(JSON.stringify({ comparison: { ...comparison, changedPaths: paths } }), 'push')).toBe(
+        WHOLE_TREE_LINT_SHARDS,
+      );
+    }
+    for (const invalid of [
+      { ...docsSnapshot, ancestor: false },
+      { ...docsSnapshot, truncated: true },
+      { ...docsSnapshot, base: '' },
+      { ...docsSnapshot, changedPaths: null },
+    ]) {
+      expect(shardsFor(JSON.stringify({ comparison: invalid }), 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
+    for (const malformed of [undefined, '', 'not JSON', '{}']) {
+      expect(shardsFor(malformed, 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
+    // Gates never take the stage-only docs exception or its comparison artifact.
     const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
     expect(lint.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
     expect(lint.find(({ uses }) => uses === LINT_ACTION)?.with).toEqual({ shard: expression(MATRIX_SHARD) });
@@ -3285,6 +3348,50 @@ it('keys browser apt archives by OS and pinned Playwright, and preserves bounded
   expect(scheduler.indexOf('capture-integration-hang.sh')).toBeLessThan(scheduler.indexOf('kill -TERM'));
 });
 
+it('shares the lint action between gates and stage and downloads paths only for the docs row', () => {
+  const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
+  for (const [workflowName, lintJob, planJob, matrix] of [
+    [GATES_WORKFLOW, FORMAT_AND_LINT_JOB, CI_PLAN_JOB, [1, 2, 3]],
+    [STAGE_WORKFLOW, 'lint', 'lint-plan', expression('fromJSON(needs.lint-plan.outputs.shards)')],
+  ] as const) {
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            steps: Schema.Array(
+              Schema.Struct({
+                if: Schema.optionalKey(Schema.String),
+                run: Schema.optionalKey(Schema.String),
+                uses: Schema.optionalKey(Schema.String),
+                with: Schema.optionalKey(Schema.Struct({ shard: Schema.optionalKey(Schema.String) })),
+              }),
+            ),
+            strategy: Schema.optionalKey(
+              Schema.Struct({ matrix: Schema.Struct({ shard: Schema.optionalKey(Schema.Unknown) }) }),
+            ),
+          }),
+        ),
+      }),
+    )(parse(readFileSync(path.join(sourceRepository, '.github/workflows', workflowName), 'utf-8')));
+    expect(workflow.jobs[lintJob]?.strategy?.matrix.shard).toEqual(matrix);
+    const calls = workflow.jobs[lintJob]?.steps.filter((step) => step.uses === LINT_ACTION);
+    expect(calls).toHaveLength(1);
+    expect(calls?.[0]?.if).toBeUndefined();
+    expect(calls?.[0]?.with?.shard).toBe(expression(MATRIX_SHARD));
+    expect(
+      workflow.jobs[planJob]?.steps.some((step) => step.run === 'bash app/scripts/ci/choose-stage-lint-shards.sh'),
+    ).toBe(workflowName === STAGE_WORKFLOW);
+    const download = workflow.jobs[lintJob]?.steps.filter(
+      (step) => step.uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true,
+    );
+    expect(download).toHaveLength(workflowName === STAGE_WORKFLOW ? 1 : 0);
+    if (workflowName === STAGE_WORKFLOW) {
+      expect(download?.[0]?.if).toBe("matrix.shard == 'docs'");
+    }
+  }
+});
+
 it.effect('executes the composite lint action itself and reports findings for every selectable shard', () =>
   Effect.gen(function* compositeLintAction() {
     const toolsPath = yield* Config.String('PATH');
@@ -3305,46 +3412,15 @@ it.effect('executes the composite lint action itself and reports findings for ev
         }),
       }),
     )(parse(readFileSync(path.join(sourceRepository, '.github/actions/lint-app/action.yml'), 'utf-8')));
-    for (const [workflowName, lintJob, planJob, matrix] of [
-      [GATES_WORKFLOW, FORMAT_AND_LINT_JOB, CI_PLAN_JOB, [1, 2, 3]],
-      [STAGE_WORKFLOW, 'lint', 'lint-plan', expression('fromJSON(needs.lint-plan.outputs.shards)')],
-    ] as const) {
-      const workflow = Schema.decodeUnknownSync(
-        Schema.Struct({
-          jobs: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              steps: Schema.Array(
-                Schema.Struct({
-                  if: Schema.optionalKey(Schema.String),
-                  run: Schema.optionalKey(Schema.String),
-                  uses: Schema.optionalKey(Schema.String),
-                  with: Schema.optionalKey(Schema.Struct({ shard: Schema.optionalKey(Schema.String) })),
-                }),
-              ),
-              strategy: Schema.optionalKey(
-                Schema.Struct({ matrix: Schema.Struct({ shard: Schema.optionalKey(Schema.Unknown) }) }),
-              ),
-            }),
-          ),
-        }),
-      )(parse(readFileSync(path.join(sourceRepository, '.github/workflows', workflowName), 'utf-8')));
-      expect(workflow.jobs[lintJob]?.strategy?.matrix.shard).toEqual(matrix);
-      const calls = workflow.jobs[lintJob]?.steps.filter((step) => step.uses === LINT_ACTION);
-      expect(calls).toHaveLength(1);
-      expect(calls?.[0]?.if).toBeUndefined();
-      expect(calls?.[0]?.with?.shard).toBe(expression(MATRIX_SHARD));
-      expect(
-        workflow.jobs[planJob]?.steps.some((step) => step.run === 'bash app/scripts/ci/choose-stage-lint-shards.sh'),
-      ).toBe(workflowName === STAGE_WORKFLOW);
-      expect(
-        workflow.jobs[lintJob]?.steps.some((step) => step.uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true),
-      ).toBe(false);
-    }
     const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-composite-lint-'));
     try {
       execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
-      const files = ['app/apps/fixture.ts', 'app/scripts/fixture.ts', 'app/verticals/inventory/fixture.ts'];
+      const files = [
+        'app/apps/fixture.ts',
+        'app/scripts/fixture.ts',
+        'app/verticals/inventory/fixture.ts',
+        'app/docs/README.md',
+      ];
       for (const file of files) {
         mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
         writeFileSync(path.join(directory, file), EMPTY_MODULE_SOURCE);
@@ -3388,7 +3464,9 @@ it.effect('executes the composite lint action itself and reports findings for ev
         path.join(sourceRepository, 'app/node_modules/.bin/lefthook'),
         path.join(directory, 'app/node_modules/.bin/lefthook'),
       );
-      for (const shard of ['1', '2', '3', 'proof']) {
+      const changedPaths = path.join(directory, CHANGED_PATHS_FILE);
+      writeFileSync(changedPaths, 'app/docs/README.md\0deleted.md\0');
+      for (const shard of ['1', '2', '3', 'docs', 'proof']) {
         let output = '';
         let status = 0;
         for (const step of action.runs.steps) {
@@ -3397,7 +3475,9 @@ it.effect('executes the composite lint action itself and reports findings for ev
           const environment = Object.fromEntries(
             Object.entries(step.env ?? {}).map(([key, value]) => [
               key,
-              value.replaceAll(expression('inputs.shard'), shard),
+              value
+                .replaceAll(expression('inputs.shard'), shard)
+                .replaceAll(expression('inputs.changed-paths'), changedPaths),
             ]),
           );
           const result = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', step.run], {
@@ -3412,11 +3492,16 @@ it.effect('executes the composite lint action itself and reports findings for ev
           }
         }
         expect(status, `shard ${shard}: ${output}`).toBe(1);
-        expect(output).toContain('GLOBAL_FINDING');
+        expect(output.match(/GLOBAL_FINDING/gu)).toHaveLength(1);
         if (shard === 'proof') {
           expect(output).not.toContain('FILE_FINDING');
         } else {
           expect(output, `shard ${shard}: ${output}`).toContain('FILE_FINDING');
+          if (shard === 'docs') {
+            expect(output).toContain('docs/README.md');
+            expect(output).not.toContain('fixture.ts');
+            expect(output).not.toContain('deleted.md');
+          }
         }
       }
     } finally {
