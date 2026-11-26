@@ -14,11 +14,11 @@ import {
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
 import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import {
-  makeOwnedIntegrationPriceGroupReaderWorkloadControlNative,
+  makeOwnedSystemPriceGroupReaderWorkloadControlNative,
   makeOwnedSystemWriterWorkloadControlNative,
 } from '../../src/testing/workload-binding-native.ts';
 import type {
-  OwnedIntegrationPriceGroupReaderWorkloadControlInput,
+  OwnedSystemPriceGroupReaderWorkloadControlInput,
   OwnedSystemWriterWorkloadControlInput,
 } from '../../src/testing/workload-binding-native.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
@@ -40,7 +40,7 @@ const readWorkloads = [
 
 it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enrollment control', (suite) => {
   suite.effect(
-    'controls exact System writers and the Integration Price Group reader with fresh incarnations and unchanged other enrollments',
+    'controls exact System writers and the System Price Group reader with fresh incarnations and unchanged other enrollments',
     () =>
       Effect.gen(function* ownedWriterEnrollmentControl() {
         const expired = yield* Effect.scoped(
@@ -144,12 +144,12 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
               tenantId,
               workloadKey: groupWriter,
             };
-            const readerInput: OwnedIntegrationPriceGroupReaderWorkloadControlInput = {
-              integrationPrincipalId: integrationId,
+            const readerInput: OwnedSystemPriceGroupReaderWorkloadControlInput = {
               operatorPrincipalId,
               operatorProviderUserId,
               ownedDatabase,
               purpose: 'implementation-1096-registered-workload-gateway',
+              systemPrincipalId,
               tenantId,
             };
             const unbootstrapped = yield* makeOwnedSystemWriterWorkloadControlNative(input);
@@ -172,7 +172,7 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
                   eq(accessWorkloadBindings.tenantId, tenantId),
                   not(
                     and(
-                      eq(accessWorkloadBindings.principalId, integrationId),
+                      eq(accessWorkloadBindings.principalId, systemPrincipalId),
                       eq(accessWorkloadBindings.workloadKey, priceGroupReader),
                     ),
                   ),
@@ -181,8 +181,8 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
               .orderBy(accessWorkloadBindings.bindingId);
             const beforeReader = yield* untouchedByReader;
             const invalidReaders = [
-              { ...readerInput, integrationPrincipalId: systemPrincipalId },
-              { ...readerInput, integrationPrincipalId: otherSystemId },
+              { ...readerInput, systemPrincipalId: integrationId },
+              { ...readerInput, systemPrincipalId: otherSystemId },
               { ...readerInput, operatorPrincipalId: integrationId },
               { ...readerInput, operatorProviderUserId: 'wrong-reader-provider' },
               { ...readerInput, tenantId: otherTenantId },
@@ -191,7 +191,7 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             for (const invalidReader of invalidReaders) {
               expect(
                 Exit.isFailure(
-                  yield* makeOwnedIntegrationPriceGroupReaderWorkloadControlNative(invalidReader).pipe(Effect.exit),
+                  yield* makeOwnedSystemPriceGroupReaderWorkloadControlNative(invalidReader).pipe(Effect.exit),
                 ),
               ).toBe(true);
             }
@@ -202,12 +202,13 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             ).toBe(true);
             // A caller cannot retarget this fixed reader API by supplying an unrelated extra workload field.
             const untrustedReaderInput = { ...readerInput, workloadKey: groupWriter };
-            const reader = yield* makeOwnedIntegrationPriceGroupReaderWorkloadControlNative(untrustedReaderInput);
+            const reader = yield* makeOwnedSystemPriceGroupReaderWorkloadControlNative(untrustedReaderInput);
             const oldReader = yield* database
               .select()
               .from(accessWorkloadBindings)
               .where(eq(accessWorkloadBindings.bindingId, reader.originalBinding.bindingId));
             expect(oldReader[0]?.workloadKey).toBe(priceGroupReader);
+            expect(oldReader[0]?.principalId).toBe(systemPrincipalId);
             yield* reader.revoke();
             const endedReader = yield* database
               .select()

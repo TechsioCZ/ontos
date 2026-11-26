@@ -33,12 +33,12 @@ const WorkloadOperatorFields = {
 const WorkloadControlInputSchema = Schema.Union([
   Schema.Struct({
     ...WorkloadOperatorFields,
-    principalKind: Schema.Literal('system'),
+    control: Schema.Literal('writer'),
     workloadKey: Schema.Literals(writerWorkloads),
   }),
   Schema.Struct({
     ...WorkloadOperatorFields,
-    principalKind: Schema.Literal('integration'),
+    control: Schema.Literal('price-group-reader'),
     workloadKey: Schema.Literal(priceGroupReaderWorkload),
   }),
 ]);
@@ -56,15 +56,15 @@ export interface OwnedSystemWriterWorkloadControlInput extends OwnedWorkloadOper
   readonly workloadKey: (typeof writerWorkloads)[number];
 }
 
-export interface OwnedIntegrationPriceGroupReaderWorkloadControlInput extends OwnedWorkloadOperatorInput {
-  readonly integrationPrincipalId: string;
+export interface OwnedSystemPriceGroupReaderWorkloadControlInput extends OwnedWorkloadOperatorInput {
+  readonly systemPrincipalId: string;
 }
 
 type OwnedNativeWorkloadControlInput = OwnedWorkloadOperatorInput & {
   readonly targetPrincipalId: string;
 } & (
-    | { readonly principalKind: 'system'; readonly workloadKey: (typeof writerWorkloads)[number] }
-    | { readonly principalKind: 'integration'; readonly workloadKey: typeof priceGroupReaderWorkload }
+    | { readonly control: 'writer'; readonly workloadKey: (typeof writerWorkloads)[number] }
+    | { readonly control: 'price-group-reader'; readonly workloadKey: typeof priceGroupReaderWorkload }
   );
 
 export interface NativeWorkloadBindingReference {
@@ -104,7 +104,7 @@ export interface OwnedNativeWorkloadBindingControl {
 }
 
 export type OwnedSystemWriterWorkloadControl = OwnedNativeWorkloadBindingControl;
-export type OwnedIntegrationPriceGroupReaderWorkloadControl = OwnedNativeWorkloadBindingControl;
+export type OwnedSystemPriceGroupReaderWorkloadControl = OwnedNativeWorkloadBindingControl;
 
 const unavailable = (
   reason: string,
@@ -183,7 +183,7 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
                 and(
                   eq(principals.tenantId, pins.tenantId),
                   eq(principals.principalId, pins.targetPrincipalId),
-                  eq(principals.kind, pins.principalKind),
+                  eq(principals.kind, 'system'),
                   eq(principals.status, 'active'),
                 ),
               )
@@ -380,10 +380,10 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
 export const makeOwnedSystemWriterWorkloadControlNative = Effect.fn('NativeWorkloadBindingControl.makeSystemWriter')(
   (input: OwnedSystemWriterWorkloadControlInput) =>
     makeOwnedWorkloadBindingControlNative({
+      control: 'writer',
       operatorPrincipalId: input.operatorPrincipalId,
       operatorProviderUserId: input.operatorProviderUserId,
       ownedDatabase: input.ownedDatabase,
-      principalKind: 'system',
       purpose: input.purpose,
       targetPrincipalId: input.systemPrincipalId,
       tenantId: input.tenantId,
@@ -391,17 +391,17 @@ export const makeOwnedSystemWriterWorkloadControlNative = Effect.fn('NativeWorkl
     }),
 );
 
-/** TEST-only Integration reader control. No caller-selected workload or Principal kind is accepted. */
-export const makeOwnedIntegrationPriceGroupReaderWorkloadControlNative = Effect.fn(
-  'NativeWorkloadBindingControl.makeIntegrationPriceGroupReader',
-)((input: OwnedIntegrationPriceGroupReaderWorkloadControlInput) =>
+/** TEST-only control for the System receiver that serves the Price Group source read. */
+export const makeOwnedSystemPriceGroupReaderWorkloadControlNative = Effect.fn(
+  'NativeWorkloadBindingControl.makeSystemPriceGroupReader',
+)((input: OwnedSystemPriceGroupReaderWorkloadControlInput) =>
   makeOwnedWorkloadBindingControlNative({
+    control: 'price-group-reader',
     operatorPrincipalId: input.operatorPrincipalId,
     operatorProviderUserId: input.operatorProviderUserId,
     ownedDatabase: input.ownedDatabase,
-    principalKind: 'integration',
     purpose: input.purpose,
-    targetPrincipalId: input.integrationPrincipalId,
+    targetPrincipalId: input.systemPrincipalId,
     tenantId: input.tenantId,
     workloadKey: priceGroupReaderWorkload,
   }),

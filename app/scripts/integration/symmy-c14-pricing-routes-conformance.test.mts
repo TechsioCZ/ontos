@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { bootstrapInternalC14PricingSourceAuthority } from '@app/pricing/testing/c14-source-authority-bootstrap';
-import { makeOwnedIntegrationPriceGroupReaderWorkloadControlNative } from '@app/core-runtime/testing/workload-binding-native';
+import { makeOwnedSystemPriceGroupReaderWorkloadControlNative } from '@app/core-runtime/testing/workload-binding-native';
 import { PriceGroupSourcePricesResponseSchema } from '@app/pricing/apis/price-group-source-prices';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
@@ -443,7 +443,7 @@ it.live(
               const requests = yield* fixture.shell.requestDiagnostics();
               const release = yield* fixture.shell.releaseDiagnostics();
               return yield* new SymmyC14ProductFixtureUnavailable({
-                message: `Actual Price List projection HTTP ${response.status}; problem: ${JSON.stringify(problem)}; group: ${group}; pricing: ${pricing}; proxy: ${proxy}; symmy: ${symmy}; gateway: ${JSON.stringify(gateway)}; issuer: ${JSON.stringify(issuer)}; requests: ${JSON.stringify(requests)}; release: ${JSON.stringify(release)}`,
+                message: `Actual Price List projection for ${query}: expected HTTP ${expectedStatus}, got ${response.status}; problem: ${JSON.stringify(problem)}; group: ${group}; pricing: ${pricing}; proxy: ${proxy}; symmy: ${symmy}; gateway: ${JSON.stringify(gateway)}; issuer: ${JSON.stringify(issuer)}; requests: ${JSON.stringify(requests)}; release: ${JSON.stringify(release)}`,
               });
             }
             return response;
@@ -1046,12 +1046,13 @@ it.live(
           selectedJobId: selectedJob.jobId,
         });
         expect(yield* fixture.priceBarrier.armedPriceCommandCount).toBe(1);
-        const reader = yield* makeOwnedIntegrationPriceGroupReaderWorkloadControlNative({
-          integrationPrincipalId: fixture.integration.principalId,
+        // The API key supplies the Symmy route proof; the System receiver supplies the Price Group read enrollment.
+        const reader = yield* makeOwnedSystemPriceGroupReaderWorkloadControlNative({
           operatorPrincipalId: fixture.integration.issuerPrincipalId,
           operatorProviderUserId: fixture.shell.providerUserId,
           ownedDatabase: fixture.isolated,
           purpose: pricingFixturePurpose,
+          systemPrincipalId: fixture.systemId,
           tenantId: fixture.tenantId,
         });
         yield* reader.revoke();
@@ -1068,7 +1069,7 @@ it.live(
           revoked: boolean;
           status: string;
         }>`select binding_id,incarnation,revoked_at is not null as revoked,status from core.access_workload_bindings
-          where tenant_id=${fixture.tenantId} and principal_id=${fixture.integration.principalId}
+          where tenant_id=${fixture.tenantId} and principal_id=${fixture.systemId}
           and workload_key='pricing.price-group-catalog.source-read'`;
         expect(enrollments).toHaveLength(2);
         expect(enrollments).toContainEqual({
@@ -1083,7 +1084,12 @@ it.live(
           revoked: false,
           status: 'active',
         });
-        expect((yield* get(firstPageQuery)).status).toBe(200);
+        const restored = yield* get(firstPageQuery);
+        expect(restored.status).toBe(200);
+        const restoredPage = yield* restored.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)));
+        expect(restoredPage.priceLists.map(({ priceGroupRef }) => priceGroupRef)).toEqual(
+          first.priceLists.map(({ priceGroupRef }) => priceGroupRef),
+        );
         yield* fixture.groupOwner.child.kill();
         yield* fixture.groupOwner.child.exitCode;
         const unavailable = yield* get(firstPageQuery, 503);
