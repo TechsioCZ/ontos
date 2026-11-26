@@ -575,6 +575,7 @@ export const makeS3ObjectStorage = Effect.fn('S3ObjectStorage.make')(function* m
   const wiring: Wiring = { client: yield* HttpClient.HttpClient, config, crypto: yield* Crypto.Crypto };
   const service: ObjectStorageService = {
     get: (key) => get(wiring, key),
+    maximumObjectBytes: S3_MAXIMUM_PARTS * S3_MAXIMUM_PART_BYTES,
     providerId: config.providerId,
     put: (request) => put(wiring, request),
     stat: (key) => stat(wiring, key),
