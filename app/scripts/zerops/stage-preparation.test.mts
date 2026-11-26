@@ -11,7 +11,7 @@ import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 const workflow = path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml');
 const Workflow = Schema.Struct({
   jobs: Schema.Struct({
-    deliver: Schema.Struct({
+    plan: Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
           name: Schema.String,
@@ -26,10 +26,10 @@ for (const status of [0, 23]) {
   it.effect(`overlaps history with setup and joins its complete result (reader exit ${status})`, () =>
     Effect.gen(function* concurrentHistory() {
       const fs = yield* FileSystem.FileSystem;
-      const { steps } = Schema.decodeUnknownSync(Workflow)(parse(yield* fs.readFileString(workflow))).jobs.deliver;
-      const start = steps.findIndex((step) => step.name === 'Start reading the delivery history');
+      const { steps } = Schema.decodeUnknownSync(Workflow)(parse(yield* fs.readFileString(workflow))).jobs.plan;
+      const start = steps.findIndex((step) => step.name === 'Start reading mutations since the shared verified base');
       const install = steps.findIndex((step) => step.name === 'Install the planner and identity tooling');
-      const finish = steps.findIndex((step) => step.name === 'Finish reading the delivery history');
+      const finish = steps.findIndex((step) => step.name === 'Finish reading the delivery mutations');
       const plan = steps.findIndex((step) => step.name === 'Plan from the last verified run, never HEAD parent');
       expect(start).toBeGreaterThan(steps.findIndex((step) => step.name.includes('Refuse a superseded')));
       expect(install).toBeGreaterThan(start);
@@ -44,6 +44,8 @@ for (const status of [0, 23]) {
       const app = path.join(root, 'app');
       const scripts = path.join(app, 'scripts/zerops');
       yield* fs.makeDirectory(scripts, { recursive: true });
+      yield* fs.makeDirectory(path.join(root, 'zerops-delivery'));
+      yield* fs.writeFileString(path.join(root, 'zerops-delivery/history.json'), '{}');
       // The remote history request needs no installed dependencies. It cannot finish until the fixture's
       // toolchain preparation runs, so starting it synchronously loses the complete result.
       yield* fs.writeFileString(
@@ -77,7 +79,6 @@ exit ${status}
       expect(joined.stdout).toContain('history-diagnostic');
       expect(yield* fs.readFileString(path.join(root, 'zerops-delivery/history.status'))).toBe(`${status}\n`);
       if (status === 0) {
-        expect(joined.stdout).toContain('{"runs":0,"mutations":[],"comparison":null}');
         expect(yield* fs.readFileString(path.join(root, 'zerops-delivery/history.json'))).toBe(
           '{"runs":[],"mutations":[],"comparison":null}\n',
         );

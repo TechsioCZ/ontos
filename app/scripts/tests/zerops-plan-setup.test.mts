@@ -69,7 +69,7 @@ it.effect(
         Effect.flatMap((source) =>
           Schema.decodeUnknownEffect(
             Schema.Struct({
-              concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
+              concurrency: Schema.Struct({ 'cancel-in-progress': Schema.String, group: Schema.String }),
               jobs: Schema.Record(
                 Schema.String,
                 Schema.Struct({
@@ -86,7 +86,8 @@ it.effect(
           )(parse(source)),
         ),
       );
-      expect(workflow.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
+      expect(workflow.concurrency['cancel-in-progress']).toContain("startsWith(github.ref, 'refs/heads/candidate/')");
+      expect(workflow.concurrency.group).toContain("|| 'zerops-stage'");
       const directory = yield* fs.makeTempDirectoryScoped();
       const git = path.join(directory, 'git');
       yield* fs.writeFileString(
@@ -99,12 +100,16 @@ printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
 `,
       );
       yield* fs.chmod(git, 0o700);
-      for (const name of ['deliver', 'build', 'deliver_app']) {
+      for (const name of ['lint-plan', 'lint', 'plan', 'deliver', 'build', 'deliver_app']) {
         const job = workflow.jobs[name];
         if (job === undefined) {
           expect.fail(`Missing stage job ${name}`);
         }
-        const checkpoint = job.steps.findIndex((step) => step.name === SUPERSEDED_HEAD);
+        const checkpoint = job.steps.findIndex(
+          (step) =>
+            step.name ===
+            (name.startsWith('lint') ? 'Refuse a superseded lint head before preparation' : SUPERSEDED_HEAD),
+        );
         const checkout = job.steps.findIndex((step) => step.uses?.startsWith('actions/checkout@') === true);
         expect(checkpoint).toBe(checkout + 1);
         const script = job.steps[checkpoint]?.run;
@@ -117,6 +122,7 @@ printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
           const result = yield* collectToolingProcess(
             ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', script], {
               env: {
+                GITHUB_REF: 'refs/heads/demo/sales-crm',
                 GITHUB_SHA: HEAD,
                 PATH: `${directory}:${yield* Config.String('PATH').pipe(Config.withDefault(''))}`,
                 REMOTE_HEAD: head,
@@ -134,6 +140,53 @@ printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
         expect(workflow.jobs[name]?.steps.some((step) => step.uses === './.github/actions/deliver-stage')).toBe(true);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('requires exact-commit lint success for both delivery paths, even when planning selects no service', () =>
+  Effect.gen(function* lintDeliveryBarrier() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            if: Schema.optionalKey(Schema.String),
+            needs: Schema.optionalKey(Schema.Array(Schema.String)),
+            steps: Schema.Array(
+              Schema.Struct({
+                name: Schema.String,
+                run: Schema.optionalKey(Schema.String),
+                uses: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        ),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    for (const name of ['deliver', 'deliver_app']) {
+      const job = workflow.jobs[name];
+      expect(job?.needs).toContain('lint');
+      expect(job?.needs).toContain('plan');
+      // Equality to success, never !failure(): a skipped, cancelled or failed lint cannot deliver.
+      expect(job?.if).toContain("needs.lint.result == 'success'");
+      expect(job?.if).toContain("needs.plan.result == 'success'");
+      expect(job?.if).toContain("github.ref == 'refs/heads/demo/sales-crm'");
+    }
+    expect(workflow.jobs.build?.needs).toEqual(['plan']);
+    expect(workflow.jobs.plan?.needs).toEqual(['lint-plan']);
+    expect(workflow.jobs.lint?.needs).toEqual(['lint-plan']);
+    // No-service plans do not skip lint; their failure still makes this workflow red and cannot advance its base.
+    expect(workflow.jobs.lint?.if).toBe("needs.lint-plan.result == 'success'");
+    expect(workflow.jobs['lint-plan']?.if).toContain("startsWith(github.ref, 'refs/heads/candidate/')");
+    expect(workflow.jobs.plan?.if).toContain("github.ref == 'refs/heads/demo/sales-crm'");
+    expect(workflow.jobs.lint?.steps.some(({ uses }) => uses === './.github/actions/lint-app')).toBe(true);
+    for (const name of ['lint-plan', 'lint']) {
+      const steps = workflow.jobs[name]?.steps ?? [];
+      expect(steps[0]?.name).toBe('Checkout');
+      expect(steps[1]?.run).toContain('git ls-remote origin "$GITHUB_REF"');
+      expect(steps[1]?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 /** The API answers, as JSON text by route, and the services of each plan artifact, by its zip route. */
@@ -163,17 +216,25 @@ const readHistory = (
       expect(zipped.status, zipped.stderr).toBe(0);
     }
     const result = yield* collectToolingProcess(
-      ChildProcess.make('bash', [HISTORY], {
-        cwd: app,
-        env: {
-          FIXTURES: data,
-          GITHUB_REPOSITORY: 'owner/repo',
-          GITHUB_RUN_NUMBER: '20',
-          GITHUB_SHA: HEAD,
-          PATH: `${bin}:${yield* Config.String('PATH')}`,
-          RUNNER_TEMP: directory,
+      ChildProcess.make(
+        'bash',
+        [
+          '-e',
+          '-c',
+          `bash ${HISTORY} comparison >"$RUNNER_TEMP/comparison.json"; bash ${HISTORY} complete "$RUNNER_TEMP/comparison.json"`,
+        ],
+        {
+          cwd: app,
+          env: {
+            FIXTURES: data,
+            GITHUB_REPOSITORY: 'owner/repo',
+            GITHUB_RUN_NUMBER: '20',
+            GITHUB_SHA: HEAD,
+            PATH: `${bin}:${yield* Config.String('PATH')}`,
+            RUNNER_TEMP: directory,
+          },
         },
-      }),
+      ),
     );
     expect(result.status, result.stderr).toBe(0);
     return Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(result.stdout);

@@ -95,6 +95,7 @@ const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
 const INSTALL_APP_ACTION = './.github/actions/install-app';
 const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
+const CHANGED_FILES_LINT_SHARD = 'shards=[0]';
 /** The overlay the gates workflow binds (CI_MATRICES_OVERLAY of its env), so the tests plan from what the gates run. */
 const MATRICES_OVERLAY = Schema.decodeUnknownSync(
   Schema.Struct({ env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.NonEmptyString }) }),
@@ -1772,6 +1773,15 @@ it('names every package integration suite and keeps native proofs one per runner
   }
 });
 
+it('prints all failing hook chunks and later fixes without changing the index', () => {
+  const output = execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/test-lint-files.sh', import.meta.url))], {
+    cwd: fileURLToPath(new URL('../../../', import.meta.url)),
+    encoding: 'utf-8',
+  });
+  expect(output).toContain('after 24/24; both exit 1');
+  expect(output).toContain('index unchanged; exit 1');
+});
+
 it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
   expect(lint.strategy.matrix.shard).toEqual([1, 2, 3]);
@@ -3176,7 +3186,8 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
     path: `${RUNNER_TEMP_EXPRESSION}/ci-changed-paths`,
   });
   expect(plan?.outputs?.['lint-shards']).toBe(expression("steps.lint-shards.outputs.shards || '[1,2,3]'"));
-  const choose = plan?.steps.find(({ id }) => id === 'lint-shards')?.run ?? 'exit 1';
+  expect(plan?.steps.find(({ id }) => id === 'lint-shards')?.run).toBe('bash app/scripts/ci/choose-lint-shards.sh');
+  const choose = readFileSync(new URL('../ci/choose-lint-shards.sh', import.meta.url), 'utf-8');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
   const shardsFor = (mode: string, paths: readonly string[]) => {
     const changed = path.join(directory, 'changed');
@@ -3191,11 +3202,23 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   };
   try {
     const ordinary = ['app/verticals/catalog/src/a b.ts', 'app/verticals/catalog/src/index.ts'];
-    expect(shardsFor('affected', ordinary)).toBe('shards=[0]');
-    expect(shardsFor('scoped', ordinary)).toBe('shards=[0]');
+    expect(shardsFor('affected', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
+    expect(shardsFor('scoped', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
     expect(shardsFor('full', ordinary)).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('scoped', [])).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('affected', [])).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(
+      shardsFor(
+        'affected',
+        Array.from({ length: 2001 }, (_, index) => `app/scripts/${index}.ts`),
+      ),
+    ).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(
+      shardsFor(
+        'affected',
+        Array.from({ length: 2000 }, (_, index) => `app/scripts/${index}.ts`),
+      ),
+    ).toBe(CHANGED_FILES_LINT_SHARD);
     for (const configuration of [
       'app/oxlint.config.ts',
       'app/.oxfmtrc.json',

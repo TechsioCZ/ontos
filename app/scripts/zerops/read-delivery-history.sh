@@ -2,7 +2,11 @@
 # Reads from GitHub what the stage delivery plan starts from (scripts/zerops/delivery-plan-cli.mts plan), as one JSON
 # document on stdout. Run history, not Actions caches: a cache entry can be evicted at any time, a run cannot.
 #
-#   GH_TOKEN=… GITHUB_REPOSITORY=… GITHUB_RUN_NUMBER=… GITHUB_SHA=… read-delivery-history.sh >history.json
+#   read-delivery-history.sh comparison >comparison.json
+#   read-delivery-history.sh complete comparison.json >history.json
+# Both use GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_NUMBER and GITHUB_SHA. The first snapshots the verified base
+# and compare list for lint and planning. Only the planner needs the later mutation lookups (74 s in run
+# 45228629460), so those still overlap its root-importer install, never delaying lint's install.
 #
 #   runs         this workflow's latest push and dispatch runs on the stage branch in this repository (null when the
 #                list cannot be read)
@@ -13,7 +17,7 @@
 #                an ancestor, every changed path (renames as both names), and whether the list may be cut short
 #                (null when the comparison cannot be read)
 #
-# It never fails: every part it cannot read is null, and the planner then deploys every service.
+# Unreadable GitHub state is null and selects every service/file. A missing or invalid shared snapshot fails closed.
 set -uo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_RUN_NUMBER:?GITHUB_RUN_NUMBER is required}"
@@ -29,16 +33,30 @@ trap 'rm -rf "$work"' EXIT
 
 empty() { jq -n '{runs: null, mutations: [], comparison: null}'; }
 
-# Push and dispatch runs in this repository only: a pull request from a fork can name its branch demo/sales-crm and
-# run its own copy of this workflow, and both push and dispatch need write access here.
-if ! runs="$(gh api "$repository/actions/workflows/zerops-stage.yml/runs?branch=demo%2Fsales-crm&per_page=50" \
-  --jq '[.workflow_runs[] | select((.event == "push" or .event == "workflow_dispatch") and .head_repository.id == .repository.id) |
-    {conclusion, head_branch, head_sha, id, path, run_attempt, run_number, status}]')" ||
-  ! jq -e 'type == "array"' <<<"$runs" >/dev/null 2>&1; then
-  echo 'the run history could not be read; every service deploys' >&2
-  empty
-  exit 0
-fi
+mode="${1:?comparison or complete is required}"
+case "$mode" in
+  comparison)
+    # Push and dispatch runs in this repository only: a pull request from a fork can name its branch demo/sales-crm and
+    # run its own copy of this workflow, and both push and dispatch need write access here.
+    if ! runs="$(gh api "$repository/actions/workflows/zerops-stage.yml/runs?branch=demo%2Fsales-crm&per_page=50" \
+      --jq '[.workflow_runs[] | select((.event == "push" or .event == "workflow_dispatch") and .head_repository.id == .repository.id) |
+        {conclusion, head_branch, head_sha, id, path, run_attempt, run_number, status}]')" ||
+      ! jq -e 'type == "array"' <<<"$runs" >/dev/null 2>&1; then
+      echo 'the run history could not be read; every service deploys' >&2
+      empty
+      exit 0
+    fi
+
+    ;;
+  complete)
+    snapshot="${2:?the shared comparison snapshot is required}"
+    jq -e 'has("runs") and has("comparison") and (.runs == null or (.runs | type == "array"))' "$snapshot" >/dev/null || exit 1
+    runs="$(jq -c '.runs' "$snapshot")"
+    comparison="$(jq -c '.comparison' "$snapshot")"
+    if [[ "$runs" == null ]]; then empty; exit 0; fi
+    ;;
+  *) echo "Unknown history operation: $mode" >&2; exit 1 ;;
+esac
 
 # This workflow's earlier runs on the branch, newest first, and the newest one that succeeded.
 earlier="$(jq -c --arg branch "$branch" --arg workflow "$workflow" --argjson number "$GITHUB_RUN_NUMBER" \
@@ -51,6 +69,19 @@ if [ "$base" = null ]; then
 fi
 base_number="$(jq -r '.run_number' <<<"$base")"
 base_sha="$(jq -r '.head_sha' <<<"$base")"
+
+if [[ "$mode" == comparison ]]; then
+  # The changed files are listed on the first page for the whole comparison; per_page=1 keeps the commit list short.
+  # GitHub lists at most 300 files, so a list of 300 or more may be cut short.
+  comparison="$(gh api "$repository/compare/$base_sha...$GITHUB_SHA?per_page=1" \
+    --jq "{base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
+           changedPaths: ([.files[]? | .filename, (.previous_filename // empty)] | unique),
+           truncated: ((.files | length) >= 300 or (has(\"files\") | not))}" 2>/dev/null)" || comparison=null
+  jq -e 'type == "object"' <<<"$comparison" >/dev/null 2>&1 || comparison=null
+  jq -n --argjson runs "$runs" --argjson comparison "$comparison" \
+    '{runs: $runs, mutations: [], comparison: $comparison}'
+  exit 0
+fi
 
 # Did any attempt of the run reach the mutation marker? The jobs of every attempt, not only the latest one.
 mutated() {
@@ -78,14 +109,6 @@ for id in $(jq -r --argjson base "$base_number" '.[] | select(.run_number > $bas
   mutations="$(jq -c --argjson id "$id" --argjson mutated "$state" --argjson services "$services" \
     '. + [{runId: $id, mutated: $mutated, services: $services}]' <<<"$mutations")"
 done
-
-# The changed files are listed on the first page for the whole comparison; per_page=1 keeps the commit list short.
-# GitHub lists at most 300 files, so a list of 300 or more may be cut short.
-comparison="$(gh api "$repository/compare/$base_sha...$GITHUB_SHA?per_page=1" \
-  --jq "{base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
-         changedPaths: ([.files[]? | .filename, (.previous_filename // empty)] | unique),
-         truncated: ((.files | length) >= 300 or (has(\"files\") | not))}" 2>/dev/null)" || comparison=null
-jq -e 'type == "object"' <<<"$comparison" >/dev/null 2>&1 || comparison=null
 
 jq -n --argjson runs "$runs" --argjson mutations "$mutations" --argjson comparison "$comparison" \
   '{runs: $runs, mutations: $mutations, comparison: $comparison}'

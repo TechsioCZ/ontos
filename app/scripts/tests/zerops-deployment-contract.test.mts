@@ -640,6 +640,8 @@ const stageJobs = () =>
       jobs: Schema.Struct({
         deliver: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
         deliver_app: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
+        'lint-plan': Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
+        plan: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
       }),
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs;
@@ -675,10 +677,10 @@ it('marks the attempt after the plan is retained and before any remote mutation,
       expect(step.run ?? '', step.name).not.toMatch(/sync-service-secret|stage-push|push-service/u);
     }
   }
-  const { deliver } = jobs;
-  const plan = deliver.steps.findIndex(({ name }) => name === 'Retain the delivery decision');
+  const plan = jobs.plan.steps.findIndex(({ name }) => name === 'Retain the delivery decision');
   expect(plan).toBeGreaterThan(-1);
-  expect(plan).toBeLessThan(deliver.steps.findIndex(({ name }) => name === MUTATION_MARKER));
+  // Both delivery jobs need plan success, so the artifact is retained before either mutation marker can run.
+  expect(jobs.plan.steps.some(({ name }) => name === MUTATION_MARKER)).toBe(false);
   // The delivery syncs every secret before its first push, and every push checks the branch head itself.
   const steps = deliverySteps();
   const sync = steps.findIndex(({ run }) => run?.includes('sync-service-secret.sh') === true);
@@ -743,8 +745,8 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   expect(steps[build]?.run).toContain('git status --porcelain --untracked-files=all');
   expect(steps[build]?.run).toContain('pack-prebuilt-units.sh "$DISTS" "$RUNNER_TEMP/units-keep/units.tar.zst"');
   // The same declared build environment as the identity step, so each build carries this commit's identity.
-  const { deliver } = stageJobs();
-  const identities = deliver.steps.find(({ name }) => name === 'Write the unit identities and shard lists');
+  const { deliver, plan } = stageJobs();
+  const identities = plan.steps.find(({ name }) => name === 'Write the unit identities and shard lists');
   expect(Object.keys(identities?.env ?? {}).length).toBeGreaterThan(0);
   for (const [variable, value] of Object.entries(identities?.env ?? {})) {
     expect(steps[build]?.env?.[variable], variable).toBe(value);
@@ -752,7 +754,7 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   expect(steps[build]?.run).toContain('zerops-unit-identities/digests.tsv');
   // The units it builds are the ones the front path could not lend.
   const delivery = deliver.steps.find(({ uses }) => uses === DELIVER_STAGE);
-  expect(delivery?.with?.['build-units']).toBe(`\${{ steps.taken.outputs.missing }}`);
+  expect(delivery?.with?.['build-units']).toBe(`\${{ needs.plan.outputs.missing }}`);
 });
 
 /** Lines that run, without comments: a comment may name node or pnpm. */
@@ -829,21 +831,21 @@ it('pushes the app before any install: nothing up to the upload needs the toolch
     'stage-push.sh',
     'sync-service-secret.sh',
   ]);
-  // The job after the unit builds installs nothing before it pushes; the planning job installed the root importer.
-  const { deliver, deliver_app: deliverApp } = stageJobs();
+  // Both delivery jobs install nothing before pushing; only planning installed the root importer.
+  const { deliver, deliver_app: deliverApp, plan } = stageJobs();
   expect(deliverApp.steps[delivery(deliverApp)]?.with?.toolchain).toBe('none');
   for (const step of deliverApp.steps.slice(0, delivery(deliverApp))) {
     expect(step.uses ?? '', step.name).not.toBe(INSTALL_APP);
     expect(code(step.run ?? ''), step.name).not.toMatch(TOOLCHAIN);
   }
-  expect(deliver.steps[delivery(deliver)]?.with?.toolchain).toBe('installed');
-  const planInstall = deliver.steps.findIndex(({ uses }) => uses === INSTALL_APP);
-  expect(planInstall).toBeGreaterThanOrEqual(0);
-  expect(planInstall).toBeLessThan(delivery(deliver));
+  expect(deliver.steps[delivery(deliver)]?.with?.toolchain).toBe('none');
+  expect(deliver.steps.some(({ uses }) => uses === INSTALL_APP)).toBe(false);
+  expect(plan.steps.some(({ uses }) => uses === INSTALL_APP)).toBe(true);
 });
 
 it('plans from the run history with only the root importer and a depth-1 checkout', () => {
-  const { steps } = stageJobs().deliver;
+  const jobs = stageJobs();
+  const { steps } = jobs.plan;
   expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
   expect(steps.find(({ uses }) => uses === INSTALL_APP)?.with?.['install-args']).toBe('--trust-lockfile --filter app');
   // The changes come from GitHub's compare API: the checkout the app push ships stays shallow.
@@ -851,7 +853,8 @@ it('plans from the run history with only the root importer and a depth-1 checkou
   expect(source).not.toContain('--unshallow');
   // No delivery state lives in the Actions cache, which evicts at will.
   expect(source).not.toMatch(/zerops-stage-(?:delivery|attempt)-|zerops-planner-modules-/u);
-  const history = steps.findIndex(({ run }) => run?.includes('read-delivery-history.sh') === true);
+  expect(jobs['lint-plan'].steps.some(({ run }) => run?.includes('read-delivery-history.sh') === true)).toBe(true);
+  const history = steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
   const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
   expect(history).toBeGreaterThanOrEqual(0);
   expect(plan).toBeGreaterThan(history);

@@ -251,27 +251,7 @@ jobs:
         env:
           CHANGED_PATHS: ${{ runner.temp }}/ci-changed-paths
           PLAN_MODE: ${{ steps.selection.outputs.mode }}
-        run: |
-          shards='[1,2,3]'
-          if [[ "$PLAN_MODE" =~ ^(affected|scoped)$ && -s "$CHANGED_PATHS" ]]; then
-            shards='[0]'
-            count=0
-            while IFS= read -r -d '' path; do
-              count=$((count + 1))
-              if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook|tsgolint)[^/]*$ ||
-                "$path" =~ (^|/)tsconfig[^/]*\.json$ || "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
-                "$path" == app/package.json || "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml ||
-                "$path" == app/.mise.toml ]]; then
-                echo "::notice title=Tool configuration changed::$path changes how unchanged files lint; every tracked file is linted."
-                shards='[1,2,3]'
-                break
-              fi
-            done <"$CHANGED_PATHS"
-            if ((count > 2000)); then
-              shards='[1,2,3]'
-            fi
-          fi
-          echo "shards=$shards" >>"$GITHUB_OUTPUT"
+        run: bash app/scripts/ci/choose-lint-shards.sh
       # A later push of this exact commit to the base branch skips its gates only when this run compared with the
       # commit that push starts from (scripts/ci/commit-proof.sh). The runs API keeps no dispatch inputs and no job
       # outputs, so the record is an artifact of this run, which only this run's jobs can write.
