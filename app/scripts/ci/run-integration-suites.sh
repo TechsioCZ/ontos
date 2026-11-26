@@ -67,7 +67,8 @@ if [[ "${1:-}" == --execute ]]; then
       --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts \
-      --exclude scripts/integration/scoped-owner-migrations.test.mts
+      --exclude scripts/integration/scoped-owner-migrations.test.mts \
+      --exclude scripts/integration/core-media-catalog-handoff.test.mts
   fi
   if [[ "$task" == ./verticals/party-registry#* ]]; then
     exec mise exec -- pnpm --filter ./verticals/party-registry run test:integration:shared --pool.maxWorkers 1 --shard "${task##*#}"

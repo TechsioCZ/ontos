@@ -75,6 +75,20 @@ it('fingerprints the recorded settings independently of their order', () => {
   expect(fingerprint({ BUCKET: 'b', REGION: 'other' })).not.toBe(recorded);
 });
 
+it('records a root integration file, whose reported path is already relative to app/', () => {
+  const file = 'scripts/integration/core-media-catalog-handoff.test.mts';
+  const chain = run(['pass'], {
+    declared: [file],
+    name: 'catalog-chain',
+    packageDirectory: '',
+    report: Option.some({
+      files: [{ results: [{ fullName: 'chain', status: 'pass' }], status: 'pass', testPath: file }],
+      status: 'pass',
+    }),
+  });
+  expect(coreMediaEvidence([chain])).toMatchObject({ status: 'PASS', totals: { files: 1, passed: 1 } });
+});
+
 const testFiles = (launch: string | undefined) => launch?.match(/tests\/integration\/\S+\.test\.ts/gu) ?? [];
 
 it('requires every case, runs the digest guard with its own setting and records no credential', () => {
@@ -116,13 +130,17 @@ it('requires every case, runs the digest guard with its own setting and records 
       },
       stdio: 'pipe',
     });
-    const [e2e, guard, providers, record] = readFileSync(launches, 'utf-8').trim().split('\n');
+    const [e2e, guard, providers, chain, record] = readFileSync(launches, 'utf-8').trim().split('\n');
     expect(e2e).toContain(
       '1|unset|http://127.0.0.1:19010|localhost:19011|exec -- pnpm --filter ./apps/shell-super-app',
     );
     expect(guard).toContain('1|50|http://127.0.0.1:19010|localhost:19011|exec -- pnpm --filter ./apps/shell-super-app');
     expect(providers).toContain(
       '1|unset|http://127.0.0.1:19000|localhost:50051|exec -- pnpm --filter ./packages/core-runtime',
+    );
+    // The real Catalog chain talks to the store and the engine directly: nothing in it cuts them.
+    expect(chain).toContain(
+      '1|unset|http://127.0.0.1:19000|localhost:50051|exec -- pnpm exec rstest --project integration scripts/integration/core-media-catalog-handoff.test.mts --pool.maxWorkers 1',
     );
     expect(record).toContain('exec -- node scripts/ci/core-media-evidence.mts --runs ');
     for (const launch of [e2e, guard, providers]) {

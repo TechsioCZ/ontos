@@ -50,6 +50,7 @@ const catalogModule = 'commerce.catalog';
 const capabilityKeys = [
   'commerce.catalog.product.create',
   'commerce.catalog.catalog-media.assign',
+  'commerce.catalog.catalog-media.remove',
   'commerce.catalog.catalog-document-current.read',
   'core.media.asset.upload',
   'core.media.asset.confirm',
@@ -87,6 +88,8 @@ const CreatedProductSchema = Schema.Struct({
   variantId: VariantIdSchema,
 });
 const AssignedSchema = Schema.Struct({ setRevision: Schema.Int });
+/** What Catalog's history keeps of one assignment, oldest first. */
+const AssignmentHistorySchema = Schema.Array(Schema.Struct({ resource: Schema.String, state: Schema.String }));
 const CurrentAnswerSchema = Schema.Struct({
   assignments: Schema.Array(
     Schema.Struct({
@@ -398,14 +401,19 @@ it.live(
           resourceType: 'commerce.catalog.variant',
           tenantId,
         };
-        const assign = (subjectRef: WireRef, resourceRef: WireRef, order: number) =>
+        const assign = (
+          subjectRef: WireRef,
+          resourceRef: WireRef,
+          order: number,
+          { assignmentId = randomUUID(), expectedSetRevision = order - 1 } = {},
+        ) =>
           catalogApi.post(
             '/catalog/actions/assign-catalog-media',
             AssignedSchema,
             {
-              assignmentId: randomUUID(),
+              assignmentId,
               evidenceRefs: [],
-              expectedSetRevision: order - 1,
+              expectedSetRevision,
               order,
               purpose: `document ${order}`,
               reason: 'D20 handoff assignment',
@@ -413,9 +421,10 @@ it.live(
               resourceRef,
               subjectRef,
             },
-            `d20-handoff-assign-${subjectRef.resourceId}-${order}`,
+            `d20-handoff-assign-${assignmentId}`,
           );
-        yield* assign(productRef, ready, 1);
+        const originalAssignmentId = randomUUID();
+        yield* assign(productRef, ready, 1, { assignmentId: originalAssignmentId });
         yield* assign(productRef, pending, 2);
         yield* assign(productRef, unknown, 3);
         yield* assign(variantRef, pending, 1);
@@ -452,11 +461,51 @@ it.live(
         expect(yield* current(variantRef)).toEqual([available(pending)]);
         expect(yield* current(productRef)).toEqual([available(ready), available(pending), without(unknown, 'ABSENT')]);
 
+        // Storing another file changes no assignment: the Product stays on what it was given (#1446 D.15).
+        const replacementBytes = new TextEncoder().encode('D20 handoff: the replacement document');
+        const replacement = yield* media.reserve(replacementBytes, 'replacement');
+        yield* media.store(replacement.resourceId, replacementBytes);
+        expect(yield* current(productRef)).toEqual([available(ready), available(pending), without(unknown, 'ABSENT')]);
+
         // Each read made Catalog fetch its own delegated credential from the Shell: nothing was answered locally.
         const outcomes = yield* shell.gatewayDiagnostics();
         expect(outcomes.slice(delegatedBefore)).toEqual(
-          Array.from({ length: 4 }, () => ({ problem: 'success', status: 200 })),
+          Array.from({ length: 5 }, () => ({ problem: 'success', status: 200 })),
         );
+
+        // Replacing is Catalog's own explicit choice: remove the old assignment, then assign the new file.
+        const removed = yield* catalogApi.post(
+          '/catalog/actions/remove-catalog-media',
+          AssignedSchema,
+          {
+            assignmentId: originalAssignmentId,
+            evidenceRefs: [],
+            expectedSetRevision: 3,
+            reason: 'D20 handoff replacement',
+            subjectRef: productRef,
+          },
+          `d20-handoff-remove-${originalAssignmentId}`,
+        );
+        yield* assign(productRef, replacement, 1, { expectedSetRevision: removed.setRevision });
+        expect(yield* current(productRef)).toEqual([
+          available(replacement),
+          available(pending),
+          without(unknown, 'ABSENT'),
+        ]);
+
+        // The history still says which file the removed assignment named, and Core still holds that file.
+        const history = yield* admin`select owner_resource_id::text as resource, state
+          from catalog.catalog_media_assignment_revisions
+          where tenant_id = ${tenantId} and assignment_id = ${originalAssignmentId}
+          order by revision`.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AssignmentHistorySchema)));
+        expect(history).toEqual([
+          { resource: ready.resourceId, state: 'ACTIVE' },
+          { resource: ready.resourceId, state: 'REMOVED' },
+        ]);
+        expect(yield* current(variantRef)).toEqual([available(pending)]);
+        const kept = yield* admin`select processing_status as status from core.media_assets
+          where tenant_id = ${tenantId} and media_asset_id = ${ready.resourceId}`;
+        expect(kept).toEqual([{ status: 'ready' }]);
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),

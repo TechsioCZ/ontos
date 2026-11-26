@@ -399,7 +399,9 @@ export const planCiChecks = (input: {
         return affectedDirectories.has('verticals/party-registry');
       }
       if (task === 'whole:core-media') {
-        return affectedDirectories.has('apps/shell-super-app') || affectedDirectories.has('packages/core-runtime');
+        return ['apps/shell-super-app', 'packages/core-runtime', 'verticals/catalog'].some((directory) =>
+          affectedDirectories.has(directory),
+        );
       }
       if (task.startsWith('whole:')) {
         return true;

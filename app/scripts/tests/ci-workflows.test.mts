@@ -2361,6 +2361,7 @@ const WHOLE_FILES = {
     'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
     'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
     'scripts/integration/scoped-owner-migrations.test.mts',
+    'scripts/integration/core-media-catalog-handoff.test.mts',
   ],
 } satisfies Readonly<Record<string, readonly string[]>>;
 /** Integration files a sharded family runs, minus the files its whole-owner tasks run alone. */
