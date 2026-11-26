@@ -636,7 +636,7 @@ it.live(
           ]),
         );
         expect(yield* Effect.flip(readPage({ ...authority, limit: 10, offset: 0 }))).toMatchObject({
-          code: 'read_handler_unavailable',
+          code: 'read_permission_denied',
         });
         privacyDenied = false;
         partyUnavailable = true;
