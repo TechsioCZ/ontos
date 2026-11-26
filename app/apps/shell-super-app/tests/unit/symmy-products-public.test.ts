@@ -73,7 +73,9 @@ describe('Symmy public products body', () => {
       sourceRecordId: 'source-product-a',
       variantSources: [{ id: readId('b'), sourceRecordId: 'source-variant-a', variantId }],
     });
-    expect(body.products[0]?.product).toMatchObject({ description: 'About', name: 'Named', productRef });
+    expect(body.products[0]?.product).toMatchObject({ description: 'About', name: 'Named', productId });
+    expect(body.products[0]?.product.variants).toEqual([{ lifecycle: 'WORK_IN_PROGRESS', productId, variantId }]);
+    expect(JSON.stringify(body)).not.toMatch(/moduleId|resourceType|productRef|variantRef/u);
     expect(Schema.is(Schema.toType(SymmyProductsResponseSchema))(body)).toBe(true);
     for (const forbidden of [
       'contractVersion',
@@ -170,7 +172,7 @@ describe('Symmy products query', () => {
   const paths = [
     'sourceRecordId',
     'product',
-    'product.productRef',
+    'product.productId',
     'product.revision',
     'product.lifecycle',
     'product.catalogReady',
@@ -222,7 +224,8 @@ describe('Symmy products query', () => {
     { fields: 'Product.name' },
     { fields: 'variantSources.id' },
     { fields: 'product.variants.variantId' },
-    { fields: 'product.productRef.tenantId' },
+    { fields: 'product.productId.tenantId' },
+    { fields: 'product.productRef' },
     { fields: 'x'.repeat(501) },
     { afterRecordId: 'cursor' },
     { code: 'source' },

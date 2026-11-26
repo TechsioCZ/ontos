@@ -3,9 +3,10 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyStockBatchRequestSchema } from '../../api/symmy/stock-batch-request-contract.ts';
 
+const unitId = '33333333-3333-4333-8333-333333333333';
 const unitRef = {
   moduleId: 'commerce.catalog',
-  resourceId: '33333333-3333-4333-8333-333333333333',
+  resourceId: unitId,
   resourceType: 'commerce.catalog.product-unit',
   tenantId: '11111111-1111-4111-8111-111111111111',
 };
@@ -13,7 +14,7 @@ const row = {
   businessObservedAt: '2026-01-01T10:00:00.000Z',
   itemKey: 'item-1',
   locationKey: 'warehouse-1',
-  quantity: { amount: '12.5', unitRef },
+  quantity: { amount: '12.5', unitId },
   revision: 'r1',
   sourceReference: 'erp-1',
 };
@@ -31,7 +32,7 @@ describe('Symmy stock batch request', () => {
 
   it('accepts canonical amounts', () => {
     for (const amount of ['0', '1', '12.5', '0.000000001', `${'9'.repeat(29)}.123456789`]) {
-      expect(accepts({ stock: [{ ...row, quantity: { amount, unitRef } }] }), amount).toBe(true);
+      expect(accepts({ stock: [{ ...row, quantity: { amount, unitId } }] }), amount).toBe(true);
     }
   });
 
@@ -48,7 +49,7 @@ describe('Symmy stock batch request', () => {
       const rest = Object.fromEntries(Object.entries(row).filter(([name]) => name !== key));
       expect(accepts({ stock: [rest] }), key).toBe(false);
     }
-    expect(accepts({ stock: [{ ...row, quantity: { unitRef } }] })).toBe(false);
+    expect(accepts({ stock: [{ ...row, quantity: { unitId } }] })).toBe(false);
     expect(accepts({ stock: [{ ...row, quantity: { amount: '1' } }] })).toBe(false);
   });
 
@@ -56,8 +57,8 @@ describe('Symmy stock batch request', () => {
     for (const key of Object.keys(row)) {
       expect(accepts({ stock: [{ ...row, [key]: null }] }), key).toBe(false);
     }
-    expect(accepts({ stock: [{ ...row, quantity: { amount: null, unitRef } }] })).toBe(false);
-    expect(accepts({ stock: [{ ...row, quantity: { amount: '1', unitRef: null } }] })).toBe(false);
+    expect(accepts({ stock: [{ ...row, quantity: { amount: null, unitId } }] })).toBe(false);
+    expect(accepts({ stock: [{ ...row, quantity: { amount: '1', unitId: null } }] })).toBe(false);
   });
 
   it('rejects a non-canonical or numeric amount', () => {
@@ -75,9 +76,9 @@ describe('Symmy stock batch request', () => {
       '9'.repeat(30),
       '0.1234567891',
     ]) {
-      expect(accepts({ stock: [{ ...row, quantity: { amount, unitRef } }] }), amount).toBe(false);
+      expect(accepts({ stock: [{ ...row, quantity: { amount, unitId } }] }), amount).toBe(false);
     }
-    expect(accepts({ stock: [{ ...row, quantity: { amount: 12.5, unitRef } }] })).toBe(false);
+    expect(accepts({ stock: [{ ...row, quantity: { amount: 12.5, unitId } }] })).toBe(false);
   });
 
   it('rejects text outside 1 to 300 characters or untrimmed', () => {
@@ -110,16 +111,20 @@ describe('Symmy stock batch request', () => {
     }
   });
 
-  it('rejects a unit reference of another resource type', () => {
-    expect(
-      accepts({ stock: [{ ...row, quantity: { amount: '1', unitRef: { ...unitRef, resourceType: 'x' } } }] }),
-    ).toBe(false);
-    expect(accepts({ stock: [{ ...row, quantity: { amount: '1', unitRef: 'unit-1' } }] })).toBe(false);
+  it('takes only a plain unit id and refuses a unit reference object', () => {
+    for (const quantity of [
+      { amount: '1', unitId: 'unit-1' },
+      { amount: '1', unitId: unitRef },
+      { amount: '1', unitRef },
+      { amount: '1', unitId, unitRef },
+    ]) {
+      expect(accepts({ stock: [{ ...row, quantity }] }), JSON.stringify(quantity)).toBe(false);
+    }
   });
 
   it('rejects reserved quantity, the contract version, selectors and unknown properties', () => {
     for (const extra of [
-      { reservedQuantity: { amount: '1', unitRef } },
+      { reservedQuantity: { amount: '1', unitId } },
       { contractVersion: 'INTERNAL_C14' },
       { sku: 'a' },
       { ean: 'a' },

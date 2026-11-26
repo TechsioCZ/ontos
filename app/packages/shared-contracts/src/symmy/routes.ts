@@ -6,7 +6,7 @@ type SymmyRouteDefinition = Readonly<
     selector?: 'code' | 'id';
   } & (
     | { method: 'POST'; mode: 'durable_job'; successStatus: 202 }
-    | { method: 'POST'; mode: 'item_results'; successStatus: 200 }
+    | { method: 'PUT'; mode: 'item_results'; successStatus: 200 }
     | { method: 'GET'; mode: 'business_read' | 'job_read'; successStatus: 200 }
   )
 >;
@@ -39,7 +39,7 @@ export const SYMMY_ROUTES = {
     successStatus: 202,
   },
   customerGroupsBatch: {
-    method: 'POST',
+    method: 'PUT',
     mode: 'item_results',
     path: `${SYMMY_REST_PREFIX}/customer-groups/batch`,
     successStatus: 200,
@@ -51,7 +51,7 @@ export const SYMMY_ROUTES = {
     successStatus: 202,
   },
   inventoryStockBatch: {
-    method: 'POST',
+    method: 'PUT',
     mode: 'item_results',
     path: `${SYMMY_REST_PREFIX}/inventory/stock/batch`,
     successStatus: 200,

@@ -1768,7 +1768,7 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(all.owners).toEqual(['customer-profile-source-page', 'source-profile-export', 'customer-profile-ico']);
       expect(all.customer).toHaveProperty('party');
       expect(all.customer).toHaveProperty('ico');
-      for (const fields of [['id', 'sourceRecordId', 'partyRef', 'profile'], ['businessName']] as const) {
+      for (const fields of [['id', 'sourceRecordId', 'partyId', 'profile'], ['businessName']] as const) {
         const bare = yield* projectCustomerParts(fields, scope, personal);
         expect(bare.owners).toEqual(['customer-profile-source-page']);
         expect(bare.customer).not.toHaveProperty('party');

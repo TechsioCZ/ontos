@@ -4,7 +4,6 @@ import {
   AdmitSymmySyncActionUnavailableProblemSchema,
 } from '@app/symmy-integration/api/admit-symmy-sync-action';
 import { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
-import { SymmyStockRowsSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Effect, Exit, Logger, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -13,10 +12,10 @@ import {
   SymmyClientIdempotencyKeySchema,
   SymmyStockDependencyNotReadyProblemSchema,
   SymmyStockInputProblemSchema,
-  SymmyStockSourceUnavailableProblemSchema,
   SymmyUnavailableProblemSchema,
 } from '../../apps/shell-super-app/api/symmy/contract.ts';
 import { makeSymmyGovernedDispatch } from '../../apps/shell-super-app/api/symmy/governed-dispatch.ts';
+import { SymmyStockBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/stock-batch-request-contract.ts';
 import type { SymmyIngressAdmission } from '../../apps/shell-super-app/api/symmy/transport.ts';
 import {
   decodeInternalSyncProblem,
@@ -36,7 +35,7 @@ const row = {
   businessObservedAt: '2026-01-01T10:00:00.000Z',
   itemKey: 'unprovisioned-stock',
   locationKey: 'warehouse',
-  quantity: { amount: '10', unitRef },
+  quantity: { amount: '10', unitId: unitRef.resourceId },
   revision: '1',
   sourceReference: 'stock-source',
 };
@@ -109,7 +108,7 @@ const stockFailure = (input: {
       request: {
         idempotencyKey,
         route: 'inventoryStockBatch',
-        stock: Schema.decodeUnknownSync(SymmyStockRowsSchema)([input.row ?? row]),
+        stock: Schema.decodeUnknownSync(SymmyStockBatchRequestSchema)({ stock: [input.row ?? row] }).stock,
       },
     })
     .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, input.fetch));
@@ -153,12 +152,12 @@ for (const reason of ['ITEM_NOT_PROVISIONED', 'POSITION_NOT_FOUND'] as const) {
   );
 }
 
-it.effect('validates exact unit, location and tenant refusals before any owner request', () =>
+it.effect('validates exact unit and location refusals before any owner request', () =>
   Effect.gen(function* stockInputContracts() {
     for (const input of [
       { changed: { ...row, locationKey: 'not-enrolled' }, reason: 'LOCATION_NOT_ENROLLED' },
       {
-        changed: { ...row, quantity: { ...row.quantity, unitRef: { ...unitRef, resourceId: otherId } } },
+        changed: { ...row, quantity: { ...row.quantity, unitId: otherId } },
         reason: 'UNIT_NOT_ENROLLED',
       },
     ] as const) {
@@ -186,23 +185,6 @@ it.effect('validates exact unit, location and tenant refusals before any owner r
       expect('retryable' in decoded).toBe(false);
       expect(requests).toBe(0);
     }
-    let tenantRequests = 0;
-    const failure = yield* stockFailure({
-      fetch: () => {
-        tenantRequests += 1;
-        return Promise.resolve(Response.json({}));
-      },
-      row: { ...row, quantity: { ...row.quantity, unitRef: { ...unitRef, tenantId: otherId } } },
-    });
-    const problem = yield* Schema.decodeUnknownEffect(SymmyStockSourceUnavailableProblemSchema)(failure);
-    const decoded = yield* decodeInternalSyncProblem({
-      body: yield* problemBody(SymmyStockSourceUnavailableProblemSchema, problem),
-      phase: 'stock-foreign-unit-tenant',
-      schema: syncNegativeResponseSchemas.stockSourceUnavailable,
-      status: problem.status,
-    });
-    expect(decoded).toMatchObject({ reason: 'TENANT_SCOPE_MISMATCH', retryable: true, status: 503 });
-    expect(tenantRequests).toBe(0);
   }),
 );
 

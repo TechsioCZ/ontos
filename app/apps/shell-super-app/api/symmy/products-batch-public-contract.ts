@@ -1,7 +1,10 @@
+import { ProductCategoryRefSchema } from '@app/catalog/resources/product-category';
 import type { SymmyProductHintKind, SymmyProductRows } from '@app/symmy-integration/symmy-internal-contracts';
 import { DateTime } from 'effect';
 import type { Types } from 'effect';
 
+import { symmyOwnerRef } from './owner-ref.ts';
+import { symmyOwnerUnitBasis } from './price-request-fields.ts';
 import type { SymmyProductsBatchRequest } from './products-batch-request-contract.ts';
 
 type Product = SymmyProductsBatchRequest['products'][number];
@@ -40,11 +43,11 @@ const unsupportedGroups = (product: Product): readonly SymmyProductHintKind[] =>
     ],
     [
       'ClassificationHint',
-      product.productType !== undefined ||
+      product.productTypeId !== undefined ||
         product.brand !== undefined ||
         product.manufacturer !== undefined ||
         filled(product.relationships) ||
-        filled(product.sizes),
+        filled(product.sizeIds),
     ],
   ];
   return groups.flatMap(([kind, supplied]) => (supplied ? [kind] : []));
@@ -54,21 +57,11 @@ type PriceRow = SymmyProductRows[number]['variants'][number]['prices'][number];
 type VariantRow = SymmyProductRows[number]['variants'][number];
 type ProductRow = SymmyProductRows[number];
 
-const mapPrice = (price: Price): PriceRow => {
+const mapPrice = (price: Price, tenantId: string): PriceRow => {
   const mapped: Types.Mutable<PriceRow> = { amount: price.amount, currencyCode: price.currencyCode };
   const { commercialScope } = price;
   if (commercialScope !== undefined) {
-    const scope: Types.Mutable<NonNullable<PriceRow['commercialScope']>> = {};
-    if (commercialScope.channelRef !== undefined) {
-      scope.channelId = commercialScope.channelRef.resourceId;
-    }
-    if (commercialScope.commerceMarketRef !== undefined) {
-      scope.marketId = commercialScope.commerceMarketRef.resourceId;
-    }
-    if (commercialScope.sellingLegalEntityRef !== undefined) {
-      scope.sellingLegalEntityId = commercialScope.sellingLegalEntityRef.resourceId;
-    }
-    mapped.commercialScope = scope;
+    mapped.commercialScope = commercialScope;
   }
   if (price.effectiveFrom !== undefined) {
     mapped.effectiveFrom = DateTime.formatIso(price.effectiveFrom);
@@ -77,15 +70,15 @@ const mapPrice = (price: Price): PriceRow => {
     mapped.priceGroupCode = price.priceGroupCode;
   }
   if (price.unitBasis !== undefined) {
-    mapped.unitBasis = price.unitBasis;
+    mapped.unitBasis = symmyOwnerUnitBasis(price.unitBasis, tenantId);
   }
   return mapped;
 };
 
-const mapVariant = (variant: Variant): VariantRow => {
+const mapVariant = (variant: Variant, tenantId: string): VariantRow => {
   const mapped: Types.Mutable<VariantRow> = {
     localized: (variant.localized ?? []).filter(hasText),
-    prices: (variant.prices ?? []).map(mapPrice),
+    prices: (variant.prices ?? []).map((price) => mapPrice(price, tenantId)),
   };
   if (variant.identifier !== undefined) {
     mapped.identifier = variant.identifier;
@@ -93,15 +86,17 @@ const mapVariant = (variant: Variant): VariantRow => {
   return mapped;
 };
 
-const mapProduct = (product: Product): ProductRow => {
+const mapProduct = (product: Product, tenantId: string): ProductRow => {
   const [initial, ...further] = product.variants;
   const mapped: Types.Mutable<ProductRow> = {
     name: product.name,
     unsupported: unsupportedGroups(product),
-    variants: [mapVariant(initial), ...further.map(mapVariant)],
+    variants: [mapVariant(initial, tenantId), ...further.map((variant) => mapVariant(variant, tenantId))],
   };
-  if (product.categories !== undefined) {
-    mapped.categories = product.categories;
+  if (product.categoryIds !== undefined) {
+    mapped.categories = product.categoryIds.map((categoryId) =>
+      symmyOwnerRef(ProductCategoryRefSchema, tenantId, categoryId),
+    );
   }
   if (product.description !== undefined) {
     mapped.description = product.description;
@@ -118,9 +113,13 @@ const mapProduct = (product: Product): ProductRow => {
 /**
  * The public products as the owner admission receives them. The route never sends a reason, an evidence
  * reference, an identity, a source fact or a version: the route enrollment and the admission derive those.
- * The first variant stays first, because it is the initial variant created with the product.
+ * The first variant stays first, because it is the initial variant created with the product. Every reference
+ * is built from the sent id and the tenant of the admitted route.
  */
-export const mapSymmyProductsBatchRequest = ({ products }: SymmyProductsBatchRequest): SymmyProductRows => {
+export const mapSymmyProductsBatchRequest = (
+  { products }: SymmyProductsBatchRequest,
+  tenantId: string,
+): SymmyProductRows => {
   const [first, ...rest] = products;
-  return [mapProduct(first), ...rest.map(mapProduct)];
+  return [mapProduct(first, tenantId), ...rest.map((product) => mapProduct(product, tenantId))];
 };

@@ -3,7 +3,7 @@ import { SymmyCustomerGroupRowSchema } from '@app/symmy-integration/symmy-intern
 import { Schema } from 'effect';
 
 /**
- * The public body of a `POST /customer-groups/batch` answer: one result per submitted group, in request order, each
+ * The public body of a `PUT /customer-groups/batch` answer: one result per submitted group, in request order, each
  * with the true owner outcome of its create or update. `code` repeats the submitted group, so a result matches by
  * code as well as by position.
  */

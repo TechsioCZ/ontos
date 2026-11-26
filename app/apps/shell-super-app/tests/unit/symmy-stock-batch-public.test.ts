@@ -7,17 +7,13 @@ import {
 } from '../../api/symmy/stock-batch-public-contract.ts';
 import { SymmyStockBatchRequestSchema } from '../../api/symmy/stock-batch-request-contract.ts';
 
-const unitRef = {
-  moduleId: 'commerce.catalog',
-  resourceId: '33333333-3333-4333-8333-333333333333',
-  resourceType: 'commerce.catalog.product-unit',
-  tenantId: '11111111-1111-4111-8111-111111111111',
-};
+const tenantId = '11111111-1111-4111-8111-111111111111';
+const unitId = '33333333-3333-4333-8333-333333333333';
 const row = (itemKey: string, businessObservedAt: string) => ({
   businessObservedAt,
   itemKey,
   locationKey: 'warehouse-1',
-  quantity: { amount: '12.5', unitRef },
+  quantity: { amount: '12.5', unitId },
   revision: 'r1',
   sourceReference: `erp-${itemKey}`,
 });
@@ -27,7 +23,16 @@ describe('Symmy stock batch public mapping', () => {
     const body = Schema.decodeUnknownSync(SymmyStockBatchRequestSchema)({
       stock: [row('item-2', '2026-01-01T10:00:00Z'), row('item-1', '2026-01-01T12:00:00+02:00')],
     });
-    const rows = mapSymmyStockBatchRequest(body);
+    const rows = mapSymmyStockBatchRequest(body, tenantId);
+    expect(rows[0]?.quantity).toEqual({
+      amount: '12.5',
+      unitRef: {
+        moduleId: 'commerce.catalog',
+        resourceId: unitId,
+        resourceType: 'commerce.catalog.product-unit',
+        tenantId,
+      },
+    });
     expect(rows.map(({ itemKey }) => itemKey)).toEqual(['item-2', 'item-1']);
     expect(rows.map(({ businessObservedAt }) => businessObservedAt)).toEqual([
       '2026-01-01T10:00:00.000Z',
@@ -45,8 +50,8 @@ describe('Symmy stock batch public mapping', () => {
 
   it('is the same for the same content however the instant is written', () => {
     const decode = Schema.decodeUnknownSync(SymmyStockBatchRequestSchema);
-    expect(mapSymmyStockBatchRequest(decode({ stock: [row('a', '2026-01-01T10:00:00Z')] }))).toEqual(
-      mapSymmyStockBatchRequest(decode({ stock: [row('a', '2026-01-01T10:00:00.000Z')] })),
+    expect(mapSymmyStockBatchRequest(decode({ stock: [row('a', '2026-01-01T10:00:00Z')] }), tenantId)).toEqual(
+      mapSymmyStockBatchRequest(decode({ stock: [row('a', '2026-01-01T10:00:00.000Z')] }), tenantId),
     );
   });
 });

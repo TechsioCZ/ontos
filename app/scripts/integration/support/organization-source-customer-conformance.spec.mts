@@ -876,8 +876,8 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
       {
         businessName: { outcome: 'AVAILABLE', value: 'Internal organization customer seventeen' },
         ico: { _tag: 'PRESENT', normalizedValue: '00000019' },
-        partyRef: known.facts.partyRef,
-        profile: { profileRef: { ...targets.profileRef, kind: 'COUNTERPARTY' } },
+        partyId: known.facts.partyRef.resourceId,
+        profile: { profileId: targets.profileRef.resourceId, profileKind: 'COUNTERPARTY' },
         sourceRecordId: fixture.acceptedProfile.payload.source.recordId,
       },
     ],

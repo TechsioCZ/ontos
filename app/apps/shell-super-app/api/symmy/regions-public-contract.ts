@@ -12,7 +12,7 @@ const regionFields = {
   currencyCode: PricingCurrencyCodeSchema,
   id: SymmyQualifiedReadIdSchema,
   marketCode: Schema.String,
-  marketRef: MarketRefSchema,
+  marketId: MarketRefSchema.fields.resourceId,
   sourceRecordId: SymmyRegionSourceIdSchema,
 };
 const envelope = {
@@ -37,7 +37,7 @@ export const SymmyRegionsSelectedResponseSchema = Schema.Struct({
       currencyCode: Schema.optionalKey(regionFields.currencyCode),
       id: regionFields.id,
       marketCode: Schema.optionalKey(regionFields.marketCode),
-      marketRef: Schema.optionalKey(regionFields.marketRef),
+      marketId: Schema.optionalKey(regionFields.marketId),
       sourceRecordId: Schema.optionalKey(regionFields.sourceRecordId),
     }),
   ),
@@ -56,7 +56,7 @@ export const mapSymmyRegionsProjection = (projection: SymmyInternalRegionsProjec
     currencyCode: region.currency_code,
     id: region.id,
     marketCode: region.market_code,
-    marketRef: region.marketRef,
+    marketId: region.marketRef.resourceId,
     sourceRecordId: region.source_record_id,
   })),
 });

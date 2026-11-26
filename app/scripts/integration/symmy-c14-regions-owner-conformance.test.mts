@@ -47,7 +47,7 @@ const regionSchema = Schema.Struct({
   currencyCode: Schema.Literal('CZK'),
   id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
   marketCode: Schema.Literal('INTERNAL_C14_CZ_REGION_MARKET'),
-  marketRef: MarketRefSchema,
+  marketId: MarketRefSchema.fields.resourceId,
   sourceRecordId: SymmySourceRecordKeySchema.fields.sourceRecordId,
 });
 const projectionSchema = Schema.Struct({
@@ -319,7 +319,7 @@ it.live(
             countryCodes: ['CZ'],
             currencyCode: 'CZK',
             marketCode: 'INTERNAL_C14_CZ_REGION_MARKET',
-            marketRef,
+            marketId: marketRef.resourceId,
             sourceRecordId: sourceRegionIds[0],
           },
         ]);

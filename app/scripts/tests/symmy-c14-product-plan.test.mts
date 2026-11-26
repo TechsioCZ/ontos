@@ -15,9 +15,7 @@ import {
 it.effect('admits the original category-free Product recovery fixture without Category assignment authority', () =>
   Effect.gen(function* originalProductFixture() {
     const tenantId = '11111111-1111-4111-8111-111111111111';
-    const body = yield* Schema.decodeUnknownEffect(SymmyProductsBatchRequestSchema)(
-      makeInternalC14ProductBody(tenantId),
-    );
+    const body = yield* Schema.decodeUnknownEffect(SymmyProductsBatchRequestSchema)(makeInternalC14ProductBody());
     const template = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(
       makeInternalC14ProductRouteTemplate({
         marketId: 'INTERNAL_C14_MARKET',
@@ -37,13 +35,13 @@ it.effect('admits the original category-free Product recovery fixture without Ca
       priceGroups: [],
       receivedAt: DateTime.makeUnsafe('2026-11-22T12:00:00.000Z'),
       route: { mappingVersion: 'INTERNAL_C14_MAPPING_V1', routeId: '55555555-5555-4555-8555-555555555555' },
-      rows: mapSymmyProductsBatchRequest(body),
+      rows: mapSymmyProductsBatchRequest(body, tenantId),
       template,
       tenantId,
     } satisfies Parameters<typeof buildSymmyProductPlan>[0];
     const plan = yield* buildSymmyProductPlan(input);
     expect(Option.isSome(plan)).toBe(true);
-    expect(body.products.every(({ categories }) => categories === undefined)).toBe(true);
+    expect(body.products.every(({ categoryIds }) => categoryIds === undefined)).toBe(true);
     const effects = Option.getOrThrow(plan).items.flatMap(({ effects: itemEffects }) => itemEffects);
     expect(effects.some(({ operation }) => operation.entrypointKey === 'commerce.catalog.create-product')).toBe(true);
     expect(effects.some(({ operation }) => operation.entrypointKey === 'commerce.pricing.define-price')).toBe(true);

@@ -21,6 +21,10 @@ import {
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 import { readSymmyStockBatchFacts } from './stock-batch-facts.ts';
+import { mapSymmyStockBatchRequest } from './stock-batch-public-contract.ts';
+import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
+import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
+import { mapSymmyProductsBatchRequest } from './products-batch-public-contract.ts';
 import { readSymmyCustomerGroupDefinitionFacts } from './customer-group-batch-facts.ts';
 import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
 import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
@@ -174,15 +178,14 @@ const syncAdmissionSource = Effect.fn('SymmyGovernedDispatch.syncAdmissionSource
   newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
 ) {
   if ('stock' in request) {
+    // A replay builds the same references, so the owner compares the same rows as on the first admission.
+    const stock = mapSymmyStockBatchRequest({ stock: request.stock }, route.tenantId);
     if (route.replayIdempotencyDigest !== undefined) {
-      return { stock: request.stock };
+      return { stock };
     }
     return {
-      stock: request.stock,
-      stockFacts: yield* readSymmyStockBatchFacts(
-        { admission, routeScope: route, rows: request.stock },
-        newRequestIdentifier,
-      ),
+      stock,
+      stockFacts: yield* readSymmyStockBatchFacts({ admission, routeScope: route, rows: stock }, newRequestIdentifier),
     };
   }
   if (route.replayIdempotencyDigest !== undefined) {
@@ -198,7 +201,8 @@ const syncAdmissionSource = Effect.fn('SymmyGovernedDispatch.syncAdmissionSource
 });
 
 /**
- * What a durable job carries besides its key and route. The price lists carry nothing more: the adapter reads the
+ * What a durable job carries besides its key and route. Public bodies name plain ids, so their references are built
+ * here for the tenant of the admitted route. The price lists carry nothing more: the adapter reads the
  * catalog head right before each create. The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
  * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
  * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
@@ -217,12 +221,13 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
     if (selected === undefined) {
       return yield* unavailable();
     }
+    const products = mapSymmyProductsBatchRequest({ products: request.products }, selected.route.tenantId);
     return {
       priceGroupFacts: yield* readSymmyProductPriceGroupFacts(
-        { admission, products: request.products, routeScope: selected.route },
+        { admission, products, routeScope: selected.route },
         newRequestIdentifier,
       ),
-      products: request.products,
+      products,
     };
   }
   if ('priceBatch' in request) {
@@ -234,16 +239,22 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
     const priceReadScope = acquireScopedRouteContext(admission, { routeKey: 'priceLists' }, newRequestIdentifier).pipe(
       Effect.map(({ route }) => route),
     );
+    const priceBatch = mapSymmyPriceListPricesBatchRequest(request.priceBatch, selected.route.tenantId);
     return {
-      priceBatch: request.priceBatch,
+      priceBatch,
       reviseFacts: yield* readSymmyPriceBatchFacts(
-        { admission, batch: request.priceBatch, priceReadScope, routeScope: selected.route },
+        { admission, batch: priceBatch, priceReadScope, routeScope: selected.route },
         newRequestIdentifier,
       ),
     };
   }
   if ('priceLists' in request) {
-    return { priceLists: request.priceLists };
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    return {
+      priceLists: mapSymmyPriceListsBatchRequest({ priceLists: request.priceLists }, selected.route.tenantId),
+    };
   }
   return 'fixtureId' in request
     ? { fixtureId: request.fixtureId }

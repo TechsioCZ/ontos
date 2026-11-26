@@ -149,7 +149,7 @@ export const symmyProductBatchLimit = (products: readonly SizedProduct[]): strin
  */
 export const SymmyProductPlanSizeSchema = Schema.Array(
   Schema.Struct({
-    categories: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    categoryIds: Schema.optionalKey(Schema.Array(Schema.Unknown)),
     lifecycle: Schema.optionalKey(ProductLifecycleSchema),
     variants: Schema.Array(
       Schema.Struct({
@@ -158,7 +158,11 @@ export const SymmyProductPlanSizeSchema = Schema.Array(
       }),
     ),
   }),
-).check(Schema.makeFilter((products) => symmyProductBatchLimit(products)));
+).check(
+  Schema.makeFilter((products) =>
+    symmyProductBatchLimit(products.map(({ categoryIds, ...product }) => ({ ...product, categories: categoryIds }))),
+  ),
+);
 
 export const SymmyProductRowsSchema = Schema.NonEmptyArray(SymmyProductRowSchema).check(
   Schema.makeFilter((products) => symmyProductBatchLimit(products)),

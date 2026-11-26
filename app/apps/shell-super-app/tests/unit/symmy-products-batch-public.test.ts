@@ -3,19 +3,20 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { mapSymmyProductsBatchRequest } from '../../api/symmy/products-batch-public-contract.ts';
 import { SymmyProductsBatchRequestSchema } from '../../api/symmy/products-batch-request-contract.ts';
-import { priceGroupRef, productRef, unitRef, variantRef } from './symmy-price-requests.fixtures.ts';
+import { priceGroupRef, productId, unitId, unitRef, variantId } from './symmy-price-requests.fixtures.ts';
 import type { Json } from './symmy-price-requests.fixtures.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
-const catalogRef = (type: string, suffix: string) => ({
+const uuid = (suffix: string) => `66666666-6666-4666-8666-${suffix.padStart(12, '0')}`;
+const categoryRef = (suffix: string) => ({
   moduleId: 'commerce.catalog',
-  resourceId: `66666666-6666-4666-8666-${suffix.padStart(12, '0')}`,
-  resourceType: `commerce.catalog.${type}`,
+  resourceId: uuid(suffix),
+  resourceType: 'commerce.catalog.product-category',
   tenantId,
 });
 type Fields = Readonly<Record<string, Json>>;
 const map = (products: readonly Json[]) =>
-  mapSymmyProductsBatchRequest(Schema.decodeUnknownSync(SymmyProductsBatchRequestSchema)({ products }));
+  mapSymmyProductsBatchRequest(Schema.decodeUnknownSync(SymmyProductsBatchRequestSchema)({ products }), tenantId);
 const product = (extra: Fields = {}, variants: readonly Json[] = [{}]) => ({
   name: 'Chair',
   variants,
@@ -60,24 +61,14 @@ describe('Symmy products batch public mapping', () => {
             {
               amount: '9',
               commercialScope: {
-                channelRef: { ...productRef, resourceId: 'B2B' },
-                commerceMarketRef: {
-                  moduleId: 'commerce.market-catalog',
-                  resourceId: 'cz-market',
-                  resourceType: 'commerce.market-catalog.market',
-                  tenantId,
-                },
-                sellingLegalEntityRef: {
-                  moduleId: 'core.identity',
-                  resourceId: '88888888-8888-4888-8888-888888888888',
-                  resourceType: 'core.identity.legal-entity',
-                  tenantId,
-                },
+                channelId: 'B2B',
+                marketId: '99999999-9999-4999-8999-999999999999',
+                sellingLegalEntityId: '88888888-8888-4888-8888-888888888888',
               },
               currencyCode: 'EUR',
               effectiveFrom: '2026-01-01T12:00:00+02:00',
               priceGroupCode: 'cz-wholesale',
-              unitBasis: { quantity: '2', unitRef },
+              unitBasis: { quantity: '2', unitId },
             },
           ],
         },
@@ -89,7 +80,7 @@ describe('Symmy products batch public mapping', () => {
         amount: '9',
         commercialScope: {
           channelId: 'B2B',
-          marketId: 'cz-market',
+          marketId: '99999999-9999-4999-8999-999999999999',
           sellingLegalEntityId: '88888888-8888-4888-8888-888888888888',
         },
         currencyCode: 'EUR',
@@ -102,63 +93,48 @@ describe('Symmy products batch public mapping', () => {
 
   it('reports every supplied field no intent writes, by group, and nothing else', () => {
     const cases: readonly (readonly [string, Fields, readonly string[]])[] = [
-      [
-        'attributes',
-        { attributes: [{ attributeDefinitionRef: catalogRef('attribute-definition', '2') }] },
-        ['AttributeHint'],
-      ],
+      ['attributes', { attributes: [{ attributeDefinitionId: uuid('2') }] }, ['AttributeHint']],
       [
         'media',
-        { media: [{ order: 1, purpose: 'GALLERY', resourceKind: 'MEDIA', resourceRef: productRef }] },
+        { media: [{ order: 1, purpose: 'GALLERY', resourceId: 'asset-1', resourceKind: 'MEDIA' }] },
         ['MediaHint'],
       ],
       ['localized', { localized: [{ locale: 'cs', name: 'Zidle' }] }, ['DescriptiveHint']],
       ['sku', { sku: 'CHAIR' }, ['DescriptiveHint']],
       ['gtin', { gtin: { code: '8590000000011', effectiveAt: '2026-01-01T00:00:00Z' } }, ['DescriptiveHint']],
-      ['productType', { productType: catalogRef('product-type', '3') }, ['ClassificationHint']],
+      ['productTypeId', { productTypeId: uuid('3') }, ['ClassificationHint']],
       ['brand', { brand: { kind: 'unknown' } }, ['ClassificationHint']],
       [
         'manufacturer',
-        {
-          manufacturer: {
-            target: {
-              kind: 'PARTY',
-              partyRef: {
-                moduleId: 'party.registry',
-                resourceId: '77777777-7777-4777-8777-777777777777',
-                resourceType: 'party.registry.party',
-                tenantId,
-              },
-            },
-          },
-        },
+        { manufacturer: { target: { kind: 'PARTY', partyId: '77777777-7777-4777-8777-777777777777' } } },
         ['ClassificationHint'],
       ],
-      ['relationships', { relationships: [{ target: variantRef, type: 'SUCCESSOR' }] }, ['ClassificationHint']],
-      ['sizes', { sizes: [productRef] }, ['ClassificationHint']],
+      ['relationships', { relationships: [{ target: { variantId }, type: 'SUCCESSOR' }] }, ['ClassificationHint']],
+      ['sizeIds', { sizeIds: [productId] }, ['ClassificationHint']],
     ];
     for (const [field, extra, kinds] of cases) {
       expect(map([product(extra)])[0]?.unsupported, field).toEqual(kinds);
     }
-    expect(map([product({ categories: [], localized: [], relationships: [], sizes: [] })])[0]?.unsupported).toEqual([]);
+    expect(map([product({ categoryIds: [], localized: [], relationships: [], sizeIds: [] })])[0]?.unsupported).toEqual(
+      [],
+    );
   });
 
   it('carries only the exact source-supplied Category references, without inventing a default', () => {
-    const categories = [catalogRef('product-category', '1'), catalogRef('product-category', '2')];
-    expect(map([product({ categories })])[0]).toMatchObject({ categories, unsupported: [] });
+    const categoryIds = [uuid('1'), uuid('2')];
+    expect(map([product({ categoryIds })])[0]).toMatchObject({
+      categories: [categoryRef('1'), categoryRef('2')],
+      unsupported: [],
+    });
     expect(map([product()])[0]).not.toHaveProperty('categories');
-    expect(map([product({ categories: [] })])[0]).toMatchObject({ categories: [], unsupported: [] });
+    expect(map([product({ categoryIds: [] })])[0]).toMatchObject({ categories: [], unsupported: [] });
   });
 
   it('reports the variant fields no intent writes, and drops a localized text that has no text', () => {
     const cases: readonly (readonly [string, Fields, readonly string[]])[] = [
       ['sku', { sku: 'CHAIR-RED' }, ['DescriptiveHint']],
       ['gtin', { gtin: { code: '8590000000011', effectiveAt: '2026-01-01T00:00:00Z' } }, ['DescriptiveHint']],
-      [
-        'attributes',
-        { attributes: [{ attributeDefinitionRef: catalogRef('attribute-definition', '2') }] },
-        ['AttributeHint'],
-      ],
+      ['attributes', { attributes: [{ attributeDefinitionId: uuid('2') }] }, ['AttributeHint']],
       ['lifecycle ACTIVE', { lifecycle: 'ACTIVE' }, ['VariantUpdateHint']],
       ['lifecycle RETIRED', { lifecycle: 'RETIRED' }, ['VariantUpdateHint']],
       ['lifecycle WORK_IN_PROGRESS', { lifecycle: 'WORK_IN_PROGRESS' }, []],

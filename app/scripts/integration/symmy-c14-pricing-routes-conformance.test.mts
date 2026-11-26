@@ -13,6 +13,7 @@ import { Array as EffectArray, Cause, DateTime, Duration, Effect, Exit, Layer, O
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
+import { SymmySourcePricesSchema } from '../../apps/shell-super-app/api/symmy/source-prices-public-contract.ts';
 import { bootstrapInternalC14PricingRouteInputs } from './support/symmy-c14-pricing-routes-inputs.mts';
 import {
   decodeInternalC14CapturedPriceGrant,
@@ -60,8 +61,8 @@ const projectionSchema = Schema.Struct({
       description: Schema.String,
       endsAt: Schema.optionalKey(PricingInstantSchema),
       name: Schema.String,
-      priceGroupRef: PriceGroupRefSchema,
-      prices: Schema.optionalKey(PriceGroupSourcePricesResponseSchema),
+      priceGroupId: PriceGroupRefSchema.fields.resourceId,
+      prices: Schema.optionalKey(SymmySourcePricesSchema),
       startsAt: PricingInstantSchema,
     }),
   ),
@@ -98,16 +99,19 @@ const publicList = (list: {
 const publicPrice = (input: {
   readonly at: string;
   readonly marketId: string;
-  readonly selection: { readonly productRef: Schema.Json; readonly variantRef: Schema.Json };
-  readonly unitRef: Schema.Json;
+  readonly selection: {
+    readonly productRef: { readonly resourceId: string };
+    readonly variantRef: { readonly resourceId: string };
+  };
+  readonly unitRef: { readonly resourceId: string };
 }) => ({
   amount: '25',
   commercialScope: { channelId: 'B2C', marketId: input.marketId },
   currencyCode: 'CZK',
   effectiveFrom: input.at,
-  productRef: input.selection.productRef,
-  unitBasis: { quantity: '1', unitRef: input.unitRef },
-  variantRef: input.selection.variantRef,
+  productId: input.selection.productRef.resourceId,
+  unitBasis: { quantity: '1', unitId: input.unitRef.resourceId },
+  variantId: input.selection.variantRef.resourceId,
 });
 const pricesPath = '/api/symmy/v1/price-lists/prices/batch';
 const outcomesOf = (job: typeof statusSchema.Type) =>
@@ -124,7 +128,7 @@ const currentRevisionOf = (price: ReturnType<typeof firstListedPrice>) =>
 /** A refused request reaches no owner: no job is admitted and no Price is written. */
 const assertPriceBatchRefusals = Effect.fn('InternalC14PricingRoutes.priceBatchRefusals')(function* batchRefusals(
   fixture: PricingFixture,
-  group: { readonly priceGroupRef: typeof PriceGroupRefSchema.Type },
+  priceGroupId: typeof PriceGroupRefSchema.fields.resourceId.Type,
   price: ReturnType<typeof publicPrice>,
 ) {
   const client = yield* HttpClient.HttpClient;
@@ -144,12 +148,9 @@ const assertPriceBatchRefusals = Effect.fn('InternalC14PricingRoutes.priceBatchR
         headers: refusedHeaders,
       });
     });
-  const body = { priceGroupRef: group.priceGroupRef, prices: [{ ...price, operation: 'DEFINE' }] };
+  const body = { priceGroupId, prices: [{ ...price, operation: 'DEFINE' }] };
   // A list that does not exist.
-  const unknown = yield* send({
-    ...body,
-    priceGroupRef: { ...group.priceGroupRef, resourceId: randomUUID() },
-  });
+  const unknown = yield* send({ ...body, priceGroupId: randomUUID() });
   expect(unknown.status).toBe(403);
   // A list that exists but that this route's source did not create: the same answer, so no list is revealed.
   const [configured] = yield* fixture.admin<{ plan: string }>`select fixture_plan::text as plan
@@ -208,59 +209,6 @@ const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes
     ).toEqual(['conflict', 'accepted_change']);
     expect((yield* groupCount)[0]?.count).toBe((before?.count ?? 0) + 1);
     // A list is readable once its definition starts, so the projections that follow wait for it.
-    yield* waitUntil(DateTime.makeUnsafe(startsAt));
-  },
-);
-
-const refRecord = Schema.Record(Schema.String, Schema.Json);
-const inTenant = (ref: Schema.Json, tenantId: string): Schema.Json => ({
-  ...Schema.decodeUnknownSync(refRecord)(ref),
-  tenantId,
-});
-
-/**
- * A price that names another tenant is not accepted for its item. It neither fails the request nor holds back the
- * list it belongs to or the lists beside it.
- */
-const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTenantPrices')(
-  function* foreignTenantPrices<E, R>(
-    fixture: PricingFixture,
-    input: {
-      readonly priceFacts: Omit<Parameters<typeof publicPrice>[0], 'at'>;
-      readonly settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>;
-    },
-  ) {
-    const foreignTenantId = randomUUID();
-    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
-    const own = publicPrice({ ...input.priceFacts, at: startsAt });
-    const foreignUnit = { ...input.priceFacts, unitRef: inTenant(input.priceFacts.unitRef, foreignTenantId) };
-    const foreign = yield* input.settleLists('INTERNAL_C14_FOREIGN_TENANT_PRICE', [
-      publicList({
-        businessCode: 'INTERNAL_C14_PRICE_GROUP_FOREIGN',
-        code: 'INTERNAL_C14_FOREIGN_PRICE_LIST',
-        effectiveFrom: startsAt,
-        prices: [
-          { ...own, productRef: inTenant(own.productRef, foreignTenantId) },
-          publicPrice({ ...foreignUnit, at: startsAt }),
-        ],
-        purpose: 'Explicit INTERNAL_C14 prices of another tenant',
-      }),
-      publicList({
-        businessCode: 'INTERNAL_C14_PRICE_GROUP_AFTER_FOREIGN',
-        code: 'INTERNAL_C14_AFTER_FOREIGN_LIST',
-        effectiveFrom: startsAt,
-        prices: [],
-        purpose: 'Explicit INTERNAL_C14 list after prices of another tenant',
-      }),
-    ]);
-    expect(
-      outcomesOf(foreign),
-      `Foreign-tenant lists starting ${startsAt}; native Group: ${yield* fixture.groupOwner.diagnostic}`,
-    ).toEqual(['accepted_change', 'unsupported', 'unsupported', 'accepted_change']);
-    const [prices] = yield* fixture.admin<{
-      count: number;
-    }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
-    expect(prices?.count).toBe(1);
     yield* waitUntil(DateTime.makeUnsafe(startsAt));
   },
 );
@@ -473,11 +421,14 @@ it.live(
           ),
         ).toEqual(EffectArray.sort([fixture.firstRecordId, fixture.secondRecordId], Order.String));
         expect(new Set(all.map(({ code }) => code)).size).toBe(2);
-        for (const list of all) {
-          expect(list.priceGroupRef.resourceType).toBe('pricing.price-group-catalog.price-group');
-          expect(list.priceGroupRef.tenantId).toBe(fixture.tenantId);
+        for (const { priceGroupId } of all) {
+          expect(
+            yield* fixture.admin<{ count: number }>`select count(*)::integer as count
+              from price_group_catalog.price_groups
+              where tenant_id=${fixture.tenantId} and price_group_id=${priceGroupId}`,
+          ).toEqual([{ count: 1 }]);
         }
-        expect(new Set(all.map(({ priceGroupRef }) => priceGroupRef.resourceId)).size).toBe(2);
+        expect(new Set(all.map(({ priceGroupId }) => priceGroupId)).size).toBe(2);
         const [forbidden] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and (action_key like 'commerce.customer-context.%' or action_key like '%promotion%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
@@ -498,12 +449,18 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
         expect(replayProjection.count).toBe(2);
-        expect(replayProjection.priceLists.map(({ priceGroupRef }) => priceGroupRef)).toEqual(
-          all.map(({ priceGroupRef }) => priceGroupRef),
+        expect(replayProjection.priceLists.map(({ priceGroupId }) => priceGroupId)).toEqual(
+          all.map(({ priceGroupId }) => priceGroupId),
         );
         const originalGroup = all.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(originalGroup);
-        const originalGroupRef = originalGroup.priceGroupRef;
+        const originalGroupId = originalGroup.priceGroupId;
+        const originalGroupRef = yield* Schema.decodeUnknownEffect(PriceGroupRefSchema)({
+          moduleId: 'pricing.price-group-catalog',
+          resourceId: originalGroupId,
+          resourceType: 'pricing.price-group-catalog.price-group',
+          tenantId: fixture.tenantId,
+        });
         const heldEffectiveAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
         const priceFacts = {
           marketId: inputs.market.marketRef.resourceId,
@@ -747,22 +704,21 @@ it.live(
             ),
           );
         yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
-        yield* assertForeignTenantPrices(fixture, { priceFacts, settleLists });
 
         const selectedAt = DateTime.formatIso(yield* DateTime.now);
         const batchPrice = { ...publicPrice({ ...priceFacts, at: selectedAt }), operation: 'DEFINE' };
         const otherGroup = all.find(({ code }) => code === fixture.secondRecordId);
         assert.isOk(otherGroup);
-        yield* assertPriceBatchRefusals(fixture, { priceGroupRef: originalGroupRef }, batchPrice);
+        yield* assertPriceBatchRefusals(fixture, originalGroupId, batchPrice);
         yield* Effect.logInfo({ phase: 'pricing-independent-list-controls-accepted' });
         const submitPrices = (
           idempotencyKey: string,
-          priceGroupRef: typeof PriceGroupRefSchema.Type,
+          priceGroupId: typeof originalGroupId,
           prices: readonly Schema.Json[],
         ) =>
           Effect.gen(function* submitPriceBatch() {
             const response = yield* client.post(`${fixture.shell.baseUrl}${pricesPath}`, {
-              body: yield* HttpBody.json({ priceGroupRef, prices }),
+              body: yield* HttpBody.json({ priceGroupId, prices }),
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
             if (response.status !== 202) {
@@ -808,12 +764,12 @@ it.live(
             tenantId: fixture.tenantId,
           }),
         ).toEqual({ outcome: 'STORED' });
-        const selectedJob = yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupRef, [batchPrice]);
+        const selectedJob = yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupId, [batchPrice]);
         // The same key and body replays the job, and the same key with another body is refused.
-        expect(yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupRef, [batchPrice])).toEqual(selectedJob);
+        expect(yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupId, [batchPrice])).toEqual(selectedJob);
         const reused = yield* client.post(`${fixture.shell.baseUrl}${pricesPath}`, {
           body: yield* HttpBody.json({
-            priceGroupRef: originalGroupRef,
+            priceGroupId: originalGroupId,
             prices: [{ ...batchPrice, amount: '26' }],
           }),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_SELECTED_PRICE' },
@@ -828,17 +784,11 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
         // The unfiltered page must still include every scheduled independent-list control once Current.
-        for (const code of [
-          'INTERNAL_C14_MIXED_NEW_LIST',
-          'INTERNAL_C14_FOREIGN_PRICE_LIST',
-          'INTERNAL_C14_AFTER_FOREIGN_LIST',
-        ]) {
-          const effectiveList = withPrices.priceLists.find((list) => list.code === code);
-          assert.isOk(effectiveList);
-          expect(DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveList.startsAt))).toBeLessThanOrEqual(
-            DateTime.toEpochMillis(yield* DateTime.now),
-          );
-        }
+        const effectiveList = withPrices.priceLists.find(({ code }) => code === 'INTERNAL_C14_MIXED_NEW_LIST');
+        assert.isOk(effectiveList);
+        expect(DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveList.startsAt))).toBeLessThanOrEqual(
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
         const priced = withPrices.priceLists.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(priced?.prices);
         expect(priced.prices.count).toBe(1);
@@ -848,10 +798,13 @@ it.live(
         if (nativePrice.price.outcome !== 'PRICE_DEFINITION_CURRENT') {
           return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The accepted native Price is not Current' });
         }
-        expect(nativePrice.price.definition.priceRef.resourceType).toBe('commerce.pricing.price');
+        expect(
+          yield* fixture.admin<{ count: number }>`select count(*)::integer as count from pricing.prices
+            where tenant_id=${fixture.tenantId} and price_id=${nativePrice.price.definition.priceId}`,
+        ).toEqual([{ count: 1 }]);
         expect(nativePrice.price.definition.identityKey.priceGroupSelector).toEqual({
           kind: 'PRICE_GROUP',
-          priceGroupRef: originalGroupRef,
+          priceGroupId: originalGroupId,
         });
         const emptyPricePageResponse = yield* get('limit=100&offset=0&priceLimit=1&priceOffset=1');
         expect(emptyPricePageResponse.status).toBe(200);
@@ -864,14 +817,14 @@ it.live(
           offset: 1,
           prices: [],
         });
-        // REVISE copies the priceRef and the revision GET /price-lists returned, unchanged.
+        // REVISE copies the priceId and the revision GET /price-lists returned, unchanged.
         const { definition: listed } = nativePrice.price;
         const reviseOf = (amount: string, revisionId = listed.revision.revisionId) => ({
           amount,
           currencyCode: 'CZK',
           expectedRevision: { revision: listed.revision.revision, revisionId },
           operation: 'REVISE',
-          priceRef: listed.priceRef,
+          priceId: listed.priceId,
         });
         const listedPrice = () =>
           get('limit=100&offset=0&priceLimit=1&priceOffset=0').pipe(
@@ -882,30 +835,16 @@ it.live(
         const beforeRevise = yield* priceCounts;
         // A price of another list than the one the body names is refused for its item, and nothing is written.
         const otherList = yield* settle(
-          yield* submitPrices('INTERNAL_C14_REVISE_OTHER_LIST', otherGroup.priceGroupRef, [reviseOf('30')]),
+          yield* submitPrices('INTERNAL_C14_REVISE_OTHER_LIST', otherGroup.priceGroupId, [reviseOf('30')]),
         );
         expect(otherList.status).toBe('completed_none');
         expect(outcomesOf(otherList)).toEqual(['unresolved']);
-        expect(yield* priceCounts).toEqual(beforeRevise);
-        // A price that names another tenant is not accepted for its item, whatever its operation. It neither fails the
-        // request nor changes the items beside it, which are still judged on their own.
-        const foreignRefTenantId = randomUUID();
-        const ungrantedBeside = { ...batchPrice, unitBasis: { ...batchPrice.unitBasis, quantity: '3' } };
-        const foreignBatch = yield* settle(
-          yield* submitPrices('INTERNAL_C14_FOREIGN_TENANT_BATCH', originalGroupRef, [
-            { ...batchPrice, productRef: inTenant(batchPrice.productRef, foreignRefTenantId) },
-            ungrantedBeside,
-            { ...reviseOf('31'), priceRef: { ...listed.priceRef, tenantId: foreignRefTenantId } },
-          ]),
-        );
-        expect(foreignBatch.status).toBe('completed_none');
-        expect(outcomesOf(foreignBatch)).toEqual(['unsupported', 'unresolved', 'unsupported']);
         expect(yield* priceCounts).toEqual(beforeRevise);
         // Items are independent. A price without a source authority grant for its exact identity is held, and a
         // revision that is no longer the current one ends conflict. Neither writes anything.
         const ungrantedPrice = { ...batchPrice, unitBasis: { ...batchPrice.unitBasis, quantity: '2' } };
         const stale = yield* settle(
-          yield* submitPrices('INTERNAL_C14_REVISE_STALE', originalGroupRef, [
+          yield* submitPrices('INTERNAL_C14_REVISE_STALE', originalGroupId, [
             ungrantedPrice,
             reviseOf('30', randomUUID()),
           ]),
@@ -919,7 +858,7 @@ it.live(
         // revision starts at the time the source asserts (the admission time), not at the owner clock.
         const beforeCurrentRevise = yield* priceCounts;
         const current = yield* settle(
-          yield* submitPrices('INTERNAL_C14_REVISE_CURRENT', originalGroupRef, [reviseOf('30')]),
+          yield* submitPrices('INTERNAL_C14_REVISE_CURRENT', originalGroupId, [reviseOf('30')]),
         );
         expect(current.status).toBe('completed_all');
         expect(outcomesOf(current)).toEqual(['accepted_change']);
@@ -933,7 +872,7 @@ it.live(
         });
         // The revision the caller read is now stale: a second revision of it ends conflict and writes nothing.
         const staleNow = yield* settle(
-          yield* submitPrices('INTERNAL_C14_REVISE_AFTER_REVISION', originalGroupRef, [reviseOf('31')]),
+          yield* submitPrices('INTERNAL_C14_REVISE_AFTER_REVISION', originalGroupId, [reviseOf('31')]),
         );
         expect(outcomesOf(staleNow)).toEqual(['conflict']);
         expect((yield* priceCounts).map(tableCounts)).toEqual(after.map(tableCounts));

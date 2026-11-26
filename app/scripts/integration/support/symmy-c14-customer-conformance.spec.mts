@@ -1,4 +1,3 @@
-import { CustomerProfileSourceItemSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import {
   EnsureRetailCustomerProfileActionAuthenticationProblemSchema,
   EnsureRetailCustomerProfileActionForbiddenProblemSchema,
@@ -8,7 +7,6 @@ import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/r
 import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-customer-context/testing/customer-profile-source-reader';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { CreatePartyResultSchema } from '@app/party-registry/api';
-import { SourceProfileExportResponseSchema } from '@app/party-registry/apis/source-profile-export';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
 import {
@@ -29,6 +27,7 @@ import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
+import { SymmyCustomersResponseSchema } from '../../../apps/shell-super-app/api/symmy/customers-public-contract.ts';
 import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
@@ -87,9 +86,9 @@ const customerReadbackSchema = Schema.Struct({
   customers: Schema.Array(
     Schema.Struct({
       id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
-      party: Schema.optionalKey(SourceProfileExportResponseSchema.members[1]),
-      partyRef: PartyRefSchema,
-      profile: CustomerProfileSourceItemSchema.fields.profile,
+      party: SymmyCustomersResponseSchema.fields.customers.value.fields.party,
+      partyId: SymmyCustomersResponseSchema.fields.customers.value.fields.partyId,
+      profile: SymmyCustomersResponseSchema.fields.customers.value.fields.profile,
       sourceRecordId: sourceRecordIdSchema,
     }),
   ),
@@ -256,8 +255,8 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
   assert.isOk(exportedCustomer);
   expect(exportedCustomer.sourceRecordId).toBe(recordId);
   expect(exportedCustomer.id).not.toBe(recordId);
-  expect(exportedCustomer.partyRef).toEqual(partyRef);
-  expect(exportedCustomer.profile.profileRef.resourceId).toBe(profileResourceId);
+  expect(exportedCustomer.partyId).toBe(partyRef.resourceId);
+  expect(exportedCustomer.profile.profileId).toBe(profileResourceId);
   assert.isOk(exportedCustomer.party);
   expect(exportedCustomer.party.firstName).toBe('Internal');
   expect(exportedCustomer.party.lastName).toBe('Customer');
@@ -271,7 +270,7 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
     expect(yield* readPage('?limit=1&offset=0')).toMatchObject({ count: 1, limit: 1, offset: 0 });
     expect(yield* readPage('?offset=1')).toMatchObject({ count: 1, customers: [], offset: 1 });
     // An unselected part is not read: no Party export, so no `party`.
-    const withoutParty = yield* readPage('?fields=partyRef');
+    const withoutParty = yield* readPage('?fields=partyId');
     expect(withoutParty.customers.map(({ sourceRecordId }) => sourceRecordId)).toEqual([recordId]);
     expect(withoutParty.customers[0]).not.toHaveProperty('party');
     for (const rejectedQuery of [
@@ -405,7 +404,7 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
   expect(pagedMatches).toMatchObject({ count: 2, limit: 1, offset: 1 });
   expect(sourceKeysOf(pagedMatches)).toEqual([secondRecordId]);
   expect(yield* read('?q=internal&offset=2')).toMatchObject({ count: 2, customers: [] });
-  const onlyParty = yield* readCustomerPage(input, '?q=hopper&fields=partyRef');
+  const onlyParty = yield* readCustomerPage(input, '?q=hopper&fields=partyId');
   expect(onlyParty.customers[0]).not.toHaveProperty('party');
   // A search with more terms than the owners take is refused whole, never searched partly.
   const manyTerms = Array.from({ length: 11 }, (_unused, index) => `t${index}`).join('%20');

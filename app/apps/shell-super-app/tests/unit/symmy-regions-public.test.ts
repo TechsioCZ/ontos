@@ -51,7 +51,7 @@ describe('Symmy public regions body', () => {
           currencyCode: 'CZK',
           id: `~c14r1.${'a'.repeat(43)}`,
           marketCode: 'CZ_NATIVE',
-          marketRef,
+          marketId: marketRef.resourceId,
           sourceRecordId: 'source-region-a',
         },
       ],
@@ -91,7 +91,7 @@ describe('Symmy public regions body', () => {
   it('returns the full body when every name is selected', () => {
     const full = mapSymmyRegionsProjection(projection());
     expect(
-      selectSymmyRegionFields(full, ['sourceRecordId', 'countryCodes', 'currencyCode', 'marketCode', 'marketRef']),
+      selectSymmyRegionFields(full, ['sourceRecordId', 'countryCodes', 'currencyCode', 'marketCode', 'marketId']),
     ).toEqual(full);
   });
 });
@@ -104,7 +104,7 @@ describe('Symmy regions query', () => {
     { q: 'cz' },
     { q: '  cz  ' },
     { fields: 'marketCode' },
-    { fields: 'sourceRecordId,countryCodes,currencyCode,marketCode,marketRef,id' },
+    { fields: 'sourceRecordId,countryCodes,currencyCode,marketCode,marketId,id' },
     { fields: 'marketCode,marketCode' },
     { fields: 'id', limit: '2', offset: '1', q: 'a' },
   ];
