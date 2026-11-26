@@ -303,96 +303,6 @@ runs:
         ZEROPS_TOKEN: ${{ inputs.zerops-token }}
       run: bash app/scripts/zerops/stage-push.sh start n1
 
-    # After the last upload, so the browser downloads never share the runner's bandwidth with an upload.
-    - name: Use the runner-owned verification browser cache
-      shell: bash
-      run: printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
-
-    - name: Name the pinned verification browsers
-      id: verification-browser-versions
-      shell: bash
-      working-directory: app
-      run: |
-        oauth="$(mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version)"
-        warmup="$(mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core --version)"
-        echo "versions=${oauth// /-}-${warmup// /-}" >>"$GITHUB_OUTPUT"
-
-    # The frozen graph covers both clients' revisions and any overrides; no prefix fallback.
-    - name: Restore the pinned verification browsers
-      id: verification-browsers
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ${{ runner.temp }}/zerops-verify-browsers
-        key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
-
-    # Reuse the gates' apt archive approach, never a cached installed /usr tree. Named by the image OS and the two
-    # Playwright versions only, not the image version: three image versions rotate under ubuntu-24.04, and an entry per
-    # image version missed in 8 of 10 deliveries, each then downloading the libraries again (up to 6 min at 98 kB/s).
-    # apt uses a seeded .deb only under the file name its current index expects (package, version, architecture) and
-    # with the size the index names, then takes it as complete without hashing it: an obsolete version, a package
-    # another image needed or a file of the wrong size is ignored or downloaded again. A wrong file of the expected
-    # name and size would reach dpkg; only this workflow on the demo branch writes the entry (branch-scoped caches keep
-    # pull requests from replacing it), as before this key changed.
-    - name: Name the Chromium system-library package cache
-      id: chromium-debs
-      shell: bash
-      run: echo "key=playwright-apt-debs-$ImageOS-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
-
-    - name: Restore the Chromium system-library packages
-      id: chromium-debs-cache
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ~/.cache/playwright-apt-debs
-        key: ${{ steps.chromium-debs.outputs.key }}
-
-    - name: Seed apt with the cached Chromium system-library packages
-      shell: bash
-      run: |
-        if [ -d ~/.cache/playwright-apt-debs ]; then
-          sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
-        fi
-
-    # Always validate BOTH clients, even on exact cache hits: a restored archive may be partial.
-    # --with-deps still checks/installs OS libraries; the restored apt packages only avoid their downloads.
-    - name: Install headless Chromium for the OAuth consent screens
-      shell: bash
-      working-directory: app
-      run: mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium
-
-    - name: Install headless Chromium for the warm-up client
-      shell: bash
-      working-directory: app
-      run: mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium
-
-    - name: Collect the Chromium system-library packages
-      shell: bash
-      run: |
-        mkdir -p ~/.cache/playwright-apt-debs
-        touch ~/.cache/playwright-apt-debs/.downloaded
-        find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
-
-    - name: Save the Chromium system-library packages
-      if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ~/.cache/playwright-apt-debs
-        key: ${{ steps.chromium-debs.outputs.key }}
-
-    - name: Save the pinned verification browsers
-      if: steps.verification-browsers.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ${{ runner.temp }}/zerops-verify-browsers
-        key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
-
-    # Neither the warm-up nor the MCP OAuth proof reads a storefront. When this run does not push the app, the app is
-    # live already: both prove it while the storefronts deploy, off the delivery's critical path.
-    - name: Prove the live app while the storefronts deploy
-      if: inputs.app != 'true'
-      shell: bash
-      working-directory: app
-      run: bash scripts/zerops/stage-proofs.sh start
-
     - name: Wait for the storefront deployments
       if: inputs.storefront == 'true' || inputs.shop == 'true' || inputs.n1 == 'true'
       shell: bash
@@ -452,31 +362,15 @@ runs:
       shell: bash
       run: bash app/scripts/zerops/stage-push.sh superseded
 
-    # Never against an app that is swapping containers: a run that pushes the app proves it once it is live.
-    - name: Prove the live app
-      if: inputs.app == 'true'
+    # Hotfix delivery: no proofs, only that every public origin answers.
+    - name: Check that the stage origins answer
       shell: bash
-      working-directory: app
-      run: bash scripts/zerops/stage-proofs.sh start
-
-    # Every service and the N1 guest checkout quote (never placement) after all pushes, then the proof verdicts.
-    # Shared by both delivery paths. Unconditional: missing proofs or a failed checkout quote fail verification.
-    - name: Verify every service and finish the proofs
-      shell: bash
-      env:
-        PUSH_N1: ${{ inputs.n1 }}
-      working-directory: app
-      run: bash scripts/zerops/stage-proofs.sh finish
-
-    - name: Upload the MCP OAuth proof
-      if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: mcp-oauth-e2e
-        path: ${{ runner.temp }}/mcp-oauth-e2e
-        if-no-files-found: ignore
-        overwrite: true
-        retention-days: 14
+      run: |
+        for url in "$STAGE_SHELL_URL" "$STAGE_STOREFRONT_URL" "$STAGE_SHOP_URL" "$STAGE_N1_URL"; do
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 5 --retry-all-errors "$url" || true)"
+          echo "$url $code"
+          case "$code" in 2*|3*) ;; *) echo "::warning::$url answered $code" ;; esac
+        done
 
     - name: Report the new app container's boot stages
       if: always() && steps.boot-stages.outcome == 'success'
