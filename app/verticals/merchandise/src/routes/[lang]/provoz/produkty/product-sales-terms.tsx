@@ -45,7 +45,7 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
       {tiers.length === 0 ? <p className="text-fg-secondary text-sm">Žádné množstevní ceny.</p> : null}
       {tiers.map((tier, index) => {
         const from = parseQuantityText(tier.minimumText);
-        const fromInvalid = from === null || (minimum !== null && from <= minimum);
+        const fromInvalid = from === null || (minimum !== null && from < minimum);
         return (
           <div
             className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
@@ -60,7 +60,7 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
               onChange={(event) => patch(tier.key, { minimumText: event.target.value })}
               size="sm"
               value={tier.minimumText}
-              {...fieldError(fromInvalid, 'Musí být větší než minimální odběr')}
+              {...fieldError(fromInvalid, 'Nesmí být menší než minimální odběr')}
             />
             <FormInput
               disabled={disabled}
@@ -263,16 +263,22 @@ export const SalesTermsPanel = ({
             onChange={(event) => set({ originalText: event.target.value })}
             value={form.originalText}
           />
-          <FormInput
-            disabled={disabled}
-            helpText={`Prázdné = jednotka produktu (${product.unit}).`}
-            id="sales-source-unit"
-            label="Jednotka zobrazená v e-shopu"
-            maxLength={40}
-            name="sourceUnit"
-            onChange={(event) => set({ sourceUnit: event.target.value })}
-            value={form.sourceUnit}
-          />
+          {variants ? (
+            <p className="text-fg-secondary text-sm">
+              Jednotku zobrazenou v e-shopu nastavte u každé varianty v Varianty › Podrobnosti.
+            </p>
+          ) : (
+            <FormInput
+              disabled={disabled}
+              helpText={`Prázdné = jednotka produktu (${product.unit}).`}
+              id="sales-source-unit"
+              label="Jednotka zobrazená v e-shopu"
+              maxLength={40}
+              name="sourceUnit"
+              onChange={(event) => set({ sourceUnit: event.target.value })}
+              value={form.sourceUnit}
+            />
+          )}
         </div>
         {variants ? (
           <p className="mt-150 text-fg-secondary text-sm">

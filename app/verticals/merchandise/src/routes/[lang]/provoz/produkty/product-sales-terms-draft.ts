@@ -48,7 +48,7 @@ export const tierRowsInvalid = (tiers: readonly TierDraft[], minimum: number | n
     const from = parseQuantityText(tier.minimumText);
     return (
       from === null ||
-      (minimum !== null && from <= minimum) ||
+      (minimum !== null && from < minimum) ||
       parseCzkText(tier.netText) === null ||
       parseCzkText(tier.grossText) === null
     );

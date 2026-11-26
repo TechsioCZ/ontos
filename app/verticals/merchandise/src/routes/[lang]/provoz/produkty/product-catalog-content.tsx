@@ -72,7 +72,7 @@ const contentDraftOf = (product: ProductRecord): ContentDraft => ({
 });
 
 const parametersInvalidOf = (parameters: readonly ParameterDraft[]) =>
-  parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '');
+  parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '');
 
 /** The UpdateProduct patch of a content draft. */
 const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, product: ProductRecord): ProductPatch => {
@@ -82,11 +82,9 @@ const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, pro
   if (categoryId !== undefined && categoryId !== product.categoryId) {
     patch.categoryId = categoryId;
   }
-  patch.parameters = draft.parameters.map(({ label, unit, value }) => ({
-    label: label.trim(),
-    unit: unit.trim(),
-    value: value.trim(),
-  }));
+  patch.parameters = draft.parameters.flatMap(({ label, unit, value }) =>
+    label.trim() === '' ? [] : [{ label: label.trim(), unit: unit.trim(), value: value.trim() }],
+  );
   patch.isAction = draft.flags.isAction;
   patch.isNew = draft.flags.isNew;
   patch.isRecommended = draft.flags.isRecommended;
