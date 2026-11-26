@@ -1,0 +1,86 @@
+name: Zerops Stable Infrastructure
+on:
+  workflow_dispatch:
+  push:
+    branches: [demo/sales-crm]
+    paths: [.github/workflows/zerops-stable-infra.yml]
+permissions:
+  contents: read
+concurrency:
+  group: zerops-stable-infrastructure
+  cancel-in-progress: false
+jobs:
+  authorize:
+    name: Install the existing deployment credentials in sales-stable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: stage-edge
+      deployment: false
+    steps:
+      - name: Copy the approved organization credentials
+        env:
+          GH_TOKEN: ${{ secrets.STABLE_SETUP_GITHUB_TOKEN }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STAGE_SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo 'One-time credential setup already removed; using installed sales-stable credentials.'
+            exit 0
+          fi
+          for name in ZEROPS_TOKEN CLOUDFLARE_API_TOKEN STAGE_SMTP_PASSWORD; do
+            test -n "${!name}"
+            printf '%s' "${!name}" | gh secret set "$name" --repo "$GITHUB_REPOSITORY" --env sales-stable
+          done
+  route:
+    name: Configure stable DNS
+    needs: authorize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: sales-stable
+      deployment: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Point the stable origins at the independent project
+        env:
+          STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.STABLE_CLOUDFLARE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          config="$RUNNER_TEMP/stable-config.json"
+          printf '%s\n' "$STABLE_CONFIG_JSON" > "$config"
+          export STABLE_CONFIG="$config"
+          node --input-type=module <<'JS'
+          import {loadStableConfig} from './ops/zerops-stable/config.mjs';
+          const c = await loadStableConfig(process.env.STABLE_CONFIG);
+          const call = async (url, token, method = 'GET', data) => {
+            const response = await fetch(url, {method, headers: {authorization: `Bearer ${token}`, 'content-type':'application/json'}, body: data ? JSON.stringify(data) : undefined, signal: AbortSignal.timeout(30000)});
+            const value = await response.json();
+            if (!response.ok || value.success === false) throw new Error(`${method} ${new URL(url).pathname}: HTTP ${response.status}`);
+            return value;
+          };
+          const project = await call(`https://api.app-prg1.zerops.io/api/rest/public/project/${c.projectId}`, process.env.ZEROPS_TOKEN);
+          const cf = `https://api.cloudflare.com/client/v4/zones/${process.env.CLOUDFLARE_ZONE_ID}/dns_records`;
+          for (const origin of Object.values(c.origins)) {
+            const host = new URL(origin).hostname;
+            const records = (await call(`${cf}?name=${host}`, process.env.CLOUDFLARE_API_TOKEN)).result;
+            for (const record of records.filter(r => r.type === 'CNAME')) await call(`${cf}/${record.id}`, process.env.CLOUDFLARE_API_TOKEN, 'DELETE');
+            for (const [type, content] of [['A', process.env.ZEROPS_SHARED_IPV4], ['AAAA', project.publicIpV6]]) {
+              if (!content) throw new Error(`No ${type} address for the stable project`);
+              const body = {type, name:host, content, proxied:false, ttl:60};
+              const existing = records.find(r => r.type === type);
+              await call(existing ? `${cf}/${existing.id}` : cf, process.env.CLOUDFLARE_API_TOKEN, existing ? 'PUT' : 'POST', body);
+            }
+            console.log(`${host}: stable project DNS configured`);
+          }
+          JS
