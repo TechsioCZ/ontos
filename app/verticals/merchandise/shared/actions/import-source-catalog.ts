@@ -16,8 +16,8 @@ export const ImportSourceCatalogPayloadSchema = Schema.Struct({
   command: Schema.Union([
     Schema.TaggedStruct('CreateProduct', {
       ...ApplyCommandPayloadSchema.fields.command.fields,
-      imageSrc: Schema.optionalKey(ImportImageUrlSchema),
       images: Schema.optionalKey(Schema.Array(ImportImageUrlSchema).check(Schema.isMaxLength(20))),
+      imageSrc: Schema.optionalKey(ImportImageUrlSchema),
     }),
     ApplyCreateCategoryCommandSchema,
     Schema.TaggedStruct('ChangeProductImages', {
@@ -32,4 +32,4 @@ export const ImportSourceCatalogPayloadSchema = Schema.Struct({
 export type ImportSourceCatalogPayload = typeof ImportSourceCatalogPayloadSchema.Type;
 export { ApplyCommandResultSchema as ImportSourceCatalogResultSchema } from './apply-command.ts';
 export { ImportImageUrlSchema } from '../domain/import-image-url.ts';
-export { isMediaImageReference } from '../domain/product-images.ts';
+export { MediaImageReferenceSchema, isMediaImageReference } from '../domain/product-images.ts';

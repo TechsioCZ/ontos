@@ -1,10 +1,12 @@
 // Product gallery references and the pure rules of a gallery change. A gallery is an ordered list of image references;
 // the first one is the main image the storefront shows. Uploaded images are Core Media Assets (`media:<asset>`);
 // imported catalog images stay the source system's own https addresses. Neither form is ever shown to a person.
-import { Option } from 'effect';
+import { Option, Schema } from 'effect';
 
 const MEDIA_REFERENCE_PREFIX = 'media:';
-const UUID = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u;
+export const MediaImageReferenceSchema = Schema.String.check(
+  Schema.isPattern(/^media:[\da-fA-F]{8}-[\da-fA-F]{4}-[1-8][\da-fA-F]{3}-[89abAB][\da-fA-F]{3}-[\da-fA-F]{12}$/u),
+);
 
 /** At most this many images per product (the model's gallery limit). */
 export const PRODUCT_GALLERY_LIMIT = 20;
@@ -14,16 +16,13 @@ export const PRODUCT_IMAGE_LINK = { linkKind: 'gallery_image', moduleKey: 'demo.
 
 export const mediaImageReference = (mediaAssetId: string): string => `${MEDIA_REFERENCE_PREFIX}${mediaAssetId}`;
 
-/** The Core Media Asset behind an uploaded-image reference; none for an external or storefront-path image. */
-export const mediaAssetIdOf = (reference: string): Option.Option<string> => {
-  if (!reference.startsWith(MEDIA_REFERENCE_PREFIX)) {
-    return Option.none();
-  }
-  const id = reference.slice(MEDIA_REFERENCE_PREFIX.length).toLowerCase();
-  return UUID.test(id) ? Option.some(id) : Option.none();
-};
+export const isMediaImageReference = Schema.is(MediaImageReferenceSchema);
 
-export const isMediaImageReference = (reference: string): boolean => Option.isSome(mediaAssetIdOf(reference));
+/** The Core Media Asset behind an uploaded-image reference; none for an external or storefront-path image. */
+export const mediaAssetIdOf = (reference: string): Option.Option<string> =>
+  isMediaImageReference(reference)
+    ? Option.some(reference.slice(MEDIA_REFERENCE_PREFIX.length).toLowerCase())
+    : Option.none();
 
 /** Appends an uploaded image; the gallery holds at most `PRODUCT_GALLERY_LIMIT` images. */
 export const appendImage = (gallery: readonly string[], reference: string): Option.Option<readonly string[]> => {

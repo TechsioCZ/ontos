@@ -3,13 +3,13 @@ import { executeImportSourceCatalogWithAuthorization } from '@app/merchandise/ap
 import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
 import {
   ImportSourceCatalogPayloadSchema,
-  isMediaImageReference,
+  MediaImageReferenceSchema,
 } from '@app/merchandise/contracts/import-source-catalog';
-import type { ImportSourceCatalogPayload } from '@app/merchandise/contracts/import-source-catalog';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { Effect, Redacted, Schema } from 'effect';
 import { symmyInvalidProblem, symmyUnavailableProblem } from './contract.ts';
 import type { SymmyIngressProblem } from './contract.ts';
+import { SymmyDemoCatalogBatchResponseSchema } from './demo-catalog-contract.ts';
 import type {
   SymmyDemoCategoriesBatchRequest,
   SymmyDemoMediaUploadRequest,
@@ -30,6 +30,7 @@ export { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-so
 
 const ownerProblemSchema = Schema.Union(importSourceCatalogActionErrors);
 const isOwnerProblem = Schema.is(ownerProblemSchema);
+const isMediaImageReference = Schema.is(MediaImageReferenceSchema);
 
 export const symmyDemoCatalogOwnerOperation = {
   entrypointKey: 'demo.merchandise.import-source-catalog',
@@ -69,7 +70,7 @@ const requireScope = (context: SymmyDemoCatalogContext) =>
 /** Every attempt acquires a fresh audience/company assertion and retains the owner's typed recovery failures. */
 const write = Effect.fn('SymmyDemoCatalog.write')(function* write(
   context: SymmyDemoCatalogContext,
-  payload: ImportSourceCatalogPayload,
+  payload: typeof ImportSourceCatalogPayloadSchema.Type,
   itemKey: string,
 ) {
   const company = yield* requireScope(context);
@@ -124,13 +125,15 @@ interface BatchState {
 }
 const batchStartingAt = (revision: number): BatchState => ({ items: [], revision });
 
-const response = (context: SymmyDemoCatalogContext, company: string, items: readonly Applied[], revision: number) => ({
-  items,
-  legalEntityId: company,
-  ownerModuleId: 'demo.merchandise' as const,
-  revision,
-  tenantId: context.scope.tenantId,
-});
+const decodeResponse = Schema.decodeUnknownEffect(SymmyDemoCatalogBatchResponseSchema);
+const response = (context: SymmyDemoCatalogContext, company: string, items: readonly Applied[], revision: number) =>
+  decodeResponse({
+    items,
+    legalEntityId: company,
+    ownerModuleId: 'demo.merchandise',
+    revision,
+    tenantId: context.scope.tenantId,
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
 
 export const executeSymmyDemoCategoriesBatch = Effect.fn('SymmyDemoCatalog.categories')(function* categories(
   context: SymmyDemoCatalogContext,
@@ -174,7 +177,7 @@ export const executeSymmyDemoCategoriesBatch = Effect.fn('SymmyDemoCatalog.categ
       };
     }),
   );
-  return response(context, company, items, revision);
+  return yield* response(context, company, items, revision);
 });
 
 export const executeSymmyDemoProductsBatch = Effect.fn('SymmyDemoCatalog.products')(function* products(
@@ -227,7 +230,7 @@ export const executeSymmyDemoProductsBatch = Effect.fn('SymmyDemoCatalog.product
       };
     }),
   );
-  return response(context, company, items, revision);
+  return yield* response(context, company, items, revision);
 });
 
 /** CoreMedia verifies content signatures, decoded byte limits, and renditions before it binds the image to the product. */
@@ -250,7 +253,7 @@ export const executeSymmyDemoMediaUpload = Effect.fn('SymmyDemoCatalog.media')(f
   ) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
-  return response(
+  return yield* response(
     context,
     company,
     [{ entityId: request.productId, image: result.image, index: 0, outcome: 'APPLIED', revision: result.revision }],

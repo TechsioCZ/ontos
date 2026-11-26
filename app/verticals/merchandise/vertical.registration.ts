@@ -11,8 +11,8 @@ export const merchandiseRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'agent-review': () => import('./src/api/agent-review-client.ts'),
-      'demo-order-export': () => import('./src/api/demo-order-export-client.ts'),
       'demo-catalog-revision': () => import('./src/api/demo-catalog-revision-client.ts'),
+      'demo-order-export': () => import('./src/api/demo-order-export-client.ts'),
       media: () => import('./src/api/media-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),

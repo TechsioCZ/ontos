@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
-import { Option, Schema } from 'effect';
+import { Option, Result, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
 import type {
   Argument,
@@ -25,6 +25,7 @@ import {
 import { hasOriginalConfiguredReadPhase } from './generated-ccc-configured-read-provenance.mts';
 import {
   hasGeneratedGovernedClientContract,
+  readModuleApiClientPolicy,
   hasConnectedGeneratedActionContract,
   hasExactSourceTokens,
   hasGeneratedSourceHeader,
@@ -1547,7 +1548,12 @@ const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<str
   for (const [binding, [modulePath, original]] of expectedImports) {
     const typeOnly = binding === 'ReadRuntime' || binding === 'GatewayAssertionRedemptionService';
     const imported = namedSourceImport(source, binding, typeOnly);
-    if (imported?.modulePath !== modulePath || imported.imported !== original || (typeOnly && !imported.typeOnly)) {
+    if (
+      imported === undefined ||
+      imported.modulePath !== modulePath ||
+      imported.imported !== original ||
+      (typeOnly && !imported.typeOnly)
+    ) {
       return false;
     }
   }
@@ -4050,25 +4056,30 @@ const hasReadContract = (
 };
 
 const hasClientContract = (
-  source: string,
+  { clientSource, contractImport, contractSource }: LoadedContributionSources,
   contribution: GovernedReadContribution,
   endpointGroup: string,
   apiValue: string,
   deploymentAppId: string,
-  ownerContractImport: string,
 ): boolean => {
   const type = toPascalCase(contribution.name);
-  const operation = contribution.kind === MODULE_API_KIND ? `execute${type}` : `load${type}Client`;
-  return hasGeneratedGovernedClientContract(source, {
-    authorizedOperation: `${operation}WithAuthorization`,
-    defaultApiPrefix: `/${deploymentAppId}-api`,
-    endpointGroup,
-    generatedHeader: generatedHeader(contribution.kind),
-    invocationKind: contribution.kind === MODULE_API_KIND ? 'module-api' : 'provider',
-    ownerApiValue: apiValue,
-    ownerContractImport,
-    publicOperation: operation,
-  });
+  const isModuleApi = contribution.kind === MODULE_API_KIND;
+  const operation = isModuleApi ? `execute${type}` : `load${type}Client`;
+  const clientPolicy = readModuleApiClientPolicy(contractSource);
+  return (
+    Result.isSuccess(clientPolicy) &&
+    hasGeneratedGovernedClientContract(clientSource, {
+      authorizedOperation: `${operation}WithAuthorization`,
+      clientPolicy: clientPolicy.success ?? {},
+      defaultApiPrefix: `/${deploymentAppId}-api`,
+      endpointGroup,
+      generatedHeader: generatedHeader(contribution.kind),
+      invocationKind: isModuleApi ? 'module-api' : 'provider',
+      ownerApiValue: apiValue,
+      ownerContractImport: contractImport,
+      publicOperation: operation,
+    })
+  );
 };
 
 const hasProblemSet = (source: string, schemaStem: string, contractImport: string): boolean => {
@@ -5665,7 +5676,7 @@ export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: strin
       return false;
     }
     const { alias } = declaration.groups;
-    if (declarations.filter((candidate) => candidate.groups?.alias === alias).length !== 1) {
+    if (alias === undefined || declarations.filter((candidate) => candidate.groups?.alias === alias).length !== 1) {
       return false;
     }
     const property = new RegExp(`\\bactionKey\\s*(?::\\s*${escapeRegExp(alias)}\\b|(?=\\s*[,}]))`, 'gu');
@@ -6739,13 +6750,17 @@ const hasCompleteGeneratedContribution = (
     context.diagnostics?.push(`${contribution.name}: missing source or provenance marker`);
     return false;
   }
-  const { clientSource, contractImport, readImport, readSource, serverSource, ...canonical } =
-    canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
+  const {
+    contractSource: canonicalContract,
+    readImport,
+    readSource,
+    serverSource,
+  } = canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
   const checks = {
-    client: hasClientContract(clientSource, contribution, group, apiValue, context.deploymentAppId, contractImport),
+    client: hasClientContract(loaded, contribution, group, apiValue, context.deploymentAppId),
     contract: hasCompleteContributionContract(
-      canonical.contractSource,
+      canonicalContract,
       contribution,
       apiValue,
       group,
@@ -9761,7 +9776,7 @@ const hasOwnedReadExecutorType = (owner: ReadPhaseOwner, source: string, paramet
   return (
     executor !== undefined &&
     derivedReadTransactionBinding(target, `transaction: ${executor}`) !== undefined &&
-    (pick?.keys.split('|').every((key) => /^['"](?:delete|insert|select|update)['"]$/u.test(key.trim())) ?? false) &&
+    pick?.keys?.split('|').every((key) => /^['"](?:delete|insert|select|update)['"]$/u.test(key.trim())) === true &&
     hasStableReadFactoryBindingsStaged(source, new Map([[type, 0]]), '') &&
     hasStableReadFactoryBindingsStaged(
       target,
@@ -11157,13 +11172,17 @@ const boundOwnerScopedReadBinding = (
   | { readonly factory: string; readonly factoryArguments: readonly string[]; readonly persistence: string }
   | undefined => {
   const binding = /^const\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<value>[\s\S]+)$/u.exec(statement)?.groups;
-  const factory =
-    binding === undefined ? undefined : /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u.exec(binding.value)?.groups?.name;
-  const factoryArguments =
-    binding === undefined ? undefined : wholeCallArguments(binding.value, /^[A-Za-z_$][A-Za-z0-9_$]*\s*\(/u, true);
-  return binding === undefined || factory === undefined || factoryArguments === undefined
+  const persistence = binding?.name;
+  const value = binding?.value;
+  if (persistence === undefined || value === undefined) {
+    return undefined;
+  }
+  const factoryCall = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u;
+  const factory = factoryCall.exec(value)?.groups?.name;
+  const factoryArguments = wholeCallArguments(value, factoryCall, true);
+  return factory === undefined || factoryArguments === undefined
     ? undefined
-    : { factory, factoryArguments, persistence: binding.name };
+    : { factory, factoryArguments, persistence };
 };
 
 /** The closed `return Effect.succeed({ … })` record a bound owner factory publishes. */
@@ -13227,9 +13246,9 @@ const hasNativeLookupTags = (owner: ReadPhaseOwner, source: string, transforms: 
     hasNativeFoundLookupTag(foundArgs) &&
     missingArgs?.length === 2 &&
     missingArgs[0] === "'not_found'" &&
-    missingArgs[1]?.startsWith('() =>') &&
-    missingResult !== undefined &&
     missingArgs[1] !== undefined &&
+    missingArgs[1].startsWith('() =>') &&
+    missingResult !== undefined &&
     hasDirectReadCallbackExpression(missingArgs[1], missingResult) &&
     hasNativeLookupFailure(owner, source, missingResult) &&
     exhaustive === MATCH_EXHAUSTIVE &&
@@ -17183,7 +17202,7 @@ const hasTenantGuardTest = (test: string, input: string, context: string): boole
 
 /** The `return` statement of a closed block: exactly one returned expression, terminated once. */
 const readClosedReturnStatement = (statement: string): string | undefined =>
-  /^return\s+(?<value>[\s\S]+);$/u.exec(statement.trim())?.groups?.value.trim();
+  /^return\s+(?<value>[\s\S]+);$/u.exec(statement.trim())?.groups?.value?.trim();
 
 /** The closed `{ if (<tenant guard>) { return <failure>; } return <native tail>; }` phase body. */
 const guardedTenantServiceReadBody = (
@@ -19628,7 +19647,8 @@ const hasPreparedOwnerReadPhase = (
       tokenizeGovernedClient(initializer),
       "Schema.Literals(['ABSENT', 'COMMITTED', 'OPEN', 'UNAVAILABLE'])",
     ) &&
-    parameters[1]?.includes(`, ${state}>`) &&
+    parameters[1] !== undefined &&
+    parameters[1].includes(`, ${state}>`) &&
     hasRuntimeNamedSourceImport(source, 'Schema', 'Schema', 'effect') &&
     hasExactSourceTokens(
       tokenizeGovernedClient(invocation.args.join(',')),
@@ -27166,7 +27186,12 @@ const hasCryptoReadImportsStaged = (source: string, importedArguments: ReadonlyS
   for (const [binding, [modulePath, original]] of expectedImports) {
     const typeOnly = binding === 'ReadRuntime' || binding === 'GatewayAssertionRedemptionService';
     const imported = namedSourceImport(source, binding, typeOnly);
-    if (imported?.modulePath !== modulePath || imported.imported !== original || (typeOnly && !imported.typeOnly)) {
+    if (
+      imported === undefined ||
+      imported.modulePath !== modulePath ||
+      imported.imported !== original ||
+      (typeOnly && !imported.typeOnly)
+    ) {
       return false;
     }
   }

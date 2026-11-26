@@ -1,4 +1,4 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Result, Schema } from 'effect';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -84,8 +84,11 @@ import {
 import { OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT } from '../microvertical-action-boundary/owner-approval-publication.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
+  MODULE_API_CLIENT_POLICY_MARKER,
+  ModuleApiClientPolicyJson,
   hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedClientContract,
+  readModuleApiClientPolicy,
   hasGeneratedModuleApiContract,
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
@@ -93,6 +96,7 @@ import {
   hasUniqueExactNamedImport,
   tokenizeGovernedClient,
 } from '../../generated-module-api-boundary.mts';
+import type { ModuleApiClientPolicy } from '../../generated-module-api-boundary.mts';
 import type {
   GovernedContributionScaffoldConfig,
   Mutation,
@@ -105,6 +109,10 @@ const PUBLIC_COMPONENT_KIND = 'public-component';
 const REPORT_KIND = 'report';
 const SEARCH_PROVIDER_KIND = 'search-provider';
 const WORKSPACE_DEPENDENCY = 'workspace:*';
+
+interface GovernedContributionInput extends GovernedContributionScaffoldConfig {
+  readonly clientPolicy?: ModuleApiClientPolicy;
+}
 const ContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerAppId'));
 const ContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerModuleId'));
 
@@ -186,9 +194,21 @@ const governedPrincipalImport =
   "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
 const governedRedemptionImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+const normalizeSupportImport = (candidate: string): string =>
+  candidate
+    .replaceAll(/\s+/gu, ' ')
+    .replace(/,\s*\}/u, ' }')
+    .replace(
+      /\{ (?<bindings>[^}]+) \}/u,
+      (_clause, bindings: string) =>
+        `{ ${bindings
+          .split(',')
+          .map((binding) => binding.trim())
+          .toSorted()
+          .join(', ')} }`,
+    );
 const governedRedemptionDatabaseImport =
-  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
-const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
+  "import { GatewayAssertionRedemptionDatabaseLive, GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
 // Demo-only exception 1 (owner-action approvals): an owner that publishes the approval API keeps main's principal
 // verifier import and adds only the approval authenticator binding to it. It stands in for the principal import.
 const ownerApprovalPrincipalImport = OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT;
@@ -434,10 +454,15 @@ const apiRequestSchema = (config: ReadAuthorizationConfig): string =>
     ? 'Schema.Struct({})'
     : `Schema.Struct({\n  ${SCAFFOLD_RECORD_KEY_FIELD}: Schema.String.check(Schema.isUUID())\n})`;
 
-const renderApiContract = (vertical: OntosVerticalMetadata, name: string, config: ReadAuthorizationConfig): string => {
+const renderApiContract = (
+  vertical: OntosVerticalMetadata,
+  name: string,
+  config: ReadAuthorizationConfig,
+  policyMarker: string,
+): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
-  return `${generatedHeader(MODULE_API_KIND)}
+  return `${generatedHeader(MODULE_API_KIND)}${policyMarker}
 import { moduleOperation } from '@app/core-runtime/sdk';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
@@ -586,10 +611,11 @@ ${renderLegacyReadPermissionTarget(config.authorization)}    policies: [],
 };
 
 const renderGovernedClientConstruction = (
-  vertical: OntosVerticalMetadata,
+  vertical: Pick<OntosVerticalMetadata, 'appId'>,
   apiValue: string,
   clientName: string,
   optionsType: string,
+  requestCache?: 'no-store',
 ): string => `const ${clientName} = (
   credential: Redacted.Redacted,
   requestCorrelation: string,
@@ -602,14 +628,23 @@ const renderGovernedClientConstruction = (
       defaultApiPrefix: '/${vertical.appId}-api',
       requestCorrelation,
     },
-    options,
+    ${requestCache === undefined ? 'options' : `{ ...options, requestCache: '${requestCache}' }`},
   );`;
 
-const renderApiClient = (
-  vertical: OntosVerticalMetadata,
+interface ModuleApiClientRenderOptions extends ModuleApiClientPolicy {
+  readonly contractImport?: string;
+}
+
+export const renderApiClient = (
+  vertical: Pick<OntosVerticalMetadata, 'appId'>,
   name: string,
-  contractImport = `../../shared/apis/${name}.ts`,
+  {
+    authorizationCredential = 'string',
+    contractImport = `../../shared/apis/${name}.ts`,
+    requestCache,
+  }: ModuleApiClientRenderOptions = {},
 ): string => {
+  const acceptsRedacted = authorizationCredential === 'redacted';
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   const clientName = `${toCamelCase(name)}Client`;
@@ -629,7 +664,7 @@ export interface ${optionsType} {
 }
 
 type ${authorizedInvocationType} = readonly [
-  credential: string,
+  credential: ${acceptsRedacted ? 'Redacted.Redacted' : 'string'},
   requestCorrelation: string,
   options?: ${optionsType},
 ];
@@ -639,13 +674,13 @@ type ${operationInvocationType} = readonly [
   options?: ${optionsType},
 ];
 
-${renderGovernedClientConstruction(vertical, value, clientName, optionsType)}
+${renderGovernedClientConstruction(vertical, value, clientName, optionsType, requestCache)}
 
 export const execute${type}WithAuthorization = (
   payload: ${type}Request,
   ...[credential, requestCorrelation, options = {}]: ${authorizedInvocationType}
 ) =>
-  ${clientName}(Redacted.make(credential), requestCorrelation, options).pipe(
+  ${clientName}(${acceptsRedacted ? 'credential' : 'Redacted.make(credential)'}, requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.${toCamelCase(name)}.execute({ payload }),
     ),
@@ -656,7 +691,7 @@ export const execute${type} = (
   ...[requestCorrelation, options = {}]: ${operationInvocationType}
 ) =>
   operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
-    execute${type}WithAuthorization(payload, credential, requestCorrelation, {
+    execute${type}WithAuthorization(payload, ${acceptsRedacted ? 'Redacted.make(credential)' : 'credential'}, requestCorrelation, {
       ...options,
       baseUrl: apiBaseUrl,
       compositionRevision,
@@ -1079,11 +1114,22 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         }
       }
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
+        const databaseSupport = `GovernedReadLayer.provide(GovernedReadLayer.mergeAll(
+          GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+          GovernedGatewayAssertionRedemptionLive.pipe(GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive))
+        )),`;
+        const standardSupport =
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),';
+        const start = GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START;
+        const end = GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END;
+        const support = generatedSlotContainsExactEntry(next, start, end, databaseSupport)
+          ? databaseSupport
+          : standardSupport;
         next = insertSortedSlotIdempotently(
           next,
-          GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
-          GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
+          start,
+          end,
+          support,
           (candidate) => candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
         );
       }
@@ -1383,7 +1429,7 @@ const acceptsGeneratedClient = (
   kind: GovernedContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  moduleApiContractImport = `../../shared/apis/${name}.ts`,
+  { contractImport = `../../shared/apis/${name}.ts`, ...clientPolicy }: ModuleApiClientRenderOptions = {},
 ): ((current: string) => boolean) => {
   const type = toPascalCase(name);
   const isModuleApi = kind === MODULE_API_KIND;
@@ -1401,13 +1447,14 @@ const acceptsGeneratedClient = (
     expectedGroups.some((endpointGroup) =>
       hasGeneratedGovernedClientContract(current, {
         authorizedOperation: `${operationStem}WithAuthorization`,
+        clientPolicy,
         defaultApiPrefix: `/${vertical.appId}-api`,
         endpointGroup,
         generatedHeader: `${generatedHeader(kind)}\n`,
         invocationKind: isModuleApi ? 'module-api' : 'provider',
         ownerApiValue: isModuleApi ? `${type}Api` : `${type}${providerKind}Api`,
         ownerContractImport: isModuleApi
-          ? moduleApiContractImport
+          ? contractImport
           : `../../shared/apis/${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts`,
         publicOperation: operationStem,
       }),
@@ -1525,7 +1572,8 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
   kind: GovernedContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  publicContractPackage?: PublicContractPackage,
+  clientPolicy: ModuleApiClientPolicy,
+  publicContractPackage: PublicContractPackage | undefined,
 ) {
   const isApi = kind === MODULE_API_KIND;
   const mutations: Mutation[] = [];
@@ -1539,10 +1587,11 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
     }[kind];
     if (isApi && publicContractPackage !== undefined) {
       ({ clientPath } = publicContractPackage);
+      const clientOptions = { ...clientPolicy, contractImport: `../apis/${name}.ts` };
       const canonicalClientMutation = yield* createOrAcceptGeneratedMutationEffect(
         publicContractPackage.clientPath,
-        renderApiClient(vertical, name, `../apis/${name}.ts`),
-        acceptsGeneratedClient(kind, vertical, name, `../apis/${name}.ts`),
+        renderApiClient(vertical, name, clientOptions),
+        acceptsGeneratedClient(kind, vertical, name, clientOptions),
       );
       const packageGatewayPath = yield* tryScaffold('failed to resolve public contract operation gateway path', () =>
         resolveContainedPath(publicContractPackage.directory, 'src', 'api', 'action-gateway.ts'),
@@ -1559,8 +1608,8 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
       );
       const clientMutation = yield* createOrAcceptGeneratedMutationEffect(
         clientPath,
-        isApi ? renderApiClient(vertical, name) : renderProviderClient(kind, vertical, name),
-        acceptsGeneratedClient(kind, vertical, name),
+        isApi ? renderApiClient(vertical, name, clientPolicy) : renderProviderClient(kind, vertical, name),
+        acceptsGeneratedClient(kind, vertical, name, clientPolicy),
       );
       mutations.push(...EffectArray.getSomes([clientMutation]));
     }
@@ -1619,20 +1668,30 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
   return { clientPath, mutations, serverPath };
 });
 
-const renderGovernedContributionArtifact = (
-  kind: GovernedContributionKind,
-  vertical: OntosVerticalMetadata,
-  name: string,
-  config: GovernedContributionScaffoldConfig,
-): string => {
-  if (kind === PUBLIC_COMPONENT_KIND) {
-    return renderPublicComponent(name);
-  }
-  if (kind === MODULE_API_KIND) {
-    return renderApiContract(vertical, name, config);
-  }
-  return renderProvider(kind, vertical, name, config);
-};
+const renderGovernedContributionArtifact = Effect.fn('GovernedContributionScaffold.renderArtifact')(
+  function* renderGovernedContributionArtifact(
+    kind: GovernedContributionKind,
+    vertical: OntosVerticalMetadata,
+    name: string,
+    config: GovernedContributionScaffoldConfig,
+    clientPolicy: ModuleApiClientPolicy | undefined,
+  ) {
+    if (kind === PUBLIC_COMPONENT_KIND) {
+      return renderPublicComponent(name);
+    }
+    if (kind === MODULE_API_KIND) {
+      const encoded =
+        clientPolicy === undefined
+          ? undefined
+          : yield* Schema.encodeEffect(ModuleApiClientPolicyJson)(clientPolicy).pipe(
+              Effect.mapError((cause) => scaffoldFailure('failed to encode module API client policy', cause)),
+            );
+      const marker = encoded === undefined ? '' : `\n${MODULE_API_CLIENT_POLICY_MARKER}${encoded}`;
+      return renderApiContract(vertical, name, config, marker);
+    }
+    return yield* tryScaffold('failed to render governed provider', () => renderProvider(kind, vertical, name, config));
+  },
+);
 
 const planGovernedArtifactMutations = Effect.fn('GovernedContributionScaffold.artifact')(
   function* planGovernedArtifactMutations(
@@ -1832,11 +1891,40 @@ const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sha
   },
 );
 
+// An authored contract keeps the opt-in when the CLI is rerun with a missing client.
+const resolveModuleApiClientPolicy = Effect.fn('GovernedContributionScaffold.clientPolicy')(
+  function* resolveModuleApiClientPolicy(artifactPath: string, requested: ModuleApiClientPolicy | undefined) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const exists = yield* fileSystem
+      .exists(artifactPath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to inspect contract ${artifactPath}`, cause)));
+    if (!exists) {
+      return requested;
+    }
+    const source = yield* fileSystem
+      .readFileString(artifactPath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read contract ${artifactPath}`, cause)));
+    const parsed = readModuleApiClientPolicy(source);
+    if (Result.isFailure(parsed)) {
+      return yield* scaffoldFailure(`invalid client policy in ${artifactPath}: ${parsed.failure}`);
+    }
+    const recorded = parsed.success;
+    if (
+      requested !== undefined &&
+      ((recorded?.authorizationCredential ?? 'string') !== (requested.authorizationCredential ?? 'string') ||
+        recorded?.requestCache !== requested.requestCache)
+    ) {
+      return yield* scaffoldFailure(`requested client policy differs from the policy recorded in ${artifactPath}`);
+    }
+    return recorded ?? undefined;
+  },
+);
+
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
     workspaceRoot: string,
     kind: GovernedContributionKind,
-    config: GovernedContributionScaffoldConfig,
+    config: GovernedContributionInput,
   ) {
     const name = yield* tryScaffold('governed contribution name is invalid', () =>
       requireCanonicalSlug(config.name, kind),
@@ -1859,6 +1947,9 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       );
     }
     const isApi = kind === MODULE_API_KIND;
+    if (!isApi && config.clientPolicy !== undefined) {
+      return yield* scaffoldFailure('client policy is supported only for module APIs');
+    }
     const publicContractPackage = isApi
       ? yield* discoverPublicContractPackage(workspaceRoot, vertical, name)
       : undefined;
@@ -1873,9 +1964,8 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       (yield* tryScaffold('failed to resolve governed contribution path', () =>
         resolveContainedPath(vertical.directory, ...artifactSegments[kind]),
       ));
-    const artifact = yield* tryScaffold('failed to render governed contribution', () =>
-      renderGovernedContributionArtifact(kind, vertical, name, config),
-    );
+    const clientPolicy = isApi ? yield* resolveModuleApiClientPolicy(artifactPath, config.clientPolicy) : undefined;
+    const artifact = yield* renderGovernedContributionArtifact(kind, vertical, name, config, clientPolicy);
     const mutations = yield* planGovernedArtifactMutations(
       kind,
       vertical,
@@ -1899,7 +1989,14 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       );
       mutations.push(...EffectArray.getSomes([readMutation]));
     }
-    const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name, publicContractPackage);
+    const transport = yield* planGovernedTransport(
+      workspaceRoot,
+      kind,
+      vertical,
+      name,
+      clientPolicy ?? {},
+      publicContractPackage,
+    );
     const { clientPath, serverPath } = transport;
     mutations.push(...transport.mutations);
     if (vertical.runtimeDeclaration === undefined) {

@@ -107,8 +107,8 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
     api: {
       // <generated-module-manifest-apis>
       'agent-review': AgentReviewApi,
-      'demo-order-export': DemoOrderExportApi,
       'demo-catalog-revision': DemoCatalogRevisionApi,
+      'demo-order-export': DemoOrderExportApi,
       media: MediaApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       records: RecordsApi,

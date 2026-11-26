@@ -1,4 +1,4 @@
-import { Predicate } from 'effect';
+import { Predicate, Result, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
 import type {
   ArrowFunctionExpression,
@@ -416,8 +416,36 @@ const directObjectHasNoSpread = (
   return true;
 };
 
+export const MODULE_API_CLIENT_POLICY_MARKER = '// @ontos-module-api-client-policy ';
+export const ModuleApiClientPolicyJson = Schema.fromJsonString(
+  Schema.Struct({
+    authorizationCredential: Schema.optionalKey(Schema.Literals(['redacted', 'string'])),
+    requestCache: Schema.optionalKey(Schema.Literal('no-store')),
+  }),
+);
+export type ModuleApiClientPolicy = typeof ModuleApiClientPolicyJson.Type;
+
+/** The generated owner contract is the authority for both scaffolding and release checks. */
+export const readModuleApiClientPolicy = (source: string): Result.Result<ModuleApiClientPolicy | null, string> => {
+  const lines = source.split(/\r?\n/u);
+  const markers = lines.filter((line) => line.startsWith(MODULE_API_CLIENT_POLICY_MARKER.trimEnd()));
+  const [marker] = markers;
+  if (marker === undefined) {
+    return Result.succeed(null);
+  }
+  if (markers.length !== 1 || lines[1] !== marker || !marker.startsWith(MODULE_API_CLIENT_POLICY_MARKER)) {
+    return Result.fail('expected one client policy immediately below the generated header');
+  }
+  const decoded = Schema.decodeUnknownResult(ModuleApiClientPolicyJson)(
+    marker.slice(MODULE_API_CLIENT_POLICY_MARKER.length),
+    { onExcessProperty: 'error' },
+  );
+  return Result.isSuccess(decoded) ? Result.succeed(decoded.success) : Result.fail(decoded.failure.message);
+};
+
 interface GovernedClientExpectation {
   readonly authorizedOperation: string;
+  readonly clientPolicy?: ModuleApiClientPolicy;
   readonly defaultApiPrefix: string;
   readonly endpointGroup: string;
   readonly generatedHeader: string;
@@ -756,38 +784,61 @@ const hasOnlyAllowedModuleStatements = (
 const hasGovernedTransportInvocation = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
-  ownerApiValue: string,
-  defaultApiPrefix: string,
+  expectation: GovernedClientExpectation,
 ): boolean => {
-  const expected = (objectTrailingComma: boolean, callTrailingComma: boolean) =>
+  const options: (readonly ExpectedToken[])[] = [];
+  if (expectation.clientPolicy?.requestCache === undefined) {
+    options.push([[SyntaxKind.Identifier, 'options']]);
+  }
+  if (
+    expectation.invocationKind === MODULE_API_INVOCATION_KIND &&
+    expectation.clientPolicy?.requestCache === 'no-store'
+  ) {
+    for (const trailingComma of [false, true]) {
+      options.push([
+        [SyntaxKind.OpenBraceToken],
+        [SyntaxKind.DotDotDotToken],
+        [SyntaxKind.Identifier, 'options'],
+        [SyntaxKind.CommaToken],
+        [SyntaxKind.Identifier, 'requestCache'],
+        [SyntaxKind.ColonToken],
+        [SyntaxKind.StringLiteral, 'no-store'],
+        ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+        [SyntaxKind.CloseBraceToken],
+      ]);
+    }
+  }
+  const expected = (option: readonly ExpectedToken[], objectTrailingComma: boolean, callTrailingComma: boolean) =>
     [
       [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
       [SyntaxKind.OpenParenToken],
       [SyntaxKind.OpenBraceToken],
       [SyntaxKind.Identifier, 'api'],
       [SyntaxKind.ColonToken],
-      [SyntaxKind.Identifier, ownerApiValue],
+      [SyntaxKind.Identifier, expectation.ownerApiValue],
       [SyntaxKind.CommaToken],
       [SyntaxKind.Identifier, 'credential'],
       [SyntaxKind.CommaToken],
       [SyntaxKind.Identifier, 'defaultApiPrefix'],
       [SyntaxKind.ColonToken],
-      [SyntaxKind.StringLiteral, defaultApiPrefix],
+      [SyntaxKind.StringLiteral, expectation.defaultApiPrefix],
       [SyntaxKind.CommaToken],
       [SyntaxKind.Identifier, 'requestCorrelation'],
       ...(objectTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.CommaToken],
-      [SyntaxKind.Identifier, 'options'],
+      ...option,
       ...(callTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
       [SyntaxKind.CloseParenToken],
       [SyntaxKind.SemicolonToken],
     ] satisfies readonly ExpectedToken[];
-  return [false, true].some((objectTrailingComma) =>
-    [false, true].some((callTrailingComma) => {
-      const sequence = expected(objectTrailingComma, callTrailingComma);
-      return helper.end === helper.start + sequence.length && matchesSequence(tokens, helper.start, sequence);
-    }),
+  return options.some((option) =>
+    [false, true].some((objectTrailingComma) =>
+      [false, true].some((callTrailingComma) => {
+        const sequence = expected(option, objectTrailingComma, callTrailingComma);
+        return helper.end === helper.start + sequence.length && matchesSequence(tokens, helper.start, sequence);
+      }),
+    ),
   );
 };
 
@@ -1085,6 +1136,7 @@ const isClientPath = (expression: Expression | null | undefined, names: readonly
 interface NativeActionContractExpectation {
   readonly apiValue: string;
   readonly endpoint: string;
+  readonly errorsExport?: string;
   readonly group: string;
   readonly invalidProblem: string;
   readonly middleware: string;
@@ -1281,6 +1333,26 @@ export const hasConnectedGeneratedActionContract = (
     }
     return resolve(middleware.callee.object);
   };
+  const hasPublishedEndpointErrors = (endpoint: CallExpression): boolean => {
+    const { errorsExport } = expected;
+    if (errorsExport === undefined) {
+      return true;
+    }
+    const options = endpoint.arguments.at(2);
+    if (options?.type !== 'ObjectExpression') {
+      return false;
+    }
+    const error = options.properties.find(
+      (property) => property.type === 'Property' && property.key.type === 'Identifier' && property.key.name === 'error',
+    );
+    const [binding] = bindings.get(errorsExport) ?? [];
+    if (!binding?.exported) {
+      return false;
+    }
+    return (
+      error?.type === 'Property' && isClientPath(error.value, [errorsExport]) && resolve(error.value) !== undefined
+    );
+  };
   const hasGroupEndpoint = (group: Expression | undefined): boolean => {
     const addEndpoint = nativeCall(group, 'add');
     if (
@@ -1303,7 +1375,8 @@ export const hasConnectedGeneratedActionContract = (
       endpoint.arguments.length === 3 &&
       nativeStringArgument(endpoint, 0, 'execute') &&
       nativeStringArgument(endpoint, 1, expected.endpoint) &&
-      hasEndpointOptions(endpoint);
+      hasEndpointOptions(endpoint) &&
+      hasPublishedEndpointErrors(endpoint);
     return validGroup && validEndpoint;
   };
   if (!hasGroupEndpoint(nativeGroup(apiGroup()))) {
@@ -1663,11 +1736,60 @@ const withoutDispatchSchemaImports = (
   });
 };
 
+/** Match the erased credential tuple separately so its runtime flow has the same type as the caller. */
+const generatedCredentialType = (
+  declaration: string,
+  optionsTypes: readonly string[],
+): 'redacted' | 'string' | undefined => {
+  const tokens = tokenizeGovernedClient(declaration);
+  const string = [[SyntaxKind.StringKeyword]] as const;
+  const redacted = [
+    [SyntaxKind.Identifier, 'Redacted'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'Redacted'],
+  ] as const;
+  const matchesTuple = (credential: readonly ExpectedToken[]) =>
+    optionsTypes.some((optionsType) =>
+      [false, true].some((trailingComma) => {
+        const tuple = [
+          [SyntaxKind.EqualsToken],
+          [SyntaxKind.ReadonlyKeyword],
+          [SyntaxKind.OpenBracketToken],
+          [SyntaxKind.Identifier, 'credential'],
+          [SyntaxKind.ColonToken],
+          ...credential,
+          [SyntaxKind.CommaToken],
+          [SyntaxKind.Identifier, 'requestCorrelation'],
+          [SyntaxKind.ColonToken],
+          [SyntaxKind.StringKeyword],
+          [SyntaxKind.CommaToken],
+          [SyntaxKind.Identifier, 'options'],
+          [SyntaxKind.QuestionToken],
+          [SyntaxKind.ColonToken],
+          [SyntaxKind.Identifier, optionsType],
+          ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+          [SyntaxKind.CloseBracketToken],
+        ] satisfies readonly ExpectedToken[];
+        const end =
+          tokenKind(tokens, tokens.length - 1) === SyntaxKind.SemicolonToken ? tokens.length - 1 : tokens.length;
+        return end === tuple.length + 2 && matchesSequence(tokens, 2, tuple);
+      }),
+    );
+  if (matchesTuple(string)) {
+    return 'string';
+  }
+  return matchesTuple(redacted) ||
+    matchesTuple([...redacted, [SyntaxKind.LessThanToken], ...string, [SyntaxKind.GreaterThanToken]])
+    ? 'redacted'
+    : undefined;
+};
+
 const exportedOperationsUseClientHelperAndGateway = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
   expectation: GovernedClientExpectation,
   source: string,
+  redactedEntry: boolean,
 ): boolean => {
   const declarations = generatedOperationDeclarations(tokens, expectation);
   if (declarations === undefined) {
@@ -1679,15 +1801,19 @@ const exportedOperationsUseClientHelperAndGateway = (
   if (authorizedArrow === undefined || operationArrow === undefined) {
     return false;
   }
-  const authorizedInvocation = [
-    [SyntaxKind.Identifier, helper.name],
-    [SyntaxKind.OpenParenToken],
+  const rawCredential = [[SyntaxKind.Identifier, 'credential']] as const;
+  const wrappedCredential = [
     [SyntaxKind.Identifier, 'Redacted'],
     [SyntaxKind.DotToken],
     [SyntaxKind.Identifier, 'make'],
     [SyntaxKind.OpenParenToken],
-    [SyntaxKind.Identifier, 'credential'],
+    ...rawCredential,
     [SyntaxKind.CloseParenToken],
+  ] as const;
+  const authorizedInvocation = [
+    [SyntaxKind.Identifier, helper.name],
+    [SyntaxKind.OpenParenToken],
+    ...(redactedEntry ? rawCredential : wrappedCredential),
     [SyntaxKind.CommaToken],
     [SyntaxKind.Identifier, 'requestCorrelation'],
     [SyntaxKind.CommaToken],
@@ -1737,7 +1863,7 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.Identifier, 'payload'],
     [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'credential'],
+    ...(redactedEntry ? wrappedCredential : rawCredential),
     [SyntaxKind.CommaToken],
     [SyntaxKind.Identifier, 'requestCorrelation'],
     [SyntaxKind.CommaToken],
@@ -2777,15 +2903,32 @@ const clientReturnTypeSpans = (statement: Program['body'][number]): readonly Cli
   return spans;
 };
 
+interface GovernedClientRuntime {
+  readonly redactedEntry: boolean;
+  readonly source: string;
+}
+
+const matchesExpectedCredentialType = (
+  credentialType: ReturnType<typeof generatedCredentialType>,
+  { clientPolicy, invocationKind }: GovernedClientExpectation,
+): boolean =>
+  credentialType !== undefined &&
+  (credentialType !== 'redacted' || invocationKind === MODULE_API_INVOCATION_KIND) &&
+  credentialType === (clientPolicy?.authorizationCredential ?? 'string');
+
 /** Project only parser-proven erased types; executable imports and expressions remain checked verbatim. */
-const governedClientRuntimeSource = (source: string, expectation: GovernedClientExpectation): string | undefined => {
+const governedClientRuntimeSource = (
+  source: string,
+  expectation: GovernedClientExpectation,
+): GovernedClientRuntime | undefined => {
   const parsed = parseSync('governed-client.ts', source);
   if (parsed.errors.length > 0) {
     return undefined;
   }
   const spans: ClientTypeSpan[] = [];
   const allowedTypeModules = new Set(['effect', 'effect/http-api', expectation.ownerContractImport]);
-  const requestType = governedRequestType(expectation);
+  const types = generatedClientTypeNames(expectation);
+  let credentialType: ReturnType<typeof generatedCredentialType>;
   let requestImports = 0;
   for (const statement of parsed.program.body) {
     if (statement.type === 'ImportDeclaration' && statement.importKind === 'type') {
@@ -2799,29 +2942,41 @@ const governedClientRuntimeSource = (source: string, expectation: GovernedClient
         if (
           statement.source.value === expectation.ownerContractImport &&
           specifier.imported.type === 'Identifier' &&
-          specifier.imported.name === requestType &&
-          specifier.local.name === requestType
+          specifier.imported.name === types.request &&
+          specifier.local.name === types.request
         ) {
           requestImports += 1;
         }
       }
       spans.push(statement);
     } else if (statement.type === 'TSTypeAliasDeclaration') {
+      if (statement.id.name === types.authorizedInvocation) {
+        if (credentialType !== undefined) {
+          return undefined;
+        }
+        credentialType = generatedCredentialType(source.slice(statement.start, statement.end), types.options);
+        if (credentialType === undefined) {
+          return undefined;
+        }
+      }
       spans.push(statement);
     }
     spans.push(...clientReturnTypeSpans(statement));
   }
-  if (requestImports !== 1) {
+  if (requestImports !== 1 || !matchesExpectedCredentialType(credentialType, expectation)) {
     return undefined;
   }
   // Spans follow source order and never overlap; erase right-to-left without moving offsets.
-  return spans.reduceRight(
-    (runtime, span) =>
-      runtime.slice(0, span.start) +
-      runtime.slice(span.start, span.end).replaceAll(/[^\r\n]/gu, ' ') +
-      runtime.slice(span.end),
-    source,
-  );
+  return {
+    redactedEntry: credentialType === 'redacted',
+    source: spans.reduceRight(
+      (runtime, span) =>
+        runtime.slice(0, span.start) +
+        runtime.slice(span.start, span.end).replaceAll(/[^\r\n]/gu, ' ') +
+        runtime.slice(span.end),
+      source,
+    ),
+  };
 };
 
 export const hasGeneratedGovernedClientContract = (source: string, expectation: GovernedClientExpectation): boolean => {
@@ -2832,7 +2987,7 @@ export const hasGeneratedGovernedClientContract = (source: string, expectation: 
   if (runtime === undefined) {
     return false;
   }
-  const tokens = tokenizeGovernedClient(runtime);
+  const tokens = tokenizeGovernedClient(runtime.source);
   const declarations = exportedConsts(tokens);
   const authorized = declarations.find(({ name }) => name.endsWith('WithAuthorization'));
   if (authorized === undefined) {
@@ -2852,11 +3007,10 @@ export const hasGeneratedGovernedClientContract = (source: string, expectation: 
         (name) => identifierOccurrences(tokens, name) === 2,
       ),
     operations:
-      helper !== undefined && exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation, source),
-    statements: helper !== undefined && hasOnlyAllowedModuleStatements(tokens, helper, expectation),
-    transport:
       helper !== undefined &&
-      hasGovernedTransportInvocation(tokens, helper, expectation.ownerApiValue, expectation.defaultApiPrefix),
+      exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation, source, runtime.redactedEntry),
+    statements: helper !== undefined && hasOnlyAllowedModuleStatements(tokens, helper, expectation),
+    transport: helper !== undefined && hasGovernedTransportInvocation(tokens, helper, expectation),
   };
   return Object.values(checks).every(Boolean);
 };

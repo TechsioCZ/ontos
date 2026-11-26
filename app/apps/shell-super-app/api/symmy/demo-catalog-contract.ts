@@ -1,3 +1,5 @@
+import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
+import { DemoCatalogRevisionResponseSchema } from '@app/merchandise/apis/demo-catalog-revision';
 import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
 import { ImportImageUrlSchema } from '@app/merchandise/contracts/import-source-catalog';
 import {
@@ -6,6 +8,11 @@ import {
   ChangeProductImagesPayloadSchema,
 } from '@app/merchandise/contracts/apply-command';
 import { Schema } from 'effect';
+
+import { symmyWriteOptions } from './contract.ts';
+
+export const SymmyDemoCatalogWriteErrors = [...symmyWriteOptions.error, ...importSourceCatalogActionErrors];
+
 export { DemoCatalogRevisionResponseSchema as SymmyDemoCatalogRevisionResponseSchema } from '@app/merchandise/apis/demo-catalog-revision';
 
 const text = (max: number) => Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(max));
@@ -78,8 +85,8 @@ export const SymmyDemoCatalogBatchResponseSchema = Schema.Struct({
       revision,
     }),
   ),
-  legalEntityId: Schema.String.check(Schema.isUUID()),
+  legalEntityId: DemoCatalogRevisionResponseSchema.fields.legalEntityId,
   ownerModuleId: Schema.Literal('demo.merchandise'),
   revision,
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: DemoCatalogRevisionResponseSchema.fields.tenantId,
 });

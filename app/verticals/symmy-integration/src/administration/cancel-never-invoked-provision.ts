@@ -1,8 +1,10 @@
-import type { CoreDatabase } from '@app/core-runtime/db/client';
 import { sql } from 'drizzle-orm';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import { Effect, Option, Schema } from 'effect';
 
-type Transaction = Parameters<Parameters<(typeof CoreDatabase)['Service']['executor']['transaction']>[0]>[0];
+type DrizzleTransaction = Parameters<Parameters<EffectPgDatabase['transaction']>[0]>[0];
+// Requiring rollback excludes the pooled executor, which cannot keep locks or tenant scope across statements.
+type Transaction = Pick<DrizzleTransaction, 'execute' | 'rollback'>;
 const uuid = Schema.String.check(Schema.isUUID());
 const bounded = (max: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max), Schema.isTrimmed());

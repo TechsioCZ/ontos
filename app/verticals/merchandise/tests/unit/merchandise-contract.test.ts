@@ -5,7 +5,7 @@ import {
   ReadHandlerUnavailable,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import { demoOrderExportApiLive } from '../../api/demo-order-export-server.ts';
+import { demoOrderExportReadApiLive } from '../../api/demo-order-export-read-server.ts';
 import { executeDemoOrderExportWithAuthorization } from '../../src/api/demo-order-export-client.ts';
 import { demoOrderExportRead } from '../../src/api/demo-order-export.read.ts';
 import { merchandiseBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -390,6 +390,6 @@ it('publishes the mounted owner endpoint and its exact company-scoped workload o
   expect(demoOrderExportRead.descriptor.legalEntityScope).toBe('required');
   expect(merchandiseApi.groups.demoOrderExport.endpoints.execute.path).toBe('/reads/demo-order-export');
   expect(merchandiseApi.groups.demoOrderExport.endpoints.execute.method).toBe('POST');
-  expect(Layer.isLayer(demoOrderExportApiLive)).toBe(true);
+  expect(Layer.isLayer(demoOrderExportReadApiLive)).toBe(true);
   expect(executeDemoOrderExportWithAuthorization).toEqual(expect.any(Function));
 });

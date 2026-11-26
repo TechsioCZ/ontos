@@ -1,4 +1,5 @@
 import {
+  hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionClientPublication,
   hasGeneratedGovernedServerContract,
   hasNativeHttpActionMount,
@@ -144,17 +145,20 @@ import {
 } from './module-entrypoint-boundaries.fixture.mts';
 import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
-import { Array as EffectArray, Cause, Effect, Exit, Match, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Array as EffectArray, Cause, Effect, Exit, FileSystem, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { validateGatewayIssuerEntrypoints } from '../check-module-entrypoint-boundaries.mts';
 import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-contracts/src/gateway-context.ts';
 import {
   generatedModuleApiEntrypointReference,
+  hasConnectedGeneratedActionContract,
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiContract,
   hasGeneratedModuleApiReadContract,
   hasGeneratedSourceHeader,
 } from '../generated-module-api-boundary.mts';
+import { planGovernedContributionScaffold, renderApiClient } from '../scaffolding/governed-contribution/scaffold.mts';
 import {
   assertPublishedOutboxContractSource,
   assertPublishedOutboxDependencyUsage,
@@ -162,6 +166,10 @@ import {
   publishedResourceRefContractExports,
   resolvePublishedContractModuleId,
 } from '../published-outbox-contracts.mts';
+
+const EFFECT_CLIENT_IMPORT = "import { Effect, Redacted } from 'effect';";
+const MERCHANDISE_EXPORT_NAME = 'demo-order-export';
+const NO_STORE_OPTIONS = "{ ...options, requestCache: 'no-store' }";
 
 it('accepts a typed Codesmith Action binding but rejects spoofed or mismatched registration types', () => {
   const binding = `export const confirmGtinAction: ActionRegistration<
@@ -304,8 +312,8 @@ it.effect('governed client return contracts erase only types and retain every ex
  type AuthorizedResult = Effect.Effect<${responseType}, Effect.Error<EndpointResult> | Schema.SchemaError>;`;
     const typed = original
       .replace(
-        "import { Effect, Redacted } from 'effect';",
-        `import { Effect, Redacted } from 'effect';\n${schemaTypeImport}\nimport type { HttpApiClient } from 'effect/http-api';`,
+        EFFECT_CLIENT_IMPORT,
+        `${EFFECT_CLIENT_IMPORT}\n${schemaTypeImport}\nimport type { HttpApiClient } from 'effect/http-api';`,
       )
       .replace(`import type { ${requestType} }`, `import type { ${requestType}, ${responseType} }`)
       .replace(
@@ -333,6 +341,195 @@ it.effect('governed client return contracts erase only types and retain every ex
       ),
     ]) {
       expect(hasGeneratedGovernedClientContract(invalid, expectation)).toBe(false);
+    }
+  }),
+);
+
+it('proves both Codesmith credential entries and rejects credential-flow mutations', () => {
+  const expectation = {
+    authorizedOperation: 'executeDemoOrderExportWithAuthorization',
+    defaultApiPrefix: '/merchandise-api',
+    endpointGroup: 'demoOrderExport',
+    generatedHeader: MODULE_API_HEADER,
+    invocationKind: MODULE_API_KIND,
+    ownerApiValue: 'DemoOrderExportApi',
+    ownerContractImport: '../../shared/apis/demo-order-export.ts',
+    publicOperation: 'executeDemoOrderExport',
+  } as const;
+  const vertical = { appId: 'merchandise' };
+  const name = MERCHANDISE_EXPORT_NAME;
+  const defaultSource = renderApiClient(vertical, name);
+  const source = renderApiClient(vertical, name, { authorizationCredential: 'redacted', requestCache: 'no-store' });
+  const accepts = (candidate: string) =>
+    hasGeneratedGovernedClientContract(candidate, {
+      ...expectation,
+      clientPolicy: { authorizationCredential: 'redacted', requestCache: 'no-store' },
+    });
+  const acceptsDefault = (candidate: string) => hasGeneratedGovernedClientContract(candidate, expectation);
+  const authorized = 'demoOrderExportClient(credential, requestCorrelation, options)';
+  const gateway = 'payload, Redacted.make(credential), requestCorrelation';
+  const redact = 'Redacted.make(credential)';
+  const redactedParameter = 'credential: Redacted.Redacted,';
+  const explicit = source.replace(redactedParameter, 'credential: Redacted.Redacted<string>,');
+  expect(source).toContain(NO_STORE_OPTIONS);
+  expect(defaultSource).not.toContain('requestCache');
+  expect(accepts(source)).toBe(true);
+  expect(accepts(explicit)).toBe(true);
+  expect(acceptsDefault(defaultSource)).toBe(true);
+  expect(acceptsDefault(source)).toBe(false);
+  for (const mutation of [
+    source.replace(redactedParameter, 'credential: string,'),
+    source.replace(redactedParameter, 'credential: Redacted.Redacted<number>,'),
+    source.replace(redactedParameter, 'credential: Redacted.Redacted | string,'),
+    source.replace(authorized, authorized.replace('credential', redact)),
+    source.replace(authorized, authorized.replace('credential', 'Redacted.value(credential)')),
+    source.replace(gateway, gateway.replace(redact, 'credential')),
+    source.replace(gateway, gateway.replace(redact, 'Redacted.make(requestCorrelation)')),
+    source.replace(EFFECT_CLIENT_IMPORT, "import { Effect, Redacted } from './private.ts';"),
+    source.replace(NO_STORE_OPTIONS, "{ ...options, requestCache: 'no-cache' }"),
+    source.replace(NO_STORE_OPTIONS, "{ requestCache: 'no-store', ...options }"),
+  ]) {
+    expect(mutation).not.toBe(source);
+    expect(accepts(mutation)).toBe(false);
+  }
+  const stringParameter = 'credential: string,';
+  const rawGateway = 'payload, credential, requestCorrelation';
+  const wrappedAuthorized = authorized.replace('credential', redact);
+  for (const mutation of [
+    defaultSource.replace(stringParameter, redactedParameter),
+    defaultSource.replace(wrappedAuthorized, authorized),
+    defaultSource.replace(rawGateway, gateway),
+  ]) {
+    expect(mutation).not.toBe(defaultSource);
+    expect(acceptsDefault(mutation)).toBe(false);
+  }
+});
+
+it.effect(
+  'regenerates the shipped Merchandise export transport from its recorded scaffold policy',
+  Effect.fn(function* regenerateMerchandiseExportTransport() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const config = { authorization: 'protected', name: MERCHANDISE_EXPORT_NAME, vertical: 'merchandise' } as const;
+    const clientPath = path.join(root, 'verticals/merchandise/src/api/demo-order-export-client.ts');
+    const filesystem = yield* FileSystem.FileSystem;
+    const shipped = yield* filesystem.readFileString(clientPath);
+    const plan = planGovernedContributionScaffold(root, 'module-api', config);
+    expect((yield* plan).mutations).toEqual([]);
+    const regenerated = yield* plan.pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...filesystem,
+        exists: (file) => (file === clientPath ? Effect.succeed(false) : filesystem.exists(file)),
+      }),
+    );
+    expect(regenerated.mutations).toEqual([{ content: shipped, kind: 'create', path: clientPath }]);
+
+    const cacheOnly = renderApiClient({ appId: config.vertical }, config.name, { requestCache: 'no-store' });
+    const withoutCache = shipped.replace(NO_STORE_OPTIONS, 'options');
+    for (const drifted of [cacheOnly, withoutCache]) {
+      expect(drifted).not.toBe(shipped);
+      const error = yield* plan.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...filesystem,
+          readFileString: (file, encoding) =>
+            file === clientPath ? Effect.succeed(drifted) : filesystem.readFileString(file, encoding),
+        }),
+        Effect.flip,
+      );
+      expect(String(error)).toContain(`refusing to overwrite existing business file: ${clientPath}`);
+    }
+  }, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'rejects independent Merchandise export policy drift in the complete owner seam',
+  Effect.fn(function* proveMerchandiseExportPolicy() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const vertical = 'merchandise';
+    const owner = `verticals/${vertical}`;
+    const name = MERCHANDISE_EXPORT_NAME;
+    const clientPath = `${owner}/src/api/${name}-client.ts`;
+    const sharedApi = `${owner}/shared/api.ts`;
+    const trees = yield* Effect.all(
+      ['apps', 'packages', 'verticals'].map((folder) => readPricingSourceTree(root, folder)),
+    );
+    const sources = new Map(trees.flat());
+    const diagnostics: string[] = [];
+    expect(hasCompleteGeneratedModuleApiSeam(sources, sharedApi, vertical, diagnostics), diagnostics.join('\n')).toBe(
+      true,
+    );
+    const shipped = sources.get(clientPath) ?? '';
+    const cacheOnly = renderApiClient({ appId: vertical }, name, { requestCache: 'no-store' });
+    const withoutCache = shipped.replace(NO_STORE_OPTIONS, 'options');
+    for (const drifted of [cacheOnly, withoutCache]) {
+      expect(drifted).not.toBe(shipped);
+      const changed = new Map(sources).set(clientPath, drifted);
+      const problems: string[] = [];
+      expect(hasCompleteGeneratedModuleApiSeam(changed, sharedApi, vertical, problems)).toBe(false);
+      expect(problems).toContain(`${name}: client`);
+    }
+  }),
+);
+
+it.effect(
+  'scaffolds opt-in credential and cache policies in a companion contract package',
+  Effect.fn(function* generateCompanionClientPolicy() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const config = {
+      authorization: 'protected',
+      clientPolicy: { authorizationCredential: 'redacted', requestCache: 'no-store' },
+      name: 'current-payment-terms',
+      vertical: 'payment-term-catalog',
+    } as const;
+    const packagePath = path.join(root, 'packages/payment-term-catalog-contracts/src');
+    const contractPath = path.join(packagePath, 'apis/current-payment-terms.ts');
+    const clientPath = path.join(packagePath, 'api/current-payment-terms-client.ts');
+    const filesystem = yield* FileSystem.FileSystem;
+    const plan = yield* planGovernedContributionScaffold(root, 'module-api', config).pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...filesystem,
+        exists: (file) =>
+          file === clientPath || file === contractPath ? Effect.succeed(false) : filesystem.exists(file),
+      }),
+    );
+    const writes = plan.mutations.filter((mutation) => mutation.kind !== 'delete');
+    const client = writes.find((mutation) => mutation.path === clientPath);
+    const contract = writes.find((mutation) => mutation.path === contractPath);
+    expect(plan.mutations).toHaveLength(2);
+    expect(client?.content).toContain('credential: Redacted.Redacted');
+    expect(client?.kind).toBe('create');
+    expect(client?.content).toContain(NO_STORE_OPTIONS);
+    expect(client?.content).toContain("from '../apis/current-payment-terms.ts'");
+    expect(contract?.kind).toBe('create');
+    expect(contract?.content.split('\n')[1]).toBe(
+      '// @ontos-module-api-client-policy {"authorizationCredential":"redacted","requestCache":"no-store"}',
+    );
+  }, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('an Action error export must be the actual mounted endpoint tuple', () =>
+  Effect.gen(function* publishedActionErrors() {
+    const file = new URL('../../verticals/merchandise/shared/apis/import-source-catalog-action.ts', import.meta.url);
+    const source = yield* Effect.promise(() => readFile(file, 'utf-8'));
+    const errorsExport = 'importSourceCatalogActionErrors';
+    const accepts = (candidate: string) =>
+      hasConnectedGeneratedActionContract(candidate, {
+        apiValue: 'ImportSourceCatalogActionApi',
+        endpoint: '/merchandise/actions/import-source-catalog',
+        errorsExport,
+        group: 'importSourceCatalogAction',
+        invalidProblem: 'ImportSourceCatalogActionInvalidProblemSchema',
+        middleware: 'ImportSourceCatalogActionSchemaErrorMiddleware',
+        middlewareKey: 'merchandise/ImportSourceCatalogActionSchemaErrorMiddleware',
+      });
+    expect(accepts(source)).toBe(true);
+    for (const mutation of [
+      source.replace(`error: ${errorsExport}`, 'error: [ImportSourceCatalogActionInvalidProblemSchema]'),
+      source.replace(`export const ${errorsExport}`, `const ${errorsExport}`),
+      source.replace(/^export const importSourceCatalogActionErrors = \[[\s\S]*?\] as const;\n/mu, ''),
+      `${source}\n${errorsExport}.push(ImportSourceCatalogActionInvalidProblemSchema);`,
+    ]) {
+      expect(mutation).not.toBe(source);
+      expect(accepts(mutation)).toBe(false);
     }
   }),
 );
@@ -1228,10 +1425,7 @@ ${GATEWAY_IMPORT}`,
         `import '../db/repository.ts';
 ${GATEWAY_IMPORT}`,
       ),
-      validClient.replace(
-        "import { Effect, Redacted } from 'effect';",
-        "import { Effect, Redacted, runSync } from 'effect';",
-      ),
+      validClient.replace(EFFECT_CLIENT_IMPORT, "import { Effect, Redacted, runSync } from 'effect';"),
       validClient.replace(
         '  options: StockListClientOptions,\n)',
         "  options: StockListClientOptions,\n  unused = fetch('/bypass'),\n)",

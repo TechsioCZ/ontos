@@ -7,6 +7,7 @@
     "./api/client": "./src/api/merchandise-client.ts",
     "./apis/demo-order-export": "./shared/apis/demo-order-export.ts",
     "./apis/demo-order-export/client": "./src/api/demo-order-export-client.ts",
+    "./operation/demo-order-export": "./shared/demo-order-export-operation.ts",
     "./apis/demo-catalog-revision": "./shared/apis/demo-catalog-revision.ts",
     "./apis/demo-catalog-revision/client": "./src/api/demo-catalog-revision-client.ts",
     "./apis/manage-catalog-action": "./shared/apis/manage-catalog-action.ts",
