@@ -91,6 +91,7 @@ import { organizationCustomerProfileIcoMigrationRead } from './src/api/organizat
 import { organizationCustomerProfileIcoRead } from './src/api/organization-customer-profile-ico.read.ts';
 import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
 import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
+import { portalAuthIssuanceSourceRead } from './src/api/portal-auth-issuance-source.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
 import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
@@ -101,6 +102,7 @@ import { reactivateCustomerProfileAction } from './src/actions/reactivate-custom
 import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
 import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
+import { relayPortalAuthCommunicationRequestAction } from './src/actions/relay-portal-auth-communication-request.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
 import { removeCustomerPaymentTermAction } from './src/actions/remove-customer-payment-term.action.ts';
@@ -135,6 +137,7 @@ import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollme
 import { changeOwnCustomerPasswordAction } from './src/actions/change-own-customer-password.action.ts';
 import { updateOwnCustomerConsentAction } from './src/actions/update-own-customer-consent.action.ts';
 import { updateOwnCustomerProfileAction } from './src/actions/update-own-customer-profile.action.ts';
+import { submitPortalAuthCommunicationRequestWorker } from './src/workers/submit-portal-auth-communication-request.worker.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
 import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
@@ -205,6 +208,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     reactivateCustomerProfileAction,
     recordPortalEnrollmentOutcomeAction,
     recoverRetailPortalProfileBindingAction,
+    relayPortalAuthCommunicationRequestAction,
     removeCounterpartyPriceGroupAction,
     removeCustomerGroupAction,
     removeCustomerPaymentTermAction,
@@ -302,6 +306,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
         import('@app/customer-payment-term-contracts/payment-term-affected-use-assessment/client'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
+      'portal-auth-issuance-source': () => import('@app/portal-auth-contracts/portal-auth-issuance-source/client'),
       'pricing-purchase-context-verification': () =>
         import('./src/api/pricing-purchase-context-verification-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
@@ -350,6 +355,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     executePrivacyMeasureWorker,
     // <generated-module-registration-workers>
     reconcilePartyMergeWorker,
+    submitPortalAuthCommunicationRequestWorker,
     // </generated-module-registration-workers>
   ],
   reads: [
@@ -411,6 +417,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     organizationCustomerProfileIcoRead,
     paymentTermAffectedUseAssessmentRead,
     paymentTermsResolutionRead,
+    portalAuthIssuanceSourceRead,
     pricingPurchaseContextVerificationRead,
     purchaseCurrencyResolutionRead,
     savedAddressSourceReceiptRead,

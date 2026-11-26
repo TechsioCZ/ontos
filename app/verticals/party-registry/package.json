@@ -96,6 +96,7 @@
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry-contracts": "workspace:*",
     "@app/privacy": "workspace:*",
+    "@app/privacy-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@effect/opentelemetry": "4.0.7",

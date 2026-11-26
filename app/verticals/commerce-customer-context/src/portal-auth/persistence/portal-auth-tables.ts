@@ -17,6 +17,8 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'recoveryReconciliation',
   'recoveryResetLedger',
   'portalAuthAuditEvent',
+  'communicationIssuance',
+  'communicationRequestOutbox',
 ] as const;
 
 /**
@@ -263,6 +265,61 @@ export const recoveryResetLedger = commercePortalAuthSchema.table(
   ],
 );
 
+/**
+ * One Auth issuance that is routed through Communications (#1406, D2): the safe facts Auth tells Communications, Auth's own
+ * settlement of it, and its PROTECTED VALUE. `protectedValue` is the original address, the secret (link or one-time code) and
+ * the ledger token, sealed (AES-256-GCM) under a key derived from the realm secret and bound to this issuance, so no other
+ * row, process or owner can open it and any Auth process can complete its owner-rendered slot while it is Current. It is
+ * cleared the moment the issuance stops being usable: settled, superseded, decided not to be sent, or expired.
+ */
+export const communicationIssuance = commercePortalAuthSchema.table(
+  'communication_issuance',
+  {
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    enrollmentOwnerInvocationId: text('enrollment_owner_invocation_id'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    flow: text('flow').notNull(),
+    issuanceRef: text('issuance_ref').primaryKey(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull(),
+    protectedValue: text('protected_value'),
+    providerSubjectId: text('provider_subject_id').notNull(),
+    settledState: text('settled_state'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('commerce_auth_communication_issuance_subject_idx').on(table.flow, table.providerSubjectId),
+    index('commerce_auth_communication_issuance_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
+/**
+ * The Auth-local outbox of Communication Requests (#1406, D1). A row is written in the SAME transaction as the issuance it
+ * belongs to, so an issuance that rolls back leaves no request, and a committed one always has its request. `request` is the
+ * encoded, secret-free Communication Request exactly as the published contract decodes it. The relay claims a due row under
+ * a lease, submits it at least once and records the decision Communications returned (identities and closed codes only);
+ * a lost lease, a crash or a lost answer leaves the row due again, and Communications' own idempotency answers the replay.
+ */
+export const communicationRequestOutbox = commercePortalAuthSchema.table(
+  'communication_request_outbox',
+  {
+    attempts: integer('attempts').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    issuanceRef: text('issuance_ref')
+      .primaryKey()
+      .references(() => communicationIssuance.issuanceRef),
+    lastFailure: text('last_failure'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    leaseOwner: text('lease_owner'),
+    outcome: text('outcome'),
+    request: text('request').notNull(),
+    state: text('state').notNull().default('PENDING'),
+    tenantId: text('tenant_id').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('commerce_auth_communication_request_outbox_due_idx').on(table.state, table.availableAt)],
+);
+
 export const commercePortalAuthDatabaseSchema = {
   account,
   rateLimit,
@@ -327,4 +384,6 @@ export const COMMERCE_PORTAL_AUTH_TABLES = [
   recoveryReconciliation,
   recoveryResetLedger,
   portalAuthAuditEvent,
+  communicationIssuance,
+  communicationRequestOutbox,
 ] as const;

@@ -94,6 +94,15 @@ export interface GatewayNativeEvidenceOperations {
   ) => Evidence<WorkloadEvidence & { readonly sourceAccess: ModuleEntrypointAccess }>;
   readonly admitRecovery: (input: NativeRecoveryInput) => Evidence<WorkloadEvidence>;
   readonly admitWorkload: (input: NativeWorkloadInput) => Evidence<WorkloadEvidence>;
+  readonly loadContinuationRow: <A, I>(
+    input: {
+      readonly consumer: { readonly moduleKey: string };
+      readonly continuation: { readonly actionKey: string; readonly topic: string; readonly workerKey: string };
+      readonly deliveryId: string;
+      readonly tenantId: string;
+    },
+    schema: Schema.Codec<A, I>,
+  ) => Evidence<A>;
   readonly loadDispatchRow: <A, I>(
     input: DispatchSelection,
     contract: DispatchContract,

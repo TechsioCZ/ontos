@@ -31,7 +31,8 @@
     "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json",
     "payment": "http://localhost:4130/.well-known/ontos-module-manifest.json",
     "promotion": "http://localhost:4131/.well-known/ontos-module-manifest.json",
-      "symmy-integration": "http://localhost:4132/.well-known/ontos-module-manifest.json"
+      "symmy-integration": "http://localhost:4132/.well-known/ontos-module-manifest.json",
+    "communications": "http://localhost:4133/communications-api"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -69,7 +70,8 @@
     "crm": 4125,
     "payment": 4130,
     "promotion": 4131,
-      "symmy-integration": 4132
+      "symmy-integration": 4132,
+    "communications": "http://localhost:4133/communications-api"
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -1705,6 +1707,54 @@
           "buildMarker": "d271b1bd0da558f4"
         }
       }
+    },
+    "communications": {
+      "apiBaseUrl": "http://localhost:4133/communications-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/communications",
+        "buildMarker": "f8da4cabfbb5119c"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-communications",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMUNICATIONS",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_COMMUNICATIONS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_COMMUNICATIONS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_COMMUNICATIONS_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_COMMUNICATIONS_WORKER",
+          "serviceBindingEnv": "VERTICAL_COMMUNICATIONS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_COMMUNICATIONS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_COMMUNICATIONS_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalCommunicationsBackend",
+        "manifestEnv": "VERTICAL_COMMUNICATIONS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4133/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4133/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/communications",
+          "buildMarker": "f8da4cabfbb5119c"
+        }
+      }
     }
   },
   "apis": {
@@ -1728,7 +1778,7 @@
     "property-leasing": "http://localhost:4115/property-leasing-api",
     "legal-agreements": "http://localhost:4116/legal-agreements-api",
     "work-tasks": "http://localhost:4117/work-tasks-api",
-    "workforce": "http://localhost:4120/workforce-api",
+    "workforce": "http://localhost:4133/workforce-api",
     "tagging": "http://localhost:4121/tagging-api",
     "sales-pipeline": "http://localhost:4122/sales-pipeline-api",
     "merchandise": "http://localhost:4123/merchandise-api",
@@ -1739,6 +1789,7 @@
     "crm": "http://localhost:4125/crm-api",
     "payment": "http://localhost:4130/payment-api",
     "promotion": "http://localhost:4131/promotion-api",
-      "symmy-integration": "http://localhost:4132/symmy-integration-api"
+      "symmy-integration": "http://localhost:4132/symmy-integration-api",
+    "communications": "http://localhost:4133/communications-api"
   }
 }

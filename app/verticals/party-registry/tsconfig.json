@@ -46,6 +46,9 @@
     },
     {
       "path": "../../packages/party-registry-identity-contracts"
+    },
+    {
+      "path": "../../packages/privacy-contracts"
     }
   ]
 }

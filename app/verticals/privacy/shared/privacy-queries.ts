@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 
 import { OwnerContributionSchema } from './domain/owner-contribution.ts';
+import { OwnerInventoryLookupSchema } from './domain/privacy-owner-scope.ts';
 import {
   PrivacyApplicabilityDecisionSchema,
   PrivacyApplicabilityPolicySchema,
@@ -142,5 +143,31 @@ export const DsrCasesResponseSchema = Schema.Struct({
   metadata: QueryMetadataSchema,
 });
 
-export const OwnerInventoryRequestSchema = Schema.Struct({ activityRef: ProcessingActivityRefSchema });
+const PrivacyRightLiteralsSchema = Schema.Literals([
+  'ACCESS',
+  'PORTABILITY',
+  'RECTIFICATION',
+  'ERASURE',
+  'RESTRICTION',
+  'OBJECTION',
+]);
+
+/**
+ * The exact owner lookup of ONE Data Subject for owners that publish an Owner Coverage Read (#595-#597). It is optional and
+ * additive: without it the Read stays the structural inventory it always was. Privacy supplies only references it has already
+ * confirmed; the owner performs no Party Matching and the Read never searches owner data on its own.
+ */
+export const OwnerInventoryOwnerLookupSchema = Schema.Struct({
+  controllerRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  requestedScopeRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  right: Schema.optionalKey(PrivacyRightLiteralsSchema),
+  subjectRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  trustedLookups: Schema.Array(OwnerInventoryLookupSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type OwnerInventoryOwnerLookup = typeof OwnerInventoryOwnerLookupSchema.Type;
+
+export const OwnerInventoryRequestSchema = Schema.Struct({
+  activityRef: ProcessingActivityRefSchema,
+  ownerLookup: Schema.optionalKey(OwnerInventoryOwnerLookupSchema),
+});
 export { PrivacyOwnerInventoryResultSchema as OwnerInventoryResponseSchema } from './domain/owner-inventory.ts';

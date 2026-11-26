@@ -1,7 +1,7 @@
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy/api/source-processing-eligibility';
+} from '@app/privacy-contracts/source-processing-eligibility';
 import { ConfigProvider, DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 

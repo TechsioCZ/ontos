@@ -66,6 +66,7 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLERS: ReadonlyMap<string, readonly 
   ['commerce.pricing.source-read', [symmyIntegration]],
   ['commerce.pricing.source-write', [symmyIntegration]],
   ['commerce.tax.symmy-seller-vat-fixture-import', [symmyIntegration]],
+  ['communications.core.request-source', [customerContext]],
   ['integration.symmy.source-organization-facts.read', ['privacy']],
   ['party.registry.source-read', [customerContext, 'privacy', symmyIntegration]],
   ['party.registry.source-write', [symmyIntegration]],
@@ -74,6 +75,7 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLERS: ReadonlyMap<string, readonly 
   ['pricing.price-group-catalog.source-write', [symmyIntegration]],
   ['privacy.core.organization-business-check', [customerContext, 'party-registry']],
   ['privacy.core.organization-profile-ico-check', [customerContext]],
+  ['privacy.core.pre-verification-subject-source', [customerContext]],
   ['privacy.core.source-processing-check', [customerContext, 'party-registry', symmyIntegration]],
 ]);
 
@@ -124,6 +126,7 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLS = {
     '{"allowRecoverySource":true,"audience":"privacy","declarationKey":"privacy.core.organization-business-applicability.read","entrypointKey":"privacy.core.api.organization-business-applicability","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"privacy.core.organization-business-check"}',
     '{"allowRecoverySource":true,"audience":"privacy","declarationKey":"privacy.core.organization-profile-ico-applicability.read","entrypointKey":"privacy.core.api.organization-profile-ico-applicability","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"privacy.core.organization-profile-ico-check"}',
     '{"allowRecoverySource":true,"audience":"privacy","declarationKey":"privacy.core.source-processing-eligibility.read","entrypointKey":"privacy.core.api.source-processing-eligibility","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"privacy.core.source-processing-check"}',
+    '{"audience":"communications","declarationKey":"communications.core.communication-request.submit","entrypointKey":"communications.core.submit-communication-request","jobKey":"commerce.customer-context.submit-portal-auth-communication-request","legalEntityScope":"optional","schemaVersion":"1","workerKey":"commerce.customer-context.submit-portal-auth-communication-request","workloadKey":"communications.core.request-source"}',
     '{"audience":"party-registry","declarationKey":"party.registry.counterparty-organization-ico-facts.read","entrypointKey":"party.registry.api.counterparty-organization-ico-facts","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.organization-ico-facts.read","workloadKey":"party.registry.source-read"}',
     '{"audience":"party-registry","declarationKey":"party.registry.source-counterparty-admission.read","entrypointKey":"party.registry.api.source-counterparty-admission","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"party.registry.source-read"}',
     '{"audience":"party-registry","declarationKey":"party.registry.source-counterparty-admission.read","entrypointKey":"party.registry.api.source-counterparty-admission","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-write","workloadKey":"party.registry.source-read"}',
@@ -134,6 +137,7 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLS = {
     '{"audience":"privacy","declarationKey":"privacy.core.organization-business-applicability.read","entrypointKey":"privacy.core.api.organization-business-applicability","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-write","workloadKey":"privacy.core.organization-business-check"}',
     '{"audience":"privacy","declarationKey":"privacy.core.organization-profile-ico-applicability.read","entrypointKey":"privacy.core.api.organization-profile-ico-applicability","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"privacy.core.organization-profile-ico-check"}',
     '{"audience":"privacy","declarationKey":"privacy.core.organization-profile-ico-applicability.read","entrypointKey":"privacy.core.api.organization-profile-ico-applicability","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-write","workloadKey":"privacy.core.organization-profile-ico-check"}',
+    '{"audience":"privacy","declarationKey":"privacy.core.pre-verification-subject.bind","entrypointKey":"privacy.core.bind-pre-verification-subject","jobKey":"commerce.customer-context.submit-portal-auth-communication-request","legalEntityScope":"optional","schemaVersion":"1","workerKey":"commerce.customer-context.submit-portal-auth-communication-request","workloadKey":"privacy.core.pre-verification-subject-source"}',
     '{"audience":"privacy","declarationKey":"privacy.core.source-processing-eligibility.read","entrypointKey":"privacy.core.api.source-processing-eligibility","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-read","workloadKey":"privacy.core.source-processing-check"}',
     '{"audience":"privacy","declarationKey":"privacy.core.source-processing-eligibility.read","entrypointKey":"privacy.core.api.source-processing-eligibility","jobKey":"integration.symmy.execute-symmy-job","legalEntityScope":"required","schemaVersion":"1","sourceWorkloadKey":"commerce.customer-context.source-write","workloadKey":"privacy.core.source-processing-check"}',
   ],

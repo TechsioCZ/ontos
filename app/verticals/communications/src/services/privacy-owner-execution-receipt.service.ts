@@ -1,0 +1,215 @@
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { PrivacyOwnerCoverageRequestSchema } from '@app/communications-contracts/privacy-owner-coverage';
+import type {
+  PrivacyOwnerExecutionOutcomeRequest,
+  PrivacyOwnerExecutionReceipt,
+} from '@app/communications-contracts/privacy-owner-execution-outcome';
+import {
+  communicationsMeasureOf,
+  evidenceRecordsOf,
+  fingerprintCommunicationsHandoff,
+  ownerScopeCanonicalText,
+  privacyOutcomeOf,
+  rejectedOutcomeOf,
+  sha256Hex,
+} from '../../shared/privacy-owner/measure-handoff.ts';
+import type { DispatchedMeasure, StoredExecutionEvidence } from '../../shared/privacy-owner/measure-handoff.ts';
+import {
+  evaluateCommunicationsOwnerMeasure,
+  handoffRecordOf,
+  isOpenObligation,
+} from '../../shared/privacy-owner/outcome.ts';
+import type {
+  OwnerBlockerAssessment,
+  OwnerEnforcementSignal,
+  OwnerMeasureEvaluationInput,
+} from '../../shared/privacy-owner/outcome.ts';
+import type { Crypto } from 'effect';
+import { Context, DateTime, Effect, Option, Result, Schema } from 'effect';
+import type { PrivacyMeasureEncoded, PrivacyOwnerCoverageResultEncoded } from '@app/shared-contracts';
+
+import { safeCauseOf } from '../domain/intake/safe-cause.ts';
+import { readPrivacyMeasureHandoffRoutine } from '../persistence/communications-routines.ts';
+import { HandoffDocumentSchema } from '../persistence/privacy-measure-records.ts';
+import { PrivacyOwnerCoverageUnavailable } from './privacy-owner-coverage-unavailable.ts';
+import { defaultPrivacyOwnerCoverageOptions, privacyOwnerCoverageForScope } from './privacy-owner-coverage.service.ts';
+import type { PrivacyOwnerCoverageOptions } from './privacy-owner-coverage.service.ts';
+
+/**
+ * The owner receipt of one Privacy Measure the owner took over (#1410, #600-#602). It READS the owner's recorded handoff and its
+ * human-confirmed evidence, asks the owner's own coverage for the exact scope the handoff carries, and lets the existing
+ * outcome evaluator say what is evidenced. It writes nothing and cannot cause a write: a measure with no confirmed evidence
+ * is received and nothing more.
+ */
+const decodeDocument = Schema.decodeUnknownEffect(HandoffDocumentSchema);
+
+const unavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new PrivacyOwnerCoverageUnavailable({ reason: 'The owner handoff records are unavailable' }),
+    'cause',
+    { enumerable: false, value: safeCauseOf(cause) },
+  );
+
+export interface PrivacyOwnerExecutionReceiptService {
+  readonly receipt: (
+    request: PrivacyOwnerExecutionOutcomeRequest,
+  ) => Effect.Effect<Option.Option<PrivacyOwnerExecutionReceipt>, PrivacyOwnerCoverageUnavailable, Crypto.Crypto>;
+}
+
+export class OwnerExecutionReceipt extends Context.Service<
+  OwnerExecutionReceipt,
+  PrivacyOwnerExecutionReceiptService
+>()('@app/communications/services/privacy-owner-execution-receipt.service/OwnerExecutionReceipt') {}
+
+/** Coverage the owner cannot give for a scope it cannot even ask about: it says so and never proves anything. */
+const incompleteCoverage = (
+  measure: DispatchedMeasure['measure'],
+  assessedAt: string,
+): PrivacyOwnerCoverageResultEncoded => ({
+  assessedAt,
+  contentStatus: 'UNKNOWN',
+  coverageParts: [],
+  coverageStatus: 'INDETERMINATE',
+  evidenceRefs: [],
+  scope: measure.scope,
+});
+
+const decodeCoverageRequest = Schema.decodeUnknownResult(PrivacyOwnerCoverageRequestSchema);
+
+/**
+ * What only Privacy and the owner's own enforcement can say, asked AGAIN every time an outcome is evaluated:
+ * - `blockers`: Privacy's CURRENT assessment of Legal Holds and retention obligations on the measure. The assessment a dispatch
+ *   carried is a point-in-time copy and is never the decision, because a hold can appear after dispatch. `none` means the
+ *   owner could not ask (or Privacy did not answer): the measure is then NOT ASSESSED, never "no blocker".
+ * - `enforcement`: a real signal that an owner Action took effect for exact targets (R-D11). `none` means no signal exists.
+ * Communications publishes neither today, so the production default is the explicit fail-closed form below.
+ */
+export interface OwnerExecutionFacts {
+  readonly blockers: (measure: PrivacyMeasureEncoded) => Effect.Effect<Option.Option<OwnerBlockerAssessment>>;
+  readonly enforcement: (measure: PrivacyMeasureEncoded) => Effect.Effect<Option.Option<OwnerEnforcementSignal>>;
+}
+
+export const failClosedOwnerExecutionFacts: OwnerExecutionFacts = Object.freeze({
+  blockers: () => Effect.succeed(Option.none()),
+  enforcement: () => Effect.succeed(Option.none()),
+});
+
+type EvaluationInput = Omit<OwnerMeasureEvaluationInput, 'blockerAssessment' | 'enforcement'>;
+
+/** The owner's answer for one measure, from the evidence and the facts asked now. */
+export const evaluateWithOwnerFacts = Effect.fn('CommunicationsPrivacyReceipt.evaluate')(function* evaluate(
+  facts: OwnerExecutionFacts,
+  input: EvaluationInput,
+) {
+  const { blockers, enforcement } = yield* Effect.all(
+    { blockers: facts.blockers(input.measure), enforcement: facts.enforcement(input.measure) },
+    { concurrency: 2 },
+  );
+  return evaluateCommunicationsOwnerMeasure({
+    ...input,
+    blockerAssessment: Option.getOrUndefined(blockers),
+    enforcement: Option.getOrUndefined(enforcement),
+  });
+});
+
+/**
+ * The one human disposition owner Privacy supplied, when exactly one is supplied for the owner's categories; none or
+ * several different ones leave the obligation unassigned and escalating, never guessed.
+ */
+export const humanDispositionOwnerOf = (supplied: PrivacyOwnerCoverageOptions['supplied']): string | undefined => {
+  const owners = new Set(
+    Object.values(supplied)
+      .map((category) => category.humanDispositionOwnerRef?.trim())
+      .filter((ref): ref is string => ref !== undefined && ref.length > 0),
+  );
+  const [only] = owners;
+  return owners.size === 1 ? only : undefined;
+};
+
+/**
+ * The open obligation record (#1410 AC-07, AC-13) shown next to the outcome while the owner has not evidenced every target: who
+ * is responsible and what happens next. A closed obligation shows none. It carries no deadline and performed nothing.
+ */
+export const openObligationOf = (
+  outcome: Parameters<typeof isOpenObligation>[0],
+  supplied: PrivacyOwnerCoverageOptions['supplied'],
+) => (isOpenObligation(outcome) ? { openObligation: handoffRecordOf(outcome, humanDispositionOwnerOf(supplied)) } : {});
+
+export const privacyOwnerExecutionReceiptForScope = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  options: PrivacyOwnerCoverageOptions = defaultPrivacyOwnerCoverageOptions,
+  facts: OwnerExecutionFacts = failClosedOwnerExecutionFacts,
+): PrivacyOwnerExecutionReceiptService => ({
+  receipt: Effect.fn('CommunicationsPrivacyReceipt.receipt')(function* receipt(request) {
+    const { handoff } = request;
+    if (handoff.tenantId !== scope.tenantId) {
+      return Option.none();
+    }
+    const attempt = request.attempt ?? 1;
+    const { fingerprint, rows } = yield* Effect.all(
+      {
+        fingerprint: fingerprintCommunicationsHandoff(handoff).pipe(Effect.mapError(unavailable)),
+        rows: transaction
+          .invoke(readPrivacyMeasureHandoffRoutine, [handoff.idempotencyKey])
+          .pipe(Effect.mapError(unavailable)),
+      },
+      { concurrency: 2 },
+    );
+    const document = yield* decodeDocument(rows[0]?.result).pipe(Effect.mapError(unavailable));
+    if (Option.isNone(document.record)) {
+      return Option.none();
+    }
+    const { record } = document;
+    const stored = record.value;
+    const now = yield* DateTime.now;
+    const common = {
+      attempt,
+      handoff,
+      occurredAt: stored.receivedAt,
+      outcomeId: `communications.core.privacy-owner-outcome:${stored.handoffFingerprint}:${String(attempt)}`,
+      recordedAt: now,
+    };
+    const handoffRef = `communications.core.privacy-measure-handoff:${stored.handoffFingerprint}`;
+    const reject = (reason: Parameters<typeof rejectedOutcomeOf>[0]['reason']) =>
+      Option.some({
+        handoffFingerprint: stored.handoffFingerprint,
+        outcome: rejectedOutcomeOf({ ...common, evidenceRefs: [handoffRef], reason }),
+      });
+    const dispatched = communicationsMeasureOf(handoff);
+    if (Result.isFailure(dispatched)) {
+      return reject(dispatched.failure);
+    }
+    const digest = yield* sha256Hex(ownerScopeCanonicalText(dispatched.success)).pipe(Effect.mapError(unavailable));
+    if (stored.handoffFingerprint !== fingerprint) {
+      // Another handoff under a recorded idempotency identity is a conflict, not an invalid owner scope.
+      return reject('HANDOFF_DOES_NOT_MATCH_THE_RECORDED_HANDOFF');
+    }
+    if (stored.scopeDigest !== digest) {
+      return reject('RECORDED_OWNER_SCOPE_DIGEST_DOES_NOT_MATCH_THE_HANDOFF');
+    }
+    const { lookups, measure } = dispatched.success;
+    const coverageRequest = decodeCoverageRequest({ scope: measure.scope, trustedLookups: lookups });
+    const coverage = Result.isFailure(coverageRequest)
+      ? Option.some({ coverage: incompleteCoverage(measure, DateTime.formatIso(now)) })
+      : yield* privacyOwnerCoverageForScope(transaction, scope, options).coverage(coverageRequest.success);
+    if (Option.isNone(coverage)) {
+      return Option.none();
+    }
+    const evidence: readonly StoredExecutionEvidence[] = document.evidence;
+    const owner = yield* evaluateWithOwnerFacts(facts, {
+      confirmedAt: DateTime.formatIso(now),
+      coverage: coverage.value.coverage,
+      evidence: evidenceRecordsOf(evidence, measure, digest),
+      evidenceRefs: [handoffRef],
+      measure,
+      outcomeRef: common.outcomeId,
+    });
+    return Option.some({
+      handoffFingerprint: stored.handoffFingerprint,
+      // The open obligation (who is responsible, what next) is shown for as long as the owner has not evidenced every target.
+      ...openObligationOf(owner, options.supplied),
+      outcome: privacyOutcomeOf({ ...common, outcome: owner }),
+    });
+  }),
+});

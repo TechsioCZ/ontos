@@ -4,7 +4,7 @@ import {
   RegisteredGatewayRouteScopeSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';

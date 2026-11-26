@@ -27,6 +27,7 @@ import { CommercePortalAuthService } from '../../session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../session/lifecycle-service.ts';
 import { CommercePortalAuthConfig } from '../config-service.ts';
 import { encodeCommerceSessionReference } from '../session-reference.ts';
+import { TWO_FACTOR_COOKIE_NAME } from '../better-auth-two-factor.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import type { CommercePortalAuthConfigValue } from '../config.ts';
 import {
@@ -84,7 +85,7 @@ const mfaSubjectCookieNames = (configuration: CommercePortalAuthConfigValue): re
     },
     baseURL: configuration.baseUrl,
   });
-  return [cookie('session_token').name, cookie('two_factor').name];
+  return [cookie('session_token').name, cookie(TWO_FACTOR_COOKIE_NAME).name];
 };
 
 /**

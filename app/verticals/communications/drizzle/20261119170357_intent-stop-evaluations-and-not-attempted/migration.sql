@@ -1,0 +1,6 @@
+ALTER TABLE "communications"."intent_handoff_stops" DROP CONSTRAINT "communications_handoff_stops_intent_uk";--> statement-breakpoint
+ALTER TABLE "communications"."intent_handoff_stops" ADD COLUMN "evaluation_seq" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE "communications"."intent_handoff_stops" ADD COLUMN "proven" boolean GENERATED ALWAYS AS (jsonb_path_exists("reasons", '$[*] ? (@.proven == true)')) STORED;--> statement-breakpoint
+ALTER TABLE "communications"."intent_handoff_stops" ADD CONSTRAINT "communications_handoff_stops_evaluation_uk" UNIQUE("tenant_id","intent_id","evaluation_seq");--> statement-breakpoint
+ALTER TABLE "communications"."intent_handoff_stops" ADD CONSTRAINT "communications_handoff_stops_evaluation_ck" CHECK ("evaluation_seq" > 0);--> statement-breakpoint
+ALTER TABLE "communications"."delivery_attempts" DROP CONSTRAINT "communications_attempts_state_ck", ADD CONSTRAINT "communications_attempts_state_ck" CHECK ("state" in ('ACCEPTED', 'INDETERMINATE', 'NOT_ATTEMPTED', 'PREPARED', 'REJECTED', 'UNAVAILABLE'));

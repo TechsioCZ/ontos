@@ -111,6 +111,7 @@ export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
 export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
 // Worker hosts enrol their database identities through this entrypoint, never a Core `db/` subpath.
 export { defineDatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
+export { configureDatabasePool } from '../db/pool-configuration.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
 export {

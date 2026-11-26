@@ -8,9 +8,9 @@ import {
   SourceProcessingIdentitySchema,
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
-} from '@app/privacy/api/source-processing-eligibility';
-import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/client';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Array as EffectArray, Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 

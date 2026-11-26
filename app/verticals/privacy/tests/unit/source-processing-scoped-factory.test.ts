@@ -3,7 +3,7 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SourceSyncProcessingPolicySchema } from '../../shared/domain/source-sync-processing-policy.ts';
+import { SourceSyncProcessingPolicySchema } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 import { sourceProcessingEligibilityRead } from '../../src/api/source-processing-eligibility.read.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../../database/identity-enrollment.ts';
 import { installOperationalScopeAt } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';

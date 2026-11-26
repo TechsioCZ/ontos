@@ -1,0 +1,48 @@
+{
+  "name": "@app/privacy-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Privacy-owned public eligibility, Privacy Measure handoff and owner-outcome contracts that Communications and other consumers import.",
+  "type": "module",
+  "exports": {
+    "./domain/anti-resurrection": "./src/domain/anti-resurrection.ts",
+    "./domain/party-reference": "./src/domain/party-reference.ts",
+    "./domain/pre-verification-binding-ref": "./src/domain/pre-verification-binding-ref.ts",
+    "./domain/privacy-eligibility-evidence": "./src/domain/privacy-eligibility-evidence.ts",
+    "./domain/privacy-measure-handoff": "./src/domain/privacy-measure-handoff.ts",
+    "./domain/privacy-owner-scope": "./src/domain/privacy-owner-scope.ts",
+    "./domain/privacy-subject": "./src/domain/privacy-subject.ts",
+    "./domain/processing-scope-ref": "./src/domain/processing-scope-ref.ts",
+    "./outbox/privacy-measure-dispatched": "./src/outbox/privacy-measure-dispatched.ts",
+    "./pre-verification-eligibility": "./src/apis/pre-verification-eligibility.ts",
+    "./pre-verification-eligibility/client": "./src/api/pre-verification-eligibility-client.ts",
+    "./record-owner-execution-outcome": "./src/apis/record-owner-execution-outcome.ts",
+    "./record-owner-execution-outcome/client": "./src/api/record-owner-execution-outcome-client.ts",
+    "./resources/privacy-subject": "./src/resources/privacy-subject.ts",
+    "./source-processing-eligibility": "./src/apis/source-processing-eligibility.ts",
+    "./source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts",
+    "./domain/source-sync-processing-policy": "./src/domain/source-sync-processing-policy.ts"
+  },
+  "scripts": {
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.7",
+    "@app/consent-authority-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43"
+  },
+  "ontosContractOwner": {
+    "appId": "privacy",
+    "moduleApis": [
+      "source-processing-eligibility",
+      "pre-verification-eligibility",
+      "record-owner-execution-outcome"
+    ],
+    "moduleId": "privacy.core",
+    "packageName": "@app/privacy"
+  }
+}

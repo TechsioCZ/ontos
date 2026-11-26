@@ -2,15 +2,13 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import {
-  SourceProcessingContextSchema,
-  SourceProcessingEligibilityRequestSchema,
-} from '../../shared/apis/source-processing-eligibility.ts';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import {
   PrivacyApplicabilityPolicySchema,
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import {
   evaluateSourceProcessingEligibility,
   sourceSubjectMatchesRequest,

@@ -3,8 +3,8 @@
 // @ontos-resource-slug privacy-subject
 import type { OntosResourceType } from '@app/core-runtime';
 
-export { PrivacySubjectRefSchema } from '@app/consent-authority-contracts';
-export type { PrivacySubjectRef } from '@app/consent-authority-contracts';
+export { PrivacySubjectRefSchema } from '@app/privacy-contracts/resources/privacy-subject';
+export type { PrivacySubjectRef } from '@app/privacy-contracts/resources/privacy-subject';
 
 export const privacySubjectResourceDescriptor = {
   capabilities: {

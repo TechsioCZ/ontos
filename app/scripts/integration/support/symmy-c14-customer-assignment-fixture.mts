@@ -2,7 +2,7 @@ import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/r
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
-import type { SourceProcessingContext } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingContext } from '@app/privacy/domain/source-processing-context';
 import { AntiResurrectionProtectionSchema } from '@app/privacy/domain/anti-resurrection';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';

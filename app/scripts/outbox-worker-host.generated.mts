@@ -21,6 +21,7 @@ import { outboxWorkerEntry as projectsOutboxWorkerEntry } from '@app/projects/ou
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 import { outboxWorkerEntry as paymentOutboxWorkerEntry } from '@app/payment/outbox-worker-host';
 import { outboxWorkerEntry as symmyIntegrationOutboxWorkerEntry } from '@app/symmy-integration/outbox-worker-host';
+import { outboxWorkerEntry as communicationsOutboxWorkerEntry } from '@app/communications/outbox-worker-host';
 
 startOutboxWorkerHost({
   entries: [
@@ -44,6 +45,7 @@ startOutboxWorkerHost({
     commerceOrderOutboxWorkerEntry,
     paymentOutboxWorkerEntry,
     symmyIntegrationOutboxWorkerEntry,
+    communicationsOutboxWorkerEntry,
   ],
   health: true,
   startup: startZeropsOutboxHost,

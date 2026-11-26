@@ -44,6 +44,7 @@ const CUSTOMER_CONTEXT_UNIT = 'commerce-customer-context';
 const ORDER_UNIT = 'commerce-order';
 const PAYMENT_UNIT = 'payment';
 const PRIVACY_UNIT = 'privacy';
+const COMMUNICATIONS_UNIT = 'communications';
 const SYMMY_INTEGRATION_UNIT = 'symmy-integration';
 
 /** An owner API the Cloudflare Worker calls by URL on the owner's custom domain. */
@@ -57,6 +58,12 @@ const cartApi = byUrl(CART_UNIT, 'ONTOS_COMMERCE_CART_API_BASE_URL');
 const customerContextApi = byUrl(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL');
 
 export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] = [
+  {
+    apiDependencies: [zeropsOnly(PRIVACY_UNIT, 'ONTOS_PRIVACY_API_BASE_URL'), shellGateway],
+    credentialVariables: [],
+    operatorValues: [],
+    unitId: COMMUNICATIONS_UNIT,
+  },
   {
     apiDependencies: [shellGateway],
     credentialVariables: [],
@@ -75,11 +82,19 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
       byUrl(ORDER_UNIT, 'ONTOS_COMMERCE_ORDER_API_BASE_URL'),
       // The Worker reaches Price Group Catalog through its VERTICAL_PRICE_GROUP_CATALOG_WORKER binding.
       zeropsOnly('price-group-catalog', 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL'),
+      // The opt-in Portal Auth communication relay of the Outbox Worker (#1406) calls the module's own relay Action, and its
+      // source worker calls Communications; both are reached inside Zerops only. A topology without Communications omits
+      // that base, and a deployment that never enables the relay reads neither.
+      zeropsOnly(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
+      zeropsOnly(COMMUNICATIONS_UNIT, 'ONTOS_COMMUNICATIONS_API_BASE_URL'),
+      // The same source worker binds the pre-verification Privacy subject first, and the Privacy measure worker calls Privacy.
+      zeropsOnly(PRIVACY_UNIT, 'ONTOS_PRIVACY_API_BASE_URL'),
       shellGateway,
     ],
     credentialVariables: [
       // Per-Tenant Core identity and gateway keys: { "<tenant id>": { coreIdentityApiKey, gatewayApiKey } }.
       'COMMERCE_TENANT_CREDENTIALS',
+      'COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY',
     ],
     operatorValues: [],
     unitId: CUSTOMER_CONTEXT_UNIT,

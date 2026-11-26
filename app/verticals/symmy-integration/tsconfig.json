@@ -67,6 +67,9 @@
     },
     {
       "path": "../../packages/party-registry-contracts"
+    },
+    {
+      "path": "../../packages/privacy-contracts"
     }
   ]
 }

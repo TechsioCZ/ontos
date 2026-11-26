@@ -55,6 +55,22 @@ export type {
   PrivacySubject,
   PrivacySubjectEncoded,
 } from './privacy-owner-contract.ts';
+export {
+  PrivacyDispatchContinuationPayloadSchema,
+  privacyDispatchConsumerOf,
+  privacyDispatchConsumerOfContinuationWorker,
+  privacyDispatchConsumerOfOperation,
+  privacyDispatchConsumerOfWorker,
+  privacyDispatchConsumers,
+  privacyDispatchContinuationOperation,
+  privacyDispatchOperationFitsConsumer,
+  privacyDispatchReceiptVerdict,
+} from './privacy-dispatch-consumers.ts';
+export type {
+  PrivacyDispatchConsumer,
+  PrivacyDispatchContinuation,
+  PrivacyDispatchContinuationPayload,
+} from './privacy-dispatch-consumers.ts';
 
 export {
   API_KEY_GATEWAY_CONTEXT_HEADER,

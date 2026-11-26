@@ -66,6 +66,7 @@
     "@app/pricing": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/privacy": "workspace:*",
+    "@app/privacy-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/tax": "workspace:*",
     "@effect/opentelemetry": "4.0.7",

@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { ConfigProvider, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 

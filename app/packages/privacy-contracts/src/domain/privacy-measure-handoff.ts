@@ -1,0 +1,522 @@
+import { normalizeOwnerScope, PrivacyMeasureOwnerScopeSchema } from './privacy-owner-scope.ts';
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import { Effect, Schema } from 'effect';
+
+const Text = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const Ref = Text;
+const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const Timestamp = PrivacyIsoTimestampSchema;
+
+export const PrivacyMeasureKindSchema = Schema.Literals(['RECTIFY', 'RESTRICT', 'ANONYMIZE', 'DELETE', 'EXPORT']);
+export type PrivacyMeasureKind = typeof PrivacyMeasureKindSchema.Type;
+
+/** The only payload the coordinator may send to an owning capability. */
+export const PrivacyMeasureHandoffSchema = Schema.Struct({
+  contentScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  controllerObligationRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  dispositionDecision: Schema.toEncoded(
+    Schema.OptionFromNullOr(Schema.Literals(['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'])),
+  ),
+  expectedEvidenceRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
+  idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
+  kind: PrivacyMeasureKindSchema,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  ownerScope: Schema.optionalKey(PrivacyMeasureOwnerScopeSchema),
+  owningCapability: Ref,
+  preconditionRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
+  requestedAt: Timestamp,
+  requestedResult: Ref,
+  resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  right: Schema.toEncoded(
+    Schema.OptionFromNullOr(
+      Schema.Literals(['ACCESS', 'PORTABILITY', 'RECTIFICATION', 'ERASURE', 'RESTRICTION', 'OBJECTION']),
+    ),
+  ),
+  sourceDecisionRef: Ref,
+  sourceDecisionRevision: Revision,
+  subjectRef: Ref,
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
+});
+export type PrivacyMeasureHandoff = typeof PrivacyMeasureHandoffSchema.Type;
+
+/**
+ * The request of an owner's own receipt Read for ONE dispatched measure: the exact complete handoff and the attempt. It can
+ * never carry a result. The Shell binds its hash to the handoff of the native dispatch, so it is defined once, here, for the
+ * coordinator that sends it, the Shell that attests it and every owner that answers it.
+ */
+export const OwnerExecutionReceiptRequestSchema = Schema.Struct({
+  attempt: Schema.optionalKey(Revision),
+  handoff: PrivacyMeasureHandoffSchema,
+});
+export type OwnerExecutionReceiptRequest = typeof OwnerExecutionReceiptRequestSchema.Type;
+
+export const OwnerExecutionStatusSchema = Schema.Literals([
+  'RECEIVED',
+  'IN_PROGRESS',
+  'SUCCEEDED',
+  'PARTIAL',
+  'BUSINESS_REJECTED',
+  'NOT_APPLICABLE',
+  'TECHNICAL_FAILED',
+  'BLOCKED',
+  'INDETERMINATE',
+]);
+export type OwnerExecutionStatus = typeof OwnerExecutionStatusSchema.Type;
+
+export const OwnerExecutionOutcomeSchema = Schema.Struct({
+  attempt: Revision,
+  evidenceRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
+  idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
+  includedResourceRefs: Schema.Array(Ref).check(Schema.isMaxLength(256)),
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  occurredAt: Timestamp,
+  outcomeId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyOutcomeId'))),
+  owningCapability: Ref,
+  reason: Ref,
+  recordedAt: Timestamp,
+  remainingResourceRefs: Schema.Array(Ref).check(Schema.isMaxLength(256)),
+  sourceDecisionRef: Ref,
+  sourceDecisionRevision: Revision,
+  status: OwnerExecutionStatusSchema,
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
+});
+export type OwnerExecutionOutcome = typeof OwnerExecutionOutcomeSchema.Type;
+
+const ownerExecutionOutcomeEquivalence = Schema.toEquivalence(OwnerExecutionOutcomeSchema);
+
+/**
+ * Whether the outcome Privacy already holds for an attempt is the SAME owner receipt as an incoming one. The owner stamps
+ * each read of its receipt with the instant of that read (`recordedAt`); every other field is the receipt itself. A second
+ * report of the same receipt for the same attempt (an owner continuation after a manual pull of that attempt, or the
+ * reverse) is therefore the same fact, never a conflict; any other difference is one.
+ */
+export const isSameOwnerExecutionReceipt = (stored: OwnerExecutionOutcome, incoming: OwnerExecutionOutcome): boolean =>
+  ownerExecutionOutcomeEquivalence({ ...stored, recordedAt: incoming.recordedAt }, incoming);
+
+/** Public coordinator input identifies an attempt but cannot carry an owner result. */
+export const OwnerExecutionOutcomeRequestSchema = Schema.Struct({
+  attempt: Revision,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
+});
+export type OwnerExecutionOutcomeRequest = typeof OwnerExecutionOutcomeRequestSchema.Type;
+
+/**
+ * A result returned by the private owner-authority seam. The coordinator may
+ * persist it only after matching every identity and scope dimension against
+ * the stored handoff.
+ */
+export const OwnerExecutionAuthorityResultSchema = Schema.Struct({
+  authorityRef: Ref,
+  contentScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  outcome: OwnerExecutionOutcomeSchema,
+  receiptRef: Ref,
+  resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  subjectRef: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
+});
+export type OwnerExecutionAuthorityResult = typeof OwnerExecutionAuthorityResultSchema.Type;
+
+export interface OwnerActionRequest {
+  readonly actionKey: string;
+  readonly handoff: PrivacyMeasureHandoff;
+  readonly idempotencyKey: string;
+}
+
+export interface PrivacyMeasureAttempt {
+  readonly attempt: number;
+  readonly outcome: OwnerExecutionOutcome | null;
+  readonly request: OwnerActionRequest;
+  readonly startedAt: typeof PrivacyIsoTimestampSchema.Type;
+}
+
+export interface PrivacyMeasureDispatch {
+  readonly attempts: readonly PrivacyMeasureAttempt[];
+  readonly createdAt: typeof PrivacyIsoTimestampSchema.Type;
+  readonly handoff: PrivacyMeasureHandoff;
+  readonly status: OwnerExecutionStatus;
+}
+
+const unique = (refs: readonly string[]): string[] => [...new Set(refs)];
+const stableKey = (parts: readonly string[]): string => parts.map((part) => `${String(part.length)}:${part}`).join('|');
+const normalizeScope = (refs: readonly string[]): string[] => unique(refs).toSorted();
+const sameScope = (left: readonly string[], right: readonly string[]): boolean => {
+  const normalizedLeft = normalizeScope(left);
+  const normalizedRight = normalizeScope(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((reference, index) => reference === normalizedRight[index])
+  );
+};
+const overlaps = (left: readonly string[], right: readonly string[]): boolean => {
+  const rightRefs = new Set(right);
+  return left.some((reference) => rightRefs.has(reference));
+};
+
+/**
+ * The handoff with every reference set in its canonical order (their order carries no meaning), so the coordinator that
+ * dispatches it and an owner that attests it encode and fingerprint the very same text.
+ */
+export const normalizePrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): PrivacyMeasureHandoff => {
+  const { ownerScope, ...rest } = handoff;
+  const normalized: PrivacyMeasureHandoff = {
+    ...rest,
+    contentScopeRefs: handoff.contentScopeRefs.toSorted(),
+    expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
+    preconditionRefs: handoff.preconditionRefs.toSorted(),
+    resourceRefs: handoff.resourceRefs.toSorted(),
+  };
+  return ownerScope === undefined ? normalized : { ...normalized, ownerScope: normalizeOwnerScope(ownerScope) };
+};
+
+/**
+ * Nothing at all for a handoff without an owner scope, so every existing owner's fingerprint is unchanged. The blocker
+ * assessment adds its own part only when the scope carries one, so a scope without it fingerprints exactly as before.
+ */
+const ownerScopeFingerprint = ({ ownerScope }: PrivacyMeasureHandoff): readonly string[] =>
+  ownerScope === undefined
+    ? []
+    : [
+        stableKey([
+          ownerScope.controllerRef,
+          ownerScope.requestedScopeRef,
+          stableKey(ownerScope.requestedScopePartRefs.toSorted()),
+          stableKey(
+            ownerScope.trustedLookups
+              .map((lookup) =>
+                stableKey(
+                  Object.entries(lookup)
+                    .toSorted(([left], [right]) => left.localeCompare(right))
+                    .flatMap(([key, value]) => [key, String(value)]),
+                ),
+              )
+              .toSorted(),
+          ),
+        ]),
+        ...(ownerScope.blockerAssessment === undefined
+          ? []
+          : [
+              stableKey([
+                ownerScope.blockerAssessment.assessedByRef,
+                stableKey(
+                  ownerScope.blockerAssessment.blockers
+                    .map(({ blockerRef, contentRefs, kind }) =>
+                      stableKey([blockerRef, kind, stableKey(contentRefs.toSorted())]),
+                    )
+                    .toSorted(),
+                ),
+              ]),
+            ]),
+      ];
+
+const handoffFingerprint = (handoff: PrivacyMeasureHandoff): string =>
+  stableKey([
+    stableKey(handoff.contentScopeRefs.toSorted()),
+    handoff.controllerObligationRef ?? '',
+    handoff.dispositionDecision ?? '',
+    stableKey(handoff.expectedEvidenceRefs.toSorted()),
+    handoff.idempotencyKey,
+    handoff.kind,
+    handoff.measureId,
+    handoff.owningCapability,
+    stableKey(handoff.preconditionRefs.toSorted()),
+    handoff.requestedAt,
+    handoff.requestedResult,
+    stableKey(handoff.resourceRefs.toSorted()),
+    handoff.right ?? '',
+    handoff.sourceDecisionRef,
+    String(handoff.sourceDecisionRevision),
+    handoff.subjectRef,
+    handoff.taskId,
+    handoff.tenantId,
+    ...ownerScopeFingerprint(handoff),
+  ]);
+
+export class PrivacyMeasureInvariantError extends Schema.TaggedError<PrivacyMeasureInvariantError>()(
+  'PrivacyMeasureInvariantError',
+  { reason: Schema.String },
+) {}
+
+const statusFromOutcome = (outcome: OwnerExecutionOutcome | null): OwnerExecutionStatus =>
+  outcome?.status ?? 'RECEIVED';
+
+const validateMatchingOwnerRequest = (
+  dispatch: PrivacyMeasureDispatch,
+  request: OwnerActionRequest,
+): PrivacyMeasureInvariantError | undefined => {
+  if (request.idempotencyKey !== dispatch.handoff.idempotencyKey) {
+    return new PrivacyMeasureInvariantError({ reason: 'Owner Action idempotency identity conflict' });
+  }
+  if (handoffFingerprint(request.handoff) !== handoffFingerprint(dispatch.handoff)) {
+    return new PrivacyMeasureInvariantError({ reason: 'Owner Action payload conflict' });
+  }
+  return undefined;
+};
+
+const outcomeMatchesHandoff = (handoff: PrivacyMeasureHandoff, outcome: OwnerExecutionOutcome): boolean =>
+  outcome.idempotencyKey === handoff.idempotencyKey &&
+  outcome.measureId === handoff.measureId &&
+  outcome.taskId === handoff.taskId &&
+  outcome.sourceDecisionRef === handoff.sourceDecisionRef &&
+  outcome.sourceDecisionRevision === handoff.sourceDecisionRevision &&
+  outcome.owningCapability === handoff.owningCapability;
+
+const outcomeMatchesDispatch = (dispatch: PrivacyMeasureDispatch, outcome: OwnerExecutionOutcome): boolean =>
+  outcomeMatchesHandoff(dispatch.handoff, outcome);
+
+const refsWithin = (values: readonly string[], allowed: readonly string[]): boolean => {
+  const allowedSet = new Set(allowed);
+  return values.every((value) => allowedSet.has(value));
+};
+
+const ownerExecutionAttemptMatches = (
+  handoff: PrivacyMeasureHandoff,
+  request: OwnerExecutionOutcomeRequest,
+  outcome: OwnerExecutionOutcome,
+): boolean =>
+  request.measureId === handoff.measureId && request.taskId === handoff.taskId && request.attempt === outcome.attempt;
+
+const ownerExecutionResourcePartitionIsExact = (
+  handoff: PrivacyMeasureHandoff,
+  outcome: OwnerExecutionOutcome,
+): boolean =>
+  new Set(outcome.includedResourceRefs).size === outcome.includedResourceRefs.length &&
+  new Set(outcome.remainingResourceRefs).size === outcome.remainingResourceRefs.length &&
+  refsWithin(outcome.includedResourceRefs, handoff.resourceRefs) &&
+  refsWithin(outcome.remainingResourceRefs, handoff.resourceRefs) &&
+  !overlaps(outcome.includedResourceRefs, outcome.remainingResourceRefs) &&
+  sameScope([...outcome.includedResourceRefs, ...outcome.remainingResourceRefs], handoff.resourceRefs);
+
+const ownerExecutionStatusMatchesResourcePartition = (
+  handoff: PrivacyMeasureHandoff,
+  outcome: OwnerExecutionOutcome,
+): boolean => {
+  if (outcome.status === 'SUCCEEDED') {
+    return outcome.remainingResourceRefs.length === 0 && sameScope(outcome.includedResourceRefs, handoff.resourceRefs);
+  }
+  if (outcome.status === 'PARTIAL') {
+    return outcome.remainingResourceRefs.length > 0;
+  }
+  return true;
+};
+
+const validateOwnerReceiptIdentity = (
+  handoff: PrivacyMeasureHandoff,
+  request: OwnerExecutionOutcomeRequest,
+  authority: OwnerExecutionAuthorityResult,
+): string | undefined => {
+  const { outcome } = authority;
+  if (!ownerExecutionAttemptMatches(handoff, request, outcome)) {
+    return 'Owner receipt does not match the requested measure attempt';
+  }
+  if (authority.tenantId !== handoff.tenantId) {
+    return 'Owner receipt does not match the trusted tenant';
+  }
+  if (!outcomeMatchesHandoff(handoff, outcome)) {
+    return 'Owner receipt does not match the dispatched Privacy Measure identity';
+  }
+  return authority.receiptRef === outcome.outcomeId
+    ? undefined
+    : 'Owner receipt reference does not match the owner outcome';
+};
+
+const validateOwnerReceiptScope = (
+  handoff: PrivacyMeasureHandoff,
+  authority: OwnerExecutionAuthorityResult,
+): string | undefined => {
+  if (!sameScope(authority.contentScopeRefs, handoff.contentScopeRefs)) {
+    return 'Owner receipt does not match the exact content scope';
+  }
+  if (!sameScope(authority.resourceRefs, handoff.resourceRefs)) {
+    return 'Owner receipt does not match the exact Resource scope';
+  }
+  if (authority.subjectRef !== handoff.subjectRef) {
+    return 'Owner receipt does not match the exact subject scope';
+  }
+  return sameScope(authority.evidenceRefs, authority.outcome.evidenceRefs)
+    ? undefined
+    : 'Owner receipt evidence does not match the authoritative outcome evidence';
+};
+
+const validateOwnerReceiptPartition = (
+  handoff: PrivacyMeasureHandoff,
+  outcome: OwnerExecutionOutcome,
+): string | undefined => {
+  if (!ownerExecutionResourcePartitionIsExact(handoff, outcome)) {
+    return 'Owner receipt does not partition the exact approved Resource scope';
+  }
+  return ownerExecutionStatusMatchesResourcePartition(handoff, outcome)
+    ? undefined
+    : 'Owner receipt status does not match its completed and remaining Resource scope';
+};
+
+/** Validates a private owner receipt before any coordinator ledger can change. */
+export const validateOwnerExecutionAuthorityResult = (
+  handoff: PrivacyMeasureHandoff,
+  request: OwnerExecutionOutcomeRequest,
+  authority: OwnerExecutionAuthorityResult,
+): string | undefined =>
+  validateOwnerReceiptIdentity(handoff, request, authority) ??
+  validateOwnerReceiptScope(handoff, authority) ??
+  validateOwnerReceiptPartition(handoff, authority.outcome);
+
+const normalizeOwnerOutcome = (outcome: OwnerExecutionOutcome, attempt: number): OwnerExecutionOutcome => ({
+  ...outcome,
+  attempt,
+  evidenceRefs: unique(outcome.evidenceRefs),
+  includedResourceRefs: unique(outcome.includedResourceRefs),
+  remainingResourceRefs: unique(outcome.remainingResourceRefs),
+});
+
+/** A Communications measure targets exactly the owner's own opaque content references (`communications.core.<kind>:<id>`). */
+export const isCommunicationsContentRef = (reference: string): boolean =>
+  /^communications\.core\.[a-z][a-z-]*:\S+$/u.test(reference);
+
+/** Rejects ambiguous handoffs before any owner Action can be invoked. */
+export const validatePrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): readonly string[] => {
+  const errors: string[] = [];
+  if (handoff.owningCapability === 'communications.core' && handoff.ownerScope === undefined) {
+    errors.push('A Communications measure must carry its exact owner scope');
+  }
+  if (handoff.owningCapability === 'communications.core' && !handoff.resourceRefs.every(isCommunicationsContentRef)) {
+    // Refused at dispatch, by name: a measure whose targets the owner cannot read must never end unreported and unexplained.
+    errors.push('A Communications measure must target only Communications content references');
+  }
+  if (handoff.resourceRefs.length === 0) {
+    errors.push('A measure must name at least one Resource');
+  }
+  if (handoff.contentScopeRefs.length === 0) {
+    errors.push('A measure must name at least one content scope');
+  }
+  if (
+    handoff.kind === 'RESTRICT' &&
+    handoff.dispositionDecision === null &&
+    handoff.requestedResult.toLowerCase().includes('disposition')
+  ) {
+    errors.push('Disposition restriction must name a Disposition Decision');
+  }
+  if (
+    handoff.kind === 'RESTRICT' &&
+    handoff.dispositionDecision === 'RESTRICT' &&
+    handoff.requestedResult.toLowerCase().includes('processing')
+  ) {
+    errors.push('Disposition RESTRICT cannot silently become Processing Restriction');
+  }
+  return errors;
+};
+
+/** Creates durable-coordinator state; the owner Action itself remains owner-local. */
+export const createPrivacyMeasureDispatch = (
+  handoff: PrivacyMeasureHandoff,
+  startedAt: string,
+): Effect.Effect<PrivacyMeasureDispatch, PrivacyMeasureInvariantError> => {
+  const validationErrors = validatePrivacyMeasureHandoff(handoff);
+  return validationErrors.length > 0
+    ? Effect.fail(
+        new PrivacyMeasureInvariantError({
+          reason: `Invalid Privacy Measure handoff: ${validationErrors.join('; ')}`,
+        }),
+      )
+    : Effect.succeed({ attempts: [], createdAt: startedAt, handoff, status: 'RECEIVED' });
+};
+
+/** Builds the public Action request. Calling this does not claim execution or completion. */
+export const prepareOwnerActionRequest = (dispatch: PrivacyMeasureDispatch, actionKey: string): OwnerActionRequest => ({
+  actionKey,
+  handoff: dispatch.handoff,
+  idempotencyKey: dispatch.handoff.idempotencyKey,
+});
+
+const validateOwnerOutcomeForDispatch = (
+  dispatch: PrivacyMeasureDispatch,
+  outcome: OwnerExecutionOutcome,
+): PrivacyMeasureInvariantError | undefined => {
+  if (!outcomeMatchesDispatch(dispatch, outcome)) {
+    return new PrivacyMeasureInvariantError({
+      reason: 'Outcome is assigned to a different measure, decision, or owner',
+    });
+  }
+  return ownerExecutionResourcePartitionIsExact(dispatch.handoff, outcome) &&
+    ownerExecutionStatusMatchesResourcePartition(dispatch.handoff, outcome)
+    ? undefined
+    : new PrivacyMeasureInvariantError({
+        reason: 'Owner outcome status does not match the exact approved Resource partition',
+      });
+};
+
+/** Records an attempt and preserves the exact approved payload for safe retries. */
+const recordOwnerExecutionOutcomeInternal = (
+  dispatch: PrivacyMeasureDispatch,
+  request: OwnerActionRequest,
+  outcome: OwnerExecutionOutcome,
+  startedAt: string,
+  reconciliation: boolean,
+): Effect.Effect<PrivacyMeasureDispatch, PrivacyMeasureInvariantError> => {
+  const requestError = validateMatchingOwnerRequest(dispatch, request);
+  if (requestError !== undefined) {
+    return Effect.fail(requestError);
+  }
+  const outcomeError = validateOwnerOutcomeForDispatch(dispatch, outcome);
+  if (outcomeError !== undefined) {
+    return Effect.fail(outcomeError);
+  }
+  if (dispatch.status === 'INDETERMINATE' && !reconciliation) {
+    return Effect.fail(
+      new PrivacyMeasureInvariantError({
+        reason: 'Indeterminate owner execution requires authoritative reconciliation before retry',
+      }),
+    );
+  }
+  const prior = dispatch.attempts.at(-1)?.outcome;
+  if (prior?.status === 'SUCCEEDED' && outcome.status !== 'SUCCEEDED') {
+    return Effect.succeed(dispatch);
+  }
+  const attempt = dispatch.attempts.length + 1;
+  const normalized = normalizeOwnerOutcome(outcome, attempt);
+  return Effect.succeed({
+    ...dispatch,
+    attempts: [...dispatch.attempts, { attempt, outcome: normalized, request, startedAt }],
+    status: statusFromOutcome(normalized),
+  });
+};
+
+/** Records an owner result while preserving invariant failures in the typed Effect error channel. */
+export const recordOwnerExecutionOutcome = (
+  dispatch: PrivacyMeasureDispatch,
+  request: OwnerActionRequest,
+  outcome: OwnerExecutionOutcome,
+  startedAt: string,
+): Effect.Effect<PrivacyMeasureDispatch, PrivacyMeasureInvariantError> =>
+  recordOwnerExecutionOutcomeInternal(dispatch, request, outcome, startedAt, false);
+
+/** Reconciles a lost response using an authoritative owner outcome, without repeating a mutation. */
+export const reconcilePrivacyMeasure = (
+  dispatch: PrivacyMeasureDispatch,
+  authoritativeOutcome: OwnerExecutionOutcome,
+  recordedAt: string,
+): Effect.Effect<PrivacyMeasureDispatch, PrivacyMeasureInvariantError> => {
+  const request = prepareOwnerActionRequest(dispatch, `${dispatch.handoff.owningCapability}.public-action`);
+  return recordOwnerExecutionOutcomeInternal(
+    dispatch,
+    request,
+    { ...authoritativeOutcome, recordedAt },
+    recordedAt,
+    true,
+  );
+};
+
+/** Restart recovery resumes the durable state and leaves indeterminate work unresolved. */
+export const recoverPrivacyMeasureDispatch = (dispatch: PrivacyMeasureDispatch): PrivacyMeasureDispatch => ({
+  attempts: dispatch.attempts.map((attempt) => ({
+    ...attempt,
+    request: { ...attempt.request, handoff: dispatch.handoff },
+  })),
+  createdAt: dispatch.createdAt,
+  handoff: dispatch.handoff,
+  status: dispatch.status === 'IN_PROGRESS' ? 'INDETERMINATE' : dispatch.status,
+});
+
+export const canRetryPrivacyMeasure = (dispatch: PrivacyMeasureDispatch): boolean =>
+  dispatch.status === 'TECHNICAL_FAILED' || dispatch.status === 'PARTIAL';

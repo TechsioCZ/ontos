@@ -4,7 +4,7 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
-import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { privacyOwnerDescriptors } from '@app/privacy/testing/owner-descriptors';
 import { GatewayDelegatedContextRequestSchema, GatewayRegisteredAssertionSubjectSchema } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';

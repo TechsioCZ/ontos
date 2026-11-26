@@ -1,6 +1,6 @@
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SourceSyncProcessingEvidenceSchema } from '../../shared/domain/source-sync-processing-policy.ts';
+import { SourceSyncProcessingEvidenceSchema } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 
 type DecodedEvidence = typeof SourceSyncProcessingEvidenceSchema.Type;
 type DecodedTargetId = NonNullable<DecodedEvidence['target']>['resourceId'];

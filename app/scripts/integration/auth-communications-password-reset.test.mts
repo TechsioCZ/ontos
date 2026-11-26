@@ -1,0 +1,539 @@
+import { randomUUID } from 'node:crypto';
+
+import { eq } from 'drizzle-orm';
+import { DateTime, Effect, Option, Redacted } from 'effect';
+import { TestClock } from 'effect/testing';
+import { describe, expect, it } from 'effect-rstest';
+
+import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  portalAuthCommunicationRequest,
+  user,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { portalAuthDefaultCopy } from '@app/communications/testing/source-owner-world';
+import {
+  FICTIONAL_COPY,
+  authWorld,
+  worldServices,
+  pendingIntentsOf,
+  step,
+  decisionIdOf,
+  issuanceRefOf,
+} from './support/auth-communications-world.spec.mts';
+import type { AuthWorld } from './support/auth-communications-world.spec.mts';
+import {
+  PASSWORD,
+  REPLACEMENT_PASSWORD,
+  headersOf,
+  makePostgresRealm,
+  signUp,
+} from './support/auth-communications-realms.spec.mts';
+import type { PostgresRealm } from './support/auth-communications-realms.spec.mts';
+import {
+  captureLogs,
+  expectNoSecretAnywhere,
+  historyReads,
+  textOf,
+  tokenFromLink,
+} from './support/auth-communications-checks.spec.mts';
+
+/**
+ * #1406 END-TO-END of the PASSWORD RESET e-mail: the real Auth realm and its recovery ledger issue the reset link, Auth's
+ * Communications-routed delivery submits the request to the real public `submit-communication-request` handler, Communications
+ * stores the durable decision and intent, the pre-handoff step re-checks every Current fact, the labelled Messaging Adapter
+ * double renders FICTIONAL copy with Auth's real owner-slot completion, and the authorized history Reads show only safe status.
+ *
+ * Owner ports: PRODUCTION (`communicationsOwnerPortsOver`): the Portal Auth source authority and recipient gate asking Auth's
+ * published Read, the Privacy gate over the REAL Privacy owner. Labelled stubs that remain: the producer's Privacy-scope
+ * declaration (production declares none: open owner gate #1396 J), the Messaging Adapter (step 22), the in-process transport to
+ * the public Action and to Auth's Read (HTTP and Shell assertion not run here), and, where a case asks for it, the trusted
+ * language (no owner publishes one). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery evidence.
+ */
+
+/** The user asks for a reset; the issuance commits with its request, and one relay tick submits it. */
+const requestReset = (realm: PostgresRealm, address = realm.email) =>
+  Effect.promise(
+    async () => await realm.auth.api.requestPasswordReset({ body: { email: address }, headers: headersOf(realm.ip) }),
+  ).pipe(Effect.tap(() => realm.relay));
+
+const setup = Effect.fn('PasswordResetE2E.setup')(function* setupWorld(options?: Parameters<typeof authWorld>[0]) {
+  const world = yield* authWorld(options ?? { mode: 'B' });
+  const realm = yield* makePostgresRealm(world, 'reset');
+  const subjectId = yield* signUp(realm);
+  return { realm, subjectId, world };
+});
+
+const onlyIntent = (world: AuthWorld) => {
+  const [intentId] = pendingIntentsOf(world);
+  return Option.match(Option.fromNullishOr(intentId), {
+    onNone: () => Effect.die('the reset request decided no pending intent'),
+    onSome: (found) => Effect.succeed(found),
+  });
+};
+
+/** The pre-handoff step run at a later instant: the world's Auth and Communications both read that clock. */
+const stepAfterMinutes = (world: AuthWorld, intentId: string, minutes: number) =>
+  Effect.gen(function* later() {
+    const now = yield* DateTime.now;
+    return yield* Effect.gen(function* atInstant() {
+      yield* TestClock.setTime(DateTime.add(now, { minutes }).epochMilliseconds);
+      return yield* step(world, world.messageHandoff, intentId);
+    }).pipe(Effect.provide(TestClock.layer()));
+  });
+
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
+
+describe('Password reset: real Auth source -> public Action -> durable decision/intent -> authorized Read (#1406)', () => {
+  it.live(
+    '[AC-05 S2.1] a reset request is committed post-issuance, decided once and reaches the recipient with Czech copy by default',
+    () =>
+      Effect.gen(function* happyPath() {
+        const { realm, subjectId, world } = yield* setup();
+        yield* requestReset(realm);
+
+        // one request, one stored decision, one intent pinned to the original subject and the issuance (never the e-mail)
+        expect(world.submissions).toHaveLength(1);
+        const [{ request, submission }] = world.submissions;
+        expect(submission).toMatchObject({
+          decision: { kind: 'MESSAGE_INTENTS' },
+          outcome: 'DECIDED',
+          replayed: false,
+        });
+        expect(request.source.moduleKey).toBe('commerce.customer-context');
+        expect(request.originalRecipients[0]?.recipientRef.resourceId).toBe(subjectId);
+        expect(request.idempotency.key).toMatch(/^portal-auth\.reset-password\.pa-/u);
+
+        const intentId = yield* onlyIntent(world);
+        expect((yield* step(world, world.messageHandoff, intentId)).kind).toBe('HANDED_OFF');
+        expect(world.mailbox).toHaveLength(1);
+        const [mail] = world.mailbox;
+        // no trusted language is established: the sole default and fallback is Czech
+        expect(mail?.language).toBe('cs');
+        expect(mail?.subject).toContain(FICTIONAL_COPY);
+        expect(textOf(mail)).toContain('/reset-password');
+        expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+
+        // the authorized Read shows the language, revision and mode actually used, and that the provider only ACCEPTED
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items).toHaveLength(1);
+        expect(page.items[0]).toMatchObject({
+          headline: {
+            attention: 'NO_FAILURE',
+            deliveryProven: false,
+            providerAccepted: true,
+            status: 'PROVIDER_ACCEPTED',
+          },
+          recipient: { channel: 'email', role: 'account-holder' },
+          template: { language: 'cs', mode: 'B', revisionNumber: 1 },
+        });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live('[AC-04 AC-06 S2.2] no reset link, token, URL, password or address is stored, shown or logged anywhere', () =>
+    Effect.gen(function* secretFree() {
+      const { realm, world } = yield* setup();
+      const { lines } = yield* captureLogs(
+        Effect.gen(function* run() {
+          yield* requestReset(realm);
+          yield* step(world, world.messageHandoff, yield* onlyIntent(world));
+        }),
+      );
+      const [mail] = world.mailbox;
+      const link = textOf(mail);
+      const token = Option.getOrThrow(tokenFromLink(link));
+      const found = yield* expectNoSecretAnywhere(
+        world,
+        [token, link.slice(link.indexOf('http')), PASSWORD, REPLACEMENT_PASSWORD, realm.email],
+        lines,
+      );
+      expect(found).toStrictEqual([]);
+      // the secret exists only where the labelled provider received it: in memory, protected
+      expect(Redacted.isRedacted(mail?.text)).toBe(true);
+      expect(JSON.stringify(mail?.text)).toBe('"<redacted>"');
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S1.2 S1.3] trusted English with both revisions approved gets the English revision; with only Czech approved it falls back to Czech',
+    () =>
+      Effect.gen(function* languages() {
+        const both = yield* setup({ mode: 'B', recipientLanguage: 'LABELLED_DOUBLE' });
+        yield* both.world.setTrustedLanguage('en');
+        yield* requestReset(both.realm);
+        yield* step(both.world, both.world.messageHandoff, yield* onlyIntent(both.world));
+        expect(both.world.mailbox[0]?.language).toBe('en');
+        expect((yield* (yield* historyReads(both.world)).list()).items[0]?.template).toMatchObject({
+          language: 'en',
+          mode: 'B',
+        });
+
+        const czechOnly = yield* setup({
+          languages: ['cs'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['en'],
+        });
+        yield* czechOnly.world.setTrustedLanguage('en');
+        yield* requestReset(czechOnly.realm);
+        yield* step(czechOnly.world, czechOnly.world.messageHandoff, yield* onlyIntent(czechOnly.world));
+        expect(czechOnly.world.mailbox[0]?.language).toBe('cs');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S1.4 outline] trusted English with an approved English revision but no usable Czech one: stopped in B, pinned in A, nothing is sent in B',
+    () =>
+      Effect.gen(function* outline() {
+        const modeB = yield* setup({
+          languages: ['en'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeB.world.setTrustedLanguage('en');
+        yield* requestReset(modeB.realm);
+        expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
+        expect(modeB.world.mailbox).toHaveLength(0);
+        expect((yield* attemptsOf(modeB.world)).length).toBe(0);
+        const stopped = yield* (yield* historyReads(modeB.world)).list();
+        expect(stopped.items[0]?.headline).toMatchObject({
+          reasonCodes: ['CZECH_REVISION_REQUIRED_BY_MODE_B'],
+          // no usable language or template is NOT_SENT: its own state, neither suppressed nor a provider failure (#1401 I-07)
+          status: 'NOT_SENT',
+        });
+
+        const modeA = yield* setup({
+          languages: ['en'],
+          mode: 'A',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeA.world.setTrustedLanguage('en');
+        yield* requestReset(modeA.realm);
+        yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
+        expect(modeA.world.mailbox[0]?.language).toBe('en');
+        expect((yield* (yield* historyReads(modeA.world)).list()).items[0]?.template).toMatchObject({
+          language: 'en',
+          mode: 'A',
+        });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live('[S1.6] without an approved Czech fallback revision and no trusted language nothing is sent', () =>
+    Effect.gen(function* noFallback() {
+      const { realm, world } = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
+      yield* requestReset(realm);
+      expect(world.mailbox).toHaveLength(0);
+      expect(pendingIntentsOf(world)).toHaveLength(0);
+      const page = yield* (yield* historyReads(world)).list();
+      expect(page.items[0]?.headline.status).toBe('NOT_SENT');
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1398 #1406 R-D1] with no Tenant revision nothing is sent, and a revision the Tenant prepared and activated is used from then on',
+    () =>
+      Effect.gen(function* noImplicitText() {
+        const RESET = 'commerce.customer-context.portal-auth.reset-password-message';
+        const seed = portalAuthDefaultCopy.find((copy) => copy.messageType === RESET && copy.language === 'cs');
+        // no Tenant revision at all: there is no built-in text to stand in, so tenant mode B stops the message (TPL-05)
+        const { realm, world } = yield* setup({ languages: [], mode: 'B' });
+        yield* requestReset(realm);
+        expect(world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        const [dayOne] = (yield* (yield* historyReads(world)).list()).items;
+        expect(dayOne?.headline).toMatchObject({ reasonCodes: ['CZECH_REVISION_UNAVAILABLE'] });
+        expect(JSON.stringify(dayOne)).not.toContain(seed?.subject ?? 'unreachable');
+
+        // the Tenant's authorised user prepares and activates an own FICTIONAL revision of the Czech text
+        const replacement = {
+          body: `${FICTIONAL_COPY} replaced reset\n\nOpen this: {{reset_link}}`,
+          requiredPlaceholders: ['reset_link'],
+          subject: `${FICTIONAL_COPY} replaced reset`,
+        };
+        const replaced = yield* world.replaceTemplate(RESET, 'cs', replacement, randomUUID());
+        yield* requestReset(realm);
+        const next = pendingIntentsOf(world).at(-1);
+        expect((yield* step(world, world.messageHandoff, next ?? '')).kind).toBe('HANDED_OFF');
+        expect(world.mailbox[0]?.subject).toBe(replacement.subject);
+        const [latest] = (yield* (yield* historyReads(world)).list()).items;
+        expect(latest?.template).toMatchObject({
+          contentDigest: replaced.revision.contentDigest,
+          revisionNumber: replaced.revision.revisionNumber,
+          source: 'TENANT_REVISION',
+        });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1398 #1406] once the Tenant took both texts over and stopped them nothing is sent, with a typed reason and no fallback',
+    () =>
+      Effect.gen(function* nothingInForce() {
+        const { realm, world } = yield* setup({ languages: [], mode: 'B', retiredLanguages: ['cs', 'en'] });
+        yield* requestReset(realm);
+        expect(world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        expect((yield* attemptsOf(world)).length).toBe(0);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]?.headline).toMatchObject({
+          reasonCodes: ['CZECH_REVISION_UNAVAILABLE'],
+          status: 'NOT_SENT',
+        });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S2.3 AC-07] an expired reset link stops before the handoff with a reason and nothing is reissued or sent',
+    () =>
+      Effect.gen(function* expired() {
+        const { realm, world } = yield* setup();
+        yield* requestReset(realm);
+        const intentId = yield* onlyIntent(world);
+        const outcome = yield* stepAfterMinutes(world, intentId, 16);
+        expect(outcome.kind).not.toBe('HANDED_OFF');
+        expect(world.mailbox).toHaveLength(0);
+        expect(realm.issued.reset).toHaveLength(1);
+        const page = yield* (yield* historyReads(world)).list();
+        // the request states the issuance's own expiry (`validUntil`): past it the stop is the concrete SOURCE_NO_LONGER_VALID, and the
+        // REAL Privacy owner adds that its binding (valid only as long as the issuance) has lapsed
+        expect(page.items[0]?.headline).toMatchObject({
+          reasonCodes: ['SOURCE_NO_LONGER_VALID', 'PRIVACY_INDETERMINATE'],
+        });
+        expect(page.items[0]?.headline.status).not.toBe('PROVIDER_ACCEPTED');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live("[S2.4] a reset link spent before the handoff stops it, read from Auth's own ledger", () =>
+    Effect.gen(function* spent() {
+      const { realm, world } = yield* setup();
+      yield* requestReset(realm);
+      const [token] = realm.issued.reset;
+      yield* realm.recovery.resetPassword({
+        newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+        token: Redacted.make(token ?? ''),
+      });
+      const outcome = yield* step(world, world.messageHandoff, yield* onlyIntent(world));
+      expect(outcome.kind).not.toBe('HANDED_OFF');
+      expect(world.mailbox).toHaveLength(0);
+      // Auth's own reset ledger row is `consumed`: the stop is the concrete SOURCE_CONSUMED, never the generic category
+      const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
+      // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
+      // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+      expect(codes[0]).toBe('SOURCE_CONSUMED');
+      expect(codes).not.toContain('SOURCE_STALE');
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live('[AUTH-COM-04] the ORIGINAL address is kept: a later profile edit does not redirect the message', () =>
+    Effect.gen(function* originalBinding() {
+      const { realm, world } = yield* setup();
+      yield* requestReset(realm);
+      const replacement = `moved-${realm.email}`;
+      yield* realm.database.executor.update(user).set({ email: replacement }).where(eq(user.email, realm.email));
+      yield* step(world, world.messageHandoff, yield* onlyIntent(world));
+      expect(Redacted.value(world.mailbox[0]?.to ?? Redacted.make(''))).toBe(realm.email);
+      expect(world.mailbox).toHaveLength(1);
+      yield* realm.database.executor.update(user).set({ email: realm.email }).where(eq(user.email, replacement));
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S3.1 AC-05] the same issuance replayed returns the original decision; a new issuance is a separate message',
+    () =>
+      Effect.gen(function* idempotency() {
+        const { realm, world } = yield* setup();
+        yield* requestReset(realm);
+        const [{ request, submission }] = world.submissions;
+        const replayed = yield* world.submitter.submit(request);
+        expect(replayed).toMatchObject({
+          decisionId: decisionIdOf(submission),
+          replayed: true,
+        });
+        expect(world.submissions).toHaveLength(2);
+        // the replay is the SAME intent: one intent row, not two
+        expect(yield* world.intentRows).toHaveLength(1);
+
+        // only a new Auth-authorized issuance creates a separate security message
+        yield* requestReset(realm);
+        expect(world.submissions).toHaveLength(3);
+        expect(new Set(world.submissions.map(({ request: sent }) => sent.occurrence.occurrenceId)).size).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    "[AC-03] the lifetime and the original binding of the reset issuance are Auth's own, whatever the language or the mode",
+    () =>
+      Effect.gen(function* lifetime() {
+        const lifetimes: number[] = [];
+        for (const [mode, language] of [
+          ['B', 'cs'],
+          ['A', 'en'],
+          ['B', 'en'],
+        ] as const) {
+          const { realm, subjectId, world } = yield* setup({ mode, recipientLanguage: 'LABELLED_DOUBLE' });
+          yield* world.setTrustedLanguage(language);
+          yield* requestReset(realm);
+          const issuance = Option.getOrThrow(yield* world.handoff.issuanceOf(issuanceRefOf(world)));
+          expect(issuance.providerSubjectId).toBe(subjectId);
+          lifetimes.push(issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds);
+        }
+        // the request states the expiry Auth STORED, a few milliseconds before the callback: the policy lifetime, whatever the language
+        const policyMs = COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds * 1000;
+        for (const measuredLifetime of lifetimes) {
+          expect(measuredLifetime).toBeLessThanOrEqual(policyMs);
+          expect(measuredLifetime).toBeGreaterThan(policyMs - 5000);
+        }
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S2.5 AC-08] an unknown address creates no request and no history; an operator without access learns nothing, an authorized one sees status only',
+    () =>
+      Effect.gen(function* enumeration() {
+        const { realm, world } = yield* setup();
+        const known = yield* requestReset(realm);
+        const unknown = yield* requestReset(realm, `nobody-${realm.email}`);
+        // the same answer for an account that exists and one that does not
+        expect(known).toStrictEqual(unknown);
+        expect(world.submissions).toHaveLength(1);
+
+        const denied = yield* historyReads(world, 'denied');
+        const deniedList = yield* Effect.flip(denied.list());
+        const deniedDetail = yield* Effect.flip(denied.detail(yield* onlyIntent(world)));
+        expect(JSON.stringify([deniedList, deniedDetail])).not.toContain(realm.email);
+
+        const allowed = yield* historyReads(world);
+        const page = yield* allowed.list();
+        expect(page.items).toHaveLength(1);
+        const detail = yield* allowed.detail(yield* onlyIntent(world));
+        expect(JSON.stringify(detail)).not.toMatch(/https?:\/\//iu);
+        expect(JSON.stringify([page, detail])).not.toContain(
+          Option.getOrThrow(Option.fromNullishOr(realm.issued.reset[0])),
+        );
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    "[S2.6 AUTH-COM-04] the same address under another subject never merges: a message for one account cannot use another account's issuance",
+    () =>
+      Effect.gen(function* twoSubjects() {
+        const { realm, subjectId, world } = yield* setup();
+        yield* requestReset(realm);
+        const other = yield* signUp(realm, `second-${realm.email}`);
+        const issuance = yield* world.handoff.issuanceOf(issuanceRefOf(world));
+        // the crafted request names ANOTHER subject for this account's issuance (a different purpose, so a different identity)
+        const crafted = yield* portalAuthCommunicationRequest(
+          { ...Option.getOrThrow(issuance), flow: 'verify-email', providerSubjectId: other },
+          { tenantId: world.tenantId },
+        );
+        const outcome = yield* world.submitter.submit(crafted);
+        expect(outcome).toMatchObject({ decision: { intents: [{ status: 'SUPPRESSED' }], kind: 'MESSAGE_INTENTS' } });
+        expect(other).not.toBe(subjectId);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S2.7 AC-06] Privacy: a prohibition suppresses, an unproven allowance holds, and an address Privacy cannot bind stops with its own reason',
+    () =>
+      Effect.gen(function* privacyStops() {
+        const prohibited = yield* setup();
+        // Privacy ITSELF records the prohibition (a withdrawal) before it answers
+        prohibited.world.prohibitProcessing();
+        yield* requestReset(prohibited.realm);
+        expect(prohibited.world.mailbox).toHaveLength(0);
+        const proven = (yield* (yield* historyReads(prohibited.world)).list()).items[0]?.headline;
+
+        // a legal basis that needs a Consent nobody can have given for an unverified address: Privacy answers INDETERMINATE itself
+        const unproven = yield* setup({ legalBasis: 'CONSENT', mode: 'B' });
+        yield* requestReset(unproven.realm);
+        expect(unproven.world.mailbox).toHaveLength(0);
+        const held = (yield* (yield* historyReads(unproven.world)).list()).items[0]?.headline;
+        expect(proven?.reasonCodes).not.toEqual(held?.reasonCodes);
+
+        // the Privacy owner has no supported pre-verification binding: Auth cannot evidence it, so nothing is sent, safely
+        const unbound = yield* setup({ evidencing: false, mode: 'B' });
+        yield* requestReset(unbound.realm);
+        expect(unbound.world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(unbound.world)).toHaveLength(0);
+        const stop = (yield* (yield* historyReads(unbound.world)).list()).items[0]?.headline;
+        expect(stop).toMatchObject({ attention: 'FAILURE', status: 'SUPPRESSED' });
+        expect(stop?.reasonCodes).not.toEqual(proven?.reasonCodes);
+        // the stop is Privacy's own class: an undeclared scope is an unresolved Privacy context and Privacy is never asked about a guess
+        expect(stop?.reasonCodes).toEqual(['PRIVACY_CONTEXT_AMBIGUOUS']);
+        expect(unbound.world.privacyQueries).toHaveLength(0);
+        expect(held?.reasonCodes).toEqual(['PRIVACY_INDETERMINATE']);
+        expect(unproven.world.privacyQueries.length).toBeGreaterThan(0);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S3.2 S3.5 AC-07] a provider timeout leaves the effect UNKNOWN and nothing is sent twice; acceptance never completes the reset',
+    () =>
+      Effect.gen(function* providerUncertainty() {
+        const { realm, world } = yield* setup();
+        world.providerAnswer.current = () => ({ kind: 'INDETERMINATE', reason: 'timeout' });
+        yield* requestReset(realm);
+        const intentId = yield* onlyIntent(world);
+        yield* step(world, world.messageHandoff, intentId);
+        yield* step(world, world.messageHandoff, intentId);
+        yield* step(world, world.messageHandoff, intentId);
+        expect(world.mailbox).toHaveLength(1);
+        expect(realm.issued.reset).toHaveLength(1);
+        expect((yield* attemptsOf(world)).length).toBe(1);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]?.headline).toMatchObject({ attention: 'UNKNOWN', providerAccepted: false });
+
+        // a SEPARATE account: acceptance by the provider is not the reset: the link is still unspent and the password unchanged
+        const accepted = yield* setup();
+        yield* requestReset(accepted.realm);
+        yield* step(accepted.world, accepted.world.messageHandoff, yield* onlyIntent(accepted.world));
+        expect((yield* (yield* historyReads(accepted.world)).list()).items[0]?.headline.status).toBe(
+          'PROVIDER_ACCEPTED',
+        );
+        expect(yield* accepted.world.handoff.currentness(issuanceRefOf(accepted.world))).toBe('CURRENT');
+        // the reset link is still unspent in Auth's own ledger: the provider's acceptance never completed the reset
+        const [token] = accepted.realm.issued.reset;
+        const ledger = yield* accepted.realm.store.peekPasswordResetLedger({ token: Redacted.make(token ?? '') });
+        expect(Option.isSome(ledger)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AUTH-COM-09 recovery NONE] a proven refusal by the provider is final: no automatic second attempt and no reissued link',
+    () =>
+      Effect.gen(function* refusal() {
+        const { realm, world } = yield* setup();
+        world.providerAnswer.current = () => ({ kind: 'REJECTED', reason: 'provider_rejected' });
+        yield* requestReset(realm);
+        const intentId = yield* onlyIntent(world);
+        yield* step(world, world.messageHandoff, intentId);
+        yield* step(world, world.messageHandoff, intentId);
+        expect((yield* attemptsOf(world)).length).toBe(1);
+        expect(world.mailbox).toHaveLength(1);
+        expect(realm.issued.reset).toHaveLength(1);
+        expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.status).toBe('FAILED');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-06 D2] an issuance whose protected value Auth cleared is resumed by no Auth process, restarted or not: a truthful stop, never reproduced',
+    () =>
+      Effect.gen(function* restart() {
+        const { realm, world } = yield* setup();
+        yield* requestReset(realm);
+        const intentId = yield* onlyIntent(world);
+        // Auth cleared the protected value (it serves nothing any more); a restarted process finds nothing to resume either
+        yield* world.handoff.forget(issuanceRefOf(world));
+        yield* world.restartAuth;
+        const outcome = yield* step(world, world.messageHandoff, intentId);
+        expect(outcome.kind).not.toBe('HANDED_OFF');
+        expect(world.mailbox).toHaveLength(0);
+        expect(realm.issued.reset).toHaveLength(1);
+        const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_NOT_RESUMABLE');
+        expect(codes).not.toContain('SOURCE_STALE');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+});

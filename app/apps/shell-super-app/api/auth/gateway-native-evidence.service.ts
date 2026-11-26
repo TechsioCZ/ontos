@@ -1323,6 +1323,62 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
   return admitRecovery;
 };
 
+const makeLoadContinuationRow = (database: CoreDatabase['Service']) =>
+  Effect.fn('GatewayNativeEvidence.loadContinuationRow')(function* load<A, I>(
+    input: {
+      readonly consumer: { readonly moduleKey: string };
+      readonly continuation: { readonly actionKey: string; readonly topic: string; readonly workerKey: string };
+      readonly deliveryId: string;
+      readonly tenantId: string;
+    },
+    schema: Schema.Codec<A, I>,
+  ) {
+    const { consumer, continuation } = input;
+    return yield* database.executor
+      .transaction(
+        Effect.fn('PrivacyDispatchEvidence.continuationTransaction')(function* native(transaction) {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id',${input.tenantId},true),set_config('ontos.legal_entity_id','',true)`,
+            'objects',
+          );
+          const rows = yield* transaction.execute(
+            sql`
+      select d.outbox_delivery_id as "deliveryId",m.payload_json as "payload",d.claimed_by as "claimId",
+        (d.status='processing' and d.claim_expires_at>now()) as "claimActive"
+      from core.outbox_deliveries d
+      join core.outbox_messages m on m.outbox_message_id=d.outbox_message_id
+      join core.domain_events e on e.domain_event_id=m.domain_event_id and e.tenant_id=m.tenant_id
+      join core.action_invocations i on i.action_invocation_id=e.action_invocation_id and i.tenant_id=m.tenant_id
+      join core.principals p on p.tenant_id=i.tenant_id and p.principal_id=i.principal_id and p.kind='human'
+      join core.tenants t on t.tenant_id=i.tenant_id and t.status='active'
+      where d.outbox_delivery_id=${input.deliveryId}::uuid and m.tenant_id=${input.tenantId}::uuid
+        and i.action_key=${continuation.actionKey} and i.status='succeeded'
+        and e.producer_module_key=${consumer.moduleKey} and m.producer_module_key=${consumer.moduleKey}
+        and m.topic=${continuation.topic} and d.consumer_module_key=${consumer.moduleKey}
+        and d.worker_key=${continuation.workerKey}
+      limit 2`,
+            'objects',
+          );
+          const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(schema), {
+            onExcessProperty: 'error',
+          })(rows).pipe(Effect.mapError(delegationForbidden('privacy_dispatch_not_admitted')));
+          const [row] = parsed;
+          if (parsed.length !== 1 || row === undefined) {
+            return yield* delegationForbidden('privacy_dispatch_not_admitted')();
+          }
+          return row;
+        }),
+      )
+      .pipe(
+        recoverSqlTransactionError,
+        Effect.mapError((cause) =>
+          Schema.is(GatewayDelegationError)(cause)
+            ? cause
+            : delegationUnavailable('source_evidence_unavailable')(cause),
+        ),
+      );
+  });
+
 /** Captures database custody once. Operations expose only fixed native admission facts. */
 export const GatewayNativeEvidenceLive = Layer.effect(
   GatewayNativeEvidence,
@@ -1332,6 +1388,7 @@ export const GatewayNativeEvidenceLive = Layer.effect(
       admitAssertion: makeAdmitAssertion(database),
       admitRecovery: makeAdmitRecovery(database),
       admitWorkload: makeAdmitWorkload(database),
+      loadContinuationRow: makeLoadContinuationRow(database),
       loadDispatchRow: makeLoadDispatchRow(database),
       selectNativeReadReceiver: makeSelectNativeReadReceiver(database),
       selectOnwardNativeReadReceiver: makeSelectOnwardNativeReadReceiver(database),

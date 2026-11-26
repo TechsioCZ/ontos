@@ -142,6 +142,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { outboxWorkerLayer } from '../../src/worker-host/layer.ts';
+import { unreportedCommunicationDecisionLayer } from '../../src/portal-auth/communications/decision-report.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type {
@@ -2931,7 +2932,8 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       kind: 'DEFAULT_CURRENCY',
     });
     yield* requireProtocol(currencyPolicy.changed, 'registered-currency-policy');
-    const workerLayer = outboxWorkerLayer.pipe(
+    // no Portal Auth relay runs here, so the source worker's completion callback reports nothing
+    const workerLayer = Layer.merge(outboxWorkerLayer, unreportedCommunicationDecisionLayer).pipe(
       Layer.provide(OutboxRepositoryLive),
       Layer.provide(ContextAccessLive),
       Layer.provideMerge(ownerRuntimeLayer),

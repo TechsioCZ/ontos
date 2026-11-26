@@ -1,14 +1,19 @@
 import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
-import { Effect, Layer } from 'effect';
+import type { ReadHandlerUnavailable } from '@app/core-runtime';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  commercePortalAuthIssuanceStateLive,
   configuredGatewayAssertionRedemptionLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
+import { portalAuthIssuanceSourceAnswer } from '../../src/api/portal-auth-issuance-source.read.ts';
+import { CommercePortalAuthProtectedHandoff } from '../../src/portal-auth/communications/protected-handoff.ts';
+import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import { jsonBody } from '../support/response.ts';
 
 /**
@@ -22,6 +27,8 @@ import { jsonBody } from '../support/response.ts';
  * closed with the owner's retryable 503 problem rather than being absent, open, or a defect.
  */
 const ORIGIN = 'http://localhost:3020';
+
+const decodeIssuanceRef = Schema.decodeSync(PortalAuthIssuanceRefSchema);
 
 const unconfiguredRuntime = Effect.acquireRelease(
   Effect.sync(() =>
@@ -140,6 +147,23 @@ it.effect('mounts the declared private verification path in the production root 
       const body = yield* jsonBody(response);
       expect(response.status, JSON.stringify(body)).toBe(401);
       expect(body).toMatchObject({ status: 401 });
+    }),
+  ),
+);
+
+it.effect('answers the issuance-source Read typed unavailable and builds no realm configuration', () =>
+  Effect.scoped(
+    Effect.gen(function* issuanceStateWithoutRealm() {
+      // The issuance state is part of the runtime every business route is served from, so a host with no realm must build
+      // it without `COMMERCE_PORTAL_AUTH_*`: a provider stacked over the route selection is built even when nothing reads it.
+      const context = yield* Layer.build(commercePortalAuthIssuanceStateLive);
+      const handoff = yield* Effect.service(CommercePortalAuthProtectedHandoff).pipe(Effect.provide(context));
+      const failure = yield* portalAuthIssuanceSourceAnswer(
+        { issuanceRef: decodeIssuanceRef('issuance-1') },
+        { handoff: Option.some(handoff) },
+      ).pipe(Effect.flip);
+
+      expect((failure satisfies ReadHandlerUnavailable).code).toBe('read_handler_unavailable');
     }),
   ),
 );

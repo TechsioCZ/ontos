@@ -18,13 +18,13 @@ import { installOperationalScopeAt } from '../../../../packages/core-runtime/src
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-} from '../../shared/apis/source-processing-eligibility.ts';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import {
   SourceSyncProcessingEvidenceSchema,
   SourceSyncProcessingPolicySchema,
-} from '../../shared/domain/source-sync-processing-policy.ts';
-import type { SourceSyncProcessingPolicy } from '../../shared/domain/source-sync-processing-policy.ts';
+} from '@app/privacy-contracts/domain/source-sync-processing-policy';
+import type { SourceSyncProcessingPolicy } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 import {
   sourceSyncProcessingPolicyMatches,
   sourceProcessingEligibilityRead,

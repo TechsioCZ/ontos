@@ -1,0 +1,10 @@
+import { Schema } from 'effect';
+import { PrivacyMeasureHandoffSchema } from '../domain/privacy-measure-handoff.ts';
+
+export const OutboxPayloadSchema = Schema.Struct({
+  handoff: PrivacyMeasureHandoffSchema,
+});
+export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
+
+export const outboxTopic = 'privacy.measure.dispatched' as const;
+export const outboxProducerModuleKey = 'privacy.core' as const;

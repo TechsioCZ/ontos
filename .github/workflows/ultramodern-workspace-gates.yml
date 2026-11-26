@@ -345,7 +345,7 @@ jobs:
             }
           - {
               shard: 6,
-              units: verticals/work-tasks verticals/commerce-order verticals/privacy verticals/symmy-integration verticals/assortment verticals/storefront-registry,
+              units: verticals/work-tasks verticals/commerce-order verticals/privacy verticals/symmy-integration verticals/assortment verticals/storefront-registry verticals/communications,
             }
     env:
       BUILD_JOBS: '2'

@@ -11,6 +11,7 @@ export const DECLARED_DELEGATED_CALLERS: readonly string[] = Object.freeze([
   'commerce-customer-context',
   'commerce-market-catalog',
   'commerce-order',
+  'communications',
   'crm',
   'finance-billing',
   'merchandise',

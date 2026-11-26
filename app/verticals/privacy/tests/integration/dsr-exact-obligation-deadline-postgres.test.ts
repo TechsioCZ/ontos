@@ -78,7 +78,11 @@ import { DecisionCheck } from '../../../../packages/core-runtime/src/access/deci
 import type { DecisionCheckPort } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import { accessDecisionUnavailable } from '../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
-import { makeDsrObligationNative, makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import {
+  makeDsrObligationNative,
+  makePrivacyDsrCompositionSnapshot,
+  privacyModuleCallRouteLive,
+} from '../support/dsr-obligation-native.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
 import { executeCreateDsrCaseWithAuthorization } from '../../src/api/create-dsr-case-action-client.ts';
@@ -474,6 +478,7 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
       Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(privacyModuleCallRouteLive),
     );
   }
   const runtime = makePrivacyApiRuntime(readRuntime, Layer.succeedContext(native.context), redemption);

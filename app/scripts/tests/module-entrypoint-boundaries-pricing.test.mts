@@ -8,6 +8,7 @@ import {
   PROTECTED_READ_AUTHORIZATION,
   carrierBlock,
   readPricingSourceTree,
+  readPublishedContractPackages,
   readWorkspaceManifests,
 } from './module-entrypoint-boundaries.fixture.mts';
 import path from 'node:path';
@@ -253,7 +254,11 @@ it.live('accepts the reviewed Privacy notice-presentation GET companion only as 
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
     const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
-    const sources = new Map([...manifests, ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH))]);
+    const sources = new Map([
+      ...manifests,
+      ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH)),
+      ...(yield* readPublishedContractPackages(root)),
+    ]);
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';

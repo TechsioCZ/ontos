@@ -2,7 +2,7 @@
 // @ontos-outbox-worker-host-owner commerce.customer-context
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Layer } from 'effect';
+import { Effect, Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -12,6 +12,18 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
+import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/config.ts';
+import {
+  communicationDecisionReporterLayer,
+  unreportedCommunicationDecisionLayer,
+} from '../portal-auth/communications/decision-report.ts';
+import { portalAuthCommunicationRelayConfiguration } from '../portal-auth/communications/relay-configuration.ts';
+import { PortalAuthRelayTransportLive } from '../portal-auth/communications/relay-transport.ts';
+import { portalAuthEmailRoute } from '../portal-auth/communications/email-route.ts';
+import { PortalAuthCommunicationRelayLive } from '../portal-auth/communications/request-relay.ts';
+import { configuredTrustedScopeLayer } from '../portal-auth/communications/trusted-scope.ts';
+import { CommercePortalAuthCommunicationStoreLive } from '../portal-auth/persistence/portal-auth-communication-store.ts';
+import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -19,24 +31,100 @@ import {
   outboxWorkerRepositoryLive,
 } from './layer.ts';
 
-/** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
-export const outboxWorkerEntry = defineOutboxWorkerEntry({
-  claimOwnerPrefix: 'commerce.customer-context-outbox-worker',
-  expectedDeployment: ultramodernApiMarker,
-  layer: Layer.merge(
-    ActiveApplicationCompositionConfigLive.pipe(
-      Layer.provide(
-        ActiveApplicationCompositionSourceLive.pipe(
-          Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
-            ),
+/** A relay that could not start: one error line with tags and key names only. */
+const relayNotStarted = (annotations: Readonly<Record<string, string>>) =>
+  Layer.effectDiscard(
+    Effect.annotateLogs(
+      Effect.logError('The Portal Auth communication relay could not start; nothing is relayed'),
+      annotations,
+    ),
+  );
+/**
+ * The Portal Auth communication relay (#1406 D1) over Auth's own store and pool and the production relay transport. The sweep
+ * of the Auth-local outbox runs here, beside the source worker it feeds, never in a request-serving API process.
+ *
+ * The realm's trusted Tenant is the deployment's reviewed `COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID`; while it is unset or
+ * malformed the relay relays nothing and reports the typed configuration error (fail closed).
+ */
+/** Auth's own store over its own pool: what the relay and the decision callback both write. */
+const portalAuthCommunicationStoreLive = CommercePortalAuthCommunicationStoreLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+  Layer.provide(CommercePortalAuthConfigLive),
+);
+const portalAuthCommunicationRelayLive = Layer.unwrap(
+  // an enabled relay requires its whole configuration before anything else is built
+  portalAuthCommunicationRelayConfiguration.pipe(
+    Effect.as(
+      PortalAuthCommunicationRelayLive.pipe(
+        Layer.provide(
+          Layer.merge(portalAuthCommunicationStoreLive, PortalAuthRelayTransportLive).pipe(
+            Layer.provideMerge(configuredTrustedScopeLayer),
           ),
         ),
       ),
     ),
-    outboxWorkerDefinitionLayer,
-  ).pipe(
+  ),
+).pipe(
+  // An adopted relay that cannot start (an incomplete relay configuration, an unreadable realm configuration, an unreachable
+  // Auth database) fails closed alone: it is logged once with key names and tags only, no loop runs, every row stays due, and
+  // the host's other loops are not taken down with it.
+  Layer.catchTag('PortalAuthCommunicationRelayConfigurationError', (failure) =>
+    relayNotStarted({ keys: failure.keys.join(','), reason: failure._tag }),
+  ),
+  Layer.catchTag(
+    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError', 'PlatformError'],
+    (failure) => relayNotStarted({ reason: failure._tag }),
+  ),
+);
+/**
+ * The source worker's completion callback (#1406 D4) over the same Auth store. A store that cannot start reports nothing: the
+ * relay logs why, and every protected value is still cleared at its expiry.
+ */
+const portalAuthCommunicationDecisionReporterLive = communicationDecisionReporterLayer.pipe(
+  Layer.provide(portalAuthCommunicationStoreLive),
+  Layer.catchTag(
+    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError'],
+    () => unreportedCommunicationDecisionLayer,
+  ),
+);
+/**
+ * Composed only for a host whose deployment routes the Portal Auth e-mails through Communications: the very route whose API
+ * composition WRITES the Auth-local outbox this loop relays (`portalAuthEmailRoute`, one decision for both). A host on the direct
+ * route has an outbox nothing writes, so it gets no loop and a callback that reports nothing.
+ */
+const portalAuthCommunicationRelayDriverLive = Layer.unwrap(
+  portalAuthEmailRoute.pipe(
+    Effect.map((route) =>
+      route === 'COMMUNICATIONS'
+        ? Layer.merge(portalAuthCommunicationRelayLive, portalAuthCommunicationDecisionReporterLive)
+        : unreportedCommunicationDecisionLayer,
+    ),
+  ),
+);
+
+/** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
+export const outboxWorkerEntry = defineOutboxWorkerEntry({
+  claimOwnerPrefix: 'commerce.customer-context-outbox-worker',
+  expectedDeployment: ultramodernApiMarker,
+  // The opt-in Portal Auth communication relay (#1406 D1) is this entry's one scoped maintenance loop: it lives exactly as
+  // long as the entry's layer scope and reads the entry's active Application Composition to relay only for this release.
+  layer: portalAuthCommunicationRelayDriverLive.pipe(
+    Layer.provideMerge(
+      Layer.merge(
+        ActiveApplicationCompositionConfigLive.pipe(
+          Layer.provide(
+            ActiveApplicationCompositionSourceLive.pipe(
+              Layer.provide(
+                FetchHttpClient.layer.pipe(
+                  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+                ),
+              ),
+            ),
+          ),
+        ),
+        outboxWorkerDefinitionLayer,
+      ),
+    ),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),

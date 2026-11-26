@@ -214,3 +214,11 @@ it('exports the Core values used by the hosted search snapshot projectors', () =
     }
   }
 });
+
+it('exports the pool configuration a hosted owner uses to open its own database pool', () => {
+  const entrypoint = focusedEntrypointValueExports(
+    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+  );
+  // The Commerce Customer Context host composes the Portal Auth relay over Auth's own pool (#1406 D1).
+  expect(entrypoint.has('configureDatabasePool')).toBe(true);
+});

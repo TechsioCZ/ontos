@@ -178,7 +178,7 @@ const trustedEnforcementAuthority: AntiResurrectionEnforcementAuthorityService =
 describe('Owner execution authority-bound Actions', () => {
   it('declares the module callers that may record an owner outcome for a verified requester', () => {
     expect(recordOwnerExecutionOutcomeAction.descriptor.accessActor).toEqual({
-      callers: ['commerce-customer-context', 'party-registry', 'symmy-integration'],
+      callers: ['commerce-customer-context', 'communications', 'party-registry', 'symmy-integration'],
       reason: expect.any(String),
       subject: 'identity',
     });

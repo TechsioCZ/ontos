@@ -883,6 +883,60 @@
       }
     },
     {
+      "id": "communications-contracts",
+      "package": "@app/communications-contracts",
+      "path": "packages/communications-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/communications.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#communications",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#communications"
+          ]
+        }
+      }
+    },
+    {
+      "id": "privacy-contracts",
+      "package": "@app/privacy-contracts",
+      "path": "packages/privacy-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/privacy.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#privacy",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#privacy"
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-auth-contracts",
+      "package": "@app/portal-auth-contracts",
+      "path": "packages/portal-auth-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
+        }
+      }
+    },
+    {
       "id": "payment",
       "package": "@app/payment",
       "path": "verticals/payment",
@@ -932,6 +986,24 @@
           "tier": "tier-2-vertical",
           "references": [
             "docs/super-app-rfc-adr/blast-radius.md#symmy-integration"
+          ]
+        }
+      }
+    },
+    {
+      "id": "communications",
+      "package": "@app/communications",
+      "path": "verticals/communications",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/communications.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#communications",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#communications"
           ]
         }
       }

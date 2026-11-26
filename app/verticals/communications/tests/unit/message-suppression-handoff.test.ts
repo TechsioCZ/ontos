@@ -1,0 +1,805 @@
+import { Array as EffectArray, Effect, Layer, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
+import { describe, expect, it } from 'effect-rstest';
+
+import { decideMessageHandoffs } from '../../src/domain/privacy/handoff-decision.ts';
+import type { MessageHandoffInput, MessageHandoffItem } from '../../src/domain/privacy/handoff-decision.ts';
+import {
+  eligibilityVerdictOf,
+  PrivacySourceEligibilityResponseSchema,
+  unavailableReasonOfOwnerProblem,
+} from '../../src/domain/privacy/source-eligibility-response.ts';
+import { HandoffFact, MessageHandoffDecision, ProviderFact } from '../../src/domain/privacy/suppression.ts';
+import type { MessageHandoffDecisionCase } from '../../src/domain/privacy/suppression.ts';
+import type { RecipientEvaluationInput } from '../../src/domain/recipient/assess-recipients.ts';
+import {
+  FIXTURE_APPROVER_ROLE,
+  FIXTURE_ORIGINAL_ROLE,
+  FIXTURE_SECONDARY_ROLE,
+  fixtureSlot,
+  fixtureType,
+  fixtureTypeNamed,
+  requiredTwoSlotTypeWith,
+} from './support/catalog-fixtures.ts';
+import {
+  currentSource,
+  handoffItem,
+  privacyAllowed,
+  privacyAnswersFor,
+  privacyGateDouble,
+  privacyIndeterminate,
+  privacyNotAllowed,
+  privacyUnavailable,
+  privacyVerdict,
+  processingScope,
+  staleSource,
+} from './support/privacy-fixtures.ts';
+import type { PrivacyAnswer } from './support/privacy-fixtures.ts';
+import { blockingFactsOf } from './support/privacy-summaries.ts';
+import {
+  binding,
+  evaluationInput,
+  gateDouble,
+  NEW_ADDRESS,
+  ORIGINAL_ADDRESS,
+  unavailable,
+  unusable,
+  usable,
+} from './support/recipient-fixtures.ts';
+import type { OwnerAnswer } from './support/recipient-fixtures.ts';
+import { feedOfHandoff, feedSummary } from './support/required-feed.ts';
+
+const owner = (response: typeof PrivacySourceEligibilityResponseSchema.Encoded) =>
+  Schema.decodeUnknownSync(PrivacySourceEligibilityResponseSchema)(response);
+
+const ownerAnswered = (response: typeof PrivacySourceEligibilityResponseSchema.Encoded) =>
+  privacyVerdict(eligibilityVerdictOf(owner(response), processingScope('recipient-a')));
+
+const decide = (
+  recipient: RecipientEvaluationInput,
+  items: readonly MessageHandoffItem[],
+  owners: {
+    readonly privacy?: Readonly<Record<string, PrivacyAnswer>>;
+    readonly recipients?: Readonly<Record<string, OwnerAnswer>>;
+    readonly source?: MessageHandoffInput['source'];
+  },
+) => {
+  const recipientGate = gateDouble(owners.recipients ?? {});
+  const privacyGate = privacyGateDouble(owners.privacy ?? {});
+  return {
+    privacyQueries: privacyGate.queries,
+    recipientQueries: recipientGate.queries,
+    run: decideMessageHandoffs({ recipient, source: owners.source ?? currentSource }, items).pipe(
+      Effect.provide(Layer.mergeAll(recipientGate.layer, privacyGate.layer)),
+    ),
+  };
+};
+
+/** Tag-free view: what happened to each message and why, most important reason first. */
+const view = (decision: MessageHandoffDecisionCase) =>
+  MessageHandoffDecision.$match(decision, {
+    AlreadyHandedOff: ({ identity, later }) => ({
+      kind: 'AlreadyHandedOff' as const,
+      later: later.map(({ category }) => category),
+      recipient: identity.recipient.resourceId,
+    }),
+    Proceed: ({ identity }) => ({ kind: 'Proceed' as const, recipient: identity.recipient.resourceId }),
+    ReconciliationRequired: ({ identity }) => ({
+      kind: 'ReconciliationRequired' as const,
+      recipient: identity.recipient.resourceId,
+    }),
+    Suppressed: ({ identity, reasons }) => ({
+      kind: 'Suppressed' as const,
+      reasons: reasons.map(({ category, cause }) => `${category}:${cause}`),
+      recipient: identity.recipient.resourceId,
+    }),
+  });
+
+const single = fixtureType();
+const forA = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a');
+const oneMessage = (overrides: Parameters<typeof handoffItem>[3] = {}) => {
+  const input = evaluationInput(single, [forA]);
+  return { input, items: [handoffItem(input, forA, 'primary', overrides)] };
+};
+/** The one decision of a single-message run. */
+const only = (decisions: readonly MessageHandoffDecisionCase[]) => Option.getOrThrow(EffectArray.head(decisions));
+
+const decideOne = (
+  owners: Parameters<typeof decide>[2],
+  overrides: Parameters<typeof handoffItem>[3] = {},
+  extra: { readonly source?: MessageHandoffInput['source'] } = {},
+) => {
+  const { input, items } = oneMessage(overrides);
+  const prepared = decide(input, items, { ...owners, ...extra });
+  return { ...prepared, first: prepared.run.pipe(Effect.map(only)) };
+};
+
+describe('#1396 Rule: eligibility is exact and Current for every recipient', () => {
+  it.effect(
+    'Scenario: Current ALLOWED, the original recipient and a current source let the message continue, nothing more',
+    () =>
+      Effect.gen(function* allowedAndEverythingElse() {
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyAllowed },
+          recipients: { 'contact-a': usable() },
+        });
+        const decision = yield* first;
+
+        expect(view(decision)).toEqual({ kind: 'Proceed', recipient: 'recipient-a' });
+        // The endpoint stays protected; the decision names no provider acceptance, delivery or verification.
+        expect(JSON.stringify(decision)).not.toContain(ORIGINAL_ADDRESS);
+        expect(Object.keys(decision).toSorted()).toEqual(['_tag', 'endpoint', 'evidence', 'identity']);
+      }),
+  );
+
+  it.effect('Scenario: Current Privacy NOT_ALLOWED blocks the message and records the proven prohibition', () =>
+    Effect.gen(function* notAllowed() {
+      const { first } = decideOne({
+        privacy: { 'recipient-a': privacyNotAllowed(['fixture_current_restriction:r1']) },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = yield* first;
+
+      expect(view(decision)).toEqual({
+        kind: 'Suppressed',
+        reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'],
+        recipient: 'recipient-a',
+      });
+      expect(blockingFactsOf(decision)).toEqual(['fixture_current_restriction:r1']);
+    }),
+  );
+
+  it.effect('Scenario: Current Privacy INDETERMINATE stops the message as uncertainty, never as a prohibition', () =>
+    Effect.gen(function* indeterminate() {
+      const { first } = decideOne({
+        privacy: { 'recipient-a': privacyIndeterminate },
+        recipients: { 'contact-a': usable() },
+      });
+
+      expect(view(yield* first)).toMatchObject({
+        reasons: ['PRIVACY_INDETERMINATE:INPUTS_NOT_EVIDENCED'],
+      });
+    }),
+  );
+
+  it.effect(
+    'Scenario: the first stage has no preference; without one an INDETERMINATE still stops and no opt-in is invented',
+    () =>
+      Effect.gen(function* noImplicitOptIn() {
+        // There is no preference input anywhere in the decision: an absent record is neither opt-in nor opt-out.
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyUnavailable('CONTEXT_AMBIGUOUS') },
+          recipients: { 'contact-a': usable() },
+        });
+
+        expect(view(yield* first)).toMatchObject({
+          kind: 'Suppressed',
+          reasons: ['PRIVACY_CONTEXT_AMBIGUOUS:CONTEXT_AMBIGUOUS'],
+        });
+      }),
+  );
+
+  it.effect(
+    '[#1400 S13] an optional message is decided without any Tenant switch or preference: none is asked for and none can be passed',
+    () =>
+      Effect.gen(function* noTenantSwitchForOptional() {
+        expect(single.requiredness).toBe('OPTIONAL');
+        const { first, privacyQueries } = decideOne({
+          privacy: { 'recipient-a': privacyAllowed },
+          recipients: { 'contact-a': usable() },
+        });
+
+        expect(view(yield* first)).toEqual({ kind: 'Proceed', recipient: 'recipient-a' });
+        // the only question put to Privacy names the message and its exact scope, never a Tenant switch or preference
+        const [query] = privacyQueries;
+        expect(Object.keys(query ?? {}).toSorted((left, right) => left.localeCompare(right))).toEqual([
+          'occurrence',
+          'recipient',
+          'scope',
+          'sourceModule',
+          'tenantId',
+          'typeId',
+        ]);
+        // every object key at any depth of the question, read from its JSON text
+        const keys = [...JSON.stringify(query).matchAll(/"(?<key>(?:[^"\\]|\\.)*)":/gu)].map(
+          (match) => match.groups?.['key'] ?? '',
+        );
+        expect(keys).toContain('purposeVersionId');
+        expect(
+          keys.filter((key) => /notif|prefer|opt[-_]?in|opt[-_]?out|subscri|switch|toggle|enabled/iu.test(key)),
+        ).toEqual([]);
+      }),
+  );
+
+  it.effect('Scenario: a historical ALLOWED for another purpose is not applied and a Current result is required', () =>
+    Effect.gen(function* historicalMarketingAllowed() {
+      const { first } = decideOne({
+        privacy: {
+          'recipient-a': privacyAnswersFor(
+            (scope) => ({ ...scope, purposeRef: 'fixture-marketing-purpose' }),
+            'ALLOWED',
+          ),
+        },
+        recipients: { 'contact-a': usable() },
+      });
+
+      expect(view(yield* first)).toMatchObject({
+        reasons: ['PRIVACY_INDETERMINATE:EVIDENCE_SCOPE_MISMATCH'],
+      });
+    }),
+  );
+
+  it.effect('Scenario: a purpose the approved type does not declare is never sent to Privacy as the type purpose', () =>
+    Effect.gen(function* undeclaredPurpose() {
+      const { input, items } = oneMessage({
+        scope: processingScope('recipient-a', { catalogPurposeRef: 'fixture.privacy.undeclared' }),
+      });
+      const prepared = decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = only(yield* prepared.run);
+
+      expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_CONTEXT_AMBIGUOUS:CONTEXT_AMBIGUOUS'] });
+      expect(prepared.privacyQueries).toHaveLength(0);
+    }),
+  );
+
+  it.effect(
+    'Scenario: ALLOWED does not override the recipient authorization, and the denial is not labelled Privacy',
+    () =>
+      Effect.gen(function* allowedButRecipientDenied() {
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyAllowed },
+          recipients: { 'contact-a': unusable('PERMISSION_ABSENT') },
+        });
+        const decision = yield* first;
+
+        expect(view(decision)).toEqual({
+          kind: 'Suppressed',
+          reasons: ['RECIPIENT_INVALID:PERMISSION_ABSENT'],
+          recipient: 'recipient-a',
+        });
+      }),
+  );
+
+  it.effect('Scenario: a proven prohibition stays the primary reason when another owner is unavailable (BR-04)', () =>
+    Effect.gen(function* provenOutranksUnavailable() {
+      const { first } = decideOne({
+        privacy: { 'recipient-a': privacyNotAllowed() },
+        recipients: { 'contact-a': unavailable() },
+      });
+
+      expect(view(yield* first)).toMatchObject({
+        reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION', 'RECIPIENT_AUTHORITY_UNAVAILABLE:AUTHORITY_UNAVAILABLE'],
+      });
+    }),
+  );
+
+  it.effect(
+    'Scenario: unknown privacy input without any proven prohibition stays indeterminate (no fabricated deny)',
+    () =>
+      Effect.gen(function* unknownInput() {
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyUnavailable('OWNER_UNAVAILABLE') },
+          recipients: { 'contact-a': usable() },
+        });
+        const decision = yield* first;
+
+        expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_AUTHORITY_UNAVAILABLE:OWNER_UNAVAILABLE'] });
+        expect(JSON.stringify(view(decision))).not.toContain('PRIVACY_NOT_ALLOWED');
+      }),
+  );
+});
+
+describe('#1396 Rule: a retired purpose and protected material stop under their own reasons', () => {
+  it.effect('Scenario: an absent or retired Privacy purpose stops as its own cause, not as missing evidence', () =>
+    Effect.gen(function* retiredPurpose() {
+      const { first } = decideOne({
+        privacy: {
+          'recipient-a': ownerAnswered({
+            eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'PURPOSE_NOT_CURRENT' },
+            evaluatedAt: '2026-11-19T10:00:00.000Z',
+            outcome: 'DENIED',
+            reason: 'PROCESSING_NOT_ALLOWED',
+          }),
+        },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = yield* first;
+
+      expect(view(decision)).toEqual({
+        kind: 'Suppressed',
+        reasons: ['PRIVACY_INDETERMINATE:PURPOSE_NOT_CURRENT'],
+        recipient: 'recipient-a',
+      });
+      expect(JSON.stringify(view(decision))).not.toMatch(/EVIDENCE_MISSING|PRIVACY_NOT_ALLOWED/u);
+    }),
+  );
+
+  it.effect('Scenario: protected material stops as a source protection and is never a Privacy prohibition', () =>
+    Effect.gen(function* protectedMaterial() {
+      const { first } = decideOne({
+        privacy: {
+          'recipient-a': ownerAnswered({
+            evaluatedAt: '2026-11-19T10:00:00.000Z',
+            outcome: 'DENIED',
+            reason: 'PROTECTED_MATERIAL',
+          }),
+        },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = yield* first;
+
+      expect(view(decision)).toEqual({
+        kind: 'Suppressed',
+        reasons: ['SOURCE_PROTECTED:PROTECTED_MATERIAL'],
+        recipient: 'recipient-a',
+      });
+      expect(MessageHandoffDecision.$is('Suppressed')(decision) && decision.primary.proven).toBe(false);
+    }),
+  );
+
+  it.effect('Scenario: an owner outage on the recipient side is not labelled an invalid recipient', () =>
+    Effect.gen(function* recipientOwnerOutage() {
+      const { first } = decideOne({
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': unavailable() },
+      });
+
+      expect(view(yield* first)).toMatchObject({
+        reasons: ['RECIPIENT_AUTHORITY_UNAVAILABLE:AUTHORITY_UNAVAILABLE'],
+      });
+    }),
+  );
+});
+
+describe('#1396 Rule: a change before the last handoff stops the work, and a proven handoff stays true', () => {
+  it.effect(
+    'Scenario: a consent withdrawal before the boundary stops the queued message and keeps the first decision',
+    () =>
+      Effect.gen(function* withdrawalBeforeBoundary() {
+        const { input, items } = oneMessage();
+        const owners = { recipients: { 'contact-a': usable() } };
+        const queued = yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowed } }).run;
+        const queuedBefore = JSON.stringify(queued);
+        const rechecked = yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyNotAllowed() } })
+          .run;
+
+        expect(view(only(queued)).kind).toBe('Proceed');
+        expect(view(only(rechecked))).toMatchObject({
+          kind: 'Suppressed',
+          reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'],
+        });
+        // Rechecking produced a NEW decision object with its own Privacy evidence and left the first one byte for byte.
+        expect(rechecked).not.toBe(queued);
+        expect(JSON.stringify(queued)).toBe(queuedBefore);
+        expect(JSON.stringify(rechecked)).not.toBe(queuedBefore);
+      }),
+  );
+
+  it.effect(
+    'Scenario: access to the Privacy Read withdrawn after the intent was prepared stops the handoff as an access failure, not a prohibition',
+    () =>
+      Effect.gen(function* accessWithdrawn() {
+        const { input, items } = oneMessage();
+        const owners = { recipients: { 'contact-a': usable() } };
+        const prepared = only(
+          yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowed } }).run,
+        );
+        const rechecked = only(
+          yield* decide(input, items, {
+            ...owners,
+            // The owner answers the withdrawn Read with its published 403 problem; the real mapping names the reason.
+            privacy: { 'recipient-a': privacyUnavailable(unavailableReasonOfOwnerProblem(403)) },
+          }).run,
+        );
+        const outage = only(
+          yield* decide(input, items, {
+            ...owners,
+            privacy: { 'recipient-a': privacyUnavailable(unavailableReasonOfOwnerProblem(503)) },
+          }).run,
+        );
+
+        expect(view(prepared).kind).toBe('Proceed');
+        expect(view(rechecked)).toEqual({
+          kind: 'Suppressed',
+          reasons: ['PRIVACY_ACCESS_DENIED:AUTHORIZATION_DENIED'],
+          recipient: 'recipient-a',
+        });
+        expect(JSON.stringify(view(rechecked))).not.toContain('PRIVACY_NOT_ALLOWED');
+        // An outage of the same Read is another fact, so the two are never reported as one another.
+        expect(view(outage)).toMatchObject({ reasons: ['PRIVACY_AUTHORITY_UNAVAILABLE:OWNER_UNAVAILABLE'] });
+      }),
+  );
+
+  it.effect('Scenario: a stale ALLOWED never authorizes queued or retried work, every handoff asks Privacy again', () =>
+    Effect.gen(function* queuedAndRetried() {
+      const { input, items } = oneMessage();
+      const prepared = decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': usable() },
+      });
+      yield* prepared.run;
+      yield* TestClock.adjust('90 days');
+      yield* prepared.run;
+
+      expect(prepared.privacyQueries).toHaveLength(2);
+      expect(prepared.recipientQueries).toHaveLength(2);
+    }),
+  );
+
+  it.effect(
+    'Scenario: a Processing Restriction of this purpose stops the last handoff and names its blocking fact',
+    () =>
+      Effect.gen(function* restriction() {
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyNotAllowed(['fixture_current_restriction:restriction-9']) },
+          recipients: { 'contact-a': usable() },
+        });
+        const decision = yield* first;
+
+        expect(view(decision).kind).toBe('Suppressed');
+        expect(blockingFactsOf(decision)).toEqual(['fixture_current_restriction:restriction-9']);
+      }),
+  );
+
+  it.effect(
+    'Scenario: a change after a proven handoff never rewrites it as suppressed and is not even asked about',
+    () =>
+      Effect.gen(function* afterProvenHandoff() {
+        const { input, items } = oneMessage({ handoff: HandoffFact.ProvenHandedOff() });
+        const prepared = decide(input, items, {
+          privacy: { 'recipient-a': privacyNotAllowed() },
+          recipients: { 'contact-a': usable() },
+          source: staleSource('SOURCE_STATE_INELIGIBLE'),
+        });
+        const decision = only(yield* prepared.run);
+
+        // History stays true; the later source condition is recorded and governs only further processing.
+        expect(view(decision)).toEqual({
+          kind: 'AlreadyHandedOff',
+          later: ['SOURCE_STALE'],
+          recipient: 'recipient-a',
+        });
+        expect(prepared.privacyQueries).toHaveLength(0);
+        expect(prepared.recipientQueries).toHaveLength(0);
+      }),
+  );
+
+  it.effect(
+    'Scenario: an unknown provider effect needs reconciliation, never a blind resend and never a Privacy verdict',
+    () =>
+      Effect.gen(function* unknownProviderEffect() {
+        const { input, items } = oneMessage({ handoff: HandoffFact.EffectUnknown() });
+        const prepared = decide(input, items, {
+          privacy: { 'recipient-a': privacyNotAllowed() },
+          recipients: { 'contact-a': usable() },
+        });
+        const decision = only(yield* prepared.run);
+
+        expect(view(decision)).toEqual({ kind: 'ReconciliationRequired', recipient: 'recipient-a' });
+        expect(prepared.privacyQueries).toHaveLength(0);
+      }),
+  );
+});
+
+describe('#1396 Rule: channel and source state are independent reasons for suppression', () => {
+  it.effect('Scenario: an unusable original endpoint stops the message and never goes to the new address', () =>
+    Effect.gen(function* unusableOriginalEndpoint() {
+      const { input, items } = oneMessage();
+      const prepared = decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': unusable('ORIGINAL_ENDPOINT_UNUSABLE'), 'contact-new': usable(NEW_ADDRESS) },
+      });
+      const decision = only(yield* prepared.run);
+
+      expect(view(decision)).toMatchObject({ reasons: ['CHANNEL_UNUSABLE:ORIGINAL_ENDPOINT_UNUSABLE'] });
+      expect(prepared.recipientQueries.map(({ contact }) => contact.contactRef.resourceId)).toEqual(['contact-a']);
+    }),
+  );
+
+  it.effect('Scenario: a provider-evidenced block is a provider suppression, distinct from Privacy NOT_ALLOWED', () =>
+    Effect.gen(function* providerSuppression() {
+      const { first } = decideOne(
+        { privacy: { 'recipient-a': privacyAllowed }, recipients: { 'contact-a': usable() } },
+        { provider: ProviderFact.Suppressed({ evidenceRef: 'fixture-provider-evidence-1', kind: 'BLOCKED' }) },
+      );
+
+      expect(view(yield* first)).toMatchObject({ reasons: ['PROVIDER_SUPPRESSED:PROVIDER_BLOCKED'] });
+    }),
+  );
+
+  it.effect(
+    'Scenario: a mandatory provider or channel fact that cannot be obtained is uncertainty, never an allow fallback',
+    () =>
+      Effect.gen(function* missingProviderFact() {
+        const { first } = decideOne(
+          { privacy: { 'recipient-a': privacyAllowed }, recipients: { 'contact-a': usable() } },
+          { provider: ProviderFact.Unavailable() },
+        );
+
+        expect(view(yield* first)).toMatchObject({ reasons: ['CHANNEL_UNUSABLE:PROVIDER_FACT_UNAVAILABLE'] });
+      }),
+  );
+
+  it.effect('Scenario: an ALLOWED for the approved channel is not reused for another channel of the endpoint', () =>
+    Effect.gen(function* channelMismatch() {
+      const { first } = decideOne(
+        { privacy: { 'recipient-a': privacyAllowed }, recipients: { 'contact-a': usable() } },
+        { scope: processingScope('recipient-a', { channel: 'sms' }) },
+      );
+
+      expect(view(yield* first)).toMatchObject({ reasons: ['CHANNEL_UNUSABLE:CHANNEL_MISMATCH'] });
+    }),
+  );
+
+  it.effect(
+    'Scenario: a revoked invitation (the source no longer justifies the request) stops it without touching the source',
+    () =>
+      Effect.gen(function* staleInvitation() {
+        const { first } = decideOne(
+          { privacy: { 'recipient-a': privacyAllowed }, recipients: { 'contact-a': usable() } },
+          {},
+          { source: staleSource('SOURCE_NO_LONGER_VALID') },
+        );
+
+        expect(view(yield* first)).toMatchObject({ reasons: ['SOURCE_STALE:SOURCE_NO_LONGER_VALID'] });
+      }),
+  );
+});
+
+describe('#1396 Rule: a marketing unsubscribe does not suppress an independent security message, a relevant restriction does', () => {
+  it.effect('Scenario: only the transactional scope is ever asked; the marketing facts are not an input', () =>
+    Effect.gen(function* marketingUnsubscribe() {
+      const { input, items } = oneMessage();
+      const prepared = decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = only(yield* prepared.run);
+
+      expect(view(decision).kind).toBe('Proceed');
+      expect(prepared.privacyQueries.map(({ scope }) => scope.catalogPurposeRef)).toEqual(['fixture.privacy.purpose']);
+    }),
+  );
+
+  it.effect(
+    'Scenario: a relevant Privacy NOT_ALLOWED applies to a security message and "security" is no exception',
+    () =>
+      Effect.gen(function* relevantRestriction() {
+        const { first } = decideOne({
+          privacy: { 'recipient-a': privacyNotAllowed(['fixture_current_restriction:security-flow']) },
+          recipients: { 'contact-a': usable() },
+        });
+
+        expect(view(yield* first)).toMatchObject({
+          kind: 'Suppressed',
+          reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'],
+        });
+      }),
+  );
+});
+
+const approvers = [
+  binding(FIXTURE_APPROVER_ROLE, 'recipient-a', 'contact-a'),
+  binding(FIXTURE_APPROVER_ROLE, 'recipient-b', 'contact-b'),
+  binding(FIXTURE_APPROVER_ROLE, 'recipient-c', 'contact-c'),
+];
+const requiredApprovers = fixtureTypeNamed('approvers-required', {
+  requiredness: 'REQUIRED',
+  result: { kind: 'MESSAGE_INTENTS', slots: [fixtureSlot('approvers', FIXTURE_APPROVER_ROLE, 'EACH_MATCHING')] },
+});
+
+const threeRecipients = () => {
+  const input = evaluationInput(requiredApprovers, approvers);
+  return { input, items: approvers.map((approver) => handoffItem(input, approver, 'approvers')) };
+};
+
+describe('#1396 Rule: every recipient has its own outcome (BR-09)', () => {
+  const allUsable = { 'contact-a': usable(), 'contact-b': usable(), 'contact-c': usable() };
+
+  it.effect(
+    'Scenario: two of three recipients may continue and the third has its own reason, so the result is partial',
+    () =>
+      Effect.gen(function* oneOfThree() {
+        const { input, items } = threeRecipients();
+        const decisions = yield* decide(input, items, {
+          privacy: { 'recipient-a': privacyAllowed, 'recipient-b': privacyAllowed, 'recipient-c': privacyNotAllowed() },
+          recipients: allUsable,
+        }).run;
+
+        expect(decisions.map(view)).toEqual([
+          { kind: 'Proceed', recipient: 'recipient-a' },
+          { kind: 'Proceed', recipient: 'recipient-b' },
+          { kind: 'Suppressed', reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'], recipient: 'recipient-c' },
+        ]);
+        expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
+          partial: true,
+          requiredOutcome: 'FAILED',
+          sourceImpact: 'SOURCE_OWNER_DECIDES',
+        });
+      }),
+  );
+
+  it.effect('Scenario: one recipient owner outage never changes the decision of another recipient', () =>
+    Effect.gen(function* isolatedFailure() {
+      const { input, items } = threeRecipients();
+      const decisions = yield* decide(input, items, {
+        privacy: {
+          'recipient-a': privacyUnavailable('OWNER_UNAVAILABLE'),
+          'recipient-b': privacyAllowed,
+          'recipient-c': privacyAllowed,
+        },
+        recipients: allUsable,
+      }).run;
+
+      expect(decisions.map((decision) => view(decision).kind)).toEqual(['Suppressed', 'Proceed', 'Proceed']);
+    }),
+  );
+
+  it.effect('Scenario: each recipient is asked for its own scope, never for a scope shared with another subject', () =>
+    Effect.gen(function* ownScopes() {
+      const { input, items } = threeRecipients();
+      const prepared = decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed, 'recipient-b': privacyAllowed, 'recipient-c': privacyAllowed },
+        recipients: allUsable,
+      });
+      yield* prepared.run;
+
+      expect(new Set(prepared.privacyQueries.map(({ scope }) => JSON.stringify(scope.subject))).size).toBe(3);
+    }),
+  );
+
+  const indivisible = {
+    approvalRuleKey: 'fixture.rule.indivisible',
+    mode: 'INDIVISIBLE',
+    slotKeys: ['primary', 'secondary'],
+  };
+  const groupType = requiredTwoSlotTypeWith({ audience: indivisible });
+  const forB = binding(FIXTURE_SECONDARY_ROLE, 'recipient-b', 'contact-b');
+  const groupItems = (overrides: Parameters<typeof handoffItem>[3] = {}) => {
+    const input = evaluationInput(groupType, [forA, forB]);
+    return {
+      input,
+      items: [handoffItem(input, forA, 'primary', overrides), handoffItem(input, forB, 'secondary')],
+    };
+  };
+
+  it.effect(
+    'Scenario: an approved indivisible audience hands off nothing when one required member is not allowed by Privacy',
+    () =>
+      Effect.gen(function* indivisibleGroup() {
+        const { input, items } = groupItems();
+        const decisions = yield* decide(input, items, {
+          privacy: { 'recipient-a': privacyAllowed, 'recipient-b': privacyNotAllowed() },
+          recipients: { 'contact-a': usable(), 'contact-b': usable() },
+        }).run;
+
+        expect(decisions.map(view)).toEqual([
+          {
+            kind: 'Suppressed',
+            reasons: ['AUDIENCE_GROUP_INCOMPLETE:AUDIENCE_GROUP_INCOMPLETE'],
+            recipient: 'recipient-a',
+          },
+          { kind: 'Suppressed', reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'], recipient: 'recipient-b' },
+        ]);
+      }),
+  );
+
+  it.effect(
+    'Scenario: a member already proven handed off is kept as it happened and the broken group is only recorded',
+    () =>
+      Effect.gen(function* brokenGroupAfterHandoff() {
+        const { input, items } = groupItems({ handoff: HandoffFact.ProvenHandedOff() });
+        const decisions = yield* decide(input, items, {
+          privacy: { 'recipient-b': privacyNotAllowed() },
+          recipients: { 'contact-a': usable(), 'contact-b': usable() },
+        }).run;
+
+        expect(view(only(decisions))).toEqual({
+          kind: 'AlreadyHandedOff',
+          later: ['AUDIENCE_GROUP_INCOMPLETE'],
+          recipient: 'recipient-a',
+        });
+      }),
+  );
+});
+
+describe('#1396 Rule: a required message never bypasses a gate and its stop reaches the source truthfully (BR-12, AC-09)', () => {
+  const requiredType = fixtureTypeNamed('required-single', { requiredness: 'REQUIRED' });
+  const forRequired = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a');
+  const requiredOne = (overrides: Parameters<typeof handoffItem>[3] = {}) => {
+    const input = evaluationInput(requiredType, [forRequired]);
+    return { input, items: [handoffItem(input, forRequired, 'primary', overrides)] };
+  };
+
+  it.effect(
+    'Scenario: a required message with a blocking Privacy fact cannot leave and the source gets a failed outcome',
+    () =>
+      Effect.gen(function* requiredBlocked() {
+        const { input, items } = requiredOne();
+        const decisions = yield* decide(input, items, {
+          privacy: { 'recipient-a': privacyNotAllowed() },
+          recipients: { 'contact-a': usable() },
+        }).run;
+        const feed = feedOfHandoff('REQUIRED', decisions);
+
+        expect(feedSummary(feed)).toEqual({
+          attentions: ['FAILURE'],
+          partial: false,
+          reasons: ['PRIVACY_NOT_ALLOWED'],
+          requiredOutcome: 'FAILED',
+          sourceImpact: 'SOURCE_OWNER_DECIDES',
+        });
+        // Communications changes nothing in the source: the outcome has no field that could.
+        expect(Object.keys(feed).toSorted()).toEqual([
+          'decisionId',
+          'messages',
+          'noMessageReason',
+          'partial',
+          'requestId',
+          'requiredOutcome',
+          'sourceImpact',
+          'unresolvedSlots',
+        ]);
+      }),
+  );
+
+  it.effect(
+    'Scenario: an unknown provider effect is owed reconciliation, which is not a suppression and not a Privacy result',
+    () =>
+      Effect.gen(function* requiredUnknownEffect() {
+        const { input, items } = requiredOne({ handoff: HandoffFact.EffectUnknown() });
+        const decisions = yield* decide(input, items, { privacy: {}, recipients: {} }).run;
+
+        expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
+          attentions: ['UNKNOWN'],
+          requiredOutcome: 'UNKNOWN',
+        });
+      }),
+  );
+
+  it.effect('Scenario: the owner own source change is truthful but is not reported as a Communications failure', () =>
+    Effect.gen(function* requiredStaleSource() {
+      const { input, items } = requiredOne();
+      const decisions = yield* decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': usable() },
+        source: staleSource('SOURCE_REVISION_NOT_CURRENT'),
+      }).run;
+
+      expect(feedSummary(feedOfHandoff('REQUIRED', decisions))).toMatchObject({
+        reasons: ['SOURCE_REVISION_NOT_CURRENT'],
+        requiredOutcome: 'SOURCE_STALE',
+      });
+    }),
+  );
+
+  it.effect(
+    'Scenario: required and optional types differ only in the outcome owed to the source, never in the gates',
+    () =>
+      Effect.gen(function* requiredVersusOptional() {
+        const { input, items } = oneMessage();
+        const decisions = yield* decide(input, items, {
+          privacy: { 'recipient-a': privacyNotAllowed() },
+          recipients: { 'contact-a': usable() },
+        }).run;
+
+        expect(feedOfHandoff('OPTIONAL', decisions).requiredOutcome).toBe('NOT_REQUIRED');
+        expect(view(only(decisions)).kind).toBe('Suppressed');
+      }),
+  );
+
+  it.effect('Scenario: everything allowed is ready for step 22, which is not a delivery claim', () =>
+    Effect.gen(function* requiredReady() {
+      const { input, items } = requiredOne();
+      const decisions = yield* decide(input, items, {
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': usable() },
+      }).run;
+
+      expect(feedOfHandoff('REQUIRED', decisions).requiredOutcome).toBe('IN_PROGRESS');
+    }),
+  );
+});

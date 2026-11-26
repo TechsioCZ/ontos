@@ -1,6 +1,6 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
-import type { SourceProcessingEligibilityResponse } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityResponse } from '@app/privacy-contracts/source-processing-eligibility';
 import { Config, DateTime, Effect, Option, Predicate } from 'effect';
 import type { CommerceSourceProcessingRequest } from './source-processing-eligibility.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';

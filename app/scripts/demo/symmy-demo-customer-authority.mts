@@ -66,9 +66,9 @@ import {
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
-import { SourceProcessingContextSchema } from '../../verticals/privacy/shared/apis/source-processing-eligibility.ts';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
-import { SourceSyncProcessingPolicySchema } from '../../verticals/privacy/shared/domain/source-sync-processing-policy.ts';
+import { SourceProcessingContextSchema } from '../../verticals/privacy/shared/domain/source-processing-context.ts';
+import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
+import { SourceSyncProcessingPolicySchema } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 import { stageWorkloadBindingIds, stageWorkloadCompanyIds } from './register-stage-workloads.mts';
 import { DemoSeedError } from './seed-client.mts';
 import type { SeedClient, SeedWriteCheckpoint } from './seed-client.mts';

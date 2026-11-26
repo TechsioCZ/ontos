@@ -1,6 +1,6 @@
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
-import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { checkPartyClientSourcePrivacy } from './party-client-source-privacy.service.ts';
 import { and, eq, isNotNull, ne, or, sql } from 'drizzle-orm';

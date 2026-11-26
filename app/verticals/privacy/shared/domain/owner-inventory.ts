@@ -24,6 +24,8 @@ export const PrivacyOwnerAvailabilitySchema = Schema.Literals(['AVAILABLE', 'UNA
 export type PrivacyOwnerAvailability = typeof PrivacyOwnerAvailabilitySchema.Type;
 
 export const PrivacyOwnerActivationStateSchema = Schema.Literals([
+  /** No Module State Gate fact was read: the owner's governed answer is the only evidence, and it names no state. */
+  'unknown',
   'inactive',
   'active',
   'read_only',
@@ -43,7 +45,48 @@ export const PrivacyOwnerObservationOutcomeSchema = Schema.Literals([
 ]);
 export type PrivacyOwnerObservationOutcome = typeof PrivacyOwnerObservationOutcomeSchema.Type;
 
+/**
+ * What an owner that answers with more than its coverage adds to its inventory entry (#1410): its configuration gaps per
+ * category, its right-specific contribution and the external copies it knows. All three are optional and additive: an owner
+ * that answers only coverage never carries them, and an entry without them is exactly the entry it has always been.
+ */
+const OwnerConfigurationSchema = Schema.Struct({
+  category: Text,
+  gapInputs: Schema.Array(Schema.Struct({ input: Text, owner: Text })),
+  state: Schema.Literals(['CONFIGURATION_GAP', 'CONFIGURED', 'CONFLICTING_CONFIGURATION', 'NOT_APPLICABLE']),
+});
+const OwnerContributionSummarySchema = Schema.Struct({
+  completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
+  decisions: Schema.Array(
+    Schema.Struct({
+      category: Text,
+      contentRef: Text,
+      outcome: Schema.Literals(['EXCLUDE', 'INCLUDE', 'REDACT']),
+      reason: Text,
+    }),
+  ),
+  exclusions: Schema.Array(Schema.Struct({ reason: Text, scopeRef: Text })),
+  includedContentRefs: Schema.Array(Text),
+  right: Text,
+  unresolvedCategories: Schema.Array(Text),
+});
+const OwnerExternalCopySchema = Schema.Struct({
+  firstObservedAt: Timestamp,
+  holderRef: Text,
+  lastObservedAt: Timestamp,
+  providerSideDispositionEvidence: Schema.Literal('NOT_HELD_BY_COMMUNICATIONS'),
+  relationship: Schema.Literals(['CURRENT_TRANSPORT', 'HISTORICAL_TRANSPORT', 'PRIOR_PROVIDER']),
+});
+const OwnerAnswerDetailFields = {
+  configuration: Schema.optionalKey(Schema.Array(OwnerConfigurationSchema)),
+  contribution: Schema.optionalKey(OwnerContributionSummarySchema),
+  externalCopies: Schema.optionalKey(Schema.Array(OwnerExternalCopySchema)),
+} as const;
+const OwnerAnswerDetailSchema = Schema.Struct(OwnerAnswerDetailFields);
+export type PrivacyOwnerAnswerDetail = typeof OwnerAnswerDetailSchema.Type;
+
 export const PrivacyOwnerObservationSchema = Schema.Struct({
+  ...OwnerAnswerDetailFields,
   moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Timestamp,
   outcome: PrivacyOwnerObservationOutcomeSchema,
@@ -64,6 +107,7 @@ export const PrivacyOwnerInventoryStatusSchema = Schema.Literals([
 export type PrivacyOwnerInventoryStatus = typeof PrivacyOwnerInventoryStatusSchema.Type;
 
 export const PrivacyOwnerInventoryEntrySchema = Schema.Struct({
+  ...OwnerAnswerDetailFields,
   moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Schema.toEncoded(Schema.OptionFromNullOr(Timestamp)),
   reason: Schema.toEncoded(Schema.OptionFromNullOr(Text)),
@@ -118,7 +162,9 @@ const statusFor = (
   if (state === undefined) {
     return 'UNCHECKED';
   }
-  if (state !== 'active' && state !== 'read_only') {
+  // `unknown` is not a refusal: the owner answered through the governed call, so its own gate admitted the read, but which
+  // admitting state it was is a fact nobody read, and none is inferred
+  if (state !== 'active' && state !== 'read_only' && state !== 'unknown') {
     return 'DISABLED';
   }
   if (observation === undefined) {
@@ -130,14 +176,35 @@ const statusFor = (
   return observation.outcome;
 };
 
+const MODULE_STATE_UNKNOWN = 'MODULE_STATE_UNKNOWN_ADMITTED_BY_THE_GOVERNED_CALL';
+
 const reasonFor = (
   status: PrivacyOwnerInventoryStatus,
   observation: PrivacyOwnerObservation | undefined,
+  state: PrivacyOwnerActivationState | undefined,
 ): string | null => {
-  if (status === 'NO_DATA' && observation?.outcome === 'NO_DATA') {
-    return observation.reason ?? 'Owner confirmed complete coverage with no data';
+  const reason =
+    status === 'NO_DATA' && observation?.outcome === 'NO_DATA'
+      ? (observation.reason ?? 'Owner confirmed complete coverage with no data')
+      : (observation?.reason ?? null);
+  return state === 'unknown' && observation !== undefined
+    ? [reason, MODULE_STATE_UNKNOWN].filter((part) => part !== null).join('; ')
+    : reason;
+};
+
+/** Only what the owner actually answered: an owner without these (or no observation at all) adds no key to its entry. */
+const answerDetailOf = (observation: PrivacyOwnerObservation | undefined): PrivacyOwnerAnswerDetail => {
+  const detail: { -readonly [Key in keyof PrivacyOwnerAnswerDetail]: PrivacyOwnerAnswerDetail[Key] } = {};
+  if (observation?.configuration !== undefined) {
+    detail.configuration = observation.configuration;
   }
-  return observation?.reason ?? null;
+  if (observation?.contribution !== undefined) {
+    detail.contribution = observation.contribution;
+  }
+  if (observation?.externalCopies !== undefined) {
+    detail.externalCopies = observation.externalCopies;
+  }
+  return detail;
 };
 
 const inventoryEntry = (
@@ -150,9 +217,10 @@ const inventoryEntry = (
 ): PrivacyOwnerInventoryEntry => {
   const status = statusFor(moduleId, composition, observation, moduleStates, availability);
   return {
+    ...answerDetailOf(observation),
     moduleId,
     observedAt: observation?.observedAt ?? null,
-    reason: reasonFor(status, observation),
+    reason: reasonFor(status, observation, moduleStates.get(moduleId)),
     requiredByCoverageRefs: [...new Set(requiredByCoverageRefs)],
     resourceRefs: observation?.resourceRefs ?? [],
     status,

@@ -18,15 +18,17 @@ import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
-  SourceProcessingContextSchema,
+  CommunicationsSourceProcessingConsumerModule,
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
-} from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import type {
   SourceProcessingEligibilityRequest,
+  SourceProcessingNotEvaluatedCause,
   SourceProcessingEligibilityResponse,
-  SourceProcessingContext,
-} from '../../shared/apis/source-processing-eligibility.ts';
+} from '@app/privacy-contracts/source-processing-eligibility';
+import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import { AntiResurrectionProtectionSchema, assessAntiResurrection } from '../../shared/domain/anti-resurrection.ts';
 import type { AntiResurrectionProtection } from '../../shared/domain/anti-resurrection.ts';
 import {
@@ -63,8 +65,8 @@ import {
   SourceSyncProcessingEvidenceSchema,
   SourceSyncProcessingEvidenceTargetSchema,
   SourceSyncProcessingPolicySchema,
-} from '../../shared/domain/source-sync-processing-policy.ts';
-import type { SourceSyncProcessingPolicy } from '../../shared/domain/source-sync-processing-policy.ts';
+} from '@app/privacy-contracts/domain/source-sync-processing-policy';
+import type { SourceSyncProcessingPolicy } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 
 const configuredContexts = Config.schema(
   Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema).check(Schema.isMaxLength(4096))),
@@ -75,6 +77,7 @@ const requestEquivalent = Schema.toEquivalence(SourceProcessingEligibilityReques
 const authorityEquivalent = Schema.toEquivalence(PrivacyApplicabilityAuthoritySchema);
 const sourcePersonRequirement = 'privacy.core.requirement.source-processing-source-person';
 const commerceCustomerContextModule = 'commerce.customer-context';
+const partyRegistryAppId = 'party-registry';
 const sourceProcessingWorkloadKey = 'privacy.core.source-processing-check';
 const sourceProcessingEntrypointKey = 'privacy.core.api.source-processing-eligibility';
 const symmyAppId = 'symmy-integration';
@@ -117,6 +120,7 @@ export interface SourceProcessingEligibilityServices {
 }
 
 const sourceSyncOperations = {
+  // Communications never inherits the demo's source-customer-sync authority.
   'commerce.customer-context': [
     'PROFILE_CREATE',
     'customer-profile-source.write',
@@ -139,7 +143,10 @@ const sourceSyncOperations = {
     'ONBOARD_COUNTERPARTY_CUSTOMER',
     'ADD_CONTACT_POINT',
   ],
-} satisfies Record<SourceProcessingEligibilityRequest['consumerModuleId'], readonly string[]>;
+} satisfies Record<
+  Exclude<SourceProcessingEligibilityRequest['consumerModuleId'], typeof CommunicationsSourceProcessingConsumerModule>,
+  readonly string[]
+>;
 
 const sourceSyncRecordMatches = (
   policy: SourceSyncProcessingPolicy,
@@ -169,6 +176,7 @@ export const sourceSyncProcessingPolicyMatches = (
   const { source } = request;
   const native = readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver;
   if (
+    request.consumerModuleId === CommunicationsSourceProcessingConsumerModule ||
     scope.tenantId !== policy.tenantId ||
     scope.legalEntityId !== policy.legalEntityId ||
     source === null ||
@@ -383,6 +391,17 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
     if (sourceSync !== undefined && sourceSyncProcessingPolicyMatches(sourceSync.policy, request, scope)) {
       return yield* evaluateSourceSync(request, sourceSync, evaluatedAt);
     }
+    const communications = request.consumerModuleId === CommunicationsSourceProcessingConsumerModule;
+    // Only the Communications consumer is told WHY nothing was evaluated; every other consumer keeps its exact response.
+    const denied = (
+      reason: 'AUTHORITY_NOT_CURRENT' | 'PROCESSING_NOT_ALLOWED' | 'PROTECTED_MATERIAL',
+      notEvaluated?: SourceProcessingNotEvaluatedCause,
+    ) => {
+      const response = { evaluatedAt, outcome: 'DENIED' as const, reason };
+      return communications && notEvaluated !== undefined
+        ? { ...response, eligibility: { outcome: 'NOT_EVALUATED' as const, reasonCode: notEvaluated } }
+        : response;
+    };
     const exactContexts = services.contexts.filter(
       (context) =>
         sourceRequestMatches(context, request) &&
@@ -391,13 +410,14 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
         contextCallerMatches(context, request, scope),
     );
     const [context] = exactContexts;
-    if (
-      exactContexts.length !== 1 ||
-      context === undefined ||
-      scope.legalEntityId === undefined ||
-      !currentContextMatches(context, request, scope, evaluatedAt)
-    ) {
-      return denySourceProcessing(evaluatedAt, 'AUTHORITY_NOT_CURRENT');
+    if (context === undefined) {
+      return denied('AUTHORITY_NOT_CURRENT', 'NO_CONTEXT');
+    }
+    if (exactContexts.length !== 1) {
+      return denied('AUTHORITY_NOT_CURRENT', 'MULTIPLE_CONTEXTS');
+    }
+    if (scope.legalEntityId === undefined || !currentContextMatches(context, request, scope, evaluatedAt)) {
+      return denied('AUTHORITY_NOT_CURRENT', 'CONTEXT_NOT_CURRENT');
     }
     const { applicabilityAuthority, intendedScope } = context;
     const authority = { ...applicabilityAuthority, asOf: evaluatedAt };
@@ -411,7 +431,7 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       { concurrency: 4 },
     ).pipe(Effect.mapError(unavailable));
     if (!hasCurrentPurposeVersion(purpose, intendedScope.purposeVersionId, evaluatedAt)) {
-      return denySourceProcessing(evaluatedAt, 'PROCESSING_NOT_ALLOWED');
+      return denied('PROCESSING_NOT_ALLOWED', 'PURPOSE_NOT_CURRENT');
     }
     const latest = latestPrivacyApplicabilityDecisionsForExactAuthorities(history, authority.scope, evaluatedAt).filter(
       (decision) => decision.authority !== undefined && authorityEquivalent(decision.authority, authority.authority),
@@ -423,7 +443,7 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       decision.evaluatedAt !== authority.decisionEvaluatedAt ||
       decision.outcome !== 'APPLICABLE'
     ) {
-      return denySourceProcessing(evaluatedAt, 'AUTHORITY_NOT_CURRENT');
+      return denied('AUTHORITY_NOT_CURRENT', 'APPLICABILITY_NOT_CURRENT');
     }
     const reevaluated = resolvePrivacyApplicability({
       authority: authority.authority,
@@ -436,7 +456,7 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       scope: authority.scope,
     });
     if (!privacyApplicabilityDecisionsAreEquivalent({ ...reevaluated, evaluatedAt: decision.evaluatedAt }, decision)) {
-      return denySourceProcessing(evaluatedAt, 'AUTHORITY_NOT_CURRENT');
+      return denied('AUTHORITY_NOT_CURRENT', 'APPLICABILITY_NOT_CURRENT');
     }
     const protectedSubjects = new Set([
       intendedScope.subjectRef.resourceId,
@@ -475,14 +495,29 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
     }
     // A known protection also blocks Party's original-source evidence read. Apply it before requesting that proof.
     if (!(yield* services.subjectExists(intendedScope.subjectRef.resourceId, request, context.targetAdmission))) {
-      return denySourceProcessing(evaluatedAt, 'AUTHORITY_NOT_CURRENT');
+      return denied('AUTHORITY_NOT_CURRENT', 'SUBJECT_NOT_FOUND');
     }
     const resolved = yield* services.repository
       .resolveEligibilityInputs(scope.tenantId, scope.legalEntityId, intendedScope, evaluatedAt, authority)
       .pipe(Effect.mapError(unavailable));
     const outcome = evaluatePrivacyEligibility(resolved.input);
     if (outcome.outcome !== 'ALLOWED') {
-      return denySourceProcessing(evaluatedAt, 'PROCESSING_NOT_ALLOWED');
+      // Both non-allowed outcomes stop the processing and stay DENIED/PROCESSING_NOT_ALLOWED. Only the Communications
+      // consumer additionally receives which one it was, with the owner's own evidence, so a proven prohibition is never
+      // confused with an input the owner could not evidence. Every other consumer keeps its existing response.
+      return communications
+        ? {
+            ...denied('PROCESSING_NOT_ALLOWED'),
+            eligibility: {
+              evidence: createPrivacyEligibilityEvidence({
+                authoritativeReferences: resolved.authoritativeReferences,
+                outcome,
+                policyRevisions: resolved.policyRevisions,
+              }),
+              outcome: outcome.outcome,
+            },
+          }
+        : denied('PROCESSING_NOT_ALLOWED');
     }
     return {
       authorityIncarnation: context.authorityIncarnation,
@@ -847,6 +882,69 @@ const sourceProcessingCaller = (scope: OperationalScope) => {
   return readVerifiedGatewayActor(scope)?.appId;
 };
 
+const communicationsAppId = 'communications';
+
+/**
+ * The calling module identity must equal the consumer the request claims, in both directions. The Shell signs the calling
+ * module of a delegated call, so the claim cannot be chosen by the request:
+ * - Symmy intake is claimed only by the Symmy integration through its API key;
+ * - `communications.core` is claimed only by the Communications module, and the Communications module may claim nothing else.
+ * The auth method of a Communications call is not fixed here: the configured context entry pins the exact auth method
+ * of the deployment, so only that one is ever evaluated. The other declared owners keep their existing admission
+ * (this read is not wider for them); Communications may not
+ * borrow their identity. Registered workload callers (`registered-workload-callers.mts`) are the Symmy-worker path of
+ * this check workload and are not widened here: Communications is a delegated module actor, not a registered worker, and
+ * its production wiring belongs to the d21-07 composition.
+ */
+export const sourceProcessingCallerAdmitted = (consumerModuleId: string, scope: OperationalScope): boolean => {
+  const appId = sourceProcessingCaller(scope);
+  if (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule) {
+    return (
+      (scope.authMethod === 'api_key' ||
+        readVerifiedGatewayWorkload(scope) !== undefined ||
+        readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) &&
+      appId === symmyAppId
+    );
+  }
+  return consumerModuleId === CommunicationsSourceProcessingConsumerModule
+    ? appId === communicationsAppId
+    : appId !== communicationsAppId;
+};
+
+/** The governed Read body: bind the caller to its claimed consumer, then evaluate the exact current context. */
+export const runSourceProcessingEligibility = Effect.fn('Privacy.runSourceProcessingEligibility')(
+  function* runEligibility(
+    input: SourceProcessingEligibilityRequest,
+    context: Pick<ReadHandlerContext<SourceProcessingEligibilityServices>, 'scope' | 'services'>,
+  ) {
+    yield* traceSourceStage('evaluation-entered');
+    const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
+    const consumerAppIds = {
+      'commerce.customer-context': 'commerce-customer-context',
+      'communications.core': 'communications',
+      'integration.symmy': symmyAppId,
+      'party.registry': partyRegistryAppId,
+    };
+    if (
+      !sourceProcessingCallerAdmitted(input.consumerModuleId, context.scope) ||
+      (input.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+        nativeIntakePrincipal(context.scope, input) === null) ||
+      ((context.services.sourceSync !== undefined ||
+        readVerifiedGatewayRouteScope(context.scope)?.nativeReadReceiver !== undefined) &&
+        sourceProcessingCaller(context.scope) !== consumerAppIds[input.consumerModuleId])
+    ) {
+      return {
+        evidence: { resultCount: 1 },
+        result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
+      };
+    }
+    const result = yield* evaluateSourceProcessingEligibility(input, context.scope, context.services, evaluatedAt).pipe(
+      Effect.tapError(() => traceSourceStage('eligibility-unavailable')),
+    );
+    return { evidence: { resultCount: 1 }, result };
+  },
+);
+
 const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -858,7 +956,7 @@ const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
 export const sourceProcessingEligibilityRead = defineRead(
   {
     accessActor: {
-      callers: ['party-registry', 'commerce-customer-context', 'symmy-integration'],
+      callers: ['party-registry', 'commerce-customer-context', 'symmy-integration', 'communications'],
       reason: 'Declared owners check the current exact source processing context for the identity they relay',
       subject: 'identity',
       subjectWorkloads: ['privacy.core.source-processing-check'],
@@ -894,36 +992,7 @@ export const sourceProcessingEligibilityRead = defineRead(
     input: SourceProcessingEligibilityRequest,
     context: ReadHandlerContext<SourceProcessingEligibilityServices>,
   ) {
-    yield* traceSourceStage('evaluation-entered');
-    const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
-    if (
-      input.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
-      nativeIntakePrincipal(context.scope, input) === null
-    ) {
-      return {
-        evidence: { resultCount: 1 },
-        result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
-      };
-    }
-    const consumerAppIds = {
-      'commerce.customer-context': 'commerce-customer-context',
-      'integration.symmy': symmyAppId,
-      'party.registry': 'party-registry',
-    };
-    if (
-      (context.services.sourceSync !== undefined ||
-        readVerifiedGatewayRouteScope(context.scope)?.nativeReadReceiver !== undefined) &&
-      sourceProcessingCaller(context.scope) !== consumerAppIds[input.consumerModuleId]
-    ) {
-      return {
-        evidence: { resultCount: 1 },
-        result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
-      };
-    }
-    const result = yield* evaluateSourceProcessingEligibility(input, context.scope, context.services, evaluatedAt).pipe(
-      Effect.tapError(() => traceSourceStage('eligibility-unavailable')),
-    );
-    return { evidence: { resultCount: 1 }, result };
+    return yield* runSourceProcessingEligibility(input, context);
   }),
   Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(transaction, scope) {
     yield* traceSourceStage('services-entered');

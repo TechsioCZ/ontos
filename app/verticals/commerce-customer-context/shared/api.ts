@@ -108,6 +108,7 @@ import { OrganizationCustomerProfileIcoMigrationApi } from './apis/organization-
 import { PaymentTermAffectedUseAssessmentApi } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
+import { PortalAuthIssuanceSourceApi } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { PreparePurchaseProposalBasisActionApi } from './apis/prepare-purchase-proposal-basis-action.ts';
 import { PricingPurchaseContextVerificationApi } from './apis/pricing-purchase-context-verification.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
@@ -121,6 +122,7 @@ import { ReactivateCustomerGroupActionApi } from './apis/reactivate-customer-gro
 import { ReactivateCustomerProfileActionApi } from './apis/reactivate-customer-profile-action.ts';
 import { RecordPortalEnrollmentOutcomeActionApi } from './apis/record-portal-enrollment-outcome-action.ts';
 import { RecoverRetailPortalProfileBindingActionApi } from './apis/recover-retail-portal-profile-binding-action.ts';
+import { RelayPortalAuthCommunicationRequestActionApi } from './apis/relay-portal-auth-communication-request-action.ts';
 import { RemoveCounterpartyPriceGroupActionApi } from './apis/remove-counterparty-price-group-action.ts';
 import { RemoveCustomerGroupActionApi } from './apis/remove-customer-group-action.ts';
 import { RemoveCustomerPaymentTermActionApi } from './apis/remove-customer-payment-term-action.ts';
@@ -384,6 +386,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof PaymentTermAffectedUseAssessmentApi
   | typeof PaymentTermPolicyCurrentApi
   | typeof PaymentTermsResolutionApi
+  | typeof PortalAuthIssuanceSourceApi
   | typeof PreparePurchaseProposalBasisActionApi
   | typeof PricingPurchaseContextVerificationApi
   | typeof PrivacyMeasureExecutionApi
@@ -397,6 +400,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof ReactivateCustomerProfileActionApi
   | typeof RecordPortalEnrollmentOutcomeActionApi
   | typeof RecoverRetailPortalProfileBindingActionApi
+  | typeof RelayPortalAuthCommunicationRequestActionApi
   | typeof RemoveCounterpartyPriceGroupActionApi
   | typeof RemoveCustomerGroupActionApi
   | typeof RemoveCustomerPaymentTermActionApi
@@ -553,6 +557,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermPolicyCurrentApi)
   .addHttpApi(PaymentTermsResolutionApi)
+  .addHttpApi(PortalAuthIssuanceSourceApi)
   .addHttpApi(PreparePurchaseProposalBasisActionApi)
   .addHttpApi(PricingPurchaseContextVerificationApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
@@ -566,6 +571,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(ReactivateCustomerProfileActionApi)
   .addHttpApi(RecordPortalEnrollmentOutcomeActionApi)
   .addHttpApi(RecoverRetailPortalProfileBindingActionApi)
+  .addHttpApi(RelayPortalAuthCommunicationRequestActionApi)
   .addHttpApi(RemoveCounterpartyPriceGroupActionApi)
   .addHttpApi(RemoveCustomerGroupActionApi)
   .addHttpApi(RemoveCustomerPaymentTermActionApi)

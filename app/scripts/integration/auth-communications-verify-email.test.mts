@@ -1,0 +1,538 @@
+import { randomUUID } from 'node:crypto';
+
+import { eq } from 'drizzle-orm';
+import { Array as EffectArray, DateTime, Effect, Exit, Order, Option, Redacted, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
+import { describe, expect, it } from 'effect-rstest';
+
+import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  CommercePortalAuthAccountCreationUnavailable,
+  EnrollmentActionInvocationIdSchema,
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+  PortalAuthIssuanceRefSchema,
+  user,
+  verification,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { approvedMessageTypes, portalAuthDefaultCopy } from '@app/communications/testing/source-owner-world';
+import { testDatabaseClients } from '../../packages/core-runtime/tests/support/database.ts';
+import {
+  FICTIONAL_COPY,
+  authWorld,
+  worldServices,
+  pendingIntentsOf,
+  step,
+  decisionIdOf,
+} from './support/auth-communications-world.spec.mts';
+import type { AuthWorld } from './support/auth-communications-world.spec.mts';
+import { PASSWORD, makeEnrollmentGateway, makePostgresRealm } from './support/auth-communications-realms.spec.mts';
+import type { PostgresRealm } from './support/auth-communications-realms.spec.mts';
+import {
+  captureLogs,
+  expectNoSecretAnywhere,
+  historyReads,
+  textOf,
+  tokenFromLink,
+} from './support/auth-communications-checks.spec.mts';
+
+/**
+ * #1406 END-TO-END of the VERIFICATION e-mail, driven the way enrollment drives it: the real account-creation gateway commits
+ * the account and then asks the provider to issue the verification link, whose callback submits the Communication Request to the
+ * real public Action. The replay scenarios prove the changed enrollment behaviour (AUTH-COM-09): a replay of the SAME owner
+ * invocation correlates the previous issuance, intent and last outcome and sends or issues nothing on uncertainty.
+ *
+ * Owner ports: PRODUCTION (`communicationsOwnerPortsOver`): the Portal Auth source authority and recipient gate asking Auth's
+ * published Read, the Privacy gate over the REAL Privacy owner. Labelled stubs that remain: the producer's Privacy-scope
+ * declaration (production declares none: open owner gate #1396 J), the Messaging Adapter (step 22), the in-process transport to
+ * the public Action and to Auth's Read (HTTP and Shell assertion not run here), and, where a case asks for it, the trusted
+ * language (no owner publishes one). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery evidence.
+ */
+
+const decodeInvocation = Schema.decodeSync(EnrollmentActionInvocationIdSchema);
+const decodeAttempt = Schema.decodeSync(EnrollmentAttemptIdSchema);
+const decodeTenant = Schema.decodeSync(EnrollmentTenantIdSchema);
+
+/** One enrollment operation: the identities its gateway call carries. A replay is the SAME object again. */
+const enrollmentOf = (realm: PostgresRealm) => ({
+  email: realm.email,
+  enrollmentAttemptId: decodeAttempt(randomUUID()),
+  name: 'Verification e-mail fixture',
+  ownerInvocationId: decodeInvocation(randomUUID()),
+  password: Redacted.make(PASSWORD),
+  tenantId: decodeTenant(randomUUID()),
+  verificationOrigin: new URL('https://portal.example.test'),
+});
+
+/** The recovery rule a FICTIONAL owner approval would give the verification type: test data, never a production limit. */
+const withFictionalRecovery = () =>
+  approvedMessageTypes.map((type) =>
+    type.purpose.endsWith('.verify-email')
+      ? { ...type, recovery: { kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE' as const, maxAttempts: 3 } }
+      : type,
+  );
+
+const setup = Effect.fn('VerifyEmailE2E.setup')(function* setupWorld(
+  options?: Parameters<typeof authWorld>[0],
+  gateway?: { readonly withReplay: boolean },
+) {
+  const world = yield* authWorld(options ?? { mode: 'B' });
+  const realm = yield* makePostgresRealm(world, 'verify');
+  const enrollment = enrollmentOf(realm);
+  const create = yield* makeEnrollmentGateway(world, realm, gateway ?? { withReplay: true });
+  // the creation commits the account, the issuance and its request; one relay tick then submits what it committed
+  return { create: () => create.create(enrollment).pipe(Effect.tap(() => world.relay)), enrollment, realm, world };
+});
+
+const onlyIntent = (world: AuthWorld) => {
+  const [intentId] = pendingIntentsOf(world);
+  return Option.match(Option.fromNullishOr(intentId), {
+    onNone: () => Effect.die('the verification request decided no pending intent'),
+    onSome: (found) => Effect.succeed(found),
+  });
+};
+
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
+const intentsOf = (world: AuthWorld) => world.intentRows;
+const verificationRows = (realm: PostgresRealm, subjectId: string) =>
+  realm.database.executor.select({ id: verification.id }).from(verification).where(eq(verification.value, subjectId));
+
+describe('Verification e-mail: real Auth source -> public Action -> durable decision/intent -> authorized Read (#1406)', () => {
+  it.live(
+    '[AC-05 S1.1] a committed account issues one verification, decided once, and reaches the recipient with Czech copy by default',
+    () =>
+      Effect.gen(function* happyPath() {
+        const { create, realm, world } = yield* setup();
+        const created = yield* create();
+        expect(world.submissions).toHaveLength(1);
+        const [{ request, submission }] = world.submissions;
+        expect(submission).toMatchObject({
+          decision: { kind: 'MESSAGE_INTENTS' },
+          outcome: 'DECIDED',
+          replayed: false,
+        });
+        expect(request.originalRecipients[0]?.recipientRef.resourceId).toBe(created.providerSubjectId);
+        // the issuance has its OWN identity: the enrollment invocation id is neither the occurrence nor the idempotency key
+        expect(request.occurrence.occurrenceId).toMatch(/^pae-[0-9a-f]{40}$/u);
+
+        expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
+        const [mail] = world.mailbox;
+        expect(mail?.language).toBe('cs');
+        expect(mail?.subject).toContain(FICTIONAL_COPY);
+        expect(textOf(mail)).toContain('/verify-email?');
+        expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]).toMatchObject({
+          headline: { deliveryProven: false, providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
+          template: { language: 'cs', mode: 'B', revisionNumber: 1 },
+        });
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1392 S3 uncommitted source] a Better Auth write that fails at commit creates no request, no decision and no send',
+    () =>
+      Effect.gen(function* uncommittedSource() {
+        const { create, realm, world } = yield* setup();
+        const { admin } = yield* testDatabaseClients;
+        // The account row is written by Better Auth in its own transaction. A deferred constraint trigger makes that transaction
+        // fail at COMMIT for this account only (a REAL database failure, not a scripted one). Observed sequencing of the real
+        // provider: the verification callback, which holds the issuance and its request, runs only AFTER that write committed, so
+        // an uncommitted source state never reaches Auth's outbox and therefore never reaches Communications.
+        const name = `r11_${randomUUID().replaceAll('-', '')}`;
+        yield* admin.unsafe(
+          `create function commerce_auth.${name}() returns trigger language plpgsql as $$ begin raise exception 'fictional: the Better Auth write failed at commit'; end $$`,
+        );
+        yield* admin.unsafe(
+          `create constraint trigger ${name} after insert on commerce_auth."user" deferrable initially deferred for each row when (new.email = '${realm.email}') execute function commerce_auth.${name}()`,
+        );
+        yield* Effect.addFinalizer(() =>
+          admin
+            .unsafe(`drop trigger if exists ${name} on commerce_auth."user"`)
+            .pipe(Effect.andThen(admin.unsafe(`drop function if exists commerce_auth.${name}()`)), Effect.ignore),
+        );
+        expect(Exit.isFailure(yield* Effect.exit(create()))).toBe(true);
+        // the account was never committed, and nothing of it was held by Auth either
+        expect(yield* realm.accountOf(realm.email)).toHaveLength(0);
+        expect(yield* world.outboxRows).toHaveLength(0);
+        // the relay has nothing to submit: Communications decides nothing, stores nothing and no message can be handed off
+        yield* world.relay;
+        expect(world.submissions).toHaveLength(0);
+        expect(yield* world.intentRows).toHaveLength(0);
+        expect(yield* world.attemptRows).toHaveLength(0);
+        expect(world.mailbox).toHaveLength(0);
+        expect((yield* (yield* historyReads(world)).list()).items).toHaveLength(0);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1398 #1406 R-D1] with no Tenant revision nothing is sent: the seed text is not used until an administrator activates a revision',
+    () =>
+      Effect.gen(function* noImplicitText() {
+        const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message';
+        const seed = portalAuthDefaultCopy.find((copy) => copy.messageType === VERIFY_EMAIL && copy.language === 'cs');
+        // no revision at all: there is no built-in text to stand in, so tenant mode B stops the message (TPL-05)
+        const { create, world } = yield* setup({ languages: [], mode: 'B' });
+        yield* create();
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        expect(world.mailbox).toHaveLength(0);
+        expect((yield* attemptsOf(world)).length).toBe(0);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['CZECH_REVISION_UNAVAILABLE'] });
+        expect(JSON.stringify(page.items[0])).not.toContain(seed?.subject ?? 'unreachable');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-04 S2.1] no verification link, token, URL, password or address is stored, shown or logged anywhere',
+    () =>
+      Effect.gen(function* secretFree() {
+        const { create, enrollment, realm, world } = yield* setup();
+        const { lines } = yield* captureLogs(
+          Effect.gen(function* run() {
+            yield* create();
+            yield* step(world, world.messageHandoff, yield* onlyIntent(world));
+          }),
+        );
+        const link = textOf(world.mailbox[0]);
+        const token = Option.getOrThrow(tokenFromLink(link));
+        const found = yield* expectNoSecretAnywhere(
+          world,
+          [token, link.slice(link.indexOf('http')), PASSWORD, realm.email],
+          lines,
+        );
+        expect(found).toStrictEqual([]);
+        // neither the enrollment operation nor the attempt travel in a request: only the issuance does
+        expect(JSON.stringify(world.submissions)).not.toContain(enrollment.ownerInvocationId);
+        expect(JSON.stringify(world.submissions)).not.toContain(enrollment.enrollmentAttemptId);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S1.2 S1.3 outline] language: trusted English is pinned in A without a usable Czech revision and stopped in B; with both approved it is English',
+    () =>
+      Effect.gen(function* languages() {
+        const modeB = yield* setup({
+          languages: ['en'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeB.world.setTrustedLanguage('en');
+        // D1: the account and its issuance commit with the request; Communications then decides that no message can leave,
+        // and a replay of the creation reports that stop truthfully, as unavailable, and never repairs it
+        yield* modeB.create();
+        expect(modeB.world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
+        expect((yield* (yield* historyReads(modeB.world)).list()).items[0]?.headline.reasonCodes).toEqual([
+          'CZECH_REVISION_REQUIRED_BY_MODE_B',
+        ]);
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(modeB.create()))).toBe(true);
+        expect(modeB.realm.issued.verification).toHaveLength(1);
+
+        const modeA = yield* setup({
+          languages: ['en'],
+          mode: 'A',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeA.world.setTrustedLanguage('en');
+        yield* modeA.create();
+        yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
+        expect(modeA.world.mailbox[0]?.language).toBe('en');
+
+        const both = yield* setup({ mode: 'B', recipientLanguage: 'LABELLED_DOUBLE' });
+        yield* both.world.setTrustedLanguage('en');
+        yield* both.create();
+        yield* step(both.world, both.world.messageHandoff, yield* onlyIntent(both.world));
+        expect(both.world.mailbox[0]?.language).toBe('en');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-06] an expired verification link and one spent before the handoff stop it with a reason, and nothing is reissued',
+    () =>
+      Effect.gen(function* stops() {
+        const expired = yield* setup();
+        yield* expired.create();
+        const now = yield* DateTime.now;
+        const later = yield* Effect.gen(function* laterStep() {
+          yield* TestClock.setTime(DateTime.add(now, { minutes: 16 }).epochMilliseconds);
+          return yield* step(expired.world, expired.world.messageHandoff, yield* onlyIntent(expired.world));
+        }).pipe(Effect.provide(TestClock.layer()));
+        expect(later.kind).not.toBe('HANDED_OFF');
+        expect(expired.world.mailbox).toHaveLength(0);
+        expect(expired.realm.issued.verification).toHaveLength(1);
+        // the source stops it (Auth's own expiry); the REAL Privacy owner adds that its binding, valid only as long as the issuance, has lapsed
+        expect((yield* (yield* historyReads(expired.world)).list()).items[0]?.headline.reasonCodes).toEqual([
+          'SOURCE_NO_LONGER_VALID',
+          'PRIVACY_INDETERMINATE',
+        ]);
+
+        const spent = yield* setup();
+        yield* spent.create();
+        const [token] = spent.realm.issued.verification;
+        yield* spent.realm.recovery.verifyEmail({ token: Redacted.make(token ?? '') });
+        expect((yield* step(spent.world, spent.world.messageHandoff, yield* onlyIntent(spent.world))).kind).not.toBe(
+          'HANDED_OFF',
+        );
+        expect(spent.world.mailbox).toHaveLength(0);
+        expect(spent.realm.issued.verification).toHaveLength(1);
+        const codes = (yield* (yield* historyReads(spent.world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_CONSUMED');
+        expect(codes).not.toContain('SOURCE_STALE');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AUTH-COM-04] the ORIGINAL address is bound: a later address change of the account does not redirect the message',
+    () =>
+      Effect.gen(function* originalBinding() {
+        const { create, realm, world } = yield* setup();
+        yield* create();
+        yield* realm.database.executor
+          .update(user)
+          .set({ email: `moved-${realm.email}` })
+          .where(eq(user.email, realm.email));
+        yield* step(world, world.messageHandoff, yield* onlyIntent(world));
+        expect(Redacted.value(world.mailbox[0]?.to ?? Redacted.make(''))).toBe(realm.email);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 S3.3] committed account, first submission possibly accepted then timed out, then a REPLAY of the same enrollment invocation: no second submission and no new issuance',
+    () =>
+      Effect.gen(function* replayAfterTimeout() {
+        const { create, realm, world } = yield* setup();
+        world.providerAnswer.current = () => ({ kind: 'INDETERMINATE', reason: 'timeout' });
+        const first = yield* create();
+        const intentId = yield* onlyIntent(world);
+        yield* step(world, world.messageHandoff, intentId);
+        expect(world.mailbox).toHaveLength(1);
+        expect((yield* (yield* historyReads(world)).list()).items[0]?.headline).toMatchObject({
+          attention: 'UNKNOWN',
+          providerAccepted: false,
+        });
+
+        const issuedBefore = realm.issued.verification.length;
+        const ledgerBefore = (yield* verificationRows(realm, first.providerSubjectId)).length;
+        const replayed = yield* create();
+        // the replay converges on the same committed subject, and sends nothing
+        expect(replayed.providerSubjectId).toBe(first.providerSubjectId);
+        expect(realm.issued.verification).toHaveLength(issuedBefore);
+        expect(world.submissions).toHaveLength(1);
+        yield* step(world, world.messageHandoff, intentId);
+        expect(world.mailbox).toHaveLength(1);
+        expect(world.messageHandoff.calls).toHaveLength(1);
+        expect(yield* attemptsOf(world)).toHaveLength(1);
+        expect(yield* verificationRows(realm, first.providerSubjectId)).toHaveLength(ledgerBefore);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 S3.4] a PROVEN non-acceptance continues the SAME intent under the approved recovery rule: the same link, a new attempt, never a new issuance',
+    () =>
+      Effect.gen(function* continuation() {
+        const { create, realm, world } = yield* setup({ mode: 'B', types: withFictionalRecovery() });
+        world.providerAnswer.current = () => ({ kind: 'REJECTED', reason: 'rate_limited' });
+        yield* create();
+        const intentId = yield* onlyIntent(world);
+        const first = yield* step(world, world.messageHandoff, intentId);
+        expect(first).toMatchObject({ followUp: 'RETRY_DUE', kind: 'HANDED_OFF' });
+        const firstLink = textOf(world.mailbox[0]);
+
+        // a replay of the enrollment between the two attempts sends nothing and issues nothing
+        yield* create();
+        expect(realm.issued.verification).toHaveLength(1);
+
+        world.providerAnswer.current = () => ({
+          kind: 'ACCEPTED',
+          providerKey: 'fictional-provider',
+          providerRef: 'fictional-ref-2',
+        });
+        yield* step(world, world.messageHandoff, intentId);
+        expect(world.mailbox).toHaveLength(2);
+        expect(textOf(world.mailbox[1])).toBe(firstLink);
+        expect(
+          EffectArray.sort(
+            (yield* attemptsOf(world)).map(({ attemptNumber }) => attemptNumber),
+            Order.Number,
+          ),
+        ).toEqual([1, 2]);
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        expect(world.submissions).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 T3-16 R-D14] a replay after a PROVEN non-acceptance with no approved recovery rule reports the truth: no message will leave, nothing is reissued, never CREATED',
+    () =>
+      Effect.gen(function* provenNonAcceptanceWithoutRule() {
+        // the production catalog: the verification type has NO recovery rule, so a proven non-acceptance HALTS
+        const { create, realm, world } = yield* setup({ mode: 'B' });
+        world.providerAnswer.current = () => ({ kind: 'REJECTED', reason: 'rate_limited' });
+        yield* create();
+        const intentId = yield* onlyIntent(world);
+        expect((yield* step(world, world.messageHandoff, intentId)).kind).toBe('HANDED_OFF');
+        // the next delivery of the step evaluates recovery: the type has no rule, so it halts and nothing more leaves
+        yield* step(world, world.messageHandoff, intentId);
+        expect((yield* (yield* historyReads(world)).list()).items[0]?.headline).toMatchObject({
+          attention: 'FAILURE',
+          status: 'FAILED',
+        });
+
+        const failure = yield* Effect.flip(create());
+        // not a CREATED answer: the Attempt stays retryable and says why, without repairing the message
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
+        expect(failure.reason).toContain('no verification message will leave');
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(world.submissions).toHaveLength(1);
+        expect(world.messageHandoff.calls).toHaveLength(1);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        expect(yield* attemptsOf(world)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 D1] an intake unreachable after the commit never loses the request: the relay resubmits the SAME request and the replay issues no second link',
+    () =>
+      Effect.gen(function* intakeUnreachable() {
+        const { create, realm, world } = yield* setup();
+        world.unavailableSubject.current = true;
+        // the account, the issuance and its request committed together; only the relay could not reach Communications
+        yield* create();
+        expect(world.submissions).toHaveLength(0);
+        const [held] = yield* world.outboxRows;
+        expect(held?.state).toBe('PENDING');
+        expect(held?.lastFailure).toBe('INTAKE_UNAVAILABLE');
+
+        // the replay of the same enrollment operation finds the held issuance: its request is owed, so nothing new is issued;
+        // the relay tick that follows retries the SAME committed request: one request, one decision, one intent
+        world.unavailableSubject.current = false;
+        yield* create();
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(world.submissions).toHaveLength(1);
+        expect(world.submissions[0]?.request.occurrence.occurrenceId).toBe(held?.issuanceRef);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 REGRESSION] Communications decided, the answer was lost: the relay resubmits the same request onto the SAME decision and the replay issues no second link',
+    () =>
+      Effect.gen(function* lostAnswer() {
+        const { create, realm, world } = yield* setup();
+        world.lostAnswerSubject.current = true;
+        yield* create();
+        // Communications admitted and decided the request; only the answer was lost, so the row stays due
+        expect(world.submissions).toHaveLength(1);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        expect((yield* world.outboxRows)[0]?.state).toBe('PENDING');
+
+        // the replay issues nothing; the relay tick that follows resubmits the same request onto the stored decision
+        world.lostAnswerSubject.current = false;
+        yield* create();
+        // never a second link, never a second request identity, never a second intent: the replay lands on the stored decision
+        expect(realm.issued.verification).toHaveLength(1);
+        const [first, second] = world.submissions;
+        expect(second?.request).toStrictEqual(first?.request);
+        expect(second?.submission).toMatchObject({
+          decisionId: first === undefined ? 'missing' : decisionIdOf(first.submission),
+          replayed: true,
+        });
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        expect((yield* world.outboxRows)[0]?.state).toBe('DECIDED');
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[AC-09 unavailable reconciliation] a stopped first message is never repaired: the replay sends nothing new and stays retryable',
+    () =>
+      Effect.gen(function* unavailableReconciliation() {
+        const { create, realm, world } = yield* setup({ evidencing: false, mode: 'B' });
+        // Privacy cannot be evidenced: the committed request is decided, and its message is stopped
+        yield* create();
+        expect(world.submissions).toHaveLength(1);
+        const failure = yield* Effect.flip(create());
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(world.submissions).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    "[S3.1 AC-03] the same issuance replayed returns the original decision, and its lifetime is Auth's own policy whatever the language",
+    () =>
+      Effect.gen(function* idempotency() {
+        const { create, world } = yield* setup();
+        yield* create();
+        const [{ request, submission }] = world.submissions;
+        const replayed = yield* world.submitter.submit(request);
+        expect(replayed).toMatchObject({
+          decisionId: decisionIdOf(submission),
+          replayed: true,
+        });
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        const issuance = Option.getOrThrow(
+          yield* world.handoff.issuanceOf(
+            Schema.decodeSync(PortalAuthIssuanceRefSchema)(request.occurrence.occurrenceId),
+          ),
+        );
+        // the request states the expiry Auth STORED, a few milliseconds before the callback
+        const policyMs = COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds * 1000;
+        const lifetime = issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds;
+        expect(lifetime).toBeLessThanOrEqual(policyMs);
+        expect(lifetime).toBeGreaterThan(policyMs - 5000);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[S2.7 AC-06 AC-08 D2] Privacy prohibition stops the message; a restarted Auth process completes the same issuance; an operator without access learns nothing',
+    () =>
+      Effect.gen(function* stopsAndAccess() {
+        const prohibited = yield* setup();
+        yield* prohibited.create();
+        // Privacy ITSELF records the prohibition (a withdrawal) before its next answer
+        prohibited.world.prohibitProcessing();
+        // the account was committed before the verdict; a replay finds the stopped message and refuses to repair it
+        const intentId = yield* onlyIntent(prohibited.world);
+        yield* step(prohibited.world, prohibited.world.messageHandoff, intentId);
+        expect(prohibited.world.mailbox).toHaveLength(0);
+        expect((yield* (yield* historyReads(prohibited.world)).list()).items[0]?.headline.reasonCodes).toEqual([
+          'PRIVACY_NOT_ALLOWED',
+        ]);
+
+        const restarted = yield* setup();
+        yield* restarted.create();
+        const restartedIntent = yield* onlyIntent(restarted.world);
+        // D2: the Auth process that issued is gone; a fresh process over the same Auth store completes the SAME link
+        yield* restarted.world.restartAuth;
+        expect((yield* step(restarted.world, restarted.world.messageHandoff, restartedIntent)).kind).toBe('HANDED_OFF');
+        expect(restarted.world.mailbox).toHaveLength(1);
+        expect(restarted.realm.issued.verification).toHaveLength(1);
+        expect(textOf(restarted.world.mailbox[0])).toContain(restarted.realm.issued.verification[0] ?? 'missing');
+
+        const denied = yield* historyReads(restarted.world, 'denied');
+        const failures = JSON.stringify([
+          yield* Effect.flip(denied.list()),
+          yield* Effect.flip(denied.detail(restartedIntent)),
+        ]);
+        expect(failures).not.toContain(restarted.realm.email);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[regression] a deployment WITHOUT Communications keeps the direct behaviour: a replay reissues the link',
+    () =>
+      Effect.gen(function* legacy() {
+        const { create, realm } = yield* setup({ mode: 'B' }, { withReplay: false });
+        yield* create();
+        yield* create();
+        expect(realm.issued.verification).toHaveLength(2);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+});

@@ -3,7 +3,7 @@ import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/test
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Layer } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import type { SourceSyncProcessingPolicy } from '../../shared/domain/source-sync-processing-policy.ts';
+import type { SourceSyncProcessingPolicy } from '@app/privacy-contracts/domain/source-sync-processing-policy';
 
 export const makeSourceSyncProcessingFixture = (
   scope: OperationalScope,

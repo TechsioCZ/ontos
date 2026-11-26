@@ -8,7 +8,7 @@ import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Option, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { readOrganizationProfileOwnerFacts } from './organization-business-applicability.service.ts';
 import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
 

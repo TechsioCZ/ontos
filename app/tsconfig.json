@@ -137,6 +137,15 @@
       "path": "packages/commerce-order-contracts"
     },
     {
+      "path": "packages/communications-contracts"
+    },
+    {
+      "path": "packages/privacy-contracts"
+    },
+    {
+      "path": "packages/portal-auth-contracts"
+    },
+    {
       "path": "verticals/commerce-order"
     },
     {
@@ -147,6 +156,9 @@
     },
     {
       "path": "verticals/symmy-integration"
+    },
+    {
+      "path": "verticals/communications"
     }
   ]
 }

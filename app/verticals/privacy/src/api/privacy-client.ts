@@ -195,6 +195,16 @@ export {
   executeAcknowledgePrivacyNoticeWithAuthorization,
 } from './acknowledge-privacy-notice-action-client.ts';
 export type { AcknowledgePrivacyNoticeActionClientOptions } from './acknowledge-privacy-notice-action-client.ts';
+export {
+  executeBindPreVerificationSubject,
+  executeBindPreVerificationSubjectWithAuthorization,
+} from './bind-pre-verification-subject-action-client.ts';
+export type { BindPreVerificationSubjectActionClientOptions } from './bind-pre-verification-subject-action-client.ts';
+export {
+  executeWithdrawPreVerificationBinding,
+  executeWithdrawPreVerificationBindingWithAuthorization,
+} from './withdraw-pre-verification-binding-action-client.ts';
+export type { WithdrawPreVerificationBindingActionClientOptions } from './withdraw-pre-verification-binding-action-client.ts';
 // </generated-action-http-client-exports>
 
 type PrivacyApiGroups = typeof privacyApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
@@ -245,12 +255,6 @@ export { executeProcessingPurposesWithAuthorization, executeProcessingPurposes }
 export { executePrivacySubjectsWithAuthorization, executePrivacySubjects } from './privacy-subjects-client.ts';
 export { executeNoticeVersionsWithAuthorization, executeNoticeVersions } from './notice-versions-client.ts';
 export { executeCurrentConsentWithAuthorization, executeCurrentConsent } from './current-consent-client.ts';
-export {
-  executeSourceProcessingEligibility,
-  executeSourceProcessingEligibilityWithAuthorization,
-} from './source-processing-eligibility-client.ts';
-export type { SourceProcessingEligibilityClientOptions } from './source-processing-eligibility-client.ts';
-
 export {
   executeMeasureExecutionEligibility,
   executeMeasureExecutionEligibilityWithAuthorization,
