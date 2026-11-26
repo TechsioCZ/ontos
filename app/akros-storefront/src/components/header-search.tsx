@@ -3,7 +3,15 @@
 import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type KeyboardEvent,
+} from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Label } from "@techsio/ui-kit/atoms/label";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -22,6 +30,10 @@ import {
   type RemoteCategorySuggestion,
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
+import { startNavigationProgress } from "@/components/navigation-progress";
+
+/** Runs while the HTML parses: text typed before hydration reaches the hidden q field and survives hydration. */
+const EARLY_QUERY_SCRIPT = `(function(){var s=document.currentScript;var w=s&&s.previousElementSibling;var f=w&&(w.tagName==="FORM"?w:w.querySelector("form"));if(!f)return;f.addEventListener("input",function(e){if(f.hasAttribute("data-sf-hydrated"))return;var t=e.target;if(!t||t.type==="hidden"||typeof t.value!=="string")return;var q=f.querySelector('input[type="hidden"][name="q"]');if(q)q.value=t.value;f.setAttribute("data-sf-early-query",t.value);},true);})();`;
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -46,6 +58,15 @@ export function HeaderSearch() {
   const id = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const early = form.getAttribute("data-sf-early-query")?.trim() ?? "";
+    form.setAttribute("data-sf-hydrated", "");
+    if (early) setQuery((current) => (current.trim() ? current : early));
+  }, []);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
   // The browser only holds featured products and navigation, so all suggestions come from the BFF.
@@ -171,9 +192,16 @@ export function HeaderSearch() {
   const resultsHref = href(`/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`);
 
   const submit = () => {
-    if (!trimmedQuery) return;
+    const input = formRef.current?.querySelector<HTMLInputElement>('input:not([type="hidden"])');
+    const term = trimmedQuery || input?.value.trim();
+    if (!term) {
+      input?.focus();
+      return;
+    }
     setOpen(false);
-    router.push(resultsHref);
+    const target = href(`/vyhledavani?q=${encodeURIComponent(term)}`);
+    startNavigationProgress(target);
+    startTransition(() => router.push(target));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
@@ -189,111 +217,122 @@ export function HeaderSearch() {
   };
 
   return (
-    <SearchForm
-      action={href("/vyhledavani")}
-      className="whitespace-normal"
-      method="get"
-      onKeyDown={handleKeyDown}
-      onSubmit={submit}
-      size="md"
-    >
-      <Label className="sr-only" htmlFor={`${id}-input`}>
-        {cs.search.label}
-      </Label>
-      <input name="q" type="hidden" value={query} />
-      <SearchForm.Control>
-        {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
-        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
-          <SearchSuggestions
-            clearable={false}
-            groups={groups}
-            id={id}
-            inputValue={query}
-            navigate={({ href }) => {
-              setOpen(false);
-              const destination = new URL(href, window.location.origin);
-              router.push(`${destination.pathname}${destination.search}${destination.hash}`);
-            }}
-            noResultsMessage={cs.search.noSuggestions}
-            loading={searchLoading}
-            loadingMessage={cs.search.loading}
-            error={
-              searchError ? (
-                <span data-sf-search-error="">
-                  <strong>{cs.search.failed}</strong> {searchError}
-                </span>
-              ) : undefined
-            }
-            retryLabel={cs.search.retry}
-            onRetry={() => {
-              setRemote((current) => ({ ...current, query: "", error: undefined }));
-              setSearchAttempt((attempt) => attempt + 1);
-            }}
-            onInputValueChange={(value) => {
-              setQuery(value);
-              setOpen(value.trim().length >= 2);
-            }}
-            onOpenChange={setOpen}
-            open={open && ready}
-            placeholder={cs.search.placeholder}
-            size="md"
-            allResultsLink={
-              searchError || searchLoading ? undefined : (
-                <Link
-                  as={StoreLink}
-                  href={resultsHref}
-                  onClick={() => setOpen(false)}
-                  size="current"
-                >
-                  {cs.search.allResults(remoteTotal)}
-                </Link>
-              )
-            }
-            resultSlot={(item) =>
-              item.data && (
-                <span
-                  data-sf-search-result=""
-                  className="flex w-full min-w-0 items-center gap-(--dimension-12)"
-                >
-                  {item.data.kind === "category" ? (
-                    <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
-                      <Icon icon="icon-[mdi--folder-outline]" size="lg" />
-                    </span>
-                  ) : (
-                    <Image
-                      alt=""
-                      className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
-                      height={48}
-                      src={item.data.imageSrc}
-                      width={48}
-                    />
-                  )}
-                  <span
-                    data-sf-search-result-label=""
-                    className="grid min-w-0 flex-1 gap-(--dimension-4)"
+    <>
+      <SearchForm
+        ref={formRef}
+        action={href("/vyhledavani")}
+        className="whitespace-normal"
+        method="get"
+        onKeyDown={handleKeyDown}
+        onSubmit={submit}
+        size="md"
+      >
+        <Label className="sr-only" htmlFor={`${id}-input`}>
+          {cs.search.label}
+        </Label>
+        <input name="q" type="hidden" value={query} />
+        <SearchForm.Control>
+          {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
+          <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
+            <SearchSuggestions
+              clearable={false}
+              groups={groups}
+              id={id}
+              inputValue={query}
+              navigate={({ href }) => {
+                setOpen(false);
+                const destination = new URL(href, window.location.origin);
+                const target = `${destination.pathname}${destination.search}${destination.hash}`;
+                startNavigationProgress(target);
+                startTransition(() => router.push(target));
+              }}
+              noResultsMessage={cs.search.noSuggestions}
+              loading={searchLoading}
+              loadingMessage={cs.search.loading}
+              error={
+                searchError ? (
+                  <span data-sf-search-error="">
+                    <strong>{cs.search.failed}</strong> {searchError}
+                  </span>
+                ) : undefined
+              }
+              retryLabel={cs.search.retry}
+              onRetry={() => {
+                setRemote((current) => ({ ...current, query: "", error: undefined }));
+                setSearchAttempt((attempt) => attempt + 1);
+              }}
+              onInputValueChange={(value) => {
+                setQuery(value);
+                setOpen(value.trim().length >= 2);
+              }}
+              onOpenChange={setOpen}
+              open={open && ready}
+              placeholder={cs.search.placeholder}
+              size="md"
+              allResultsLink={
+                searchError || searchLoading ? undefined : (
+                  <Link
+                    as={StoreLink}
+                    href={resultsHref}
+                    onClick={() => setOpen(false)}
+                    size="current"
                   >
-                    <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
-                      {item.label}
-                    </span>
-                    {item.data.kind === "category" && item.data.trail && (
-                      <span className="truncate text-xs text-(--color-fg-secondary)">
-                        {item.data.trail}
+                    {cs.search.allResults(remoteTotal)}
+                  </Link>
+                )
+              }
+              resultSlot={(item) =>
+                item.data && (
+                  <span
+                    data-sf-search-result=""
+                    className="flex w-full min-w-0 items-center gap-(--dimension-12)"
+                  >
+                    {item.data.kind === "category" ? (
+                      <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
+                        <Icon icon="icon-[mdi--folder-outline]" size="lg" />
                       </span>
+                    ) : (
+                      <Image
+                        alt=""
+                        className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
+                        height={48}
+                        src={item.data.imageSrc}
+                        width={48}
+                      />
+                    )}
+                    <span
+                      data-sf-search-result-label=""
+                      className="grid min-w-0 flex-1 gap-(--dimension-4)"
+                    >
+                      <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
+                        {item.label}
+                      </span>
+                      {item.data.kind === "category" && item.data.trail && (
+                        <span className="truncate text-xs text-(--color-fg-secondary)">
+                          {item.data.trail}
+                        </span>
+                      )}
+                    </span>
+                    {item.data.kind === "product" ? (
+                      <SuggestionPrice {...item.data} />
+                    ) : (
+                      <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
                     )}
                   </span>
-                  {item.data.kind === "product" ? (
-                    <SuggestionPrice {...item.data} />
-                  ) : (
-                    <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
-                  )}
-                </span>
-              )
-            }
+                )
+              }
+            />
+          </div>
+          <SearchForm.Button
+            aria-label={cs.actions.search}
+            iconSize="lg"
+            isLoading={pending}
+            showSearchIcon
           />
-        </div>
-        <SearchForm.Button aria-label={cs.actions.search} iconSize="lg" showSearchIcon />
-      </SearchForm.Control>
-    </SearchForm>
+        </SearchForm.Control>
+      </SearchForm>
+      <script dangerouslySetInnerHTML={{ __html: EARLY_QUERY_SCRIPT }} />
+    </>
   );
 }
 
