@@ -16,7 +16,6 @@ import { symmyRouteContextRead } from './src/api/symmy-route-context.read.ts';
 import { symmySourceOrganizationFactsRead } from './src/api/symmy-source-organization-facts.read.ts';
 import { symmySyncAdmissionRead } from './src/api/symmy-sync-admission.read.ts';
 import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
-import { symmyRouteRequirementsRead } from './src/api/symmy-route-requirements.read.ts';
 // </generated-module-registration-imports>
 
 export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
@@ -68,7 +67,6 @@ export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
     symmyJobPrivacyExecutionRead,
     symmyJobStatusRead,
     symmyRouteContextRead,
-    symmyRouteRequirementsRead,
     symmySourceOrganizationFactsRead,
     symmySyncAdmissionRead,
     // </generated-module-registration-reads>

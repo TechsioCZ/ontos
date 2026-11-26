@@ -56,7 +56,6 @@ import { symmyRouteContextReadApiLive } from './symmy-route-context-read-server.
 import { symmySourceOrganizationFactsReadApiLive } from './symmy-source-organization-facts-read-server.ts';
 import { symmySyncAdmissionReadApiLive } from './symmy-sync-admission-read-server.ts';
 import { symmyCompanyRoutesReadApiLive } from './symmy-company-routes-read-server.ts';
-import { symmyRouteRequirementsReadApiLive } from './symmy-route-requirements-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedModuleStateGateLive = ModuleStateGateLive.pipe(
@@ -133,7 +132,6 @@ const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   symmySourceOrganizationFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmySyncAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmyCompanyRoutesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  symmyRouteRequirementsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   GovernedReadLayer.provide(governedReadRuntimeLive),

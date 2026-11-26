@@ -16,8 +16,6 @@
     "./api/manage-symmy-routes-action/client": "./src/api/manage-symmy-routes-action-client.ts",
     "./api/symmy-company-routes": "./shared/apis/symmy-company-routes.ts",
     "./api/symmy-company-routes/client": "./src/api/symmy-company-routes-client.ts",
-    "./api/symmy-route-requirements": "./shared/apis/symmy-route-requirements.ts",
-    "./api/symmy-route-requirements/client": "./src/api/symmy-route-requirements-client.ts",
     "./api/symmy-job-privacy-execution": "./shared/apis/symmy-job-privacy-execution.ts",
     "./api/symmy-job-privacy-execution/client": "./src/api/symmy-job-privacy-execution-client.ts",
     "./api/symmy-job-status": "./shared/apis/symmy-job-status.ts",
