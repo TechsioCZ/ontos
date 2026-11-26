@@ -6,7 +6,7 @@ import {
   ShippingMethodSchema,
 } from "@app/merchandise/domain/merchandise-model";
 import { StorefrontOrderLineResultSchema } from "@app/merchandise/contracts/apply-command";
-import { Schema } from "effect";
+import { Schema, Struct } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
 import { CartQuoteRequestSchema, CartQuoteSchema, CartScopeSchema } from "./cart-quote";
 import { OrderedProductPresentationSchema } from "./ordered-product";
@@ -14,7 +14,7 @@ import { OrderedProductPresentationSchema } from "./ordered-product";
 const minor = Schema.Int.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }));
 const name = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 export const CheckoutRequestSchema = Schema.Struct({
-  ...CartQuoteRequestSchema.fields,
+  ...Struct.omit(CartQuoteRequestSchema.fields, ["shipping"]),
   address: Schema.toEncoded(OrderAddressSchema),
   clientRequestId: Schema.String.check(Schema.isUUID()),
   contact: Schema.Struct({

@@ -18,7 +18,7 @@ import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
-import { verifiedCartQuote } from "./cart-quote-state";
+import { displayedCartQuote, verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
@@ -220,7 +220,7 @@ const MiniCartLine = ({
             </div>
           </NumericInput>
         </div>
-        <div className="flex h-7 w-7 shrink-0">
+        <div className="flex h-7 w-7 shrink-0 self-center">
           <Button
             aria-label={`${d.shopping.remove}: ${entry.name}`}
             block
@@ -255,18 +255,14 @@ const MiniCartTotals = ({
   locale: string;
   quote: ReturnType<typeof useCartQuote>;
 }) => {
+  const displayed = displayedCartQuote(quote, false);
   let net = d.shopping.unresolved;
   let vat = d.shopping.unresolved;
   let total = d.shopping.unresolved;
-  if (
-    quote.state === "ready" &&
-    quote.result?.outcome === "VALID" &&
-    quote.result.totalMinor !== null &&
-    quote.result.totalVatMinor !== null
-  ) {
-    total = formatMoney(quote.result.totalMinor, currency, locale);
-    net = formatMoney(quote.result.totalMinor - quote.result.totalVatMinor, currency, locale);
-    vat = formatMoney(quote.result.totalVatMinor, currency, locale);
+  if (displayed !== null && displayed.totalMinor !== null && displayed.totalVatMinor !== null) {
+    total = formatMoney(displayed.totalMinor, currency, locale);
+    net = formatMoney(displayed.totalMinor - displayed.totalVatMinor, currency, locale);
+    vat = formatMoney(displayed.totalVatMinor, currency, locale);
   }
   return (
     <TotalsSummary

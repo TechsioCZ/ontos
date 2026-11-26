@@ -705,6 +705,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     receiptEntries: currentReceipt === null ? [] : receiptEntries,
     recover,
     restoredReceipt,
+    sessionReady,
     submit,
   };
 };

@@ -35,6 +35,7 @@ interface BackendOptions {
   readonly responseCurrency?: "CZK" | "EUR";
   readonly responseMarketId?: string;
   readonly secretMarker?: string;
+  readonly shippingPriceMinor?: number;
   readonly stockCatalog?: typeof CatalogResponseSchema.Type;
   readonly stockReadStatus?: number;
 }
@@ -43,6 +44,7 @@ const backend = (options: BackendOptions = {}) => {
   rs.stubEnv("ONTOS_STOREFRONT_TENANT_ID", tenantId);
   rs.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
   rs.stubEnv("ONTOS_SHELL_URL", "https://shell.example");
+  const shippingPriceMinor = options.shippingPriceMinor ?? 0;
   const calls: Request[] = [];
   const upstreamMarker = options.secretMarker ?? "Upstream failure";
   let reads = 0;
@@ -99,6 +101,7 @@ const backend = (options: BackendOptions = {}) => {
               markets: [
                 {
                   effectivePeriod: { startsAt: "1970-01-01T00:00:00Z" },
+                  jurisdictions: [{ code: "CZ", kind: "COUNTRY" }],
                   lifecycle: "ACTIVE",
                   marketCode: "N1-CZ",
                   marketRef: { resourceId: marketId },
@@ -108,6 +111,11 @@ const backend = (options: BackendOptions = {}) => {
               ],
             }
           : {
+              checkout: {
+                carrierTrackingAvailable: false,
+                paymentAvailable: false,
+                shippingMethods: [{ id: "PPL", priceMinor: 12_900, title: "PPL" }],
+              },
               market: { configured: options.marketConfigured ?? true, currency: "CZK", marketId },
               revision: 7,
             };
@@ -234,8 +242,8 @@ const backend = (options: BackendOptions = {}) => {
             marketId: options.responseMarketId ?? marketId,
           },
           outcome: options.outcome ?? "VALID",
-          shippingPriceMinor: 0,
-          totalMinor: 2420,
+          shippingPriceMinor,
+          totalMinor: 2420 + shippingPriceMinor,
           totalVatMinor: 420,
         },
       }),
@@ -251,6 +259,62 @@ const request = (body: string, requestOrigin = origin) =>
   });
 
 describe("governed cart quote transport", () => {
+  it.effect(
+    "quotes selected delivery before contact entry with native shipping and tax totals",
+    () =>
+      Effect.gen(function* shippingPreview() {
+        const owner = backend({ shippingPriceMinor: 12_900 });
+        const result = yield* quoteCart(
+          Schema.decodeUnknownSync(CartQuoteRequestSchema)({
+            ...input,
+            shipping: { expectedPriceMinor: 12_900, method: "PPL" },
+          }),
+        ).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+          Effect.provide(FetchHttpClient.layer),
+        );
+        expect(result).toMatchObject({
+          outcome: "VALID",
+          shippingPriceMinor: 12_900,
+          totalMinor: 15_320,
+          totalVatMinor: 420,
+        });
+        const commandRequest = owner.calls.find(
+          (upstream) =>
+            !upstream.url.endsWith("/gateway-read") && !upstream.url.endsWith("/gateway-context"),
+        );
+        if (commandRequest === undefined) {
+          throw new Error("Missing native preview command");
+        }
+        const payload = yield* Effect.promise(() => commandRequest.json());
+        expect(payload.command).toMatchObject({
+          dryRun: true,
+          expectedShippingPriceMinor: 12_900,
+          shippingMethod: "PPL",
+        });
+        expect(payload.command).not.toHaveProperty("contact");
+        expect(payload.command).not.toHaveProperty("deliveryAddress");
+        expect(owner.calls).toHaveLength(4);
+      }),
+  );
+  it.effect("refuses an obsolete delivery price before dispatching a preview command", () =>
+    Effect.gen(function* changedDeliveryPrice() {
+      const owner = backend();
+      const error = yield* quoteCart(
+        Schema.decodeUnknownSync(CartQuoteRequestSchema)({
+          ...input,
+          shipping: { expectedPriceMinor: 1, method: "PPL" },
+        }),
+      ).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        Effect.provide(FetchHttpClient.layer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ state: "invalid" });
+      expect(owner.calls.every((upstream) => upstream.url.endsWith("/gateway-read"))).toBe(true);
+    }),
+  );
+
   it.effect("returns fresh per-variant stock without substituting the group total", () =>
     Effect.gen(function* variantStockHints() {
       const owner = backend({

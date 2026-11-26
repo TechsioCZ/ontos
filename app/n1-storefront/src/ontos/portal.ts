@@ -67,7 +67,12 @@ export const PortalRefusalDiagnosticSchema = Schema.Literals([
   "owner-journey-unavailable",
 ]);
 export const PortalOutcomeSchema = Schema.Union([
-  Schema.Struct({ email: Schema.String, name: Schema.String, state: Schema.Literal("admitted") }),
+  Schema.Struct({
+    customerKey: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f\d]{64}$/u))),
+    email: Schema.String,
+    name: Schema.String,
+    state: Schema.Literal("admitted"),
+  }),
   Schema.Struct({
     phase: PortalEnrollmentPhaseSchema,
     state: Schema.Literal("registration-progress"),

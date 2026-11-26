@@ -1,6 +1,6 @@
 import { boundOwnerClient, withOwnerOperation } from "./owner-operation";
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { commerceCustomerContextApi } from "@app/commerce-customer-context/api";
 import { makeEffectBffClientOptions } from "@app/shared-contracts/client-runtime";
 import { makeEffectHttpApiClient } from "@modern-js/bff-effect/effect-client";
@@ -230,7 +230,22 @@ const readAdmission = (config: StorefrontConfiguration, request: PortalRequestCo
     Effect.map((identity): PortalOutcome =>
       identity.state === "anonymous"
         ? { state: "anonymous" }
-        : { email: identity.account.email, name: identity.account.name, state: "admitted" },
+        : {
+            // Opaque presentation identity only; native subjects and authority remain server-owned.
+            customerKey: createHmac("sha256", config.apiKey)
+              .update(
+                JSON.stringify([
+                  config.appId,
+                  config.tenantId,
+                  config.legalEntityId,
+                  identity.account.id,
+                ]),
+              )
+              .digest("hex"),
+            email: identity.account.email,
+            name: identity.account.name,
+            state: "admitted",
+          },
     ),
   );
 /** Own-profile operations share the Portal transport boundary; consumers never construct a client. */

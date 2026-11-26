@@ -2,7 +2,7 @@
 import { setTimeout as nextTurn } from "node:timers/promises";
 import { browserNetwork, networkIdle, serveApi } from "@app/shared-contracts/testing/http-double";
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Deferred, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -58,11 +58,16 @@ const quote = {
   totalVatMinor: 3471,
 } satisfies CartQuote;
 const requests: CartQuoteRequest[] = [];
+const quoteGates = new Map<number, Deferred.Deferred<CartQuote>>();
 let stockQuantity = 2;
 const handlers = HttpApiBuilder.group(CartQuoteApi, "cartQuote", (group) =>
   group.handle("quote", ({ payload }) =>
-    Effect.sync(() => {
+    Effect.gen(function* cartQuoteResponse() {
       requests.push(payload);
+      const gate = quoteGates.get(requests.length);
+      if (gate !== undefined) {
+        return yield* Deferred.await(gate);
+      }
       return {
         ...quote,
         stocks: [{ productId: entry.productId, stockQuantity, variantId: entry.variantId }],
@@ -153,6 +158,7 @@ const expectQuoteRequest = async (locale: "cs" | "en") => {
 
 beforeEach(async () => {
   requests.length = 0;
+  quoteGates.clear();
   stockQuantity = 2;
   window.localStorage.setItem(cartStorageKey(scope), storedCart);
   network = startNetwork();
@@ -168,6 +174,7 @@ afterEach(async () => {
   container.remove();
   window.localStorage.removeItem(cartStorageKey(scope));
   await network.dispose();
+  rs.restoreAllMocks();
 });
 
 const changeQuantity = async (label: string) => {
@@ -177,8 +184,87 @@ const changeQuantity = async (label: string) => {
       ?.click();
   });
 };
+const miniAmount = (label: string) =>
+  [...document.querySelectorAll(".n1-mini-cart-totals dt")].find(
+    (term) => term.textContent === label,
+  )?.nextElementSibling?.textContent;
 
 describe("cart controls use current owner stock", () => {
+  it("retains displayed totals during a stale cart refresh while checkout waits for the response", async () => {
+    let now = 1000;
+    rs.spyOn(performance, "now").mockImplementation(() => now);
+    await mount("cs", false, false);
+    await eventually(() => expect(requests).toHaveLength(1));
+    await network.runPromise(networkIdle);
+    const refreshed = await network.runPromise(Deferred.make<CartQuote>());
+    quoteGates.set(2, refreshed);
+    now += 31_000;
+    await mount("cs", true, false);
+    await eventually(() => expect(requests).toHaveLength(2));
+    const d = getDictionary("cs");
+    expect(miniAmount(d.checkout.total)).toBe("200,00\u00A0Kč");
+    expect(miniAmount(d.shopping.net)).toBe("165,29\u00A0Kč");
+    expect(miniAmount(d.shopping.vat)).toBe("34,71\u00A0Kč");
+    expect(document.querySelector('a[href="/cs/pokladna"]')).toBeNull();
+    await act(async () => {
+      await network.runPromise(Deferred.succeed(refreshed, quote));
+    });
+    await eventually(() => {
+      expect(miniAmount(d.checkout.total)).toBe("200,00\u00A0Kč");
+      expect(document.querySelector('a[href="/cs/pokladna"]')).not.toBeNull();
+    });
+  });
+
+  it("clears the previous quantity's totals until the new quantity has an owner quote", async () => {
+    await mount("cs", true, false);
+    const d = getDictionary("cs");
+    await eventually(() => expect(miniAmount(d.checkout.total)).toBe("200,00\u00A0Kč"));
+    const changed = await network.runPromise(Deferred.make<CartQuote>());
+    quoteGates.set(2, changed);
+    await changeQuantity("Set one");
+    await eventually(() =>
+      expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2, 1]),
+    );
+    expect(miniAmount(d.checkout.total)).toBe(d.shopping.unresolved);
+    expect(miniAmount(d.shopping.net)).toBe(d.shopping.unresolved);
+    expect(miniAmount(d.shopping.vat)).toBe(d.shopping.unresolved);
+    expect(document.querySelector('a[href="/cs/pokladna"]')).toBeNull();
+    await act(async () => {
+      await network.runPromise(
+        Deferred.succeed(changed, { ...quote, totalMinor: 10_000, totalVatMinor: 1736 }),
+      );
+    });
+    await eventually(() => expect(miniAmount(d.checkout.total)).toBe("100,00\u00A0Kč"));
+  });
+
+  it("does not replace newer quantity totals with a late response for the previous selection", async () => {
+    const previous = await network.runPromise(Deferred.make<CartQuote>());
+    const current = await network.runPromise(Deferred.make<CartQuote>());
+    quoteGates.set(1, previous);
+    quoteGates.set(2, current);
+    await mount("cs", true, false);
+    await eventually(() => expect(requests).toHaveLength(1));
+    await changeQuantity("Set one");
+    await eventually(() =>
+      expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2, 1]),
+    );
+    await act(async () => {
+      await network.runPromise(
+        Deferred.succeed(current, { ...quote, totalMinor: 10_000, totalVatMinor: 1736 }),
+      );
+    });
+    const d = getDictionary("cs");
+    await eventually(() => expect(miniAmount(d.checkout.total)).toBe("100,00\u00A0Kč"));
+    await act(async () => {
+      await network.runPromise(Deferred.succeed(previous, quote));
+      await network.runPromise(networkIdle);
+    });
+    expect(miniAmount(d.checkout.total)).toBe("100,00\u00A0Kč");
+    expect(miniAmount(d.shopping.net)).toBe("82,64\u00A0Kč");
+    expect(miniAmount(d.shopping.vat)).toBe("17,36\u00A0Kč");
+    expect(document.querySelector('a[href="/cs/pokladna"]')).not.toBeNull();
+  });
+
   it.each(["cs", "en"] as const)(
     "bounds a legacy hintless cart and disables increment at max in %s",
     async (locale) => {

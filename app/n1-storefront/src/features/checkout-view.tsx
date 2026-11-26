@@ -13,6 +13,9 @@ import type { CheckoutLockManager } from "./checkout-guard";
 import { CheckoutFields } from "./checkout-fields";
 import { CheckoutItems, CheckoutShipping, CheckoutTotals } from "./checkout-panels";
 import { EmptyCartView } from "./empty-cart-view";
+import { useCartQuoteRequest } from "./use-cart-quote";
+import { requestForCart } from "./cart-quote-request";
+import { displayedCartQuote } from "./cart-quote-state";
 import { useCheckout } from "./use-checkout";
 import { usePortalAuth } from "./auth-view";
 
@@ -332,7 +335,7 @@ const CheckoutActions = ({
         aria-busy={pending}
         aria-label={pending ? pendingLabel : actionLabel}
         block
-        disabled={disabled || pending}
+        disabled={disabled || pending || !checkout.guardLoaded || !checkout.sessionReady}
         isLoading={pending}
         onClick={() => {
           restoreFocus.current = submit.current?.form?.contains(document.activeElement) ?? false;
@@ -377,6 +380,16 @@ const ReadyCheckout = ({
     options.shippingMethods[0]?.id ?? null,
   );
   const method = options.shippingMethods.find((item) => item.id === shippingId);
+  const cartRequest = requestForCart(checkout.cart, locale, false);
+  const { quote: preview } = useCartQuoteRequest(
+    cartRequest === null || method === undefined
+      ? null
+      : {
+          ...cartRequest,
+          shipping: { expectedPriceMinor: method.priceMinor, method: method.id },
+        },
+  );
+  const totals = checkout.quote ?? displayedCartQuote(preview, false);
   const pending = checkout.progress !== "idle";
   const notice = noticeText(checkout, d);
   if (checkout.receipt !== null) {
@@ -385,7 +398,7 @@ const ReadyCheckout = ({
     );
   }
   let body;
-  if (!checkout.guardLoaded || checkout.cart?.loaded !== true) {
+  if (checkout.cart?.loaded !== true) {
     body = <output>{d.shopping.loading}</output>;
   } else if (checkout.guarded) {
     body = (
@@ -490,7 +503,7 @@ const ReadyCheckout = ({
               currency={options.scope.currency}
               dictionary={d}
               locale={locale}
-              result={checkout.quote}
+              result={totals}
             />
             {notice !== "" && (
               <StatusText align="start" showIcon status={noticeStatus(checkout)}>

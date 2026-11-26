@@ -18,6 +18,7 @@ import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
 import { readOwner, StorefrontReadUnavailable } from "./gateway";
+import { readCheckoutContext } from "./checkout-context";
 import { selectMarket } from "./market";
 import { readCurrentMarketCatalog } from "./market-catalog-read";
 
@@ -226,8 +227,12 @@ const mintQuoteContext = (config: StorefrontConfiguration) =>
     );
   });
 
-/** Require owner evidence of a dry run; never turn PLACED/REPLAYED or a shipping-inclusive amount into goods totals. */
-export const confirmCartQuote = (scope: CartScope, result: ApplyCommandResult) =>
+/** Require a dry run matching the requested shipping; goods-only callers still require zero shipping. */
+export const confirmCartQuote = (
+  scope: CartScope,
+  result: ApplyCommandResult,
+  shipping?: CartQuoteRequest["shipping"],
+) =>
   Effect.gen(function* confirmCartQuoteProgram() {
     const { storefrontOrder: order } = yield* Schema.decodeUnknownEffect(DryRunEvidenceSchema)(
       result,
@@ -238,25 +243,34 @@ export const confirmCartQuote = (scope: CartScope, result: ApplyCommandResult) =
     ) {
       return yield* new CartQuoteFailure({ state: scopeMismatchState });
     }
-    const goodsConfirmed = order.shippingPriceMinor === 0 && order.market?.configured !== false;
+    const totalsConfirmed =
+      order.shippingPriceMinor === (shipping?.expectedPriceMinor ?? 0) &&
+      order.market?.configured !== false;
     if (
       order.outcome === "VALID" &&
-      (!goodsConfirmed ||
+      (!totalsConfirmed ||
         order.totalMinor === undefined ||
         order.totalVatMinor === undefined ||
         order.issues.length !== 0)
     ) {
       return yield* new CartQuoteFailure({ state: "unavailable" });
     }
-    return yield* Schema.decodeUnknownEffect(CartQuoteSchema)({
+    const quote = {
       issues: order.issues.map((issue) =>
         Struct.pick(issue, ["code", "currentUnitPriceMinor", "productId", "variantId"]),
       ),
       outcome: order.outcome,
       scope,
-      totalMinor: goodsConfirmed ? (order.totalMinor ?? null) : null,
-      totalVatMinor: goodsConfirmed ? (order.totalVatMinor ?? null) : null,
-    }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })));
+      totalMinor: totalsConfirmed ? (order.totalMinor ?? null) : null,
+      totalVatMinor: totalsConfirmed ? (order.totalVatMinor ?? null) : null,
+    };
+    const priced =
+      shipping === undefined
+        ? quote
+        : { ...quote, shippingPriceMinor: totalsConfirmed ? order.shippingPriceMinor : null };
+    return yield* Schema.decodeUnknownEffect(CartQuoteSchema)(priced).pipe(
+      Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
+    );
   });
 
 type NativeQuoteFailure =
@@ -343,7 +357,27 @@ export const quoteCart = (input: CartQuoteRequest) =>
       ) {
         return yield* new CartQuoteFailure({ state: scopeMismatchState });
       }
-      const snapshot = yield* readQuoteContext(config, request.locale);
+      const snapshot = yield* request.shipping === undefined
+        ? readQuoteContext(config, request.locale).pipe(
+            Effect.map((context) => ({ ...context, shippingMethods: [] })),
+          )
+        : readCheckoutContext(config, request.locale).pipe(
+            Effect.catchTag("CheckoutFailure", (error) =>
+              Effect.fail(
+                new CartQuoteFailure({
+                  state: error.state === "forbidden" ? "forbidden" : "unavailable",
+                }),
+              ),
+            ),
+          );
+      if (request.shipping !== undefined) {
+        const method = snapshot.shippingMethods.find(
+          (entry) => entry.id === request.shipping?.method,
+        );
+        if (method === undefined || method.priceMinor !== request.shipping.expectedPriceMinor) {
+          return yield* new CartQuoteFailure({ state: "invalid" });
+        }
+      }
       if (!sameScope(snapshot.scope, request.scope)) {
         return yield* new CartQuoteFailure({ state: scopeMismatchState });
       }
@@ -355,10 +389,10 @@ export const quoteCart = (input: CartQuoteRequest) =>
           _tag: "PlaceStorefrontOrder",
           clientRequestId: requestId,
           dryRun: true,
-          expectedShippingPriceMinor: 0,
+          expectedShippingPriceMinor: request.shipping?.expectedPriceMinor ?? 0,
           lines: request.lines,
           marketId: snapshot.scope.marketId,
-          shippingMethod: "OSOBNI_ODBER",
+          shippingMethod: request.shipping?.method ?? "OSOBNI_ODBER",
         },
         expectedRevision: snapshot.revision,
       }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
@@ -398,8 +432,8 @@ export const quoteCart = (input: CartQuoteRequest) =>
           state: "unavailable",
         });
       }
-      const quote = yield* confirmCartQuote(snapshot.scope, result);
-      const stocks = yield* readCartStocks(config, request);
+      const quote = yield* confirmCartQuote(snapshot.scope, result, request.shipping);
+      const stocks = request.shipping === undefined ? yield* readCartStocks(config, request) : null;
       return stocks === null || stocks === undefined ? quote : { ...quote, stocks };
     }),
   ).pipe(

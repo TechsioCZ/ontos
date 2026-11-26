@@ -1,3 +1,4 @@
+import { ShippingMethodSchema } from "@app/merchandise/domain/merchandise-model";
 import { makeProblemDetailsSchema } from "@app/shared-contracts/problem-details";
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
@@ -34,10 +35,16 @@ export const CartQuoteRequestSchema = Schema.Struct({
   ),
   locale: Schema.Literals(["cs", "en"]),
   scope: CartScopeSchema,
+  shipping: Schema.optionalKey(
+    Schema.Struct({
+      expectedPriceMinor: nonnegativeMinor,
+      method: ShippingMethodSchema,
+    }),
+  ),
 });
 export type CartQuoteRequest = typeof CartQuoteRequestSchema.Type;
 
-/** Owner-confirmed goods subtotal only, with zero pickup shipping and no payment charge. */
+/** Owner-confirmed goods, optionally including the explicitly selected shipping method. */
 export const CartQuoteSchema = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
@@ -49,6 +56,7 @@ export const CartQuoteSchema = Schema.Struct({
   ),
   outcome: Schema.Literals(["VALID", "REJECTED"]),
   scope: CartScopeSchema,
+  shippingPriceMinor: Schema.optionalKey(Schema.NullOr(nonnegativeMinor)),
   stocks: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -74,7 +82,9 @@ export const CartQuoteSchema = Schema.Struct({
       quote.outcome !== "VALID" ||
       (quote.totalMinor !== null &&
         quote.totalVatMinor !== null &&
-        quote.totalVatMinor <= quote.totalMinor),
+        quote.totalVatMinor <= quote.totalMinor &&
+        (quote.shippingPriceMinor === undefined ||
+          (quote.shippingPriceMinor !== null && quote.shippingPriceMinor <= quote.totalMinor))),
   ),
 );
 export type CartQuote = typeof CartQuoteSchema.Type;

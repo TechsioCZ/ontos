@@ -46,3 +46,15 @@ export const quoteFailureState = (error: QuoteFailureDetails): "scope-mismatch" 
     Match.when({ _tag: "CartQuoteScopeProblem" }, () => "scope-mismatch" as const),
     Match.orElse(() => "unavailable" as const),
   );
+
+/** Retained totals are presentation only; checkout permission still requires verifiedCartQuote. */
+export const displayedCartQuote = (
+  quote: CartQuoteFeedbackState,
+  invalid: boolean,
+): CartQuote | null =>
+  !invalid &&
+  (quote.state === "ready" || quote.state === "pending") &&
+  quote.result?.outcome === "VALID" &&
+  quote.result.issues.length === 0
+    ? quote.result
+    : null;

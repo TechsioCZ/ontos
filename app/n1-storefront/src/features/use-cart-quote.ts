@@ -72,6 +72,11 @@ export const useCartQuoteRequest = (input: CartQuoteRequest | null) => {
   const { attempt } = check;
   const requested = check.generation === generation;
   const [snapshot, setSnapshot] = useState<QuoteSnapshot | null>(null);
+  // A background attempt must not erase confirmed prices for this exact selection generation.
+  const displayed =
+    requested && snapshot?.key === selection.key && snapshot.generation === generation
+      ? snapshot
+      : null;
   const current =
     requested && isCurrentQuoteSnapshot(snapshot, selection, attempt) ? snapshot : null;
   // Recheck on demand when a viewer opens the cart, without polling a cart already open.
@@ -131,7 +136,7 @@ export const useCartQuoteRequest = (input: CartQuoteRequest | null) => {
   }, [activeKey, attempt, generation]);
   const verify = () => setCheck((previous) => ({ attempt: previous.attempt + 1, generation }));
   const quote: CartQuoteView = {
-    result: current?.result ?? null,
+    result: displayed?.result ?? null,
     state: quoteState(activeKey, current),
     stocks: stockSnapshot?.scopeKey === scopeKey ? stockSnapshot.stocks : [],
     verify,

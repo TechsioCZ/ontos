@@ -9,6 +9,7 @@ import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { RadioCard } from "@techsio/ui-kit/molecules/radio-card";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";
 import type { Dictionary } from "@/i18n";
+import type { CartQuote } from "@/ontos/cart-quote";
 import type { CheckoutResult } from "@/ontos/checkout";
 import type { CheckoutOptions } from "@/ontos/checkout-server";
 import { publicImage } from "@/ontos/catalog-model";
@@ -168,14 +169,18 @@ export const CheckoutTotals = ({
   currency: ReadyOptions["scope"]["currency"];
   dictionary: Dictionary;
   locale: string;
-  result: CheckoutResult | null;
+  result:
+    | Pick<CheckoutResult, "outcome" | "totalMinor" | "totalVatMinor" | "shippingPriceMinor">
+    | CartQuote
+    | null;
 }) => {
   const known =
     result !== null &&
     result.outcome !== "REJECTED" &&
     result.totalMinor !== null &&
     result.totalVatMinor !== null &&
-    result.shippingPriceMinor !== null;
+    result.shippingPriceMinor !== null &&
+    result.shippingPriceMinor !== undefined;
   const money = (amount: number) => formatMarketAmount(amount, locale, currency);
   const { unresolved } = d.shopping;
   return (

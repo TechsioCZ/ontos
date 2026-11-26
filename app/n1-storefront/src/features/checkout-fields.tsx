@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Exit, Fiber, Schema } from "effect";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from "react";
+import { Effect, Exit, Fiber, Schema } from "effect";
+import { HttpApiClient } from "effect/http-api";
+import { CustomerProfileApi } from "@/ontos/customer-profile";
+import { sameCheckoutCustomer } from "./checkout-session-observation";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormInput } from "./form-controls";
 import { Select } from "@techsio/ui-kit/molecules/select";
@@ -29,12 +32,24 @@ import type { CheckoutPostalDraft } from "./checkout-saved-address";
 
 type Field = keyof typeof checkoutFieldAttributes;
 type FieldErrors = Partial<Record<Field | "country", string | null>>;
+type ContactField = "firstName" | "lastName" | "email" | "phone";
+const contactDefaults = (identity: CustomerAddressIdentity | null) => {
+  const [firstName = "", ...lastName] = identity?.name.trim().split(/\s+/u) ?? [];
+  return { email: identity?.email ?? "", firstName, lastName: lastName.join(" "), phone: "" };
+};
+const profileClient = HttpApiClient.make(CustomerProfileApi);
+const readCheckoutProfile = profileClient.pipe(
+  Effect.flatMap((api) => api.customerProfile.read()),
+  Effect.timeout("65 seconds"),
+);
 interface CheckoutFieldState {
+  readonly contact: Record<ContactField, string>;
   readonly epoch: number;
   readonly errors: FieldErrors;
   readonly identity: CustomerAddressIdentity | null;
   readonly postal: CheckoutPostalDraft;
   readonly snapshot: (CustomerAddressesSnapshot & { readonly generation: number }) | null;
+  readonly touched: Partial<Record<ContactField, boolean>>;
 }
 
 const clearPostalErrors = (errors: FieldErrors) => ({
@@ -55,42 +70,43 @@ const checkoutFieldStateForIdentity = (
   countryCodes: readonly string[],
 ): CheckoutFieldState => {
   const identityChanged = state.identity !== identity;
-  const postal = checkoutPostalForIdentity(state.postal, identity, countryCodes);
+  const customerChanged = !sameCheckoutCustomer(state.identity, identity);
+  const postal = customerChanged
+    ? initialCheckoutPostalDraft(countryCodes)
+    : checkoutPostalForIdentity(state.postal, identity, countryCodes);
   if (!identityChanged && postal === state.postal) {
     return state;
   }
   return {
+    contact: customerChanged ? contactDefaults(identity) : state.contact,
     epoch: state.epoch + (identityChanged ? 1 : 0),
     errors: postal === state.postal ? state.errors : clearPostalErrors(state.errors),
     identity,
     postal,
     snapshot: identityChanged ? null : state.snapshot,
+    touched: customerChanged ? {} : state.touched,
   };
 };
 
-/** Native order fields with explicit, lossless reuse of the admitted customer's saved postal data. */
-export const CheckoutFields = ({
-  countryCodes,
-  dictionary: d,
-  disabled,
-  locale,
-  onEdit,
-}: {
-  countryCodes: readonly string[];
-  dictionary: Dictionary;
-  disabled: boolean;
-  locale: string;
-  onEdit: () => void;
-}) => {
-  const id = useId();
+/** Keep the editable draft separate from refreshable, admission-scoped own reads. */
+const useCheckoutFields = (
+  countryCodes: readonly string[],
+  disabled: boolean,
+  onEdit: () => void,
+) => {
   const auth = usePortalAuth({ mode: "login" });
-  const identity = checkoutAddressIdentity(auth);
+  // Keep the draft through a pending read, while private reads/selections still require admission.
+  const identity = auth.loaded && auth.outcome.state === "admitted" ? auth.outcome : null;
+  const readIdentity = checkoutAddressIdentity(auth);
+  const profileEdited = useEffectEvent(() => onEdit());
   const [fieldState, setFieldState] = useState<CheckoutFieldState>(() => ({
+    contact: contactDefaults(identity),
     epoch: 0,
     errors: {},
     identity,
     postal: initialCheckoutPostalDraft(countryCodes),
     snapshot: null,
+    touched: {},
   }));
   const state = checkoutFieldStateForIdentity(fieldState, identity, countryCodes);
   if (state !== fieldState) {
@@ -98,14 +114,14 @@ export const CheckoutFields = ({
     setFieldState(state);
   }
   const { epoch, errors, postal: currentPostal, snapshot } = state;
-  const postalValues: Partial<Record<Field, string>> = currentPostal.fields;
+  const values = { ...currentPostal.fields, ...state.contact } satisfies Record<Field, string>;
   const selectionContext = useRef({ countryCodes, disabled, epoch, identity, snapshot });
   useLayoutEffect(() => {
     selectionContext.current = { countryCodes, disabled, epoch, identity, snapshot };
   }, [countryCodes, disabled, epoch, identity, snapshot]);
   useEffect(() => {
     let current = true;
-    const fiber = identity === null ? null : clientRuntime.runFork(readCustomerAddresses());
+    const fiber = readIdentity === null ? null : clientRuntime.runFork(readCustomerAddresses());
     if (fiber !== null && identity !== null) {
       fiber.addObserver((exit) => {
         if (current) {
@@ -131,11 +147,90 @@ export const CheckoutFields = ({
         clientRuntime.runFork(Fiber.interrupt(fiber));
       }
     };
-  }, [epoch, identity]);
+  }, [epoch, identity, readIdentity]);
+  useEffect(() => {
+    let current = true;
+    const fiber = readIdentity === null ? null : clientRuntime.runFork(readCheckoutProfile);
+    if (fiber !== null && readIdentity !== null) {
+      fiber.addObserver((exit) => {
+        if (!current || !Exit.isSuccess(exit) || exit.value.state !== "ready") {
+          return;
+        }
+        const { profile } = exit.value;
+        const defaults = {
+          ...contactDefaults({ ...readIdentity, name: profile.displayName }),
+          email: profile.contactEmail.trim() || readIdentity.email,
+          phone: profile.phone,
+        };
+        setFieldState((previous) => {
+          if (previous.identity !== readIdentity || previous.epoch !== epoch) {
+            return previous;
+          }
+          const contact = { ...previous.contact };
+          for (const field of ["firstName", "lastName", "email", "phone"] as const) {
+            if (previous.touched[field] !== true) {
+              contact[field] = defaults[field];
+            }
+          }
+          return { ...previous, contact };
+        });
+        profileEdited();
+      });
+    }
+    return () => {
+      current = false;
+      if (fiber !== null) {
+        clientRuntime.runFork(Fiber.interrupt(fiber));
+      }
+    };
+  }, [epoch, readIdentity]);
   const addressState =
     identity === null || snapshot?.generation !== epoch
       ? null
       : customerAddressesForIdentity(snapshot, identity);
+  return {
+    addressState,
+    auth,
+    currentPostal,
+    epoch,
+    errors,
+    identity,
+    readIdentity,
+    selectionContext,
+    setFieldState,
+    snapshot,
+    values,
+  };
+};
+
+/** Native order fields with explicit, lossless reuse of the admitted customer's saved postal data. */
+export const CheckoutFields = ({
+  countryCodes,
+  dictionary: d,
+  disabled,
+  locale,
+  onEdit,
+}: {
+  countryCodes: readonly string[];
+  dictionary: Dictionary;
+  disabled: boolean;
+  locale: string;
+  onEdit: () => void;
+}) => {
+  const id = useId();
+  const {
+    addressState,
+    auth,
+    currentPostal,
+    epoch,
+    errors,
+    identity,
+    readIdentity,
+    selectionContext,
+    setFieldState,
+    snapshot,
+    values,
+  } = useCheckoutFields(countryCodes, disabled, onEdit);
   const addresses = addressState?.state === "ready" ? addressState.addresses : [];
   const savedItems = checkoutSavedAddressItems(
     addresses,
@@ -175,11 +270,25 @@ export const CheckoutFields = ({
             const { value } = event.currentTarget;
             setFieldState((previous) => ({
               ...previous,
+              contact:
+                field === "firstName" ||
+                field === "lastName" ||
+                field === "email" ||
+                field === "phone"
+                  ? { ...previous.contact, [field]: value }
+                  : previous.contact,
               errors: { ...previous.errors, [field]: null },
               postal:
                 field === "city" || field === "postalCode" || field === "street"
                   ? editCheckoutPostal(previous.postal, identity, countryCodes, field, value)
                   : previous.postal,
+              touched:
+                field === "firstName" ||
+                field === "lastName" ||
+                field === "email" ||
+                field === "phone"
+                  ? { ...previous.touched, [field]: true }
+                  : previous.touched,
             }));
             onEdit();
           }}
@@ -194,7 +303,7 @@ export const CheckoutFields = ({
           pattern={field === "phone" ? undefined : pattern}
           size="md"
           validateStatus={error === undefined ? "default" : "error"}
-          value={postalValues[field]}
+          value={values[field]}
         />
         {error === undefined ? null : (
           <StatusText id={errorId} showIcon size="sm" status="error">
@@ -276,13 +385,14 @@ export const CheckoutFields = ({
       <h2 className="text-lg font-semibold">{d.checkout.address}</h2>
       {savedItems.length > 0 && (
         <Select
-          disabled={disabled}
+          disabled={disabled || readIdentity === null}
           id={`${id}-saved-address`}
           items={savedItems}
           onValueChange={({ value }) => {
             const { current } = selectionContext;
             if (
               current.disabled ||
+              readIdentity === null ||
               current.epoch !== epoch ||
               current.identity !== identity ||
               current.snapshot !== snapshot ||

@@ -2,6 +2,7 @@ import { afterEach, rs } from "@rstest/core";
 import { Context, Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { describe, expect, it } from "effect-rstest";
+import { currentPortalServer, portalRequestContext } from "../src/ontos/portal-server";
 import { portalWeb } from "../src/ontos/portal-http";
 
 afterEach(() => {
@@ -47,6 +48,51 @@ const mfaRequest = (
   });
 
 describe("N1 MFA ongoing-login boundary", () => {
+  it.effect(
+    "keeps opaque draft identity stable across refreshes and distinguishes same-display customers",
+    () =>
+      Effect.gen(function* opaqueCustomerIdentity() {
+        configure();
+        let subject = "native-subject-a";
+        const fetch: typeof globalThis.fetch = (input, init) => {
+          const upstream = new Request(input, init);
+          return Promise.resolve(
+            upstream.url.endsWith("/gateway-context")
+              ? gateway()
+              : Response.json({
+                  account: {
+                    email: "shopper@example.test",
+                    id: subject,
+                    name: "Shopper",
+                    partyId: "71000000-0000-4000-8000-000000000096",
+                    tenantId,
+                  },
+                  state: "authenticated",
+                }),
+          );
+        };
+        const read = currentPortalServer(
+          portalRequestContext(origin, "commerce-portal.session_token=test"),
+        ).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.provide(FetchHttpClient.layer),
+        );
+        const first = yield* read;
+        const refreshed = yield* read;
+        expect(refreshed).toEqual(first);
+        subject = "native-subject-b";
+        const changed = yield* read;
+        if (first.state !== "admitted" || changed.state !== "admitted") {
+          throw new Error("Expected native admission");
+        }
+        expect(first.customerKey).toMatch(/^[a-f\d]{64}$/u);
+        expect(changed.customerKey).not.toBe(first.customerKey);
+        expect(changed.email).toBe(first.email);
+        expect(JSON.stringify(first)).not.toContain("native-subject");
+        expect(JSON.stringify(first)).not.toContain("test-mfa-api-key");
+      }),
+  );
+
   for (const [action, payload] of [
     ["request", { trustDevice: true }],
     ["verify", { code, method: "backup" }],
@@ -117,7 +163,12 @@ describe("N1 MFA ongoing-login boundary", () => {
       );
       expect(response.status).toBe(200);
       expect(yield* Effect.promise(() => response.json())).toEqual({
-        outcome: { email: "shopper@example.test", name: "Shopper", state: "admitted" },
+        outcome: {
+          customerKey: expect.stringMatching(/^[a-f\d]{64}$/u),
+          email: "shopper@example.test",
+          name: "Shopper",
+          state: "admitted",
+        },
         state: "complete",
       });
       expect(bodies).toEqual([{ code, trustDevice: false }]);

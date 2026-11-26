@@ -18,3 +18,14 @@ export const observeCheckoutSession = (
   }
   return { generation: previous === null ? 0 : previous.generation + 1, identity, key };
 };
+
+/** Draft continuity is distinct from operation admission. Never equate customers by display data. */
+export const sameCheckoutCustomer = (
+  left: CheckoutSessionObservation["identity"],
+  right: CheckoutSessionObservation["identity"],
+) =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.customerKey !== undefined &&
+    left.customerKey === right.customerKey);

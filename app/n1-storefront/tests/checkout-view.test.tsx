@@ -18,6 +18,8 @@ import { CheckoutRequestSchema } from "../src/ontos/checkout";
 import type { CheckoutRecoverySchema, CheckoutResultSchema } from "../src/ontos/checkout";
 import type { CheckoutOptions } from "../src/ontos/checkout-server";
 import type { PortalOutcome } from "../src/ontos/portal";
+import type { CustomerAddressesRead } from "../src/ontos/customer-addresses";
+import type { CustomerProfileRead } from "../src/ontos/customer-profile";
 import { getDictionary } from "../src/i18n";
 
 const unexpectedNavigation = () => {
@@ -84,7 +86,52 @@ const confirmed = {
   totalVatMinor: 2256,
 } satisfies typeof CheckoutResultSchema.Encoded;
 const requests: Request[] = [];
+const ownerAdmission = {
+  customerKey: "a".repeat(64),
+  email: "owner@example.test",
+  name: "Jan Novák",
+  state: "admitted",
+} satisfies PortalOutcome & { customerKey: string };
 let admission: PortalOutcome = { state: "anonymous" };
+const savedAddresses = {
+  addresses: [
+    {
+      id: "delivery-home",
+      isBillingDefault: false,
+      isDeliveryDefault: true,
+      label: "Home",
+      location: {
+        address: {
+          addressLine1: "Saved street 1",
+          city: "Praha",
+          countryCode: "CZ",
+          postalCode: "11000",
+        },
+        state: "available",
+      },
+      purposes: ["DELIVERY"],
+      revision: 1,
+    },
+  ],
+  state: "ready",
+  viewerEmail: "owner@example.test",
+} satisfies CustomerAddressesRead;
+const ownerProfile = {
+  profile: {
+    contactEmail: "contact@example.test",
+    displayName: "Jan Novák",
+    phone: "+420123456789",
+    version: "a".repeat(64),
+  },
+  state: "ready",
+} satisfies CustomerProfileRead;
+let addresses: CustomerAddressesRead = {
+  addresses: [],
+  state: "ready",
+  viewerEmail: "owner@example.test",
+};
+let profile: CustomerProfileRead = ownerProfile;
+let profileGate: Promise<Response> | null = null;
 let recovery: typeof CheckoutRecoverySchema.Encoded = { state: "unconfirmed" };
 let accountGate: Promise<Response> | null = null;
 let recoveryGate: Promise<Response> | null = null;
@@ -120,10 +167,29 @@ const fetchOwner = async (request: Request): Promise<Response> => {
       return await (accountGate ?? Promise.resolve(Response.json(admission)));
     }
     case "/api/customer-addresses": {
-      return Response.json({ addresses: [], state: "ready", viewerEmail: "owner@example.test" });
+      return Response.json(addresses);
+    }
+    case "/api/customer-profile": {
+      return await (profileGate ?? Promise.resolve(Response.json(profile)));
     }
     case "/api/checkout/status": {
       return await (recoveryGate ?? Promise.resolve(Response.json(recovery)));
+    }
+    case "/api/cart-quote": {
+      const payload = await request.json();
+      const { shipping } = payload;
+      const shippingPriceMinor = shipping?.method === "PPL" ? 12_900 : 0;
+      const result = {
+        issues: [],
+        outcome: "VALID",
+        scope: options.scope,
+        totalMinor: 100 + shippingPriceMinor,
+        totalVatMinor: shippingPriceMinor === 0 ? 17 : 2256,
+      };
+      if (shipping !== undefined) {
+        Object.assign(result, { shippingPriceMinor });
+      }
+      return Response.json(result);
     }
     case "/api/checkout": {
       if (quoteGate !== null) {
@@ -153,13 +219,13 @@ const seed = ({ edited = false, guarded = true } = {}) => {
     window.localStorage.setItem(checkoutGuardKey(options.scope), JSON.stringify(guard));
   }
 };
-const mount = async () => {
+const mount = async (checkoutOptions: CheckoutOptions = options) => {
   await act(async () => {
     root.render(
       <AppRouterContext.Provider value={router}>
         <PortalSessionProvider>
           <CartProvider imageHosts={[]} scope={options.scope}>
-            <CheckoutView dictionary={d} locale="cs" locks={locks} options={options} />
+            <CheckoutView dictionary={d} locale="cs" locks={locks} options={checkoutOptions} />
           </CartProvider>
         </PortalSessionProvider>
       </AppRouterContext.Provider>,
@@ -204,6 +270,9 @@ beforeEach(() => {
   accountGate = null;
   recoveryGate = null;
   quoteGate = null;
+  profileGate = null;
+  profile = ownerProfile;
+  addresses = { addresses: [], state: "ready", viewerEmail: "owner@example.test" };
   previousInterceptor = window.happyDOM.settings.fetch.interceptor;
   window.happyDOM.settings.fetch.interceptor = {
     beforeAsyncRequest: async ({ request, window }) => {
@@ -229,6 +298,57 @@ afterEach(async () => {
   window.localStorage.clear();
   window.happyDOM.settings.fetch.interceptor = previousInterceptor;
 });
+
+const checkoutInput = (name: string) => {
+  const control = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+  if (control === null) {
+    throw new Error(`Missing checkout input: ${name}`);
+  }
+  return control;
+};
+const editCheckoutFields = async (fields: Record<string, string>) => {
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (nativeValue?.set === undefined) {
+    throw new Error("Native input value setter is unavailable");
+  }
+  await act(async () => {
+    for (const [name, value] of Object.entries(fields)) {
+      const control = checkoutInput(name);
+      nativeValue.set?.call(control, value);
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+};
+const savedAddressTrigger = () => {
+  const label = [...container.querySelectorAll("label")].find(
+    (item) => item.textContent === d.checkout.savedAddresses.label,
+  );
+  const trigger =
+    label === undefined
+      ? null
+      : container.querySelector<HTMLButtonElement>(
+          `[role="combobox"][aria-labelledby="${label.id}"]`,
+        );
+  if (trigger === null) {
+    throw new Error("Missing saved address selector");
+  }
+  return trigger;
+};
+const selectSavedAddress = async () => {
+  await eventually(() => expect(savedAddressTrigger()).toBeDefined());
+  await act(async () => savedAddressTrigger().click());
+  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull());
+  await act(async () => {
+    const row = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      item.textContent?.includes("Saved street 1"),
+    );
+    if (row === undefined) {
+      throw new Error("Missing saved delivery address");
+    }
+    row.click();
+  });
+  await eventually(() => expect(checkoutInput("street").value).toBe("Saved street 1"));
+};
 
 const completeNextPurchase = async (cycle: number) => {
   await eventually(() => {
@@ -291,6 +411,255 @@ const completeNextPurchase = async (cycle: number) => {
 };
 
 describe("checkout through public session, cart and owner boundaries", () => {
+  it("shows owner-confirmed totals before contact entry and still requires explicit checkout verification", async () => {
+    seed({ guarded: false });
+    await mount();
+    await eventually(() => {
+      expect(amount(d.checkout.total)).toBe("130\u00A0Kč");
+      expect(amount(d.checkout.netIncludesShipping)).toBe("107,44\u00A0Kč");
+      expect(amount(d.shopping.vat)).toBe("22,56\u00A0Kč");
+      expect(amount(d.checkout.shippingIncluded)).toBe("129\u00A0Kč");
+    });
+    expect(checkoutInput("email").value).toBe("");
+    expect(checkoutInput("firstName").value).toBe("");
+    expect(button(d.checkout.verify).disabled).toBe(false);
+    expect(container.querySelector(`button[aria-label="${d.checkout.confirm}"]`)).toBeNull();
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(0);
+    const previews = await Promise.all(
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/cart-quote")
+        .map((request) => request.json()),
+    );
+    expect(previews).toContainEqual({
+      lines: [line],
+      locale: "cs",
+      scope: options.scope,
+      shipping: { expectedPriceMinor: 12_900, method: "PPL" },
+    });
+    await editCheckoutFields({
+      city: "Praha",
+      email: "buyer@example.test",
+      firstName: "Jan",
+      lastName: "Novák",
+      postalCode: "11000",
+      street: "Test 1",
+    });
+    quoteGate = Promise.resolve(
+      Response.json({
+        ...confirmed,
+        orderId: null,
+        orderNumber: null,
+        outcome: "VALID",
+        status: null,
+      }),
+    );
+    await act(async () => container.querySelector("form")?.requestSubmit());
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    const writes = await Promise.all(
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/checkout")
+        .map((request) => request.json()),
+    );
+    expect(writes.map((payload) => payload.mode)).toEqual(["quote"]);
+    expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
+  });
+
+  it("refreshes checkout preview totals for the selected shipping method before contact entry", async () => {
+    seed({ guarded: false });
+    await mount({
+      ...options,
+      shippingMethods: [
+        ...options.shippingMethods,
+        { id: "OSOBNI_ODBER", priceMinor: 0, title: "Pickup" },
+      ],
+    });
+    await eventually(() => expect(amount(d.checkout.total)).toBe("130\u00A0Kč"));
+    const pickup = container.querySelector<HTMLInputElement>(
+      'input[name="shippingMethod"][value="OSOBNI_ODBER"]',
+    );
+    if (pickup === null) {
+      throw new Error("Missing pickup shipping option");
+    }
+    await act(async () => pickup.click());
+    await eventually(() => {
+      expect(amount(d.checkout.total)).toBe("1\u00A0Kč");
+      expect(amount(d.checkout.netIncludesShipping)).toBe("0,83\u00A0Kč");
+      expect(amount(d.shopping.vat)).toBe("0,17\u00A0Kč");
+      expect(amount(d.checkout.shippingIncluded)).toBe("0\u00A0Kč");
+    });
+    const previews = await Promise.all(
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/cart-quote")
+        .map((request) => request.json()),
+    );
+    expect(previews).toContainEqual({
+      lines: [line],
+      locale: "cs",
+      scope: options.scope,
+      shipping: { expectedPriceMinor: 0, method: "OSOBNI_ODBER" },
+    });
+    expect(checkoutInput("email").value).toBe("");
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(0);
+  });
+
+  it.each(["focus", "visibilitychange"])(
+    "retains selected address and edited contact fields after same-customer %s refresh",
+    async (event) => {
+      seed({ guarded: false });
+      admission = { ...ownerAdmission };
+      addresses = savedAddresses;
+      await mount();
+      await selectSavedAddress();
+      const edited = {
+        email: "order@example.test",
+        firstName: "Eva",
+        lastName: "Kupující",
+        phone: "+420987654321",
+      };
+      await editCheckoutFields(edited);
+      const response = Promise.withResolvers<Response>();
+      accountGate = response.promise;
+      await act(async () => {
+        (event === "focus" ? window : document).dispatchEvent(new Event(event));
+      });
+      await eventually(() =>
+        expect(
+          requests.filter((request) => new URL(request.url).pathname === "/api/account"),
+        ).toHaveLength(2),
+      );
+      await act(async () => response.resolve(Response.json({ ...admission })));
+      await eventually(() => {
+        for (const [name, value] of Object.entries(edited)) {
+          expect(checkoutInput(name).value).toBe(value);
+        }
+        expect(checkoutInput("street").value).toBe("Saved street 1");
+        expect(checkoutInput("city").value).toBe("Praha");
+        expect(checkoutInput("postalCode").value).toBe("11000");
+        expect(savedAddressTrigger().textContent).toContain("Saved street 1");
+      });
+    },
+  );
+
+  it("retains manually entered contact and postal fields after same-customer refresh", async () => {
+    seed({ guarded: false });
+    admission = { ...ownerAdmission };
+    await mount();
+    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    const edited = {
+      city: "Brno",
+      email: "order@example.test",
+      firstName: "Eva",
+      lastName: "Kupující",
+      postalCode: "60200",
+      street: "Manual street 2",
+    };
+    await editCheckoutFields(edited);
+    const response = Promise.withResolvers<Response>();
+    accountGate = response.promise;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await act(async () => response.resolve(Response.json({ ...admission })));
+    await eventually(() => {
+      for (const [name, value] of Object.entries(edited)) {
+        expect(checkoutInput(name).value).toBe(value);
+      }
+    });
+  });
+
+  it.each(["anonymous", "other-customer", "same-display-customer"])(
+    "clears previous customer's edited checkout data when refresh resolves to %s",
+    async (nextActor) => {
+      seed({ guarded: false });
+      admission = { ...ownerAdmission };
+      addresses = savedAddresses;
+      await mount();
+      await selectSavedAddress();
+      const edited = {
+        email: "private@example.test",
+        firstName: "Private",
+        lastName: "Buyer",
+        phone: "+420987654321",
+        street: "Private street 2",
+      };
+      await editCheckoutFields(edited);
+      const nextAdmission =
+        nextActor === "same-display-customer"
+          ? { ...ownerAdmission, customerKey: "b".repeat(64) }
+          : {
+              ...ownerAdmission,
+              customerKey: "b".repeat(64),
+              email: "other@example.test",
+              name: "Petr Nový",
+            };
+      admission = nextActor === "anonymous" ? { state: "anonymous" } : nextAdmission;
+      addresses = { addresses: [], state: "ready", viewerEmail: nextAdmission.email };
+      profile =
+        nextActor === "anonymous"
+          ? { state: "anonymous" }
+          : {
+              ...ownerProfile,
+              profile: {
+                ...ownerProfile.profile,
+                contactEmail: nextAdmission.email,
+                displayName: nextAdmission.name,
+              },
+            };
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      await eventually(() => {
+        expect(button(d.checkout.verify).disabled).toBe(false);
+        for (const [name, value] of Object.entries({
+          ...edited,
+          city: "Praha",
+          postalCode: "11000",
+        })) {
+          expect(checkoutInput(name).value).not.toBe(value);
+        }
+      });
+      await editCheckoutFields({ email: "fresh-order@example.test" });
+      expect(checkoutInput("email").disabled).toBe(false);
+      expect(checkoutInput("email").readOnly).toBe(false);
+      expect(checkoutInput("email").value).toBe("fresh-order@example.test");
+    },
+  );
+
+  it("prefills editable checkout contact details from the admitted customer's profile", async () => {
+    seed({ guarded: false });
+    admission = { ...ownerAdmission };
+    await mount();
+    await eventually(() => {
+      expect(checkoutInput("email").value).toBe("contact@example.test");
+      expect(checkoutInput("firstName").value).toBe("Jan");
+      expect(checkoutInput("lastName").value).toBe("Novák");
+    });
+    await editCheckoutFields({
+      email: "order@example.test",
+      firstName: "Eva",
+      lastName: "Kupující",
+    });
+    expect(checkoutInput("email").value).toBe("order@example.test");
+    expect(checkoutInput("firstName").value).toBe("Eva");
+    expect(checkoutInput("lastName").value).toBe("Kupující");
+  });
+
+  it("fills only untouched contact fields when the customer profile arrives after editing", async () => {
+    seed({ guarded: false });
+    admission = { ...ownerAdmission };
+    const response = Promise.withResolvers<Response>();
+    profileGate = response.promise;
+    await mount();
+    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    await editCheckoutFields({ email: "order@example.test", firstName: "Eva" });
+    await act(async () => response.resolve(Response.json(ownerProfile)));
+    await eventually(() => {
+      expect(checkoutInput("email").value).toBe("order@example.test");
+      expect(checkoutInput("firstName").value).toBe("Eva");
+      expect(checkoutInput("lastName").value).toBe("Novák");
+    });
+  });
+
   it.each([true, false])(
     "starts a new checkout after confirming a saved previous order (edited: %s)",
     async (edited) => {

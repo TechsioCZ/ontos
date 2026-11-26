@@ -8,6 +8,8 @@ import type {
   CustomerAddressesSnapshot,
 } from "@/ontos/customer-addresses-client";
 
+import { sameCheckoutCustomer } from "./checkout-session-observation";
+
 export interface CheckoutPostalFields {
   readonly city: string;
   readonly country: string;
@@ -65,14 +67,15 @@ export const initialCheckoutPostalDraft = (
   selectedAddressId: null,
 });
 
-/** Copied postal data belongs to an exact admitted instance, even after a manual edit. */
+/** Copied draft survives a refresh of the same opaque customer; reads keep exact admission fences. */
 export const checkoutPostalForIdentity = (
   draft: CheckoutPostalDraft,
   identity: CustomerAddressIdentity | null,
   countryCodes: readonly string[],
 ) =>
   draft.copiedForIdentity !== null &&
-  (draft.copiedForIdentity !== identity || !countryCodes.includes(draft.fields.country))
+  (!sameCheckoutCustomer(draft.copiedForIdentity, identity) ||
+    !countryCodes.includes(draft.fields.country))
     ? initialCheckoutPostalDraft(countryCodes)
     : draft;
 
