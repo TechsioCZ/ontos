@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
 import type { Cause } from 'effect';
+import { isChunkLoadFailure, recoverFromStaleBuild } from './routes/stale-build-recovery.tsx';
 
 const FailureDescriptionSchema = Schema.Struct({ message: Schema.String, stack: Schema.optionalKey(Schema.String) });
 const WrappedFailureDescriptionSchema = Schema.Struct({ cause: FailureDescriptionSchema });
@@ -21,6 +22,10 @@ export const reportModuleEntrypointFailure = (
           }),
         onSome: ({ cause: description }) => description.stack ?? description.message,
       });
+  // A deploy removed the chunk this open document asks for: a fresh document of the same URL recovers.
+  if ('document' in globalThis && isChunkLoadFailure({ message: diagnostic })) {
+    recoverFromStaleBuild();
+  }
   return Effect.logError(`Remote module entrypoint failed (${moduleOwner}; phase=${phase})`, diagnostic).pipe(
     Effect.annotateLogs({ moduleOwner, phase }),
   );
