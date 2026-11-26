@@ -1,4 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { ReferenceGatewayCredentialsSchema } from './reference-gateway.ts';
 
 import {
@@ -92,18 +93,21 @@ const revisionMetaPattern = /<meta\b[^>]*\bname="ontos-composition-revision"[^>]
 const revisionContentPattern = /\bcontent="([\da-f]{64})"/u;
 
 /** The release the Shell serves now, read from a fresh render of this page (the document's own pin stays sealed). */
-// @effect-diagnostics-next-line asyncFunction:off -- Hotfix: the stage build fails on this diagnostic; expires: 2026-12-31.
-const currentReleaseRevision = Effect.tryPromise(async () => {
-  // @effect-diagnostics-next-line globalFetchInEffect:off -- Hotfix: a same-page document read; expires: 2026-12-31.
-  const response = await globalThis.fetch(globalThis.location.href, {
-    cache: 'no-store',
-    credentials: 'same-origin',
-    headers: { accept: 'text/html' },
-  });
-  const html = response.ok ? await response.text() : '';
-  const tag = revisionMetaPattern.exec(html)?.[0];
-  return tag === undefined ? undefined : revisionContentPattern.exec(tag)?.[1];
-}).pipe(
+const currentReleaseRevision = HttpClient.HttpClient.pipe(
+  Effect.flatMap((client) =>
+    client.execute(
+      HttpClientRequest.get(globalThis.location.href, {
+        headers: { accept: 'text/html', 'cache-control': 'no-cache' },
+      }),
+    ),
+  ),
+  Effect.flatMap((response) => (response.status === 200 ? response.text : Effect.succeed(''))),
+  Effect.map((html) => {
+    const tag = revisionMetaPattern.exec(html)?.[0];
+    return tag === undefined ? undefined : revisionContentPattern.exec(tag)?.[1];
+  }),
+  // @effect-diagnostics-next-line strictEffectProvide:off -- This browser read is its own entry point: the operation gateway's callers provide no HttpClient, as the generated gateway clients carry their own transport.
+  Effect.provide(FetchHttpClient.layer),
   Effect.timeout('15 seconds'),
   Effect.orElseSucceed((): string | undefined => undefined),
 );
