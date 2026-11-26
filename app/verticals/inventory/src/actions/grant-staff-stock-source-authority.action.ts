@@ -229,7 +229,7 @@ export const grantStaffStockSourceAuthorityAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: MODULE_KEY,
     payloadSchema: GrantStaffStockSourceAuthorityPayloadSchema,
     policies: [],

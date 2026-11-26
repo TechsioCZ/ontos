@@ -533,7 +533,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     declarationKey: 'commerce.inventory.source-assertion.import',
     entrypointKey: commerceInventoryImportSourceAssertion,
     jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     schemaVersion: '1',
     sourceActionKey: integrationSymmyAdmitSymmySync,
     workloadKey: 'commerce.inventory.source-write',
