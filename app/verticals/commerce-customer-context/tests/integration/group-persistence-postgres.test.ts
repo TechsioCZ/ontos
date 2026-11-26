@@ -34,6 +34,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CommerceSourceProcessingEligibility } from '../../src/integrations/source-processing-eligibility.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { allowFixtureSourceProcessing } from '../support/source-processing-allowance.fixture.ts';
 import { makeVerifiedGatewayPrincipals } from '../support/verified-gateway-principal.ts';
 
 const profileTemporal = 'c7100000-0000-4000-8000-000000000001';
@@ -122,7 +123,7 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
       // INTERNAL_CONTRACT Privacy seam, as in the owner lifecycle suite. Snapshot admission
       // still executes the registered Action, actual Core transaction, producer and access evidence.
       const admissionContext = yield* Layer.build(
-        Layer.succeed(CommerceSourceProcessingEligibility, { check: () => Effect.void }).pipe(
+        Layer.succeed(CommerceSourceProcessingEligibility, { check: allowFixtureSourceProcessing }).pipe(
           Layer.provideMerge(fixture.layer),
         ),
       );

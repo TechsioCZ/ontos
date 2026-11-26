@@ -129,6 +129,7 @@ import {
 } from '../support/enrollment-application-composition.ts';
 import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
 import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
+import { allowFixtureSourceProcessing } from '../support/source-processing-allowance.fixture.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -557,7 +558,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
   // INTERNAL_CONTRACT: the Privacy owner separately proves its current eligibility/erasure ledger.
   // This seam records exactly what the native Commerce owner submits and can revoke each attempt.
   const sourcePrivacy = Layer.succeed(CommerceSourceProcessingEligibility, {
-    check: (scope, input) =>
+    check: (scope, input, requirementKey) =>
       Effect.gen(function* internalSourcePrivacy() {
         expect(scope.tenantId).toBe(tenantId);
         expect(scope.legalEntityId).toBe(legalEntityId);
@@ -565,7 +566,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
         if (sourcePrivacyDenied || (sourceRecoveryDenied && input.operation === 'customer-group-membership.recover')) {
           return yield* new CommerceSourceProcessingRejected({ code: 'DENIED', reason: 'Internal protected material' });
         }
-        return yield* Effect.void;
+        return yield* allowFixtureSourceProcessing(scope, input, requirementKey);
       }),
   });
   const setSourcePrivacyDenied = (denied: boolean) => {

@@ -46,6 +46,7 @@ import {
 } from '../../src/database/schema.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { allowFixtureSourceProcessing } from '../support/source-processing-allowance.fixture.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
@@ -207,7 +208,7 @@ const nativeFixture = Effect.fn('ProfileIcoTests.nativeFixture')(function* nativ
       read: () => Effect.succeed(inventory),
     }),
     Layer.succeed(CommerceSourceProcessingEligibility, {
-      check: (scope, input) =>
+      check: (scope, input, requirementKey) =>
         scope.tenantId !== fixture.tenantId ||
         privacyDenied ||
         (fullScopeDenied && input.target === null) ||
@@ -219,7 +220,7 @@ const nativeFixture = Effect.fn('ProfileIcoTests.nativeFixture')(function* nativ
                 reason: 'Internal current protected-material fixture',
               }),
             )
-          : Effect.void,
+          : allowFixtureSourceProcessing(scope, input, requirementKey),
     }),
     profileCounterpartyRoleEligibilityResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive,
