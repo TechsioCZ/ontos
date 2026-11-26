@@ -163,7 +163,7 @@ export function ProductGrid({
                 >
                   {cs.product.stockStatus[product.stock.status]}
                 </ProductCard.Stock>
-                {product.hasVariants && (
+                {product.hasVariants && product.priceIsFrom && (
                   <Badge className="whitespace-nowrap" size="sm" variant="secondary">
                     {cs.product.moreVariants}
                   </Badge>
