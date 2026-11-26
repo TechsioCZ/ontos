@@ -717,9 +717,9 @@ describe("fresh searches through the real catalog/gateway transport", () => {
           kind: "quantity",
           status: "in-stock",
           stockCount: 20,
-          minimumQuantity: 10,
+          minimumQuantity: 2,
           packageQuantity: 10,
-          quantityStep: 10,
+          quantityStep: 2,
           unit: "ks",
         },
       });
