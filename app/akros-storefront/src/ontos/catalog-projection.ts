@@ -500,7 +500,12 @@ export function projectProducts(body: Raw): ProductPage {
       ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(first?.minimumQuantity ?? minimum),
-      packageQuantity: first ? first.packageQuantity : number(p.packageQuantity),
+      // The owner stores 0 for a cleared package: only a positive package is one.
+      packageQuantity: first
+        ? first.packageQuantity
+        : (number(p.packageQuantity) ?? 0) > 0
+          ? number(p.packageQuantity)
+          : undefined,
       stockCount: productAvailabilityUnknown
         ? 0
         : isGroup
