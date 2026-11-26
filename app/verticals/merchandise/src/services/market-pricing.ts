@@ -16,10 +16,14 @@ const tiersIn = (tiers: PriceTiers, pricing: MarketPricing): PriceTiers =>
 
 const variantIn = <Variant extends VariantRecord>(variant: Variant, pricing: MarketPricing): Variant => {
   const net: Variant = { ...variant, priceMinor: convertGrossMinor(variant.priceMinor, pricing) };
-  const converted: Variant =
+  const grossConverted: Variant =
     variant.grossPriceMinor === undefined
       ? net
       : { ...net, grossPriceMinor: convertGrossMinor(variant.grossPriceMinor, pricing) };
+  const converted: Variant =
+    variant.originalPriceMinor === undefined
+      ? grossConverted
+      : { ...grossConverted, originalPriceMinor: convertGrossMinor(variant.originalPriceMinor, pricing) };
   return variant.priceTiers === undefined
     ? converted
     : { ...converted, priceTiers: tiersIn(variant.priceTiers, pricing) };
@@ -96,6 +100,9 @@ export const productInMarketCurrency = (record: ProductRecord, pricing: MarketPr
   }
   if (record.priceTiers !== undefined) {
     converted = { ...converted, priceTiers: tiersIn(record.priceTiers, pricing) };
+  }
+  if (record.originalPriceMinor !== undefined) {
+    converted = { ...converted, originalPriceMinor: convertGrossMinor(record.originalPriceMinor, pricing) };
   }
   if (record.variantRecords !== undefined) {
     converted = { ...converted, variantRecords: record.variantRecords.map((variant) => variantIn(variant, pricing)) };
