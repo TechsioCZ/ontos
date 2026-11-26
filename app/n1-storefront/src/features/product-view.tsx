@@ -26,6 +26,9 @@ import { formatMarketAmount } from "./price-props";
 import { ProductLabels } from "./product-labels";
 
 const emptyCategories: CatalogModel["categories"] = [];
+const sizeGuideLabelPattern = /velikost|size/i;
+const sizeGuideImagePattern =
+  /(\.(png|jpe?g|webp|gif|svg|avif)(\?|#|$))|^\/(media|uploads|api\/media)\//i;
 const galleryItems = (images: readonly string[], imageAlt: string) =>
   images.map((src, index) => ({
     alt: imageAlt,
@@ -133,6 +136,9 @@ export const ProductView = ({
   ];
   const labels = [...new Set([...(product.labels ?? []), ...(variant?.labels ?? [])])];
   const quantityPrices = variant === undefined ? product.priceTiers : variant.priceTiers;
+  const sizeGuides = product.documents.filter((document) =>
+    sizeGuideLabelPattern.test(document.label),
+  );
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -415,7 +421,21 @@ export const ProductView = ({
           <Tabs.Content value="sizes">
             <div className="flex flex-col gap-6 p-4">
               <h2 className="text-xl font-semibold leading-9">{d.sizeGuideTitle}</h2>
-              <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+              {sizeGuides.length === 0 ? (
+                <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+              ) : (
+                sizeGuides.map((document) => (
+                  <div className="flex flex-col gap-2" key={`${document.url}:${document.label}`}>
+                    {sizeGuideImagePattern.test(document.url) && (
+                      // biome-ignore lint/performance/noImgElement: staff-attached size charts come from any host
+                      <img alt={document.label} className="h-auto max-w-full" src={document.url} />
+                    )}
+                    <Link href={document.url} rel="noopener noreferrer" target="_blank">
+                      {document.label}
+                    </Link>
+                  </div>
+                ))
+              )}
             </div>
           </Tabs.Content>
         </Tabs>
