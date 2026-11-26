@@ -53,8 +53,12 @@ export const CatalogResponseSchema = Schema.Struct({
   categories: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
+        description: optionalUnknown,
+        heading: optionalUnknown,
         id: Schema.String,
+        imageAlt: optionalUnknown,
         imageSrc: optionalString,
+        longDescription: optionalUnknown,
         name: Schema.String,
         parentId: Schema.NullOr(Schema.String),
         published: Schema.optionalKey(Schema.Boolean),

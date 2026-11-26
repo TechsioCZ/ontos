@@ -42,6 +42,14 @@ export const CategoryView = ({
   const trail = categoryTrail(catalog.categories, slug);
   const current = trail.at(-1);
   const title = current?.name ?? d.catalog;
+  // Staff edit the page heading, descriptions and image of a category in OntOS (Kategorie e-shopu).
+  const text = (value: unknown) =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  const heading = text(current?.heading) ?? title;
+  const description = text(current?.description);
+  const longDescription = text(current?.longDescription);
+  const imageSrc = text(current?.imageSrc);
+  const imageAlt = text(current?.imageAlt) ?? title;
   const children = catalog.categories.filter((item) => item.parentId === current?.id);
   const childRows: (typeof children)[] = [];
   for (let offset = 0; offset < children.length; offset += 2) {
@@ -121,12 +129,32 @@ export const CategoryView = ({
         )}
         <div className="w-full min-w-0 flex-1 md:px-3">
           <div className="relative mb-6 md:mb-3">
-            <h1 className="text-2xl font-bold md:text-xl md:leading-8">{title}</h1>
+            <h1 className="text-2xl font-bold md:text-xl md:leading-8">{heading}</h1>
             <div
               aria-hidden="true"
               className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block"
             />
           </div>
+          {(description !== undefined || imageSrc !== undefined) && (
+            <div className="mb-6 flex flex-col gap-4 md:mb-4 md:flex-row md:items-start">
+              {imageSrc !== undefined && (
+                <div className="relative size-32 shrink-0">
+                  <Image
+                    alt={imageAlt}
+                    as={NextImage}
+                    fill
+                    objectFit="contain"
+                    size="full"
+                    sizes="128px"
+                    src={imageSrc}
+                  />
+                </div>
+              )}
+              {description !== undefined && (
+                <p className="whitespace-pre-line text-md leading-6">{description}</p>
+              )}
+            </div>
+          )}
           {catalog.configured && nodes.length > 0 && (
             <div className="mb-6 md:hidden">
               <Button
@@ -203,6 +231,9 @@ export const CategoryView = ({
               pageSize={catalog.pageSize}
               pathname={pathname}
             />
+          )}
+          {longDescription !== undefined && (
+            <div className="mt-8 whitespace-pre-line text-md leading-6">{longDescription}</div>
           )}
         </div>
       </div>
