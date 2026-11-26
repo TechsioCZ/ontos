@@ -85,6 +85,7 @@ import {
   ShellNativeTenantSetupGatewayCommandSchema,
   ShellNativeSafeFailureSchema,
   ShellNativeSystemWorkloadEnrollmentCommandSchema,
+  ShellNativeHumanSessionCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
   ShellNativeGatewayDiagnosticSchema,
@@ -826,6 +827,13 @@ const serve = Effect.scoped(
         secret: Redacted.value(issued.secret),
       });
     });
+    const humanSession = Effect.fn('ShellNativeChild.humanSession')(function* humanSession() {
+      const cookie = yield* Ref.get(sessionCookie);
+      if (!productionGate || !(yield* Ref.get(mounted)) || Option.isNone(cookie)) {
+        return yield* unavailable();
+      }
+      return yield* sendPrivate(writer, { _tag: 'human-session', cookie: cookie.value, origin: configuration.baseUrl });
+    });
     const primaryReadiness = Option.isNone(relaySourceUser)
       ? { baseUrl, providerUserId }
       : { baseUrl, providerUserId, relaySourceProviderUserId: relaySourceUser.value.providerUserId };
@@ -912,6 +920,9 @@ const serve = Effect.scoped(
           }
           if (Schema.is(ShellNativeSystemWorkloadEnrollmentCommandSchema)(command)) {
             return yield* changeSystemWorkloadEnrollment(command);
+          }
+          if (Schema.is(ShellNativeHumanSessionCommandSchema)(command)) {
+            return yield* humanSession();
           }
           if (Schema.is(ShellNativeModuleSourceIssueCommandSchema)(command)) {
             return yield* issueModuleSource(command);
