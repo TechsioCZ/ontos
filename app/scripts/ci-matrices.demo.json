@@ -11,16 +11,8 @@
     {
       "name": "the stage delivery and the repository tooling tests",
       "paths": [
-        ".github/workflows/zerops-stage.yml",
-        ".github/workflows/zerops-stable.yml",
-        "ops/zerops-stable/bootstrap.mjs",
-        "ops/zerops-stable/bootstrap.test.mjs",
-        "ops/zerops-stable/deploy.mjs",
-        "ops/zerops-stable/deploy.test.mjs",
-        "ops/zerops-stable/initialize.mjs",
-        "ops/zerops-stable/initialize.test.mjs",
-        "ops/zerops-stable/push.test.mjs",
-        "ops/zerops-stable/workflow.test.mjs",
+        ".github/workflows/zerops-*.yml",
+        "ops/zerops-stable/**",
         ".github/actions/deliver-stage/**",
         "app/docs/architecture/MERGING.md",
         "app/scripts/zerops/app-boot-stages.sh",

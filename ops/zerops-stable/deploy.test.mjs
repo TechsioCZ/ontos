@@ -8,10 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 
 import { loadStableConfig } from './config.mjs';
-import { assertReleaseWindow, assertReopenEvidence, installKind } from './deploy-evidence.mjs';
-import { enterMaintenance } from './maintenance.mjs';
-import { createFakeGate } from './maintenance-fixture.mjs';
-import { executeInstall, materializeRelease, planInstall, stageArtifacts, verifyArtifacts } from './deploy.mjs';
+import { assertReopenEvidence, installKind } from './deploy-evidence.mjs';
+import { createFakeZerops } from './maintenance-fixture.mjs';
+import { executeInstall, main, materializeRelease, planInstall, stageArtifacts, verifyArtifacts, verifyDeployment } from './deploy.mjs';
 import { configFileDigest, inspectRelease } from './release.mjs';
 
 const roots = [];
@@ -29,13 +28,6 @@ const run = (cwd, ...args) => {
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const saturday = new Date('2026-11-28T09:00:00Z');
 const COMMIT = 'a'.repeat(40);
-
-test('Saturday and Sunday in Prague are release days; a weekday needs an emergency reason', () => {
-  assert.equal(assertReleaseWindow(saturday).weekday, 'Sat');
-  assert.equal(assertReleaseWindow(new Date('2026-11-27T23:30:00Z')).weekday, 'Sat');
-  assert.throws(() => assertReleaseWindow(new Date('2026-11-25T12:00:00Z'), '  '), /emergency-reason/u);
-  assert.equal(assertReleaseWindow(new Date('2026-11-25T12:00:00Z'), 'orders fail').emergencyReason, 'orders fail');
-});
 
 test('the live app versions decide what an install deploys', () => {
   const none = { app: null, storefront: null, shop: null, n1: null };
@@ -99,100 +91,91 @@ test('staged artifacts verify against the release and config, and any change is 
   assert.throws(() => verifyArtifacts(r.artifacts, expected), /shop\/app\/\.zerops-storefront\.tar\.gz changed/u);
 });
 
-/**
- * maintenance.mjs's own fake Zerops and Cloudflare gate, the project entered into maintenance by enterMaintenance;
- * workload statuses then as given, active app versions as given, pushes and stops recorded.
- */
-async function stable(config, statuses, activeVersions, { failApp = false } = {}) {
-  const fake = createFakeGate(config);
-  await enterMaintenance(config, fake.gate);
-  for (const [name, status] of Object.entries(statuses)) fake.zerops.byName(name).status = status;
+/** The fake stable Zerops project (every service ACTIVE) with workload statuses and active app versions as given; pushes recorded. */
+function stable(config, activeVersions, { statuses = {}, failApp = false, origins = () => ({ status: 200 }) } = {}) {
+  const zerops = createFakeZerops(config);
+  for (const [name, status] of Object.entries(statuses)) zerops.byName(name).status = status;
   const calls = [];
   const fetchImpl = async (url) => {
-    const service = fake.zerops.byName(Object.keys(config.services).find((name) => url.endsWith(`/${config.services[name]}`)));
-    const name = service.name;
+    const name = Object.keys(config.services).find((key) => url.endsWith(`/${config.services[key]}`));
+    if (!name) return origins(url);
+    const service = zerops.byName(name);
     return { ok: true, json: async () => ({ ...service, activeAppVersion: activeVersions[name] ? { name: activeVersions[name] } : null }) };
   };
   const push = async (step) => {
     calls.push(`push ${step.service}`);
-    fake.zerops.byName(step.service).status = 'ACTIVE';
     if (step.service === 'app' && failApp) throw new Error('app build failed');
   };
-  const stops = () => fake.zerops.state.calls.filter((call) => call.endsWith('/stop')).map((call) => Object.keys(config.services).find((name) => call.includes(config.services[name])));
-  return { ...fake, fetchImpl, push, calls, stops };
+  return { zerops, client: zerops.client, fetchImpl, push, calls };
 }
 
-const fronts = (status) => ({ storefront: status, shop: status, n1: status });
-const commonInstall = (r) => ({ repoRoot: r.repo, configPath: r.configPath, tag: r.tag, artifacts: r.artifacts, maintenanceConfirmed: true, now: saturday, token: 't', checkTools: () => {} });
-const plan = (r, z, extra = {}) => planInstall({ ...commonInstall(r), gate: z.gate, fetchImpl: z.fetchImpl, work: temp('stable-plan-'), ...extra });
+const none = { app: null, storefront: null, shop: null, n1: null };
+const plan = (r, z, extra = {}) =>
+  planInstall({ repoRoot: r.repo, configPath: r.configPath, tag: r.tag, artifacts: r.artifacts, token: 't', checkTools: () => {}, client: z.client, fetchImpl: z.fetchImpl, work: temp('stable-plan-'), ...extra });
 const steps = (planned) => planned.pushes.map((step) => `${step.service}:${step.setup}`);
 
-test('the first install deploys the app alone, explicitly; the next one only the fronts', async () => {
+test('the first install deploys the app alone, the next one only the fronts, every later one all four app first', async () => {
   const r = await release();
-  const fresh = await stable(r.config, { app: 'READY_TO_DEPLOY', ...fronts('READY_TO_DEPLOY') }, {});
-  await assert.rejects(plan(r, fresh), /--bootstrap-app/u);
-  const first = await plan(r, fresh, { bootstrapApp: true });
+  const first = await plan(r, stable(r.config, none));
   assert.equal(first.kind, 'bootstrap-app');
   assert.equal(first.commit, r.release.commit);
   assert.deepEqual(steps(first), ['app:app']);
-
-  const appOnly = await stable(r.config, { app: 'ACTIVE', ...fronts('READY_TO_DEPLOY') }, { app: r.release.commit });
-  await assert.rejects(plan(r, appOnly, { bootstrapApp: true }), /never ran/u);
-  const second = await plan(r, appOnly);
+  const second = await plan(r, stable(r.config, { ...none, app: r.release.commit }));
   assert.equal(second.kind, 'bootstrap-fronts');
-  assert.equal(second.maintenance, 'gated');
   assert.deepEqual(steps(second), ['storefront:storefront', 'shop:shop', 'n1:n1']);
+  const old = 'e'.repeat(40);
+  const update = await plan(r, stable(r.config, { app: old, storefront: old, shop: old, n1: old }));
+  assert.equal(update.kind, 'update');
+  assert.deepEqual(steps(update), ['app:app', 'storefront:storefront', 'shop:shop', 'n1:n1']);
 });
 
-test('an update needs every workload stopped behind the gate and data.mjs backup and rehearsal', async () => {
+test('an install refuses a service of the demo or another project, and artifacts of another config', async () => {
   const r = await release();
-  const previous = { app: 'e'.repeat(40), storefront: 'e'.repeat(40), shop: 'e'.repeat(40), n1: 'e'.repeat(40) };
-  const backupPath = join(r.root, 'backup');
-  const rehearsalPath = join(r.root, 'rehearsal.json');
-  const checked = [];
-  const checkData = async (input) => {
-    checked.push(input);
-    return { backupManifestSha256: '0'.repeat(64) };
-  };
-  const stopped = await stable(r.config, {}, previous);
-  await assert.rejects(plan(r, stopped), /--backup DIR and --rehearsal FILE/u);
-  await assert.rejects(plan(r, stopped, { maintenanceConfirmed: false }), /maintenance-confirmed/u);
-  const planned = await plan(r, stopped, { backupPath, rehearsalPath, checkData });
-  assert.equal(planned.kind, 'update');
-  assert.equal(planned.maintenance, 'maintenance');
-  assert.deepEqual(steps(planned), ['app:app', 'storefront:storefront', 'shop:shop', 'n1:n1']);
-  assert.equal(checked[0].runningRevision, 'e'.repeat(40));
-  assert.equal(checked[0].release.commit, r.release.commit);
-  await assert.rejects(plan(r, stopped, { backupPath, rehearsalPath, checkData, now: new Date('2026-11-25T12:00:00Z') }), /emergency-reason/u);
-
-  const running = await stable(r.config, { app: 'ACTIVE' }, previous);
-  await assert.rejects(plan(r, running, { backupPath, rehearsalPath, checkData }), /not in maintenance/u);
-  const opened = await stable(r.config, {}, previous);
-  opened.edgeApi.ourRule(r.config).enabled = false;
-  await assert.rejects(plan(r, opened, { backupPath, rehearsalPath, checkData }), /not in maintenance/u);
-  const demo = await stable(r.config, {}, previous);
+  const demo = stable(r.config, none);
   demo.zerops.byName('n1').projectId = r.config.demoProjectId;
-  await assert.rejects(plan(r, demo, { backupPath, rehearsalPath, checkData }), /demo project/u);
-  const fresh = await stable(r.config, { app: 'READY_TO_DEPLOY', ...fronts('READY_TO_DEPLOY') }, {});
-  await assert.rejects(plan(r, fresh, { bootstrapApp: true, backupPath, rehearsalPath }), /takes no --backup/u);
+  await assert.rejects(plan(r, demo), /demo project/u);
+  const renamed = stable(r.config, none);
+  renamed.zerops.byName('shop').name = 'storefront';
+  await assert.rejects(plan(r, renamed), /services\.shop is the Zerops service named storefront/u);
+  const otherConfig = join(r.root, 'other.config.json');
+  writeFileSync(otherConfig, `${readFileSync(r.configPath, 'utf8')}\n`);
+  await assert.rejects(plan(r, stable(r.config, none), { configPath: otherConfig }), /configDigest/u);
 });
 
-test('an install leaves the candidate running behind the gate; a failure stops every workload', async () => {
+test('an install pushes in order and a failed push stops it, naming what was pushed', async () => {
   const r = await release();
-  const fresh = await stable(r.config, { app: 'READY_TO_DEPLOY', ...fronts('READY_TO_DEPLOY') }, {});
-  const first = await plan(r, fresh, { bootstrapApp: true });
-  const before = fresh.stops().length;
-  const result = await executeInstall(first, { gate: fresh.gate, push: fresh.push });
-  assert.deepEqual(fresh.calls, ['push app']);
-  assert.equal(fresh.stops().length, before);
-  assert.equal(result.maintenance.workloads.app.status, 'ACTIVE');
-  assert.equal(result.maintenance.state, 'gated');
+  const old = 'e'.repeat(40);
+  const z = stable(r.config, { app: old, storefront: old, shop: old, n1: old });
+  const result = await executeInstall(await plan(r, z), { push: z.push });
+  assert.deepEqual(result.pushed, ['app', 'storefront', 'shop', 'n1']);
+  assert.deepEqual(z.calls, ['push app', 'push storefront', 'push shop', 'push n1']);
+  const failing = stable(r.config, { app: old, storefront: old, shop: old, n1: old }, { failApp: true });
+  await assert.rejects(executeInstall(await plan(r, failing), { push: failing.push }), /failed after no push: app build failed/u);
+  assert.deepEqual(failing.calls, ['push app']);
+});
 
-  const failing = await stable(r.config, { app: 'READY_TO_DEPLOY', ...fronts('READY_TO_DEPLOY') }, {}, { failApp: true });
-  const failingPlan = await plan(r, failing, { bootstrapApp: true });
-  const stopsBefore = failing.stops().length;
-  await assert.rejects(executeInstall(failingPlan, { gate: failing.gate, push: failing.push }), /Every workload is stopped\. The project is unsafe/u);
-  assert.deepEqual(failing.stops().slice(stopsBefore), ['app']);
+test('verify passes only when every workload is ACTIVE on the tag and every origin answers', async () => {
+  const r = await release();
+  const { commit } = r.release;
+  const all = { app: commit, storefront: commit, shop: commit, n1: commit };
+  const verify = (z) => verifyDeployment({ repoRoot: r.repo, configPath: r.configPath, tag: r.tag, token: 't', client: z.client, fetchImpl: z.fetchImpl });
+  const live = await verify(stable(r.config, all, { origins: (url) => ({ status: url.includes('ontos.') ? 302 : 200 }) }));
+  assert.deepEqual(live.versions, all);
+  assert.deepEqual(Object.values(live.origins), [302, 200, 200, 200]);
+  await assert.rejects(verify(stable(r.config, { ...all, shop: 'e'.repeat(40) })), /shop runs e{40}, not/u);
+  await assert.rejects(verify(stable(r.config, all, { statuses: { n1: 'STOPPED' } })), /n1 is STOPPED/u);
+  await assert.rejects(verify(stable(r.config, all, { origins: (url) => ({ status: url.includes('akros') ? 502 : 200 }) })), /akros\.example\.com answered 502/u);
+  const refused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  await assert.rejects(verify(stable(r.config, all, { origins: () => Promise.reject(refused) })), /unreachable \(ECONNREFUSED\)/u);
+});
+
+test('the CLI takes one command and never mixes their options', async () => {
+  const env = { ZEROPS_TOKEN: 't' };
+  await assert.rejects(main(['--config', 'c', '--tag', 't'], { env }), /usage/u);
+  await assert.rejects(main(['build', '--config', 'c', '--tag', 't', '--output', 'o', '--execute'], { env }), /usage/u);
+  await assert.rejects(main(['verify', '--config', 'c', '--tag', 't', '--artifacts', 'a'], { env }), /usage/u);
+  await assert.rejects(main(['install', '--config', 'c', '--tag', 't'], { env }), /usage/u);
+  await assert.rejects(main(['install', '--config', 'c', '--tag', 't', '--artifacts', 'a'], { env: {} }), /ZEROPS_TOKEN is required/u);
 });
 
 test('reopening needs complete passed evidence of the release every workload runs, under this config', async () => {

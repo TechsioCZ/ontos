@@ -84,7 +84,7 @@ test('the plan checks everything and writes nothing', async () => {
   assert.equal(plan.database.state, 'fresh');
   assert.deepEqual(plan.database.missingRoles, ROLES);
   assert.equal(plan.spicedbDeploy, true);
-  assert.match(plan.next, /deploy\.mjs .*--bootstrap-app/u);
+  assert.match(plan.next, /deploy\.mjs install .*--execute/u);
 });
 
 test('a refused source revision never reaches service or database initialization', async () => {

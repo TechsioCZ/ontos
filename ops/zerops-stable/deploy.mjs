@@ -1,32 +1,25 @@
 #!/usr/bin/env node
-// Builds a stable release candidate in CI and installs it into the stable Zerops project by hand.
+// Builds a stable release in CI, installs it into the stable Zerops project and checks what runs there. The
+// Zerops Stable Release workflow (.github/workflows/zerops-stable.yml) runs all three; an operator can too.
 //
-//   CI, from a clean checkout at the tag (fetch-depth 0), workspace installed:
-//   node ops/zerops-stable/deploy.mjs --build-only --config PATH --tag TAG --output DIR
-//       [--demo-ref origin/demo/sales-crm] [--remote origin]
+//   node ops/zerops-stable/deploy.mjs build --config PATH --tag TAG --output DIR [--demo-ref REF] [--remote NAME]
+//     From a clean checkout at the tag (fetch-depth 0), workspace installed. Writes the install artifacts.
+//   ZEROPS_TOKEN=… node ops/zerops-stable/deploy.mjs install --config PATH --tag TAG --artifacts DIR [--execute]
+//     Without --execute a plan: every check runs, nothing changes. Prints the install kind.
+//   ZEROPS_TOKEN=… node ops/zerops-stable/deploy.mjs verify --config PATH --tag TAG
+//     Every workload of the stable project is ACTIVE on the tag's commit and every public origin answers.
 //
-//   Operator, with the project in maintenance (maintenance.mjs enter), from DIR downloaded from that CI run:
-//   ZEROPS_TOKEN=… node ops/zerops-stable/deploy.mjs --config PATH --tag TAG --artifacts DIR --maintenance-confirmed
-//       [--backup DIR --rehearsal FILE] [--bootstrap-app] [--emergency-reason TEXT] [--execute]
+// The live app versions decide what an install deploys (deploy-evidence.mjs installKind): the first install deploys
+// the app alone, so the live app can issue the storefront keys; the next install of the same artifacts deploys only
+// the fronts; every later one is an update of all four, app first. The app runs its migrations on start; Zerops'
+// native backups cover the data, and a failed Zerops build leaves the running version serving.
 //
-// Without --execute the install is a plan: every check runs, nothing changes. Saturday and Sunday (Prague) are
-// release days; a weekday install needs --emergency-reason. The live app versions decide what deploys
-// (deploy-evidence.mjs installKind): the first install is --bootstrap-app, the app alone, so the live app can issue
-// the storefront keys; the next install of the same artifacts deploys only the fronts; every later one is an update
-// of all four, which needs the data.mjs backup and the migration rehearsal of this commit.
-//
-// The build runs the repository's own tooling: build-app.sh with the stable app setup's build variables,
-// pack-prebuilt-units.sh and build-storefront.sh. The app package is a shallow clone of the tag, never the
-// operator's checkout: the materialized zerops.yaml replaces app/zerops.yaml there with its index entry marked
-// skip-worktree, so the Git tree reads clean and every release identity stays the tag's commit. Each push runs the
-// tag's own push-service.sh with the full commit as the app version name.
-//
-// The install runs behind the closed gate (maintenance.mjs enter: the Cloudflare rule admits only verifier IPs, the
-// zerops.app subdomains are off), so a deploy that starts a service exposes nothing. An update starts from every
-// workload stopped, the state its backup was taken in. The app goes first, so a failed app build changes no front;
-// it runs its migrations on start. A successful install leaves the project gated with every workload running the candidate, for
-// verify.mjs; only maintenance.mjs leave reopens, on its evidence. A failed push stops every workload (the app's
-// background work included) and reports the project unsafe: rerun, or restore the backup with data.mjs.
+// Every install proves the project is the stable one (not the demo, every service its own) and the artifacts are
+// exactly what CI built from the tag and this config. The build runs the repository's own tooling: build-app.sh
+// with the stable app setup's build variables, pack-prebuilt-units.sh and build-storefront.sh. The app package is a
+// shallow clone of the tag, never the operator's checkout: the materialized zerops.yaml replaces app/zerops.yaml
+// there with its index entry marked skip-worktree, so the Git tree reads clean and every release identity stays the
+// tag's commit. Each push runs the tag's own push-service.sh with the full commit as the app version name.
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,19 +31,8 @@ import { parseArgs } from 'node:util';
 const { parse: parseYaml } = createRequire(new URL('../../app/package.json', import.meta.url))('yaml');
 
 import { loadStableConfig } from './config.mjs';
-import {
-  DEPLOYED_WORKLOADS,
-  GateError,
-  assertInstallData,
-  INSTALLED_WORKLOADS,
-  assertReleaseWindow,
-  installKind,
-  readActiveVersions,
-  readJson,
-  sha256File,
-} from './deploy-evidence.mjs';
-import { cloudflareClientFromEnv, edgeSettingsFromEnv } from './edge.mjs';
-import { assertEdgeClosed, assertInMaintenance, assertProjectServices, createZeropsClient, maintenanceStatus } from './maintenance.mjs';
+import { DEPLOYED_WORKLOADS, GateError, INSTALLED_WORKLOADS, installKind, readActiveVersions, readJson, sha256File } from './deploy-evidence.mjs';
+import { assertProjectServices, createZeropsClient } from './maintenance.mjs';
 import { materializeStableZerops } from './materialize.mjs';
 import {
   ARTIFACTS_KIND,
@@ -71,8 +53,6 @@ export const PUSHES = Object.freeze([
   { service: 'shop', setup: 'shop', kind: 'storefront', package: 'akros-storefront', path: 'shop' },
   { service: 'n1', setup: 'n1', kind: 'n1', package: 'n1-storefront', path: 'n1' },
 ]);
-/** Zerops service states in which a workload serves nothing: stopped, or created and never deployed. */
-export const NOT_RUNNING = new Set(['STOPPED', 'READY_TO_DEPLOY']);
 const FRONTS = PUSHES.filter((push) => push.kind);
 const STOREFRONT_BUILDS = [
   ['akros-storefront', 'storefront'],
@@ -306,46 +286,22 @@ export async function planInstall({
   configPath,
   tag,
   artifacts,
-  backupPath,
-  rehearsalPath,
-  maintenanceConfirmed,
-  emergencyReason,
-  bootstrapApp = false,
   demoRef = DEFAULT_DEMO_REF,
   remote = DEFAULT_REMOTE,
-  now = new Date(),
   token,
-  gate,
+  client,
   fetchImpl = fetch,
   checkTools = assertPushTools,
-  checkData = assertInstallData,
   work,
 }) {
-  if (maintenanceConfirmed !== true) fail('--maintenance-confirmed is required: announce the window, then run maintenance.mjs enter');
-  const window = assertReleaseWindow(now, emergencyReason);
   const release = inspectDeployableRelease({ cwd: repoRoot, tag, demoRef, remote });
   const config = await loadStableConfig(configPath);
   const configDigest = configFileDigest(configPath);
   const yaml = materializeRelease(repoRoot, release.commit, config);
   const { manifestDigest } = verifyArtifacts(artifacts, { release, configDigest, projectId: config.projectId, yaml });
-
-  await assertProjectServices(config, { client: gate.client });
+  await assertProjectServices(config, { client });
   const versions = await readActiveVersions(config, { token, fetchImpl });
   const kind = installKind(versions, release.commit);
-  // Ownership (no demo or foreign service), the closed gate and running datastores, from maintenance.mjs. An update
-  // starts from everything stopped, the state its backup was taken in; a bootstrap step may find the app it deployed.
-  const maintenance = kind === 'update' ? await assertInMaintenance(config, gate) : await assertEdgeClosed(config, gate);
-  if (kind === 'bootstrap-app' && bootstrapApp !== true) {
-    fail('no app version was ever active here: the first install is --bootstrap-app (the app alone), then provision keys and rerun');
-  }
-  if (kind !== 'bootstrap-app' && bootstrapApp === true) fail(`--bootstrap-app needs an app that never ran; this install is ${kind}`);
-  let data = null;
-  if (kind === 'update') {
-    if (!backupPath || !rehearsalPath) fail('an update needs --backup DIR and --rehearsal FILE from data.mjs');
-    data = await checkData({ backupDirectory: backupPath, rehearsalPath, config, release, runningRevision: versions.app, now });
-  } else if (backupPath !== undefined || rehearsalPath !== undefined) {
-    fail(`a ${kind} install changes no data; it takes no --backup or --rehearsal`);
-  }
   checkTools();
 
   const source = join(work, 'app-source');
@@ -363,20 +319,15 @@ export async function planInstall({
     manifestDigest,
     projectId: config.projectId,
     kind,
-    window,
-    maintenance: maintenance.state,
-    data,
     versions,
     pushScript,
     projectHosts: Object.values(config.origins).map((origin) => new URL(origin).hostname),
-    services: Object.fromEntries(DEPLOYED_WORKLOADS.map((name) => [name, config.services[name]])),
     pushes: PUSHES.filter(({ service }) => INSTALLED_WORKLOADS[kind].includes(service)).map(({ service, setup, path }) => ({
       service,
       serviceId: config.services[service],
       setup,
       cwd: service === 'app' ? source : join(artifacts, path),
     })),
-    config,
   };
 }
 
@@ -395,100 +346,112 @@ export function runPush(plan, push, { token }) {
   });
 }
 
-/** Stops a workload unless it is not running; one that is mid-deploy or mid-start is waited out first. */
-const stopIfRunning = async (client, serviceId) => {
-  let { status } = await client.service(serviceId);
-  if (NOT_RUNNING.has(status)) return;
-  if (status !== 'ACTIVE') ({ status } = await client.settledService(serviceId));
-  if (status === 'ACTIVE') await client.stopService(serviceId);
+/** Carries out a plan, one push at a time in install order; the first failure stops the install and names what was pushed. */
+export async function executeInstall(plan, { push, log = () => {} }) {
+  const pushed = [];
+  for (const step of plan.pushes) {
+    log(`pushing ${step.service} (${step.serviceId}) as ${plan.commit}`);
+    try {
+      await push(step);
+    } catch (error) {
+      throw new GateError(`the install of ${plan.tag} failed after ${pushed.join(', ') || 'no push'}: ${error.message}. Rerun the install.`);
+    }
+    pushed.push(step.service);
+  }
+  return { pushed };
+}
+
+/** An origin answers when it serves a 2xx or 3xx (redirects not followed: a login redirect is an answer). */
+const readOrigin = async (origin, fetchImpl) => {
+  try {
+    const response = await fetchImpl(origin, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+    return response.status;
+  } catch (error) {
+    return `unreachable (${error.cause?.code ?? error.name})`;
+  }
 };
 
-/** Carries out a plan. A failure stops every workload and throws: the project is not safe to reopen. */
-export async function executeInstall(plan, { gate, push, log = () => {} }) {
-  const done = [];
-  try {
-    for (const step of plan.pushes) {
-      log(`pushing ${step.service} (${step.serviceId}) as ${plan.commit}`);
-      await push(step);
-      done.push(step.service);
-    }
-  } catch (error) {
-    const unstopped = [];
-    for (const name of DEPLOYED_WORKLOADS) {
-      try {
-        await stopIfRunning(gate.client, plan.services[name]);
-      } catch (stopError) {
-        unstopped.push(`${name} (${stopError.message})`);
-      }
-    }
-    throw new GateError(
-      `the install of ${plan.tag} failed after ${done.join(', ') || 'no push'}: ${error.message}. ` +
-        (unstopped.length > 0 ? `NOT STOPPED: ${unstopped.join(', ')}. ` : 'Every workload is stopped. ') +
-        'The project is unsafe to reopen: rerun the install, or restore the backup with data.mjs.',
-    );
+/**
+ * What runs in the stable project now: every workload ACTIVE on the tag's commit (the project and its services
+ * proven the stable ones), and every public origin of the config answering. Throws on anything else.
+ */
+export async function verifyDeployment({
+  repoRoot = REPO_ROOT,
+  configPath,
+  tag,
+  demoRef = DEFAULT_DEMO_REF,
+  remote = DEFAULT_REMOTE,
+  token,
+  client,
+  fetchImpl = fetch,
+}) {
+  const release = inspectDeployableRelease({ cwd: repoRoot, tag, demoRef, remote });
+  const config = await loadStableConfig(configPath);
+  const services = await assertProjectServices(config, { client });
+  const versions = await readActiveVersions(config, { token, fetchImpl });
+  const failures = [];
+  for (const name of DEPLOYED_WORKLOADS) {
+    if (versions[name] !== release.commit) failures.push(`${name} runs ${versions[name]}, not ${release.commit}`);
+    if (services[name].status !== 'ACTIVE') failures.push(`${name} is ${services[name].status}`);
   }
-  return { pushed: done, maintenance: await maintenanceStatus(plan.config, gate) };
+  const origins = {};
+  for (const [name, origin] of Object.entries(config.origins)) {
+    origins[name] = await readOrigin(origin, fetchImpl);
+    if (!(typeof origins[name] === 'number' && origins[name] >= 200 && origins[name] < 400)) {
+      failures.push(`${origin} answered ${origins[name]}`);
+    }
+  }
+  if (failures.length > 0) fail(`${tag} is not live in ${config.projectId}: ${failures.join('; ')}`);
+  return { tag, commit: release.commit, projectId: config.projectId, versions, origins };
 }
 
 const USAGE = `usage:
-  deploy.mjs --build-only --config PATH --tag TAG --output DIR [--demo-ref REF] [--remote NAME]
-  deploy.mjs --config PATH --tag TAG --artifacts DIR --maintenance-confirmed [--backup DIR --rehearsal FILE]
-             [--bootstrap-app] [--emergency-reason TEXT] [--demo-ref REF] [--remote NAME] [--execute]`;
+  deploy.mjs build   --config PATH --tag TAG --output DIR [--demo-ref REF] [--remote NAME]
+  deploy.mjs install --config PATH --tag TAG --artifacts DIR [--execute] [--demo-ref REF] [--remote NAME]   (env: ZEROPS_TOKEN)
+  deploy.mjs verify  --config PATH --tag TAG [--demo-ref REF] [--remote NAME]                               (env: ZEROPS_TOKEN)`;
 
 export async function main(argv, { env = process.env, log = (line) => process.stderr.write(`${line}\n`) } = {}) {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     args: argv,
     strict: true,
+    allowPositionals: true,
     options: {
-      'build-only': { type: 'boolean', default: false },
       config: { type: 'string' },
       tag: { type: 'string' },
       output: { type: 'string' },
       artifacts: { type: 'string' },
-      backup: { type: 'string' },
-      rehearsal: { type: 'string' },
-      'maintenance-confirmed': { type: 'boolean', default: false },
-      'emergency-reason': { type: 'string' },
-      'bootstrap-app': { type: 'boolean', default: false },
       'demo-ref': { type: 'string' },
       remote: { type: 'string' },
       execute: { type: 'boolean', default: false },
     },
   });
+  const [command, ...rest] = positionals;
+  if (rest.length > 0 || !values.config || !values.tag) fail(USAGE);
   const common = { configPath: values.config, tag: values.tag, demoRef: values['demo-ref'] ?? DEFAULT_DEMO_REF, remote: values.remote ?? DEFAULT_REMOTE };
-  if (!values.config || !values.tag) fail(USAGE);
-  if (values['build-only']) {
-    if (!values.output || values.artifacts || values.execute) fail(USAGE);
+  const only = (...allowed) => {
+    for (const option of ['output', 'artifacts', 'execute']) if (values[option] && !allowed.includes(option)) fail(USAGE);
+  };
+  if (command === 'build') {
+    only('output');
+    if (!values.output) fail(USAGE);
     return buildArtifacts({ ...common, output: values.output });
   }
-  if (!values.artifacts || values.output) fail(USAGE);
+  if (command !== 'install' && command !== 'verify') fail(USAGE);
   const token = env.ZEROPS_TOKEN;
-  if (!token) fail('ZEROPS_TOKEN is required (read-only for the plan, deploy rights for --execute); the gate reads CLOUDFLARE_API_TOKEN and STABLE_EDGE_FILE');
-  const config = await loadStableConfig(values.config);
-  const gate = { client: createZeropsClient({ token }), cloudflare: cloudflareClientFromEnv(env), edge: await edgeSettingsFromEnv(config, env) };
+  if (!token) fail('ZEROPS_TOKEN is required');
+  const client = createZeropsClient({ token });
+  if (command === 'verify') {
+    only();
+    return verifyDeployment({ ...common, token, client });
+  }
+  only('artifacts', 'execute');
+  if (!values.artifacts) fail(USAGE);
   const work = mkdtempSync(join(tmpdir(), 'zerops-stable-install-'));
   try {
-    const plan = await planInstall({
-      ...common,
-      artifacts: values.artifacts,
-      backupPath: values.backup,
-      rehearsalPath: values.rehearsal,
-      maintenanceConfirmed: values['maintenance-confirmed'],
-      emergencyReason: values['emergency-reason'],
-      bootstrapApp: values['bootstrap-app'],
-      token,
-      gate,
-      work,
-    });
-    const { config, pushScript, ...summary } = plan;
-    if (!values.execute) return { ...summary, executed: false, next: 'rerun with --execute to install' };
-    const result = await executeInstall(plan, { gate, push: (step) => runPush(plan, step, { token }), log });
-    return {
-      ...summary,
-      executed: true,
-      ...result,
-      next: 'the candidate runs behind the closed edge: run verify.mjs on it, then maintenance.mjs leave --evidence',
-    };
+    const plan = await planInstall({ ...common, artifacts: values.artifacts, token, client, work });
+    const { pushScript, ...summary } = plan;
+    if (!values.execute) return { ...summary, executed: false };
+    return { ...summary, executed: true, ...(await executeInstall(plan, { push: (step) => runPush(plan, step, { token }), log })) };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

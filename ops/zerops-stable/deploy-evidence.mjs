@@ -1,20 +1,18 @@
-// The gates of a stable release. deploy.mjs installs behind the closed edge after the release window, the data.mjs
-// backup and migration rehearsal, and a read-only read of each workload's active app version. maintenance.mjs leave
-// reopens only through assertReopenEvidence: complete passed verify.mjs evidence of the release every workload runs.
+// What a stable release reads from the live project: each workload's active app version, which decides what deploy.mjs
+// installs (installKind). maintenance.mjs leave reopens a gated project only through assertReopenEvidence: complete
+// passed verify.mjs evidence of the release every workload runs.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { assertRehearsalEvidence, backupManifestDigest, readRehearsalEvidence, verifyBackup } from './data.mjs';
 import { ZEROPS_PUBLIC_API_URL } from './maintenance.mjs';
-import { DEFAULT_DEMO_REF, DEFAULT_REMOTE, configFileDigest, inspectDeployableRelease, pragueDay } from './release.mjs';
+import { DEFAULT_DEMO_REF, DEFAULT_REMOTE, configFileDigest, inspectDeployableRelease } from './release.mjs';
 
 export class GateError extends Error {
   name = 'GateError';
 }
 
 export const DEPLOYED_WORKLOADS = Object.freeze(['app', 'storefront', 'shop', 'n1']);
-export const BACKUP_MAX_AGE_HOURS = 12;
 
 const fail = (message) => {
   throw new GateError(message);
@@ -29,39 +27,6 @@ export const readJson = (path, what) => {
     return fail(`${what} ${path} is not readable JSON (${error.code ?? error.name})`);
   }
 };
-
-/** Saturday and Sunday in Prague are release days; any other day needs the emergency reason, which is recorded. */
-export function assertReleaseWindow(now, emergencyReason) {
-  const { weekday, date } = pragueDay(now);
-  const reason = typeof emergencyReason === 'string' ? emergencyReason.trim() : '';
-  if (weekday === 'Sat' || weekday === 'Sun') return { weekday, date, emergencyReason: reason || null };
-  if (!reason) fail(`${weekday} ${date} in Prague is not a release day; a weekday deploy needs --emergency-reason`);
-  return { weekday, date, emergencyReason: reason };
-}
-
-/**
- * An update's data prerequisites, through data.mjs: a verified backup of this project taken from the release that
- * runs now and in the last BACKUP_MAX_AGE_HOURS, and a passed migration rehearsal of exactly this tag and commit on
- * that backup.
- */
-export async function assertInstallData({ backupDirectory, rehearsalPath, config, release, runningRevision, now }) {
-  const backup = await verifyBackup(backupDirectory, { projectId: config.projectId });
-  if (backup.sourceRevision !== runningRevision) {
-    fail(`the backup was taken from ${backup.sourceRevision}; the app runs ${runningRevision}`);
-  }
-  const age = now.getTime() - Date.parse(backup.createdAt);
-  if (!(age >= 0 && age <= BACKUP_MAX_AGE_HOURS * 3_600_000)) {
-    fail(`the backup was created ${backup.createdAt}; an update needs one from the last ${BACKUP_MAX_AGE_HOURS} hours`);
-  }
-  const backupManifestSha256 = await backupManifestDigest(backupDirectory);
-  const rehearsal = assertRehearsalEvidence(await readRehearsalEvidence(rehearsalPath), {
-    config,
-    backupManifestSha256,
-    tag: release.tag,
-    commit: release.commit,
-  });
-  return { backupCreatedAt: backup.createdAt, backupManifestSha256, rehearsalFinishedAt: rehearsal.finishedAt };
-}
 
 /** The name of each workload's active app version (null when the service never deployed), read-only. */
 export async function readActiveVersions(config, { token, fetchImpl = fetch, apiUrl = ZEROPS_PUBLIC_API_URL }) {
@@ -85,9 +50,9 @@ export async function readActiveVersions(config, { token, fetchImpl = fetch, api
 /**
  * What an install of <commit> is, from the live active app versions:
  *   bootstrap-app     no app version was ever active: no migration ran and no customer data exists. Only the app
- *                     deploys (--bootstrap-app), so the live app can issue the storefront keys and seed the accounts.
+ *                     deploys, so the live app can issue the storefront keys and seed the accounts.
  *   bootstrap-fronts  the app runs <commit> and no front ever deployed: the fronts deploy, the app is not touched.
- *   update            anything else: every workload deploys, after a backup and a migration rehearsal of <commit>.
+ *   update            anything else: every workload deploys, the app first.
  */
 export function installKind(versions, commit) {
   if (versions.app === null) return 'bootstrap-app';
