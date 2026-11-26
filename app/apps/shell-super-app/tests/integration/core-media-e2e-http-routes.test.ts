@@ -208,6 +208,13 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // Without the capability the engine refuses, and nothing is created.
               expect((yield* reserveOverHttp(edge, nobody, bytes, { idempotencyKey: 'denied' })).status).toBe(403);
               expect((yield* rowsOf(world)).length).toBe(2);
+              // One byte more than 10,000 parts of 5 GiB: the store can never write it, so nothing is reserved.
+              const tooLarge = yield* reserveOverHttp(edge, uploader, bytes, {
+                declaredByteSize: 10_000 * 5 * 1024 ** 3 + 1,
+                idempotencyKey: 'too-large',
+              });
+              expect(tooLarge.status).toBe(422);
+              expect((yield* rowsOf(world)).length).toBe(2);
               // A rename needs its own key and its own capability, which the uploader does not hold.
               expect((yield* renameOverHttp(edge, owner, id, 'Named.pdf', null)).status).toBe(428);
               expect((yield* renameOverHttp(edge, uploader, id, 'Named.pdf', 'rename-denied')).status).toBe(403);
