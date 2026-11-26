@@ -51,6 +51,7 @@ import { Array as EffectArray, Effect, Layer, Option, Order, Schema } from 'effe
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { symmyCompanyRoutesRead } from '../../src/api/symmy-company-routes.read.ts';
 import { symmyJobPrivacyExecutionRead } from '../../src/api/symmy-job-privacy-execution.read.ts';
 import { symmyJobStatusRead } from '../../src/api/symmy-job-status.read.ts';
 import { symmyRouteContextRead } from '../../src/api/symmy-route-context.read.ts';
@@ -229,6 +230,7 @@ export const makeNativeExecutionRegistration = (
     manifest,
     outboxWorkers: [...workers],
     reads: [
+      symmyCompanyRoutesRead,
       symmyJobPrivacyExecutionRead,
       symmyJobStatusRead,
       symmyRouteContextRead,

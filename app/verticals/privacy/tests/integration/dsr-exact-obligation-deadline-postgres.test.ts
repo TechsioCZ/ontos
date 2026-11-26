@@ -325,7 +325,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
   const ownerRuntimeContext = yield* Layer.build(
     Layer.merge(
       ownerActions.pipe(Layer.provideMerge(ownerApprovals)),
-      makeReadRuntimeLive(owner.deployment, privacyRegistration),
+      makeReadRuntimeLive(owner.deployment, privacyRegistration).pipe(Layer.provide(privacyModuleCallRouteLive)),
     ).pipe(Layer.provide(ownerDependencies)),
   );
   const context = Context.merge(fixtureContext, ownerRuntimeContext);
