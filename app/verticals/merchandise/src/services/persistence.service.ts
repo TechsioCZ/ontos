@@ -2773,6 +2773,20 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       );
       return revision ?? (yield* revisionConflict());
     });
+    const requireCurrentOrderRevision = Effect.fn('Merchandise.requireCurrentOrderRevision')(
+      function* requireCurrentOrderRevision(working: WorkingSet, command: Exclude<MerchandiseCommand, AiCommand>) {
+        if (isOrderScopedEdit(command)) {
+          const current = working.state.orders.find((order) => order.id === command.id);
+          if (
+            current !== undefined &&
+            DateTime.toEpochMillis(current.updatedAt) !== DateTime.toEpochMillis(command.expectedUpdatedAt)
+          ) {
+            return yield* revisionConflict('The order changed; refresh before another edit');
+          }
+        }
+        return yield* Effect.void;
+      },
+    );
     const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(
       command: Exclude<MerchandiseCommand, AiCommand>,
       expectedRevision: number,
@@ -2826,15 +2840,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const working = yield* loadWorkingSet(transaction, store, head, workingSetRequestOf(command, resourceId)).pipe(
         Effect.mapError(unavailable),
       );
-      if (isOrderScopedEdit(command)) {
-        const current = working.state.orders.find((order) => order.id === command.id);
-        if (
-          current !== undefined &&
-          DateTime.toEpochMillis(current.updatedAt) !== DateTime.toEpochMillis(command.expectedUpdatedAt)
-        ) {
-          return yield* revisionConflict('The order changed; refresh before another edit');
-        }
-      }
+      yield* requireCurrentOrderRevision(working, command);
       const now = yield* DateTime.now;
       const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
       if (Predicate.isTagged(command, 'ChangeProductImages')) {

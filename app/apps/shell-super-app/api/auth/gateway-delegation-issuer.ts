@@ -36,7 +36,7 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
-import { DateTime, Effect, Match, Predicate, Ref, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Ref, Schema, Struct } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
@@ -224,6 +224,21 @@ const fingerprintOf = <Fields extends Schema.Struct.Fields>(fields: Fields, valu
     Effect.mapError(delegationUnavailable('exchange_ledger_unavailable')),
   );
 
+// The ledger hashes schema-encoded JSON in field order. The requirement follows the route scope.
+const nativeRouteReadFingerprintFields = Struct.assign(
+  {
+    actor: GatewayActorClaimSchema,
+    audience: Schema.String,
+    compositionRevision: Schema.String,
+    principal: GatewayTrustedPrincipalContextSchema,
+    routeScope: RegisteredGatewayRouteScopeSchema,
+  },
+  { requirementKey: Schema.String },
+);
+
+export const fingerprintNativeRouteRead = (input: Schema.Struct<typeof nativeRouteReadFingerprintFields>['Type']) =>
+  fingerprintOf(nativeRouteReadFingerprintFields, input);
+
 type ModuleAccess = Parameters<typeof tenantStatesAllowingAccess>[0];
 
 /** The tenant's current states of the source and destination modules. */
@@ -362,8 +377,9 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
   // lasting, deliberate state: switched off (`inactive`) or retired with its tenant (`archived`). One that is only
   // stopped for now (`suspended`, `quarantined`) is a plain refusal: an outage to the caller, never an answer.
   const readableStates: ReadonlySet<string> = new Set(tenantStatesAllowingAccess('read'));
+  const statesByModule = new Map(states.toReversed().map(({ moduleKey, state }) => [moduleKey, state]));
   for (const moduleKey of destinationModules) {
-    const destinationState = states.find((state) => state.moduleKey === moduleKey)?.state;
+    const destinationState = statesByModule.get(moduleKey);
     if (destinationState === undefined || !readableStates.has(destinationState)) {
       return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
         ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
@@ -747,8 +763,8 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
       assertion: payload.subject.sourceAssertion,
       binding,
       currentDate,
-      now,
       nativeRouteRead: true,
+      now,
       requestedCompositionRevision: payload.compositionRevision,
     });
     const witness = yield* admitNativeRouteRead({
@@ -766,22 +782,18 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
       return yield* delegationForbidden('conditional_requirement_refused')();
     }
     yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
-    const states = yield* loadModuleStates(admitted.principal.tenantId, admitted.moduleAccess.map((item) => item.moduleKey));
+    const states = yield* loadModuleStates(
+      admitted.principal.tenantId,
+      admitted.moduleAccess.map((item) => item.moduleKey),
+    );
     yield* requireModuleStates(states, admitted.moduleAccess);
-    const requestFingerprint = yield* fingerprintOf({
-      actor: GatewayActorClaimSchema,
-      audience: Schema.String,
-      compositionRevision: Schema.String,
-      principal: GatewayTrustedPrincipalContextSchema,
-      routeScope: RegisteredGatewayRouteScopeSchema,
-      requirementKey: Schema.String,
-    }, {
+    const requestFingerprint = yield* fingerprintNativeRouteRead({
       actor,
       audience: payload.audience,
       compositionRevision: payload.compositionRevision,
       principal: admitted.principal,
-      routeScope: admitted.routeScope,
       requirementKey: payload.subject.operationRequirementKey,
+      routeScope: admitted.routeScope,
     });
     yield* reserveExchange({
       exchangeId: payload.exchangeId,

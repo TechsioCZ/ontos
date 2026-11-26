@@ -10,6 +10,29 @@ const manifest = {
   devDependencies: { '@modern-js/app-tools': '*' },
   scripts: { build: 'modern build --deploy-target node' },
 };
+const acceptedBuildScripts = [
+  ['minimal-build', 'modern build'],
+  ['chained-build', 'node a.mts --all && modern build && node b.mts .'],
+  ['multiple-spaces', 'modern  build'],
+  ['horizontal-whitespace', '\tmodern\tbuild\t'],
+] as const;
+const rejectedBuildScripts = [
+  ['runtime-build', 'node src/browser.tsx'],
+  ['printed-build', 'echo modern build'],
+  ['printed-chained-build', 'node a.mts && echo modern build'],
+  ['quoted-build', 'echo "a && modern build"'],
+  ['redirected-prebuild', 'node prebuild.mjs > build.log && modern build'],
+  ['expanded-prebuild', `node prebuild.mjs "\${TARGET}" && modern build`],
+  ['hash-in-word', 'node prebuild.mjs assets.svg#logo && modern build'],
+  ['semicolon', 'modern build; rm -rf dist'],
+  ['pipe', 'modern build | tee log'],
+  ['similar-command', 'moderns build'],
+  ['similar-subcommand', 'modern builder'],
+  ['empty-script', ''],
+  ['empty-command', 'modern build && '],
+  ['continuation-newline', 'node a.mts &&\n  modern build'],
+  ['trailing-newline', 'modern build\n'],
+] as const;
 const nativeConfig = "import { defineConfig } from '@modern-js/app-tools'; export default defineConfig({});";
 const owner = 'apps/modern';
 const valid = {
@@ -57,7 +80,6 @@ const ownerFiles = (directory: string, compilerManifest: CompilerManifest, confi
 ];
 const counterfeitOwners = [
   ['missing-compiler', { dependencies: manifest.dependencies, scripts: manifest.scripts }, nativeConfig],
-  ['runtime-build', { ...manifest, scripts: { build: 'node src/browser.tsx' } }, nativeConfig],
   ['comment-config', manifest, `/* ${nativeConfig} */ export default {};`],
   ['counterfeit-config', manifest, 'const defineConfig = (value) => value; export default defineConfig({});'],
   [
@@ -66,21 +88,21 @@ const counterfeitOwners = [
     "import { defineConfig } from '@modern-js/app-tools'; void defineConfig; export default {};",
   ],
 ] as const;
-const currentPage = 'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx';
-const currentShell = ['package.json', 'modern.config.ts', 'src/routes/[lang]/modules/[moduleId]/page.tsx'].map(
-  (file) => ({
-    path: `apps/shell-super-app/${file}`,
-    source: readFileSync(path.join(appRoot, `apps/shell-super-app/${file}`), 'utf-8'),
-  }),
-);
+const shellRoutes = ['src/routes/[lang]/modules/[moduleId]/page.tsx', 'src/routes/module-entrypoint-loader.ts'];
+const currentShell = ['package.json', 'modern.config.ts', ...shellRoutes].map((file) => ({
+  path: `apps/shell-super-app/${file}`,
+  source: readFileSync(path.join(appRoot, `apps/shell-super-app/${file}`), 'utf-8'),
+}));
 
 const admitted: WorkspaceEntry[] = [
   ...Object.entries(valid).map(([name, source]) => ({ path: `${owner}/src/${name}.tsx`, source })),
-  ...currentShell.filter((entry) => entry.path === currentPage),
+  ...acceptedBuildScripts.map(([name]) => ({ path: `apps/${name}/src/browser.tsx`, source: valid.importMetaBrowser })),
+  ...currentShell.filter((entry) => shellRoutes.some((route) => entry.path === `apps/shell-super-app/${route}`)),
 ];
 const rejected: WorkspaceEntry[] = [
   ...Object.entries(invalid).map(([name, source]) => ({ path: `${owner}/src/${name}.tsx`, source })),
   { path: `${owner}/scripts/runtime.mts`, source: valid.browser },
+  ...rejectedBuildScripts.map(([name]) => ({ path: `apps/${name}/src/browser.tsx`, source: valid.importMetaBrowser })),
   ...counterfeitOwners.map(([name]) => ({ path: `apps/${name}/src/browser.tsx`, source: valid.browser })),
 ];
 
@@ -89,6 +111,9 @@ describeWorkspace(
   'models only genuine Modern compiler target branches and retains runtime environment diagnostics',
   [
     ...ownerFiles(owner, manifest, nativeConfig),
+    ...[...acceptedBuildScripts, ...rejectedBuildScripts].flatMap(([name, build]) =>
+      ownerFiles(`apps/${name}`, { ...manifest, scripts: { build } }, nativeConfig),
+    ),
     ...counterfeitOwners.flatMap(([name, compilerManifest, config]) =>
       ownerFiles(`apps/${name}`, compilerManifest, config),
     ),

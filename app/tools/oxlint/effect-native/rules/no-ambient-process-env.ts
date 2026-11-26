@@ -64,7 +64,7 @@ import { parseSync } from 'oxc-parser';
 
 import { keyName as sharedKeyName, memberName, parentOf, skipWrappers, unwrapNode as unwrap } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
-import { booleanOption, stringList } from '../shared/options.ts';
+import { booleanOption, optionRecord, stringList } from '../shared/options.ts';
 import { includesRuleFile } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
 
@@ -100,6 +100,19 @@ const MODERN_CONFIG_FACTORY_SOURCES: ReadonlySet<string> = new Set([
   '@modern-js/ultramodern-app-tools',
 ]);
 
+/**
+ * Recognize only commands joined by `&&`, each made of plain words (`[A-Za-z0-9_@%+=:,./-]+`) separated by spaces or tabs.
+ * Every command must match this grammar, and at least one must start with the words `modern build`.
+ */
+const hasModernBuildCommand = (script: string): boolean => {
+  const plainCommand = /^[ \t]*[A-Za-z0-9_@%+=:,./-]+(?:[ \t]+[A-Za-z0-9_@%+=:,./-]+)*[ \t]*$/u;
+  const modernBuild = /^[ \t]*modern[ \t]+build(?:[ \t]|$)/u;
+  const commands = script.split('&&');
+  return (
+    commands.every((command) => plainCommand.test(command)) && commands.some((command) => modernBuild.test(command))
+  );
+};
+
 /** The native compiler owns this define only in an application's compiled source tree. */
 const hasModernCompilerOwner = (filename: string): boolean => {
   let directory = nodePath.dirname(filename);
@@ -123,7 +136,7 @@ const hasModernCompilerOwner = (filename: string): boolean => {
     if (
       !dependencies['@modern-js/app-tools'] ||
       !dependencies['@modern-js/runtime'] ||
-      !/^modern[ \t]+build(?:[ \t]|$)/u.test(manifest.scripts.build)
+      !hasModernBuildCommand(manifest.scripts.build)
     ) {
       return false;
     }
@@ -187,6 +200,9 @@ const modernCompilerProcess = (context: Context, target: ESTree.Node): Identifie
   return process.type === 'Identifier' && isUnshadowedGlobal(context, process, 'process') ? process : null;
 };
 
+const isImportMeta = (node: ESTree.MetaProperty): boolean =>
+  node.meta.name === 'import' && node.property.name === 'meta';
+
 /**
  * The framework defines `import.meta.env.MODERN_TARGET` with the same per-environment value as
  * `process.env.MODERN_TARGET`. Only the literal static chain qualifies; `import.meta` cannot be rebound.
@@ -225,62 +241,71 @@ const DEFAULTS: RuleOptions = {
   includePaths: [...DEFAULT_INCLUDE_PATHS],
 };
 
-function readOptions(raw: unknown): RuleOptions {
-  const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
+const readOptions = (options: Context['options']): RuleOptions => {
+  const given = optionRecord(options[0]);
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
     ignoreTestFiles: booleanOption(given.ignoreTestFiles, DEFAULTS.ignoreTestFiles),
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
-}
+};
 
-function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  return memberName(node, { templates: true, unwrap: {} });
-}
+const staticPropertyName = (node: ESTree.MemberExpression): string | null =>
+  memberName(node, { templates: true, unwrap: {} });
 
-function keyName(key: AnyNode | undefined): string | null {
-  return sharedKeyName(key, false, { templates: true, unwrap: {} });
-}
+const keyName = (key: AnyNode | undefined): string | null => sharedKeyName(key, false, { templates: true, unwrap: {} });
 
-function isProcessSource(node: AnyNode | undefined): boolean {
-  if (!node) return false;
+const isProcessSource = (node: AnyNode | undefined): boolean => {
+  if (!node) {
+    return false;
+  }
   const source = unwrap(node);
   return source.type !== 'Identifier' && PROCESS_MODULES.has(keyName(source) ?? '');
-}
+};
 
-function isProcessImport(specifier: ESTree.ImportDeclaration['specifiers'][number]): boolean {
+const isProcessImport = (specifier: ESTree.ImportDeclaration['specifiers'][number]): boolean => {
   const declaration = parentOf(specifier);
-  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return false;
-  if (!PROCESS_MODULES.has(declaration.source.value)) return false;
-  if (specifier.type !== 'ImportSpecifier') return true;
+  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') {
+    return false;
+  }
+  if (!PROCESS_MODULES.has(declaration.source.value)) {
+    return false;
+  }
+  if (specifier.type !== 'ImportSpecifier') {
+    return true;
+  }
   return specifier.importKind !== 'type' && keyName(specifier.imported) === 'default';
-}
+};
 
-function immutableInitializer(declaration: ESTree.VariableDeclarator): AnyNode | null {
-  if (declaration.id.type !== 'Identifier' || parentOf(declaration)?.kind !== 'const') return null;
+const immutableInitializer = (declaration: ESTree.VariableDeclarator): AnyNode | null => {
+  if (declaration.id.type !== 'Identifier' || parentOf(declaration)?.kind !== 'const') {
+    return null;
+  }
   return declaration.init;
-}
+};
 
-function isImportMeta(node: ESTree.MetaProperty): boolean {
-  return node.meta.name === 'import' && node.property.name === 'meta';
-}
-
-function isContainerHost(context: Context, member: ESTree.MemberExpression): boolean {
+const isContainerHost = (context: Context, member: ESTree.MemberExpression): boolean => {
   const hostName = staticPropertyName(member);
-  if (hostName === null || !ENV_HOSTS.has(hostName)) return false;
+  if (hostName === null || !ENV_HOSTS.has(hostName)) {
+    return false;
+  }
   const container = unwrap(member.object);
   return (
     container.type === 'Identifier' &&
     CONTAINER_GLOBALS.has(container.name) &&
     isUnshadowedGlobal(context, container, container.name)
   );
-}
+};
 
-function isMutatingCall(context: Context, call: ESTree.CallExpression, reference: AnyNode): boolean {
-  if (call.arguments[0] !== reference || call.callee.type !== 'MemberExpression') return false;
+const isMutatingCall = (context: Context, call: ESTree.CallExpression, reference: AnyNode): boolean => {
+  if (call.arguments[0] !== reference || call.callee.type !== 'MemberExpression') {
+    return false;
+  }
   const member = call.callee;
-  if (member.object.type !== 'Identifier') return false;
+  if (member.object.type !== 'Identifier') {
+    return false;
+  }
   const namespace = member.object;
   const members = MUTATING_CALLS.get(namespace.name);
   const name = staticPropertyName(member);
@@ -290,22 +315,20 @@ function isMutatingCall(context: Context, call: ESTree.CallExpression, reference
     members.has(name) &&
     isUnshadowedGlobal(context, namespace, namespace.name)
   );
-}
+};
 
-function isMutation(context: Context, parent: AnyNode | null, reference: AnyNode): boolean {
-  switch (parent?.type) {
-    case 'AssignmentExpression':
-      return parent.left === reference;
-    case 'UnaryExpression':
-      return parent.operator === 'delete';
-    case 'UpdateExpression':
-      return true;
-    case 'CallExpression':
-      return isMutatingCall(context, parent, reference);
-    default:
-      return false;
+const isMutation = (context: Context, parent: AnyNode | null, reference: AnyNode): boolean => {
+  if (parent?.type === 'AssignmentExpression') {
+    return parent.left === reference;
   }
-}
+  if (parent?.type === 'UnaryExpression') {
+    return parent.operator === 'delete';
+  }
+  return (
+    parent?.type === 'UpdateExpression' ||
+    (parent?.type === 'CallExpression' && isMutatingCall(context, parent, reference))
+  );
+};
 
 const isImmutableModernProcess = (context: Context, process: IdentifierNode): boolean => {
   let scope: Scope | null = context.sourceCode.getScope(process);
@@ -346,119 +369,82 @@ export const isModernCompilerTargetComparison = (context: Context, node: ESTree.
   return (process === null || isImmutableModernProcess(context, process)) && hasModernCompilerOwner(context.filename);
 };
 
-function patternSource(node: AnyNode): AnyNode | null {
+const patternSource = (node: AnyNode): AnyNode | null => {
   const parent = parentOf(node);
-  switch (parent?.type) {
-    case 'VariableDeclarator':
-      return parent.init;
-    case 'AssignmentExpression':
-    case 'AssignmentPattern':
-      return parent.right;
-    default:
-      return null;
+  if (parent?.type === 'VariableDeclarator') {
+    return parent.init;
   }
-}
+  return parent?.type === 'AssignmentExpression' || parent?.type === 'AssignmentPattern' ? parent.right : null;
+};
 
-function isEnvProperty(property: ESTree.ObjectPattern['properties'][number]): boolean {
-  if (property.type !== 'Property') return false;
+const isEnvProperty = (property: ESTree.ObjectPattern['properties'][number]): boolean => {
+  if (property.type !== 'Property') {
+    return false;
+  }
   return (
     sharedKeyName(property.key, property.computed, {
       templates: true,
       unwrap: {},
     }) === 'env'
   );
-}
+};
 
 /** Effect-native rule: configuration is declared with `Config` and provided by one `ConfigProvider`. */
 export const rule = defineRule({
-  meta: {
-    type: 'problem',
-    docs: {
-      description:
-        'Audit A3/B2: ambient `process.env` / `import.meta.env` / `Bun.env` / `Deno.env` reads and mutations bypass Config, ConfigProvider and Redacted, hide the requirement from the Layer graph and make tests depend on the real environment. Syntax-only: bounded immutable local aliases and static keys, not arbitrary cross-module flow or dynamic keys.',
-      url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#a3-replace-ambient-configuration-with-config-configprovider-and-redacted',
-    },
-    messages: {
-      ambientEnvRead:
-        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.String`/`Config.Int`/`Config.Redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
-      ambientEnvMutation:
-        'Audit A3/B2: `{{expression}}` mutates the ambient environment, so this code configures itself through a process-global side effect that leaks across tests and cannot be typed or redacted. Provide the values through a map-backed `ConfigProvider` test Layer (`Layer.setConfigProvider(ConfigProvider.fromMap(new Map([...])))`) instead of writing to or deleting from `process.env`.',
-    },
-    schema: [
-      {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          allowPaths: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Globs of files allowed to read the ambient environment, e.g. a ratified framework-config carve-out (default: none — framework configs are reported).',
-          },
-          ignoreTestFiles: {
-            type: 'boolean',
-            description:
-              'Skip test files entirely (default: false — audit B2 wants tests configured through ConfigProvider.fromMap).',
-          },
-          includePaths: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
-          },
-        },
-      },
-    ],
-    defaultOptions: [
-      {
-        allowPaths: [],
-        ignoreTestFiles: false,
-        includePaths: [...DEFAULT_INCLUDE_PATHS],
-      },
-    ],
-  },
   create(context) {
-    const options = readOptions(context.options[0]);
-    if (!includesRuleFile(context.filename, options)) return {};
-
+    const options = readOptions(context.options);
+    if (!includesRuleFile(context.filename, options)) {
+      return {};
+    }
     const printed = (node: AnyNode): string => snippet(context.sourceCode.getText(node), 72, 69, '...');
 
     const report = (node: AnyNode, messageId: string): void => {
-      context.report({ node, messageId, data: { expression: printed(node) } });
+      context.report({ data: { expression: printed(node) }, messageId, node });
     };
 
-    const identifierHost = (inner: AnyNode & { readonly name: string }, depth: number): boolean => {
+    const identifierHost = (inner: IdentifierNode, isEnvInitializer: (initializer: AnyNode) => boolean): boolean => {
       const variable = resolveVariable(context, inner.name, inner);
       const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (definition?.type === 'ImportBinding') {
-        return isProcessImport(definition.node as ESTree.ImportDeclaration['specifiers'][number]);
+        const specifier = definition.node;
+        return (
+          (specifier.type === 'ImportSpecifier' ||
+            specifier.type === 'ImportDefaultSpecifier' ||
+            specifier.type === 'ImportNamespaceSpecifier') &&
+          isProcessImport(specifier)
+        );
       }
-      if (definition?.type === 'Variable') {
-        const initializer = immutableInitializer(definition.node as ESTree.VariableDeclarator);
-        if (initializer) return isEnvHost(initializer, depth + 1);
+      if (definition?.type === 'Variable' && definition.node.type === 'VariableDeclarator') {
+        const initializer = immutableInitializer(definition.node);
+        if (initializer !== null) {
+          return isEnvInitializer(initializer);
+        }
       }
       return ENV_HOSTS.has(inner.name) && isUnshadowedGlobal(context, inner, inner.name);
     };
 
     // Bounded immutable aliases only; no cross-module flow or reassignment inference.
     const isEnvHost = (node: AnyNode, depth = 0): boolean => {
-      if (depth > 16) return false;
-      const inner = unwrap(node);
-      switch (inner.type) {
-        case 'AwaitExpression':
-          return isEnvHost(inner.argument, depth + 1);
-        case 'ImportExpression':
-          return isProcessSource(inner.source);
-        case 'CallExpression':
-          return isUnshadowedGlobal(context, unwrap(inner.callee), 'require') && isProcessSource(inner.arguments[0]);
-        case 'MetaProperty':
-          return isImportMeta(inner);
-        case 'Identifier':
-          return identifierHost(inner, depth);
-        case 'MemberExpression':
-          return isContainerHost(context, inner);
-        default:
-          return false;
+      if (depth > 16) {
+        return false;
       }
+      const inner = unwrap(node);
+      if (inner.type === 'AwaitExpression') {
+        return isEnvHost(inner.argument, depth + 1);
+      }
+      if (inner.type === 'ImportExpression') {
+        return isProcessSource(inner.source);
+      }
+      if (inner.type === 'CallExpression') {
+        return isUnshadowedGlobal(context, unwrap(inner.callee), 'require') && isProcessSource(inner.arguments[0]);
+      }
+      if (inner.type === 'MetaProperty') {
+        return isImportMeta(inner);
+      }
+      if (inner.type === 'Identifier') {
+        return identifierHost(inner, (initializer) => isEnvHost(initializer, depth + 1));
+      }
+      return inner.type === 'MemberExpression' && isContainerHost(context, inner);
     };
 
     /** Climb the continued member chain before classifying its consumer. */
@@ -471,53 +457,110 @@ export const rule = defineRule({
     };
 
     return {
-      // `import process from "node:process"` / `import { env } from "process"`.
-      ImportDeclaration(node) {
-        if (node.importKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
-        for (const specifier of node.specifiers) {
-          if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportNamespaceSpecifier') {
-            continue;
-          }
-          if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-          const imported =
-            specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-          // `import { env } from "node:process"` *is* the ambient environment bag.
-          if (imported === 'env') report(specifier as unknown as AnyNode, 'ambientEnvRead');
-        }
-      },
-
       ExportNamedDeclaration(node) {
-        if (!node.source || node.exportKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
+        if (!node.source || node.exportKind === 'type' || !PROCESS_MODULES.has(node.source.value)) {
+          return;
+        }
         for (const specifier of node.specifiers) {
           if (
             specifier.type === 'ExportSpecifier' &&
             specifier.exportKind !== 'type' &&
-            keyName(specifier.local as AnyNode) === 'env'
-          )
-            report(specifier as AnyNode, 'ambientEnvRead');
+            keyName(specifier.local) === 'env'
+          ) {
+            report(specifier, 'ambientEnvRead');
+          }
+        }
+      },
+
+      // `import process from "node:process"` / `import { env } from "process"`.
+      ImportDeclaration(node) {
+        if (node.importKind === 'type' || !PROCESS_MODULES.has(node.source.value)) {
+          return;
+        }
+        for (const specifier of node.specifiers) {
+          if (
+            specifier.type === 'ImportSpecifier' &&
+            specifier.importKind !== 'type' &&
+            keyName(specifier.imported) === 'env'
+          ) {
+            report(specifier, 'ambientEnvRead');
+          }
         }
       },
 
       // The anti-pattern itself: `<host>.env`, reported once at the innermost env node.
       MemberExpression(node) {
-        if (staticPropertyName(node) !== 'env') return;
-        if (!isEnvHost(node.object as AnyNode)) return;
+        if (staticPropertyName(node) !== 'env') {
+          return;
+        }
+        if (!isEnvHost(node.object)) {
+          return;
+        }
         const target = parentOf(node);
         const comparison = target?.type === 'MemberExpression' ? parentOf(target) : null;
         if (comparison !== null && isModernCompilerTargetComparison(context, comparison)) {
           return;
         }
-        report(node as unknown as AnyNode, classify(node as unknown as AnyNode));
+        report(node, classify(node));
       },
 
       // `const { env } = process` / `const { env: environment } = globalThis.process`.
       ObjectPattern(node) {
         const source = patternSource(node);
-        if (source === null || !isEnvHost(source)) return;
+        if (source === null || !isEnvHost(source)) {
+          return;
+        }
         for (const property of node.properties) {
-          if (isEnvProperty(property)) report(property, 'ambientEnvRead');
+          if (isEnvProperty(property)) {
+            report(property, 'ambientEnvRead');
+          }
         }
       },
     };
+  },
+  meta: {
+    defaultOptions: [
+      {
+        allowPaths: [],
+        ignoreTestFiles: false,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
+    ],
+    docs: {
+      description:
+        'Audit A3/B2: ambient `process.env` / `import.meta.env` / `Bun.env` / `Deno.env` reads and mutations bypass Config, ConfigProvider and Redacted, hide the requirement from the Layer graph and make tests depend on the real environment. Syntax-only: bounded immutable local aliases and static keys, not arbitrary cross-module flow or dynamic keys.',
+      url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#a3-replace-ambient-configuration-with-config-configprovider-and-redacted',
+    },
+    messages: {
+      ambientEnvMutation:
+        'Audit A3/B2: `{{expression}}` mutates the ambient environment, so this code configures itself through a process-global side effect that leaks across tests and cannot be typed or redacted. Provide the values through a map-backed `ConfigProvider` test Layer (`Layer.setConfigProvider(ConfigProvider.fromMap(new Map([...])))`) instead of writing to or deleting from `process.env`.',
+      ambientEnvRead:
+        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.String`/`Config.Int`/`Config.Redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
+    },
+    schema: [
+      {
+        additionalProperties: false,
+        properties: {
+          allowPaths: {
+            description:
+              'Globs of files allowed to read the ambient environment, e.g. a ratified framework-config carve-out (default: none — framework configs are reported).',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          ignoreTestFiles: {
+            description:
+              'Skip test files entirely (default: false — audit B2 wants tests configured through ConfigProvider.fromMap).',
+            type: 'boolean',
+          },
+          includePaths: {
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            items: { type: 'string' },
+            type: 'array',
+          },
+        },
+        type: 'object',
+      },
+    ],
+    type: 'problem',
   },
 });

@@ -194,6 +194,28 @@ export const partyLifecycleReceiptMatches = (
   );
 };
 
+const requireLifecyclePartyCorrelation = Effect.fn('PartySourceLifecycle.requirePartyCorrelation')(
+  function* requirePartyCorrelation(
+    transaction: SourceTransaction,
+    scope: OperationalScope,
+    input: PartySourceLifecycleInput,
+    reference: SourceReference,
+    mode: 'WRITE' | 'RECOVER',
+  ) {
+    if (
+      input.operation === 'ONBOARD_COUNTERPARTY_CUSTOMER' &&
+      (scope.legalEntityId === undefined ||
+        (mode === 'WRITE' &&
+          (yield* loadSourceCorrelatedParty(transaction, scope, {
+            partyRef: input.payload.partyRef,
+            sourceReference: reference,
+          })) === undefined))
+    ) {
+      return yield* denied('client_source_exact_party_correlation_required');
+    }
+  },
+);
+
 const prepareLifecycle = Effect.fn('PartySourceLifecycle.prepare')(function* prepare(
   transaction: SourceTransaction,
   scope: OperationalScope,
@@ -226,17 +248,7 @@ const prepareLifecycle = Effect.fn('PartySourceLifecycle.prepare')(function* pre
   if (permitsQualifiedOrganizationSource(sourceProjection) && !permitsQualifiedOrganizationSource(targetProjection)) {
     return yield* denied('client_source_current_organization_projection_required');
   }
-  if (
-    input.operation === 'ONBOARD_COUNTERPARTY_CUSTOMER' &&
-    (scope.legalEntityId === undefined ||
-      (mode === 'WRITE' &&
-        (yield* loadSourceCorrelatedParty(transaction, scope, {
-          partyRef: input.payload.partyRef,
-          sourceReference: reference,
-        })) === undefined))
-  ) {
-    return yield* denied('client_source_exact_party_correlation_required');
-  }
+  yield* requireLifecyclePartyCorrelation(transaction, scope, input, reference, mode);
   const request = yield* Schema.encodeEffect(PartySourceLifecycleInputSchema)(input).pipe(Effect.mapError(unavailable));
   const sourceOccurrenceHash = fingerprintPartySourceEffect({
     domain: 'PARTY_SOURCE_LIFECYCLE',
