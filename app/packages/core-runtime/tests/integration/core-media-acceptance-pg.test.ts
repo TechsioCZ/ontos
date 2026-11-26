@@ -20,6 +20,7 @@ import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
 import { WorkloadKeySchema } from '../../src/authorization/access-declaration.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { assetCurrentRead } from '../../src/generated-reads/asset-current.ts';
@@ -488,8 +489,8 @@ const insertLink = (world: World, mediaAssetId: string, targetResourceId: string
  * Acceptance proofs on real PostgreSQL through the real Action and Read runtimes (the in-memory provider
  * double stands in for storage and is never storage proof). Each test names the matrix rows it lifts. What they
  * prove is Core's own behavior: the recorded type is a claim and never a check, a system file needs no original
- * name, and neither an upload, a rename, nor the removal of a business reference touches another asset, another
- * reference or the bytes.
+ * name, and neither an upload nor a rename touches another asset or a business reference. Core writes no media
+ * link: the links here are fixture rows, and removing one is its owner's behavior, which nothing here proves.
  */
 
 /** A value as the text a consumer could see, so a test can search it for something that must not be there. */
@@ -631,57 +632,45 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
     }).pipe(Effect.scoped),
   );
 
-  // L1429-D8, L1429-F9, L1429-H9, L1434-BDD-18, L1442-BDD-26 (Core side: the asset, its bytes and the other reference)
-  suite.effect('keeps the asset, its bytes and the other reference when one business reference is removed', () =>
-    Effect.gen(function* detach() {
+  // L1429-D8, L1429-F9, L1429-H9: the schema half only. Core has no detach, so removing a business reference and
+  // what its owner keeps afterwards is not proven here.
+  suite.effect('refuses to delete an asset while any media link, live or soft-deleted, still points at it', () =>
+    Effect.gen(function* referenced() {
       const harness = yield* openHarness();
       const world = yield* makeWorld(harness.admin, harness.database.executor);
-      const bytes = bytesOf('shared by two products');
-      const shared = yield* uploadFlow(harness, world, world.human, bytes, { key: 'detach' });
+      const shared = yield* uploadFlow(harness, world, world.human, bytesOf('shared by two products'), {
+        key: 'referenced',
+      });
       yield* insertLink(world, shared.mediaAssetId, 'product-1');
       yield* insertLink(world, shared.mediaAssetId, 'product-2');
-      const key = deriveMediaStorageKey({ mediaAssetId: shared.mediaAssetId, tenantId: world.tenantId });
-      const rowBefore = yield* harness.rowOf(world.tenantId, shared.mediaAssetId);
-      const callsBefore = (yield* harness.storage.calls).length;
-
-      // While it is referenced the database itself refuses to remove the asset.
-      const refused = yield* Effect.exit(
-        harness.admin.unsafe(`delete from core.media_assets where tenant_id = $1 and media_asset_id = $2`, [
-          world.tenantId,
-          shared.mediaAssetId,
-        ]),
+      const deleteAsset = harness.admin.unsafe(
+        `delete from core.media_assets where tenant_id = $1 and media_asset_id = $2`,
+        [world.tenantId, shared.mediaAssetId],
       );
-      expect(Exit.isFailure(refused)).toBe(true);
-
-      // The owner of the reference removes one of them, softly and then for good.
-      yield* harness.admin.unsafe(
-        `update core.media_links set deleted_at = now() where tenant_id = $1 and target_resource_id = 'product-1'`,
-        [world.tenantId],
+      /** The constraint that refused the delete; a delete that succeeds fails the test here. */
+      const refusedBy = deleteAsset.pipe(
+        Effect.flip,
+        Effect.map((failure) => Option.getOrUndefined(findPostgresFailure(failure))?.constraint),
       );
-      expect(yield* harness.rowOf(world.tenantId, shared.mediaAssetId)).toEqual(rowBefore);
-      const afterSoft = yield* harness.linksOf(world.tenantId);
-      expect(afterSoft.map((link) => [link.target_resource_id, link.deleted_at === null])).toEqual([
-        ['product-1', false],
-        ['product-2', true],
-      ]);
+
+      expect(yield* refusedBy).toBe('core_media_links_tenant_asset_fk');
+      // One reference gone: the other one still holds the asset.
       yield* harness.admin.unsafe(
         `delete from core.media_links where tenant_id = $1 and target_resource_id = 'product-1'`,
         [world.tenantId],
       );
-      expect((yield* harness.linksOf(world.tenantId)).map((link) => link.target_resource_id)).toEqual(['product-2']);
+      expect(yield* refusedBy).toBe('core_media_links_tenant_asset_fk');
+      // A soft-deleted link is still a row that points at the asset.
+      yield* harness.admin.unsafe(`update core.media_links set deleted_at = now() where tenant_id = $1`, [
+        world.tenantId,
+      ]);
+      expect(yield* refusedBy).toBe('core_media_links_tenant_asset_fk');
+      expect(yield* harness.rowOf(world.tenantId, shared.mediaAssetId)).toBeDefined();
 
-      // The asset is still ready and verified, the bytes are still stored, and nothing asked the provider to delete.
-      expect(yield* harness.rowOf(world.tenantId, shared.mediaAssetId)).toEqual(rowBefore);
-      const metadata = yield* harness.metadataOf(world, shared.mediaAssetId);
-      expect(metadata).toMatchObject({
-        contentSha256: digestOf(bytes),
-        contentVerified: true,
-        processingStatus: 'ready',
-      });
-      expect(Option.getOrUndefined(yield* harness.storage.peek(key))).toEqual(bytes);
-      const callsAfter = yield* harness.storage.calls;
-      expect(callsAfter.length).toBe(callsBefore);
-      expect(callsAfter.every(({ operation }) => ['get', 'put', 'stat'].includes(operation))).toBe(true);
+      // The control: with no link row left the very same statement removes it, so the links were what refused.
+      yield* harness.admin.unsafe(`delete from core.media_links where tenant_id = $1`, [world.tenantId]);
+      yield* deleteAsset;
+      expect(yield* harness.rowOf(world.tenantId, shared.mediaAssetId)).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 
