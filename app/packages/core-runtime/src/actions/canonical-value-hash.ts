@@ -70,7 +70,7 @@ const normalizeObjectForHash = <Value extends object>(
       reason: 'Action payloads must not contain cyclic values',
     });
   }
-  const prototype = Reflect.getPrototypeOf(value);
+  const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     throw new CanonicalValueError({
       reason: 'Action payloads must contain only canonical data values',

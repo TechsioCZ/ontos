@@ -297,7 +297,7 @@ const contextOwnerPath = 'packages/codec-fixture';
 const contextCodecFile = 'packages/codec-fixture/src/codec.ts';
 const contextPackageFile = 'packages/codec-fixture/package.json';
 const contextPackage = JSON.stringify({ exports: { '.': './src/codec.ts' }, name: '@app/codec-fixture' });
-const coreRepository = 'packages/core-runtime/src/actions/repository.ts';
+const coreHashModule = 'packages/core-runtime/src/actions/canonical-value-hash.ts';
 for (const [name, before, after] of [
   [
     'ambient canonicalizer',
@@ -355,9 +355,9 @@ for (const [name, before, after] of [
 ] as const) {
   it(`rejects ${name} inside the actual Core hash closure`, () => {
     const snapshot = new Map(sources);
-    const source = snapshot.get(coreRepository) ?? '';
+    const source = snapshot.get(coreHashModule) ?? '';
     expect(source.includes(before)).toBe(true);
-    snapshot.set(coreRepository, source.replace(before, after));
+    snapshot.set(coreHashModule, source.replace(before, after));
     expect(contextualProof(commerceFile, 'fingerprintOrganizationProfileSourceCreateTemplate', snapshot)).toBe(false);
   });
 }
@@ -751,9 +751,9 @@ for (const [name, before, after] of [
   ],
 ] as const) {
   it(`rejects ${name} in the actual Core Action hash used by a public metadata codec`, () => {
-    const source = sources.get(coreRepository) ?? '';
+    const source = sources.get(coreHashModule) ?? '';
     expect(source.includes(before)).toBe(true);
-    const snapshot = new Map([...sources, [coreRepository, source.replace(before, after)]]);
+    const snapshot = new Map([...sources, [coreHashModule, source.replace(before, after)]]);
     expect(contextualProof(pricingIdentityFile, 'prepareDefinePriceOriginalRequestIdentity', snapshot)).toBe(false);
   });
 }
@@ -769,7 +769,7 @@ it('treats only erased closed primitive projections as metadata, never Scope lif
 });
 
 it('checks local startup on every actual Core hash publication module before trusting its body', () => {
-  for (const file of [coreRepository, 'packages/core-runtime/src/access/enforcement/index.ts']) {
+  for (const file of [coreHashModule]) {
     for (const initializer of [
       'const ambient=process.env.VALUE;',
       'const sideEffect=fetch("https://example.invalid");',
@@ -783,10 +783,9 @@ it('checks local startup on every actual Core hash publication module before tru
   }
 });
 
-const coreSchemaFile = 'packages/core-runtime/src/db/schema.ts';
 it('rejects eager imported getters through direct, aliased and destructured startup reads', () => {
   const probe = 'packages/core-runtime/src/actions/initializer-probe.ts';
-  const source = sources.get(coreRepository) ?? '';
+  const source = sources.get(coreHashModule) ?? '';
   for (const read of ['imported.current', 'alias.current', 'destructure']) {
     const declaration =
       read === 'destructure'
@@ -795,25 +794,25 @@ it('rejects eager imported getters through direct, aliased and destructured star
     const snapshot = new Map([
       ...sources,
       [probe, 'export const imported={get current(){return fetch("https://example.invalid");}};'],
-      [coreRepository, `${source}\nimport {imported} from './initializer-probe.ts';${declaration}`],
+      [coreHashModule, `${source}\nimport {imported} from './initializer-probe.ts';${declaration}`],
     ]);
     expect(contextualProof(commerceFile, 'fingerprintOrganizationProfileSourceCreateTemplate', snapshot)).toBe(false);
   }
   const snapshot = new Map([
     ...sources,
-    [coreRepository, `${source}\nimport {env} from 'node:process';const boot=env.CODEC_KEY;`],
+    [coreHashModule, `${source}\nimport {env} from 'node:process';const boot=env.CODEC_KEY;`],
   ]);
   expect(contextualProof(commerceFile, 'fingerprintOrganizationProfileSourceCreateTemplate', snapshot)).toBe(false);
 });
 
 it('admits genuine own literal startup metadata without promoting an opaque column to codec data', () => {
   const probe = 'packages/core-runtime/src/actions/initializer-probe.ts';
-  const source = sources.get(coreRepository) ?? '';
+  const source = sources.get(coreHashModule) ?? '';
   const snapshot = new Map([
     ...sources,
     [probe, "export const imported={current:'v1'};"],
     [
-      coreRepository,
+      coreHashModule,
       `${source}\nimport {imported} from './initializer-probe.ts';const alias=imported;const boot=alias.current;const {current:other}=imported;`,
     ],
   ]);
@@ -824,116 +823,6 @@ it('admits genuine own literal startup metadata without promoting an opaque colu
   snapshot.set(file, codec);
   expect(contextualProof(file, 'codec', snapshot)).toBe(false);
 });
-
-for (const [name, mutate] of [
-  [
-    'foreign schema factory',
-    (source: string) => source.replace("from 'drizzle-orm/pg-core'", "from './foreign-pg-core.ts'"),
-  ],
-  [
-    'foreign column builder',
-    (source: string) =>
-      `${source.replace('  uuid,', '  uuid as genuineUuid,')}\nimport {uuid} from './foreign-column.ts';`,
-  ],
-  ['foreign wrapper', (source: string) => source.replace('=> table.enableRLS();', '=> foreign(table);')],
-  [
-    'column accessor',
-    (source: string) =>
-      source.replace(
-        "completedAt: timestamp('completed_at', { withTimezone: true }),",
-        "get completedAt(){return fetch('remote');},",
-      ),
-  ],
-  [
-    'table mutation',
-    (source: string) =>
-      `${source}\nObject.defineProperty(actionInvocations,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'destructured table alias mutation',
-    (source: string) =>
-      `${source}\nconst {table:captured}={table:actionInvocations};Object.defineProperty(captured,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'class stored table mutation',
-    (source: string) =>
-      `${source}\nclass Hold{static value=actionInvocations;}Object.defineProperty(Hold.value,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'concise returned table escape',
-    (source: string) =>
-      `${source}\nconst leak=()=>actionInvocations;Object.defineProperty(leak(),'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'conditional table escape',
-    (source: string) =>
-      `${source}\nconst escaped=true?actionInvocations:actionInvocations;Object.defineProperty(escaped,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'logical table escape',
-    (source: string) =>
-      `${source}\nconst escaped=true&&actionInvocations;Object.defineProperty(escaped,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'sequence table escape',
-    (source: string) =>
-      `${source}\nconst escaped=(0,actionInvocations);Object.defineProperty(escaped,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  ['yielded table escape', (source: string) => `${source}\nfunction* leak(){yield actionInvocations;}`],
-  [
-    'parameter default table escape',
-    (source: string) =>
-      `${source}\nconst leak=(value=actionInvocations)=>value;Object.defineProperty(leak(),'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'container member class escape',
-    (source: string) =>
-      `${source}\nconst box={raw:actionInvocations};class Hold{static value=box.raw;}Object.defineProperty(Hold.value,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'container member return escape',
-    (source: string) =>
-      `${source}\nconst box={raw:actionInvocations};const leak=()=>box.raw;Object.defineProperty(leak(),'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  [
-    'schema instance parameter escape',
-    (source: string) =>
-      source.replace(
-        'export const actionInvocations = enableCoreGovernedRls(',
-        'const leak=(value=coreSchema)=>value;leak().table=foreign;\nexport const actionInvocations = enableCoreGovernedRls(',
-      ),
-  ],
-  [
-    'returned column table escape',
-    (source: string) =>
-      `${source}\nfunction leak(){return actionInvocations.requestHash;}Object.defineProperty(leak().table,'requestHash',{get(){return fetch('remote');}});`,
-  ],
-  ['returned table escape', (source: string) => `${source}\nfunction leak(){return actionInvocations;}`],
-  ['constructed table escape', (source: string) => `${source}\nconst leak=new Foreign(actionInvocations);`],
-  [
-    'schema factory cohort mutation',
-    (source: string) =>
-      `import {pgSchema as alternateSchema} from 'drizzle-orm/pg-core';function mutate(){alternateSchema.fake=foreign;}\n${source}`,
-  ],
-  [
-    'column factory cohort mutation',
-    (source: string) =>
-      `import {uuid as alternateUuid} from 'drizzle-orm/pg-core';function mutate(){alternateUuid.fake=foreign;}\n${source}`,
-  ],
-] as const) {
-  it(`rejects ${name} in initialization-only native column provenance`, () => {
-    const source = sources.get(coreSchemaFile) ?? '';
-    const altered = mutate(source);
-    expect(altered).not.toBe(source);
-    const snapshot = new Map([
-      ...sources,
-      [coreSchemaFile, altered],
-      ['packages/core-runtime/src/db/foreign-pg-core.ts', 'export const pgSchema=()=>({table:()=>({})});'],
-      ['packages/core-runtime/src/db/foreign-column.ts', 'export const uuid=()=>({});'],
-    ]);
-    expect(contextualProof(commerceFile, 'fingerprintOrganizationProfileSourceCreateTemplate', snapshot)).toBe(false);
-  });
-}
 
 const objectMethods = ['create', 'setPrototypeOf'];
 const objectEvidence = (source: string, methods = objectMethods): boolean => {

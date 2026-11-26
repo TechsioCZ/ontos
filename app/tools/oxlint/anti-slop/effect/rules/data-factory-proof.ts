@@ -1710,7 +1710,7 @@ class DataFactoryProof {
         result = native('crypto:createHash');
       else if (NOBLE_DATA_FUNCTIONS.has(`${imported.source}:${imported.imported}`))
         result = native(`noble:${imported.imported}`);
-      else if (this.publicCodecs && imported.source === '@app/core-runtime/access/enforcement' &&
+      else if (this.publicCodecs && imported.source === '@app/core-runtime/actions/canonical-value-hash' &&
         ['computeCanonicalValueHash', 'computeActionRequestHash'].includes(imported.imported) && this.genuineCoreHash(model, imported.source, imported.imported))
         result = { kind: 'function', apply: (args) => {
           if (args.length !== 1 || !(imported.imported === 'computeActionRequestHash' ? isData(args[0]) : isClosedData(args[0]))) return BAD;
