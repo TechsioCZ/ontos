@@ -1,4 +1,4 @@
-import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
+import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';
 import { PricingCommitmentConfirmationVerifiedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { OrderServiceApprovalEvidenceRequestSchema } from '@app/commerce-customer-context/api/order-service-approval-evidence';

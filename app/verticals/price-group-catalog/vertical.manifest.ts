@@ -11,7 +11,7 @@ import { CreatePriceGroupDefinitionRevisionActionApi } from './shared/apis/creat
 import { PriceGroupCatalogHeadApi } from './shared/apis/price-group-catalog-head.ts';
 import { priceGroupCatalogHeadRead } from './src/api/price-group-catalog-head.read.ts';
 import { priceGroupCatalogRootResourceDescriptor } from './shared/resources/price-group-catalog-root.ts';
-import { PriceGroupDefinitionApi } from './shared/apis/price-group-definition.ts';
+import { PriceGroupDefinitionApi } from '@app/price-group-catalog-contracts/price-group-definition';
 import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { priceGroupResourceDescriptor } from './shared/resources/price-group.ts';
 import { PriceGroupResultLookupApi } from './shared/apis/price-group-result-lookup.ts';
@@ -19,7 +19,7 @@ import { priceGroupResultLookupRead } from './src/api/price-group-result-lookup.
 import { PriceGroupSourceAssociationsApi } from './shared/apis/price-group-source-associations.ts';
 import { priceGroupSourceAssociationsRead } from './src/api/price-group-source-associations.read.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
-import { ValidatePriceGroupCompatibilityApi } from './shared/apis/validate-price-group-compatibility.ts';
+import { ValidatePriceGroupCompatibilityApi } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-manifest-imports>
 import { priceGroupCatalogMcpContribution } from './shared/mcp/contribution.ts';

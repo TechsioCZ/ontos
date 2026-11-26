@@ -96,7 +96,7 @@ import type {
   RetailPrincipalResolutionRequest,
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
-import type { MarketSubjectRestrictionsCurrentRequest } from '../../shared/apis/market-subject-restrictions-current.ts';
+import type { MarketSubjectRestrictionsCurrentRequest } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import {
   CommerceCustomerProfileSubjectSchema,
   ReconciliationOwnerSchema,

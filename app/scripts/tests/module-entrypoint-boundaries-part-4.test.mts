@@ -9,7 +9,6 @@ import {
   hasValidGovernedHttpCompositionRoot,
   hasOwnerLocalReadServiceFactory,
   hasNativeHttpActionMount,
-  hasPublishedGeneratedContractShim,
 } from '../generated-governed-http-boundary.mts';
 import {
   hasGeneratedGovernedClientContract,
@@ -80,6 +79,7 @@ import {
   assertPublishedPartyUsage,
   partyOutboxSource,
   readPricingSourceTree,
+  readWorkspaceManifests,
   RESOLVED_OWNER_CONSUMER,
   RENAMED_CONTRACTS_PACKAGE,
   makeResolvedOwnerFixture,
@@ -490,7 +490,7 @@ exampleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive), 
   }
 });
 
-it.live('accepts actual CCC named recovery reexports and rejects provenance or executable escapes', () =>
+it.live('publishes the CCC recovery read from its package and rejects every owner forwarder that once named it', () =>
   Effect.gen(function* actualNamedCustomerContextRecovery() {
     const root = path.resolve(import.meta.dirname, '../..');
     const owner = CUSTOMER_CONTEXT_VERTICAL_PATH;
@@ -525,20 +525,18 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         ),
       ),
     ]);
-    const sources = new Map([...trees.flat(), ...metadata]);
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...trees.flat(), ...metadata]);
     const shared = `${owner}/shared/api.ts`;
     const contractFile = `${owner}/shared/apis/market-retirement-reservation-recovery.ts`;
     const clientFile = `${owner}/src/api/market-retirement-reservation-recovery-client.ts`;
     const contractSpecifier = '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
-    const contract = sources.get(contractFile) ?? '';
-    const client = sources.get(clientFile) ?? '';
-    for (const shim of [contract, client]) {
-      expect(shim).toContain('export {');
-      expect(shim).toContain('export type {');
-    }
-    expect(hasPublishedGeneratedContractShim(sources, contractFile, contract)).toBe(true);
-    const inlineType = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\nexport { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
-    expect(hasPublishedGeneratedContractShim(sources, contractFile, inlineType)).toBe(true);
+    // The named forwarders the owner kept before the read was published from its package alone.
+    const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
+    const contract = `${marker}export { MarketRetirementReservationRecoveryApi, MarketRetirementReservationRecoveryRequestSchema } from '${contractSpecifier}';\nexport type { MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
+    const client = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}/client\nexport { executeMarketRetirementReservationRecovery } from '${contractSpecifier}/client';\n`;
+    expect(sources.has(contractFile)).toBe(false);
+    expect(sources.has(clientFile)).toBe(false);
     const diagnostics: string[] = [];
     expect(hasCompleteGeneratedModuleApiSeam(sources, shared, deployment, diagnostics), diagnostics.join('\n')).toBe(
       true,
@@ -610,8 +608,10 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         CUSTOMER_CONTEXT_DEPLOYMENT_ID,
       ),
     ).toBe(false);
-    const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
     for (const invalid of [
+      contract,
+      `${MODULE_API_HEADER}export * from '${contractSpecifier}';\n`,
+      `${marker}export { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`,
       contract.replaceAll(`from '${contractSpecifier}'`, "from '@app/wrong-contracts/recovery'"),
       contract.replaceAll(`from '${contractSpecifier}'`, "from '../../src/private.ts'"),
       `${contract}\nexport type { Other } from '@app/wrong-contracts/recovery';`,
@@ -625,17 +625,20 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
       `${marker}export { Injected } from \`${contractSpecifier}\`;`,
       contract.replace(`// @ontos-public-contract ${contractSpecifier}\n`, ''),
     ]) {
-      expect(invalid).not.toBe(contract);
-      expect(hasPublishedGeneratedContractShim(sources, contractFile, invalid)).toBe(false);
+      for (const file of [contractFile, clientFile]) {
+        expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [file, invalid]]), shared, deployment)).toBe(
+          false,
+        );
+      }
     }
-    // Full owner integration for both source paths; the shared classifier above covers each grammar escape.
-    for (const [file, invalid] of [
-      [contractFile, `${contract}\nexecutePrivateOperation();`],
-      [clientFile, client.replaceAll(`from '${contractSpecifier}/client'`, "from '@app/wrong-contracts/recovery'")],
+    for (const invalid of [
+      client,
+      `${MODULE_API_HEADER}export * from '${contractSpecifier}/client';\n`,
+      client.replaceAll(`from '${contractSpecifier}/client'`, "from '@app/wrong-contracts/recovery'"),
     ]) {
-      expect(invalid).not.toBe(sources.get(file));
-      const changed = new Map([...sources, [file, invalid]]);
-      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, deployment)).toBe(false);
+      expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [clientFile, invalid]]), shared, deployment)).toBe(
+        false,
+      );
     }
   }),
 );
@@ -974,7 +977,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualTaxClientFixture();
       const clientFile = 'verticals/tax/src/api/tax-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/tax-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/tax/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

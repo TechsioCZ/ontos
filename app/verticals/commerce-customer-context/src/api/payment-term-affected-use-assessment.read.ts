@@ -14,12 +14,12 @@ import { Hex } from 'effect/encoding';
 import {
   PaymentTermAffectedUseAssessmentRequestSchema,
   PaymentTermAffectedUseAssessmentResponseSchema,
-} from '../../shared/apis/payment-term-affected-use-assessment.ts';
+} from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import type {
   PaymentTermAffectedUseAssessment,
   PaymentTermAffectedUseAssessmentRequest,
   PaymentTermAffectedUseAssessmentResponse,
-} from '../../shared/apis/payment-term-affected-use-assessment.ts';
+} from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
 
 export interface PaymentTermAffectedUseAssessmentServices {

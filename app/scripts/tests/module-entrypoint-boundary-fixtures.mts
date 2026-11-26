@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, Schema } from 'effect';
-import { expect } from 'effect-rstest';
+import { afterAll, expect } from 'effect-rstest';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import { hasGeneratedActionRegistrationBinding } from '../generated-governed-http-boundary.mts';
 import { assertPublishedCrossMicroVerticalContractUsage } from '../published-outbox-contracts.mts';
@@ -60,6 +60,36 @@ export const CATALOG_VERTICAL_PATH = 'verticals/catalog';
 
 export const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
 
+/**
+ * What a fixture copying Customer Context needs beside it: the contract packages the module reaches, and the owner
+ * modules those packages name (their package reads are judged against modules the topology knows).
+ */
+const CUSTOMER_CONTEXT_REACH = [
+  'packages/customer-market-retirement-contracts',
+  'packages/customer-payment-term-contracts',
+  'packages/payment-term-catalog-contracts',
+  // the Portal Auth issuance source Read is published through its own contracts package
+  'packages/portal-auth-contracts',
+  'packages/catalog-selection-contracts',
+  // customer-price-group-resolution calls the Catalog's operation reference from this package.
+  'packages/price-group-catalog-contracts',
+  'verticals/payment-term-catalog',
+  'verticals/price-group-catalog',
+  // Customer Context's contracts take Party Registry's contracts and resources, which the seam follows.
+  'packages/party-registry-contracts',
+  PARTY_VERTICAL_PATH,
+] as const;
+
+/** Customer Context's purchase currency resolution names Pricing's published currencies, held by this manifest alone. */
+const PRICING_CONTRACTS_PACKAGE_JSON_PATH = 'packages/pricing-contracts/package.json';
+
+const CUSTOMER_CONTEXT_REACH_OWNERS = [
+  { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+  { id: 'party-registry', path: PARTY_VERTICAL_PATH },
+  { id: 'payment-term-catalog', path: 'verticals/payment-term-catalog' },
+  { id: 'price-group-catalog', path: 'verticals/price-group-catalog' },
+] as const;
+
 export const PRICING_SHARED_API_PATH = 'verticals/pricing/shared/api.ts';
 
 export const PRICING_HANDLER_PATH = 'verticals/pricing/api/index.ts';
@@ -114,19 +144,324 @@ export const GOVERNED_SEARCH_HEADER =
 export const acceptsTypedGtinBinding = (source: string) =>
   hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
 
-export const checkModuleEntrypointBoundaries = (root: string) =>
-  checkModuleEntrypointBoundariesEffect(root).pipe(
-    Effect.provide(NodeServices.layer),
-    // Generated fixtures have no Git history. Keep their inventory identity
-    // explicit and independent of the host's Git integration.
-    Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ULTRAMODERN_SOURCE_REVISION: 'working-tree',
-        }),
-      ),
-    ),
+/** The workspace's library packages a fixture may hold some files of, beside their manifests, by package name. */
+const CORE_RUNTIME_PATH = 'packages/core-runtime';
+const LIBRARY_PACKAGES = new Map([
+  ['@app/core-runtime', CORE_RUNTIME_PATH],
+  ['@app/shared-contracts', SHARED_CONTRACTS_WORKSPACE_PATH],
+]);
+const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
+const BUILD_DIRECTORIES = new Set(['node_modules', 'dist', '.output', '.modern', 'coverage']);
+const LIBRARY_MANIFEST = 'package.json';
+const LIBRARY_COPY_PREFIX = 'ontos-libraries-';
+/** A JavaScript, TypeScript or JSON file: what a fixture's specifiers may name. */
+const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx|json)$/u;
+const LibraryExportSchema = Schema.Union([Schema.String, Schema.Struct({ default: Schema.String })]);
+const LibraryManifestSchema = Schema.Struct({ exports: Schema.Record(Schema.String, LibraryExportSchema) });
+const ProcessGoneSchema = Schema.Struct({ code: Schema.Literal('ESRCH') });
+
+const fileExists = async (file: string) => {
+  try {
+    await readFile(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Every static specifier a source names, by a plain scan: `from '…'`, `import '…'`, `import('…')`, `require('…')`. */
+const specifiersOf = (source: string): readonly string[] =>
+  [...source.matchAll(/(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](?<specifier>[^'"\n]+)['"]/gu)].flatMap((match) =>
+    match.groups?.specifier === undefined ? [] : [match.groups.specifier],
   );
+
+/** What TypeScript's `Bundler` resolution substitutes for a JavaScript extension, in its order (the specification's table). */
+const SUBSTITUTED_EXTENSIONS = new Map([
+  ['.cjs', ['.cts', '.d.cts', '.cjs']],
+  ['.js', ['.ts', '.tsx', '.d.ts', '.js', '.jsx']],
+  ['.jsx', ['.tsx', '.d.ts', '.jsx']],
+  ['.mjs', ['.mts', '.d.mts', '.mjs']],
+]);
+const IMPLIED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx'];
+
+/** What TypeScript's `Bundler` resolution tries for a path, in its order. */
+const bundlerCandidates = (base: string): readonly string[] => {
+  const extension = path.posix.extname(base);
+  const substituted = SUBSTITUTED_EXTENSIONS.get(extension);
+  if (substituted !== undefined) {
+    return substituted.map((replacement) => `${base.slice(0, -extension.length)}${replacement}`);
+  }
+  return [
+    base,
+    ...IMPLIED_EXTENSIONS.map((implied) => `${base}${implied}`),
+    ...IMPLIED_EXTENSIONS.map((implied) => `${base}/index${implied}`),
+  ];
+};
+
+/** The library packages as the workspace holds them: their source files, read once, and what their manifests export. */
+interface Libraries {
+  readonly copy: string;
+  readonly exports: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  readonly sources: ReadonlyMap<string, string>;
+}
+
+/**
+ * Where a specifier of `importer` names a library file or a file `exists` holds, a path and what a library's
+ * `exports` publishes alike under the `Bundler` candidates; nothing for any other module.
+ */
+const resolvedIn =
+  (libraries: Libraries, exists: (file: string) => boolean) =>
+  (importer: string, specifier: string): string | undefined => {
+    const [scope, name, ...rest] = specifier.split('/');
+    const directory = LIBRARY_PACKAGES.get(`${scope}/${name}`);
+    const published =
+      directory === undefined
+        ? undefined
+        : libraries.exports.get(directory)?.get(rest.length === 0 ? '.' : `./${rest.join('/')}`);
+    let target: string | undefined;
+    if (specifier.startsWith('.')) {
+      target = path.posix.join(path.posix.dirname(importer), specifier);
+    } else if (directory !== undefined && published !== undefined) {
+      target = path.posix.join(directory, published);
+    }
+    return target === undefined
+      ? undefined
+      : bundlerCandidates(target).find((candidate) => libraries.sources.has(candidate) || exists(candidate));
+  };
+
+/** Every source file of a workspace directory, read, and copied read-only into `copy`. */
+const copyReadOnly = (copy: string, directory: string): Effect.Effect<readonly (readonly [string, string])[]> =>
+  Effect.gen(function* copyReadOnlyDirectory() {
+    const entries = yield* Effect.promise(
+      async () => await readdir(path.join(WORKSPACE_ROOT, directory), { withFileTypes: true }),
+    );
+    yield* Effect.promise(async () => await mkdir(path.join(copy, directory), { recursive: true }));
+    const copied = yield* Effect.forEach(
+      entries,
+      (entry): Effect.Effect<readonly (readonly [string, string])[]> => {
+        const file = `${directory}/${entry.name}`;
+        if (entry.isDirectory() && !BUILD_DIRECTORIES.has(entry.name)) {
+          return copyReadOnly(copy, file);
+        }
+        return entry.isFile() && SOURCE_FILE.test(entry.name)
+          ? Effect.promise(async () => {
+              const source = await readFile(path.join(WORKSPACE_ROOT, file), 'utf-8');
+              await writeFile(path.join(copy, file), source, { mode: 0o444 });
+              return [[file, source] as const];
+            })
+          : Effect.succeed([]);
+      },
+      { concurrency: 'unbounded' },
+    );
+    return copied.flat();
+  });
+
+/** Whether the process that made a copy is gone, so the copy is a crashed run's. */
+const isStaleCopy = (name: string): boolean => {
+  const pid = Number(name.slice(LIBRARY_COPY_PREFIX.length).split('-')[0]);
+  if (!Number.isInteger(pid) || pid === process.pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return Schema.is(ProcessGoneSchema)(error);
+  }
+};
+
+/**
+ * One read-only copy of the library packages per test file, made when a fixture first holds files of one and removed
+ * after the file's tests; a copy a crashed run left is removed when the next copy is made. Fixtures link to it, never
+ * to the workspace's own packages.
+ */
+const libraryCopies = new Map<'libraries', Libraries>();
+afterAll(async () => {
+  await Promise.all(
+    [...libraryCopies.values()].map(async ({ copy }) => await rm(copy, { force: true, recursive: true })),
+  );
+});
+const sharedLibraries = Effect.gen(function* copyLibraries() {
+  const known = libraryCopies.get('libraries');
+  if (known !== undefined) {
+    return known;
+  }
+  const stale = (yield* Effect.promise(async () => await readdir(os.tmpdir()))).filter(
+    (name) => name.startsWith(LIBRARY_COPY_PREFIX) && isStaleCopy(name),
+  );
+  yield* Effect.promise(
+    async () =>
+      await Promise.all(
+        stale.map(async (name) => await rm(path.join(os.tmpdir(), name), { force: true, recursive: true })),
+      ),
+  );
+  const copy = yield* Effect.promise(
+    async () => await mkdtemp(path.join(os.tmpdir(), `${LIBRARY_COPY_PREFIX}${process.pid}-`)),
+  );
+  const sources = new Map(
+    (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) => copyReadOnly(copy, directory))).flat(),
+  );
+  const exports = new Map(
+    [...LIBRARY_PACKAGES.values()].map((directory) => {
+      const manifest = Schema.decodeUnknownSync(Schema.fromJsonString(LibraryManifestSchema))(
+        sources.get(`${directory}/${LIBRARY_MANIFEST}`) ?? '{"exports":{}}',
+      );
+      return [
+        directory,
+        new Map(
+          Object.entries(manifest.exports).map(([subpath, published]) => [
+            subpath,
+            Schema.is(Schema.String)(published) ? published : published.default,
+          ]),
+        ),
+      ] as const;
+    }),
+  );
+  const libraries: Libraries = { copy, exports, sources };
+  libraryCopies.set('libraries', libraries);
+  return libraries;
+});
+
+/** The files a fixture holds under a directory, by their paths from the fixture's root. */
+const fixtureFiles = (root: string, directory: string): Effect.Effect<readonly string[]> =>
+  Effect.gen(function* listFixtureFiles() {
+    const entries = yield* Effect.promise(async () => {
+      try {
+        return await readdir(path.join(root, directory), { withFileTypes: true });
+      } catch {
+        return [];
+      }
+    });
+    const files = yield* Effect.forEach(
+      entries,
+      (entry) =>
+        entry.isDirectory()
+          ? fixtureFiles(root, `${directory}/${entry.name}`)
+          : Effect.succeed([`${directory}/${entry.name}`]),
+      { concurrency: 'unbounded' },
+    );
+    return files.flat();
+  });
+
+/** A fixture file's source, empty when the fixture has no such file. */
+const fixtureSource = (root: string, file: string) =>
+  Effect.promise(async () => {
+    try {
+      return await readFile(path.join(root, file), 'utf-8');
+    } catch {
+      return '';
+    }
+  });
+
+/**
+ * The library files the fixture's own sources name, every source file of it outside the library packages (owner files,
+ * contract package files, the Shell's), by a plain scan of their specifiers: what any check may read of a library.
+ */
+const fixtureNamedLibraryFiles = (root: string, libraries: Libraries) =>
+  Effect.gen(function* namedByFixture() {
+    const libraryDirectories = [...LIBRARY_PACKAGES.values()].map((directory) => `${directory}/`);
+    const sources = (yield* Effect.forEach(['apps', 'verticals', 'packages'], (top) => fixtureFiles(root, top)))
+      .flat()
+      .filter((file) => SOURCE_FILE.test(file) && !libraryDirectories.some((directory) => file.startsWith(directory)));
+    const resolve = resolvedIn(libraries, () => false);
+    const named = new Set<string>();
+    for (const file of sources) {
+      for (const specifier of specifiersOf(yield* fixtureSource(root, file))) {
+        const target = resolve(file, specifier);
+        if (target !== undefined && libraries.sources.has(target)) {
+          named.add(target);
+        }
+      }
+    }
+    return named;
+  });
+
+/**
+ * The library files a fixture holds: those it wrote, and, of each library it holds files of, the files its own sources
+ * name, with every library file those reach, so every file a held library's specifier names exists. A fixture that
+ * holds a library by its manifest alone holds none of its files.
+ */
+const heldLibraryFiles = (root: string, libraries: Libraries, named: ReadonlySet<string>) =>
+  Effect.gen(function* libraryClosure() {
+    const written = new Map(
+      (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) => fixtureFiles(root, directory)))
+        .flat()
+        .filter((file) => path.posix.basename(file) !== LIBRARY_MANIFEST)
+        .map((file) => [file, file] as const),
+    );
+    const writtenSources = new Map(
+      yield* Effect.forEach([...written.keys()], (file) =>
+        fixtureSource(root, file).pipe(Effect.map((source) => [file, source] as const)),
+      ),
+    );
+    const resolve = resolvedIn(libraries, (file) => writtenSources.has(file));
+    const libraryOf = (file: string) =>
+      [...LIBRARY_PACKAGES.values()].find((directory) => file.startsWith(`${directory}/`));
+    const held = new Set<string>();
+    const pending = [...written.keys()];
+    const heldLibraries = new Set<string>();
+    while (pending.length > 0) {
+      for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+        if (!held.has(file)) {
+          held.add(file);
+          heldLibraries.add(libraryOf(file) ?? '');
+          for (const specifier of specifiersOf(writtenSources.get(file) ?? libraries.sources.get(file) ?? '')) {
+            const target = resolve(file, specifier);
+            if (target !== undefined && (libraries.sources.has(target) || writtenSources.has(target))) {
+              pending.push(target);
+            }
+          }
+        }
+      }
+      // A library the closure enters is held: the files the fixture's sources name of it are held too.
+      pending.push(...[...named].filter((file) => !held.has(file) && heldLibraries.has(libraryOf(file) ?? '')));
+    }
+    return [...held].filter((file) => !writtenSources.has(file));
+  });
+
+/**
+ * The library files a fixture holds beside the ones it wrote (`heldLibraryFiles`), linked from the shared read-only
+ * copy; `write` gives a fixture its own file before it edits a linked one.
+ */
+const holdLibraryFiles = (root: string) =>
+  Effect.gen(function* holdLibraries() {
+    const holdsAny = (yield* Effect.forEach([...LIBRARY_PACKAGES.values()], (directory) =>
+      fixtureFiles(root, directory),
+    ))
+      .flat()
+      .some((file) => path.posix.basename(file) !== LIBRARY_MANIFEST);
+    if (holdsAny) {
+      const libraries = yield* sharedLibraries;
+      const linked = yield* heldLibraryFiles(root, libraries, yield* fixtureNamedLibraryFiles(root, libraries));
+      yield* Effect.forEach(
+        linked,
+        (file) =>
+          Effect.promise(async () => {
+            if (!(await fileExists(path.join(root, file)))) {
+              await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+              await link(path.join(libraries.copy, file), path.join(root, file));
+            }
+          }),
+        { concurrency: 'unbounded', discard: true },
+      );
+    }
+  });
+
+export const checkModuleEntrypointBoundaries = (root: string) =>
+  holdLibraryFiles(root)
+    .pipe(Effect.andThen(checkModuleEntrypointBoundariesEffect(root)))
+    .pipe(
+      Effect.provide(NodeServices.layer),
+      // Generated fixtures have no Git history. Keep their inventory identity
+      // explicit and independent of the host's Git integration.
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            ULTRAMODERN_SOURCE_REVISION: 'working-tree',
+          }),
+        ),
+      ),
+    );
 
 export const ARCHIVE_ORGANIZATION_DECLARATION = 'export const archiveOrganizationEngagementAction';
 
@@ -252,6 +587,8 @@ export const write = (root: string, file: string, source: string) =>
   Effect.gen(function* testEffect1() {
     const target = path.join(root, file);
     yield* Effect.tryPromise(async () => await mkdir(path.dirname(target), { recursive: true }));
+    // A file linked from the shared library copy is replaced, never written through.
+    yield* Effect.tryPromise(async () => await rm(target, { force: true }));
     yield* Effect.tryPromise(async () => await writeFile(target, source, 'utf-8'));
   });
 
@@ -400,11 +737,70 @@ export const assertRejectedSources = Effect.fn(function* rejectGovernedSources(
   }
 });
 
+/**
+ * The manifest of every package of the workspace under `folders`: a module (`verticals`), a contract or a library
+ * package. Held without its files, a package is named, never read: an `@app/…` specifier of a copied module resolves
+ * through its `exports`, so a tree copied from a few folders still names the workspace's packages.
+ */
+export const readWorkspaceManifests = (root: string, folders: readonly string[]) =>
+  Effect.promise(async () => {
+    const listed = await Promise.all(
+      folders.map(async (folder) => {
+        const entries = await readdir(path.join(root, folder), { withFileTypes: true });
+        return entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}/package.json`);
+      }),
+    );
+    const manifests = await Promise.all(
+      listed
+        .flat()
+        .map(async (file) => [file, await readFile(path.join(root, file), 'utf-8').catch(() => '')] as const),
+    );
+    return manifests.filter(([, source]) => source !== '');
+  });
+
+/**
+ * The manifest of every module of the workspace but `copied`: an `@app/…` specifier of a copied module names them,
+ * and resolves through their `exports`.
+ */
+const writeNamedModuleManifests = Effect.fn(function* writeNamedModuleManifests(
+  root: string,
+  copied: readonly string[],
+) {
+  const held = new Set(copied.map((folder) => `${folder}/package.json`));
+  for (const [file, source] of yield* readWorkspaceManifests(path.resolve(import.meta.dirname, '../..'), [
+    'verticals',
+  ])) {
+    if (!held.has(file)) {
+      yield* write(root, file, source);
+    }
+  }
+});
+
+/** Each copied package linked as the workspace links it, under its folder's name, unless the fixture linked it already. */
+const linkWorkspacePackages = Effect.fn(function* linkWorkspacePackages(root: string, folders: readonly string[]) {
+  const links = path.join(root, APP_PACKAGE_LINK_DIRECTORY);
+  yield* Effect.promise(async () => await mkdir(links, { recursive: true }));
+  const linked = new Set(yield* Effect.promise(async () => await readdir(links)));
+  for (const folder of folders) {
+    if (!linked.has(path.basename(folder))) {
+      yield* Effect.promise(
+        async () => await symlink(path.join(root, folder), path.join(links, path.basename(folder)), 'dir'),
+      );
+    }
+  }
+});
+
 export const makeFixture = Effect.fn(function* mergedScenario1(includeParty = false) {
   const root = yield* Effect.acquireRelease(
     Effect.promise(async () => await mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
     (directory) => Effect.promise(async () => await rm(directory, { force: true, recursive: true })),
   );
+  // The workspace's library packages, which every module's `@app/…` specifiers resolve through; a contract package
+  // names an owner module the fixture's topology may not know.
+  const packages = yield* readWorkspaceManifests(path.resolve(import.meta.dirname, '../..'), ['packages']);
+  for (const [file, source] of packages.filter(([, manifest]) => !manifest.includes('"ontosContractOwner"'))) {
+    yield* write(root, file, source);
+  }
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -466,16 +862,12 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   );
   yield* write(root, ACTION_FILE, validAction);
   yield* write(root, WORKER_FILE, validWorker);
+  // The shell's gateway contract, as the workspace holds it.
   yield* write(
     root,
     GATEWAY_CONTRACT_FILE,
-    `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
-  .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context' };`,
+    yield* Effect.promise(async () => await readFile(path.join(WORKSPACE_ROOT, GATEWAY_CONTRACT_FILE), 'utf-8')),
   );
-  yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
 });
 
@@ -600,6 +992,11 @@ const handlersLive = Layer.mergeAll(
   // </generated-governed-http-handler-layers>
 );
 export default assembleEffectBffRuntime({ api, handlers: handlersLive });`,
+  );
+  yield* write(
+    root,
+    `${vertical}/shared/ultramodern-build.ts`,
+    "export const ultramodernDeliveryUnit = 'inventory-stock';\n",
   );
   yield* write(
     root,
@@ -1063,7 +1460,7 @@ export const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleF
   }
   yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, target] of [
-    ['core-runtime', 'packages/core-runtime'],
+    ['core-runtime', CORE_RUNTIME_PATH],
     [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
     [CUSTOMER_CONTEXT_DEPLOYMENT_ID, CUSTOMER_CONTEXT_VERTICAL_PATH],
   ] as const) {
@@ -1165,7 +1562,7 @@ const writeLinkedCoreSdk = Effect.fn(function* writeLinkedCoreSdk(root: string, 
   yield* Effect.promise(
     async () =>
       await symlink(
-        path.join(root, 'packages/core-runtime'),
+        path.join(root, CORE_RUNTIME_PATH),
         path.join(root, APP_PACKAGE_LINK_DIRECTORY, 'core-runtime'),
         'dir',
       ),
@@ -1193,6 +1590,8 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
       yield* write(root, file, source);
     }
   }
+  // The other modules Party Registry names (Privacy's client aggregate), by their manifests alone.
+  yield* writeNamedModuleManifests(root, [INVENTORY_VERTICAL_PATH, PARTY_VERTICAL_PATH]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
@@ -1261,19 +1660,31 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: MARKET_DEPLOYMENT_ID, path: owner },
+        { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
+        ...CUSTOMER_CONTEXT_REACH_OWNERS,
       ],
     }),
   );
-  // verify-market-eligibility-v1 calls Customer Context's operation reference from its contract package.
-  for (const folder of [owner, 'packages/customer-market-retirement-contracts']) {
+  // verify-market-eligibility-v1 calls Customer Context's operation reference from its contract package, whose package
+  // reads name Customer Context: the module and the contract packages and owners it reaches are copied with it.
+  for (const folder of [owner, CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]) {
     for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
       yield* write(root, file, source);
     }
   }
+  // The other modules the copied ones name (Party Registry names Privacy's client aggregate), by their manifests alone.
+  yield* writeNamedModuleManifests(root, [
+    INVENTORY_VERTICAL_PATH,
+    owner,
+    CUSTOMER_CONTEXT_VERTICAL_PATH,
+    ...CUSTOMER_CONTEXT_REACH,
+    ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: reached }) => reached),
+  ]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
+    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -1294,6 +1705,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       async () => await symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
+  yield* linkWorkspacePackages(root, [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]);
   yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
@@ -1310,16 +1722,22 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: 'privacy', path: PRIVACY_VERTICAL_PATH },
+        { id: PARTY_DEPLOYMENT_ID, path: PARTY_VERTICAL_PATH },
       ],
     }),
   );
-  const sources = [
-    ...(yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH)),
-    ...(yield* readPublishedContractPackages(workspace)),
-  ];
-  for (const [file, source] of sources) {
+  // Its read contracts take Party Registry's and its value kernel's, so they are copied with it. The Privacy owner inventory
+  // also calls Communications' published Owner Coverage and its shims re-export Privacy's own contracts package.
+  for (const [file, source] of yield* readPublishedContractPackages(workspace)) {
     yield* write(root, file, source);
   }
+  for (const folder of [PRIVACY_VERTICAL_PATH, PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]) {
+    for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
+      yield* write(root, file, source);
+    }
+  }
+  // The other modules they name, by their manifests alone.
+  yield* writeNamedModuleManifests(root, [INVENTORY_VERTICAL_PATH, PRIVACY_VERTICAL_PATH, PARTY_VERTICAL_PATH]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
@@ -1346,6 +1764,8 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
         'dir',
       ),
   );
+  yield* linkWorkspacePackages(root, [PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]);
+  yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
 
@@ -1401,7 +1821,8 @@ export const CATALOG_QUANTITY_CONTRACT = 'packages/catalog-selection-contracts/s
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
-  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment.
+  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment. The copied
+  // Payment Term and Price Group contract packages publish package reads, so their owner modules are copied too.
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -1410,30 +1831,41 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
-        { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+        ...CUSTOMER_CONTEXT_REACH_OWNERS,
       ],
     }),
   );
-  for (const folder of [
-    CUSTOMER_CONTEXT_VERTICAL_PATH,
-    'packages/customer-market-retirement-contracts',
-    'packages/customer-payment-term-contracts',
-    'packages/payment-term-catalog-contracts',
-    // the Portal Auth issuance source Read is published through its own contracts package
-    'packages/portal-auth-contracts',
-    'packages/catalog-selection-contracts',
-    // customer-price-group-resolution calls the Catalog's operation reference from this package.
-    'packages/price-group-catalog-contracts',
-  ]) {
+  for (const folder of [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]) {
     const sources = yield* readPricingSourceTree(workspace, folder);
     for (const [file, source] of sources) {
       yield* write(root, file, source);
     }
   }
-  // Public contracts export operation references built by the Core SDK's `moduleOperation`, and
-  // market-bootstrap-resolution calls the Market Catalog's published module-api contracts.
-  for (const file of [CORE_SDK_SOURCE_PATH, 'verticals/commerce-market-catalog/package.json']) {
-    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
+  // Public contracts export operation references built by the Core SDK's `moduleOperation`.
+  yield* write(
+    root,
+    CORE_SDK_SOURCE_PATH,
+    yield* Effect.promise(async () => await readFile(path.join(workspace, CORE_SDK_SOURCE_PATH), 'utf-8')),
+  );
+  // The other modules Customer Context names (market-bootstrap-resolution calls the Market Catalog's published
+  // module-api contracts, its contracts take Party Registry's resources), by their manifests alone. A module the
+  // topology names is the check's to judge whole, so only the others are held by their manifests.
+  yield* writeNamedModuleManifests(root, [
+    CUSTOMER_CONTEXT_VERTICAL_PATH,
+    ...CUSTOMER_CONTEXT_REACH,
+    ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: owner }) => owner),
+  ]);
+  yield* write(
+    root,
+    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
+    yield* Effect.promise(
+      async () => await readFile(path.join(workspace, PRICING_CONTRACTS_PACKAGE_JSON_PATH), 'utf-8'),
+    ),
+  );
+  // Each copied package is linked as the workspace links it, so the check resolves what Customer Context takes.
+  for (const [file, source] of yield* readPricingSourceTree(workspace, SHARED_CONTRACTS_WORKSPACE_PATH)) {
+    yield* write(root, file, source);
   }
+  yield* linkWorkspacePackages(root, [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]);
   return root;
 });

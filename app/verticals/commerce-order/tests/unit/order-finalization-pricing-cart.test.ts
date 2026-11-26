@@ -1,4 +1,4 @@
-import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
+import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { NodeCrypto } from '@effect/platform-node';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';

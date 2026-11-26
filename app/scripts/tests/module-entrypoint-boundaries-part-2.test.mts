@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionHttpRunnerBinding,
-  hasPublishedGeneratedContractShim,
+  hasPublishedGeneratedActionContractShim,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import { hasGeneratedModuleApiContract, hasGeneratedSourceHeader } from '../generated-module-api-boundary.mts';
@@ -92,6 +92,7 @@ import {
   partyOutboxSource,
   readPublishedContractPackages,
   readPricingSourceTree,
+  readWorkspaceManifests,
   makePortalPublicRoleFixture,
   makeActualCatalogSelectionFixture,
   makeActualPartyClientFixture,
@@ -1334,7 +1335,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
   }
 });
 
-it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
+it('classifies only exact published Action HTTP contract shims and no read forwarder', () => {
   const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
@@ -1370,15 +1371,11 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(HttpApiGrou
     [STOCK_LIST_PUBLISHED_SOURCE, readTarget],
     [RESERVE_PUBLISHED_SOURCE, actionTarget],
   ]);
-  const acceptsRead = (source = readShim) => hasPublishedGeneratedContractShim(sources, readContractFile, source);
-  const acceptsAction = (source = actionShim) => hasPublishedGeneratedContractShim(sources, actionFile, source);
-  expect(acceptsRead()).toBe(true);
+  const acceptsRead = (source = readShim) => hasPublishedGeneratedActionContractShim(sources, readContractFile, source);
+  const acceptsAction = (source = actionShim) => hasPublishedGeneratedActionContractShim(sources, actionFile, source);
+  // A module read is published from its package with no owner file; an owner read forwarder is never accepted.
+  expect(acceptsRead()).toBe(false);
   expect(acceptsAction()).toBe(true);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT));
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, `${readTarget}\nconst HttpApiGroup = fakeGroup;`);
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget);
   const disconnected = `${actionTarget.replace(
     'export const ReserveActionApi =',
     UNUSED_NATIVE_API_DECLARATION,
@@ -1435,15 +1432,14 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActi
   sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
   for (const invalid of [
     { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, packageName: '@app/other' } },
-    { ...metadata, exports: { ...metadata.exports, './stock-list': '../private.ts' } },
-    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+    { ...metadata, exports: { ...metadata.exports, './reserve-action': '../private.ts' } },
   ]) {
     sources.set(packageFile, JSON.stringify(invalid));
-    expect(acceptsRead()).toBe(false);
+    expect(acceptsAction()).toBe(false);
   }
   sources.set(packageFile, JSON.stringify(metadata));
   sources.set('packages/ambiguous/package.json', JSON.stringify(metadata));
-  expect(acceptsRead()).toBe(false);
+  expect(acceptsAction()).toBe(false);
 });
 
 it.live('binds actual governed Action HTTP runners across formatting and an authenticated observer', () =>
@@ -1497,7 +1493,9 @@ it.live('accepts the reviewed Privacy notice-presentation GET companion only as 
     // The Privacy owner inventory declares its governed call against Communications' published Owner Coverage operation
     // and its shims re-export Privacy's own contracts package, so those packages belong to the source set the seam is
     // judged against.
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
     const sources = new Map([
+      ...manifests,
       ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH)),
       ...(yield* readPublishedContractPackages(root)),
     ]);
@@ -1901,7 +1899,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPartyClientFixture();
       const apiFile = `${PARTY_VERTICAL_PATH}/shared/api.ts`;
       const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
-      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => globalThis;\n`);
+      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/party-api-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/party-registry/api';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
@@ -1924,7 +1922,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPrivacyClientFixture();
       const clientFile = 'verticals/privacy/src/api/privacy-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/privacy-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/privacy/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

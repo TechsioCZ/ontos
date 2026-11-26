@@ -1,11 +1,14 @@
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { hasCompleteGeneratedModuleApiSeam, readSdkFormViolations } from '../generated-governed-http-boundary.mts';
-import { PRICING_SHARED_API_PATH, readPricingSourceTree } from './module-entrypoint-boundary-fixtures.mts';
+import {
+  PRICING_SHARED_API_PATH,
+  readPricingSourceTree,
+  readWorkspaceManifests,
+} from './module-entrypoint-boundary-fixtures.mts';
 
 /* A synthetic owner: one read of `demo.module`, one provider contract package of `provider.module`. */
 
@@ -327,7 +330,7 @@ const seam = (candidate: ReadonlyMap<string, string>) => {
 
 describe('the read SDK form inside the generated module API seam', () => {
   const pricingRead = 'verticals/pricing/src/api/quotation-verification.read.ts';
-  const retirementPackage = 'packages/customer-market-retirement-contracts/package.json';
+  const retirementContracts = 'packages/customer-market-retirement-contracts';
   const requirementKey = 'commerce.pricing.requirement.quotation-verify-purchase-context';
   const bareHandler = '  readVerification,\n  servicesForScope,';
   const descriptorEnd = "    schemaVersion: '1',\n  },\n  readVerification,";
@@ -336,12 +339,16 @@ describe('the read SDK form inside the generated module API seam', () => {
     "import { marketSubjectRestrictionsCurrentOperation } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';",
   ].join('\n');
 
+  // The declared call's operation is read where its contract package declares it, so the package comes whole.
   const pricingSources = Effect.gen(function* loadPricingSources() {
     const root = path.resolve(import.meta.dirname, '../..');
     const trees = yield* Effect.all(
-      ['verticals/pricing', 'packages/pricing-contracts'].map((folder) => readPricingSourceTree(root, folder)),
+      ['verticals/pricing', 'packages/pricing-contracts', retirementContracts].map((folder) =>
+        readPricingSourceTree(root, folder),
+      ),
     );
-    return new Map([...trees.flat(), [retirementPackage, readFileSync(path.join(root, retirementPackage), 'utf-8')]]);
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    return new Map([...manifests, ...trees.flat()]);
   });
 
   const withRunForm = (
