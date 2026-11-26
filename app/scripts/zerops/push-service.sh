@@ -5,7 +5,7 @@
 #
 #   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
 #
-# The `storefront` and `n1` setups ship only app/zerops.yaml and the storefront the runner built
+# The `storefront`, `shop` and `n1` setups ship only app/zerops.yaml and the storefront the runner built
 # (scripts/zerops/build-storefront.sh): app/.zerops-storefront.tar.gz and its manifest app/.zerops-storefront.json, run
 # from the directory that build staged. Zerops unpacks it.
 #
@@ -60,7 +60,7 @@ log_error() { log "$@" >&2; }
 # Stage a service-specific package, never mutate the runner's shared Git index.
 mkdir -p "$work/source"
 case "$setup" in
-  storefront | n1)
+  storefront | shop | n1)
     # A storefront setup builds nothing on Zerops: the package is its zerops.yaml and the runner's archive. No source,
     # no Git history and no other service's files travel with it.
     for file in app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json; do

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "projectId": "STABLEproject000000000",
+  "demoProjectId": "DEMOproject00000000000",
+  "services": {
+    "app": "STABLEapp0000000000000",
+    "storefront": "STABLEstorefront000000",
+    "shop": "STABLEshop000000000000",
+    "n1": "STABLEn10000000000000",
+    "spicedb": "STABLEspicedb000000000",
+    "db18": "STABLEdb18000000000000",
+    "migrator": "STABLEmigrator00000000"
+  },
+  "origins": {
+    "shell": "https://ontos.example.com",
+    "storefront": "https://akros.example.com",
+    "shop": "https://shop.example.com",
+    "n1": "https://n1.example.com"
+  },
+  "variables": {
+    "app": {
+      "SMTP_FROM": "OntOS <noreply@ontos.example.com>",
+      "CLOUDFLARE_EMAIL_ACCOUNT_ID": "00000000000000000000000000000000",
+      "ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED": "true",
+      "ONTOS_SYMMY_JOB_RETENTION_POLICIES": "[{\"policyId\":\"example-symmy-products\",\"revision\":\"v1\",\"tenantId\":\"00000000-0000-4000-8000-000000000001\",\"routeId\":\"00000000-0000-4000-8000-000000000010\",\"governanceLegalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"targetLegalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"retentionMs\":2592000000}]",
+      "ONTOS_SYMMY_PRICE_READ_SOURCES": "{\"schemaVersion\":1,\"routes\":[{\"tenantId\":\"00000000-0000-4000-8000-000000000001\",\"legalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"routeId\":\"00000000-0000-4000-8000-000000000011\",\"issuerId\":\"symmy-example\",\"sourceNamespace\":\"example-erp\",\"sourceSystem\":{\"ownerModuleId\":\"external.symmy\",\"sourceSystemRef\":\"symmy-example\"}}]}"
+    },
+    "storefront": {
+      "STOREFRONT_BRAND": "akros",
+      "ONTOS_STOREFRONT_APP_ID": "akros-storefront",
+      "ONTOS_STOREFRONT_LEGAL_ENTITY_ID": "00000000-0000-4000-8000-000000000002",
+      "ONTOS_STOREFRONT_ERP_OFFERS": "{\"00000000-0000-4000-8000-000000000002\":{\"customerConfigurationId\":\"example\",\"channelId\":\"B2C\",\"marketId\":\"00000000-0000-4000-8000-000000000020\",\"currencyCode\":\"CZK\",\"unitId\":\"00000000-0000-4000-8000-000000000021\",\"unitQuantity\":\"1\"}}"
+    },
+    "shop": {
+      "STOREFRONT_BRAND": "sroubshop",
+      "ONTOS_STOREFRONT_APP_ID": "sroubshop-storefront",
+      "ONTOS_STOREFRONT_LEGAL_ENTITY_ID": "00000000-0000-4000-8000-000000000003"
+    },
+    "n1": {
+      "ONTOS_STOREFRONT_LEGAL_ENTITY_ID": "00000000-0000-4000-8000-000000000004",
+      "ONTOS_STOREFRONT_TENANT_ID": "00000000-0000-4000-8000-000000000005",
+      "STOREFRONT_IMAGE_HOSTS": "n1.example.com"
+    },
+    "spicedb": {}
+  }
+}

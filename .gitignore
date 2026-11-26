@@ -4,3 +4,7 @@
 .DS_Store
 __pycache__# Zerops build scratch (app/scripts/zerops/build-app.sh): logs, the unit cache and the shipped Node runtime.
 /app/.zerops/
+
+# Stable environment operator configuration, credentials, backups and downloaded release packages.
+/app/.zerops-stable/
+/ops/zerops-stable/node_modules/
