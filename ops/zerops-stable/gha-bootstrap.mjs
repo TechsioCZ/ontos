@@ -19,9 +19,9 @@
 //   merged into the app's owner secrets as COMMERCE_TENANT_CREDENTIALS as soon as it is issued, then the portal identity
 //   deployment), the workload registrations of both (register-stage-workloads.mts), an app restart so the app runs the
 //   stored owner secrets,
-//   each selling tenant's VAT baseline (seed-tax-baseline.mts) and the synthetic sales data of the tenants the bundle
-//   names in `salesData`: storefront registration, market, association, market settings and products, all through
-//   native Actions over the public Shell.
+//   each selling tenant's VAT baseline (seed-tax-baseline.mts), then each storefront tenant's sales setup: storefront
+//   registration, Czech B2C market, association and market settings, plus the synthetic products of the tenants the
+//   bundle names in `salesData`, all through native Actions over the public Shell.
 // Every step is idempotent and no issued key exists only in memory, so after-app reruns until it completes (the
 // workflow runs it again on a `bootstrap-fronts` install).
 //
@@ -30,7 +30,8 @@
 //     "databaseAdminUrl": "postgresql://<db18 superUser>:<password>@db18:5432/<db18 dbName>",
 //     "secrets": <secrets.mjs bundle>, "spec": <bootstrap spec>, "accounts": <bootstrap.mjs accounts file>,
 //     "modules": { "<tenant slug>": ["<module key>", …] }, "salesData": ["<tenant slug>"] }
-// `modules` and `salesData` are optional: an absent tenant gets no module activation and no sales data.
+// `modules` and `salesData` are optional: an absent tenant gets no module activation and no synthetic products. A
+// storefront tenant needs exactly one storefront and the modules of its sales setup (STOREFRONT_MARKET_MODULES).
 // Secrets travel only on stdin (ssh, child processes) and in request bodies. Storefront keys go from the Shell's answer
 // to the Zerops secret store; a rerun reads them back from there.
 import { createHash } from 'node:crypto';
@@ -68,6 +69,13 @@ export const REMOTE_APP_ROOT = '/var/www/app';
 /** The app host's loopback composition (scripts/zerops/app-host.mts CONTROL_PORT, COMPOSITION_PATH). */
 export const REMOTE_COMPOSITION_URL = 'http://127.0.0.1:3001/_host/composition';
 const ACCOUNT_KEYS = ['retiredAccountEmails', 'retiredTenants', 'schemaVersion', 'tenants'];
+/** The owners of a storefront's sales setup: its registration, its market and the market's offer. */
+export const STOREFRONT_MARKET_MODULES = Object.freeze(['commerce.storefront-registry', 'commerce.market-catalog', 'demo.merchandise']);
+/**
+ * The locales each storefront app serves from its one market: N1 renders /cs and /en over the same market, the AKROS
+ * storefront app (storefront and shop) addresses a market by its primary locale.
+ */
+export const STOREFRONT_MARKET_LOCALES = Object.freeze({ n1: ['cs', 'en'], shop: ['cs'], storefront: ['cs'] });
 
 export class BootstrapRunError extends Error {
   name = 'BootstrapRunError';
@@ -142,10 +150,13 @@ export const parseBootstrapBundle = (text, { catalog, config }) => {
   if (!Array.isArray(salesData) || salesData.some((slug) => !slugs.includes(slug)) || new Set(salesData).size !== salesData.length) {
     fail('STABLE_BOOTSTRAP_JSON salesData must list unique tenant slugs');
   }
+  for (const tenant of spec.tenants.filter(({ storefronts }) => storefronts.length > 0)) {
+    if (tenant.storefronts.length !== 1) fail(`storefront tenant ${tenant.slug} needs exactly one storefront`);
+    const missing = STOREFRONT_MARKET_MODULES.filter((key) => !(modules[tenant.slug] ?? []).includes(key));
+    if (missing.length > 0) fail(`storefront tenant ${tenant.slug} needs ${missing.join(', ')} in its modules`);
+  }
   for (const slug of salesData) {
-    const tenant = spec.tenants.find((entry) => entry.slug === slug);
-    if (tenant.storefronts.length !== 1) fail(`salesData tenant ${slug} needs exactly one storefront`);
-    if (!(modules[slug] ?? []).includes('demo.merchandise')) fail(`salesData tenant ${slug} needs demo.merchandise in its modules`);
+    if (spec.tenants.find((entry) => entry.slug === slug).storefronts.length === 0) fail(`salesData tenant ${slug} has no storefront`);
   }
   return { accounts, adminUrl: value.databaseAdminUrl, modules, passwords, salesData, secrets: value.secrets, spec };
 };
@@ -405,7 +416,7 @@ const program = Effect.gen(function* () {
       yield* client.call('commerce-market-catalog', '/commerce-market-catalog/actions/create-market', enc(CreateMarketPayloadSchema), {
         channels: ['B2C'], effectivePeriod: { startsAt: effectiveFrom }, jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }], lifecycle: 'ACTIVE',
         marketCode: input.market.code, marketId: input.marketId, purpose: input.market.purpose, reason: 'Stable sales environment market',
-        sellingLegalEntityRef: sellerRef, supportedLocales: ['cs'],
+        sellingLegalEntityRef: sellerRef, supportedLocales: input.market.locales,
       }, enc(CreateMarketResultSchema), true);
       markets = yield* catalog();
     }
@@ -463,23 +474,27 @@ if (Exit.isSuccess(exit)) {
 }
 `;
 
-/** The input of one tenant's sales data: its storefront, one Czech B2C market and the synthetic products. */
+/**
+ * The input of one storefront tenant's sales setup: its storefront, one Czech B2C market in the locales its storefront
+ * app serves, and the synthetic products only for a `salesData` tenant (AKROS takes its catalogue from Symmy).
+ */
 export const salesDataInput = ({ apply, bundle, config, slug }) => {
   const tenant = bundle.spec.tenants.find((entry) => entry.slug === slug);
+  const [storefront] = tenant.storefronts;
   const written = bundle.accounts.tenants.find((entry) => entry.slug === slug);
   const owner = written.accounts.find(({ grants }) => grants.owner);
   const code = `${slug.toUpperCase().replaceAll('-', '')}-CZ`;
   return {
     apply,
-    associationId: seededId(written.tenantId, `association:${code}:${tenant.storefronts[0].storefrontAppId}`),
+    associationId: seededId(written.tenantId, `association:${code}:${storefront.storefrontAppId}`),
     email: owner.email,
     legalEntityId: written.legalEntity.legalEntityId,
-    market: { code, purpose: `Maloobchodní prodej v Česku (${tenant.displayName})` },
+    market: { code, locales: STOREFRONT_MARKET_LOCALES[storefront.service], purpose: `Maloobchodní prodej v Česku (${tenant.displayName})` },
     marketId: seededId(written.tenantId, `market:${code}`),
     password: bundle.passwords.get(owner.email.toLowerCase()),
-    products: SALES_PRODUCTS,
+    products: bundle.salesData.includes(slug) ? SALES_PRODUCTS : [],
     shellUrl: config.origins.shell,
-    storefrontAppId: tenant.storefronts[0].storefrontAppId,
+    storefrontAppId: storefront.storefrontAppId,
     tenantId: written.tenantId,
   };
 };
@@ -492,11 +507,11 @@ export const runSalesData = (input, { run = spawnSync } = {}) => {
     input: JSON.stringify(input),
     stdio: ['pipe', 'pipe', 2],
   });
-  if (result.error || result.status !== 0) fail(`sales data for tenant ${input.tenantId} failed`);
+  if (result.error || result.status !== 0) fail(`sales setup of storefront ${input.storefrontAppId} failed`);
   try {
     return JSON.parse(result.stdout.trim().split('\n').at(-1));
   } catch {
-    return fail('the sales data step printed no result');
+    return fail(`sales setup of storefront ${input.storefrontAppId} printed no result`);
   }
 };
 
@@ -636,7 +651,7 @@ export const afterApp = async ({ apply, bundle, config, deps, log }) => {
   log('accounts: native bootstrap on the app container');
   deps.remote(accountsScript(bundle.accounts, apply));
   if (!apply) {
-    log('dry run: modules, storefront keys, workloads and sales data follow the committed accounts; rerun with --apply');
+    log('dry run: modules, storefront keys, workloads and sales setup follow the committed accounts; rerun with --apply');
     return { applied: false };
   }
   const ownerOf = (slug) => {
@@ -694,9 +709,9 @@ export const afterApp = async ({ apply, bundle, config, deps, log }) => {
     log(`VAT baseline ${slug}: verified`);
   }
   const sales = {};
-  for (const slug of bundle.salesData) {
+  for (const { slug } of bundle.spec.tenants.filter(({ storefronts }) => storefronts.length > 0)) {
     sales[slug] = deps.salesData(salesDataInput({ apply: true, bundle, config, slug })).pending;
-    log(`sales data ${slug}: ${sales[slug].length === 0 ? 'already complete' : sales[slug].join('; ')}`);
+    log(`sales setup ${slug}: ${sales[slug].length === 0 ? 'already complete' : sales[slug].join('; ')}`);
   }
   log('next: deploy storefront, shop and n1; their keys are stored');
   return { applied: true, sales };

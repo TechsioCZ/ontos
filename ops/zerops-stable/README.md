@@ -18,7 +18,8 @@ Use `mode=verify` with an existing release tag to check the running versions and
 
 The first deployment initializes database roles and SpiceDB over the project VPN on the hosted runner.
 It installs the app, routes its public address, creates the configured accounts and storefront identities, and then installs the three fronts.
-The bootstrap helper activates the configured tenant modules and seeds only the tenants explicitly listed in the bootstrap bundle's `salesData`.
+The bootstrap helper activates the configured tenant modules and gives each storefront its registration, a Czech market, the association and the market settings.
+Only the tenants listed in the bootstrap bundle's `salesData` get synthetic products.
 Updates install the app first, followed by the fronts. App startup runs the native migrations.
 There is no weekday restriction, maintenance-approval requirement, or mandatory custom backup rehearsal.
 

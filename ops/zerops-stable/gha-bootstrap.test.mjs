@@ -67,7 +67,11 @@ const bundleValue = (overrides = {}) => ({
   accounts,
   databaseAdminUrl: 'postgresql://db18:admin-password-value@db18:5432/db18',
   kind: 'ontos.stable.bootstrap',
-  modules: { sroubshop: ['demo.merchandise', 'commerce.market-catalog', 'commerce.storefront-registry', 'commerce.tax'] },
+  modules: {
+    akros: ['demo.merchandise', 'commerce.market-catalog', 'commerce.storefront-registry', 'commerce.tax', 'integration.symmy'],
+    n1: ['demo.merchandise', 'commerce.market-catalog', 'commerce.storefront-registry', 'commerce.tax'],
+    sroubshop: ['demo.merchandise', 'commerce.market-catalog', 'commerce.storefront-registry', 'commerce.tax'],
+  },
   projectId: config.projectId,
   salesData: ['sroubshop'],
   schemaVersion: 1,
@@ -89,7 +93,7 @@ test('the bundle parses against the stable config and carries every account pass
   const bundle = parse(bundleValue());
   assert.equal(bundle.passwords.get('obchod@sroubshop.example'), 'secret-password-of-obchod@sroubshop.example');
   assert.deepEqual(bundle.salesData, ['sroubshop']);
-  assert.deepEqual(parse(bundleValue({ modules: undefined, salesData: undefined })).modules, {});
+  assert.deepEqual(parse(bundleValue({ salesData: undefined })).salesData, []);
 });
 
 test('a bundle of another project, identity or module set is refused without echoing a secret', () => {
@@ -97,13 +101,17 @@ test('a bundle of another project, identity or module set is refused without ech
     refusal(bundleValue({ projectId: 'OTHERproject0000000000' })),
     refusal(bundleValue({ accounts: { ...accounts, tenants: accounts.tenants.slice(1) } })),
     refusal(bundleValue({ modules: { sroubshop: ['demo.nonexistent'] } })),
-    refusal(bundleValue({ modules: {}, salesData: ['sroubshop'] })),
+    refusal(bundleValue({ modules: undefined, salesData: undefined })),
     refusal(bundleValue({ databaseAdminUrl: 'https://db18' })),
   ];
   const swapped = structuredClone(accounts);
   swapped.tenants[0].legalEntity.legalEntityId = '11111111-1111-4111-8111-111111111111';
   messages.push(refusal(bundleValue({ accounts: swapped })));
   assert.match(messages.at(-1), /variables\.shop\.ONTOS_STOREFRONT_LEGAL_ENTITY_ID/u);
+  assert.equal(
+    refusal(bundleValue({ modules: { ...bundleValue().modules, n1: ['demo.merchandise', 'commerce.tax'] } })),
+    'storefront tenant n1 needs commerce.storefront-registry, commerce.market-catalog in its modules',
+  );
   for (const message of messages) assert.doesNotMatch(message, /password-value|secret-password/u);
   assert.equal(
     (() => {
@@ -258,6 +266,31 @@ test('after-app dry run reads the accounts plan only; sales data addresses stabl
   assert.match(input.marketId, /^[\da-f]{8}-[\da-f]{4}-8[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u);
 });
 
+test('every storefront gets its own Czech market; only salesData tenants get synthetic products', () => {
+  const bundle = parse(bundleValue());
+  const setup = (slug) => salesDataInput({ apply: true, bundle, config, slug });
+  const byTenant = (slug) => accounts.tenants.find((tenant) => tenant.slug === slug);
+  const akros = setup('akros');
+  assert.equal(akros.storefrontAppId, 'akros-storefront');
+  assert.equal(akros.tenantId, byTenant('akros').tenantId);
+  assert.equal(akros.legalEntityId, byTenant('akros').legalEntity.legalEntityId);
+  assert.equal(akros.email, 'owner@akros.example');
+  assert.deepEqual(akros.market.code, 'AKROS-CZ');
+  assert.deepEqual(akros.market.locales, ['cs']);
+  assert.equal(akros.marketId, seededId(byTenant('akros').tenantId, 'market:AKROS-CZ'));
+  assert.deepEqual(akros.products, [], 'AKROS products come from Symmy');
+  const n1 = setup('n1');
+  assert.equal(n1.storefrontAppId, 'n1-storefront');
+  assert.equal(n1.market.code, 'N1-CZ');
+  assert.deepEqual(n1.market.locales, ['cs', 'en'], 'N1 serves /cs and /en from one market');
+  assert.deepEqual(n1.products, []);
+  assert.equal(setup('sroubshop').products.length, 8);
+  assert.notEqual(n1.marketId, akros.marketId);
+  assert.notEqual(n1.associationId, akros.associationId);
+  assert.equal(parse(bundleValue({ salesData: [] })).salesData.length, 0);
+  assert.deepEqual(salesDataInput({ apply: true, bundle: parse(bundleValue({ salesData: [] })), config, slug: 'sroubshop' }).products, []);
+});
+
 test('each storefront tenant gets one native Commerce portal key, kept in the app owner secrets', async () => {
   const bundle = parse(bundleValue());
   const principals = new Map();
@@ -356,6 +389,7 @@ test('storefront keys issued before a failure reach their services', async () =>
 test('after-app restarts the app even when this run stored nothing new, before the steps that need it', async () => {
   const bundle = parse(bundleValue());
   const calls = [];
+  const setups = [];
   const owners = JSON.stringify({ 'shell-super-app': { BETTER_AUTH_SECRET: 'auth' } });
   const principal = (displayName) => ({ displayName, key: { bindingStatus: 'active' }, kind: 'service', principalId: newId(), principalStatus: 'active' });
   const result = await afterApp({
@@ -371,8 +405,9 @@ test('after-app restarts the app even when this run stored nothing new, before t
       portalDeployment: () => ({ deployment: {}, verification: {} }),
       remote: (script) => calls.push(script.includes('register-stage-workloads') ? 'workloads' : 'remote'),
       restartApp: async () => calls.push('restart'),
-      salesData: () => {
+      salesData: (input) => {
         calls.push('sales');
+        setups.push([input.storefrontAppId, input.products.length]);
         return { pending: [] };
       },
       shellClient: {
@@ -396,5 +431,7 @@ test('after-app restarts the app even when this run stored nothing new, before t
   assert.equal(result.applied, true);
   const at = (step) => calls.indexOf(step);
   assert.ok(at('secrets') < at('workloads') && at('workloads') < at('restart') && at('restart') < at('shell'), calls.join(','));
-  assert.ok(at('shell') < at('tax dry-run') && at('tax verify') < at('sales'), calls.join(','));
+  assert.ok(at('shell') < at('tax dry-run') && calls.lastIndexOf('tax verify') < at('sales'), calls.join(','));
+  assert.deepEqual(setups, [['sroubshop-storefront', 8], ['akros-storefront', 0], ['n1-storefront', 0]]);
+  assert.deepEqual(Object.keys(result.sales), ['sroubshop', 'akros', 'n1']);
 });
