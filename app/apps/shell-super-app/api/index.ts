@@ -2530,8 +2530,8 @@ const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }:
  * stored object, and only the host can produce one: a payload field could be forged by any caller. So the host reads
  * the reserved row through the same `authenticated_principal` byte-source Read the byte edge uses (the row and the
  * reserving principal authorize the read-back; the confirm capability is still decided by the Action), lets the Core
- * settle the upload against the stored object, and hands the Action the verification it asked for. A sealed asset is
- * answered from its row: neither the provider nor the Action is asked again.
+ * settle the upload against the stored object, and hands the Action the verification it asked for. For a sealed or closed
+ * asset the provider is not asked, but the Action still decides the caller and follows the row.
  */
 const settleReservedUpload = Effect.fn('shell.coreMedia.settleReservedUpload')(function* settleReservedUpload<
   Failure extends { readonly _tag: string },

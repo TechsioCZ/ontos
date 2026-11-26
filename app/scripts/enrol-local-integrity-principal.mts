@@ -79,7 +79,7 @@ const enrolWithLocalConfiguration = Effect.gen(function* enrolConfigured() {
 const runLocalIntegrityEnrollment = Effect.matchEffect(enrolWithLocalConfiguration, {
   onFailure: (error) =>
     Console.error(
-      'The integrity principal was not enrolled. Start the applications, then run the command again.',
+      'The integrity principal was not enrolled. It needs the applications running with an active Application Composition source and the seeded local owner; see the error below.',
       error,
     ).pipe(Effect.as(false)),
   onSuccess: (enrollment) => Console.log(`core.media.integrity: ${enrollment._tag}`).pipe(Effect.as(true)),
