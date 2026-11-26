@@ -1,6 +1,6 @@
 import { describe, expect } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Context, Deferred, Effect } from "effect";
+import { Context, Deferred, Effect, Predicate } from "effect";
 import { createOperation, OperationError, REQUEST_LIMIT } from "@ontos/storefront-runtime";
 import { FetchHttpClient } from "effect/http";
 import { customerProfileWeb, makeCustomerProfileWeb } from "../src/ontos/customer-profile-http";
@@ -216,8 +216,9 @@ for (const boundary of ["channel", "outer"] as const) {
       );
       expect(response.status).toBe(503);
       expect(response.headers.get("content-type")).toContain("application/problem+json");
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "CustomerProfileUnavailableProblem",
+      const problem = yield* Effect.promise(() => response.json());
+      expect(Predicate.isTagged(problem, "CustomerProfileUnavailableProblem")).toBe(true);
+      expect(problem).toMatchObject({
         state: "unavailable",
         status: 503,
       });
@@ -271,8 +272,9 @@ for (const boundary of ["channel", "outer"] as const) {
             expect(response.status).toBe(503);
             expect(response.headers.get("content-type")).toContain("application/problem+json");
             expect(response.headers.get("cache-control")).toBe("no-store");
-            expect(yield* Effect.promise(() => response.json())).toMatchObject({
-              _tag: "CustomerProfileUnconfirmedProblem",
+            const problem = yield* Effect.promise(() => response.json());
+            expect(Predicate.isTagged(problem, "CustomerProfileUnconfirmedProblem")).toBe(true);
+            expect(problem).toMatchObject({
               state: "unconfirmed",
               status: 503,
             });
@@ -328,8 +330,9 @@ it.effect(
       );
       expect(response.status).toBe(503);
       expect(response.headers.get("content-type")).toContain("application/problem+json");
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "CustomerProfileUnavailableProblem",
+      const problem = yield* Effect.promise(() => response.json());
+      expect(Predicate.isTagged(problem, "CustomerProfileUnavailableProblem")).toBe(true);
+      expect(problem).toMatchObject({
         state: "unavailable",
         status: 503,
       });

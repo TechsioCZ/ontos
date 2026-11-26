@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, rs } from "@rstest/core";
 import { expect, it } from "effect-rstest";
 import { ERROR_BYTES } from "@ontos/storefront-runtime";
-import { Clock, Context, Effect, Fiber } from "effect";
+import { Clock, Context, Effect, Fiber, Predicate } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 import { passwordRecoveryWeb } from "../src/ontos/password-recovery-http";
@@ -135,8 +135,9 @@ for (const kind of ["cancelled", "deadline", "body_oversize"] as const) {
       expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
       expect(response.headers.get("set-cookie")).not.toContain("private-reset-token");
       expect(response.headers.get("set-cookie")).not.toContain("staff.session");
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "PasswordRecoveryUnavailableProblem",
+      const problem = yield* Effect.promise(() => response.json());
+      expect(Predicate.isTagged(problem, "PasswordRecoveryUnavailableProblem")).toBe(true);
+      expect(problem).toMatchObject({
         state: "unconfirmed",
         status: 503,
       });
@@ -167,8 +168,9 @@ it.effect(
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
       expect(response.headers.get("set-cookie")).toBeNull();
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "PasswordRecoveryUnavailableProblem",
+      const problem = yield* Effect.promise(() => response.json());
+      expect(Predicate.isTagged(problem, "PasswordRecoveryUnavailableProblem")).toBe(true);
+      expect(problem).toMatchObject({
         state: "unconfirmed",
         status: 503,
       });

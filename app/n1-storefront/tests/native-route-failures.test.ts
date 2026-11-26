@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Schema, Stream } from "effect";
+import { Deferred, Effect, Layer, Predicate, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { describe, expect, it } from "effect-rstest";
 import { ERROR_BYTES } from "@ontos/storefront-runtime";
@@ -160,8 +160,14 @@ describe("real native route failures retain dispatch evidence", () => {
             const uncertain = phase === "action" && mode === "place";
             expect(response.status).toBe(503);
             expect(response.headers.get("cache-control")).toBe("no-store");
-            expect(yield* Effect.promise(() => response.json())).toMatchObject({
-              _tag: uncertain ? "CheckoutUncertainProblem" : "CheckoutUnavailableProblem",
+            const problem = yield* Effect.promise(() => response.json());
+            expect(
+              Predicate.isTagged(
+                problem,
+                uncertain ? "CheckoutUncertainProblem" : "CheckoutUnavailableProblem",
+              ),
+            ).toBe(true);
+            expect(problem).toMatchObject({
               state: uncertain ? "uncertain" : "unavailable",
             });
             expect(owner.actions()).toBe(phase === "action" ? 1 : 0);
@@ -187,9 +193,13 @@ describe("real native route failures retain dispatch evidence", () => {
           ),
         );
         expect(response.status).toBe(503);
-        expect(yield* Effect.promise(() => response.json())).toMatchObject({
-          _tag: phase === "action" ? "InquiryUnconfirmed" : "InquiryUnavailable",
-        });
+        const problem = yield* Effect.promise(() => response.json());
+        expect(
+          Predicate.isTagged(
+            problem,
+            phase === "action" ? "InquiryUnconfirmed" : "InquiryUnavailable",
+          ),
+        ).toBe(true);
         expect(owner.mints()).toBe(1);
         expect(owner.actions()).toBe(phase === "action" ? 1 : 0);
       }).pipe(Effect.provide(owner.layer));

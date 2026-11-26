@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "effect-rstest";
-import { Effect, Fiber, Schema } from "effect";
+import { Effect, Fiber, Predicate, Result, Schema } from "effect";
 import type { HttpClient } from "effect/http";
 import { FetchHttpClient } from "effect/http";
 import { executeSubmitStorefrontInquiryWithAuthorization } from "@app/work-tasks/clients/submit-storefront-inquiry";
@@ -204,8 +204,8 @@ describe("generated Actions use the native owner transport bounds", () => {
               withOwnerOperation(action.invoke()).pipe(Effect.result),
               fetch,
             );
+            expect(Result.isFailure(result)).toBe(true);
             expect(result).toMatchObject({
-              _tag: "Failure",
               failure: { kind: "body_oversize" },
             });
             expect(calls).toBe(1);
@@ -232,9 +232,10 @@ describe("generated Actions use the native owner transport bounds", () => {
             403,
           ).response;
         };
-        expect(
-          yield* run(withOwnerOperation(action.invoke()).pipe(Effect.result), fetch),
-        ).toMatchObject({ _tag: "Failure", failure: { _tag: action.problem } });
+        const result = yield* run(withOwnerOperation(action.invoke()).pipe(Effect.result), fetch);
+        expect(Result.isFailure(result) && Predicate.isTagged(result.failure, action.problem)).toBe(
+          true,
+        );
         expect(calls).toBe(1);
       }),
     );
@@ -305,12 +306,13 @@ describe("generated Actions use the native owner transport bounds", () => {
           expect(requests).toHaveLength(OWNER_WORK_LIMIT);
           if (stop === "release") {
             release.resolve(null);
-            expect(yield* Fiber.join(pending)).toMatchObject({ _tag: "Success" });
+            expect(Result.isSuccess(yield* Fiber.join(pending))).toBe(true);
             expect(requests).toHaveLength(total);
           } else {
             operation.abort(stop);
-            expect(yield* Fiber.join(pending)).toMatchObject({
-              _tag: "Failure",
+            const result = yield* Fiber.join(pending);
+            expect(Result.isFailure(result)).toBe(true);
+            expect(result).toMatchObject({
               failure: { kind: stop },
             });
             expect(requests).toHaveLength(OWNER_WORK_LIMIT);

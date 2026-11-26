@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { Clock, Effect, Schedule, Schema } from "effect";
+import { Clock, Effect, Exit, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { HttpClientResponse } from "effect/http";
 import { recoverableReadAdmission } from "@ontos/storefront-runtime";
@@ -198,9 +198,7 @@ export const readOwner = <A, I>(
           startedAt: yield* Clock.currentTimeMillis,
         };
         const response = yield* HttpClient.execute(request).pipe(
-          Effect.onExit((exit) =>
-            exit._tag === "Failure" ? logOwnerRead(read, "transport", null) : Effect.void,
-          ),
+          Effect.onExitIf(Exit.isFailure, () => logOwnerRead(read, "transport", null)),
           Effect.mapError(() => new StorefrontReadUnavailable({ reason: "transport" })),
         );
         yield* logOwnerRead(read, response.status, response.headers["server-timing"] ?? null);
