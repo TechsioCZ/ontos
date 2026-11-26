@@ -13,6 +13,7 @@ import {
   MediaIngestUncertain,
   MediaIntegrityFailed,
   MediaLengthRequired,
+  MediaUnavailable,
   mediaAssetNotFound,
 } from './errors.ts';
 import { reconcileUncertainUpload } from './reconciliation.ts';
@@ -36,8 +37,8 @@ import type { MediaStoredObjectVerification } from './verification.ts';
 
 type ConfirmResult = typeof ConfirmAssetResultSchema.Type;
 
-const isIntegrityFailed = Schema.is(MediaIntegrityFailed);
-const isIngestUncertain = Schema.is(MediaIngestUncertain);
+/** The confirm Action's answers about the row itself, as opposed to a refusal of the caller. */
+const isRowAnswer = Schema.is(Schema.Union([MediaIntegrityFailed, MediaIngestUncertain, MediaUnavailable]));
 
 export interface IngestMediaBytesInput<BodyError, ConfirmFailure extends { readonly _tag: string }, ConfirmServices> {
   /** The reserved row the byte-source Read offered, read in the trusted tenant scope. */
@@ -138,13 +139,11 @@ export const ingestMediaBytes = Effect.fn('MediaIngest.ingest')(function* ingest
       selectedLegalEntityId: input.selectedLegalEntityId,
     });
     // A sealed asset's replay is answered only after the Action agreed. A closed or scanning asset takes no bytes
-    // whatever the Action says about the row, so only a refusal of the caller matters and the byte hop answers.
+    // whatever the Action says about the row (`failed`, or a state it cannot settle): the gate has allowed the caller
+    // by then, so only a refusal matters and the byte hop answers.
     yield* asset.processingStatus === 'ready'
       ? decision
-      : decision.pipe(
-          Effect.catchIf(isIntegrityFailed, () => Effect.void),
-          Effect.catchIf(isIngestUncertain, () => Effect.void),
-        );
+      : decision.pipe(Effect.catchIf(isRowAnswer, () => Effect.void));
   }
   // A body that breaks mid-flight (a dropped connection, a short body) is a transfer that did not finish: the put
   // aborts and leaves nothing readable, and the stored object is judged by the verification below.
