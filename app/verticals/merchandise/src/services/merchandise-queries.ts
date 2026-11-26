@@ -1289,10 +1289,14 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
   const activeId =
     input.activeId ?? (input.activeSlug === undefined ? undefined : categoryIdBySlug(db, scope, input.activeSlug));
   const active = activeId === undefined ? sql`false` : eq(categories.id, activeId);
-  // Storefront tiles and the sidebar show images of roots and of the active category's children.
+  // Storefront tiles and the sidebar show images of roots and of the active category's children; the desktop mega
+  // menu shows the roots' children with their images on every page.
   const shown = input.storefront
     ? or(
         sql`${categories.parentId} is null`,
+        sql`${categories.parentId} in (select root.id from ${categories} root
+          where root.parent_id is null and root.tenant_id = ${scope.tenantId}::uuid
+            and root.legal_entity_id = ${scope.legalEntityId}::uuid)`,
         active,
         activeId === undefined ? sql`false` : eq(categories.parentId, activeId),
       )
