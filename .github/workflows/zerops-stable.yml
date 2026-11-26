@@ -1,10 +1,6 @@
+# Pushes test the tools only. Builds and controlled live verification require manual dispatch.
+# No job deploys or schedules a release. The operator installs the downloaded packages separately.
 name: Zerops Stable Release
-
-# Manual only. For one pinned sales-stable tag on demo/sales-crm it either builds the release packages and digests
-# (mode build) or runs a controlled verification (mode verify-candidate or verify-deployed). Nothing here deploys to Zerops. Verification uses only dedicated test accounts. The live cutover stays the manual CLI: deploy.mjs --artifacts DIR, with the operator's local backup
-# and evidence, run from the artifact this workflow uploads.
-# The tag is checked out by its name, validated, and pinned to a commit; every later job checks out that commit only.
-# Scripts come from the pinned commit; this workflow file comes from the dispatched ref.
 on:
   workflow_dispatch:
     inputs:
@@ -20,24 +16,48 @@ on:
           - verify-candidate
           - verify-deployed
         default: build
-
+  push:
+    branches:
+      - demo/sales-crm
+    paths:
+      - ops/zerops-stable/**
+      - app/zerops.yaml
+      - app/zerops-import.yaml
+      - app/scripts/zerops/push-service.sh
+      - .github/workflows/zerops-stable.yml
 permissions:
   contents: read
-
 concurrency:
-  group: zerops-stable
-  cancel-in-progress: false
-
+  group: zerops-stable-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
+  test:
+    name: Test the sales-stable tooling
+    if: github.ref == 'refs/heads/demo/sales-crm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26.13.1
+      - name: Install the deployment tools
+        run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
+      - name: Run the sales-stable tests
+        run: node --test 'ops/zerops-stable/*.test.mjs'
   pin:
     name: Pin the tag to a commit
-    if: github.ref == 'refs/heads/demo/sales-crm'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/demo/sales-crm'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
     steps:
-      # The name is checked before anything uses it, so only a well-formed tag reaches checkout and the scripts.
       - name: Validate the tag name
         id: tag
         env:
@@ -50,28 +70,22 @@ jobs:
             exit 1
           fi
           echo "ref=refs/tags/$TAG" >>"$GITHUB_OUTPUT"
-
       - name: Checkout the pinned tag
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ steps.tag.outputs.ref }}
-          # release.mjs checks the tag's ancestry against demo/sales-crm, which needs the branch history.
           fetch-depth: 0
           persist-credentials: false
-
       - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: '26.13.1'
-
+          node-version: 26.13.1
       - name: Install the deployment tools
         run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
-
       - name: Inspect the tag against demo/sales-crm
         env:
           TAG: ${{ inputs.tag }}
         run: node ops/zerops-stable/release.mjs inspect --tag "$TAG" --demo-ref origin/demo/sales-crm
-
       - name: Record the pinned commit
         id: pin
         env:
@@ -81,7 +95,7 @@ jobs:
           sha="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
           echo "sha=$sha" >>"$GITHUB_OUTPUT"
           printf '### Pinned %s\n\n- Commit: %s\n' "$TAG" "$sha" >>"$GITHUB_STEP_SUMMARY"
-
+    needs: test
   build:
     name: Build the release packages (no live writes)
     needs: pin
@@ -93,22 +107,17 @@ jobs:
       deployment: false
     steps:
       - name: Checkout the pinned commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.pin.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      # Full install: the app and storefront builds need every workspace package, not only the root importer.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
-
       - name: Install the deployment tools
         run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
-
-      # The config is the environment's secret. It is written outside the repository, so it never enters the checkout.
       - name: Write the sales-stable config outside the repository
         env:
           STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
@@ -124,15 +133,12 @@ jobs:
           printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
           jq -e '.schemaVersion == 1' "$config" >/dev/null
           echo "STABLE_CONFIG=$config" >>"$GITHUB_ENV"
-
       - name: Build the release packages
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           node ops/zerops-stable/deploy.mjs --build-only --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/release"
-
-      # Guardrail, not proof: no credential file names, and no copy of the config's compact JSON anywhere in the packages.
       - name: Refuse credentials in the release packages
         env:
           RELEASE_DIR: ${{ runner.temp }}/sales-stable/release
@@ -150,7 +156,6 @@ jobs:
             echo '::error::The release packages contain the sales-stable config.'
             exit 1
           fi
-
       - name: Summarize the release packages
         env:
           TAG: ${{ inputs.tag }}
@@ -164,15 +169,13 @@ jobs:
             (cd "$RELEASE_DIR" && find . -type f -print0 | sort -z | xargs -0 -r sha256sum | head -n 200)
             echo '~~~'
           } >>"$GITHUB_STEP_SUMMARY"
-
       - name: Upload the release packages
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: sales-stable-release-${{ needs.pin.outputs.sha }}
           path: ${{ runner.temp }}/sales-stable/release
           if-no-files-found: error
           retention-days: 30
-
   verify:
     name: Verify the sales-stable state (dedicated test accounts)
     needs: pin
@@ -184,20 +187,17 @@ jobs:
       deployment: false
     steps:
       - name: Checkout the pinned commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.pin.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
-
       - name: Install the deployment tools
         run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
-
       - name: Write the sales-stable config outside the repository
         env:
           STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
@@ -213,12 +213,10 @@ jobs:
           printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
           jq -e '.schemaVersion == 1' "$config" >/dev/null
           echo "STABLE_CONFIG=$config" >>"$GITHUB_ENV"
-
       - name: Verify the candidate or the deployed state
         env:
           MODE: ${{ inputs.mode }}
           TAG: ${{ inputs.tag }}
-          # Read-only Zerops access for the verification; the build mode never receives it.
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
           STABLE_VERIFICATION_JSON: ${{ secrets.STABLE_VERIFICATION_JSON }}
           MIGRATION_EVIDENCE_JSON: ${{ secrets.MIGRATION_EVIDENCE_JSON }}
@@ -245,10 +243,9 @@ jobs:
           printf '%s\n' "$WALKTHROUGH_EVIDENCE_JSON" >"$RUNNER_TEMP/sales-stable/walkthrough.json"
           node ops/zerops-stable/verify.mjs --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/verify/$phase.json" --phase "$phase" \
             --migration-evidence "$RUNNER_TEMP/sales-stable/migration.json" --walkthrough-evidence "$RUNNER_TEMP/sales-stable/walkthrough.json"
-
       - name: Upload the verification evidence
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: sales-stable-verify-${{ needs.pin.outputs.sha }}-${{ inputs.mode }}
           path: ${{ runner.temp }}/sales-stable/verify
