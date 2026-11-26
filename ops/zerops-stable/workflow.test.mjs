@@ -23,15 +23,15 @@ test('demo pushes test the standalone deployment tools without installing or dep
 
 test('candidate work is manually dispatched, follows the tooling checks, and never installs a release', () => {
   assert.match(workflow.jobs.pin.if, /github.event_name == 'workflow_dispatch'/u);
-  assert.equal(workflow.jobs.pin.needs, 'test');
+  assert.deepEqual(workflow.jobs.pin.needs, ['test', 'shared-runtime']);
   assert.equal(workflow.on.workflow_dispatch.inputs.tag.required, true);
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.mode.options, ['build', 'verify-candidate', 'verify-deployed']);
+  assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs), ['tag']);
   assert.doesNotMatch(runs.join('\n'), /--execute|--maintenance-confirmed|--confirm-paid-resources/u);
   assert.doesNotMatch(text, /^\s*schedule:/mu);
 });
 
 test('release builds have full tag history, exact pinned source, and no live deployment token', () => {
-  for (const name of ['build', 'verify']) {
+  for (const name of ['build']) {
     const checkout = workflow.jobs[name].steps.find((step) => step.uses?.startsWith('actions/checkout'));
     assert.equal(checkout.with.ref, '${{ needs.pin.outputs.sha }}');
     assert.equal(checkout.with['fetch-depth'], 0);
@@ -42,17 +42,14 @@ test('release builds have full tag history, exact pinned source, and no live dep
   assert.ok(workflow.jobs.build.steps.some((step) => step.run?.includes('deploy.mjs --build-only')));
 });
 
-test('verification gets dedicated credentials and evidence instead of demo credentials or fabricated passes', () => {
+test('CI never receives live verification credentials or customer backups', () => {
   assert.doesNotMatch(text, /stage-edge/u);
   for (const job of jobs) {
     if (JSON.stringify(job).includes('secrets.')) assert.equal(job.environment?.name, 'sales-stable');
   }
-  const verification = JSON.stringify(workflow.jobs.verify);
-  for (const name of ['STABLE_CONFIG_JSON', 'STABLE_VERIFICATION_JSON', 'MIGRATION_EVIDENCE_JSON', 'WALKTHROUGH_EVIDENCE_JSON']) {
-    assert.ok(verification.includes(`secrets.${name}`));
-  }
-  const command = workflow.jobs.verify.steps.find((step) => step.run?.includes('verify.mjs')).run;
-  for (const arg of ['--tag "$TAG"', '--migration-evidence', '--walkthrough-evidence']) assert.ok(command.includes(arg));
+  assert.ok(JSON.stringify(workflow.jobs.build).includes('secrets.STABLE_CONFIG_JSON'));
+  assert.doesNotMatch(text, /STABLE_VERIFICATION_JSON|MIGRATION_EVIDENCE_JSON|WALKTHROUGH_EVIDENCE_JSON|ZEROPS_TOKEN/u);
+  assert.equal(workflow.jobs.verify, undefined);
 });
 
 test('workflow inputs never enter shell source and all third-party actions are pinned', () => {

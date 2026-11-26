@@ -1,5 +1,5 @@
-# Pushes test the tools only. Builds and controlled live verification require manual dispatch.
-# No job deploys or schedules a release. The operator installs the downloaded packages separately.
+# Pushes test the tools and shared runtime contracts only. Manual dispatch builds one pinned tag.
+# Live verification and cutover run through the operator CLI; CI has no customer data or live credentials.
 name: Zerops Stable Release
 on:
   workflow_dispatch:
@@ -8,14 +8,6 @@ on:
         description: Pinned release tag sales-stable/YYYY-MM-DD or sales-stable/YYYY-MM-DD-N, on demo/sales-crm
         type: string
         required: true
-      mode:
-        description: build (packages and digests, no token, no live writes), verify-candidate or verify-deployed (dedicated test accounts)
-        type: choice
-        options:
-          - build
-          - verify-candidate
-          - verify-deployed
-        default: build
   push:
     branches:
       - demo/sales-crm
@@ -25,6 +17,13 @@ on:
       - app/zerops-import.yaml
       - app/scripts/zerops/push-service.sh
       - .github/workflows/zerops-stable.yml
+      - app/scripts/zerops/app-host.mts
+      - app/scripts/zerops/deployment-profile.mts
+      - app/scripts/materialize-zerops-environment.mts
+      - app/scripts/tests/zerops-app-host.test.mts
+      - app/scripts/tests/zerops-symmy-demo-bootstrap.test.mts
+      - app/scripts/tests/materialize-zerops-environment.test.mts
+      - app/scripts/tests/zerops-deployment-contract.test.mts
 permissions:
   contents: read
 concurrency:
@@ -95,11 +94,12 @@ jobs:
           sha="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
           echo "sha=$sha" >>"$GITHUB_OUTPUT"
           printf '### Pinned %s\n\n- Commit: %s\n' "$TAG" "$sha" >>"$GITHUB_STEP_SUMMARY"
-    needs: test
+    needs:
+      - test
+      - shared-runtime
   build:
     name: Build the release packages (no live writes)
     needs: pin
-    if: inputs.mode == 'build'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment:
@@ -176,78 +176,20 @@ jobs:
           path: ${{ runner.temp }}/sales-stable/release
           if-no-files-found: error
           retention-days: 30
-  verify:
-    name: Verify the sales-stable state (dedicated test accounts)
-    needs: pin
-    if: inputs.mode != 'build'
+  shared-runtime:
+    name: Check demo boot and fresh-environment deployment contracts
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment:
-      name: sales-stable
-      deployment: false
+    timeout-minutes: 20
     steps:
-      - name: Checkout the pinned commit
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ needs.pin.outputs.sha }}
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
-      - name: Install the deployment tools
-        run: npm ci --prefix ops/zerops-stable --ignore-scripts --no-audit --no-fund
-      - name: Write the sales-stable config outside the repository
-        env:
-          STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$STABLE_CONFIG_JSON" ]]; then
-            echo '::error::The sales-stable environment has no STABLE_CONFIG_JSON secret.'
-            exit 1
-          fi
-          umask 077
-          config="$RUNNER_TEMP/sales-stable/config.json"
-          mkdir -p "$RUNNER_TEMP/sales-stable"
-          printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
-          jq -e '.schemaVersion == 1' "$config" >/dev/null
-          echo "STABLE_CONFIG=$config" >>"$GITHUB_ENV"
-      - name: Verify the candidate or the deployed state
-        env:
-          MODE: ${{ inputs.mode }}
-          TAG: ${{ inputs.tag }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-          STABLE_VERIFICATION_JSON: ${{ secrets.STABLE_VERIFICATION_JSON }}
-          MIGRATION_EVIDENCE_JSON: ${{ secrets.MIGRATION_EVIDENCE_JSON }}
-          WALKTHROUGH_EVIDENCE_JSON: ${{ secrets.WALKTHROUGH_EVIDENCE_JSON }}
-        run: |
-          set -euo pipefail
-          case "$MODE" in
-            verify-candidate) phase=candidate ;;
-            verify-deployed) phase=deployed ;;
-            *)
-              echo "::error::Mode '$MODE' is not a verification mode."
-              exit 1
-              ;;
-          esac
-          mkdir -p "$RUNNER_TEMP/sales-stable/verify"
-          umask 077
-          test -n "$STABLE_VERIFICATION_JSON" && test -n "$MIGRATION_EVIDENCE_JSON" && test -n "$WALKTHROUGH_EVIDENCE_JSON" || {
-            echo '::error::Verification requires dedicated test-account configuration and migration/walkthrough evidence.'
-            exit 1
-          }
-          export STABLE_VERIFICATION_FILE="$RUNNER_TEMP/sales-stable/verification.json"
-          printf '%s\n' "$STABLE_VERIFICATION_JSON" >"$STABLE_VERIFICATION_FILE"
-          printf '%s\n' "$MIGRATION_EVIDENCE_JSON" >"$RUNNER_TEMP/sales-stable/migration.json"
-          printf '%s\n' "$WALKTHROUGH_EVIDENCE_JSON" >"$RUNNER_TEMP/sales-stable/walkthrough.json"
-          node ops/zerops-stable/verify.mjs --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/verify/$phase.json" --phase "$phase" \
-            --migration-evidence "$RUNNER_TEMP/sales-stable/migration.json" --walkthrough-evidence "$RUNNER_TEMP/sales-stable/walkthrough.json"
-      - name: Upload the verification evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: sales-stable-verify-${{ needs.pin.outputs.sha }}-${{ inputs.mode }}
-          path: ${{ runner.temp }}/sales-stable/verify
-          if-no-files-found: error
-          retention-days: 30
+      - name: Check the shared host and environment materializers
+        working-directory: app
+        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts --pool.maxWorkers 1
