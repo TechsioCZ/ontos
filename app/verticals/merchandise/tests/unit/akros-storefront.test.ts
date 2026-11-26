@@ -2,8 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { SourceGroupIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
-import { AKROS_LEGAL_ENTITY_ID, assertStorefrontScope } from '../../shared/actions/command-guard.ts';
+import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
@@ -102,15 +101,6 @@ it.effect('returns the exact current gross tier and snapshots the tier on placem
     expect(placed.state.orders[0]?.totalMinor).toBe(700);
     expect(placed.state.movements).toHaveLength(state.movements.length + 1);
     expect(placed.state.movements.at(-1)?.delta).toBe(-100);
-  }),
-);
-it.effect('AKROS API keys may only place storefront orders', () =>
-  Effect.gen(function* merchandiseScenario3() {
-    yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
-    for (const tag of ['ChangePrice', 'UpdateProduct', 'CreateOrder', 'ChangeOrderStatus']) {
-      const denied = yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
-      expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
-    }
   }),
 );
 it.effect('staff price edits update live tier prices without losing source metadata', () =>

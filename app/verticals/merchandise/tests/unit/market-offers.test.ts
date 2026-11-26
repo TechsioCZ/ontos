@@ -1,11 +1,7 @@
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema, merchandiseMarketCommandSchemas } from '../../shared/actions/apply-command.ts';
-import {
-  AKROS_LEGAL_ENTITY_ID,
-  assertCommandAllowed,
-  assertStorefrontScope,
-} from '../../shared/actions/command-guard.ts';
+import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { RecordsResponseSchema, RecordsViewSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import {
@@ -215,7 +211,6 @@ it.effect('guards market commands like other catalog and money changes', () =>
     // One product's offer is an ordinary catalog edit an agent key may run (human approval for bulk changes).
     yield* assertCommandAllowed('non_human', 'SetProductMarketOffer');
     for (const tag of ['ConfigureMarket', 'RemoveMarket', 'SetMarketProductOffers', 'SetProductMarketOffer']) {
-      yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
       expect(
         blockedReasonOf({ _tag: tag }, { canManageCatalog: true, canManageMarkets: false, canWrite: true }),
       ).toBeDefined();

@@ -1,48 +1,19 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import {
-  AKROS_LEGAL_ENTITY_ID,
   assertCommandAllowed,
-  assertStorefrontScope,
-  ESHOP_LEGAL_ENTITY_ID,
-  isStorefrontServiceKey,
+  isStorefrontAdmission,
   principalKindOf,
-  storefrontReadRequest,
   withCommandGuard,
 } from '../../shared/actions/command-guard.ts';
 import { MerchandisePermissionDenied } from '../../shared/errors/merchandise-permission-denied.ts';
+import { placeStorefrontOrderAction } from '../../src/actions/place-storefront-order.action.ts';
+import { merchandiseRuntimeDeclaration } from '../../vertical.runtime-declaration.ts';
 
 const deniedCommands = ['BulkUpdateProducts', 'ChangePrice', 'EditOrder', 'ConfigureStorefrontCatalog'] as const;
 
-it('forces e-shop API keys into the public view even if the flag is omitted or false', () => {
-  const request = { view: { orderClientRequestId: 'guest-request', storefront: false } };
-  expect(storefrontReadRequest('api_key', ESHOP_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
-  expect(storefrontReadRequest('api_key', ESHOP_LEGAL_ENTITY_ID, request)).toEqual({
-    view: { orderClientRequestId: 'guest-request', storefront: true },
-  });
-  expect(storefrontReadRequest('session', ESHOP_LEGAL_ENTITY_ID, request)).toBe(request);
-  expect(storefrontReadRequest('api_key', 'other-company', request)).toBe(request);
-});
-
 const isRejection = Schema.is(MerchandisePermissionDenied);
-
-it.effect('only allows guest order placement for the storefront company key', () =>
-  Effect.gen(function* storefrontCommands() {
-    yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
-    for (const tag of [
-      'EditOrder',
-      'ChangeOrderStatus',
-      'UpdateProduct',
-      'CreateOrder',
-      'ConfigureStorefrontCatalog',
-    ]) {
-      const failure = yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
-      expect(isRejection(failure)).toBe(true);
-      yield* assertStorefrontScope('session', ESHOP_LEGAL_ENTITY_ID, tag);
-    }
-    yield* assertStorefrontScope('api_key', 'other-company', 'CreateOrder');
-  }),
-);
 
 it('treats sessions as human and API keys or system jobs as non-human', () => {
   expect(principalKindOf('session')).toBe('human');
@@ -99,10 +70,42 @@ it('treats an MCP connection as its person, and a connection for an agent as non
   expect(principalKindOf('oauth_connection', undefined, 'ChangePrice')).toBe('human');
 });
 
-it('limits only the storefront API key to the public catalog', () => {
-  const request = { view: {} };
-  expect(storefrontReadRequest('oauth_connection', AKROS_LEGAL_ENTITY_ID, request)).toBe(request);
-  expect(storefrontReadRequest('api_key', AKROS_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
-  expect(isStorefrontServiceKey('oauth_connection', AKROS_LEGAL_ENTITY_ID)).toBe(false);
-  expect(isStorefrontServiceKey('api_key', AKROS_LEGAL_ENTITY_ID)).toBe(true);
+it('recognizes the Storefront BFF only by its Core workload admission, never by key kind or company', () => {
+  expect(isStorefrontAdmission({ outcome: 'ALLOWED', reasons: [{ code: 'allow.workload' }] })).toBe(true);
+  // A person, an MCP connection or any key holding its own grants is admitted by them, in every company.
+  expect(isStorefrontAdmission({ outcome: 'ALLOWED', reasons: [{ code: 'allow.granted' }] })).toBe(false);
+  expect(isStorefrontAdmission({ outcome: 'DENIED', reasons: [{ code: 'deny.workload_unbound' }] })).toBe(false);
+  expect(isStorefrontAdmission({ outcome: 'UNAVAILABLE', reasons: [{ code: 'unavailable.engine' }] })).toBe(false);
+});
+
+type CommandInput = typeof MerchandiseCommandSchema.Encoded;
+const guestOrder: CommandInput = {
+  _tag: 'PlaceStorefrontOrder',
+  clientRequestId: 'order-request-1',
+  lines: [{ expectedUnitPriceMinor: 121, productId: 'product-1', quantity: 1 }],
+  shippingMethod: 'OSOBNI_ODBER',
+};
+const staffCommands: readonly CommandInput[] = [
+  { _tag: 'ChangePrice', id: 'product-1', priceMinor: 16 },
+  { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CONFIRMED' },
+  { _tag: 'RecordStockMovement', delta: 1, productId: 'product-1', reason: 'RECEIPT' },
+  { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' },
+];
+
+const decodesAsCommand = Schema.decodeUnknownOption(MerchandiseCommandSchema);
+const decodesAsStorefrontOrder = (command: CommandInput) =>
+  Option.isSome(
+    Schema.decodeUnknownOption(placeStorefrontOrderAction.descriptor.payloadSchema)({ command, expectedRevision: 0 }),
+  );
+
+it('admits the Storefront workload, in any company, only to the guest order', () => {
+  const storefrontActions = merchandiseRuntimeDeclaration.actions.filter(
+    (action) => action.descriptor.accessWorkload?.workloads.includes('demo.storefront-client') === true,
+  );
+  expect(storefrontActions).toEqual([placeStorefrontOrderAction]);
+  for (const command of staffCommands) {
+    expect(Option.isSome(decodesAsCommand(command))).toBe(true);
+    expect(decodesAsStorefrontOrder(command)).toBe(false);
+  }
+  expect(decodesAsStorefrontOrder(guestOrder)).toBe(true);
 });

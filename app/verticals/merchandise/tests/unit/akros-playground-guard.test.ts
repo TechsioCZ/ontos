@@ -7,32 +7,8 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  AKROS_PLAYGROUND_LEGAL_ENTITY_ID,
-  assertStorefrontScope,
-  isStorefrontServiceKey,
-  storefrontReadRequest,
-} from '../../shared/actions/command-guard.ts';
+import { AKROS_PLAYGROUND_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
-import { MerchandisePermissionDenied } from '../../shared/errors/merchandise-permission-denied.ts';
-
-it('forces the new tenant storefront key to public catalog views, not staff records', () => {
-  expect(isStorefrontServiceKey('api_key', AKROS_PLAYGROUND_LEGAL_ENTITY_ID)).toBe(true);
-  expect(storefrontReadRequest('api_key', AKROS_PLAYGROUND_LEGAL_ENTITY_ID, { view: { storefront: false } })).toEqual({
-    view: { storefront: true },
-  });
-  expect(isStorefrontServiceKey('session', AKROS_PLAYGROUND_LEGAL_ENTITY_ID)).toBe(false);
-});
-
-it.effect('keeps the new storefront key limited to guest order placement', () =>
-  Effect.gen(function* storefrontBoundaries() {
-    yield* assertStorefrontScope('api_key', AKROS_PLAYGROUND_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
-    for (const tag of ['CreateProduct', 'UpdateProduct', 'CreateOrder', 'RecordStockMovement']) {
-      const denied = yield* assertStorefrontScope('api_key', AKROS_PLAYGROUND_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
-      expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
-    }
-  }),
-);
 
 it.layer(NodeCrypto.layer)('New AKROS storefront governed read boundary', (suite) => {
   suite.effect('rejects staff and order reads before accessing owner data', () =>

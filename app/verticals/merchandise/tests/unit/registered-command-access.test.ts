@@ -1,5 +1,3 @@
-import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
-import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import {
   ActiveApplicationCompositionService,
@@ -305,37 +303,38 @@ for (const outcome of ['DENIED', 'UNAVAILABLE', 'NEEDS_APPROVAL'] as const) {
     }),
   );
 }
-it.effect('workload admission is confined to the known storefront protocol, never staff or another company', () =>
+it.effect('Core-admitted storefront workloads in a fresh company can read only the storefront view', () =>
   Effect.gen(function* workloadProtocol() {
-    const scripted = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
-    const gate: AccessDecisionService = {
-      ...scripted,
-      decide: (input: Parameters<typeof scripted.decide>[0]) =>
-        scripted
-          .decide(input)
-          .pipe(Effect.map((decision): AccessDecision => ({ ...decision, reasons: [{ code: 'allow.workload' }] }))),
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED', reasons: ['allow.workload'] } });
+    const freshScope = {
+      ...scope,
+      authMethod: 'api_key' as const,
+      legalEntityId: '30000000-0000-4000-8000-000000000001',
     };
-    for (const [currentScope, request] of [
-      [scope, {}],
-      [scope, { view: { storefront: true } }],
-      [
-        { ...scope, authMethod: 'api_key' as const, legalEntityId: '30000000-0000-4000-8000-000000000001' },
-        { view: { storefront: true } },
-      ],
-    ] as const) {
-      expect(
-        yield* merchandiseRecordsGrants(currentScope, request).pipe(
-          Effect.provideService(AccessDecisionGate, gate),
-          Effect.isFailure,
-        ),
-      ).toBe(true);
-    }
-    const grants = yield* merchandiseRecordsGrants(
-      { ...scope, authMethod: 'api_key', legalEntityId: ESHOP_LEGAL_ENTITY_ID },
-      { view: { storefront: true } },
-    ).pipe(Effect.provideService(AccessDecisionGate, gate));
+    expect(
+      yield* merchandiseRecordsGrants(freshScope, {}).pipe(
+        Effect.provideService(AccessDecisionGate, gate),
+        Effect.isFailure,
+      ),
+    ).toBe(true);
+    const grants = yield* merchandiseRecordsGrants(freshScope, { view: { storefront: true } }).pipe(
+      Effect.provideService(AccessDecisionGate, gate),
+    );
     expect(grants.readAll).toBe(true);
     expect(grants.writeAll).toBe(false);
     expect(grants.catalog).toBe(false);
+  }),
+);
+it.effect('a non-storefront key follows its own grants instead of the storefront protocol', () =>
+  Effect.gen(function* personalKeyGrants() {
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED', reasons: ['allow.granted'] } });
+    const grants = yield* merchandiseRecordsGrants(
+      { ...scope, authMethod: 'api_key', legalEntityId: ESHOP_LEGAL_ENTITY_ID },
+      {},
+    ).pipe(Effect.provideService(AccessDecisionGate, gate));
+    expect(grants.readAll).toBe(true);
+    expect(grants.writeAll).toBe(true);
+    expect(grants.catalog).toBe(true);
+    expect(gate.askedDecisions.length).toBeGreaterThan(1);
   }),
 );

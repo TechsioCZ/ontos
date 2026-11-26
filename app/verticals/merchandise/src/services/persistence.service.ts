@@ -71,7 +71,7 @@ import type {
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
-import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontServiceKey } from '../../shared/actions/command-guard.ts';
+import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontAdmission } from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import {
@@ -2386,10 +2386,7 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
     });
   }
   // A workload admission grants only its native Storefront protocol. It can never become staff rights.
-  if (
-    read.reasons.some(({ code }) => code === 'allow.workload') &&
-    (!isStorefrontServiceKey(scope.authMethod, scope.legalEntityId) || request.view?.storefront !== true)
-  ) {
+  if (isStorefrontAdmission(read) && request.view?.storefront !== true) {
     return yield* new MerchandisePermissionDenied({
       code: 'merchandise_permission_denied',
       reason: 'The registered Storefront workload may only read its own Storefront view',

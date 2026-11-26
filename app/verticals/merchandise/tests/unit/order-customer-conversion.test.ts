@@ -10,11 +10,7 @@ import type { CustomerListItem } from '@app/party-registry/api/client';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
-import {
-  AKROS_LEGAL_ENTITY_ID,
-  assertCommandAllowed,
-  assertStorefrontScope,
-} from '../../shared/actions/command-guard.ts';
+import { AKROS_LEGAL_ENTITY_ID, assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { orderCustomerSeedEligible } from '../../scripts/order-presentation.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { MerchandiseStateSchema, OrderSchema } from '../../shared/apis/records.ts';
@@ -371,10 +367,9 @@ it.effect('linking preserves financial/stock snapshots and is idempotent after c
     expect(repeated.state).toBe(result.state);
   }),
 );
-it.effect('storefront and non-human principals cannot convert order customers', () =>
+it.effect('non-human principals cannot convert order customers', () =>
   Effect.gen(function* guard() {
     yield* assertCommandAllowed('non_human', 'LinkOrderCustomer').pipe(Effect.flip);
-    yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'LinkOrderCustomer').pipe(Effect.flip);
   }),
 );
 

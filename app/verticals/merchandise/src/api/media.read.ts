@@ -10,11 +10,13 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { Effect, Match, Option } from 'effect';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { DateTime, Effect, Match, Option } from 'effect';
+import { recordsCarrier } from '../../shared/access-declarations.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../shared/apis/media.ts';
 import type { MediaRequest } from '../../shared/apis/media.ts';
-import { isStorefrontServiceKey } from '../../shared/actions/command-guard.ts';
-import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
+import { isStorefrontAdmission } from '../../shared/actions/command-guard.ts';
+import { persistenceService } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -49,33 +51,30 @@ const makeMediaServices: ReadServiceFactory<Services> = (transaction, scope) =>
     ),
   );
 
-/** Staff need the module read grant; the storefront service key reads published product images only. */
-const prepareMediaRead = Effect.fn('MerchandiseMedia.prepare')(function* prepareMediaRead(scope: OperationalScope) {
-  if (isStorefrontServiceKey(scope.authMethod, scope.legalEntityId)) {
-    return { storefront: true };
+/**
+ * Staff need the products read grant; the registered Storefront BFF, admitted on the same records carrier through its
+ * workload, reads published product images only.
+ */
+export const prepareMediaRead = Effect.fn('MerchandiseMedia.prepare')(function* prepareMediaRead(
+  scope: OperationalScope,
+) {
+  const gate = yield* AccessDecisionGate;
+  const records = yield* gate.decide({
+    carrier: recordsCarrier,
+    legalEntityScope: 'required',
+    now: yield* DateTime.nowAsDate,
+    scope,
+  });
+  if (records.outcome === 'UNAVAILABLE') {
+    return yield* unavailable(records);
   }
-  const grants = yield* merchandiseRecordsGrants(scope, {}).pipe(
-    Effect.mapError((failure) =>
-      Match.value(failure).pipe(
-        Match.tag(
-          'MerchandisePermissionDenied',
-          () =>
-            new ReadPermissionDenied({
-              code: 'read_permission_denied',
-              reason: 'Product images require read access to products',
-            }),
-        ),
-        Match.orElse(unavailable),
-      ),
-    ),
-  );
-  if (!grants.readAll) {
+  if (records.outcome !== 'ALLOWED') {
     return yield* new ReadPermissionDenied({
       code: 'read_permission_denied',
       reason: 'Product images require read access to products',
     });
   }
-  return { storefront: false };
+  return { storefront: isStorefrontAdmission(records) };
 });
 
 export const mediaRead = defineRead(

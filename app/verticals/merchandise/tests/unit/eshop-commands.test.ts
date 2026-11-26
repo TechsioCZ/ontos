@@ -3,11 +3,9 @@ import { expect, it } from 'effect-rstest';
 import {
   MerchandiseCommandSchema,
   MerchandiseLifecycleConflict,
-  MerchandisePermissionDenied,
   StorefrontOrderResultSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
@@ -397,16 +395,6 @@ it.effect('ChangePrice on a variant appends its own price history', () =>
     const variant = record.variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(29_900);
     expect(variant?.priceHistory).toHaveLength(2);
-  }),
-);
-
-it.effect('the storefront API key may only place guest orders in the e-shop company', () =>
-  Effect.gen(function* guard() {
-    const eshop = '71000000-0000-4000-8000-000000000023';
-    yield* assertStorefrontScope('api_key', eshop, 'PlaceStorefrontOrder');
-    const denied = yield* Effect.flip(assertStorefrontScope('api_key', eshop, 'CreateProduct'));
-    expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
-    yield* assertStorefrontScope('session', eshop, 'EditOrder');
   }),
 );
 

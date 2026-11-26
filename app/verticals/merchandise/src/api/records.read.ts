@@ -11,7 +11,7 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { merchandiseRecordsPreparation, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
+import { isAkrosCompany } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -106,20 +106,13 @@ export const recordsRead = defineRead(
   {
     prepare: (input: RecordsRequest, context) =>
       akrosServiceKeyGuard(input, context.scope).pipe(
-        Effect.andThen(
-          merchandiseRecordsPreparation(
-            context.scope,
-            storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
-          ).pipe(Effect.mapError(readFailure)),
-        ),
+        Effect.andThen(merchandiseRecordsPreparation(context.scope, input).pipe(Effect.mapError(readFailure))),
       ),
     load: (input: RecordsRequest, context) =>
-      context.services
-        .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input), context.prepared)
-        .pipe(
-          Effect.mapError(readFailure),
-          Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
-        ),
+      context.services.records(input, context.prepared).pipe(
+        Effect.mapError(readFailure),
+        Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
+      ),
   },
   makeRecordsServices,
 );

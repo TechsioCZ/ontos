@@ -1,6 +1,7 @@
-// Narrow registered Actions supply authority. This guard keeps the existing human-only and storefront protocols.
+// Narrow registered Actions supply authority. This guard keeps the existing human-only protocol.
 import { Effect, Schema } from 'effect';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
+import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
 import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
 
 export const PrincipalKindSchema = Schema.Literals(['human', 'non_human']);
@@ -67,57 +68,27 @@ export const assertCommandAllowed = (
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 export const AKROS_PLAYGROUND_LEGAL_ENTITY_ID = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
 export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
-/** The N1 e-shop (its own storefront application and service key; see app/n1-storefront). */
-export const N1_LEGAL_ENTITY_ID = 'd7ad363a-ddb0-46c6-bb11-8d9362281297';
 export const isAkrosCompany = (id: string | undefined) =>
   id === AKROS_LEGAL_ENTITY_ID || id === AKROS_PLAYGROUND_LEGAL_ENTITY_ID;
-const isStorefrontCompany = (id: string | undefined) =>
-  id === ESHOP_LEGAL_ENTITY_ID || id === N1_LEGAL_ENTITY_ID || isAkrosCompany(id);
-
-/** Only the storefront BFF's API key is limited to the storefront; people, MCP connections and agents use their grants. */
-export const isStorefrontServiceKey = (
-  authMethod: TrustedPrincipalContext['authMethod'],
-  legalEntityId: string | undefined,
-): boolean => authMethod === 'api_key' && isStorefrontCompany(legalEntityId);
-
-/** Commands the storefront service key may run inside the e-shop company: only the guest storefront order. */
-export const storefrontOnlyCommands: ReadonlySet<string> = new Set(['PlaceStorefrontOrder']);
-
-/** In the e-shop company, the storefront API key (the BFF) may place guest orders and nothing else. */
-export const assertStorefrontScope = (
-  authMethod: TrustedPrincipalContext['authMethod'],
-  legalEntityId: string | undefined,
-  commandTag: string,
-): Effect.Effect<void, MerchandisePermissionDenied> =>
-  !isStorefrontServiceKey(authMethod, legalEntityId) || storefrontOnlyCommands.has(commandTag)
-    ? Effect.void
-    : Effect.fail(
-        new MerchandisePermissionDenied({
-          code: 'merchandise_permission_denied',
-          reason: `Merchandise command ${commandTag} is not available to the storefront`,
-        }),
-      );
 
 /**
- * In the e-shop company, the storefront API key (the BFF key) only ever reads the public storefront view:
- * published active products and, at most, the one order it placed by `clientRequestId`. Staff data (all orders with
- * customer contacts, stock ledger, order indicators) stays server-side even if the key omits the storefront flag.
+ * Whether Core admitted this caller as the registered Storefront BFF: through its active `demo.storefront-client`
+ * workload binding, registered for this company (O73, D6). Pass the decision of a carrier whose one workload is the
+ * storefront's (`recordsCarrier`, `placeStorefrontOrderCarrier`). People, MCP connections, agents and every other key
+ * are admitted by their own grants instead, so neither the credential kind nor the company ever decides it.
  */
-export const storefrontReadRequest = <Request extends { readonly view?: { readonly storefront?: boolean } }>(
-  authMethod: TrustedPrincipalContext['authMethod'],
-  legalEntityId: string | undefined,
-  request: Request,
-): Request =>
-  isStorefrontServiceKey(authMethod, legalEntityId)
-    ? { ...request, view: { ...request.view, storefront: true } }
-    : request;
+export const isStorefrontAdmission = (decision: Pick<AccessDecision, 'outcome' | 'reasons'>): boolean =>
+  decision.outcome === 'ALLOWED' && decision.reasons.some(({ code }) => code === 'allow.workload');
 
-/** Wraps the apply-command handler: the guard runs before any state is loaded. */
+/**
+ * Wraps the apply-command handler: the guard runs before any state is loaded. The Storefront BFF needs no command
+ * guard of its own: Core admits its workload only on `place-storefront-order`, whose payload is the guest order alone.
+ */
 export const withCommandGuard =
   <
     Payload extends { readonly command: { readonly _tag: string } },
     Context extends {
-      readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId' | 'legalEntityId'>;
+      readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId'>;
     },
     Success,
     Failure,
@@ -129,9 +100,4 @@ export const withCommandGuard =
     assertCommandAllowed(
       principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag),
       payload.command._tag,
-    ).pipe(
-      Effect.flatMap(() =>
-        assertStorefrontScope(context.scope.authMethod, context.scope.legalEntityId, payload.command._tag),
-      ),
-      Effect.flatMap(() => handler(payload, context)),
-    );
+    ).pipe(Effect.flatMap(() => handler(payload, context)));
