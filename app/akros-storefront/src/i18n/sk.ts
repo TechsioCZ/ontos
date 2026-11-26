@@ -199,6 +199,9 @@ export const sk: Dictionary = {
   },
   productPage: {
     weight: "Hmotnosť",
+    manufacturer: "Výrobca",
+    documents: "Dokumenty na stiahnutie",
+    related: "Súvisiace produkty",
     descriptionUnavailable: "Popis nie je k dispozícii.",
     deliveryTitle: "Doprava a platba",
     deliveryText: "Spôsob dopravy a platby zvolíte v košíku.",

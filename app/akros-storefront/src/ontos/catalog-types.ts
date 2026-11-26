@@ -77,6 +77,11 @@ export interface CatalogPriceTier {
   priceExcludingVatMinor: number;
 }
 
+export interface CatalogDocument {
+  label: string;
+  url: string;
+}
+
 export interface CatalogParameter {
   label: string;
   value: string;
@@ -108,6 +113,14 @@ export interface CatalogProduct {
   description: string;
   priceMinor: number;
   originalPriceMinor?: number;
+  /** Manufacturer / brand name set in OntOS. */
+  brand?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  /** Downloadable documents (only https:// or same-origin "/" URLs). */
+  documents?: CatalogDocument[];
+  /** Staff-picked related products, in the stored order. */
+  relatedProductIds?: string[];
   /** The market currency every price of this product is in. */
   currency: StoreCurrency;
   unit: string;

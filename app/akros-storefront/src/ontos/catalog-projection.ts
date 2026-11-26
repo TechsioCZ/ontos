@@ -84,6 +84,17 @@ const number = (v: unknown): number | undefined =>
 const text = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+/** Trimmed non-empty text, else undefined (blank owner fields fall through). */
+const filled = (v: unknown): string | undefined => {
+  const value = typeof v === "string" ? v.trim() : "";
+  return value || undefined;
+};
+const documentsOf = (v: unknown): { label: string; url: string }[] =>
+  rows(v).flatMap((d) => {
+    const url = text(d.url).trim();
+    if (!url.startsWith("https://") && !(url.startsWith("/") && !url.startsWith("//"))) return [];
+    return [{ label: filled(d.label) ?? filled(d.name) ?? filled(d.title) ?? url, url }];
+  });
 const parameters = (v: unknown): CatalogParameter[] =>
   rows(v)
     .map((p) => ({ label: text(p.label), value: text(p.value), unit: text(p.unit) }))
@@ -344,18 +355,29 @@ export function projectProducts(body: Raw): ProductPage {
             }))
             .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0);
       const packageQuantity = number(v.packageQuantity);
-      const unit = text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks"))));
-      const sourceNetWeight = sourceUnitWeightKg(text(v.sku), unit);
+      const unit =
+        filled(v.sourceUnit) ?? filled(v.unit) ?? filled(p.sourceUnit) ?? filled(p.unit) ?? "ks";
+      const variantWeightGrams = number(v.weightGrams);
+      const sourceNetWeight =
+        variantWeightGrams !== undefined && variantWeightGrams > 0
+          ? variantWeightGrams / 1000
+          : sourceUnitWeightKg(text(v.sku), unit);
+      const variantOriginal = number(v.originalPriceMinor);
+      const variantDescription = text(v.description).trim() || undefined;
       return {
         id: text(v.id),
         sourceId: text(v.sourceId, text(v.id)),
         sku: text(v.sku),
         label: text(v.name, text(v.label, text(v.sku))),
+        ...(variantDescription ? { description: variantDescription } : {}),
         unit,
         ...(sourceNetWeight === undefined ? {} : { sourceNetWeight }),
         vatRate: number(p.vatRate),
         // An unpriced variant is shown (with the reason) but can never be bought: price 0 disables buying.
         priceMinor: priceIssue ? 0 : gross!,
+        ...(!priceIssue && variantOriginal !== undefined && variantOriginal > gross!
+          ? { originalPriceMinor: variantOriginal }
+          : {}),
         // Unknown availability is never sold from the raw ledger count.
         stockCount: availabilityUnknown ? 0 : stockOf(v.stockOnHand, v.availability),
         ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
@@ -429,10 +451,27 @@ export function projectProducts(body: Raw): ProductPage {
     // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
     const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
     const paragraphs = paragraphsOf(p);
-    const productUnit = text(p.sourceUnit, text(p.unit, "ks"));
+    const productUnit = filled(p.sourceUnit) ?? filled(p.unit) ?? "ks";
+    const productWeightGrams = number(p.weightGrams);
     // A variant group has no weight of its own; each variant carries its own (never inherited).
     const netWeight =
-      isGroup || variants.length ? undefined : sourceUnitWeightKg(text(p.sku), productUnit);
+      isGroup || variants.length
+        ? undefined
+        : productWeightGrams !== undefined && productWeightGrams > 0
+          ? productWeightGrams / 1000
+          : sourceUnitWeightKg(text(p.sku), productUnit);
+    const productGross = productPriceIssue ? 0 : isGroup ? groupGross! : gross!;
+    const ownOriginal = number(p.originalPriceMinor);
+    const productOriginal = productPriceIssue
+      ? undefined
+      : isGroup
+        ? first?.originalPriceMinor
+        : ownOriginal !== undefined && ownOriginal > productGross
+          ? ownOriginal
+          : undefined;
+    const brandName = filled(p.brand);
+    const seoTitle = filled(p.seoTitle);
+    const seoDescription = filled(p.seoDescription);
     const detail = p.detail && typeof p.detail === "object" ? (p.detail as Raw) : {};
     products.push({
       id: text(p.id),
@@ -445,7 +484,13 @@ export function projectProducts(body: Raw): ProductPage {
       unit: productUnit,
       ...(netWeight === undefined ? {} : { netWeight }),
       vatRate: number(p.vatRate),
-      priceMinor: productPriceIssue ? 0 : isGroup ? groupGross! : gross!,
+      priceMinor: productGross,
+      ...(productOriginal === undefined ? {} : { originalPriceMinor: productOriginal }),
+      ...(brandName ? { brand: brandName } : {}),
+      ...(seoTitle ? { seoTitle } : {}),
+      ...(seoDescription ? { seoDescription } : {}),
+      documents: documentsOf(p.documents),
+      relatedProductIds: strings(p.relatedProductIds).filter((id) => id.trim() !== ""),
       ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(first?.minimumQuantity ?? minimum),

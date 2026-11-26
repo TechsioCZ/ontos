@@ -200,6 +200,9 @@ export const en: Dictionary = {
   },
   productPage: {
     weight: "Weight",
+    manufacturer: "Manufacturer",
+    documents: "Documents to download",
+    related: "Related products",
     descriptionUnavailable: "No description available.",
     deliveryTitle: "Delivery and payment",
     deliveryText: "You choose the delivery and payment method in the cart.",
