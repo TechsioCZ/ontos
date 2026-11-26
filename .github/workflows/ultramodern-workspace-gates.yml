@@ -913,35 +913,7 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      - name: Format and Lint the shard's files through the pre-commit hook
-        if: matrix.shard != 0
-        env:
-          SHARD: ${{ matrix.shard }}
-          SHARDS: 3
-        run: |
-          # Shard k takes the tracked files from the (k-1)-th start up to the k-th, in `git ls-files` byte order.
-          starts=(app/scripts/ app/verticals/inventory/)
-          if ((${#starts[@]} + 1 != SHARDS)); then
-            echo "::error title=Lint shards::SHARDS is $SHARDS, but the slice starts make $((${#starts[@]} + 1)) shards."
-            exit 1
-          fi
-          (
-            export LC_ALL=C
-            shard=1
-            git ls-files -z | while IFS= read -r -d '' file; do
-              while ((shard < SHARDS)) && [[ ! "$file" < "${starts[shard - 1]}" ]]; do
-                shard=$((shard + 1))
-              done
-              if ((shard == SHARD)); then
-                printf '%s\0' "$file"
-              fi
-            done
-          ) >"$RUNNER_TEMP/shard-files"
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
-            <"$RUNNER_TEMP/shard-files"
-          git diff --exit-code HEAD
-
-      # A missing artifact fails this step, which is the point: without the list this row proves nothing.
+      # A missing artifact fails: without the exact changed list shard 0 proves nothing.
       - name: Download the exact changed-path list
         if: matrix.shard == 0
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -949,31 +921,11 @@ jobs:
           name: ci-changed-paths
           path: ${{ runner.temp }}/ci-plan
 
-      # ci-plan chose this row only for a narrowed run whose non-empty list changes no tool configuration.
-      - name: Format and Lint the run's changed files through the pre-commit hook
-        if: matrix.shard == 0
-        run: |
-          changed="$RUNNER_TEMP/ci-plan/ci-changed-paths"
-          files="$RUNNER_TEMP/hook-files"
-          # A changed path is a literal file name, never a pathspec pattern.
-          export GIT_LITERAL_PATHSPECS=1
-          if [[ ! -s "$changed" ]]; then
-            echo "::error title=No changed-path list::The changed-files row has no changed paths, so it would prove nothing."
-            exit 1
-          fi
-          # A path the diff deleted, or that this commit does not track, has nothing to check.
-          xargs -0 git ls-files -z -- <"$changed" >"$files"
-          if [[ ! -s "$files" ]]; then
-            echo "::error title=No tracked changed files::The changed-files row would prove nothing."
-            exit 1
-          fi
-          # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
-          # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
-          # workspace typecheck, and lost its 16 GB runner.
-          # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
-            <"$files"
-          git diff --exit-code HEAD
+      - name: Format and Lint through every pre-commit job
+        uses: ./.github/actions/lint-app
+        with:
+          shard: ${{ matrix.shard }}
+          changed-paths: ${{ runner.temp }}/ci-plan/ci-changed-paths
 
       # Once per run, whatever the hook found.
       - name: Typecheck the Effect lint rules

@@ -53,8 +53,11 @@ const NODE_PROOF_COMMAND = 'mise exec -- pnpm node:proof';
 const TYPECHECK_COMMAND = 'pnpm typecheck';
 const PREPROPOSAL_PREFIX = 'whole:preproposal-';
 const FIRST_SHARD_CONDITION = 'matrix.shard == 0';
-const PRECOMMIT_COMMAND = 'lefthook run pre-commit --files-from-stdin --no-auto-install';
+const PRECOMMIT_COMMAND = 'run pre-commit --files-from-stdin --no-auto-install';
 const CLEAN_TREE_COMMAND = 'git diff --exit-code HEAD';
+const LINT_ACTION = './.github/actions/lint-app';
+const LINT_SELECTION = fileURLToPath(new URL('../ci/lint-shard-files.sh', import.meta.url));
+const LINT_RUN = readFileSync(new URL('../ci/lint-files.sh', import.meta.url), 'utf-8');
 const APP_PACKAGE_PATH = 'app/package.json';
 const EMPTY_MODULE_SOURCE = 'export {};\n';
 const BOOTSTRAP_ORDERING_STEP = 'Remove the pre-seeded runtime role to prove deployment bootstrap ordering';
@@ -1777,21 +1780,19 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     name: CHANGED_PATHS_ARTIFACT,
     path: `${RUNNER_TEMP_EXPRESSION}/ci-plan`,
   });
-  const step = lint.steps.find(
-    ({ name }) => name === "Format and Lint the run's changed files through the pre-commit hook",
-  );
-  expect(step?.if).toBe(FIRST_SHARD_CONDITION);
+  const step = lint.steps.find(({ uses }) => uses === LINT_ACTION);
+  expect(step?.with?.shard).toBe(expression(MATRIX_SHARD));
   expect(download?.if).toBe(FIRST_SHARD_CONDITION);
   expect(step?.env).toBeUndefined();
-  const run = step?.run ?? 'exit 1';
+  const run = LINT_RUN;
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain(PRECOMMIT_COMMAND);
   expect(run).toContain('--no-stage-fixed');
   // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
   // and lost its runner.
   expect(run).not.toMatch(/pnpm lint$/mu);
-  expect(run.trimEnd().endsWith(CLEAN_TREE_COMMAND)).toBe(true);
-  const select = run.slice(0, run.indexOf('mise exec'));
+  expect(run).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
+  const select = `bash "${LINT_SELECTION}" 0 "$RUNNER_TEMP/ci-plan/ci-changed-paths" >"$RUNNER_TEMP/hook-files"`;
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-selection-'));
   const repository = path.join(directory, 'repository');
@@ -1855,10 +1856,10 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     // Exactly the changed files that this commit still tracks: a deleted or untracked path has nothing
     // to check, and nothing else rides along.
     expect(sorted(selectFiles([...specialPaths, 'app/removed.ts', untrackedPath]))).toEqual(sorted(specialPaths));
-    // Empty, missing, deleted-only and untracked-only inputs must never produce a passing no-op.
+    // Empty or missing input is invalid; deleted-only paths have no content to check.
     expect(() => selectFiles([])).toThrow();
     expect(() => selectFiles()).toThrow();
-    expect(() => selectFiles(['app/removed.ts', untrackedPath])).toThrow();
+    expect(selectFiles(['app/removed.ts', untrackedPath])).toEqual([]);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -2467,14 +2468,15 @@ it('runs excluded whole-owner scenarios exactly once in isolated integration lan
 
 it('formats and lints every tracked file in exactly one pre-commit hook shard', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
-  const step = lint.steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
-  const shards = Number(step?.env?.SHARDS);
+  const step = lint.steps.find(({ uses }) => uses === LINT_ACTION);
+  expect(step).toBeDefined();
+  const shards = 3;
   expect(lint.strategy.matrix.shard).toEqual(Array.from({ length: shards }, (_, index) => index + 1));
-  const run = step?.run ?? 'exit 1';
+  const run = LINT_RUN;
   // The hook sees its shard's files, and a file it fixes fails the gate.
   expect(run).toContain(PRECOMMIT_COMMAND);
-  expect(run.trimEnd().endsWith(CLEAN_TREE_COMMAND)).toBe(true);
-  const select = run.slice(0, run.indexOf('mise exec'));
+  expect(run).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
+  const select = `bash "${LINT_SELECTION}" "$SHARD" >"$RUNNER_TEMP/shard-files"`;
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
   const repository = path.join(directory, 'repository');
@@ -3214,16 +3216,11 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   const download = lint.find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
   expect(download?.if).toBe(FIRST_SHARD_CONDITION);
   expect(download?.with?.name).toBe(CHANGED_PATHS_ARTIFACT);
-  const changedRow = lint.find(
-    ({ name }) => name === "Format and Lint the run's changed files through the pre-commit hook",
-  );
-  expect(changedRow?.if).toBe(FIRST_SHARD_CONDITION);
-  expect(changedRow?.run).toContain('export GIT_LITERAL_PATHSPECS=1');
-  expect(changedRow?.run).toContain(PRECOMMIT_COMMAND);
-  expect(changedRow?.run?.trimEnd().endsWith(CLEAN_TREE_COMMAND)).toBe(true);
-  expect(lint.find(({ name }) => name === "Format and Lint the shard's files through the pre-commit hook")?.if).toBe(
-    'matrix.shard != 0',
-  );
+  const hook = lint.find(({ uses }) => uses === LINT_ACTION);
+  expect(hook?.with?.shard).toBe(expression(MATRIX_SHARD));
+  expect(readFileSync(LINT_SELECTION, 'utf-8')).toContain('GIT_LITERAL_PATHSPECS=1');
+  expect(LINT_RUN).toContain(PRECOMMIT_COMMAND);
+  expect(LINT_RUN).toContain(`${CLEAN_TREE_COMMAND} || failed=1`);
 });
 
 it('runs the lint rules and the whole-tree repository policy once in every plan, beside the lint', () => {
