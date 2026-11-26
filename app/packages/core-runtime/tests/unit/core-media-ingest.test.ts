@@ -95,7 +95,7 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
       readonly body?: Stream.Stream<Uint8Array, unknown>;
       readonly contentLength?: number | 'absent';
       readonly principalId?: string;
-      /** The decision for a sealed row; a refusal stands for a caller without the confirm capability. */
+      /** The decision for a row past `uploaded`; a refusal stands for a caller without the confirm capability. */
       readonly sealedDecision?: Effect.Effect<ConfirmResult, MediaForbidden>;
       readonly selectedLegalEntityId?: string | undefined;
       readonly storageOverride?: typeof storage.service;
@@ -105,11 +105,11 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
       asset: options.asset ?? reserved(),
       body: options.body ?? pieces(content),
       confirm: (verification) =>
-        options.asset?.processingStatus === 'ready'
-          ? Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(
+        (options.asset?.processingStatus ?? 'uploaded') === 'uploaded'
+          ? confirm(verification)
+          : Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(
               Effect.andThen(options.sealedDecision ?? followsSealedRow),
-            )
-          : confirm(verification),
+            ),
       contentLength: lengthOf(options.contentLength),
       mediaAssetRef,
       principalId: options.principalId ?? reserving,
@@ -352,8 +352,8 @@ it.effect('never writes for a sealed, failed or scanning asset, even for the pri
       'MediaNotReady',
     );
     expect(yield* callsOf).toEqual([]);
-    // Only the sealed asset asked for a decision; nothing was verified or written.
-    expect(yield* confirms).toEqual(['unverifiable']);
+    // Each asked for a decision on no evidence; nothing was verified or written.
+    expect(yield* confirms).toEqual(['unverifiable', 'unverifiable', 'unverifiable']);
   }),
 );
 
@@ -370,6 +370,18 @@ it.effect('decides a replay on a sealed asset again: without the confirm capabil
     );
     expect(failureTag(exit)).toBe('MediaForbidden');
     expect(yield* Ref.get(pulled)).toBe(0);
+    expect(yield* callsOf).toEqual([]);
+  }),
+);
+
+it.effect('decides a request for a failed or scanning asset too, before it tells anything of the row', () =>
+  Effect.gen(function* deniedClosed() {
+    const { callsOf, ingest } = yield* setup();
+    const refused = Effect.fail(new MediaForbidden({ code: 'media_forbidden', reason: 'revoked' }));
+    for (const processingStatus of ['failed', 'scanning'] as const) {
+      const exit = yield* Effect.exit(ingest({ asset: reserved({ processingStatus }), sealedDecision: refused }));
+      expect(failureTag(exit)).toBe('MediaForbidden');
+    }
     expect(yield* callsOf).toEqual([]);
   }),
 );

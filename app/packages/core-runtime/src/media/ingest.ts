@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Stream } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { MediaAssetRef } from '../resources/media-asset.ts';
@@ -35,6 +35,9 @@ import type { MediaStoredObjectVerification } from './verification.ts';
  */
 
 type ConfirmResult = typeof ConfirmAssetResultSchema.Type;
+
+const isIntegrityFailed = Schema.is(MediaIntegrityFailed);
+const isIngestUncertain = Schema.is(MediaIngestUncertain);
 
 export interface IngestMediaBytesInput<BodyError, ConfirmFailure extends { readonly _tag: string }, ConfirmServices> {
   /** The reserved row the byte-source Read offered, read in the trusted tenant scope. */
@@ -124,16 +127,24 @@ export const ingestMediaBytes = Effect.fn('MediaIngest.ingest')(function* ingest
   if (asset.storageKey !== namedKey || !isCallersReservation(asset, input)) {
     return yield* mediaAssetNotFound();
   }
-  // A replay on a sealed asset is a request of its own: the Action decides it under the confirm capability (it follows
-  // the row, so it needs no evidence about the object), before a body byte is read.
-  if (asset.processingStatus === 'ready') {
-    yield* confirmReservedUpload({
+  // A request on an asset past `uploaded` is decided by the Action under the confirm capability (it follows the row, so
+  // it needs no evidence about the object), before a body byte is read or anything of the row is told.
+  if (asset.processingStatus !== 'uploaded') {
+    const decision = confirmReservedUpload({
       asset,
       confirm: input.confirm,
       mediaAssetRef: input.mediaAssetRef,
       principalId: input.principalId,
       selectedLegalEntityId: input.selectedLegalEntityId,
     });
+    // A sealed asset's replay is answered only after the Action agreed. A closed or scanning asset takes no bytes
+    // whatever the Action says about the row, so only a refusal of the caller matters and the byte hop answers.
+    yield* asset.processingStatus === 'ready'
+      ? decision
+      : decision.pipe(
+          Effect.catchIf(isIntegrityFailed, () => Effect.void),
+          Effect.catchIf(isIngestUncertain, () => Effect.void),
+        );
   }
   // A body that breaks mid-flight (a dropped connection, a short body) is a transfer that did not finish: the put
   // aborts and leaves nothing readable, and the stored object is judged by the verification below.

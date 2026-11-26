@@ -1293,6 +1293,7 @@ jobs:
         run: mise exec -- pnpm active-composition:publish prove-build
 
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
+        id: integration-suites
         if: matrix.suite == 'integration'
         working-directory: app
         # The job environment above is the whole configuration. Native fixtures refuse to start unless
@@ -1311,7 +1312,7 @@ jobs:
       # The record is generated from this run's own test reports, so it is kept when a case failed too. It is
       # named per attempt for the same reason as the diagnostics below.
       - name: Upload the Core Media evidence record
-        if: ${{ !cancelled() && matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media') }}
+        if: ${{ !cancelled() && steps.integration-suites.outcome != 'skipped' && matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: core-media-evidence-${{ github.run_attempt }}

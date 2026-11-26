@@ -2502,8 +2502,10 @@ it('gives the one Core Media row its object store before the suites and keeps th
   expect(steps[start]?.if).toBe(selected);
   expect(steps[start]?.run).toBe('bash scripts/ci/start-core-media-object-store.sh');
   expect(steps[tests]?.env?.CORE_MEDIA_EVIDENCE_DIR).toBe(`${RUNNER_TEMP_EXPRESSION}/core-media-evidence`);
-  // Kept when a case failed too: the record then says which one.
-  expect(steps[upload]?.if).toBe(expression(`!cancelled() && ${selected}`));
+  // Kept when a case failed too: the record then says which one. A run that never reached the suites has none.
+  expect(steps[upload]?.if).toBe(
+    expression(`!cancelled() && steps.integration-suites.outcome != 'skipped' && ${selected}`),
+  );
   expect(steps[upload]?.with).toEqual({
     'if-no-files-found': 'error',
     name: `core-media-evidence-${RUN_ATTEMPT_EXPRESSION}`,
