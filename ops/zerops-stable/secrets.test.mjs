@@ -57,7 +57,7 @@ test('initialization creates fresh private credentials without overwriting an ex
     assert.ok(owners['shell-super-app'].ONTOS_EMAIL_DISPATCH_SECRET.length >= 32);
     for (const key of ['REF', 'VERSION', 'LINEAGE_REF']) assert.ok(owners.pricing[`ONTOS_PRICING_CONFIRMATION_KEY_${key}`]);
     assert.deepEqual(Object.keys(a.services).sort(), ['app', 'spicedb']);
-    for (const key of ['PARTY_REGISTRY_DB_PASSWORD', 'PARTY_REGISTRY_WORKER_DB_PASSWORD', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD']) {
+    for (const key of ['PARTY_REGISTRY_DATABASE_PASSWORD', 'PARTY_REGISTRY_WORKER_DATABASE_PASSWORD', 'SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD']) {
       assert.ok(a.services.app[key].length >= 32, key);
       assert.notEqual(a.services.app[key], b.services.app[key]);
     }
@@ -74,7 +74,7 @@ test('rejects cross-project and malformed bundles without echoing secret values'
   for (const value of [
     { ...bundle(), projectId: 'demo-project' },
     { ...bundle(), services: { unknown: { TOKEN: 'never-log-this' } } },
-    { ...bundle(), services: { migrator: { SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'never-log-this' } } },
+    { ...bundle(), services: { migrator: { SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: 'never-log-this' } } },
     { ...bundle(), services: { app: { TOKEN: '' } } },
     { ...bundle(), services: { app: { 'bad-key': 'never-log-this' } } },
     { ...bundle(), services: {} },
@@ -187,7 +187,7 @@ const liveStore = (content, { failNew = false } = {}) => {
 };
 
 test('storing the app secrets on a project that already holds them changes nothing', async () => {
-  const passwords = { PARTY_REGISTRY_DB_PASSWORD: 'party', SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'issuer', SMTP_PASSWORD: 'smtp' };
+  const passwords = { PARTY_REGISTRY_DATABASE_PASSWORD: 'party', SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: 'issuer', SMTP_PASSWORD: 'smtp' };
   const stored = Object.entries(passwords).map(([key, content], index) => ({ content, id: String(index), key }));
   const result = await applySecrets({
     apply: true,

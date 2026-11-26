@@ -260,10 +260,10 @@ zerops:
         # Operator-authorized AKROS source synchronization; never enabled by production materialization.
         ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true'
         # The identity passwords are sensitive secrets of this service. Naming one here would override the secret.
-        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
-        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${PARTY_REGISTRY_DATABASE_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${PARTY_REGISTRY_WORKER_DATABASE_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PORT: '3000'
-        SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SMTP_FROM: OntOS <noreply@ontos-stage.web-revolution.cz>
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_DATABASE_PASSWORD: ${spicedb_SPICEDB_DATABASE_PASSWORD}

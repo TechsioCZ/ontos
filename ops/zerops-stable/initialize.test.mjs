@@ -24,9 +24,9 @@ const bundle = {
   services: {
     app: {
       ONTOS_OWNER_SECRETS_JSON: '{"pricing":{"KEY":"bundle"}}',
-      PARTY_REGISTRY_DB_PASSWORD: 'pw-party',
-      PARTY_REGISTRY_WORKER_DB_PASSWORD: 'pw-worker',
-      SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'pw-issuer',
+      PARTY_REGISTRY_DATABASE_PASSWORD: 'pw-party',
+      PARTY_REGISTRY_WORKER_DATABASE_PASSWORD: 'pw-worker',
+      SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: 'pw-issuer',
     },
     spicedb: { SPICEDB_DATABASE_PASSWORD: 'pw-spicedb', SPICEDB_GRPC_PRESHARED_KEY: 'psk' },
   },
@@ -147,7 +147,7 @@ test('refusals: a deployed workload, unsynced secrets, another db18, data withou
     [{ statuses: { spicedb: 'STOPPED' } }, /spicedb is STOPPED/u],
     [
       {
-        userData: { ...storedServices, app: { ...storedServices.app, PARTY_REGISTRY_DB_PASSWORD: 'old' } },
+        userData: { ...storedServices, app: { ...storedServices.app, PARTY_REGISTRY_DATABASE_PASSWORD: 'old' } },
       },
       /sync --apply/u,
     ],
@@ -173,7 +173,7 @@ test('the canonical setup maps every explicit manifest role to its app secret', 
   const { explicitRoles } = runDatabaseLauncher({ mode: 'roles' });
   const secrets = roleSecretsOf(canonicalZerops);
   assert.deepEqual([...explicitRoles].sort(), [...secrets.keys()].sort());
-  assert.equal(secrets.get('shell_gateway_issuer'), 'SHELL_GATEWAY_ISSUER_DB_PASSWORD');
+  assert.equal(secrets.get('shell_gateway_issuer'), 'SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD');
 });
 
 test('secrets reach PostgreSQL steps on stdin or in the child env, never in arguments', () => {

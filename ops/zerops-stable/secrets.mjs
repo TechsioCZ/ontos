@@ -69,9 +69,9 @@ export async function initializeSecrets({ config, generateTls = generateTlsMater
       services: {
         app: {
           ONTOS_OWNER_SECRETS_JSON: JSON.stringify(ownerSecrets),
-          PARTY_REGISTRY_DB_PASSWORD: secret(),
-          PARTY_REGISTRY_WORKER_DB_PASSWORD: secret(),
-          SHELL_GATEWAY_ISSUER_DB_PASSWORD: secret(),
+          PARTY_REGISTRY_DATABASE_PASSWORD: secret(),
+          PARTY_REGISTRY_WORKER_DATABASE_PASSWORD: secret(),
+          SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: secret(),
         },
         spicedb: {
           SPICEDB_DATABASE_PASSWORD: secret(),

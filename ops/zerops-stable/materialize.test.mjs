@@ -85,8 +85,8 @@ test('keeps every other canonical value, including in-project service and secret
     }
   }
   assert.equal(setups.app.run.envVariables.CLOUDFLARE_EMAIL_API_TOKEN, '${SMTP_PASSWORD}');
-  assert.equal(setups.app.run.envVariables.PARTY_REGISTRY_DB_PASSWORD, undefined, 'the app secret is not overridden');
-  assert.match(setups.app.run.envVariables.PARTY_REGISTRY_DATABASE_URL, /:\$\{PARTY_REGISTRY_DB_PASSWORD\}@/u);
+  assert.equal(setups.app.run.envVariables.PARTY_REGISTRY_DATABASE_PASSWORD, undefined, 'the app secret is not overridden');
+  assert.match(setups.app.run.envVariables.PARTY_REGISTRY_DATABASE_URL, /:\$\{PARTY_REGISTRY_DATABASE_PASSWORD\}@/u);
   assert.equal(setups.app.run.envVariables.SPICEDB_ENDPOINT, 'spicedb:50051');
 });
 

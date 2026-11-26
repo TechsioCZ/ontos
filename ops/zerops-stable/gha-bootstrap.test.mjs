@@ -60,7 +60,7 @@ const secrets = {
   services: {
     app: {
       ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"BETTER_AUTH_SECRET":"auth-secret-value"}}',
-      PARTY_REGISTRY_DB_PASSWORD: 'db-password-value',
+      PARTY_REGISTRY_DATABASE_PASSWORD: 'db-password-value',
     },
     spicedb: { SPICEDB_DATABASE_PASSWORD: 'spicedb-password-value' },
   },
@@ -108,7 +108,7 @@ test('a bundle of another project, identity or module set is refused without ech
   ];
   // The identity passwords are the app's own secrets; a bundle still holding them for a separate service is refused.
   assert.match(
-    refusal(bundleValue({ secrets: { ...secrets, services: { ...secrets.services, migrator: { SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'db-password-value' } } } })),
+    refusal(bundleValue({ secrets: { ...secrets, services: { ...secrets.services, migrator: { SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: 'db-password-value' } } } })),
     /secrets: Secret bundle contains an unknown service/u,
   );
   const swapped = structuredClone(accounts);

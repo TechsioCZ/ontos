@@ -467,12 +467,14 @@ it('connects the application container to each database identity only through it
   expect(databaseUrlKeys(app)).toStrictEqual(DATABASE_URL_KEYS);
   expect(app.DATABASE_URL).toBe(identityUrl('ontos_runtime', 'db18_password'));
   expect(app.COMMERCE_PORTAL_AUTH_DATABASE_URL).toBe(identityUrl('ontos_runtime', 'db18_password'));
-  expect(app.PARTY_REGISTRY_DATABASE_URL).toBe(identityUrl('party_registry_runtime', 'PARTY_REGISTRY_DB_PASSWORD'));
+  expect(app.PARTY_REGISTRY_DATABASE_URL).toBe(
+    identityUrl('party_registry_runtime', 'PARTY_REGISTRY_DATABASE_PASSWORD'),
+  );
   expect(app.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(
-    identityUrl('party_registry_worker', 'PARTY_REGISTRY_WORKER_DB_PASSWORD'),
+    identityUrl('party_registry_worker', 'PARTY_REGISTRY_WORKER_DATABASE_PASSWORD'),
   );
   expect(app.SHELL_GATEWAY_ISSUER_DATABASE_URL).toBe(
-    identityUrl('shell_gateway_issuer', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+    identityUrl('shell_gateway_issuer', 'SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD'),
   );
 });
 
@@ -494,9 +496,9 @@ it('uses the superuser only in the admin URLs the application supervisor reads',
 it('reads each identity password from the application secrets and references it only there', () => {
   const environments = serviceEnvironments();
   const owners = {
-    PARTY_REGISTRY_DB_PASSWORD: ['app'],
-    PARTY_REGISTRY_WORKER_DB_PASSWORD: ['app'],
-    SHELL_GATEWAY_ISSUER_DB_PASSWORD: ['app'],
+    PARTY_REGISTRY_DATABASE_PASSWORD: ['app'],
+    PARTY_REGISTRY_WORKER_DATABASE_PASSWORD: ['app'],
+    SHELL_GATEWAY_ISSUER_DATABASE_PASSWORD: ['app'],
   };
 
   for (const [secretKey, expected] of Object.entries(owners)) {
