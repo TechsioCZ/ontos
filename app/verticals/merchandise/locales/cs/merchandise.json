@@ -510,7 +510,7 @@
           "selectAllLabel": "Vybrat všechny řádky",
           "selectionLabel": "Vybrat řádky"
         },
-        "title": "Produkty a sklad",
+        "title": "Produkty",
         "validation": {
           "delta": "Zadejte nenulové množství od −1 000 000 do 1 000 000, nejvýše se 6 desetinnými místy.",
           "lowStock": "Zadejte celé číslo 0 nebo větší.",

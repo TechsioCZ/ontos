@@ -4,6 +4,7 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect, Option } from 'effect';
@@ -14,6 +15,7 @@ import type { ProductPageItem } from '../../../../../shared/apis/product-page.ts
 import { catalogI18nResources } from '../../../../i18n/resources';
 import {
   catalogLocaleFromSearch,
+  companyErpOffer,
   erpOfferFromSearch,
   rememberedErpOffer,
   rememberErpOffer,
@@ -64,8 +66,8 @@ const useData = <I, A, E>(store: Pick<PageData<I, A, E>, 'ensure' | 'snapshot' |
   return snapshot;
 };
 
-/** The offer the URL names, remembered in this browser; else the last remembered one. */
-const useErpOffer = (search: string): Option.Option<ErpOffer> => {
+/** The offer the URL names, remembered in this browser; else the company's storefront offer; else the last remembered one. */
+const useErpOffer = (search: string, legalEntityId: string): Option.Option<ErpOffer> => {
   const named = erpOfferFromSearch(search);
   const [remembered, setRemembered] = useState(Option.none<ErpOffer>);
   useEffect(() => {
@@ -74,7 +76,11 @@ const useErpOffer = (search: string): Option.Option<ErpOffer> => {
       onSome: rememberErpOffer,
     });
   }, [search]);
-  return Option.isSome(named) ? named : remembered;
+  if (Option.isSome(named)) {
+    return named;
+  }
+  const company = companyErpOffer(legalEntityId);
+  return Option.isSome(company) ? company : remembered;
 };
 
 /** Says what is missing; the same layout as the Shell's empty states. */
@@ -302,9 +308,9 @@ const Pager = ({
 };
 
 const ProductsPageContent = (props: ProductsPageProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const search = props.search ?? '';
-  const offer = useErpOffer(search);
+  const offer = useErpOffer(search, props.context?.legalEntityId ?? '');
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState({ offset: 0, search: '' });
   if (props.context === undefined) {
@@ -322,8 +328,8 @@ const ProductsPageContent = (props: ProductsPageProps) => {
       <header className="flex flex-col gap-100">
         <h1 className="font-semibold text-xl">{t(`${key}.title`)}</h1>
         <p className="max-w-prose text-fg-secondary text-sm">{t(`${key}.intro`)}</p>
+        <Link href={`/${language ?? 'cs'}/provoz/produkty`}>{t(`${key}.editorLink`)}</Link>
       </header>
-      {Option.isNone(offer) && <StatusText status="warning">{t(`${key}.offerMissing`)}</StatusText>}
       <section className="flex flex-col gap-200 rounded-lg border border-border-primary p-250">
         <form
           className="flex flex-wrap items-end gap-150"
