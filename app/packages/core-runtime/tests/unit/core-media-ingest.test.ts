@@ -139,7 +139,7 @@ it.effect('refuses another principal before it reads a body byte, and reveals no
         principalId: stranger,
       }),
     );
-    expect(failureTag(exit)).toBe('MediaForbidden');
+    expect(failureTag(exit)).toBe('MediaAssetNotFound');
     expect(yield* Ref.get(pulled)).toBe(0);
     expect(yield* callsOf).toEqual([]);
     expect(yield* confirms).toEqual([]);
@@ -306,19 +306,19 @@ it.effect('is a conflict when a replay carries different bytes, and the sealed o
 const otherTenantId = '00000000-0000-4000-8000-000000000002';
 const closedStatuses = ['uploaded', 'ready', 'failed', 'scanning'] as const;
 
-it.effect('answers another principal of the same tenant the same refusal for every status, with no provider call', () =>
+it.effect('does not let another principal of the same tenant find the asset, whatever its status', () =>
   Effect.gen(function* statusOracle() {
     const { callsOf, confirms, ingest } = yield* setup();
     for (const processingStatus of closedStatuses) {
       const asset = reserved({ processingStatus, sealedAt: processingStatus === 'ready' ? sealedAt : null });
-      expect(failureTag(yield* Effect.exit(ingest({ asset, principalId: stranger })))).toBe('MediaForbidden');
+      expect(failureTag(yield* Effect.exit(ingest({ asset, principalId: stranger })))).toBe('MediaAssetNotFound');
     }
     // An unbound reservation has no principal to match, so nobody may send its bytes.
     expect(
       failureTag(
         yield* Effect.exit(ingest({ asset: reserved({ ingestedByPrincipalId: null }), principalId: stranger })),
       ),
-    ).toBe('MediaForbidden');
+    ).toBe('MediaAssetNotFound');
     expect(yield* callsOf).toEqual([]);
     expect(yield* confirms).toEqual([]);
   }),

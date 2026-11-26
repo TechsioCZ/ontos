@@ -2837,7 +2837,7 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
 
 /**
  * The failure of a Core Media upload as the client sees it: the media outcomes keep the status ERRORS.md gives them
- * (403 refused principal, 404 absent or foreign, 409 state or content conflict, 411 body of unstated length,
+ * (403 refused capability, 404 absent, foreign or another principal's, 409 state or content conflict, 411 body of unstated length,
  * 422 proven corruption, 503 uncertain or unavailable), and every Action or Read failure of the confirm step keeps
  * its identity mapping. No problem carries a key, a digest, a locator or a provider message.
  */
