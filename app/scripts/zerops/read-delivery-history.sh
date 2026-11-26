@@ -74,9 +74,12 @@ if [[ "$mode" == comparison ]]; then
   # The changed files are listed on the first page for the whole comparison; per_page=1 keeps the commit list short.
   # GitHub lists at most 300 files, so a list of 300 or more may be cut short.
   comparison="$(gh api "$repository/compare/$base_sha...$GITHUB_SHA?per_page=1" \
-    --jq "{base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
+    --jq 'if (.files | type == "array") and
+      all(.files[]; type == "object" and (.filename | type == "string" and length > 0) and
+        (if has("previous_filename") then (.previous_filename | type == "string" and length > 0) else true end))
+      then . else error("unreadable comparison files") end'" | {base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
            changedPaths: ([.files[]? | .filename, (.previous_filename // empty)] | unique),
-           truncated: ((.files | length) >= 300 or (has(\"files\") | not))}" 2>/dev/null)" || comparison=null
+           truncated: ((.files | length) >= 300)}" 2>/dev/null)" || comparison=null
   jq -e 'type == "object"' <<<"$comparison" >/dev/null 2>&1 || comparison=null
   jq -n --argjson runs "$runs" --argjson comparison "$comparison" \
     '{runs: $runs, mutations: [], comparison: $comparison}'
@@ -109,7 +112,10 @@ mutated() {
   done
   jq -se --argjson total "$total" '([.[].id] | unique | length) == $total' "$collected" >/dev/null || return 1
   jq -s --arg marker "$marker" '[.[].steps[] |
-    select(.name == $marker and (.conclusion == "success" or .status == "in_progress"))] | length > 0' "$collected"
+    select(.name == $marker)] |
+    if any(.[]; .conclusion == "success" or .status == "in_progress") then true
+    elif any(.[]; .status == "completed" and .conclusion == null) then null
+    else false end' "$collected"
 }
 # The services of the run's own plan artifact (zerops-delivery-plan, uploaded before its first mutation).
 planned_services() {

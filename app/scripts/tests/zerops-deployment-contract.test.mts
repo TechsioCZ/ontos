@@ -629,6 +629,7 @@ const DeliveryStepSchema = Schema.Struct({
 type DeliveryStep = typeof DeliveryStepSchema.Type;
 const stageProofsPath = new URL('../zerops/stage-proofs.sh', import.meta.url);
 const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
+const PROOFS_FINISH = 'bash scripts/zerops/stage-proofs.sh finish';
 /** The delivery every run shares (.github/actions/deliver-stage), from its secret syncs to its last proof. */
 const deliverySteps = (): readonly DeliveryStep[] =>
   Schema.decodeUnknownSync(Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }) }))(
@@ -689,7 +690,7 @@ it('marks the attempt after the plan is retained and before any remote mutation,
   expect(firstPush).toBeGreaterThan(sync);
   expect(readFileSync(stagePushPath, 'utf-8')).toContain('if [ "$head" != "$GITHUB_SHA" ]; then');
   // The live proofs stay mandatory: their verdict has no condition, and fails when they never started.
-  const finish = steps.find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
+  const finish = steps.find(({ run }) => run === PROOFS_FINISH);
   expect(finish).toBeDefined();
   expect(finish?.if).toBeUndefined();
   expect(finish?.['continue-on-error']).toBeUndefined();
@@ -913,7 +914,7 @@ it('binds N1 pushes to the packaged Next build and configured origin, not an unr
   expect(build).toContain('build_id="$(cat "$package/.next/BUILD_ID")"');
   expect(build).toContain(String.raw`printf 'STAGE_N1_BUILD_ID=%s\n'`);
   expect(build.indexOf('STAGE_N1_BUILD_ID')).toBeLessThan(build.indexOf('mv "$package/.next/standalone"'));
-  const finish = deliverySteps().find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
+  const finish = deliverySteps().find(({ run }) => run === PROOFS_FINISH);
   expect(finish?.env?.PUSH_N1).toBe(`\${{ inputs.n1 }}`);
   const proofs = readFileSync(stageProofsPath, 'utf-8');
   expect(proofs).toContain(`checkout_args=(--origin "\${STAGE_N1_URL:?STAGE_N1_URL is required}")`);
@@ -928,4 +929,18 @@ it('binds N1 pushes to the packaged Next build and configured origin, not an unr
     `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "\${checkout_args[@]}"`,
   );
   expect(proofs).not.toContain('--expect-build-id "$GITHUB_SHA"');
+});
+
+it('documents app-only failure logs and warning-only page timing budgets from the delivery action', () => {
+  const logs = deliverySteps().find(({ name }) => name === 'Show app runtime and build logs after a failed deploy');
+  expect(logs?.if).toBe("failure() && steps.push-app.outcome != 'skipped'");
+  expect(logs?.run).toContain('--show-build-logs');
+  const verify = deliverySteps().find(({ name }) => name === 'Verify every service and finish the proofs');
+  expect(verify?.run).toBe(PROOFS_FINISH);
+  const probe = readFileSync(new URL('../zerops/verify-service.mjs', import.meta.url), 'utf-8');
+  expect(probe).toContain('::warning title=Stage page budget::');
+  expect(probe).toContain('if (failures.length > 0)');
+  const playbook = readFileSync(new URL('../../docs/architecture/DEPLOYMENT.md', import.meta.url), 'utf-8');
+  expect(playbook).toContain('a storefront-only failure does not collect app logs');
+  expect(playbook).toContain('page-timing overruns warn, while status, transport and timeout failures block');
 });

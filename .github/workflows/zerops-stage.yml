@@ -11,21 +11,12 @@ name: Zerops Stage Deploy
 # switches traffic only after /_host/ready answers.
 # One verified-history snapshot feeds planning and lint in parallel. Unit builds never wait for lint; only the two
 # delivering jobs do. Even a no-service-change plan must pass lint before this run can become the next verified base.
+# Every push starts lint, including documentation-only repairs; the plan can select no delivery.
 # Cloudflare stays in front of stage only as DNS, WAF and Access.
 on:
   push:
     branches:
       - demo/sales-crm
-    paths-ignore:
-      - 'docs/**'
-      - 'app/docs/**'
-      - '**/README.md'
-      - '**/AGENTS.md'
-      - '**/CLAUDE.md'
-      - '**/CONTRIBUTING.md'
-      - '**/SECURITY.md'
-      - '**/CHANGELOG.md'
-      - '**/LICENSE.md'
   workflow_dispatch:
     # The upload warm-up shares one curl invocation, and so one connection, with the upload itself
     # (scripts/zerops/push-service.sh). Its rule was: a second upload attempt means this goes back off. Job

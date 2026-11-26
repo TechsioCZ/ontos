@@ -471,3 +471,58 @@ it.live("executes the real planner over this commit's reference graph: what stag
     }
   }),
 );
+
+it.effect('leaves malformed comparison file records unknown rather than granting partial or empty proof', () =>
+  Effect.gen(function* malformedComparison() {
+    for (const files of [
+      null,
+      {},
+      [null],
+      [{}],
+      [{ filename: '' }],
+      [{ filename: 'valid.ts' }, {}],
+      [{ filename: 'new.ts', previous_filename: null }],
+    ]) {
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({ files, status: 'identical' }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({ comparison: null });
+    }
+  }),
+);
+
+it.effect('keeps an unavailable terminal marker outcome unknown unless another attempt proves mutation', () =>
+  Effect.gen(function* unknownMarker() {
+    const unknown = { id: 2, steps: [{ conclusion: null, name: MUTATION_MARKER, status: 'completed' }] };
+    for (const proved of [false, true]) {
+      const allJobs = proved ? [unknown, ...jobs('success').jobs] : [unknown];
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({ files: [], status: 'identical' }),
+        [jobsOf(13)]: JSON.stringify({ jobs: allJobs, total_count: allJobs.length }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(13, 13, 'failure'), run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({ mutations: [{ mutated: proved ? true : null, runId: 13, services: null }] });
+    }
+  }),
+);
+
+it.effect('starts Stage Deploy even for a documentation-only repair push', () =>
+  Effect.gen(function* documentationTrigger() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        on: Schema.Struct({
+          push: Schema.Struct({
+            branches: Schema.Array(Schema.String),
+            paths: Schema.optionalKey(Schema.Array(Schema.String)),
+            'paths-ignore': Schema.optionalKey(Schema.Array(Schema.String)),
+          }),
+        }),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    expect(workflow.on.push.branches).toContain('demo/sales-crm');
+    expect(workflow.on.push['paths-ignore']).toBeUndefined();
+    expect(workflow.on.push.paths).toBeUndefined();
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
