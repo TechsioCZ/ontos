@@ -28,7 +28,7 @@ import {
   ActionPrincipalUnavailableErrorSchema,
   makeGatewayPrincipalVerifierLayer,
 } from '@app/gateway-principal-verifier/server';
-import { ConfigProvider, Effect, Exit, Layer, Predicate, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Layer, Predicate, Redacted, Result, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { NodeCrypto } from '@effect/platform-node';
@@ -59,6 +59,7 @@ import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
  * release does not declare the operation, and an unavailable catalog.
  */
 
+const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const issuer = 'https://shell.example.test';
 const issuedAt = 1_700_000_000;
 const requester = {
@@ -116,7 +117,7 @@ const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declare
   } as const;
   const configuration = yield* parseGatewayIssuerConfig({
     ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...jwk, d: privateJwk.d }),
+    ONTOS_GATEWAY_PRIVATE_JWK: jsonText({ ...jwk, d: privateJwk.d }),
   });
   const issuerLayer = makeGatewayIssuerLayer({
     currentTimeSeconds: Effect.succeed(issuedAt),
@@ -194,7 +195,7 @@ const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declare
         makeGatewayPrincipalVerifierLayer(
           ConfigProvider.fromUnknown({
             ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+            ONTOS_GATEWAY_PUBLIC_JWKS: jsonText({
               keys: [options.otherKey === true ? { ...jwk, x: 'A'.repeat(43) } : jwk],
             }),
           }),
@@ -390,16 +391,17 @@ it.effect('the hosted handler runs the original Current read with a fresh bindin
         }),
       ).pipe(Effect.provide(boot), Effect.result);
       if (allowed) {
-        expect(result, JSON.stringify({ catalogLoads, trace: harness.snapshot() })).toMatchObject({
-          _tag: 'Success',
-          success: { entries: [{ kind: 'ABSENT', resourceRef: currentPayload.mediaAssetRefs[0] }] },
+        const context = jsonText({ catalogLoads, trace: harness.snapshot() });
+        expect(Result.isSuccess(result), context).toBe(true);
+        expect(Result.getOrThrow(result), context).toMatchObject({
+          entries: [{ kind: 'ABSENT', resourceRef: currentPayload.mediaAssetRefs[0] }],
         });
         expect(harness.snapshot().ownerQueries).toHaveLength(1);
       } else {
-        expect(result).toMatchObject({
-          _tag: 'Failure',
-          failure: { _tag: 'CoreHostedOperationForbiddenProblem', status: 403 },
-        });
+        expect(Result.isFailure(result)).toBe(true);
+        const failure = Result.getOrThrow(Result.flip(result));
+        expect(Predicate.isTagged(failure, 'CoreHostedOperationForbiddenProblem')).toBe(true);
+        expect(failure).toMatchObject({ status: 403 });
         expect(harness.snapshot().ownerQueries).toHaveLength(0);
       }
       expect(catalogLoads).toEqual([1]);
@@ -437,7 +439,7 @@ it.effect(
         const failure = yield* tryRequest({ authorization, 'x-correlation-id': 'authenticated' });
         expect(Schema.is(CoreHostedOperationUnavailableProblemSchema)(failure)).toBe(true);
         expect(failure).toMatchObject({ retryable: true, status: 503 });
-        expect(JSON.stringify(failure)).not.toContain('private catalog location');
+        expect(jsonText(failure)).not.toContain('private catalog location');
         expect(catalogLoads).toEqual([1]);
         expect(consumed).toHaveLength(1);
       }).pipe(Effect.provide(boot));

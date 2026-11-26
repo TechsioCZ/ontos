@@ -331,9 +331,10 @@ it.effect('refuses mismatched or ambiguous receiving operations even with an act
         systems: 1,
         workloadKey: 'party.registry.source-write',
       });
-      expect(result).toMatchObject({
-        _tag: 'Failure',
-        failure: { code: 'forbidden', reason: 'registered_operation_refused' },
+      expect(Result.isFailure(result)).toBe(true);
+      expect(Result.getOrThrow(Result.flip(result))).toMatchObject({
+        code: 'forbidden',
+        reason: 'registered_operation_refused',
       });
       expect(queries.some((query) => query.sql.includes('core.access_workload_bindings'))).toBe(false);
     }
