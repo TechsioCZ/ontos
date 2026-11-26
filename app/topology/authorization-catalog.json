@@ -19721,6 +19721,58 @@
         },
         {
           "accessDeclaration": {
+            "key": "integration.symmy.symmy-routes.manage",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "integrations",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.manage-symmy-routes",
+            "moduleKey": "integration.symmy",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "integration.symmy.symmy-routes.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "integrations",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.api.symmy-company-routes",
+            "moduleKey": "integration.symmy",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "integration.symmy.symmy-source-organization-facts.read",
             "kind": "read",
             "modes": [
