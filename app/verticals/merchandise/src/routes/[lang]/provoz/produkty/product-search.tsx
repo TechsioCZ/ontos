@@ -108,6 +108,8 @@ export const ProductSearchCombobox = ({
       noResultsMessage={noResultsMessage}
       onChange={(values) => {
         const picked = Array.isArray(values) ? values[0] : values;
+        // A pick closes the list so it never covers what the pick reveals below it.
+        setOpen(false);
         if (picked === selected?.id) {
           return;
         }
@@ -121,6 +123,7 @@ export const ProductSearchCombobox = ({
         }
       }}
       onRetry={() => setAttempt((current) => current + 1)}
+      open={open}
       openOnClick
       placeholder={placeholder}
       retryLabel={retryLabel}
