@@ -1,5 +1,5 @@
-// The price history's "Cena s DPH": a history entry stores only the net price, so only the price in force now has a
-// price including VAT (its stored gross); every earlier price shows none instead of one invented from today's rate.
+// The price history's "Cena s DPH": a history entry stores only the net price; the price in force now shows its stored
+// gross and every earlier price the gross at that same VAT rate.
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -43,10 +43,10 @@ const product = Schema.decodeSync(ProductRecordSchema)({
   ],
 });
 
-it('shows the stored gross for the prices in force now and none for earlier prices', () => {
+it('shows the stored gross for the prices in force now and earlier prices at the same VAT rate', () => {
   expect(priceHistoryRows(product).map((row) => [row.name, row.net, row.gross])).toEqual([
     ['1 kg · KAVA-1KG', 1000, 1300],
-    ['1 kg · KAVA-1KG', 800, undefined],
+    ['1 kg · KAVA-1KG', 800, 1040],
     ['Základní cena produktu · KAVA', 900, 1100],
   ]);
 });

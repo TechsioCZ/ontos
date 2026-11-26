@@ -114,6 +114,9 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   // it started from, so the server refuses a save over someone else's change. A saved draft moves it to the revision
   // the server returned.
   const base = useRef(options.revision);
+  // The revision the last save of this form committed. A product read older than it (one that started before the save
+  // and landed after it) still shows the version before the save: it must not replace the saved draft.
+  const [committedRevision, setCommittedRevision] = useState(0);
   // The confirmed version as of the last render, which a save compares its draft with.
   const confirmedNow = useRef(options.value);
   const draft = useDraftSave<V, never>({
@@ -126,6 +129,7 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
           base.current = Math.max(base.current, committed);
           if (outcome.ok) {
             base.current = outcome.revision;
+            setCommittedRevision(outcome.revision);
             setError(null);
             options.onSaved();
             return 'saved';
@@ -167,7 +171,18 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
     reset(server);
     adopt(server);
   };
-  if (!Equal.equals(seen, server)) {
+  const staleRead = options.revision < committedRevision;
+  const { onReload, revision: shownRevision } = options;
+  const reloadedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (staleRead && reloadedFor.current !== shownRevision) {
+      reloadedFor.current = shownRevision;
+      onReload();
+    }
+  }, [onReload, shownRevision, staleRead]);
+  if (staleRead) {
+    // Wait for the read that includes this form's last save.
+  } else if (!Equal.equals(seen, server)) {
     setSeen(server);
     if (clean) {
       setPassedOver(Option.none());

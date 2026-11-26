@@ -1,12 +1,12 @@
-// The rows of a product's price history with variants. A history entry stores only the net price, so the price
-// including VAT is known only for the price in force now (its stored gross); older rows show none rather than one
-// invented from today's rate.
+// The rows of a product's price history with variants. A history entry stores only the net price; every row shows
+// the price including VAT at the VAT rate of the price in force now (its stored gross), the in-force row that gross.
 import { DateTime } from 'effect';
+import { grossUnitPriceMinor } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 
 export interface PriceHistoryRow {
   readonly at: DateTime.Utc;
-  /** The stored gross of the price in force now; absent for every earlier price. */
+  /** The price including VAT: the stored gross in force now, earlier prices at the same VAT rate. */
   readonly gross?: number;
   readonly key: string;
   readonly name: string;
@@ -31,8 +31,14 @@ const rowsOf = (series: PricedSeries): readonly PriceHistoryRow[] =>
       net: entry.priceMinor,
       previous: entry.previousPriceMinor ?? series.history[index - 1]?.priceMinor,
     };
-    const inForce = index === series.history.length - 1 && entry.priceMinor === series.current;
-    return inForce && series.storedGross !== undefined ? { ...row, gross: series.storedGross } : row;
+    if (series.storedGross === undefined || series.current <= 0) {
+      return row;
+    }
+    if (entry.priceMinor === series.current) {
+      return { ...row, gross: series.storedGross };
+    }
+    const vatRate = Math.round(((series.storedGross - series.current) * 100) / series.current);
+    return { ...row, gross: grossUnitPriceMinor(entry.priceMinor, vatRate) };
   });
 
 /** Every variant's and the product's own price changes, newest first. */

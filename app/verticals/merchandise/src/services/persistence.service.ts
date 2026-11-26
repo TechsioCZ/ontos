@@ -22,7 +22,7 @@ import type {
 } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
+import { Config, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -43,7 +43,13 @@ import type {
   StorefrontOrderResult,
 } from '../../shared/actions/apply-command.ts';
 import { AKROS_STOREFRONT_ORIGIN, SHOP_STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
-import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
+import type {
+  MerchandiseState,
+  ProductRecord,
+  RecordsRequest,
+  RecordsResponse,
+  RecordsView,
+} from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
   OrderIdSchema,
@@ -71,7 +77,12 @@ import type {
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
-import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontAdmission } from '../../shared/actions/command-guard.ts';
+import {
+  AKROS_LEGAL_ENTITY_ID,
+  ESHOP_LEGAL_ENTITY_ID,
+  isAkrosCompany,
+  isStorefrontAdmission,
+} from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import {
@@ -184,11 +195,43 @@ import {
 import type { OrderMarketContext } from './market-pricing.ts';
 
 /** The demo company sells through the pseudonymous e-shop; the AKROS playground company through the AKROS host. */
-const storefrontOriginOf = (legalEntityId: string | undefined): string | undefined => {
+/**
+ * N1's storefront: this deployment's ONTOS_N1_STOREFRONT_ORIGIN (the app service's runtime setting on stage and on
+ * stable), with the Czech locale prefix its product pages live under.
+ */
+const n1StorefrontBase = Config.schema(Schema.URLFromString, 'ONTOS_N1_STOREFRONT_ORIGIN').pipe(
+  Config.option,
+  Config.map(Option.map((url) => `${url.origin}/cs`)),
+);
+
+/** Every company other than AKROS, ŠroubShop and the playground e-shop sells on this deployment's N1 storefront. */
+const sellsOnN1 = (legalEntityId: string | undefined) =>
+  legalEntityId !== undefined &&
+  legalEntityId !== AKROS_LEGAL_ENTITY_ID &&
+  legalEntityId !== ESHOP_LEGAL_ENTITY_ID &&
+  !isAkrosCompany(legalEntityId);
+
+/** The storefront base the company's staff links open; none for a company without a storefront here. */
+const storefrontOriginOf = Effect.fn('Merchandise.storefrontOriginOf')(function* storefrontOriginOf(
+  legalEntityId: string | undefined,
+) {
   if (legalEntityId === AKROS_LEGAL_ENTITY_ID) {
     return SHOP_STOREFRONT_ORIGIN;
   }
-  return isAkrosCompany(legalEntityId) ? AKROS_STOREFRONT_ORIGIN : undefined;
+  if (isAkrosCompany(legalEntityId)) {
+    return AKROS_STOREFRONT_ORIGIN;
+  }
+  const base = sellsOnN1(legalEntityId)
+    ? yield* n1StorefrontBase.pipe(Effect.orElseSucceed(() => Option.none<string>()))
+    : Option.none<string>();
+  return Option.getOrUndefined(base);
+});
+
+const storefrontAppIdOf = (legalEntityId: string | undefined): string => {
+  if (legalEntityId === AKROS_LEGAL_ENTITY_ID) {
+    return 'sroubshop-storefront';
+  }
+  return sellsOnN1(legalEntityId) ? 'n1-storefront' : 'akros-storefront';
 };
 
 const unavailable = (cause?: unknown) =>
@@ -3271,6 +3314,41 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const synced = tax === undefined ? undefined : yield* staffTaxSync(loaded, tax);
       return { head: synced?.head ?? loaded ?? EMPTY_CATALOG_HEAD, synced };
     });
+    /** Staff rows with the storefront's own filter facts and the link to the product on the company's e-shop. */
+    const withStorefrontVisibility = Effect.fn('Merchandise.withStorefrontVisibility')(
+      function* withStorefrontVisibility<P extends { readonly products: readonly ProductRecord[] }>(staffPage: P) {
+        const shopOrigin = yield* storefrontOriginOf(legalEntityId);
+        if (shopOrigin === undefined || staffPage.products.length === 0) {
+          return staffPage;
+        }
+        const facts = yield* Effect.gen(function* facts() {
+          return yield* storefrontVisibilityFacts(transaction, store, {
+            markets: yield* listMarkets(transaction, store),
+            productIds: staffPage.products.map((product) => product.id),
+            storefrontAppId: storefrontAppIdOf(legalEntityId),
+          });
+        }).pipe(Effect.mapError(unavailable));
+        const byId = new Map(facts.map((row) => [row.id, row] as const));
+        return {
+          ...staffPage,
+          products: staffPage.products.map((product) => {
+            const row = byId.get(product.id);
+            if (row === undefined) {
+              return product;
+            }
+            const { id: _id, slug, ...rest } = row;
+            void _id;
+            return {
+              ...product,
+              storefrontVisibility: {
+                ...rest,
+                href: `${shopOrigin}/produkt/${encodeURIComponent(slug ?? product.id)}`,
+              },
+            };
+          }),
+        };
+      },
+    );
     /**
      * The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}
      * and, for staff, the company's rates from Tax ({@link prepareStaffTaxRates}), both prepared before it.
@@ -3313,36 +3391,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const staffPage = yield* staffProducts(transaction, store, view, storefront, options).pipe(
         Effect.mapError(unavailable),
       );
-      const shopOrigin = storefrontOriginOf(legalEntityId);
-      const page =
-        staff && shopOrigin !== undefined && staffPage.products.length > 0
-          ? yield* Effect.gen(function* page() {
-              const facts = yield* storefrontVisibilityFacts(transaction, store, {
-                markets: yield* listMarkets(transaction, store),
-                productIds: staffPage.products.map((product) => product.id),
-                storefrontAppId: legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'sroubshop-storefront' : 'akros-storefront',
-              });
-              const byId = new Map(facts.map((row) => [row.id, row] as const));
-              return {
-                ...staffPage,
-                products: staffPage.products.map((product) => {
-                  const row = byId.get(product.id);
-                  if (row === undefined) {
-                    return product;
-                  }
-                  const { id: _id, slug, ...rest } = row;
-                  void _id;
-                  return {
-                    ...product,
-                    storefrontVisibility: {
-                      ...rest,
-                      href: `${shopOrigin}/produkt/${encodeURIComponent(slug ?? product.id)}`,
-                    },
-                  };
-                }),
-              };
-            }).pipe(Effect.mapError(unavailable))
-          : staffPage;
+      const page = staff ? yield* withStorefrontVisibility(staffPage) : staffPage;
       const movements =
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
@@ -3365,7 +3414,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const storefrontOrigin = storefrontOriginOf(legalEntityId);
+      const storefrontOrigin = yield* storefrontOriginOf(legalEntityId);
       const staffResponse = {
         ...catalogMetadata,
         ...marketMetadata,
