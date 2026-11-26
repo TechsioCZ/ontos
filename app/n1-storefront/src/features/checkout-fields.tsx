@@ -85,7 +85,7 @@ const checkoutFieldStateForIdentity = (
     identity,
     postal,
     prefillVersion: state.prefillVersion,
-    snapshot: identityChanged ? null : state.snapshot,
+    snapshot: customerChanged ? null : state.snapshot,
     touched: customerChanged ? {} : state.touched,
   };
 };
@@ -124,10 +124,24 @@ const useCheckoutFields = (
   }, [prefillVersion]);
   const { epoch, errors, postal: currentPostal, snapshot } = state;
   const values = { ...currentPostal.fields, ...state.contact } satisfies Record<Field, string>;
-  const selectionContext = useRef({ countryCodes, disabled, epoch, identity, snapshot });
+  const currentSnapshot = snapshot?.identity === identity && snapshot?.generation === epoch;
+  const selectionDisabled = disabled || readIdentity === null || !currentSnapshot;
+  const selectionContext = useRef({
+    countryCodes,
+    disabled: selectionDisabled,
+    epoch,
+    identity,
+    snapshot,
+  });
   useLayoutEffect(() => {
-    selectionContext.current = { countryCodes, disabled, epoch, identity, snapshot };
-  }, [countryCodes, disabled, epoch, identity, snapshot]);
+    selectionContext.current = {
+      countryCodes,
+      disabled: selectionDisabled,
+      epoch,
+      identity,
+      snapshot,
+    };
+  }, [countryCodes, selectionDisabled, epoch, identity, snapshot]);
   useEffect(() => {
     let current = true;
     const fiber = readIdentity === null ? null : clientRuntime.runFork(readCustomerAddresses());
@@ -196,10 +210,12 @@ const useCheckoutFields = (
       }
     };
   }, [epoch, readIdentity]);
+  // Keep the last same-customer list visible during refresh. Selection still requires
+  // a fresh exact-admission snapshot, enforced by selectionDisabled and the copy boundary.
   const addressState =
-    identity === null || snapshot?.generation !== epoch
+    snapshot === null || !sameCheckoutCustomer(snapshot.identity, identity)
       ? null
-      : customerAddressesForIdentity(snapshot, identity);
+      : customerAddressesForIdentity(snapshot, snapshot.identity);
   return {
     addressState,
     auth,
@@ -209,6 +225,7 @@ const useCheckoutFields = (
     identity,
     readIdentity,
     selectionContext,
+    selectionDisabled,
     setFieldState,
     snapshot,
     values,
@@ -239,6 +256,7 @@ export const CheckoutFields = ({
     identity,
     readIdentity,
     selectionContext,
+    selectionDisabled,
     setFieldState,
     snapshot,
     values,
@@ -397,7 +415,7 @@ export const CheckoutFields = ({
       <h2 className="text-lg font-semibold">{d.checkout.address}</h2>
       {savedItems.length > 0 && (
         <Select
-          disabled={disabled || readIdentity === null}
+          disabled={selectionDisabled}
           id={`${id}-saved-address`}
           items={savedItems}
           onValueChange={({ value }) => {

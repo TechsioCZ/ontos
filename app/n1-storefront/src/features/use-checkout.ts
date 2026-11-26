@@ -322,7 +322,7 @@ const observeGuard = (
 /** Observe only the in-memory shared Portal session; credentials never enter durable intent state. */
 const useCheckoutSession = () => {
   const auth = usePortalAuth({ mode: "login" });
-  // A new admission invalidates local work even when its serialized customer data is identical.
+  // A new admission fences pending work even when its serialized customer data is identical.
   // Server admission remains the authority for every request.
   const [previousSession, setPreviousSession] = useState(() => observeCheckoutSession(null, auth));
   const observed = observeCheckoutSession(previousSession, auth);
@@ -338,7 +338,20 @@ const useCheckoutSession = () => {
       currentSession.current = -1;
     };
   }, [sessionGeneration]);
-  return { currentSession, ready: auth.loaded && !auth.pending, sessionGeneration };
+  // Completed quotes can survive a refresh of the same server-confirmed customer.
+  // Pending operations remain fenced by the strict admission generation above.
+  let quoteCustomerKey = `admission:${sessionGeneration}`;
+  if (auth.outcome.state === "anonymous") {
+    quoteCustomerKey = "guest";
+  } else if (auth.outcome.state === "admitted" && auth.outcome.customerKey !== undefined) {
+    quoteCustomerKey = `customer:${auth.outcome.customerKey}`;
+  }
+  return {
+    currentSession,
+    quoteCustomerKey,
+    ready: auth.loaded && !auth.pending,
+    sessionGeneration,
+  };
 };
 
 /** A repeated market is a new lifecycle; StrictMode replay keeps the same context. */
@@ -377,7 +390,12 @@ const receiptForContext = (
 /** Unresolved intents survive reloads; confirmed recovery can release a newly filled cart. */
 export const useCheckout = (options: ReadyOptions, locale: string, locks?: CheckoutLockManager) => {
   const cart = useCart();
-  const { currentSession, ready: sessionReady, sessionGeneration } = useCheckoutSession();
+  const {
+    currentSession,
+    quoteCustomerKey,
+    ready: sessionReady,
+    sessionGeneration,
+  } = useCheckoutSession();
   const key = checkoutGuardKey(options.scope);
   const { contextKey, currentScope } = useCheckoutContext(key, sessionGeneration, locale);
   const [editVersion, setEditVersion] = useState(0);
@@ -401,7 +419,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     options.shippingMethods,
     lines,
     editVersion,
-    sessionGeneration,
+    quoteCustomerKey,
   ]);
   const { currentReceipt, restoredReceipt } = receiptForContext(
     receipt,

@@ -132,6 +132,7 @@ let addresses: CustomerAddressesRead = {
 };
 let profile: CustomerProfileRead = ownerProfile;
 let profileGate: Promise<Response> | null = null;
+let addressesGate: Promise<Response> | null = null;
 let recovery: typeof CheckoutRecoverySchema.Encoded = { state: "unconfirmed" };
 let accountGate: Promise<Response> | null = null;
 let recoveryGate: Promise<Response> | null = null;
@@ -167,7 +168,7 @@ const fetchOwner = async (request: Request): Promise<Response> => {
       return await (accountGate ?? Promise.resolve(Response.json(admission)));
     }
     case "/api/customer-addresses": {
-      return Response.json(addresses);
+      return await (addressesGate ?? Promise.resolve(Response.json(addresses)));
     }
     case "/api/customer-profile": {
       return await (profileGate ?? Promise.resolve(Response.json(profile)));
@@ -271,6 +272,7 @@ beforeEach(() => {
   recoveryGate = null;
   quoteGate = null;
   profileGate = null;
+  addressesGate = null;
   profile = ownerProfile;
   addresses = { addresses: [], state: "ready", viewerEmail: "owner@example.test" };
   previousInterceptor = window.happyDOM.settings.fetch.interceptor;
@@ -350,6 +352,31 @@ const selectSavedAddress = async () => {
   await eventually(() => expect(checkoutInput("street").value).toBe("Saved street 1"));
 };
 
+const verifySavedAddressCheckout = async () => {
+  seed({ guarded: false });
+  admission = { ...ownerAdmission };
+  addresses = savedAddresses;
+  await mount();
+  await selectSavedAddress();
+  await editCheckoutFields({
+    email: "order@example.test",
+    firstName: "Eva",
+    lastName: "Kupující",
+    phone: "+420987654321",
+  });
+  quoteGate = Promise.resolve(
+    Response.json({
+      ...confirmed,
+      orderId: null,
+      orderNumber: null,
+      outcome: "VALID",
+      status: null,
+    }),
+  );
+  await act(async () => container.querySelector("form")?.requestSubmit());
+  await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+};
+
 const completeNextPurchase = async (cycle: number) => {
   await eventually(() => {
     expect(container.querySelector("h1")?.textContent).toBe(d.checkout.heading);
@@ -411,6 +438,45 @@ const completeNextPurchase = async (cycle: number) => {
 };
 
 describe("checkout through public session, cart and owner boundaries", () => {
+  it("keeps the selected saved address visible through same-customer session and address refresh", async () => {
+    await verifySavedAddressCheckout();
+    const session = Promise.withResolvers<Response>();
+    const refreshedAddresses = Promise.withResolvers<Response>();
+    accountGate = session.promise;
+    addressesGate = refreshedAddresses.promise;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(savedAddressTrigger().textContent).toContain("Saved street 1");
+    expect(savedAddressTrigger().disabled).toBe(true);
+    await act(async () => session.resolve(Response.json({ ...ownerAdmission })));
+    await eventually(() =>
+      expect(
+        requests.filter((request) => new URL(request.url).pathname === "/api/customer-addresses"),
+      ).toHaveLength(2),
+    );
+    expect(savedAddressTrigger().textContent).toContain("Saved street 1");
+    expect(savedAddressTrigger().disabled).toBe(true);
+    await act(async () => refreshedAddresses.resolve(Response.json(savedAddresses)));
+    await eventually(() => {
+      expect(savedAddressTrigger().textContent).toContain("Saved street 1");
+      expect(savedAddressTrigger().disabled).toBe(false);
+      expect(checkoutInput("street").value).toBe("Saved street 1");
+    });
+  });
+
+  it("keeps completed checkout verification after a same-customer focus refresh", async () => {
+    await verifySavedAddressCheckout();
+    const session = Promise.withResolvers<Response>();
+    accountGate = session.promise;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(container.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(true);
+    await act(async () => session.resolve(Response.json({ ...ownerAdmission })));
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    expect(savedAddressTrigger().textContent).toContain("Saved street 1");
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(1);
+  });
+
   it("shows owner-confirmed totals before contact entry and still requires explicit checkout verification", async () => {
     seed({ guarded: false });
     await mount();
