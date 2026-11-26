@@ -317,7 +317,7 @@ const fixture = (
             items:
               options.profile === undefined || options.target !== 'agent'
                 ? []
-                : [{ kind: 'agent', principalId: agentId, principalStatus: 'active' }],
+                : [{ integrationKind: null, kind: 'agent', principalId: agentId, principalStatus: 'active' }],
             nextOffset: null,
           }),
         );
