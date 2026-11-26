@@ -754,7 +754,7 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
       workspaceRoot,
       childSettings,
       false,
-      'ignore',
+      'inherit',
       (result) =>
         Console.error(
           `[app-host] stage Symmy ${kind} bootstrap failed category=${result.category}${

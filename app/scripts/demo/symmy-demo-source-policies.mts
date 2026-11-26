@@ -22,7 +22,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Console, Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Config, Console, Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import { defineDatabaseIdentityEnrollment } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
@@ -884,6 +884,11 @@ export const bootstrapSymmyDemoSourcePolicies = Effect.gen(function* bootstrapSo
     }),
   );
 }).pipe(
+  Effect.tapCause((cause) =>
+    Console.error(
+      `[symmy-demo-source-policies] ${Cause.pretty(cause).replaceAll(/postgres(?:ql)?:\/\/[^\s'"]+/giu, '<redacted-url>')}`,
+    ),
+  ),
   Effect.mapError((failure) =>
     Schema.is(SymmyDemoSourcePolicyFailure)(failure)
       ? failure
