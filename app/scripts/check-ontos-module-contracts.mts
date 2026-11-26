@@ -121,7 +121,9 @@ const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts',
 
 type TopologyVertical = (typeof TopologySchema.Type.verticals)[number];
 
-const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem> =>
+export const walkSourceFiles = (
+  directory: string,
+): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* walkSourceDirectory() {
     const fileSystem = yield* FileSystem.FileSystem;
     if (!(yield* fileSystem.exists(directory))) {
@@ -131,7 +133,8 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     const files = yield* Effect.all(
       entries.map((entry) =>
         Effect.gen(function* inspectSourceEntry() {
-          if (entry === 'node_modules' || entry.startsWith('dist')) {
+          // Installed dependencies and gitignored build output (`.output`, `dist*`) are not the module's source.
+          if (entry === 'node_modules' || entry === '.output' || entry.startsWith('dist')) {
             return [];
           }
           const target = path.join(directory, entry);
