@@ -133,11 +133,45 @@ describe("checkout cart quantity", () => {
     await user.clear(input);
     await user.type(input, "15");
     await user.tab();
-    await waitFor(() => expect(storedQuantity()).toBe(10));
-    expect(screen.getByDisplayValue("10")).not.toBeNull();
+    await waitFor(() => expect(storedQuantity()).toBe(20));
+    expect(screen.getByDisplayValue("20")).not.toBeNull();
+    expect(screen.getByText("Upraveno na 20 ks")).toBeTruthy();
     await user.clear(input);
     await user.tab();
     expect(storedQuantity()).toBeGreaterThanOrEqual(10);
     expect(screen.getByRole("spinbutton").getAttribute("aria-valuenow")).not.toBeNull();
   });
+
+  it.each([
+    { stock: 280, canIncrease: false, maximum: 200 },
+    { stock: 400, canIncrease: true, maximum: 400 },
+  ])(
+    "explains the orderable limit for stock of $stock pieces",
+    async ({ stock, canIncrease, maximum }) => {
+      const stored = JSON.parse(window.localStorage.getItem("akros-demo-cart-v3")!);
+      Object.assign(stored.lines[0], {
+        minimumQuantity: 200,
+        quantityStep: 200,
+        stockCount: stock,
+        quantity: 200,
+      });
+      window.localStorage.setItem("akros-demo-cart-v3", JSON.stringify(stored));
+      const user = userEvent.setup();
+      render(
+        <CartProvider>
+          <CartItemsTable />
+        </CartProvider>,
+      );
+
+      const input = await screen.findByRole("spinbutton");
+      const plus = screen.getByRole<HTMLButtonElement>("button", { name: "Zvýšit množství: Vrut" });
+      expect(input.getAttribute("aria-valuemax")).toBe(String(maximum));
+      expect(screen.getByText("Po 200 ks")).toBeTruthy();
+      expect(plus.disabled).toBe(!canIncrease);
+      if (canIncrease) await user.click(plus);
+      await waitFor(() => expect(storedQuantity()).toBe(maximum));
+      expect(screen.getByText(`Ze skladu max. ${maximum} ks`)).toBeTruthy();
+      expect(plus.disabled).toBe(true);
+    },
+  );
 });

@@ -88,7 +88,8 @@ export function CartSelector() {
         theme="outlined"
         size="sm"
         block
-        className="mt-(--dimension-32) leading-(--sf-checkout-heading-leading)"
+        data-sf-checkout-action
+        className="mt-(--dimension-24)"
         uppercase
         disabled={!ready}
         onClick={() => {

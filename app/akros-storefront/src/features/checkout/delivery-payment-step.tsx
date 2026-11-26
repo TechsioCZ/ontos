@@ -1,10 +1,13 @@
 "use client";
+import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { RadioGroupLabel } from "@/components/form-controls";
 import { useCheckout } from "./checkout-provider";
@@ -43,15 +46,9 @@ export function DeliveryPaymentStep() {
         router.push(storeHref("/kosik/dodaci-udaje"));
       }}
     >
-      <div
-        data-sf-checkout-methods
-        className="grid grid-cols-1 gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
-      >
+      <div data-sf-checkout-methods className="sf-checkout-panel sf-checkout-section-stack">
         <section aria-labelledby="delivery-title">
-          <h1
-            id="delivery-title"
-            className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
-          >
+          <h1 id="delivery-title" className="sf-checkout-section-heading">
             {copy.title}
           </h1>
           <RadioGroup
@@ -70,20 +67,20 @@ export function DeliveryPaymentStep() {
               {methods.map((method) => {
                 const price = method.priceMinor;
                 return (
-                  <RadioGroup.Item
-                    key={method.id}
-                    value={method.id}
-                    className="min-h-20 items-center border-b border-(--color-border-primary) py-3 last:border-b-0"
-                  >
+                  <RadioGroup.Item key={method.id} value={method.id} data-sf-checkout-method>
                     <RadioGroup.ItemHiddenInput />
                     <RadioGroup.ItemControl />
-                    <RadioGroup.ItemContent className="col-start-3 max-[24rem]:col-span-2">
+                    <span data-sf-checkout-method-mark aria-hidden="true">
+                      {method.id === "PPL" ? (
+                        <Image alt="" src="/akros/footer/ppl.png" width={80} height={43} />
+                      ) : (
+                        <Icon icon="token-icon-sf-checkout-shipping" size="lg" />
+                      )}
+                    </span>
+                    <RadioGroup.ItemContent data-sf-checkout-method-name>
                       <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
-                      <RadioGroup.ItemDescription>{copy.priceNote}</RadioGroup.ItemDescription>
                     </RadioGroup.ItemContent>
-                    <span
-                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm max-[24rem]:col-span-2 max-[24rem]:col-start-3 max-[24rem]:row-start-2 ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--sf-checkout-muted)"}`}
-                    >
+                    <span data-sf-checkout-method-price data-free={price === 0 || undefined}>
                       {price === 0 ? copy.free : formatCheckoutPrice(price, money)}
                     </span>
                   </RadioGroup.Item>
@@ -94,41 +91,39 @@ export function DeliveryPaymentStep() {
               <RadioGroup.StatusText status="error">{errors.deliveryId}</RadioGroup.StatusText>
             )}
           </RadioGroup>
-          {!methods.length && <p role="status">{methodsError || copy.loading}</p>}
-          <p className="mt-4 text-sm">{copy.carrierNote}</p>
+          {!methods.length && <output>{methodsError || copy.loading}</output>}
+          <StatusText className="sf-checkout-section-note" size="sm">
+            {copy.carrierNote}
+          </StatusText>
         </section>
         <section aria-labelledby="payment-title">
-          <h2
-            id="payment-title"
-            className="mb-4 text-(length:--sf-checkout-payment-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
-          >
+          <h2 id="payment-title" className="sf-checkout-section-heading">
             {copy.paymentTitle}
           </h2>
-          <div className="rounded-sm border border-(--color-border-primary) p-4">
-            <p className="font-bold">{copy.noOnlinePayment}</p>
-            <p className="mt-2 text-sm text-(--color-fg-secondary)">{copy.paymentNote}</p>
+          <div data-sf-checkout-payment-note>
+            <strong>{copy.noOnlinePayment}</strong>
+            <StatusText size="sm">{copy.paymentNote}</StatusText>
           </div>
         </section>
       </div>
-      <div className="mt-6 flex flex-wrap justify-between gap-4">
+      <div className="sf-checkout-actions">
         <LinkButton
           as={StoreLink}
           href="/kosik"
           variant="secondary"
           size="sm"
           data-sf-checkout-action
-          className="leading-(--sf-checkout-heading-leading)"
+          className="sf-checkout-back"
           uppercase
         >
           {copy.back}
         </LinkButton>
-        <div className="grid gap-2">
+        <div className="sf-checkout-next">
           <Button
             type="submit"
             variant="primary"
             size="sm"
             data-sf-checkout-action
-            className="leading-(--sf-checkout-heading-leading)"
             uppercase
             disabled={blocked}
             aria-describedby={blocked ? "methods-blocked" : undefined}
@@ -136,9 +131,9 @@ export function DeliveryPaymentStep() {
             {copy.next}
           </Button>
           {blocked && (
-            <p id="methods-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">
+            <StatusText id="methods-blocked" size="sm">
               {quote?.blockedReason}
-            </p>
+            </StatusText>
           )}
         </div>
       </div>

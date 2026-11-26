@@ -2,6 +2,7 @@
 import StoreLink from "@/components/store-link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { useRouter } from "next/navigation";
 import { useDictionary, useStoreHref, useStorePathname } from "@/ontos/market-context";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
@@ -132,28 +133,24 @@ export function CheckoutLayout({
           className="mx-auto grid w-full max-w-(--sf-checkout-content-width) items-start gap-(--dimension-24) 2xl:grid-cols-[minmax(0,1fr)_var(--sf-checkout-sidebar-width)]"
         >
           <div className="contents min-w-0 2xl:block">
-            <Steps.List
-              aria-label={cs.checkout.stepsLabel}
-              className="mb-(--dimension-60) order-0 min-w-0 pt-(--dimension-24)"
-            >
+            <Steps.List aria-label={cs.checkout.stepsLabel} data-sf-checkout-steps>
               {checkoutSteps.map((item, index) => (
-                <Steps.Item key={item.href} index={index} className="block min-w-0">
+                <Steps.Item key={item.href} index={index}>
                   <Steps.Trigger
                     disabled={
                       !ready ||
                       (!canCheckout && index > 0) ||
                       getReachableStep(index, cart, draft, navigable) !== index
                     }
-                    className="relative z-1 w-full flex-col justify-center text-center"
                   >
                     <Steps.Indicator>
-                      <Steps.Number className="leading-(--sf-checkout-body-leading)" />
+                      <Steps.Number />
                     </Steps.Indicator>
-                    <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal">
+                    <Steps.Title data-sf-checkout-step-title>
                       {cs.checkout.steps[item.key]}
                     </Steps.Title>
                   </Steps.Trigger>
-                  <Steps.Separator className="absolute top-5 left-[calc(50%+1.5rem)] w-[calc(100%-3rem)]" />
+                  <Steps.Separator />
                 </Steps.Item>
               ))}
             </Steps.List>
@@ -189,27 +186,43 @@ export function CheckoutLayout({
                     {cs.checkout.chooser.title}
                   </h2>
                   <p>{cs.checkout.chooser.description}</p>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <Button
-                      type="button"
-                      variant="primary"
+                  <div className="sf-checkout-actions">
+                    <LinkButton
+                      as={StoreLink}
+                      href="/"
+                      className="sf-checkout-back"
+                      data-sf-checkout-action
                       size="sm"
                       uppercase
-                      disabled={cartBlocked}
-                      aria-describedby={cartBlocked ? "checkout-choice-blocked" : undefined}
-                      onClick={() => {
-                        chooseGuestCheckout();
-                        router.push(storeHref(checkoutSteps[1].href));
-                      }}
+                      variant="secondary"
                     >
-                      {cs.checkout.chooser.withoutAccount}
-                    </Button>
-                    <StoreLink href="/prihlaseni?returnTo=%2Fkosik" className="underline">
-                      {cs.checkout.chooser.signIn}
-                    </StoreLink>
-                    <StoreLink href="/registrace?returnTo=%2Fkosik" className="underline">
-                      {cs.checkout.chooser.createAccount}
-                    </StoreLink>
+                      {cs.cart.backToShop}
+                    </LinkButton>
+                    <div className="sf-checkout-next">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        data-sf-checkout-action
+                        uppercase
+                        disabled={cartBlocked}
+                        aria-describedby={cartBlocked ? "checkout-choice-blocked" : undefined}
+                        onClick={() => {
+                          chooseGuestCheckout();
+                          router.push(storeHref(checkoutSteps[1].href));
+                        }}
+                      >
+                        {cs.checkout.chooser.withoutAccount}
+                      </Button>
+                      <div data-sf-checkout-account-links>
+                        <StoreLink href="/prihlaseni?returnTo=%2Fkosik">
+                          {cs.checkout.chooser.signIn}
+                        </StoreLink>
+                        <StoreLink href="/registrace?returnTo=%2Fkosik">
+                          {cs.checkout.chooser.createAccount}
+                        </StoreLink>
+                      </div>
+                    </div>
                   </div>
                   {cartBlocked && (
                     <p id="checkout-choice-blocked" className="text-xs text-(--color-fg-secondary)">
@@ -220,12 +233,13 @@ export function CheckoutLayout({
               ))}
             {ready && !hasUnconfirmedOrder && cart.lines.length > 0 && step < 3 && (
               <section
-                className="order-4 mt-(--dimension-60) min-w-0"
+                data-sf-checkout-recommendations={checkoutSteps[step].key}
+                className="sf-checkout-recommendations"
                 aria-labelledby="checkout-recommendations"
               >
                 <h2
                   id="checkout-recommendations"
-                  className="mt-4 mb-6 text-(length:--sf-checkout-recommendation-size) leading-(--sf-checkout-heading-leading) font-extrabold text-(--sf-checkout-recommendation-color)"
+                  className={step === 1 ? "sr-only" : "sf-checkout-recommendations-heading"}
                 >
                   {cs.checkout.recommendationsTitle}
                 </h2>

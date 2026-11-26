@@ -378,6 +378,9 @@ export const en: Dictionary = {
     decrementQuantityOf: (label: string) => `Decrease quantity: ${label}`,
     incrementQuantityOf: (label: string) => `Increase quantity: ${label}`,
     quantityOf: (label: string) => `Quantity: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `In steps of ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Adjusted to ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Up to ${quantity} ${unit} in stock`,
     lineState: {
       inStock: "In stock",
       unverified: "Cannot verify",

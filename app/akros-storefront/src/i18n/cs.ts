@@ -374,6 +374,9 @@ export const cs = {
     decrementQuantityOf: (label: string) => `Snížit množství: ${label}`,
     incrementQuantityOf: (label: string) => `Zvýšit množství: ${label}`,
     quantityOf: (label: string) => `Množství: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `Po ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Upraveno na ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Ze skladu max. ${quantity} ${unit}`,
     lineState: {
       inStock: "Skladem",
       unverified: "Nelze ověřit",

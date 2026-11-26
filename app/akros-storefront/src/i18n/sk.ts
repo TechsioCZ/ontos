@@ -376,6 +376,9 @@ export const sk: Dictionary = {
     decrementQuantityOf: (label: string) => `Znížiť množstvo: ${label}`,
     incrementQuantityOf: (label: string) => `Zvýšiť množstvo: ${label}`,
     quantityOf: (label: string) => `Množstvo: ${label}`,
+    quantityStep: (quantity: string, unit: string) => `Po ${quantity} ${unit}`,
+    quantityAdjusted: (quantity: string, unit: string) => `Upravené na ${quantity} ${unit}`,
+    quantityStockLimit: (quantity: string, unit: string) => `Zo skladu max. ${quantity} ${unit}`,
     lineState: {
       inStock: "Skladom",
       unverified: "Nemožno overiť",
