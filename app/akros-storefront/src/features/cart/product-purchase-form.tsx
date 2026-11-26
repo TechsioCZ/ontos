@@ -16,7 +16,7 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
-import { getMaximumOrderQuantity } from "@/features/cart/cart-state";
+import { getMaximumOrderQuantity, normalizeOrderQuantity } from "@/features/cart/cart-state";
 import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/ontos/catalog-types";
 
 interface ProductPurchaseFormProps {
@@ -69,6 +69,25 @@ const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPur
   ...(variant.sourceNetWeight ? { unitWeightKg: variant.sourceNetWeight } : {}),
 });
 
+function orderQuantityError(
+  quantity: number,
+  minimum: number,
+  maximum: number,
+  step: number,
+  unit: string,
+  cs: Dictionary,
+  locale: string,
+) {
+  const format = (value: number) =>
+    new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(value);
+  if (!Number.isFinite(quantity)) return cs.product.quantityRequired;
+  if (quantity < minimum) return cs.product.quantityMinimum(format(minimum), unit);
+  if (quantity > maximum) return cs.product.quantityMaximum(format(maximum), unit);
+  const lower = Number((Math.floor(quantity / step) * step).toFixed(6));
+  const upper = Number((Math.ceil(quantity / step) * step).toFixed(6));
+  return cs.product.quantityMultiple(format(step), unit, format(lower), format(upper));
+}
+
 interface VariantOrderControlProps {
   mode: "minimum" | "package";
   onAdd: (variant: CatalogPurchaseVariant, quantity: number) => void;
@@ -87,50 +106,73 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
     ? Math.floor(maximumOrderQuantity / packageQuantity)
     : maximumOrderQuantity;
   const minimum = isPackage
-    ? variant.quantityStep
-      ? Math.ceil(variant.minimumQuantity / packageQuantity)
-      : 0
+    ? Math.max(1, Math.ceil(variant.minimumQuantity / packageQuantity))
     : variant.minimumQuantity;
   const step = isPackage ? 1 : (variant.quantityStep ?? variant.minimumQuantity);
   const [selectedQuantity, setSelectedQuantity] = useState(minimum);
+  const [showError, setShowError] = useState(false);
   const quantityToAdd = isPackage
     ? Math.max(selectedQuantity, 1) * packageQuantity
     : selectedQuantity;
   const label = formatVariantLabel(variant);
+  const validQuantity =
+    Number.isFinite(selectedQuantity) &&
+    selectedQuantity >= minimum &&
+    selectedQuantity <= maximum &&
+    (!isPackage || Number.isInteger(selectedQuantity)) &&
+    normalizeOrderQuantity(getVariantCartItem(product, variant), quantityToAdd) === quantityToAdd;
   const disabled =
     maximum <= 0 ||
+    !validQuantity ||
     variant.priceMinor <= 0 ||
     !!variant.priceUnavailableReason ||
     !!variant.availabilityUnknown;
+  const error =
+    showError && !validQuantity
+      ? isPackage
+        ? cs.product.packageQuantityInvalid
+        : orderQuantityError(
+            selectedQuantity,
+            minimum,
+            maximum,
+            step,
+            variant.unit,
+            cs,
+            money.locale,
+          )
+      : undefined;
 
   return (
-    <div
-      className={`sf-variant-table__order sf-variant-table__order--${mode} @max-sf-variant-table/sf-variants:grid-cols-[var(--sf-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-sf-variant-table/sf-variants:gap-(--dimension-8)! @max-sf-variant-table/sf-variants:border-0! @max-sf-variant-table/sf-variants:px-(--dimension-0)!`}
+    <NumericInput
+      className={`sf-variant-table__order sf-variant-table__order--${mode} items-start! @max-sf-variant-table/sf-variants:grid-cols-[var(--sf-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-sf-variant-table/sf-variants:gap-(--dimension-8)! @max-sf-variant-table/sf-variants:border-0! @max-sf-variant-table/sf-variants:px-(--dimension-0)!`}
+      id={inputId}
+      locale={money.locale}
+      max={maximum}
+      min={minimum}
+      onChange={(quantity) => {
+        setSelectedQuantity(quantity);
+        setShowError(false);
+      }}
+      onValueCommit={() => setShowError(true)}
+      clampValueOnBlur={false}
+      invalid={!!error}
+      size="sm"
+      step={step}
+      value={selectedQuantity}
     >
-      <NumericInput
-        id={inputId}
-        locale="cs-CZ"
-        max={maximum}
-        min={minimum}
-        onChange={setSelectedQuantity}
-        size="sm"
-        step={step}
-        value={selectedQuantity}
-      >
-        <NumericInput.Control className="sf-variant-table__quantity-control @max-sf-variant-table/sf-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
-          <NumericInput.DecrementTrigger
-            aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
-            icon="token-icon-minus"
-          />
-          <NumericInput.Input
-            aria-label={isPackage ? cs.product.packagesOf(label) : cs.product.quantityOf(label)}
-          />
-          <NumericInput.IncrementTrigger
-            aria-label={isPackage ? cs.product.incrementPackages : cs.product.incrementQuantity}
-            icon="token-icon-plus"
-          />
-        </NumericInput.Control>
-      </NumericInput>
+      <NumericInput.Control className="sf-variant-table__quantity-control @max-sf-variant-table/sf-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
+        <NumericInput.DecrementTrigger
+          aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
+          icon="token-icon-minus"
+        />
+        <NumericInput.Input
+          aria-label={isPackage ? cs.product.packagesOf(label) : cs.product.quantityOf(label)}
+        />
+        <NumericInput.IncrementTrigger
+          aria-label={isPackage ? cs.product.incrementPackages : cs.product.incrementQuantity}
+          icon="token-icon-plus"
+        />
+      </NumericInput.Control>
       <Button
         aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
         block={!isPackage}
@@ -160,7 +202,21 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
           </span>
         )}
       </Button>
-    </div>
+      {!isPackage && step !== 1 && (
+        <NumericInput.StatusText
+          className="col-start-1 justify-center text-center"
+          size="sm"
+          align="center"
+        >
+          {cs.product.orderIncrement(step.toLocaleString(money.locale), variant.unit)}
+        </NumericInput.StatusText>
+      )}
+      {error && (
+        <NumericInput.StatusText className="col-span-full text-start" size="sm" status="error">
+          {error}
+        </NumericInput.StatusText>
+      )}
+    </NumericInput>
   );
 }
 
@@ -183,6 +239,7 @@ export function ProductPurchaseForm({
   const [ranges, setRanges] = useState<Record<string, NumericRange>>({});
   const [filterRevision, setFilterRevision] = useState(0);
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
+  const [showQuantityError, setShowQuantityError] = useState(false);
   const normalizedSearchTerm = normalizeCatalogSearchTerm(initialVariantSearch ?? "");
   const visibleVariants = useMemo(
     () =>
@@ -233,24 +290,38 @@ export function ProductPurchaseForm({
       ...(unitWeightKg ? { unitWeightKg } : {}),
     };
     const maximumQuantity = getMaximumOrderQuantity(productCartItem);
+    const validQuantity =
+      Number.isFinite(quantity) && normalizeOrderQuantity(productCartItem, quantity) === quantity;
+    const step = purchaseItem.quantityStep ?? purchaseItem.minimumQuantity;
+    const error =
+      showQuantityError && !validQuantity
+        ? orderQuantityError(
+            quantity,
+            purchaseItem.minimumQuantity,
+            maximumQuantity,
+            step,
+            purchaseItem.unit,
+            cs,
+            money.locale,
+          )
+        : undefined;
 
     return (
       <div className="sf-purchase-form">
-        {purchaseItem.quantityStep && (
-          <small className="col-span-full text-fg-secondary">
-            {cs.product.wholePackagesOnly(
-              purchaseItem.packageQuantity ?? purchaseItem.quantityStep,
-              purchaseItem.unit,
-            )}
-          </small>
-        )}
         <NumericInput
+          className="col-span-full grid! grid-cols-subgrid gap-(--dimension-8)!"
           id={`quantity-${product.id}`}
-          locale="cs-CZ"
+          locale={money.locale}
           min={purchaseItem.minimumQuantity}
           max={maximumQuantity}
           step={purchaseItem.quantityStep ?? purchaseItem.minimumQuantity}
-          onChange={setQuantity}
+          onChange={(value) => {
+            setQuantity(value);
+            setShowQuantityError(false);
+          }}
+          onValueCommit={() => setShowQuantityError(true)}
+          clampValueOnBlur={false}
+          invalid={!!error}
           size="lg"
           value={quantity}
         >
@@ -267,39 +338,55 @@ export function ProductPurchaseForm({
               icon="token-icon-plus"
             />
           </NumericInput.Control>
+          <Button
+            block
+            className="max-lg:order-last"
+            disabled={
+              adding ||
+              maximumQuantity <= 0 ||
+              !validQuantity ||
+              purchaseItem.priceMinor <= 0 ||
+              !!purchaseItem.priceUnavailableReason ||
+              !!purchaseItem.availabilityUnknown
+            }
+            title={
+              purchaseItem.priceUnavailableReason
+                ? cs.product.priceUnavailableTitle(
+                    priceUnavailableText(purchaseItem.priceUnavailableReason, cs, money),
+                  )
+                : purchaseItem.availabilityUnknown
+                  ? cs.product.availabilityUnknownTitle
+                  : undefined
+            }
+            icon="token-icon-cart"
+            onClick={() => {
+              void addItem(
+                productCartItem,
+                quantity,
+                variant?.priceTiers ?? product.detail.priceTiers,
+              );
+            }}
+            size="md"
+            uppercase
+            variant="primary"
+          >
+            {cs.product.buy}
+          </Button>
+          {step !== 1 && (
+            <NumericInput.StatusText
+              className="col-start-1 justify-center text-center"
+              size="sm"
+              align="center"
+            >
+              {cs.product.orderIncrement(step.toLocaleString(money.locale), purchaseItem.unit)}
+            </NumericInput.StatusText>
+          )}
+          {error && (
+            <NumericInput.StatusText className="col-span-full text-start" size="sm" status="error">
+              {error}
+            </NumericInput.StatusText>
+          )}
         </NumericInput>
-        <Button
-          block
-          disabled={
-            adding ||
-            maximumQuantity <= 0 ||
-            purchaseItem.priceMinor <= 0 ||
-            !!purchaseItem.priceUnavailableReason ||
-            !!purchaseItem.availabilityUnknown
-          }
-          title={
-            purchaseItem.priceUnavailableReason
-              ? cs.product.priceUnavailableTitle(
-                  priceUnavailableText(purchaseItem.priceUnavailableReason, cs, money),
-                )
-              : purchaseItem.availabilityUnknown
-                ? cs.product.availabilityUnknownTitle
-                : undefined
-          }
-          icon="token-icon-cart"
-          onClick={() => {
-            void addItem(
-              productCartItem,
-              quantity,
-              variant?.priceTiers ?? product.detail.priceTiers,
-            );
-          }}
-          size="md"
-          uppercase
-          variant="primary"
-        >
-          {cs.product.buy}
-        </Button>
       </div>
     );
   }
@@ -449,9 +536,8 @@ export function ProductPurchaseForm({
                   const isAvailable =
                     !item.availabilityUnknown && item.stockCount >= item.minimumQuantity;
                   const basePriceTier = item.priceTiers[0];
-                  const packageQuantity = item.packageQuantity ?? item.minimumQuantity;
                   const hasSeparatePackage =
-                    packageQuantity > item.minimumQuantity || !!item.quantityStep;
+                    item.packageQuantity !== undefined && item.packageQuantity > 0;
                   return (
                     <Table.Row
                       key={item.id}
@@ -543,16 +629,7 @@ export function ProductPurchaseForm({
                         align="center"
                         style={{ width: "var(--sf-variant-table-purchase-column-width)" }}
                       >
-                        <div className="sf-variant-table__purchase-cell @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8)">
-                          {item.quantityStep && (
-                            <small className="col-span-full text-fg-secondary">
-                              {cs.product.wholePackagesMinimum(
-                                packageQuantity,
-                                item.unit,
-                                item.minimumQuantity,
-                              )}
-                            </small>
-                          )}
+                        <div className="sf-variant-table__purchase-cell items-start! @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8)">
                           <VariantOrderControl
                             mode="minimum"
                             onAdd={addVariant}

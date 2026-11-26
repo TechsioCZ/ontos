@@ -125,10 +125,13 @@ describe("ProductPurchaseForm", () => {
   );
 
   it.each([
+    { minimumQuantity: 6, packageQuantity: 60, quantityStep: 6, unit: "ks" },
+    { minimumQuantity: 50, packageQuantity: 500, quantityStep: 50, unit: "ks" },
+    { minimumQuantity: 0.5, packageQuantity: 100, quantityStep: 0.5, unit: "m" },
     { minimumQuantity: 200, packageQuantity: 200, quantityStep: 200, unit: "ks" },
     { minimumQuantity: 100, packageQuantity: 100, quantityStep: 100, unit: "m" },
     { minimumQuantity: 400, packageQuantity: 200, quantityStep: 200, unit: "ks" },
-  ])("only adds authoritative package multiples: %j", async (constraints) => {
+  ])("keeps order increments separate from the whole-package shortcut: %j", async (constraints) => {
     const user = userEvent.setup();
     const live = { ...variants[0], ...constraints };
     render(
@@ -137,7 +140,10 @@ describe("ProductPurchaseForm", () => {
         <CartLines />
       </CartProvider>,
     );
-    expect(screen.getByText(/Pouze celá balení/)).toBeTruthy();
+    expect(screen.queryByText(/Pouze celá balení/)).toBeNull();
+    const total =
+      live.minimumQuantity +
+      Math.max(1, Math.ceil(live.minimumQuantity / live.packageQuantity)) * live.packageQuantity;
     expect(
       (screen.getByRole("spinbutton", { name: "Množství M 2 × 5" }) as HTMLInputElement).value,
     ).toBe(String(live.minimumQuantity));
@@ -153,12 +159,165 @@ describe("ProductPurchaseForm", () => {
     await waitFor(() =>
       expect(
         JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
-      ).toBe(live.minimumQuantity * 2),
+      ).toBe(total),
     );
     lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
-    expect(lines[0].quantity).toBe(live.minimumQuantity * 2);
-    expect(lines[0].quantity % live.packageQuantity).toBe(0);
+    expect(lines[0].quantity).toBe(total);
+    expect(lines[0].quantity % live.quantityStep).toBe(0);
+    const packageInput = screen.getByRole("spinbutton", { name: "Počet celých balení M 2 × 5" });
+    const packageControl = packageInput.closest('[data-part="root"]') as HTMLElement;
+    expect(within(packageControl).queryByText(/^1 balení =/)).toBeNull();
+    expect(within(packageControl).queryByText(/^Odběr po/)).toBeNull();
+    const buyPackage = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Koupit celé balení M 2 × 5",
+    });
+    await user.clear(packageInput);
+    await user.type(packageInput, "0");
+    expect(buyPackage.disabled).toBe(true);
+    await user.clear(packageInput);
+    await user.type(packageInput, "1.5");
+    expect(buyPackage.disabled).toBe(true);
+    await user.tab();
+    expect(within(packageControl).getByRole("alert").textContent).toBe(
+      "Zadejte platný počet celých balení podle dostupného skladu.",
+    );
   });
+
+  it.each([false, true])(
+    "rejects off-step quantities before purchase (variant list: %s)",
+    async (variantList) => {
+      const user = userEvent.setup();
+      const live = { ...variants[0], minimumQuantity: 6, quantityStep: 6, packageQuantity: 60 };
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm
+            product={product}
+            variant={variantList ? undefined : live}
+            variants={variantList ? [live] : undefined}
+          />
+          <CartLines />
+        </CartProvider>,
+      );
+      const input = screen.getByRole("spinbutton", {
+        name: variantList ? "Množství M 2 × 5" : "Množství",
+      });
+      const buy = screen.getByRole<HTMLButtonElement>("button", {
+        name: variantList ? "Koupit M 2 × 5" : "Koupit",
+      });
+      await user.clear(input);
+      await user.type(input, "15");
+      expect(buy.disabled).toBe(true);
+      expect(input.getAttribute("aria-invalid")).not.toBe("true");
+      await user.keyboard("{Enter}");
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      const error = screen.getByText("Zadejte násobek 6 ks, například 12 nebo 18.");
+      expect(input.getAttribute("aria-errormessage")).toContain(
+        error.closest('[role="alert"]')!.id,
+      );
+      expect((input as HTMLInputElement).value).toBe("15");
+      await user.click(buy);
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toHaveLength(0);
+      await user.clear(input);
+      await user.type(input, "12");
+      expect(buy.disabled).toBe(false);
+      await user.click(buy);
+      await waitFor(() =>
+        expect(
+          JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
+        ).toBe(12),
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "explains the order increment after editing without replacing the draft (variant list: %s)",
+    async (variantList) => {
+      const user = userEvent.setup();
+      const live = {
+        ...variants[0],
+        minimumQuantity: 10,
+        quantityStep: 10,
+        packageQuantity: 200,
+        stockCount: 280,
+      };
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm
+            product={product}
+            variant={variantList ? undefined : live}
+            variants={variantList ? [live] : undefined}
+          />
+        </CartProvider>,
+      );
+      const input = screen.getByRole<HTMLInputElement>("spinbutton", {
+        name: variantList ? "Množství M 2 × 5" : "Množství",
+      });
+      const hint = screen.getByText("Odběr po 10 ks").closest('[data-status="default"]')!;
+      expect(input.getAttribute("aria-describedby")).toContain(hint.id);
+      await user.clear(input);
+      await user.type(input, "4");
+      expect(input.getAttribute("aria-invalid")).not.toBe("true");
+      await user.type(input, "4");
+      expect(screen.queryByRole("alert")).toBeNull();
+      await user.tab();
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Zadejte násobek 10 ks, například 40 nebo 50.",
+      );
+      expect(input.value).toBe("44");
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      await user.clear(input);
+      await user.type(input, "40");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(input.getAttribute("aria-invalid")).not.toBe("true");
+      await user.click(screen.getByRole("button", { name: "Zvýšit množství" }));
+      expect(input.value).toBe("50");
+      await user.clear(input);
+      await user.type(input, "4");
+      await user.tab();
+      expect(screen.getByRole("alert").textContent).toBe("Zadejte alespoň 10 ks.");
+      await user.clear(input);
+      await user.type(input, "285");
+      await user.tab();
+      expect(screen.getByRole("alert").textContent).toBe("Lze koupit nejvýše 280 ks.");
+      expect(input.value).toBe("285");
+      await user.clear(input);
+      await user.tab();
+      expect(screen.getByRole("alert").textContent).toBe("Zadejte množství.");
+      expect(input.value).toBe("");
+    },
+  );
+
+  it.each([false, true])(
+    "suggests valid fractional quantities using the market number format (variant list: %s)",
+    async (variantList) => {
+      const user = userEvent.setup();
+      const live = {
+        ...variants[0],
+        minimumQuantity: 0.5,
+        quantityStep: 0.5,
+        packageQuantity: 2,
+        unit: "m",
+      };
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm
+            product={product}
+            variant={variantList ? undefined : live}
+            variants={variantList ? [live] : undefined}
+          />
+        </CartProvider>,
+      );
+      const input = screen.getByRole("spinbutton", {
+        name: variantList ? "Množství M 2 × 5" : "Množství",
+      });
+      await user.clear(input);
+      await user.type(input, "1.25");
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Zadejte násobek 0,5 m, například 1 nebo 1,5.",
+      );
+    },
+  );
 
   it("filters immediately and synchronizes typed range limits with the slider", async () => {
     const user = userEvent.setup();

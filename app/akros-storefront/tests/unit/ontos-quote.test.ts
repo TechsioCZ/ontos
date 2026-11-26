@@ -218,7 +218,7 @@ describe("server cart quote", () => {
     expect(quote.lineIssues).toEqual([]);
     expect(quote.cart.lines[0]).toMatchObject({
       minimumQuantity: 10,
-      quantityStep: 1,
+      quantityStep: 10,
       quantity: 15,
     });
   });

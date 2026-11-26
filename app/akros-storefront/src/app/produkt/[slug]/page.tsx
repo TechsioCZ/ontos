@@ -335,7 +335,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                       </p>
                     )}
 
-                    <div className="sf-product-detail__purchase-row">
+                    <div className="sf-product-detail__purchase-row lg:items-start">
                       <ProductPurchaseForm
                         product={purchaseProduct}
                         variant={singleVariant ? purchaseVariants[0] : undefined}
