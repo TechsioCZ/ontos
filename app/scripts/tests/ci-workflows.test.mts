@@ -3199,7 +3199,7 @@ it('proves the pinned formatter and linter configuration inputs on unchanged fil
 
 for (const [script, proof] of [
   ['test-lint-files.sh', 'Earlier job failure and later auto-fix both printed; index unchanged; exit 1.'],
-  ['test-lint-regressions.sh', 'Unsupported file templates in run and args fail closed before executing the hook.'],
+  ['test-lint-regressions.sh', 'Global-name/tag collisions fail closed before any job executes.'],
 ]) {
   it(`runs the real hook regression proof ${script} in the repository tooling suite`, () => {
     const output = execFileSync('/bin/bash', [fileURLToPath(new URL(`../ci/${script}`, import.meta.url))], {
@@ -3210,7 +3210,7 @@ for (const [script, proof] of [
   });
 }
 
-it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
+it('lints only the changed files of a narrowed run unless a cross-file policy input changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true);
   // A re-run of ci-plan, whose planning can fail after this upload, replaces it instead of failing on the name.
@@ -3245,7 +3245,7 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
     return readFileSync(output, 'utf-8').trim();
   };
   try {
-    const ordinary = ['app/verticals/catalog/src/a b.ts', 'app/verticals/catalog/src/index.ts'];
+    const ordinary = ['app/scripts/a b.sh', 'app/scripts/ordinary.sh'];
     expect(shardsFor('affected', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
     expect(shardsFor('scoped', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
     expect(shardsFor('full', ordinary)).toBe(WHOLE_TREE_LINT_SHARDS);
@@ -3254,13 +3254,13 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
     expect(
       shardsFor(
         'affected',
-        Array.from({ length: 2001 }, (_, index) => `app/scripts/${index}.ts`),
+        Array.from({ length: 2001 }, (_, index) => `app/scripts/${index}.sh`),
       ),
     ).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(
       shardsFor(
         'affected',
-        Array.from({ length: 2000 }, (_, index) => `app/scripts/${index}.ts`),
+        Array.from({ length: 2000 }, (_, index) => `app/scripts/${index}.sh`),
       ),
     ).toBe(CHANGED_FILES_LINT_SHARD);
     const comparison = { ancestor: true, base: 'a'.repeat(40), changedPaths: [], truncated: false };
@@ -3297,8 +3297,51 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
       'app/apps/shell-super-app/package.json',
       'app/pnpm-lock.yaml',
       'app/.mise.toml',
+      '.npmrc',
+      '.node-version',
+      '.tool-versions',
+      'mise.toml',
+      // Rule -> external inputs -> selector class (keep this census with new rule inputs).
+      // no-ambient-process-env + no-hand-parsed-environment-value -> compiler owner -> modern.config.*
+      'app/verticals/facility-operations/modern.config.ts',
+      // no-effect-run-in-tests -> manifest + selected setup entries -> rstest.config.*
+      'app/verticals/party-registry/rstest.config.mjs',
+      // no-unregistered-native-test-imports -> root Rstest, workflow, base/overlay -> metadata
+      'app/rstest.config.ts',
+      GATES_WORKFLOW_PATH,
+      'app/scripts/ci-matrices.json',
+      'app/scripts/ci-matrices.demo.json',
+      // The parser imported by that rule is executable policy, not just a linted script.
+      'app/scripts/ci/ci-matrices.mts',
+      'app/scripts/ci/ci-matrices-rules.mts',
+      'app/scripts/quality-cli-lifecycle.mts',
+      // no-service-constructor-imports -> data/passive factory imports + package source census -> source
+      // React Doctor no-barrel-import and import/{default,namespace,no-cycle,no-named-as-default,
+      // no-named-as-default-member,export} also follow source, including generated/ignored source.
+      'app/packages/core-runtime/src/data.ts',
+      'app/packages/tooling/outside-program.cjs',
+      'app/verticals/catalog/shared/ultramodern-build.ts',
+      // React Doctor no-img-without-dimensions -> sibling stylesheet imports -> styles
+      'app/verticals/catalog/src/preview.css',
+      'app/verticals/catalog/src/preview.scss',
+      // React Doctor project/DOM census -> HTML/MDX consumers -> markup
+      'app/verticals/catalog/index.html',
+      'app/verticals/catalog/docs/component.mdx',
+      'app/verticals/catalog/INDEX.HTML',
+      'app/verticals/catalog/docs/COMPONENT.MDX',
+      // React Doctor curated framework detection -> workspace/Expo/Nx metadata -> JSON/YAML/properties
+      'app/pnpm-workspace.yml',
+      'app/verticals/catalog/jsconfig.json',
+      'app/verticals/catalog/aliases.jsonc',
+      'app/verticals/catalog/app.json',
+      'app/verticals/catalog/project.json',
+      'app/nx.json',
+      'app/verticals/catalog/android/gradle.properties',
+      // Repository policy's managed-asset exemption -> lock + pinned generated asset -> managed assets
+      'app/.agents/skills-lock.json',
+      'app/.codex/skills/mf/assets/observability-chrome-devtool.iife.js',
     ]) {
-      expect(shardsFor('affected', [...ordinary, configuration])).toBe(WHOLE_TREE_LINT_SHARDS);
+      expect(shardsFor('affected', [...ordinary, configuration]), configuration).toBe(WHOLE_TREE_LINT_SHARDS);
     }
   } finally {
     rmSync(directory, { force: true, recursive: true });
