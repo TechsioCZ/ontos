@@ -113,6 +113,8 @@ const demoTokens = (setups) => {
     const env = setups.get(source).run.envVariables;
     for (const key of variableKeys(setup)) if (typeof env[key] === 'string') values.push(env[key]);
   }
+  const n1Origin = setups.get('app').run.envVariables.ONTOS_N1_STOREFRONT_ORIGIN;
+  if (typeof n1Origin === 'string') values.push(n1Origin);
   return tokensOf(values);
 };
 
@@ -123,6 +125,8 @@ const stableSetup = (setups, config, setup) => {
   for (const key of variableKeys(setup)) delete env[key];
   Object.assign(env, config.variables[setup]);
   if (setup === 'app') {
+    env.ONTOS_DEMO_FIXTURES_ENABLED = 'false';
+    env.ONTOS_N1_STOREFRONT_ORIGIN = config.origins.n1;
     for (const phase of PHASES) {
       for (const [variable, origin] of Object.entries(ORIGIN_VARIABLES)) {
         copy[phase].envVariables[variable] = config.origins[origin];

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "tenants": [
+    {
+      "slug": "sroubshop",
+      "displayName": "ŠroubShop",
+      "defaultLocale": "cs",
+      "moduleKey": "party.registry",
+      "legalEntity": {
+        "legalName": "Šroubárna s.r.o.",
+        "registrationCountry": "CZ",
+        "registrationNumber": "STABLE-SROUB"
+      },
+      "accounts": [
+        {
+          "email": "obchod@sroubshop.example",
+          "displayName": "Vedoucí obchodu",
+          "owner": true,
+          "roles": ["full_access"]
+        },
+        {
+          "email": "prodej@sroubshop.example",
+          "displayName": "Obchodník",
+          "owner": false,
+          "roles": ["full_access"]
+        }
+      ],
+      "storefronts": [
+        {
+          "storefrontAppId": "sroubshop-storefront",
+          "service": "shop",
+          "brand": "sroubshop",
+          "workloadKeys": ["commerce.storefront-client", "demo.storefront-client", "work.storefront-client"]
+        }
+      ]
+    },
+    {
+      "slug": "akros",
+      "displayName": "AKROS",
+      "defaultLocale": "cs",
+      "moduleKey": "party.registry",
+      "legalEntity": {
+        "legalName": "AKROS",
+        "registrationCountry": "CZ",
+        "registrationNumber": "<AKROS IČO>"
+      },
+      "accounts": [
+        {
+          "email": "<akros owner email>",
+          "displayName": "AKROS",
+          "owner": true,
+          "roles": ["full_access"]
+        }
+      ],
+      "storefronts": [
+        {
+          "storefrontAppId": "akros-storefront",
+          "service": "storefront",
+          "brand": "akros",
+          "workloadKeys": ["commerce.storefront-client", "demo.storefront-client"]
+        }
+      ]
+    },
+    {
+      "slug": "n1",
+      "displayName": "N1",
+      "defaultLocale": "cs",
+      "moduleKey": "party.registry",
+      "legalEntity": {
+        "legalName": "N1",
+        "registrationCountry": "CZ",
+        "registrationNumber": "<N1 IČO>"
+      },
+      "accounts": [
+        {
+          "email": "<n1 owner email>",
+          "displayName": "N1",
+          "owner": true,
+          "roles": ["full_access"]
+        }
+      ],
+      "storefronts": [
+        {
+          "storefrontAppId": "n1-storefront",
+          "service": "n1",
+          "workloadKeys": ["commerce.storefront-client", "demo.storefront-client", "work.storefront-client"]
+        }
+      ]
+    }
+  ]
+}

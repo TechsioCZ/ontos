@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "projectName": "OntOS stable",
+  "orgId": "KyBprR6GQHePj6ahY0i0ew",
+  "corePackage": "LIGHT",
+  "demoProjectId": "t1ljmn3DRDafgi8AuPvhdQ",
+  "origins": {
+    "shell": "https://ontos.web-revolution.cz",
+    "storefront": "https://ontos-akros.web-revolution.cz",
+    "shop": "https://ontos-shop.web-revolution.cz",
+    "n1": "https://ontos-n1.web-revolution.cz"
+  }
+}

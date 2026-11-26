@@ -23,6 +23,15 @@ const stageHosts = [
   ...new Set(ORIGINS.flatMap((name) => ['build', 'run'].map((phase) => new URL(canonical.app[phase].envVariables[name]).hostname))),
 ];
 const setupsOf = (text) => Object.fromEntries(parse(text).zerops.map((setup) => [setup.setup, setup]));
+
+test('stable disables demo fixture bootstraps and admits its own N1 origin without changing feature mode', () => {
+  const config = example();
+  const { app } = setupsOf(materializeStableZerops(canonicalText, config).combined);
+  assert.equal(app.run.envVariables.ONTOS_DEMO_FIXTURES_ENABLED, 'false');
+  assert.equal(app.run.envVariables.ONTOS_N1_STOREFRONT_ORIGIN, config.origins.n1);
+  assert.equal(app.run.envVariables.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT, 'stage');
+  assert.equal(app.build.envVariables.ONTOS_INTERNAL_SYMMY_INGRESS, '1');
+});
 const withCanonical = (change) => {
   const document = parse(canonicalText);
   change(Object.fromEntries(document.zerops.map((setup) => [setup.setup, setup])), document);
@@ -62,7 +71,9 @@ test('keeps every other canonical value, including in-project service and secret
   const setups = setupsOf(materializeStableZerops(canonicalText, config).combined);
   for (const [setup, source] of Object.entries(SOURCES)) {
     const replaced = new Set([...Object.keys(STABLE_VARIABLES[setup].required), ...Object.keys(STABLE_VARIABLES[setup].optional)]);
-    if (setup === 'app') for (const name of ORIGINS) replaced.add(name);
+    if (setup === 'app') {
+      for (const name of [...ORIGINS, 'ONTOS_DEMO_FIXTURES_ENABLED', 'ONTOS_N1_STOREFRONT_ORIGIN']) replaced.add(name);
+    }
     const { envVariables: canonicalRun, ...canonicalRest } = canonical[source].run;
     const { envVariables: run, ...rest } = setups[setup].run;
     assert.deepEqual(rest, canonicalRest);

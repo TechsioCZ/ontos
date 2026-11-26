@@ -10,6 +10,7 @@ import {
   initializeSecrets,
   readSecretBundle,
   validateSecretBundle,
+  mergeOwnerSecrets,
 } from './secrets.mjs';
 
 const config = {
@@ -52,6 +53,9 @@ test('initialization creates fresh private credentials without overwriting an ex
     const a = await readSecretBundle(first, config);
     const b = await readSecretBundle(second, config);
     assert.notEqual(a.services.app.ONTOS_OWNER_SECRETS_JSON, b.services.app.ONTOS_OWNER_SECRETS_JSON);
+    const owners = JSON.parse(a.services.app.ONTOS_OWNER_SECRETS_JSON);
+    assert.ok(owners['shell-super-app'].ONTOS_EMAIL_DISPATCH_SECRET.length >= 32);
+    for (const key of ['REF', 'VERSION', 'LINEAGE_REF']) assert.ok(owners.pricing[`ONTOS_PRICING_CONFIRMATION_KEY_${key}`]);
     assert.notEqual(a.services.migrator.PARTY_REGISTRY_DB_PASSWORD, b.services.migrator.PARTY_REGISTRY_DB_PASSWORD);
     assert.notEqual(a.services.spicedb.SPICEDB_DATABASE_PASSWORD, b.services.spicedb.SPICEDB_DATABASE_PASSWORD);
     const before = await readFile(first, 'utf-8');
@@ -98,14 +102,14 @@ test('default sync plans without touching live services or including values', as
     assertServices: () => assert.fail('must not contact services'),
     bundle: bundle(),
     config,
-    runCommand: () => assert.fail('must not mutate services'),
+    env: {},
   });
   assert.equal(result.applied, false);
-  assert.deepEqual(result.changes, [{ key: 'SMTP_PASSWORD', service: 'app' }]);
+  assert.deepEqual(result.changes, [{ key: 'SMTP_PASSWORD', service: 'app', action: 'not-inspected' }]);
   assert.ok(!JSON.stringify(result).includes('never-log-this'));
 });
 
-test('apply proves project ownership first and passes values only through the child environment', async () => {
+test('apply proves project ownership before secret inspection and mutation', async () => {
   const calls = [];
   const result = await applySecrets({
     apply: true,
@@ -116,13 +120,17 @@ test('apply proves project ownership first and passes values only through the ch
     bundle: bundle(),
     config,
     env: { ZEROPS_TOKEN: 'token' },
-    runCommand: (command, args, options) => {
-      assert.equal(calls[0], 'ownership');
-      assert.equal(command, 'bash');
-      assert.equal(options.env.STABLE_SECRET_VALUE, 'never-log-this');
-      assert.ok(!args.join(' ').includes('never-log-this'));
-      assert.deepEqual(args.slice(-3), ['app-id', 'SMTP_PASSWORD', 'STABLE_SECRET_VALUE']);
-      calls.push('sync');
+    store: {
+      list: async (service) => {
+        assert.equal(calls[0], 'ownership');
+        assert.equal(service, 'app-id');
+        return [];
+      },
+      create: async (service, key, content) => {
+        assert.deepEqual([service, key, content], ['app-id', 'SMTP_PASSWORD', 'never-log-this']);
+        calls.push('sync');
+      },
+      remove: () => assert.fail('new value does not delete anything'),
     },
   });
   assert.deepEqual(calls, ['ownership', 'sync']);
@@ -139,8 +147,57 @@ test('ownership refusal prevents every mutation', async () => {
       bundle: bundle(),
       config,
       env: { ZEROPS_TOKEN: 'token' },
-      runCommand: () => assert.fail('must not mutate services'),
+      store: { list: () => assert.fail('must not inspect another project') },
     }),
     /wrong project/u,
   );
+});
+
+test('adding per-tenant commerce credentials preserves generated authentication and other owner settings', () => {
+  const original = JSON.stringify({
+    'shell-super-app': { BETTER_AUTH_SECRET: 'original-auth', ONTOS_EMAIL_DISPATCH_SECRET: 'original-email' },
+    pricing: { ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: 'original-signing' },
+  });
+  const addition = JSON.stringify({ 'commerce-customer-context': { COMMERCE_TENANT_CREDENTIALS: '{"tenant":{}}' } });
+  const merged = JSON.parse(mergeOwnerSecrets(original, addition));
+  assert.deepEqual(merged['shell-super-app'], JSON.parse(original)['shell-super-app']);
+  assert.deepEqual(merged.pricing, JSON.parse(original).pricing);
+  assert.equal(merged['commerce-customer-context'].COMMERCE_TENANT_CREDENTIALS, '{"tenant":{}}');
+});
+
+const liveStore = (content, { failNew = false } = {}) => {
+  let current = [{ id: 'existing', key: 'SMTP_PASSWORD', content }];
+  const changes = [];
+  return {
+    changes,
+    get current() { return current; },
+    list: async () => current.map((entry) => ({ ...entry })),
+    remove: async (id) => { changes.push('delete'); current = current.filter((entry) => entry.id !== id); },
+    create: async (_service, key, value) => {
+      changes.push('create');
+      if (failNew && value !== content) throw new Error('provider failed with an untrusted secret body');
+      current = [{ id: 'created', key, content: value }];
+    },
+  };
+};
+
+test('a second fresh bundle cannot silently rotate any existing live secret', async () => {
+  const store = liveStore('old-private-value');
+  const input = { config, bundle: bundle(), assertServices: async () => {}, store };
+  const plan = await applySecrets(input);
+  assert.deepEqual(plan.changes, [{ service: 'app', key: 'SMTP_PASSWORD', action: 'replace' }]);
+  await assert.rejects(applySecrets({ ...input, apply: true }), /confirm-rotation/u);
+  assert.deepEqual(store.changes, []);
+  assert.ok(!JSON.stringify(plan).includes('old-private-value'));
+  await applySecrets({ ...input, apply: true, confirmRotation: true });
+  assert.equal(store.current[0].content, 'never-log-this');
+});
+
+test('a failed explicit replacement restores the old value and still reports failure', async () => {
+  const store = liveStore('old-private-value', { failNew: true });
+  await assert.rejects(applySecrets({
+    config, bundle: bundle(), assertServices: async () => {}, store, apply: true, confirmRotation: true,
+  }), /previous value was restored/u);
+  assert.equal(store.current[0].content, 'old-private-value');
+  assert.deepEqual(store.changes, ['delete', 'create', 'create']);
 });
