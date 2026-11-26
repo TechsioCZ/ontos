@@ -31,6 +31,16 @@ import type { ProductVariantDestination } from './product-variant-destination.ts
 import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
 import { priceHistoryRows } from './product-price-history.ts';
+import { VariantDetailEditor, VariantDetailsToggle } from './product-variant-editor.tsx';
+import type { VariantDetailDraft } from './product-variant-editor.tsx';
+import {
+  czkText,
+  parseCzkText,
+  parseQuantityText,
+  priceTiersOf,
+  tierDraftsOf,
+  tierRowsInvalid,
+} from './product-sales-terms-draft.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -59,7 +69,7 @@ const parseCzk = (text: string): number | null => {
   return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;
 };
 
-interface VariantDraft {
+interface VariantDraft extends VariantDetailDraft {
   readonly active: boolean;
   readonly attributes: string;
   readonly id?: VariantId;
@@ -69,11 +79,52 @@ interface VariantDraft {
   readonly sku: string;
 }
 
+const EMPTY_VARIANT_DETAILS: VariantDetailDraft = {
+  description: '',
+  flags: { isAction: false, isNew: false, isRecommended: false, isSale: false },
+  imageSrc: '',
+  minimumQuantityText: '',
+  originalPriceText: '',
+  packageQuantityText: '',
+  parameters: [],
+  sourceUnit: '',
+  tiers: [],
+  tiersEdited: false,
+  unit: '',
+  weightGramsText: '',
+};
+
+const optionalText = (value: number | undefined): string => (value === undefined ? '' : String(value));
+
+const variantDetailsOf = (variant: ProductVariant): VariantDetailDraft => ({
+  description: variant.description ?? '',
+  flags: {
+    isAction: variant.isAction === true,
+    isNew: variant.isNew === true,
+    isRecommended: variant.isRecommended === true,
+    isSale: variant.isSale === true,
+  },
+  imageSrc: variant.imageSrc ?? '',
+  minimumQuantityText: optionalText(variant.minimumQuantity),
+  originalPriceText:
+    variant.originalPriceMinor === undefined || variant.originalPriceMinor === 0
+      ? ''
+      : czkText(variant.originalPriceMinor),
+  packageQuantityText: optionalText(variant.packageQuantity),
+  parameters: (variant.parameters ?? []).map((parameter, index) => ({ ...parameter, key: index })),
+  sourceUnit: variant.sourceUnit ?? '',
+  tiers: tierDraftsOf(variant.priceTiers),
+  tiersEdited: false,
+  unit: variant.unit ?? '',
+  weightGramsText: variant.weightGrams === undefined || variant.weightGrams === 0 ? '' : String(variant.weightGrams),
+});
+
 const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] => {
   const drafts: VariantDraft[] = [];
   for (const variant of product.variants ?? []) {
     if (isRealVariant(variant)) {
       drafts.push({
+        ...variantDetailsOf(variant),
         active: variant.active !== false,
         attributes: variant.attributes,
         id: variant.id,
@@ -297,8 +348,29 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
   );
 };
 
+const weightInvalid = (text: string) => {
+  if (text.trim() === '') {
+    return false;
+  }
+  const weight = Number(text.trim());
+  return !Number.isInteger(weight) || weight < 0 || weight > 1_000_000_000;
+};
+
+const optionalQuantityInvalid = (text: string) => text.trim() !== '' && parseQuantityText(text) === null;
+
+/** Whether the detail fields of a variant cannot be saved. */
+const variantDetailsInvalid = (draft: VariantDetailDraft) =>
+  draft.parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '') ||
+  optionalQuantityInvalid(draft.minimumQuantityText) ||
+  optionalQuantityInvalid(draft.packageQuantityText) ||
+  (draft.tiersEdited && tierRowsInvalid(draft.tiers, parseQuantityText(draft.minimumQuantityText) ?? 1)) ||
+  weightInvalid(draft.weightGramsText) ||
+  (draft.originalPriceText.trim() !== '' && parseCzkText(draft.originalPriceText) === null) ||
+  draft.description.trim().length > 2000;
+
 const variantErrorsOf = (drafts: readonly VariantDraft[]) =>
   drafts.map((draft) => ({
+    details: variantDetailsInvalid(draft),
     name: draft.name.trim() === '' || draft.name.trim().length > 100,
     price: parseCzk(draft.priceText) === null,
     sku: draft.sku.trim() === '' || draft.sku.trim().length > 64,
@@ -310,7 +382,79 @@ const duplicateSkuOf = (drafts: readonly VariantDraft[]) => {
 };
 
 const variantsInvalid = (drafts: readonly VariantDraft[]) =>
-  duplicateSkuOf(drafts) || variantErrorsOf(drafts).some((entry) => entry.name || entry.price || entry.sku);
+  duplicateSkuOf(drafts) ||
+  variantErrorsOf(drafts).some((entry) => entry.details || entry.name || entry.price || entry.sku);
+
+type EditableVariant = { -readonly [Key in keyof ProductVariant]?: ProductVariant[Key] };
+
+/**
+ * The variant with the detail fields of its draft. A save replaces the whole variant list, so an emptied field drops
+ * the key; tiers are sent only when edited (otherwise the server keeps or rescales the stored ones).
+ */
+const withVariantDetails = (kept: ProductVariant | EditableVariant, draft: VariantDetailDraft): EditableVariant => {
+  const {
+    description: _description,
+    imageSrc: _imageSrc,
+    isAction: _isAction,
+    isNew: _isNew,
+    isRecommended: _isRecommended,
+    isSale: _isSale,
+    minimumQuantity: _minimumQuantity,
+    originalPriceMinor: _originalPriceMinor,
+    packageQuantity: _packageQuantity,
+    parameters: _parameters,
+    sourceUnit: _sourceUnit,
+    unit: _unit,
+    weightGrams: _weightGrams,
+    ...rest
+  } = kept;
+  const variant: EditableVariant = { ...rest };
+  const parameters = draft.parameters.map(({ label, unit, value }) => ({
+    label: label.trim(),
+    unit: unit.trim(),
+    value: value.trim(),
+  }));
+  if (parameters.length > 0) {
+    variant.parameters = parameters;
+  }
+  if (draft.imageSrc !== '') {
+    variant.imageSrc = draft.imageSrc;
+  }
+  for (const flag of ['isAction', 'isNew', 'isRecommended', 'isSale'] as const) {
+    if (draft.flags[flag]) {
+      variant[flag] = true;
+    }
+  }
+  const minimum = parseQuantityText(draft.minimumQuantityText);
+  if (minimum !== null) {
+    variant.minimumQuantity = minimum;
+  }
+  const packageQuantity = parseQuantityText(draft.packageQuantityText);
+  if (packageQuantity !== null) {
+    variant.packageQuantity = packageQuantity;
+  }
+  if (draft.unit.trim() !== '') {
+    variant.unit = draft.unit.trim();
+  }
+  if (draft.sourceUnit.trim() !== '') {
+    variant.sourceUnit = draft.sourceUnit.trim();
+  }
+  if (draft.description.trim() !== '') {
+    variant.description = draft.description.trim();
+  }
+  const weight = Number(draft.weightGramsText.trim());
+  if (draft.weightGramsText.trim() !== '' && weight > 0) {
+    variant.weightGrams = weight;
+  }
+  const original = parseCzkText(draft.originalPriceText);
+  if (original !== null && original > 0) {
+    variant.originalPriceMinor = original;
+  }
+  if (draft.tiersEdited) {
+    variant.priceTiers = priceTiersOf(draft.tiers);
+  }
+  return variant;
+};
 
 /** The variants an UpdateProduct sends for `drafts`; the product's legacy variants stay as they are. */
 const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
@@ -321,7 +465,7 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
     const kept = original?.priceMinor === priceMinor ? original : originalFields;
     void inheritedTiers;
     const variant = {
-      ...kept,
+      ...withVariantDetails(kept, draft),
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
@@ -383,6 +527,7 @@ const useVariantsPanel = ({
         attributes: '',
         key,
         name: '',
+        ...EMPTY_VARIANT_DETAILS,
         priceText: moneyInputText(product.currentPriceMinor / 100),
         sku: `${product.sku}-${current.length + 1}`,
       },
@@ -512,6 +657,8 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
     product.taxClassificationCode ?? DEFAULT_TAX_CLASSIFICATION,
     DateTime.nowUnsafe(),
   );
+  const [openDetails, setOpenDetails] = useState<string | null>(null);
+  const vatRate = classification.current?.ratePercent;
   const variantDestination = props.variantDestination ?? { kind: 'none' };
   const selectedKey = variantDestination.kind === 'selected' ? variantDestination.draftKey : undefined;
   const [appliedTarget, setAppliedTarget] = useState<string | null>(null);
@@ -600,7 +747,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                   const record = draft.id === undefined ? undefined : records.get(draft.id);
                   const price = parseCzk(draft.priceText);
                   const error = errors[index];
-                  return (
+                  return [
                     <Table.Row
                       aria-current={draft.key === selectedKey}
                       className={draft.key === selectedKey ? 'bg-primary/10' : ''}
@@ -636,6 +783,11 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             placeholder={placeholders.attributes}
                             size="sm"
                             value={draft.attributes}
+                          />
+                          <VariantDetailsToggle
+                            invalid={error?.details === true}
+                            onToggle={() => setOpenDetails((current) => (current === draft.key ? null : draft.key))}
+                            open={openDetails === draft.key}
                           />
                           {renderVariantPriceTiers(
                             record,
@@ -710,8 +862,22 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                           </Badge>
                         )}
                       </Table.Cell>
-                    </Table.Row>
-                  );
+                    </Table.Row>,
+                    openDetails === draft.key ? (
+                      <Table.Row key={`${draft.key}-details`}>
+                        <Table.Cell colSpan={7}>
+                          <VariantDetailEditor
+                            disabled={!canWrite}
+                            draft={draft}
+                            idPrefix={`variant-${draft.key}`}
+                            images={product.images ?? []}
+                            onChange={(next) => patchDraft(draft.key, next)}
+                            vatRate={vatRate}
+                          />
+                        </Table.Cell>
+                      </Table.Row>
+                    ) : null,
+                  ];
                 })}
               </Table.Body>
             </Table>
