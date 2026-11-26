@@ -4,7 +4,11 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { ManageSymmyRoutesPayloadSchema, ManageSymmyRoutesRejected } from '../../shared/actions/manage-symmy-routes.ts';
+import {
+  ManageSymmyRoutesPayloadSchema,
+  ManageSymmyRoutesRejected,
+  SymmyExecutorWorkloadKeySchema,
+} from '../../shared/actions/manage-symmy-routes.ts';
 import { manageSymmyRoutesAction } from '../../src/actions/manage-symmy-routes.action.ts';
 import type { manageSymmyRoutesServices } from '../../src/actions/manage-symmy-routes.action.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
@@ -16,6 +20,7 @@ const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const adminPrincipalId = '33333333-3333-4333-8333-333333333333';
 const integrationPrincipalId = '44444444-4444-4444-8444-444444444444';
 const source = { issuerId: 'symmy-akros', sourceNamespace: 'akros-erp' };
+const workloadKeyOf = (workloadKey: string) => SymmyExecutorWorkloadKeySchema.make(workloadKey);
 
 type Services = Effect.Success<ReturnType<typeof manageSymmyRoutesServices>>;
 type EnableInput = Parameters<Services['enable']>[0];
@@ -47,12 +52,15 @@ const payload = Schema.decodeUnknownSync(ManageSymmyRoutesPayloadSchema)({
 const recordingServices = () => {
   const enabled: EnableInput[] = [];
   const disabled: DisableInput[] = [];
+  const steps: string[] = [];
   const services: Services = {
     disable: (input) => {
       disabled.push(input);
+      steps.push(`disable ${input.reference.routeKey}`);
       return Effect.succeed({
         changeToken: input.expectedChangeToken + 1,
         executors: [],
+        executorWorkloads: [],
         outcome: 'deactivated' as const,
         requiredBindings: [],
         routeId: input.reference.routeId,
@@ -62,9 +70,21 @@ const recordingServices = () => {
     },
     enable: (input) => {
       enabled.push(input);
+      steps.push(`enable ${input.request.routeKey}`);
       return Effect.succeed({
         changeToken: enabled.length,
         executors: [],
+        // The products route's write workload is the one the executor did not hold yet.
+        executorWorkloads:
+          input.request.routeKey === 'productsBatch' && input.request.legalEntityId !== undefined
+            ? [
+                {
+                  change: 'granted' as const,
+                  legalEntityId: input.request.legalEntityId,
+                  workloadKey: workloadKeyOf('catalog.write'),
+                },
+              ]
+            : [],
         outcome: 'enrolled' as const,
         requiredBindings: [],
         routeId: input.request.routeId,
@@ -72,8 +92,17 @@ const recordingServices = () => {
         sourcePeers: [],
       });
     },
+    lockExecutorWorkloads: () =>
+      Effect.sync(() => {
+        steps.push('lock executor workloads');
+      }),
+    withdrawExecutorWorkloads: (attribution) =>
+      Effect.sync(() => {
+        steps.push(`withdraw executor workloads (${attribution.reason})`);
+        return [{ change: 'withdrawn' as const, workloadKey: workloadKeyOf('region.read') }];
+      }),
   };
-  return { disabled, enabled, services };
+  return { disabled, enabled, services, steps };
 };
 
 const run = (access: 'allowed' | 'denied', services: Services, key: string) =>
@@ -121,9 +150,24 @@ describe('integration.symmy.manage-symmy-routes', () => {
 
   it.effect('enrolls every route in the caller Tenant and company, with its retention and price read source', () =>
     Effect.gen(function* administrator() {
-      const { disabled, enabled, services } = recordingServices();
+      const { disabled, enabled, services, steps } = recordingServices();
       const { outcome } = yield* run('allowed', services, 'allowed');
       expect(Result.isSuccess(outcome)).toBe(true);
+      // The executor lock comes before every route's enrollment lock; what a disabled route alone needed is withdrawn
+      // once, after every change.
+      expect(steps).toEqual([
+        'lock executor workloads',
+        'enable priceLists',
+        'enable productsBatch',
+        'disable adminRegions',
+        'withdraw executor workloads (Connect Symmy to the company)',
+      ]);
+      expect(Result.isSuccess(outcome) ? outcome.success : undefined).toMatchObject({
+        executorWorkloads: [
+          { change: 'granted', legalEntityId, workloadKey: 'catalog.write' },
+          { change: 'withdrawn', workloadKey: 'region.read' },
+        ],
+      });
       const scope = { legalEntityId, principalId: integrationPrincipalId, tenantId };
       expect(enabled.map(({ request }) => [request.tenantId, request.legalEntityId, request.principalId])).toEqual([
         [tenantId, legalEntityId, integrationPrincipalId],

@@ -33,7 +33,10 @@ import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-cont
 import type { PriceSourceSystem } from '@app/pricing-contracts/domain/price-source-provenance';
 import { and, eq, inArray, isNull, ne, notExists, sql } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
+import { SymmyExecutorWorkloadChangeSchema } from '../../shared/actions/manage-symmy-routes.ts';
+import type { SymmyExecutorWorkloadChange } from '../../shared/actions/manage-symmy-routes.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyJobLifecyclePolicyRefSchema } from '../../shared/domain/symmy-job-notification.ts';
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
@@ -52,7 +55,7 @@ import {
   deriveSymmyRouteBindings,
   symmyBindingWorkloads,
 } from './symmy-route-bindings.ts';
-import type { SymmyRouteBindingPlan } from './symmy-route-bindings.ts';
+import type { SymmyRequiredBinding, SymmyRouteBindingPlan } from './symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal } from './symmy-route-enrollment-refused.ts';
 import { SymmyRouteEnrollmentUnavailable } from './symmy-route-enrollment-unavailable.ts';
@@ -101,6 +104,8 @@ export const SymmyRouteEnrollmentReceiptSchema = Schema.Struct({
       workloadKey: Schema.String.pipe(Schema.brand('SymmyRouteExecutorWorkloadKey')),
     }),
   ),
+  /** What this change bound or registered for the Tenant's Symmy executor so the route's calls run. */
+  executorWorkloads: Schema.Array(SymmyExecutorWorkloadChangeSchema),
   outcome: Schema.Literals(['deactivated', 'enrolled', 'replaced', 'unchanged']),
   requiredBindings: Schema.Array(SymmyRequiredBindingSchema),
   routeId: SymmyRouteEnrollmentRequestSchema.fields.routeId,
@@ -116,6 +121,15 @@ export const SymmyRouteEnrollmentReceiptSchema = Schema.Struct({
   strandedWork: Schema.optionalKey(SymmyStrandedWorkSchema),
 });
 export type SymmyRouteEnrollmentReceipt = typeof SymmyRouteEnrollmentReceiptSchema.Type;
+
+/**
+ * Binds or registers for the Symmy executor what the route's bindings need of it, in the change's transaction, before the
+ * bindings are checked (`grantSymmyExecutorWorkloads`).
+ */
+export type SymmyExecutorWorkloadGrantor = (input: {
+  readonly bindings: readonly SymmyRequiredBinding[];
+  readonly legalEntityId?: string | undefined;
+}) => Effect.Effect<readonly SymmyExecutorWorkloadChange[], SymmyRouteEnrollmentUnavailable, Crypto.Crypto>;
 
 /** Who applied a change and why: the administrator's principal and Action invocation, and the stated reason. */
 export interface SymmyRouteEnrollmentAttribution {
@@ -479,6 +493,7 @@ export const applySymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.apply')
   input: SymmyRouteEnableData & {
     readonly attribution: SymmyRouteEnrollmentAttribution;
     readonly change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
+    readonly grantExecutorWorkloads: SymmyExecutorWorkloadGrantor;
     readonly inventory: SymmyRouteInventory;
     readonly plan: Pick<SymmyRouteBindingPlan, 'bindings' | 'moduleKeys'>;
     readonly request: SymmyRouteEnrollmentRequest;
@@ -495,12 +510,21 @@ export const applySymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.apply')
   if (isRefused(decision)) {
     return yield* decision;
   }
-  const checked = yield* routeChecks(transaction, { inventory, plan, request });
+  // The executor's missing workloads are granted first, so the binding checks read them; a refusal rolls them back.
+  const [executorWorkloads, checked] = yield* Effect.all(
+    [
+      input.grantExecutorWorkloads({ bindings: plan.bindings, legalEntityId: request.legalEntityId }),
+      routeChecks(transaction, { inventory, plan, request }),
+    ],
+    // In order: the checks read what the grant wrote.
+    { concurrency: 1 },
+  );
   yield* refused(checked.refusals);
   const receipt = (outcome: SymmyRouteEnrollmentReceipt['outcome'], changeToken: number) =>
     decodeReceipt({
       changeToken,
       executors: checked.executors,
+      executorWorkloads,
       outcome,
       requiredBindings: plan.bindings,
       routeId: request.routeId,
@@ -546,6 +570,7 @@ export const enableSymmyRoute = Effect.fn('SymmyRouteEnrollment.enable')(functio
     readonly attribution: SymmyRouteEnrollmentAttribution;
     readonly change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
     readonly contracts: SymmyRouteContracts;
+    readonly grantExecutorWorkloads: SymmyExecutorWorkloadGrantor;
     readonly request: SymmyRouteEnrollmentRequest;
   },
 ) {
@@ -599,6 +624,7 @@ export const deactivateSymmyRoute = Effect.fn('SymmyRouteEnrollment.deactivate')
     const fields = {
       changeToken,
       executors: [],
+      executorWorkloads: [],
       outcome,
       requiredBindings: [],
       routeId: route.routeId,

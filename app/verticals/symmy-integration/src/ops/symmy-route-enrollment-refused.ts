@@ -50,7 +50,8 @@ const SymmyRouteEnrollmentRefusalSchema = Schema.Struct({
   /**
    * On `integration_binding_missing` and `integration_company_registration_missing`: the workloads, any one of which the
    * integration principal must hold registered for the company. `core.identity.register-integration-workloads` grants
-   * them; the route change is then repeated.
+   * them; the route change is then repeated. On `executor_binding_missing`: the executor workload no system principal
+   * holds; for `integration.symmy.execute-symmy-job`, `core.identity.change-system-workload-enrollment` enrolls it.
    */
   workloads: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
 });

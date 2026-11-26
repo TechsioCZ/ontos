@@ -265,6 +265,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
         forced !== (name !== 'gateway_assertion_redemptions') ||
         insert_allowed !==
           [
+            'executor_workload_grants',
             'gateway_assertion_redemptions',
             'import_jobs',
             'job_effects',
@@ -277,7 +278,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
           ].includes(name) ||
         read_allowed !==
           !['job_notifications', 'privacy_measure_executions', 'route_enrollment_records'].includes(name) ||
-        unsafe_mutation !== ['job_routes', 'route_price_read_sources'].includes(name),
+        unsafe_mutation !== ['executor_workload_grants', 'job_routes', 'route_price_read_sources'].includes(name),
     )
   ) {
     yield* new SymmySchemaVerificationError({

@@ -1,7 +1,7 @@
 import { TrustedPrincipalContextSchema, findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
   Array as EffectArray,
@@ -19,12 +19,16 @@ import {
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
+import { grantSymmyExecutorWorkloads } from '../../src/ops/symmy-executor-workloads.ts';
 import { SYMMY_JOB_KEY } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRequiredBinding } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
 import { SymmyRouteEnrollmentUnavailable } from '../../src/ops/symmy-route-enrollment-unavailable.ts';
 import { applySymmyRouteEnrollment, deactivateSymmyRoute } from '../../src/ops/symmy-route-enrollment-store.ts';
-import type { SymmyRouteEnrollmentAttribution } from '../../src/ops/symmy-route-enrollment-store.ts';
+import type {
+  SymmyExecutorWorkloadGrantor,
+  SymmyRouteEnrollmentAttribution,
+} from '../../src/ops/symmy-route-enrollment-store.ts';
 import { symmyIntegrationRelations } from '../../src/db/schema.ts';
 import {
   SymmyRouteEnrollmentRequestSchema,
@@ -98,6 +102,22 @@ const attribution = {
   reason: 'Enroll the products route for the import',
 };
 const enroll: SymmyRouteChange = { kind: 'enroll' };
+
+/**
+ * The executor grants `integration.symmy.manage-symmy-routes` makes, or none: without them the fixture's bindings alone
+ * decide, so each refusal is checked as such.
+ */
+const executorGrantor =
+  (
+    enabled: boolean,
+    ...[executor, scope, stated]: readonly [
+      Parameters<typeof grantSymmyExecutorWorkloads>[0],
+      OperationalScope,
+      SymmyRouteEnrollmentAttribution,
+    ]
+  ): SymmyExecutorWorkloadGrantor =>
+  (needed) =>
+    enabled ? grantSymmyExecutorWorkloads(executor, { ...needed, attribution: stated, scope }) : Effect.succeed([]);
 const replaceAt = (expectedChangeToken: number) => ({ expectedChangeToken, kind: 'replace' }) as const;
 const deactivateAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'deactivate' });
 /** The change token a receipt reports, which a receipt of a stored route always carries. */
@@ -289,6 +309,8 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   const run = (input: {
     readonly attribution?: SymmyRouteEnrollmentAttribution;
     readonly change?: SymmyRouteChange;
+    /** Grant the Symmy executor what the route needs, as `integration.symmy.manage-symmy-routes` does. */
+    readonly executorGrants?: boolean;
     /** A deactivation names the route by its reference alone. */
     readonly request: ReturnType<typeof request> | SymmyRouteReference;
     readonly required?: readonly SymmyRequiredBinding[];
@@ -317,13 +339,14 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
         return yield* applySymmyRouteEnrollment(executor, {
           attribution: stated,
           change,
+          grantExecutorWorkloads: executorGrantor(input.executorGrants === true, executor, administrator, stated),
           inventory,
           plan: { bindings: input.required ?? bindings, moduleKeys: [catalogModule, 'integration.symmy'] },
           priceReadSource: Option.none(),
           request: enrollment,
           retentionPolicy: Option.none(),
         });
-      }),
+      }).pipe(Effect.provide(NodeCrypto.layer)),
     );
   return {
     admin,
@@ -607,6 +630,70 @@ it.effect(
       expect(yield* refusedWith(runtime`select setval('symmy_integration.job_route_change_tokens', 1) as token`)).toBe(
         '42501',
       );
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000,
+);
+
+it.effect(
+  'grants the enrolled Symmy executor the owner workloads a route needs, registered for its company, once and audited',
+  () =>
+    Effect.gen(function* executorGrants() {
+      const { admin, legalEntityId, request, run, systemId, tenantId } = yield* makeFixture();
+      const readWorkload = 'commerce.catalog.symmy-product-read';
+      const needed: SymmyRequiredBinding[] = [
+        ...bindings,
+        { companyScoped: true, identity: 'executor', purpose: 'recovery', workloads: [readWorkload] },
+      ];
+      const v1 = request('productsBatch', { routeId: crypto.randomUUID() });
+      const enrolled = yield* run({ executorGrants: true, request: v1, required: needed });
+      expect(enrolled.outcome).toBe('enrolled');
+      expect(enrolled.executorWorkloads).toEqual([
+        { change: 'granted', workloadKey: readWorkload },
+        { change: 'granted', legalEntityId, workloadKey: readWorkload },
+      ]);
+      // The binding is the executor's, registered for the route's company, and the grant names who made it and why.
+      const held = admin`select b.principal_id, c.legal_entity_id from core.access_workload_bindings b
+          join core.access_workload_company_bindings c on c.tenant_id=b.tenant_id and c.workload_binding_id=b.binding_id
+          where b.tenant_id=${tenantId} and b.workload_key=${readWorkload} and b.status='active' and c.status='active'`;
+      expect(yield* held).toEqual([{ legal_entity_id: legalEntityId, principal_id: systemId }]);
+      const grants = admin`select kind, granted_by_ref, granted_reason, withdrawn_at from symmy_integration.executor_workload_grants
+          where tenant_id=${tenantId} order by kind`;
+      expect(yield* grants).toEqual([
+        {
+          granted_by_ref: attribution.operatorRef,
+          granted_reason: attribution.reason,
+          kind: 'binding',
+          withdrawn_at: null,
+        },
+        {
+          granted_by_ref: attribution.operatorRef,
+          granted_reason: attribution.reason,
+          kind: 'company_registration',
+          withdrawn_at: null,
+        },
+      ]);
+      // A repeated enable finds everything held and grants nothing more.
+      const again = yield* run({ executorGrants: true, request: v1, required: needed });
+      expect(again).toMatchObject({ executorWorkloads: [], outcome: 'unchanged' });
+      expect(yield* grants).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000,
+);
+
+it.effect(
+  'grants nothing while the Tenant has no Symmy executor, and the route is refused naming the enrollment to make',
+  () =>
+    Effect.gen(function* noExecutor() {
+      const { admin, bindingOf, request, revokeBinding, run, systemId, tenantId } = yield* makeFixture();
+      yield* revokeBinding(yield* bindingOf(systemId, SYMMY_JOB_KEY));
+      const v1 = request('productsBatch', { routeId: crypto.randomUUID() });
+      const found = yield* refusals(run({ executorGrants: true, request: v1 }));
+      expect(found).toContainEqual(
+        expect.objectContaining({ code: 'executor_binding_missing', workloads: [SYMMY_JOB_KEY] }),
+      );
+      expect(
+        yield* admin`select 1 from symmy_integration.executor_workload_grants where tenant_id=${tenantId}`,
+      ).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000,
 );

@@ -562,6 +562,7 @@ describe('Symmy route bindings', () => {
       {
         code: 'integration_company_registration_missing',
         detail: `The integration principal ${integrationId} holds ${sourceRead}, needed for ${definitionRead}@1, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+        workloads: [sourceRead],
       },
     ]);
     expect(reading.moduleKeys).toContain('commerce.customer-context');
@@ -686,10 +687,12 @@ describe('Symmy route bindings', () => {
       {
         code: 'integration_binding_missing',
         detail: `The integration principal holds none of ${productImport}, needed for commerce.catalog.create-product@2`,
+        workloads: [productImport],
       },
       {
         code: 'executor_binding_missing',
         detail: `No active system principal holds ${productImport}, needed for commerce.catalog.create-product@2`,
+        workloads: [productImport],
       },
     ]);
 
@@ -870,6 +873,7 @@ describe('Symmy route bindings', () => {
       {
         code: 'integration_company_registration_missing',
         detail: `The integration principal ${integrationId} holds ${marketRead}, needed for commerce.market-catalog.api.current-market-catalog@1, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+        workloads: [marketRead],
       },
     ]);
   });
@@ -933,6 +937,7 @@ describe('Symmy route bindings', () => {
         {
           code: 'integration_company_registration_missing',
           detail: `The integration principal ${integrationId} holds ${admit}, needed for job admission, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+          workloads: [admit],
         },
         {
           code: 'executor_company_registration_missing',

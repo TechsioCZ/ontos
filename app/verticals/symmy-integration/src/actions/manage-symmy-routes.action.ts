@@ -21,6 +21,12 @@ import type {
   ManageSymmyRoutesResult,
   SymmyRouteChangeRequest,
 } from '../../shared/actions/manage-symmy-routes.ts';
+import {
+  grantSymmyExecutorWorkloads,
+  lockSymmyExecutorWorkloads,
+  withdrawSymmyExecutorWorkloads,
+} from '../ops/symmy-executor-workloads.ts';
+import type { SymmyExecutorAttribution } from '../ops/symmy-executor-workloads.ts';
 import type { SymmyRouteEnrollmentRefused } from '../ops/symmy-route-enrollment-refused.ts';
 import { deactivateSymmyRoute, enableSymmyRoute } from '../ops/symmy-route-enrollment-store.ts';
 import type { SymmyRouteContracts, SymmyRouteEnrollmentAttribution } from '../ops/symmy-route-enrollment-store.ts';
@@ -41,10 +47,13 @@ const contextUnavailable = (reason: string) => (cause?: unknown) =>
     value: cause,
   });
 
-/** The route store bound to the Action's transaction and the installed contracts of the active composition. */
+/**
+ * The route store bound to the Action's transaction and the installed contracts of the active composition, with the
+ * Symmy executor's workload grants (`symmy-executor-workloads.ts`) in the same transaction and scope.
+ */
 export const manageSymmyRoutesServices = Effect.fn('ManageSymmyRoutesAction.servicesForScope')(function* services(
   transaction: ScopedTransactionExecutor,
-  _scope: OperationalScope,
+  scope: OperationalScope,
   compositionRevision: string,
 ) {
   const authority = yield* Effect.serviceOption(ActiveApplicationCompositionService);
@@ -60,8 +69,17 @@ export const manageSymmyRoutesServices = Effect.fn('ManageSymmyRoutesAction.serv
   const contracts: SymmyRouteContracts = catalog.contracts;
   return {
     disable: (input: Parameters<typeof deactivateSymmyRoute>[1]) => deactivateSymmyRoute(transaction, input),
-    enable: (input: Omit<Parameters<typeof enableSymmyRoute>[1], 'contracts'>) =>
-      enableSymmyRoute(transaction, { ...input, contracts }),
+    enable: (input: Omit<Parameters<typeof enableSymmyRoute>[1], 'contracts' | 'grantExecutorWorkloads'>) =>
+      enableSymmyRoute(transaction, {
+        ...input,
+        contracts,
+        grantExecutorWorkloads: (needed) =>
+          grantSymmyExecutorWorkloads(transaction, { ...needed, attribution: input.attribution, scope }),
+      }),
+    /** Taken first, before any route's enrollment lock. */
+    lockExecutorWorkloads: () => lockSymmyExecutorWorkloads(transaction, scope.tenantId),
+    withdrawExecutorWorkloads: (attribution: SymmyExecutorAttribution) =>
+      withdrawSymmyExecutorWorkloads(transaction, { attribution, contracts, scope }),
   };
 });
 type Services = Effect.Success<ReturnType<typeof manageSymmyRoutesServices>>;
@@ -149,8 +167,10 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
     operatorRef: `${principalId}@${context.actionInvocationId}`,
     reason: payload.reason,
   };
+  yield* context.services.lockExecutorWorkloads().pipe(Effect.mapError(unavailableRejection));
   // In order: a read route a write route depends on is enrolled first. Every change is decided, so the administrator
   // sees each refusal at once (the workloads still to grant among them); any refusal rolls every change back.
+  const granted: ManageSymmyRoutesResult['executorWorkloads'][number][] = [];
   const decided = yield* Effect.forEach(
     payload.changes,
     (change) =>
@@ -160,6 +180,7 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
         ),
         Effect.catchTag('SymmyRouteEnrollmentUnavailable', (failure) => Effect.fail(unavailableRejection(failure))),
         Effect.map((receipt) => {
+          granted.push(...receipt.executorWorkloads);
           const route: ManageSymmyRoutesResult['routes'][number] = {
             changeToken: receipt.changeToken,
             outcome: receipt.outcome,
@@ -184,6 +205,10 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
     return yield* rejected(failures.flatMap(({ refusals }) => refusals));
   }
   const routes = decided.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
+  // After every change: what a disabled route alone needed is withdrawn, what another active route needs stays.
+  const withdrawn = yield* context.services
+    .withdrawExecutorWorkloads(attribution)
+    .pipe(Effect.mapError(unavailableRejection));
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `symmy-route-enrollment:${payload.integrationPrincipalId}:${legalEntityId}`,
@@ -193,7 +218,7 @@ export const handleManageSymmyRoutes = Effect.fn('ManageSymmyRoutesAction.handle
     targetResourceId: payload.integrationPrincipalId,
     targetResourceType: 'principal',
   });
-  return { routes };
+  return { executorWorkloads: [...granted, ...withdrawn], routes };
 });
 
 export const manageSymmyRoutesAction = defineAction(

@@ -43,6 +43,7 @@ import type { SymmyJobRetentionPolicy } from '../../verticals/symmy-integration/
 import { symmyIntegrationRelations } from '../../verticals/symmy-integration/src/db/schema.ts';
 import { SymmyRouteEnrollmentRequestSchema } from '../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts';
 import type { SymmyRouteEnrollmentRequest } from '../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts';
+import { grantSymmyExecutorWorkloads } from '../../verticals/symmy-integration/src/ops/symmy-executor-workloads.ts';
 import { enableSymmyRoute } from '../../verticals/symmy-integration/src/ops/symmy-route-enrollment-store.ts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
@@ -109,16 +110,19 @@ const enableRoute = Effect.fn('SymmyC14RouteEnrollment.enable')(function* enable
   );
   return yield* database.transaction((transaction) =>
     installOperationalScope(transaction, input.administrator, defineDatabaseIdentityEnrollment([])).pipe(
-      Effect.flatMap((executor) =>
-        enableSymmyRoute(executor, {
-          attribution: { operatorRef, reason: 'INTERNAL_C14 enrolls the products routes of a fresh Tenant' },
+      Effect.flatMap((executor) => {
+        const attribution = { operatorRef, reason: 'INTERNAL_C14 enrolls the products routes of a fresh Tenant' };
+        return enableSymmyRoute(executor, {
+          attribution,
           change: { kind: 'enroll' },
           contracts: input.contracts,
+          grantExecutorWorkloads: (needed) =>
+            grantSymmyExecutorWorkloads(executor, { ...needed, attribution, scope: input.administrator }),
           priceReadSource: Option.none(),
           request,
           retentionPolicy,
-        }),
-      ),
+        });
+      }),
     ),
   );
 });

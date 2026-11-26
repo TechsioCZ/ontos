@@ -9,6 +9,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -38,6 +39,7 @@ const SyncRetentionReceiptSchema = Schema.Struct({
 });
 export const SYMMY_INTEGRATION_SCHEMA_NAME = 'symmy_integration';
 export const SYMMY_INTEGRATION_TABLES = [
+  'executor_workload_grants',
   'gateway_assertion_redemptions',
   'import_jobs',
   'job_effects',
@@ -301,6 +303,45 @@ export const symmyRoutePriceReadSources = symmyIntegrationSchema.table.withRLS(
   ],
 );
 
+/**
+ * What `integration.symmy.manage-symmy-routes` wrote for the Tenant's Symmy executor (the one system Principal enrolled
+ * for `integration.symmy.execute-symmy-job`) because an enabled route calls under an owner workload: a workload binding
+ * no system Principal held, or the registration of the executor's binding for the company a route's calls run in. Only
+ * these rows are withdrawn, once no active route of the Tenant calls under the workload (in that company); an
+ * installer's binding or registration is never touched. Who granted or withdrew each, and why, is kept with it.
+ */
+export const symmyExecutorWorkloadGrants = symmyIntegrationSchema.table.withRLS(
+  'executor_workload_grants',
+  {
+    executorPrincipalId: uuid('executor_principal_id').notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
+    grantedByRef: text('granted_by_ref').notNull(),
+    grantedReason: text('granted_reason').notNull(),
+    /** The Core row written: the workload binding, or the company registration of `workloadBindingId`. */
+    grantedRowId: uuid('granted_row_id').notNull(),
+    kind: text('kind', { enum: ['binding', 'company_registration'] }).notNull(),
+    legalEntityId: uuid('legal_entity_id'),
+    tenantId: uuid('tenant_id').notNull(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    withdrawnByRef: text('withdrawn_by_ref'),
+    workloadBindingId: uuid('workload_binding_id').notNull(),
+    workloadKey: text('workload_key').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.grantedRowId], name: 'symmy_executor_workload_grants_pk' }),
+    check(
+      'symmy_executor_workload_grants_values_ck',
+      sql`char_length(${table.workloadKey}) between 1 and 200 and char_length(${table.grantedByRef}) between 1 and 200
+        and char_length(${table.grantedReason}) between 1 and 500
+        and ${table.kind} in ('binding', 'company_registration')
+        and (${table.kind} = 'company_registration') = (${table.legalEntityId} is not null)
+        and (${table.kind} = 'binding') = (${table.grantedRowId} = ${table.workloadBindingId})
+        and (${table.withdrawnAt} is null) = (${table.withdrawnByRef} is null)`,
+    ),
+    ...tenantRlsPolicies('symmy_executor_workload_grants_tenant', table.tenantId),
+  ],
+);
+
 /** An immutable admitted internal fixture. Execution requires a separate registered workload. */
 export const symmyImportJobs = symmyIntegrationSchema.table.withRLS(
   'import_jobs',
@@ -463,6 +504,7 @@ export const { symmyJobNotifications, symmyJobRetentionTombstones } = defineSymm
 
 export const symmyIntegrationRelations = defineRelations({
   gatewayAssertionRedemptions,
+  symmyExecutorWorkloadGrants,
   symmyImportJobs,
   symmyJobEffects,
   symmyJobNotifications,

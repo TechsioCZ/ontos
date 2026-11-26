@@ -3,6 +3,7 @@
  * one integration principal in the selected company. Symmy is a connector partner: the Shell's integration flow creates
  * the integration principal and its managed API key, then enables the route families the partner may use here.
  */
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { PriceSourceSystemSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
@@ -99,6 +100,19 @@ export const ManageSymmyRoutesPayloadSchema = Schema.Struct({
 });
 export type ManageSymmyRoutesPayload = typeof ManageSymmyRoutesPayloadSchema.Type;
 
+/**
+ * An owner workload the change bound to the Tenant's Symmy executor (with the company it is registered for), or
+ * withdrew from it once no active route calls under it any more.
+ */
+/** A workload key the Symmy executor holds or held. */
+export const SymmyExecutorWorkloadKeySchema = Schema.String.pipe(Schema.brand('SymmyExecutorWorkloadKey'));
+export const SymmyExecutorWorkloadChangeSchema = Schema.Struct({
+  change: Schema.Literals(['granted', 'withdrawn']),
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  workloadKey: SymmyExecutorWorkloadKeySchema,
+});
+export type SymmyExecutorWorkloadChange = typeof SymmyExecutorWorkloadChangeSchema.Type;
+
 export const SymmyManagedRouteOutcomeSchema = Schema.Struct({
   changeToken,
   outcome: Schema.Literals(['deactivated', 'enrolled', 'replaced', 'unchanged']),
@@ -107,6 +121,11 @@ export const SymmyManagedRouteOutcomeSchema = Schema.Struct({
   routeKey: SymmyManagedRouteKeySchema,
 });
 export const ManageSymmyRoutesResultSchema = Schema.Struct({
+  /**
+   * What the run bound or registered for the Tenant's Symmy executor so the enabled routes' calls run, and what it
+   * withdrew once no active route needed it. Empty when the executor already held everything (as an installer set it).
+   */
+  executorWorkloads: Schema.Array(SymmyExecutorWorkloadChangeSchema),
   routes: Schema.Array(SymmyManagedRouteOutcomeSchema),
 });
 export type ManageSymmyRoutesResult = typeof ManageSymmyRoutesResultSchema.Type;
@@ -117,7 +136,10 @@ export const ManageSymmyRoutesRefusalSchema = Schema.Struct({
   /**
    * On `integration_binding_missing` and `integration_company_registration_missing`: the workloads, any one of which the
    * integration principal must hold registered for the company. Grant the first of each through
-   * `core.identity.register-integration-workloads`, then repeat the route change.
+   * `core.identity.register-integration-workloads`, then repeat the route change. On `executor_binding_missing` for
+   * `integration.symmy.execute-symmy-job`: the Tenant has no Symmy executor; enroll it through
+   * `core.identity.change-system-workload-enrollment`, then repeat the change, which grants the executor every other
+   * workload it needs.
    */
   workloads: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
 });

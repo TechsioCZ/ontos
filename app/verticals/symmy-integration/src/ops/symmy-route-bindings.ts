@@ -545,6 +545,7 @@ export const checkSymmyRouteBindings = (input: {
       refusals.push({
         code: 'executor_binding_missing',
         detail: `No active system principal holds ${workloadKey}, needed for ${binding.purpose}`,
+        workloads: [workloadKey],
       });
     } else if (systems.length > 1) {
       refusals.push({
