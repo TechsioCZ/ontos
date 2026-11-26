@@ -18,6 +18,7 @@ import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { newUuid } from './browser-crypto.ts';
 import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
 import {
   categoryDraftErrors,
@@ -258,7 +259,7 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
     if (invalid || busy) {
       return;
     }
-    const id = `ontos-category-${crypto.randomUUID()}`;
+    const id = `ontos-category-${browserRuntime.runSync(newUuid)}`;
     setBusy(true);
     setError(null);
     runCommand(createCategoryCommandOf(draft, id), revision, (outcome) => {
