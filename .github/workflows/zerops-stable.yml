@@ -1,13 +1,30 @@
-# Pushes test the tools and shared runtime contracts only. Manual dispatch builds one pinned tag.
-# Live verification and cutover run through the operator CLI; CI has no customer data or live credentials.
+# The stable sales release. Pushes to demo/sales-crm test the release tooling and the shared runtime contracts.
+# A dispatch is the operator's approval: it pins a ref of demo/sales-crm as a sales-stable tag (or takes an existing
+# tag) and, by mode:
+#   build   builds the install artifacts of the tag (no live writes)
+#   deploy  builds them, installs them into the stable Zerops project (ops/zerops-stable/deploy.mjs), routes the public
+#           hostnames (DNS only) and checks the project runs the tag
+#   verify  checks the stable project runs the given tag and its public origins answer
+# The first install of a fresh project bootstraps it (ops/zerops-stable/gha-bootstrap.mjs) around the app's first deploy.
+# Credentials reach only the jobs of the sales-stable environment, through env, never a file the run uploads.
 name: Zerops Stable Release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Pinned release tag sales-stable/YYYY-MM-DD or sales-stable/YYYY-MM-DD-N, on demo/sales-crm
+      ref:
+        description: A sales-stable/YYYY-MM-DD[-N] tag, or a branch or commit of demo/sales-crm to pin as the next tag
         type: string
         required: true
+        default: demo/sales-crm
+      mode:
+        description: build, deploy, or verify the live project
+        type: choice
+        required: true
+        default: build
+        options:
+          - build
+          - deploy
+          - verify
   push:
     branches:
       - demo/sales-crm
@@ -16,6 +33,7 @@ on:
       - app/zerops.yaml
       - app/zerops-import.yaml
       - app/scripts/zerops/push-service.sh
+      - app/scripts/zerops/route-stage-domains.sh
       - .github/workflows/zerops-stable.yml
       - app/scripts/zerops/app-host.mts
       - app/scripts/zerops/deployment-profile.mts
@@ -40,13 +58,14 @@ on:
       - app/verticals/merchandise/tests/unit/storefront-media-access.test.ts
 permissions:
   contents: read
+# Dispatches run one at a time and are never cancelled: an install is never interrupted by the next one.
 concurrency:
   group: zerops-stable-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
   test:
     name: Test the sales-stable tooling
-    if: github.ref == 'refs/heads/demo/sales-crm'
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -65,57 +84,96 @@ jobs:
           install-args: --trust-lockfile --filter app
       - name: Run the sales-stable tests
         run: node --test --test-concurrency=1 'ops/zerops-stable/*.test.mjs'
+  shared-runtime:
+    name: Check demo boot and fresh-environment deployment contracts
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+      - name: Check the shared host and environment materializers
+        working-directory: app
+        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts scripts/demo/mcp-oauth-e2e/verification-identity.test.mts --pool.maxWorkers 1
+      - name: Check fresh-company storefront authorization
+        working-directory: app/verticals/merchandise
+        run: mise exec -- pnpm exec rstest run --project unit tests/unit/registered-command-access.test.ts tests/unit/command-guard.test.ts tests/unit/storefront-media-access.test.ts --pool.maxWorkers 1
   pin:
-    name: Pin the tag to a commit
+    name: Pin the release tag
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/demo/sales-crm'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Pushing a new annotated sales-stable tag.
+    permissions:
+      contents: write
     outputs:
+      tag: ${{ steps.pin.outputs.tag }}
       sha: ${{ steps.pin.outputs.sha }}
     steps:
-      - name: Validate the tag name
-        id: tag
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          pattern='^sales-stable/[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]+)?$'
-          if [[ ! "$TAG" =~ $pattern ]]; then
-            echo '::error::The tag must look like sales-stable/YYYY-MM-DD or sales-stable/YYYY-MM-DD-N.'
-            exit 1
-          fi
-          echo "ref=refs/tags/$TAG" >>"$GITHUB_OUTPUT"
-      - name: Checkout the pinned tag
+      - name: Checkout demo/sales-crm with every tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ steps.tag.outputs.ref }}
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26.13.1
-      - name: Inspect the tag against demo/sales-crm
-        env:
-          TAG: ${{ inputs.tag }}
-        run: node ops/zerops-stable/release.mjs inspect --tag "$TAG" --demo-ref origin/demo/sales-crm
-      - name: Record the pinned commit
+      # An existing tag is used as it is. Any other ref resolves to a commit of demo/sales-crm; the newest tag already
+      # on that commit is reused, else the next free sales-stable/<Prague date>[-N] is pinned and pushed.
+      - name: Resolve or pin the tag
         id: pin
         env:
-          TAG: ${{ inputs.tag }}
+          REF: ${{ inputs.ref }}
+          MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          sha="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
-          echo "sha=$sha" >>"$GITHUB_OUTPUT"
-          printf '### Pinned %s\n\n- Commit: %s\n' "$TAG" "$sha" >>"$GITHUB_STEP_SUMMARY"
-    needs:
-      - test
-      - shared-runtime
+          if [[ ! "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+            echo '::error::ref must be a tag, branch or commit name.'
+            exit 1
+          fi
+          if [[ "$REF" == sales-stable/* ]]; then
+            tag="$REF"
+          elif [[ "$MODE" == verify ]]; then
+            echo '::error::verify checks a pinned release: give its sales-stable/YYYY-MM-DD[-N] tag as ref.'
+            exit 1
+          else
+            if ! commit="$(git rev-parse --verify --quiet --end-of-options "origin/$REF^{commit}" || git rev-parse --verify --quiet --end-of-options "$REF^{commit}")"; then
+              echo "::error::$REF names no commit here."
+              exit 1
+            fi
+            tag="$(git for-each-ref --sort=-creatordate --count=1 --points-at "$commit" --format='%(refname:strip=2)' 'refs/tags/sales-stable/')"
+            if [[ -z "$tag" ]]; then
+              day="$(TZ=Europe/Prague date +%F)"
+              tag="sales-stable/$day"
+              n=1
+              while git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; do
+                n=$((n + 1))
+                tag="sales-stable/$day-$n"
+              done
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              node ops/zerops-stable/release.mjs pin --tag "$tag" --ref "$commit" --push
+            fi
+          fi
+          node ops/zerops-stable/release.mjs inspect --tag "$tag"
+          sha="$(git rev-parse --verify "refs/tags/$tag^{commit}")"
+          printf 'tag=%s\nsha=%s\n' "$tag" "$sha" >>"$GITHUB_OUTPUT"
+          printf '### %s %s\n\n- Commit: %s\n' "$MODE" "$tag" "$sha" >>"$GITHUB_STEP_SUMMARY"
   build:
-    name: Build the release packages (no live writes)
+    name: Build the release packages
     needs: pin
+    if: inputs.mode != 'verify'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The whole app on one runner; the unit cache below keeps every unit whose inputs did not change.
+    timeout-minutes: 240
     environment:
       name: sales-stable
       deployment: false
@@ -130,6 +188,14 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
+      # build-app.sh keeps a unit whose build digest is unchanged from UNIT_CACHE_DIR (default app/.zerops/unit-cache,
+      # ignored by Git); a kept unit keeps the source revision it was built from, an ancestor of this commit.
+      - name: Restore the stable unit builds
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: app/.zerops/unit-cache
+          key: sales-stable-units-${{ needs.pin.outputs.sha }}
+          restore-keys: sales-stable-units-
       - name: Write the sales-stable config outside the repository
         env:
           STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
@@ -140,17 +206,20 @@ jobs:
             exit 1
           fi
           umask 077
-          config="$RUNNER_TEMP/sales-stable/config.json"
           mkdir -p "$RUNNER_TEMP/sales-stable"
+          config="$RUNNER_TEMP/sales-stable/config.json"
           printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
           jq -e '.schemaVersion == 1' "$config" >/dev/null
           echo "STABLE_CONFIG=$config" >>"$GITHUB_ENV"
       - name: Build the release packages
         env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          node ops/zerops-stable/deploy.mjs --build-only --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/release"
+          TAG: ${{ needs.pin.outputs.tag }}
+        run: node ops/zerops-stable/deploy.mjs build --config "$STABLE_CONFIG" --tag "$TAG" --output "$RUNNER_TEMP/sales-stable/release"
+      - name: Save the stable unit builds
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: app/.zerops/unit-cache
+          key: sales-stable-units-${{ needs.pin.outputs.sha }}
       - name: Refuse credentials in the release packages
         env:
           RELEASE_DIR: ${{ runner.temp }}/sales-stable/release
@@ -170,41 +239,248 @@ jobs:
           fi
       - name: Summarize the release packages
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.pin.outputs.tag }}
           SHA: ${{ needs.pin.outputs.sha }}
           RELEASE_DIR: ${{ runner.temp }}/sales-stable/release
         run: |
           set -euo pipefail
-          printf '### Release packages built, no live writes\n\n- Tag: %s\n- Commit: %s\n- Artifact: sales-stable-release-%s\n\n' "$TAG" "$SHA" "$SHA" >>"$GITHUB_STEP_SUMMARY"
+          printf '### Release packages built\n\n- Tag: %s\n- Commit: %s\n- Artifact: sales-stable-release-%s\n\n' "$TAG" "$SHA" "$SHA" >>"$GITHUB_STEP_SUMMARY"
           {
             echo '~~~text'
             (cd "$RELEASE_DIR" && find . -type f -print0 | sort -z | xargs -0 -r sha256sum | head -n 200)
             echo '~~~'
           } >>"$GITHUB_STEP_SUMMARY"
+      # The storefront packages are dotfiles (.zerops-storefront.*); the manifest lists every file.
       - name: Upload the release packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: sales-stable-release-${{ needs.pin.outputs.sha }}
           path: ${{ runner.temp }}/sales-stable/release
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
-  shared-runtime:
-    name: Check demo boot and fresh-environment deployment contracts
+  deploy:
+    name: Install the release into the stable project
+    needs:
+      - pin
+      - build
+    if: inputs.mode == 'deploy'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 180
+    environment:
+      name: sales-stable
+      deployment: false
+    env:
+      TAG: ${{ needs.pin.outputs.tag }}
     steps:
-      - name: Checkout
+      - name: Checkout the pinned commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 1
+          ref: ${{ needs.pin.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
-      - name: Check the shared host and environment materializers
-        working-directory: app
-        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts scripts/demo/mcp-oauth-e2e/verification-identity.test.mts --pool.maxWorkers 1
-      - name: Check fresh-company storefront authorization
-        working-directory: app/verticals/merchandise
-        run: mise exec -- pnpm exec rstest run --project unit tests/unit/registered-command-access.test.ts tests/unit/command-guard.test.ts tests/unit/storefront-media-access.test.ts --pool.maxWorkers 1
+      - name: Download the release packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sales-stable-release-${{ needs.pin.outputs.sha }}
+          path: ${{ runner.temp }}/sales-stable/release
+      - name: Write the sales-stable config outside the repository
+        env:
+          STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$STABLE_CONFIG_JSON" ]]; then
+            echo '::error::The sales-stable environment has no STABLE_CONFIG_JSON secret.'
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/sales-stable"
+          config="$RUNNER_TEMP/sales-stable/config.json"
+          printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
+          jq -e '.schemaVersion == 1' "$config" >/dev/null
+          project="$(jq -er .projectId "$config")"
+          printf 'STABLE_CONFIG=%s\nZEROPS_PROJECT_ID=%s\nARTIFACTS=%s\n' "$config" "$project" "$RUNNER_TEMP/sales-stable/release" >>"$GITHUB_ENV"
+      # Read-only: proves the project and the artifacts, and reads what this install deploys from the live versions.
+      - name: Plan the install
+        id: plan
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" >"$RUNNER_TEMP/plan.json"
+          kind="$(jq -er .kind "$RUNNER_TEMP/plan.json")"
+          echo "kind=$kind" >>"$GITHUB_OUTPUT"
+          printf '### Install %s: %s\n' "$TAG" "$kind" >>"$GITHUB_STEP_SUMMARY"
+      # A fresh project: the database identities, SpiceDB and the secrets the app needs before its first start, and the
+      # accounts on the app container after it, over the project VPN. zcli 1.1.3 drives wg-quick and resolvectl as root;
+      # its state lives in a runner-owned directory, and the token stays in env, never in arguments.
+      - name: Join the stable project VPN
+        id: vpn
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --no-install-recommends wireguard-tools systemd-resolved iputils-ping
+          sudo systemctl start systemd-resolved
+          npm install --global @zerops/zcli@1.1.3
+          mise reshim
+          cli_path="$(node -e 'process.stdout.write(require(process.argv[1]).getBinaryPath())' "$(npm root --global)/@zerops/zcli/lib/resolve.js")"
+          [[ -x "$cli_path" ]]
+          state_directory="$(mktemp --directory "$RUNNER_TEMP/ontos-zerops-vpn.XXXXXX")"
+          chmod 700 "$state_directory"
+          printf 'state-directory=%s\ncli-path=%s\n' "$state_directory" "$cli_path" >>"$GITHUB_OUTPUT"
+          export ZEROPS_CLI_DATA_FILE_PATH="$state_directory/cli.data"
+          export ZEROPS_WG_CONFIG_FILE_PATH="$state_directory/zerops.conf"
+          export ZEROPS_CLI_YAML_FILE_PATH="$state_directory/.zcli.yml"
+          export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+          sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
+            "$cli_path" vpn up --project-id "$ZEROPS_PROJECT_ID" --mtu 1350
+      - name: Bootstrap the project before the first app deploy
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STAGE_SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
+          STABLE_BOOTSTRAP_JSON: ${{ secrets.STABLE_BOOTSTRAP_JSON }}
+        run: node ops/zerops-stable/gha-bootstrap.mjs before-app --config "$STABLE_CONFIG" --tag "$TAG" --apply
+      - name: Install
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" --execute >"$RUNNER_TEMP/install.json"
+      # Zerops routes a hostname only to a deployed port, so each install routes what it deployed and what ran before:
+      # a Zerops public routing plus DNS-only A and AAAA records. Idempotent.
+      - name: Route the installed hostnames
+        env:
+          INSTALL: ${{ runner.temp }}/install.json
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.STABLE_CLOUDFLARE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+        run: &route |
+          set -euo pipefail
+          mapfile -t routes < <(jq -r --slurpfile config "$STABLE_CONFIG" '
+            . as $install | $config[0] as $c
+            | (["app", "shell", 3000], ["storefront", "storefront", 3070], ["shop", "shop", 3070], ["n1", "n1", 3071])
+            | . as [$service, $origin, $port]
+            | select($install.versions[$service] != null or ($install.pushed | index($service)) != null)
+            | ($c.origins[$origin] | sub("^https://"; "") | sub("[:/].*$"; "")), $c.services[$service], ($port | tostring)' "$INSTALL")
+          bash app/scripts/zerops/route-stage-domains.sh "${routes[@]}"
+      # A new routing answers HTTPS only once Zerops has its certificate: up to fifteen minutes.
+      - name: Wait for the Shell origin to answer HTTPS
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        run: |
+          set -euo pipefail
+          shell="$(jq -er .origins.shell "$STABLE_CONFIG")"
+          for attempt in $(seq 1 90); do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$shell/" || true)"
+            if [[ "$status" =~ ^[23][0-9][0-9]$ ]]; then
+              echo "$shell answered HTTP $status"
+              exit 0
+            fi
+            echo "attempt $attempt: $shell answered '$status'; retrying in 10 s"
+            sleep 10
+          done
+          exit 1
+      # The app runs and its hostname answers: the accounts, modules, storefront principals and keys, then the fronts.
+      - name: Bootstrap the project after the first app deploy
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STAGE_SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
+          STABLE_BOOTSTRAP_JSON: ${{ secrets.STABLE_BOOTSTRAP_JSON }}
+        run: node ops/zerops-stable/gha-bootstrap.mjs after-app --config "$STABLE_CONFIG" --tag "$TAG" --apply
+      - name: Install the fronts
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: node ops/zerops-stable/deploy.mjs install --config "$STABLE_CONFIG" --tag "$TAG" --artifacts "$ARTIFACTS" --execute >"$RUNNER_TEMP/install-fronts.json"
+      - name: Route the front hostnames
+        if: steps.plan.outputs.kind == 'bootstrap-app'
+        env:
+          INSTALL: ${{ runner.temp }}/install-fronts.json
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.STABLE_CLOUDFLARE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+        run: *route
+      # A new routing waits for its certificate: up to ten minutes.
+      - name: Verify the stable project runs the release
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if node ops/zerops-stable/deploy.mjs verify --config "$STABLE_CONFIG" --tag "$TAG" >"$RUNNER_TEMP/verify.json"; then
+              jq -r '"### Live: \(.tag) \(.commit)\n", (.origins | to_entries[] | "- \(.key): HTTP \(.value)")' "$RUNNER_TEMP/verify.json" >>"$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "attempt $attempt did not verify; retrying in 30 s"
+            sleep 30
+          done
+          exit 1
+      - name: Clear this runner's VPN key and configuration
+        if: always() && steps.vpn.outputs.state-directory != ''
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          VPN_STATE_DIRECTORY: ${{ steps.vpn.outputs.state-directory }}
+          VPN_CLI_PATH: ${{ steps.vpn.outputs.cli-path }}
+        run: |
+          set -uo pipefail
+          [[ "$VPN_STATE_DIRECTORY" == "$RUNNER_TEMP"/ontos-zerops-vpn.* && -d "$VPN_STATE_DIRECTORY" && -x "$VPN_CLI_PATH" ]] || exit 1
+          export ZEROPS_CLI_DATA_FILE_PATH="$VPN_STATE_DIRECTORY/cli.data"
+          export ZEROPS_WG_CONFIG_FILE_PATH="$VPN_STATE_DIRECTORY/zerops.conf"
+          export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
+          export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+          preserve=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH
+          cleanup_status=0
+          sudo --preserve-env="$preserve" "$VPN_CLI_PATH" vpn clear --project-id "$ZEROPS_PROJECT_ID" || cleanup_status=$?
+          if sudo ip link show dev zerops >/dev/null 2>&1; then
+            sudo --preserve-env="$preserve" "$VPN_CLI_PATH" vpn down || cleanup_status=$?
+          fi
+          if sudo ip link show dev zerops >/dev/null 2>&1; then
+            echo 'The runner-owned Zerops VPN interface is still present.' >&2
+            cleanup_status=1
+          fi
+          sudo rm --recursive --force -- "$VPN_STATE_DIRECTORY" || cleanup_status=$?
+          exit "$cleanup_status"
+  verify:
+    name: Verify the stable project runs the release
+    needs: pin
+    if: inputs.mode == 'verify'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: sales-stable
+      deployment: false
+    steps:
+      - name: Checkout the pinned commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ needs.pin.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the app workspace dependencies
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile --filter app
+      - name: Verify
+        env:
+          TAG: ${{ needs.pin.outputs.tag }}
+          STABLE_CONFIG_JSON: ${{ secrets.STABLE_CONFIG_JSON }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          config="$RUNNER_TEMP/config.json"
+          printf '%s\n' "$STABLE_CONFIG_JSON" >"$config"
+          node ops/zerops-stable/deploy.mjs verify --config "$config" --tag "$TAG" >"$RUNNER_TEMP/verify.json"
+          jq -r '"### Live: \(.tag) \(.commit)\n", (.origins | to_entries[] | "- \(.key): HTTP \(.value)")' "$RUNNER_TEMP/verify.json" >>"$GITHUB_STEP_SUMMARY"
