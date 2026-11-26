@@ -337,7 +337,8 @@ const selectsCoreMediaProof = (changedPath: string) =>
     .integration.flatMap((entry) => entry.tasks ?? [])
     .includes('whole:core-media');
 
-it('runs the Core Media proof only when the Shell or Core runtime is affected', () => {
+it('runs the Core Media proof only when the Shell, Core runtime or Catalog is affected', () => {
+  expect(selectsCoreMediaProof('app/verticals/catalog/src/integrations/core-media-owner.ts')).toBe(true);
   expect(selectsCoreMediaProof('app/apps/shell-super-app/src/service.ts')).toBe(true);
   expect(selectsCoreMediaProof('app/packages/core-runtime/src/media/download.ts')).toBe(true);
   expect(selectsCoreMediaProof('app/verticals/promotion/src/service.ts')).toBe(false);

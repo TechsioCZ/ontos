@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Run from app/. The Core Media proof of one integration lane: the Shell end-to-end suites (#1446) and the
-# core-runtime S3 provider suites against a real S3-compatible emulator (MinIO, NOT Cloudflare R2), with
-# D20_E2E_REQUIRED=1 so a case this run cannot execute fails instead of skipping. Needs the lane's PostgreSQL
-# and SpiceDB, the emulator of start-core-media-object-store.sh and the gateway keys of the environment.
+# Run from app/. The Core Media proof of one integration lane: the Shell end-to-end suites (#1446), the
+# core-runtime S3 provider suites and the real Catalog-to-Core chain against a real S3-compatible emulator
+# (MinIO, NOT Cloudflare R2), with D20_E2E_REQUIRED=1 so a case this run cannot execute fails instead of
+# skipping. Needs the lane's PostgreSQL and SpiceDB, the emulator of start-core-media-object-store.sh, the
+# gateway keys of the environment and this commit's built Catalog, Market Catalog and Shell artifacts.
 # It ends by writing the evidence record from the reports of this very run, also when a suite failed.
 set -euo pipefail
 
@@ -58,20 +59,24 @@ core_files=(
   tests/integration/core-media-recovery-s3.test.ts
   tests/integration/core-media-upload-edge.test.ts
 )
+chain_file=scripts/integration/core-media-catalog-handoff.test.mts
 
 rm -rf "$CORE_MEDIA_EVIDENCE_DIR/runs" "$CORE_MEDIA_EVIDENCE_DIR/core-media-evidence.json"
 mkdir -p "$CORE_MEDIA_EVIDENCE_DIR/runs"
 runs="$(cd "$CORE_MEDIA_EVIDENCE_DIR/runs" && pwd)"
 
 # Every run is declared before any of them starts: a run that never reports stays NOT VERIFIED in the record.
+# A package of `.` is app/ itself, whose files are already named from there.
 declare_run() {
-  local name="$1" package="$2"
+  local name="$1" package="$2" prefix="$2/"
   shift 2
-  printf '%s\n' "$@" | sed "s|^|$package/|" >"$runs/$name.files"
+  if [[ "$package" == . ]]; then prefix=''; fi
+  printf '%s\n' "$@" | sed "s|^|$prefix|" >"$runs/$name.files"
 }
 declare_run shell-e2e "$shell_package" "${shell_files[@]}"
 declare_run shell-digest-step-guard "$shell_package" "$digest_guard"
 declare_run core-runtime-s3-providers "$core_package" "${core_files[@]}"
+declare_run catalog-chain . "$chain_file"
 
 # What a run was configured with, without any credential: only these names reach the evidence record.
 # shellcheck disable=SC2016 # $ENV is jq's, not the shell's.
@@ -96,9 +101,12 @@ run_suites() {
   shift
   echo "Core Media run: $name"
   env "${settings[@]}" jq --null-input "$recorded_settings" >"$runs/$name.settings.json"
+  local launcher=(pnpm --filter "./$package" run test:integration)
+  if [[ "$package" == . ]]; then
+    launcher=(pnpm exec rstest --project integration)
+  fi
   env "${settings[@]}" "ONTOS_RSTEST_JSON_REPORT=$runs/$name.report.json" \
-    mise exec -- pnpm --filter "./$package" run test:integration "$@" \
-    --pool.maxWorkers 1 --testTimeout "$test_timeout_ms" || status=1
+    mise exec -- "${launcher[@]}" "$@" --pool.maxWorkers 1 --testTimeout "$test_timeout_ms" || status=1
 }
 
 run_suites shell-e2e "$shell_package" "${shell_environment[@]}" -- "${shell_files[@]}"
@@ -106,6 +114,7 @@ run_suites shell-e2e "$shell_package" "${shell_environment[@]}" -- "${shell_file
 run_suites shell-digest-step-guard "$shell_package" "${shell_environment[@]}" \
   CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS=50 -- "$digest_guard"
 run_suites core-runtime-s3-providers "$core_package" "CORE_MEDIA_S3_ENDPOINT=$emulator" -- "${core_files[@]}"
+run_suites catalog-chain . "CORE_MEDIA_S3_ENDPOINT=$emulator" -- "$chain_file"
 
 # Fails on a failed, skipped or unreported case, whatever Rstest itself exited with.
 mise exec -- node scripts/ci/core-media-evidence.mts \

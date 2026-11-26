@@ -126,7 +126,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts --exclude scripts/integration/core-media-catalog-handoff.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,

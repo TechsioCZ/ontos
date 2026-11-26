@@ -37,7 +37,7 @@ export interface RunInput {
   /** The files the run was asked to execute, relative to app/. */
   readonly declared: readonly string[];
   readonly name: string;
-  /** The package directory the report's test paths are relative to. */
+  /** The package directory the report's test paths are relative to; empty for app/ itself. */
   readonly packageDirectory: string;
   /** None when the run left no readable report. */
   readonly report: Option.Option<typeof ReportSchema.Type>;
@@ -68,7 +68,9 @@ const fingerprintOf = (settings: typeof SettingsSchema.Type) =>
 const fileRecord = (run: RunInput, file: string) => {
   const reported = run.report.pipe(
     Option.flatMap((report) =>
-      Option.fromUndefinedOr(report.files.find(({ testPath }) => `${run.packageDirectory}/${testPath}` === file)),
+      Option.fromUndefinedOr(
+        report.files.find(({ testPath }) => [run.packageDirectory, testPath].filter(Boolean).join('/') === file),
+      ),
     ),
   );
   const tests = Option.match(reported, { onNone: () => [], onSome: ({ results }) => results });
@@ -149,7 +151,8 @@ const readRun = Effect.fn('CoreMediaEvidence.readRun')(function* readRun(directo
   return {
     declared,
     name,
-    packageDirectory: (declared[0] ?? '').split('/tests/')[0] ?? '',
+    // `<package>/tests/...` names its package; a root file has no such segment and is already relative to app/.
+    packageDirectory: /^(?<directory>.+?)\/tests\//u.exec(declared[0] ?? '')?.groups?.directory ?? '',
     report,
     settings,
   } satisfies RunInput;
