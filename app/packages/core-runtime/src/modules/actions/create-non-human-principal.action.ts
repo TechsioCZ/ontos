@@ -13,12 +13,19 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 const uuid = Schema.String.check(Schema.isUUID());
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
-const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
-  displayName,
-  // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
-  // a persisted kind is never evidence of Core attestation.
-  kind: Schema.Literals(['service', 'integration']),
-});
+/** A connector partner identifier (`symmy`, …); the Shell's connector-partner declaration says what each one means. */
+const IntegrationKindSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]{0,39}$/u));
+// `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
+// a persisted kind is never evidence of Core attestation.
+const CreateNonHumanPrincipalPayloadSchema = Schema.Union([
+  Schema.Struct({ displayName, kind: Schema.Literal('service') }),
+  Schema.Struct({
+    displayName,
+    /** The connector partner the integration authenticates for; absent for a generic integration. */
+    integrationKind: Schema.optionalKey(IntegrationKindSchema),
+    kind: Schema.Literal('integration'),
+  }),
+]);
 export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
 const CreateNonHumanPrincipalResultSchema = Schema.Struct({
   principalId: PrincipalIdSchema,

@@ -781,6 +781,40 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           .where(and(eq(dataAccessEvents.tenantId, tenantId), eq(dataAccessEvents.authMethod, 'api_key')));
         expect(apiKeyReadEvidence?.authBindingId).toBe(selfBinding.authBindingId);
 
+        // A connector-partner integration (Symmy) names its partner when it is created, and its list row says so.
+        const connector = yield* runIdentityAction(
+          actionRuntime.runAction({
+            payload: { displayName: 'Symmy', integrationKind: 'symmy', kind: 'integration' },
+            principal,
+            registration: createNonHumanPrincipalAction,
+            transport: { correlationId: yield* nextUuid, idempotencyKey: yield* nextUuid },
+          }),
+        );
+        const [connectorRow] = yield* admin
+          .select({ integrationKind: principals.integrationKind, kind: principals.kind })
+          .from(principals)
+          .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, connector.principalId)));
+        expect(connectorRow).toEqual({ integrationKind: 'symmy', kind: 'integration' });
+        const connectors = yield* runIdentityRead(
+          readRuntime.runRead({
+            input: { limit: 100, offset: 0, scope: 'tenant-managed' },
+            principal,
+            registration: managedPrincipalsRead,
+            transport: { correlationId: yield* nextUuid },
+          }),
+        );
+        expect(
+          connectors.items
+            .filter(({ principalId: listedPrincipalId }) => listedPrincipalId === connector.principalId)
+            .map(({ integrationKind }) => Option.getOrNull(integrationKind)),
+        ).toEqual(['symmy']);
+        // A partner is named only for an integration, never for a service (core_principals_integration_kind_ck).
+        yield* Effect.flip(
+          admin
+            .insert(principals)
+            .values({ displayName: 'Robot', integrationKind: 'symmy', kind: 'service', status: 'active', tenantId }),
+        );
+
         const systemPrincipal = yield* makeSystemPrincipalContextResolver({
           executor: runtimeDatabase,
         }).resolve({

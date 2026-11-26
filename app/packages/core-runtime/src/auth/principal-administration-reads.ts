@@ -53,6 +53,8 @@ const ManagedItem = Schema.Struct({
   bindingRevokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
   bindingStatus: Schema.optionalKey(Schema.OptionFromNullOr(BindingStatusSchema)),
   displayName: Schema.optionalKey(Schema.String),
+  /** The connector partner an integration authenticates for; none when it was created for none. */
+  integrationKind: Schema.OptionFromNullOr(Schema.String),
   kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
@@ -104,6 +106,7 @@ const services = (
         bindingRevokedAt: principalAuthBindings.revokedAt,
         bindingStatus: principalAuthBindings.status,
         displayName: principals.displayName,
+        integrationKind: principals.integrationKind,
         kind: principals.kind,
         principalId: principals.principalId,
         principalStatus: principals.status,

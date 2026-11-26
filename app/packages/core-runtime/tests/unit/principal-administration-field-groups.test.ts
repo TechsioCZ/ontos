@@ -26,6 +26,7 @@ const managedList = () =>
         bindingRevokedAt: null,
         bindingStatus: 'active',
         displayName: 'Ada Lovelace',
+        integrationKind: null,
         kind: 'service',
         principalId: '00000000-0000-4000-8000-0000000000a2',
         principalStatus: 'active',
@@ -83,8 +84,9 @@ it('omits every declared managed-principal field when its groups are denied and 
   const groups = managedPrincipalsRead.descriptor.accessFieldGroups ?? [];
   const projected = projectReadResultFields(managedList(), deniedPathsOf(groups), managedSchema);
   const [item] = Option.getOrThrow(projected).items;
-  // Only the identity and status remain; the personal name and the credential metadata are gone.
+  // Only the identity, kind and status remain; the personal name and the credential metadata are gone.
   expect(item).toEqual({
+    integrationKind: Option.none(),
     kind: 'service',
     principalId: '00000000-0000-4000-8000-0000000000a2',
     principalStatus: 'active',

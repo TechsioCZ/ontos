@@ -149,7 +149,13 @@ const principalManagementPersistenceFromTransaction = (
       .insert(principals)
       .values(
         input.principalId === undefined
-          ? { displayName: input.displayName, kind: input.kind, status: 'active', tenantId: input.tenantId }
+          ? {
+              displayName: input.displayName,
+              integrationKind: input.kind === 'integration' ? (input.integrationKind ?? null) : null,
+              kind: input.kind,
+              status: 'active',
+              tenantId: input.tenantId,
+            }
           : {
               displayName: input.displayName,
               kind: input.kind,
@@ -367,11 +373,14 @@ const principalManagementPersistenceFromTransaction = (
       ),
 });
 
-export interface CreateNonHumanPrincipalInput {
+export type CreateNonHumanPrincipalInput = {
   readonly displayName: string;
-  readonly kind: Extract<PrincipalKind, 'integration' | 'service'>;
   readonly tenantId: string;
-}
+} & (
+  | { readonly kind: 'service' }
+  /** `integrationKind` names the connector partner the integration authenticates for. */
+  | { readonly integrationKind?: string; readonly kind: 'integration' }
+);
 
 export interface CreatePlatformServicePrincipalInput {
   readonly displayName: string;

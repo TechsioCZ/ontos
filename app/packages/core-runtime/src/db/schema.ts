@@ -277,6 +277,11 @@ export const principals = enableCoreGovernedRls(
        * derived id. No Action or API sets it.
        */
       platformRole: text('platform_role').$type<'access_release_actor' | 'internal_workload'>(),
+      /**
+       * The connector partner an `integration` principal authenticates for (`symmy`, …), named when it is created; the
+       * Shell's connector-partner declaration says what an identifier means. Null for every other principal.
+       */
+      integrationKind: text('integration_kind'),
     },
     (table) => [
       uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
@@ -290,6 +295,10 @@ export const principals = enableCoreGovernedRls(
       check(
         'core_principals_platform_role_ck',
         sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system') or (${table.platformRole} = 'internal_workload' and ${table.kind} = 'service')`,
+      ),
+      check(
+        'core_principals_integration_kind_ck',
+        sql`${table.integrationKind} is null or (${table.kind} = 'integration' and ${table.integrationKind} ~ '^[a-z][a-z0-9-]{0,39}$')`,
       ),
       sharedRuntimeAllPolicy('principals'),
     ],
