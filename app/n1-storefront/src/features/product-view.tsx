@@ -326,6 +326,22 @@ export const ProductView = ({
                   </div>
                 </>
               )}
+              {product.documents.length > 0 && (
+                <>
+                  <h2 className="text-n1-product-section font-bold leading-7">
+                    {d.productDocuments}
+                  </h2>
+                  <ul className="flex flex-col gap-1">
+                    {product.documents.map((document) => (
+                      <li key={`${document.url}:${document.label}`}>
+                        <Link href={document.url} rel="noopener noreferrer" target="_blank">
+                          {document.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           </Tabs.Content>
           <Tabs.Content value="sizes">

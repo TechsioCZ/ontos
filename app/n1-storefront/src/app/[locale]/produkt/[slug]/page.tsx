@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Schema } from "effect";
 import { getDictionary } from "@/i18n";
@@ -5,6 +6,34 @@ import { getCatalog } from "@/ontos/catalog";
 import { ProductView } from "@/features/product-view";
 import { CatalogState } from "@/features/catalog-state";
 import { CatalogView } from "@/features/catalog-view";
+
+export const generateMetadata = async ({
+  params,
+}: {
+  params: Promise<{ locale: string; slug: string }>;
+}): Promise<Metadata> => {
+  const { locale, slug } = await params;
+  const result = await getCatalog(locale, JSON.stringify({ slug }));
+  const product =
+    result.state === "ready"
+      ? result.catalog.details.find((item) => item.slug === slug)
+      : undefined;
+  if (product === undefined) {
+    return {};
+  }
+  const title = product.seoTitle || product.name;
+  const description = product.seoDescription || product.paragraphs[0] || product.description;
+  const [image] = product.images;
+  return {
+    ...(description.length > 0 ? { description } : {}),
+    openGraph: {
+      title,
+      ...(description.length > 0 ? { description } : {}),
+      ...(image === undefined ? {} : { images: [image] }),
+    },
+    title,
+  };
+};
 
 const ProductPage = async ({
   params,
@@ -35,9 +64,15 @@ const ProductPage = async ({
   // one category, so use the actual primary category, never an unfiltered fallback.
   const category = result.catalog.categories.find((item) => item.id === product.categoryId);
   const related =
-    category === undefined
-      ? undefined
-      : await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+    product.relatedProductIds.length > 0
+      ? await getCatalog(
+          locale,
+          JSON.stringify({ productIds: product.relatedProductIds.slice(0, 24) }),
+        )
+      : category === undefined
+        ? undefined
+        : await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+  const relatedLimit = product.relatedProductIds.length > 0 ? 24 : 4;
   const relatedCatalog =
     related?.state === "ready"
       ? {
@@ -45,7 +80,9 @@ const ProductPage = async ({
           catalog: {
             ...related.catalog,
             details: [],
-            products: related.catalog.products.filter((item) => item.id !== product.id).slice(0, 4),
+            products: related.catalog.products
+              .filter((item) => item.id !== product.id)
+              .slice(0, relatedLimit),
           },
         }
       : related;
