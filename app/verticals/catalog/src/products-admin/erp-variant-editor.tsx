@@ -136,11 +136,21 @@ const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
     Effect.flatMap((payload) => executeGrantExternalPriceSourceAuthority(payload, id, { idempotencyKey: grantKey })),
     Effect.match({ onFailure: (problem) => describe('Oprávnění zdroje ceny', problem), onSuccess: () => '' }),
   );
-  const now = DateTime.formatIso(yield* DateTime.now);
+  // Pricing takes a value-only change at the stated effectiveFrom and requires the assertion's business time to be
+  // that same instant. It must not be after the server's operation time (a few seconds back absorbs clock skew) and
+  // not before the Current Revision it replaces.
+  const skewed = DateTime.subtract(yield* DateTime.now, { seconds: 5 });
+  const currentFrom = DateTime.make(current.effectivePeriod.effectiveFrom);
+  const now = DateTime.formatIso(
+    Option.isSome(currentFrom) && DateTime.isLessThanOrEqualTo(skewed, currentFrom.value)
+      ? DateTime.add(currentFrom.value, { milliseconds: 1 })
+      : skewed,
+  );
   const [assertionId, version, revisionKey] = yield* Effect.all([freshUuid, freshUuid, freshUuid], { concurrency: 1 });
   const monetaryAmount = { amount, currencyCode: identityKey.currencyCode };
   const reviseId = yield* requestId;
   const result = yield* Schema.decodeEffect(RevisePricePayloadSchema)({
+    effectiveFrom: now,
     expectedCurrent: {
       effectivePeriod: current.effectivePeriod,
       priceRef: found.priceRef,
