@@ -47,11 +47,7 @@ start() {
   local service="$1" id setup source log status resolved head
   resolved="$(target "$service")"
   read -r id setup <<<"$resolved"
-  head="$(branch_head)"
-  if [ "$head" != "$GITHUB_SHA" ]; then
-    echo "::error::the stage branch points at ${head:-nothing readable}, not this run's $GITHUB_SHA; the $service push does not start"
-    return 1
-  fi
+  # Hotfix: a run delivers its commit even when a newer push arrived, so frequent pushes never starve stage.
   source="$PWD"
   if [ "$service" != app ]; then source="$RUNNER_TEMP/storefront-push/$setup"; fi
   log="$state/$service.log"
