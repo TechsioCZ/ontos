@@ -872,7 +872,15 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             disabled={!canWrite}
                             draft={draft}
                             idPrefix={`variant-${draft.key}`}
-                            images={product.images ?? []}
+                            images={[
+                              ...new Set([
+                                ...(product.images ?? []),
+                                // A saved variant photo outside the gallery stays selectable after switching away.
+                                ...(product.variantRecords ?? []).flatMap((variant) =>
+                                  variant.imageSrc === undefined || variant.imageSrc === '' ? [] : [variant.imageSrc],
+                                ),
+                              ]),
+                            ]}
                             onChange={(next) => patchDraft(draft.key, next)}
                             vatRate={vatRate}
                           />
