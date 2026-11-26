@@ -703,7 +703,17 @@ export const afterApp = async ({ apply, bundle, config, deps, log }) => {
   for (const slug of selling) {
     const { email, password, written } = ownerOf(slug);
     const target = { email, password, shellUrl: config.origins.shell, tenantId: written.tenantId };
-    const plan = deps.taxBaseline({ ...target, mode: 'dry-run' });
+    // The restarted app answers its session before its owners serve: the first gateway assertion can answer 503.
+    let plan;
+    for (let attempt = 1; plan === undefined; attempt += 1) {
+      try {
+        plan = deps.taxBaseline({ ...target, mode: 'dry-run' });
+      } catch (error) {
+        if (attempt >= 20) throw error;
+        log(`VAT baseline ${slug}: not ready (${error.message}); retrying in 30 s`);
+        await new Promise((resolve) => setTimeout(resolve, 30_000));
+      }
+    }
     deps.taxBaseline({ ...target, mode: 'apply', reviewed: plan.fingerprint });
     deps.taxBaseline({ ...target, mode: 'verify' });
     log(`VAT baseline ${slug}: verified`);
