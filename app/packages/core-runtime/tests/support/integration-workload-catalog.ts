@@ -1,14 +1,13 @@
 import { Effect, Schema } from 'effect';
 
-import { defineAction } from '../actions/definition.ts';
-import { buildInstalledModuleCatalog } from '../modules/catalog.ts';
-import { decodeOntosModuleDeploymentContract, defineOntosModuleManifest } from '../modules/manifest.ts';
-import { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import { defineAction } from '../../src/actions/definition.ts';
+import { buildInstalledModuleCatalog } from '../../src/modules/catalog.ts';
+import { decodeOntosModuleDeploymentContract, defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   defineVerticalRuntimeRegistration,
   extractVerticalRuntimeSafeDescriptors,
-} from '../modules/runtime-registration.ts';
-import { makeModuleContractFixture } from './module-contract.ts';
+} from '../../src/modules/runtime-registration.ts';
 
 /*
  * The installed contracts a connector-partner workload registration reads: a partner module whose admission Action
@@ -55,14 +54,32 @@ const publishedContract = (input: {
   readonly moduleId: string;
   readonly systemWorkloads: readonly string[];
 }) => {
-  const fixture = makeModuleContractFixture({
-    appId: input.appId,
-    buildMarker: 'integration-workload-registration',
-    moduleId: input.moduleId,
-  });
+  const activation = {
+    defaultState: 'inactive' as const,
+    preservesHistoryWhenInactive: true as const,
+    scope: 'tenant' as const,
+    supportedStates: ['inactive' as const, 'active' as const],
+  };
+  const module = {
+    description: `${input.moduleId} module`,
+    displayName: input.moduleId,
+    id: input.moduleId,
+    implementedAs: 'ultramodern_microvertical' as const,
+    kind: 'business_module' as const,
+  };
+  const shellContributions = {
+    mediaAttachments: [],
+    navigation: [],
+    pages: [],
+    publicComponents: [],
+    reports: [],
+    resourceDetails: [],
+    search: [],
+    timelines: [],
+  };
   const manifest = defineOntosModuleManifest({
-    activation: fixture.manifest.activation,
-    module: { ...fixture.manifest.module, id: input.moduleId },
+    activation,
+    module,
     publicSurface: {
       actions: input.actions,
       api: {},
@@ -71,27 +88,31 @@ const publishedContract = (input: {
       reports: [],
       resourceTypes: [],
       search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
+      shellContributions,
     },
   });
   const registration = defineVerticalRuntimeRegistration({ actions: input.actions, manifest, outboxWorkers: [] });
   const { actions } = extractVerticalRuntimeSafeDescriptors(registration);
   const contract = decodeOntosModuleDeploymentContract({
-    ...fixture,
+    deployment: { appId: input.appId, buildMarker: 'integration-workload-registration' },
     manifest: {
-      ...fixture.manifest,
-      publicSurface: { ...fixture.manifest.publicSurface, actions },
+      activation,
+      module,
+      originatorActions: [],
+      publicSurface: {
+        actions,
+        api: [],
+        components: [],
+        events: [],
+        reports: [],
+        resourceTypes: [],
+        search: [],
+        shellContributions,
+      },
       systemWorkloads: input.systemWorkloads,
     },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: '2',
   });
   return { contract, expectedAppId: contract.deployment.appId };
 };

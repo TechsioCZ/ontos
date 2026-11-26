@@ -49,7 +49,7 @@ import {
   PARTNER_READ_WORKLOAD,
   PARTNER_SYSTEM_WORKLOAD,
   integrationWorkloadCatalog,
-} from '../../src/testing/integration-workload-catalog.ts';
+} from '../support/integration-workload-catalog.ts';
 import { cell, makeAuthority, makeCheck, principalHolder } from '../unit/access-decision-support.ts';
 
 /*

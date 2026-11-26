@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { MODULE_INTERNAL_WORKLOADS } from '../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
@@ -62,7 +63,6 @@ import {
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
-  MODULE_INTERNAL_WORKLOADS,
 } from './module-credentials.mts';
 import type { ProvisioningOutput } from './module-credentials.mts';
 import { liveModuleKeyIds } from './module-credential-liveness.mts';

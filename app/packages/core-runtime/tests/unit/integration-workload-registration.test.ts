@@ -9,7 +9,7 @@ import {
   PARTNER_READ_WORKLOAD,
   PARTNER_SYSTEM_WORKLOAD,
   integrationWorkloadCatalog,
-} from '../../src/testing/integration-workload-catalog.ts';
+} from '../support/integration-workload-catalog.ts';
 
 const catalog = {
   manifest: {
@@ -24,7 +24,11 @@ const symmy = {
   manifest: {
     module: { id: 'integration.symmy' },
     publicSurface: {
-      actions: [{ accessWorkload: { workloads: ['integration.symmy.admit-symmy-sync'] } }],
+      actions: [
+        { accessWorkload: { workloads: ['integration.symmy.admit-symmy-sync'] } },
+        // Symmy's own server reads source organization facts as this internal workload; the platform holds it.
+        { accessWorkload: { workloads: ['integration.symmy.source-organization-facts.read'] } },
+      ],
     },
     systemWorkloads: ['integration.symmy.execute-symmy-job'],
   },
@@ -34,6 +38,10 @@ it('binds an integration only to a receiver workload an installed module publish
   expect(bindableWorkloadOwner([catalog, symmy], 'commerce.symmy-product-import')).toBe('commerce.catalog');
   expect(bindableWorkloadOwner([catalog, symmy], 'commerce.symmy-product-read')).toBe('commerce.catalog');
   expect(bindableWorkloadOwner([catalog, symmy], 'integration.symmy.admit-symmy-sync')).toBe('integration.symmy');
+});
+
+it('never binds a module internal workload the platform declares, even where no Tenant holds it', () => {
+  expect(bindableWorkloadOwner([catalog, symmy], 'integration.symmy.source-organization-facts.read')).toBeUndefined();
 });
 
 it('never binds a system workload, an unpublished key or a key outside the publishing module namespace', () => {

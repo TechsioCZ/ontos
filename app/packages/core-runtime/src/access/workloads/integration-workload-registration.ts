@@ -10,6 +10,7 @@ import { workloadKeyBelongsToModule } from '../../authorization/access-declarati
 import { accessWorkloadBindings, accessWorkloadCompanyBindings, principals } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import type { AccessIntentError } from '../intent/errors.ts';
+import { MODULE_INTERNAL_WORKLOADS } from './module-internal-workloads.ts';
 
 /*
  * The workloads a Tenant administrator binds to one of the Tenant's integration Principals (a connector partner such as
@@ -45,7 +46,13 @@ export const integrationWorkloadStoreFailure = (failure: AccessIntentError) =>
     }),
   );
 
-/** Which installed module publishes the workload as a receiver, unless it is that module's system workload. */
+/** Every module internal workload the platform declares; it is never an integration's, held in a Tenant or not. */
+const moduleInternalWorkloads: ReadonlySet<string> = new Set([...MODULE_INTERNAL_WORKLOADS.values()].flat());
+
+/**
+ * Which installed module publishes the workload as a receiver, unless it is that module's system workload or a module
+ * internal workload the platform declares.
+ */
 export interface WorkloadPublishingManifest {
   readonly module: { readonly id: string };
   readonly publicSurface: {
@@ -61,21 +68,23 @@ export const bindableWorkloadOwner = (
   contracts: readonly { readonly manifest: WorkloadPublishingManifest }[],
   workloadKey: string,
 ): string | undefined =>
-  contracts.find(({ manifest }) => {
-    if (!workloadKeyBelongsToModule(workloadKey, manifest.module.id)) {
-      return false;
-    }
-    const isKey = (declared: string) => declared === workloadKey;
-    if ((manifest.systemWorkloads ?? []).some(isKey)) {
-      return false;
-    }
-    return (
-      manifest.publicSurface.actions.some((action) => (action.accessWorkload?.workloads ?? []).some(isKey)) ||
-      (manifest.publicSurface.operationContracts ?? []).some((operation) =>
-        (operation.workloadCarrier?.workloads ?? []).some(isKey),
-      )
-    );
-  })?.manifest.module.id;
+  moduleInternalWorkloads.has(workloadKey)
+    ? undefined
+    : contracts.find(({ manifest }) => {
+        if (!workloadKeyBelongsToModule(workloadKey, manifest.module.id)) {
+          return false;
+        }
+        const isKey = (declared: string) => declared === workloadKey;
+        if ((manifest.systemWorkloads ?? []).some(isKey)) {
+          return false;
+        }
+        return (
+          manifest.publicSurface.actions.some((action) => (action.accessWorkload?.workloads ?? []).some(isKey)) ||
+          (manifest.publicSurface.operationContracts ?? []).some((operation) =>
+            (operation.workloadCarrier?.workloads ?? []).some(isKey),
+          )
+        );
+      })?.manifest.module.id;
 
 /** The target must be an active integration Principal of the Tenant that the platform did not make. */
 export const requireTenantIntegration = Effect.fn('IntegrationWorkloadRegistration.requireTenantIntegration')(

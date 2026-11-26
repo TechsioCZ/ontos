@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { MODULE_INTERNAL_WORKLOADS } from '../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
@@ -11,7 +12,6 @@ import {
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
   INTERNAL_WORKLOAD_LABELS,
-  MODULE_INTERNAL_WORKLOADS,
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
