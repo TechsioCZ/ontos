@@ -642,7 +642,8 @@ export const reconcileCoreContext = (
       ),
     );
 
-const loadRootConfiguration = () =>
+/** `app/.env` under the process environment, accepted only as a local development setup (loopback, development). */
+export const loadRootConfiguration = () =>
   Effect.gen(function* loadConfiguration() {
     const fileProvider = yield* ConfigProvider.fromDotEnv({
       path: path.join(import.meta.dirname, '..', '.env'),
