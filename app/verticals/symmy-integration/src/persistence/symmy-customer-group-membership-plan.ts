@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Order, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Order, Schema } from 'effect';
 
 import { SYMMY_EFFECT_ASSIGNED_AT_ADMISSION } from '../../shared/domain/symmy-customer-batch.ts';
 import {
@@ -73,8 +73,8 @@ export interface SymmyGroupMembershipCustomerSource {
 }
 
 export interface SymmyGroupMembershipCustomer {
-  readonly profile: SymmyGroupMembershipProfile;
   readonly processingKind: 'PERSONAL_DATA' | 'ORG_BUSINESS_REFERENCE';
+  readonly profile: SymmyGroupMembershipProfile;
 }
 
 export interface SymmyGroupMembershipPlanInput<Failure, ResolveFailure, ReserveFailure> {
@@ -125,13 +125,17 @@ export const symmyMembershipProfilesFromReceipts = (
 ): ReadonlyMap<string, SymmyGroupMembershipCustomer> => {
   const candidates = new Map<string, Map<string, SymmyGroupMembershipCustomer>>();
   for (const { organization, receipt, recordId } of receipts) {
-    const profile =
-      receipt._tag === 'RetailProfileEnsured'
-        ? { profileKind: 'RETAIL' as const, profileRef: receipt.profileRef }
-        : receipt._tag === 'CounterpartyProfileCreated'
-          ? { profileKind: 'COUNTERPARTY' as const, profileRef: receipt.profileRef }
-          : undefined;
-    if (profile === undefined || profile.profileRef.tenantId !== tenantId) {
+    const profile = Match.value(receipt).pipe(
+      Match.tags({
+        CounterpartyProfileCreated: ({ profileRef }): SymmyGroupMembershipProfile => ({
+          profileKind: 'COUNTERPARTY',
+          profileRef,
+        }),
+        RetailProfileEnsured: ({ profileRef }): SymmyGroupMembershipProfile => ({ profileKind: 'RETAIL', profileRef }),
+      }),
+      Match.orElse(() => null),
+    );
+    if (profile === null || profile.profileRef.tenantId !== tenantId) {
       continue;
     }
     const known = candidates.get(recordId) ?? new Map<string, SymmyGroupMembershipCustomer>();

@@ -23,8 +23,8 @@ export const SymmyJobRetentionPolicySchema = Schema.Struct({
   ...SymmyJobLifecyclePolicyRefSchema.fields,
   governanceLegalEntityId: LegalEntityIdSchema,
   retentionMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(315_576_000_000)),
-  routeId: SymmyLifecycleRouteIdSchema,
   routeFamily: Schema.optionalKey(Schema.Literal('DEMO_GROUP_MEMBERSHIP')),
+  routeId: SymmyLifecycleRouteIdSchema,
   targetLegalEntityId: Schema.OptionFromNullOr(LegalEntityIdSchema),
   tenantId: TenantIdSchema,
 }).check(
@@ -45,12 +45,24 @@ export const SymmyJobRetentionPolicySchema = Schema.Struct({
 export type SymmyJobRetentionPolicy = typeof SymmyJobRetentionPolicySchema.Type;
 
 interface RetainedRoute {
-  readonly tenantId: string;
+  readonly fixturePlan: SymmyFixtureExecutionPlan | null;
   readonly legalEntityId: string | null;
   readonly routeId: string;
   readonly routeKey: string;
-  readonly fixturePlan: SymmyFixtureExecutionPlan | null;
+  readonly tenantId: string;
 }
+
+const isDemoMembershipSelector = (selector: SymmyFixtureExecutionPlan['selector']): boolean => {
+  const demo = SYMMY_DEMO_MEMBERSHIP_RETENTION;
+  return (
+    selector?.kind === 'CUSTOMER_GROUP' &&
+    selector.source.route.tenantId === demo.tenantId &&
+    selector.source.route.integrationRouteId === demo.sourceRouteId &&
+    selector.source.issuerId === demo.issuer &&
+    selector.source.sourceNamespace === demo.namespace &&
+    selector.target?.tenantId === demo.tenantId
+  );
+};
 
 /** A standing demo family policy applies only to real selected routes of its exact enrolled source. */
 export const symmyRetentionPolicyMatchesRoute = (policy: SymmyJobRetentionPolicy, route: RetainedRoute): boolean => {
@@ -69,12 +81,7 @@ export const symmyRetentionPolicyMatchesRoute = (policy: SymmyJobRetentionPolicy
     plan?.sourceRouteId === demo.sourceRouteId &&
     plan.sourceRouteRevision === demo.revision &&
     plan.sourceMappingVersion === demo.revision &&
-    selector?.kind === 'CUSTOMER_GROUP' &&
-    selector.source.route.tenantId === demo.tenantId &&
-    selector.source.route.integrationRouteId === demo.sourceRouteId &&
-    selector.source.issuerId === demo.issuer &&
-    selector.source.sourceNamespace === demo.namespace &&
-    selector.target?.tenantId === demo.tenantId &&
+    isDemoMembershipSelector(selector) &&
     plan.items.every(({ source }) => source.issuerId === demo.issuer && source.sourceNamespace === demo.namespace)
   );
 };

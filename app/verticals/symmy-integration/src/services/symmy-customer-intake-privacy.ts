@@ -258,9 +258,9 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
             requestCorrelation,
             subject: {
               _tag: 'NativeRouteRead',
-              scope,
               operationRequirementKey: customerIntakePrivacyRequirement,
               requestHash: computeCanonicalValueHash(request),
+              scope,
             },
           },
           crypto,

@@ -2102,10 +2102,12 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupMembership' }>,
 ) {
   const payload = yield* Schema.decodeUnknownEffect(ApplyCustomerGroupMembershipSourcePayloadSchema)(intent.payload);
+  const requestIdentity = { effectId: payload.source.effectId, manager: payload.manager };
+  if (payload.processingKind === 'ORG_BUSINESS_REFERENCE') {
+    Object.assign(requestIdentity, { processingKind: payload.processingKind });
+  }
   const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)({
-    effectId: payload.source.effectId,
-    manager: payload.manager,
-    ...(payload.processingKind === 'ORG_BUSINESS_REFERENCE' ? { processingKind: payload.processingKind } : {}),
+    ...requestIdentity,
     profile: payload.profile,
     route: payload.route,
   });
@@ -2330,7 +2332,11 @@ const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileM
     context.requestCorrelation,
     context.options,
   );
-  if (result._tag !== mode || result.receipt.actionInvocationId !== context.originalActionInvocationId) {
+  const matchesInvocation = Match.value(result).pipe(
+    Match.tag(mode, ({ receipt }) => receipt.actionInvocationId === context.originalActionInvocationId),
+    Match.orElse(() => false),
+  );
+  if (!matchesInvocation) {
     return unavailableRecovery;
   }
   if (mode === 'ORG_RECEIPT') {

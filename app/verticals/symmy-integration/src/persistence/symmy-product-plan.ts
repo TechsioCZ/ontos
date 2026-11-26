@@ -521,6 +521,31 @@ const categoryAssignmentEffects = (
     operation: categoryAssignmentOperation,
   }));
 
+/** The owner writes one effect per locale at the settled Product's current revision, or reports it unchanged. */
+const productTextEffects = (
+  localized: SymmyProductRow['localized'],
+  parent: { readonly effectKey: string; readonly itemKey: string },
+  evidenceRefs: readonly string[],
+) =>
+  (localized ?? []).map((text, textIndex) => ({
+    dependsOn: [productCreateKey],
+    effectKey: `product-facts-${textIndex}`,
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent,
+      request: {
+        _tag: 'SetProductLocalizedFacts',
+        payload: {
+          evidenceRefs,
+          facts: { ...present('description', text.description), ...present('name', text.name) },
+          locale: text.locale,
+          reason: SYMMY_PRODUCT_REASON,
+        },
+      },
+    },
+    operation: productFactsOperation,
+  }));
+
 /** One product: its item, the items of its variants and prices, and the unsupported groups it names. */
 const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduct<Failure>(
   facts: ProductFacts<Failure>,
@@ -553,26 +578,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const variantItems = variants.map((variant, position) =>
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
-  // The Product's own texts, one per locale, each the localized facts of the Product the create settled on: a text
-  // the owner already holds is reported as unchanged, any other one is written at the owner's current revision.
-  const productTexts = (row.localized ?? []).map((text, textIndex) => ({
-    dependsOn: [productCreateKey],
-    effectKey: `product-facts-${textIndex}`,
-    intent: {
-      _tag: 'CatalogProductDependentEffect',
-      parent,
-      request: {
-        _tag: 'SetProductLocalizedFacts',
-        payload: {
-          evidenceRefs,
-          facts: { ...present('description', text.description), ...present('name', text.name) },
-          locale: text.locale,
-          reason: SYMMY_PRODUCT_REASON,
-        },
-      },
-    },
-    operation: productFactsOperation,
-  }));
+  const productTexts = productTextEffects(row.localized, parent, evidenceRefs);
   const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
   const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
   const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
@@ -583,9 +589,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       : readinessSteps.map((step, position) => ({
           dependsOn: [
             parent,
-            ...(position === 0
-              ? productTexts.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey }))
-              : []),
+            ...(position === 0 ? productTexts.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey })) : []),
             ...readinessSteps.slice(0, position).map((previous) => ({
               effectKey: `readiness-${previous.toLowerCase()}`,
               itemKey: productItemKey,
