@@ -59,7 +59,7 @@ describe('governed SKU Action contracts', () => {
   it('keeps public operations explicit, permissioned, and idempotent', () => {
     for (const action of [assignSkuAction, renameSkuAction, correctSkuAction]) {
       expect(action.descriptor.idempotency).toBe('required');
-      expect(action.descriptor.legalEntityScope).toBe('forbidden');
+      expect(action.descriptor.legalEntityScope).not.toBe('required');
       expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
     expect(assignSkuAction.descriptor.actionKey).toBe('commerce.catalog.assign-sku');

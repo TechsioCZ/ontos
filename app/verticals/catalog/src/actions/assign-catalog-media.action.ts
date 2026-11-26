@@ -122,7 +122,7 @@ export const assignCatalogMediaAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: AssignCatalogMediaPayloadSchema,
     policies: [],

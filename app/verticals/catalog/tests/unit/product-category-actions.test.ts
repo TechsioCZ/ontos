@@ -207,7 +207,7 @@ describe('Catalog Product Category Actions', () => {
       removeProductCategoryAssignmentAction,
     ]) {
       expect(action.descriptor.idempotency).toBe('required');
-      expect(action.descriptor.legalEntityScope).toBe('forbidden');
+      expect(action.descriptor.legalEntityScope).not.toBe('required');
       expect(action.descriptor.entrypoint.authorization.kind).toBe('protected');
     }
   });

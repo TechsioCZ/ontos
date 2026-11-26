@@ -236,7 +236,7 @@ export const setVariantAttributeOverrideAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: CATALOG_MODULE_KEY,
     payloadSchema: SetVariantAttributeOverridePayloadSchema,
     policies: [],

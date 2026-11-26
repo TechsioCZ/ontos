@@ -90,7 +90,7 @@ export const retireVariantAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: RetireVariantPayloadSchema,
     policies: [],

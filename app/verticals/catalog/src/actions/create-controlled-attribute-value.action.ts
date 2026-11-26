@@ -115,7 +115,7 @@ export const createControlledAttributeValueAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: CATALOG_MODULE_KEY,
     payloadSchema: CreateControlledAttributeValuePayloadSchema,
     policies: [],

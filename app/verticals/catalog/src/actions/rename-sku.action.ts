@@ -72,7 +72,7 @@ export const renameSkuAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: RenameSkuPayloadSchema,
     policies: [],

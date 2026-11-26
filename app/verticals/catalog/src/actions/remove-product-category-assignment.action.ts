@@ -104,7 +104,7 @@ export const removeProductCategoryAssignmentAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: RemoveProductCategoryAssignmentPayloadSchema,
     policies: [],
