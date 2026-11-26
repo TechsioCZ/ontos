@@ -3265,7 +3265,7 @@ it('runs the lint rules and the whole-tree repository policy once in every plan,
   const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
   // Every plan now selects whole-tree shard 1 here, even when scoped. A scoped plan skips the Typecheck
   // row, and the policy lints the whole app tree, so it runs here whatever the hook found.
-  const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard == 1");
+  const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1");
   expect(lint.filter((step) => step.if === once).map(({ run }) => run)).toEqual([
     'mise exec -- pnpm typecheck:lint-rules',
     'mise exec -- pnpm test:lint-rules',

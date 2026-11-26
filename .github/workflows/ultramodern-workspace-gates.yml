@@ -877,17 +877,17 @@ jobs:
 
       # Once per run, whatever the hook found.
       - name: Typecheck the Effect lint rules
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
         working-directory: app
         run: mise exec -- pnpm typecheck:lint-rules
 
       - name: Test the Effect lint rules
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
         working-directory: app
         run: mise exec -- pnpm test:lint-rules
 
       - name: Repository policy over the whole app tree
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
         working-directory: app
         run: mise exec -- pnpm lint:repository-policy
 
