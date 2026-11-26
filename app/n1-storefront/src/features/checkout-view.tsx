@@ -17,6 +17,7 @@ import { useCartQuoteRequest } from "./use-cart-quote";
 import { requestForCart } from "./cart-quote-request";
 import { displayedCartQuote } from "./cart-quote-state";
 import { useCheckout } from "./use-checkout";
+import { useCheckoutFormValidity } from "./use-checkout-form-validity";
 import { usePortalAuth } from "./auth-view";
 
 const dateFormatters = {
@@ -286,11 +287,10 @@ const CheckoutActions = ({
   locale: string;
 }) => {
   const pending = checkout.progress !== "idle";
-  const confirming = checkout.quote?.outcome === "VALID";
   const pendingLabel = checkout.progress === "place" ? d.checkout.sending : d.checkout.checking;
   const pendingShortLabel =
     checkout.progress === "place" ? d.checkout.sendingShort : d.checkout.checkingShort;
-  const actionLabel = confirming ? d.checkout.confirm : d.checkout.verify;
+  const actionLabel = d.checkout.confirm;
   const submit = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
   const wasPending = useRef(pending);
@@ -352,13 +352,7 @@ const CheckoutActions = ({
             <span className="hidden xl:inline">{pendingLabel}</span>
           </>
         )}
-        {!pending && confirming && d.checkout.confirm}
-        {!pending && !confirming && (
-          <>
-            <span className="xl:hidden">{d.checkout.verifyShort}</span>
-            <span className="hidden xl:inline">{d.checkout.verify}</span>
-          </>
-        )}
+        {!pending && d.checkout.confirm}
       </Button>
     </div>
   );
@@ -376,6 +370,8 @@ const ReadyCheckout = ({
   options: ReadyOptions;
 }) => {
   const checkout = useCheckout(options, locale, locks);
+  const [form, setForm] = useState<HTMLFormElement | null>(null);
+  const formValid = useCheckoutFormValidity(form);
   const [shippingId, setShippingId] = useState<string | null>(
     options.shippingMethods[0]?.id ?? null,
   );
@@ -450,6 +446,7 @@ const ReadyCheckout = ({
           event.preventDefault();
           checkout.submit(new FormData(event.currentTarget), method);
         }}
+        ref={setForm}
       >
         <noscript>
           <p>{d.auth.javascriptRequired}</p>
@@ -496,7 +493,7 @@ const ReadyCheckout = ({
                 <CheckoutActions
                   checkout={checkout}
                   dictionary={d}
-                  disabled={options.countryCodes.length === 0 || method === undefined}
+                  disabled={!formValid || options.countryCodes.length === 0 || method === undefined}
                   locale={locale}
                 />
               }

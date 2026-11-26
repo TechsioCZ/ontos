@@ -352,7 +352,7 @@ const selectSavedAddress = async () => {
   await eventually(() => expect(checkoutInput("street").value).toBe("Saved street 1"));
 };
 
-const verifySavedAddressCheckout = async () => {
+const prepareSavedAddressCheckout = async () => {
   seed({ guarded: false });
   admission = { ...ownerAdmission };
   addresses = savedAddresses;
@@ -364,53 +364,22 @@ const verifySavedAddressCheckout = async () => {
     lastName: "Kupující",
     phone: "+420987654321",
   });
-  quoteGate = Promise.resolve(
-    Response.json({
-      ...confirmed,
-      orderId: null,
-      orderNumber: null,
-      outcome: "VALID",
-      status: null,
-    }),
-  );
-  await act(async () => container.querySelector("form")?.requestSubmit());
   await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
 };
 
 const completeNextPurchase = async (cycle: number) => {
   await eventually(() => {
     expect(container.querySelector("h1")?.textContent).toBe(d.checkout.heading);
-    expect(button(d.checkout.verify).disabled).toBe(false);
+    expect(button(d.checkout.confirm).disabled).toBe(true);
   });
-  const form = container.querySelector("form");
-  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-  if (form === null || nativeValue?.set === undefined) {
-    throw new Error("Expected an editable checkout form");
-  }
-  await act(async () => {
-    for (const [name, value] of Object.entries({
-      city: "Praha",
-      email: "buyer@example.test",
-      firstName: "Jan",
-      lastName: "Novák",
-      postalCode: "11000",
-      street: "Test 1",
-    })) {
-      const input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
-      nativeValue.set?.call(input, value);
-      input?.dispatchEvent(new Event("input", { bubbles: true }));
-    }
+  await editCheckoutFields({
+    city: "Praha",
+    email: "buyer@example.test",
+    firstName: "Jan",
+    lastName: "Novák",
+    postalCode: "11000",
+    street: "Test 1",
   });
-  quoteGate = Promise.resolve(
-    Response.json({
-      ...confirmed,
-      orderId: null,
-      orderNumber: null,
-      outcome: "VALID",
-      status: null,
-    }),
-  );
-  await act(async () => form.requestSubmit());
   await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
   const result = {
     ...confirmed,
@@ -420,7 +389,7 @@ const completeNextPurchase = async (cycle: number) => {
   };
   quoteGate = Promise.resolve(Response.json(result));
   recovery = { result, state: "confirmed" };
-  await act(async () => form.requestSubmit());
+  await act(async () => button(d.checkout.confirm).click());
   await eventually(() =>
     expect(container.querySelector("h1")?.textContent).toBe(d.checkout.confirmed),
   );
@@ -438,8 +407,99 @@ const completeNextPurchase = async (cycle: number) => {
 };
 
 describe("checkout through public session, cart and owner boundaries", () => {
+  it("enables the single Order action only while all required form fields are valid", async () => {
+    seed({ guarded: false });
+    await mount();
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(true));
+    expect(container.querySelector(`button[aria-label="${d.checkout.verify}"]`)).toBeNull();
+    await editCheckoutFields({
+      city: "Praha",
+      email: "buyer@example.test",
+      firstName: "Jan",
+      lastName: "Novák",
+      postalCode: "11000",
+      street: "Test 1",
+    });
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    await editCheckoutFields({ email: "invalid-email" });
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(true));
+    await editCheckoutFields({ email: "buyer@example.test" });
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    await editCheckoutFields({ firstName: "" });
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(true));
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(0);
+  });
+
+  it("keeps Order disabled without an available shipping method", async () => {
+    seed({ guarded: false });
+    await mount({ ...options, shippingMethods: [] });
+    await editCheckoutFields({
+      city: "Praha",
+      email: "buyer@example.test",
+      firstName: "Jan",
+      lastName: "Novák",
+      postalCode: "11000",
+      street: "Test 1",
+    });
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(true));
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(0);
+  });
+
+  it("places a valid order once and ignores repeated clicks while the owner is answering", async () => {
+    seed({ guarded: false });
+    const response = Promise.withResolvers<Response>();
+    quoteGate = response.promise;
+    await mount();
+    await editCheckoutFields({
+      city: "Praha",
+      email: "buyer@example.test",
+      firstName: "Jan",
+      lastName: "Novák",
+      postalCode: "11000",
+      street: "Test 1",
+    });
+    const form = container.querySelector("form");
+    if (form === null) {
+      throw new Error("Expected an editable checkout form");
+    }
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
+    await act(async () => button(d.checkout.confirm).click());
+    await eventually(() =>
+      expect(
+        requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+      ).toHaveLength(1),
+    );
+    const write = requests.find((request) => new URL(request.url).pathname === "/api/checkout");
+    const sent = Schema.decodeUnknownSync(CheckoutRequestSchema)(await write?.clone().json());
+    expect(sent.mode).toBe("place");
+    expect(sent.lines).toEqual([line]);
+    expect(button(d.checkout.sending).disabled).toBe(true);
+    expect(button(d.checkout.sending).getAttribute("aria-busy")).toBe("true");
+    expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).not.toBeNull();
+    await act(async () => {
+      button(d.checkout.sending).click();
+      button(d.checkout.sending).click();
+      form.requestSubmit();
+    });
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(1);
+    await act(async () => response.resolve(Response.json({ ...confirmed, outcome: "PLACED" })));
+    await eventually(() =>
+      expect(container.querySelector("h1")?.textContent).toBe(d.checkout.confirmed),
+    );
+    expect(window.localStorage.getItem(cartStorageKey(options.scope))).toBeNull();
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(1);
+  });
+
   it("keeps the selected saved address visible through same-customer session and address refresh", async () => {
-    await verifySavedAddressCheckout();
+    await prepareSavedAddressCheckout();
     const session = Promise.withResolvers<Response>();
     const refreshedAddresses = Promise.withResolvers<Response>();
     accountGate = session.promise;
@@ -463,8 +523,8 @@ describe("checkout through public session, cart and owner boundaries", () => {
     });
   });
 
-  it("keeps completed checkout verification after a same-customer focus refresh", async () => {
-    await verifySavedAddressCheckout();
+  it("keeps a valid order ready after a same-customer focus refresh", async () => {
+    await prepareSavedAddressCheckout();
     const session = Promise.withResolvers<Response>();
     accountGate = session.promise;
     await act(async () => window.dispatchEvent(new Event("focus")));
@@ -474,10 +534,10 @@ describe("checkout through public session, cart and owner boundaries", () => {
     expect(savedAddressTrigger().textContent).toContain("Saved street 1");
     expect(
       requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
-  it("shows owner-confirmed totals before contact entry and still requires explicit checkout verification", async () => {
+  it("shows owner-confirmed totals before contact entry without submitting an order", async () => {
     seed({ guarded: false });
     await mount();
     await eventually(() => {
@@ -488,8 +548,8 @@ describe("checkout through public session, cart and owner boundaries", () => {
     });
     expect(checkoutInput("email").value).toBe("");
     expect(checkoutInput("firstName").value).toBe("");
-    expect(button(d.checkout.verify).disabled).toBe(false);
-    expect(container.querySelector(`button[aria-label="${d.checkout.confirm}"]`)).toBeNull();
+    expect(button(d.checkout.confirm).disabled).toBe(true);
+    expect(container.querySelector(`button[aria-label="${d.checkout.verify}"]`)).toBeNull();
     expect(
       requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
     ).toHaveLength(0);
@@ -504,32 +564,6 @@ describe("checkout through public session, cart and owner boundaries", () => {
       scope: options.scope,
       shipping: { expectedPriceMinor: 12_900, method: "PPL" },
     });
-    await editCheckoutFields({
-      city: "Praha",
-      email: "buyer@example.test",
-      firstName: "Jan",
-      lastName: "Novák",
-      postalCode: "11000",
-      street: "Test 1",
-    });
-    quoteGate = Promise.resolve(
-      Response.json({
-        ...confirmed,
-        orderId: null,
-        orderNumber: null,
-        outcome: "VALID",
-        status: null,
-      }),
-    );
-    await act(async () => container.querySelector("form")?.requestSubmit());
-    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
-    const writes = await Promise.all(
-      requests
-        .filter((request) => new URL(request.url).pathname === "/api/checkout")
-        .map((request) => request.json()),
-    );
-    expect(writes.map((payload) => payload.mode)).toEqual(["quote"]);
-    expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
   });
 
   it("refreshes checkout preview totals for the selected shipping method before contact entry", async () => {
@@ -614,7 +648,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
     seed({ guarded: false });
     admission = { ...ownerAdmission };
     await mount();
-    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    await eventually(() => expect(container.querySelector("form")).not.toBeNull());
     const edited = {
       city: "Brno",
       email: "order@example.test",
@@ -675,7 +709,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
             };
       await act(async () => window.dispatchEvent(new Event("focus")));
       await eventually(() => {
-        expect(button(d.checkout.verify).disabled).toBe(false);
+        expect(button(d.checkout.confirm).disabled).toBe(true);
         for (const [name, value] of Object.entries({
           ...edited,
           city: "Praha",
@@ -716,7 +750,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
     const response = Promise.withResolvers<Response>();
     profileGate = response.promise;
     await mount();
-    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    await eventually(() => expect(container.querySelector("form")).not.toBeNull());
     await editCheckoutFields({ email: "order@example.test", firstName: "Eva" });
     await act(async () => response.resolve(Response.json(ownerProfile)));
     await eventually(() => {
@@ -726,13 +760,13 @@ describe("checkout through public session, cart and owner boundaries", () => {
     });
   });
 
-  it("keeps checkout confirmation when a delayed profile cannot change edited contact fields", async () => {
+  it("keeps a valid order ready when a delayed profile cannot change edited contact fields", async () => {
     seed({ guarded: false });
     admission = { ...ownerAdmission };
     const response = Promise.withResolvers<Response>();
     profileGate = response.promise;
     await mount();
-    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    await eventually(() => expect(container.querySelector("form")).not.toBeNull());
     const editedContact = {
       email: "order@example.test",
       firstName: "Eva",
@@ -745,16 +779,6 @@ describe("checkout through public session, cart and owner boundaries", () => {
       postalCode: "11000",
       street: "Test 1",
     });
-    quoteGate = Promise.resolve(
-      Response.json({
-        ...confirmed,
-        orderId: null,
-        orderNumber: null,
-        outcome: "VALID",
-        status: null,
-      }),
-    );
-    await act(async () => container.querySelector("form")?.requestSubmit());
     await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(false));
     await act(async () => {
       response.resolve(Response.json(ownerProfile));
@@ -766,6 +790,9 @@ describe("checkout through public session, cart and owner boundaries", () => {
         expect(checkoutInput(field).value).toBe(value);
       }
     });
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+    ).toHaveLength(0);
   });
 
   it.each([true, false])(
@@ -794,7 +821,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
     const firstSubmission = await completeNextPurchase(0);
     const secondSubmission = await completeNextPurchase(1);
     const submittedIds = [firstSubmission, secondSubmission];
-    await eventually(() => expect(button(d.checkout.verify).disabled).toBe(false));
+    await eventually(() => expect(button(d.checkout.confirm).disabled).toBe(true));
     expect(new Set(submittedIds).size).toBe(2);
     expect(submittedIds).not.toContain(guard.clientRequestId);
     const writes = await Promise.all(
@@ -802,7 +829,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
         .filter((request) => new URL(request.url).pathname === "/api/checkout")
         .map((request) => request.json()),
     );
-    expect(writes.map((payload) => payload.mode)).toEqual(["quote", "place", "quote", "place"]);
+    expect(writes.map((payload) => payload.mode)).toEqual(["place", "place"]);
     expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
   });
 
@@ -928,13 +955,13 @@ describe("checkout through public session, cart and owner boundaries", () => {
     );
   });
 
-  it("disables checkout during an actual quote and never offers placement from a refused price", async () => {
+  it("blocks duplicate placement while pending and allows editing after an owner rejection", async () => {
     seed({ guarded: false });
     const response = Promise.withResolvers<Response>();
     quoteGate = response.promise;
     await mount();
     await eventually(() => {
-      expect(button(d.checkout.verify).disabled).toBe(false);
+      expect(button(d.checkout.confirm).disabled).toBe(true);
     });
     const form = container.querySelector("form");
     if (form === null) {
@@ -966,8 +993,8 @@ describe("checkout through public session, cart and owner boundaries", () => {
       form.requestSubmit();
     });
     await eventually(() => {
-      expect(button(d.checkout.checking).disabled).toBe(true);
-      expect(button(d.checkout.checking).getAttribute("aria-busy")).toBe("true");
+      expect(button(d.checkout.sending).disabled).toBe(true);
+      expect(button(d.checkout.sending).getAttribute("aria-busy")).toBe("true");
       expect(
         requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
       ).toHaveLength(1);
@@ -992,17 +1019,30 @@ describe("checkout through public session, cart and owner boundaries", () => {
       );
     });
     await eventually(() => {
-      expect(button(d.checkout.verify).disabled).toBe(false);
+      expect(button(d.checkout.confirm).disabled).toBe(false);
       expect(container.textContent).toContain(d.checkout.rejected);
     });
     expect(container.querySelector('a[href="/cs/kosik"]')).not.toBeNull();
-    expect(container.querySelector(`button[aria-label="${d.checkout.confirm}"]`)).toBeNull();
+    expect(checkoutInput("email").disabled).toBe(false);
     expect(amount(d.checkout.total)).toBe(d.shopping.unresolved);
     expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
     const write = requests.find((request) => new URL(request.url).pathname === "/api/checkout");
-    const sent = Schema.decodeUnknownSync(CheckoutRequestSchema)(await write?.json());
-    expect(sent.mode).toBe("quote");
+    const sent = Schema.decodeUnknownSync(CheckoutRequestSchema)(await write?.clone().json());
+    expect(sent.mode).toBe("place");
     expect(sent.lines).toEqual([line]);
+    await editCheckoutFields({ street: "Updated street 2" });
+    expect(button(d.checkout.confirm).disabled).toBe(false);
+    quoteGate = Promise.resolve(Response.json({ ...confirmed, outcome: "PLACED" }));
+    await act(async () => button(d.checkout.confirm).click());
+    await eventually(() =>
+      expect(container.querySelector("h1")?.textContent).toBe(d.checkout.confirmed),
+    );
+    const writes = await Promise.all(
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/checkout")
+        .map((request) => request.clone().json()),
+    );
+    expect(writes.map((payload) => payload.mode)).toEqual(["place", "place"]);
   });
 
   it("never calls corrupt saved order storage an empty cart or permits submission", async () => {

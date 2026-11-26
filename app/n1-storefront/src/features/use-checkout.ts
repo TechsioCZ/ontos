@@ -504,12 +504,11 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
       setNotice("invalid");
       return;
     }
-    const placing = quote?.outcome === "VALID";
     const requestKey = selectionKey;
     const requestGeneration = selection.generation;
     const requestSession = sessionGeneration;
     busy.current = true;
-    setProgress(placing ? "place" : "quote");
+    setProgress("place");
     setNotice(null);
     clientRuntime.runFork(
       submitCheckoutProgram({
@@ -519,13 +518,13 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
         locale,
         locks,
         method,
-        placing,
+        placing: true,
         scope: options.scope,
       }).pipe(
         Effect.matchEffect({
           onFailure: (error) => {
             if (currentSession.current === requestSession && currentScope.current === contextKey) {
-              setNotice(failureNotice(error, placing));
+              setNotice(failureNotice(error, true));
             }
             restore();
             return Effect.void;
