@@ -29,6 +29,19 @@ jq -r '."pre-commit".jobs[] | .run + " " + (.args // "") |
 jq -r '."pre-commit".jobs[] | select((.run + " " + (.args // "") | contains("{staged_files}")) | not) | .name' \
   "$work/config.json" >"$work/global-jobs"
 globals="$(paste -sd, "$work/global-jobs")"
+# Lefthook v2.1.15 internal/run/controller/job.go skipReason matches exact accumulated tags AND
+# PrintableName (internal/config/job.go); scope.go extend accumulates job/group tags. The shape
+# check above disallows groups and requires unique explicit names, so PrintableName is .name.
+# https://github.com/evilmartians/lefthook/blob/v2.1.15/internal/run/controller/job.go#L190-L203
+# https://github.com/evilmartians/lefthook/blob/v2.1.15/internal/config/job.go#L40-L52
+# Reject even a global's own colliding tag: exclusions must have one meaning before any job runs.
+if ! jq -e --rawfile globals "$work/global-jobs" '
+  ($globals | split("\n") | map(select(length > 0))) as $names |
+  [."pre-commit".jobs[] | (.tags // [])[] | select(. as $tag | $names | index($tag))] |
+  length == 0' "$work/config.json" >/dev/null; then
+  echo '::error::CI global-job names intersect job tags; LEFTHOOK_EXCLUDE would silently skip jobs.'
+  exit 1
+fi
 failed=0
 while IFS= read -r job; do
   echo "::group::pre-commit / global $job"

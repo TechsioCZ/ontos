@@ -124,11 +124,32 @@ unsupported_templates() {
   done
   echo 'Unsupported file templates in run and args fail closed before executing the hook.'
 }
+exclusion_collisions() {
+  for tagged in lint global; do
+    cat >lefthook.yml <<CONFIG
+pre-commit:
+  jobs:
+    - name: global
+      tags: [$([[ "$tagged" == global ]] && echo global)]
+      run: echo GLOBAL_EXECUTED
+    - name: lint
+      tags: [$([[ "$tagged" == lint ]] && echo global)]
+      run: echo FILE_EXECUTED {staged_files}; exit 1
+CONFIG
+    status=0
+    printf 'app/fixtures/excluded.ts\0' | bash "$runner" >collision.log 2>&1 || status=$?
+    test "$status" -ne 0 || { cat collision.log; return 1; }
+    grep -q 'global-job names intersect job tags' collision.log || { cat collision.log; return 1; }
+    if grep -q '_EXECUTED' collision.log; then cat collision.log; exit 1; fi
+  done
+  echo 'Global-name/tag collisions fail closed before any job executes.'
+}
 case "${1:-all}" in
   local-skip) local_skip ;;
   no-match) no_match ;;
   quotes) quoted_boundary ;;
   templates) unsupported_templates ;;
-  all) local_skip; no_match; quoted_boundary; unsupported_templates ;;
+  exclusions) exclusion_collisions ;;
+  all) local_skip; no_match; quoted_boundary; unsupported_templates; exclusion_collisions ;;
   *) exit 1 ;;
 esac
