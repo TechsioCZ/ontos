@@ -2,11 +2,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
-  PriceSourceAuthoritySchema,
   PriceSourceEvidenceSchema,
   PriceSourceFactFingerprintBasisSchema,
   PriceSourceFactFingerprintSchema,
-  PriceSourceMappingSchema,
   priceSourceFactFingerprintBasisFrom,
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import type {
@@ -47,8 +45,6 @@ const decodeFingerprint = Schema.decodeResult(PriceSourceFactFingerprintSchema);
 const decodeEvidence = Schema.decodeResult(PriceSourceEvidenceSchema);
 const identityKeyEquivalence = Schema.toEquivalence(PriceIdentityKeySchema);
 const priceRefEquivalence = Schema.toEquivalence(PriceRefSchema);
-const sourceAuthorityEquivalence = Schema.toEquivalence(PriceSourceAuthoritySchema);
-const sourceMappingEquivalence = Schema.toEquivalence(PriceSourceMappingSchema);
 
 export const priceSourceFactFingerprint = (sourceAssertion: PriceSourceAssertionInput) =>
   Result.getOrThrow(
@@ -166,8 +162,8 @@ export const priceSourceProvenanceMatchesDefinition = (
 
 /**
  * A source asserted the amount its exact Price already has: Pricing answers the Current source fact instead of
- * recording a second one. It must be a whole, self-consistent fact of the same source authority and mapping, for the
- * same Tenant and the asserted amount.
+ * recording a second one. It must be a whole, self-consistent fact for the same Tenant and the asserted amount; the
+ * Current fact may be another source's (the staff ERP editor's), the same amount is no change either way.
  */
 export const unchangedPriceSourceProvenanceMatches = (input: {
   readonly definition: PriceDefinition;
@@ -177,14 +173,11 @@ export const unchangedPriceSourceProvenanceMatches = (input: {
 }): boolean => {
   const { definition, expectedEvidence, monetaryAmount, provenance } = input;
   const current = provenance.evidence.sourceAssertion;
-  const asserted = expectedEvidence.sourceAssertion;
   return (
     priceSourceProvenanceMatchesDefinition(provenance, definition) &&
     provenance.evidence.tenantId === expectedEvidence.tenantId &&
     provenance.evidence.sourceFactFingerprint === priceSourceFactFingerprint(current) &&
     current.timing.ownerBusinessEffectiveAt === provenance.canonicalLink.effectiveFrom &&
-    sourceAuthorityEquivalence(current.sourceAuthority, asserted.sourceAuthority) &&
-    sourceMappingEquivalence(current.mapping, asserted.mapping) &&
     definition.revision.monetaryAmount.currencyCode === monetaryAmount.currencyCode &&
     priceDecimalValuesEqual(definition.revision.monetaryAmount.amount, monetaryAmount.amount)
   );

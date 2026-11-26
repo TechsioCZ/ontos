@@ -343,8 +343,9 @@ const buildPriceItem = Effect.fn('SymmyProductPlan.price')(function* buildPriceI
                 sourceAssertionId: occurrenceId,
                 sourceAuthority: priceSource.sourceAuthority,
                 sourceRecord: {
-                  // Version 1 is the initial source fact, not this delivery's occurrence.
-                  sourceChangeCorrelation: `initial:${record}`,
+                  // One source fact per asserted value: a re-sent price keeps its fact (and answers no change), a new
+                  // amount or start is a new fact that supersedes the Current one, whoever wrote that.
+                  sourceChangeCorrelation: `${record}:${price.currencyCode}:${price.amount}:${effectiveFrom}`,
                   sourceRecordRef: recordId,
                   sourceRecordVersion: '1',
                   sourceSystem,
