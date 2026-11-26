@@ -352,14 +352,32 @@ const manufacturerOf = (product: OwnerProduct): string | undefined => {
     : undefined;
 };
 
+const detailImagesOf = (product: OwnerProduct, hosts: readonly string[]) => {
+  const gallery =
+    product.gallery ??
+    (product.imageSrc !== undefined && product.imageSrc.length > 0 ? [product.imageSrc] : []);
+  return [
+    ...new Set(
+      gallery
+        .map((source) => imageOf(product.id, source, hosts))
+        .filter((source) => source !== null),
+    ),
+  ];
+};
+
+const detailParagraphsOf = (product: OwnerProduct, fallback: string) => {
+  if (product.descriptionParagraphs !== undefined) {
+    return product.descriptionParagraphs;
+  }
+  const description = product.description ?? fallback;
+  return description.length > 0 ? [description] : [];
+};
+
 const detailOf = (
   product: OwnerProduct,
   card: ProductCardModel,
   hosts: readonly string[],
 ): ProductDetailModel => {
-  const gallery =
-    product.gallery ??
-    (product.imageSrc !== undefined && product.imageSrc.length > 0 ? [product.imageSrc] : []);
   const variants = variantDetailsOf(product, card, hosts);
   const manufacturer = manufacturerOf(product);
   const detail: ProductDetailModel = {
@@ -372,22 +390,12 @@ const detailOf = (
           (document.url.startsWith("/") && !document.url.startsWith("//"))),
     ),
     imageAlt: product.imageAlt ?? product.name,
-    images: [
-      ...new Set(
-        gallery
-          .map((source) => imageOf(product.id, source, hosts))
-          .filter((source) => source !== null),
-      ),
-    ],
+    images: detailImagesOf(product, hosts),
     minimumQuantity:
       product.minimumQuantity !== undefined && product.minimumQuantity > 0
         ? product.minimumQuantity
         : 1,
-    paragraphs:
-      product.descriptionParagraphs ??
-      ((product.description ?? card.description).length > 0
-        ? [product.description ?? card.description]
-        : []),
+    paragraphs: detailParagraphsOf(product, card.description),
     parameters: product.parameters ?? [],
     priceExcludingVatMinor:
       variants.length > 0 || (product.variantSummary?.count ?? 0) > 0
@@ -442,7 +450,10 @@ export const projectCatalog = (
     const card: ProductCardModel = {
       ...Struct.pick(product, ["minimumQuantity", "packageQuantity", "unit"]),
       currency: body.market.currency,
-      description: product.shortDescription || product.description || "",
+      description:
+        (product.shortDescription ?? "").length > 0
+          ? (product.shortDescription ?? "")
+          : (product.description ?? ""),
       id: product.id,
       image: imageOf(
         product.id,

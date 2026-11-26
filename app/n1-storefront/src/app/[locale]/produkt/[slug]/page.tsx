@@ -24,15 +24,16 @@ export const generateMetadata = async ({
   const title = product.seoTitle || product.name;
   const description = product.seoDescription || product.paragraphs[0] || product.description;
   const [image] = product.images;
-  return {
-    ...(description.length > 0 ? { description } : {}),
-    openGraph: {
-      title,
-      ...(description.length > 0 ? { description } : {}),
-      ...(image === undefined ? {} : { images: [image] }),
-    },
-    title,
-  };
+  const openGraph: NonNullable<Metadata["openGraph"]> = { title };
+  const metadata: Metadata = { openGraph, title };
+  if (description.length > 0) {
+    metadata.description = description;
+    openGraph.description = description;
+  }
+  if (image !== undefined) {
+    openGraph.images = [image];
+  }
+  return metadata;
 };
 
 const ProductPage = async ({
@@ -63,15 +64,15 @@ const ProductPage = async ({
   // Historical N1 recommends by category. The current public owner read supports
   // one category, so use the actual primary category, never an unfiltered fallback.
   const category = result.catalog.categories.find((item) => item.id === product.categoryId);
-  const related =
-    product.relatedProductIds.length > 0
-      ? await getCatalog(
-          locale,
-          JSON.stringify({ productIds: product.relatedProductIds.slice(0, 24) }),
-        )
-      : category === undefined
-        ? undefined
-        : await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+  let related: Awaited<ReturnType<typeof getCatalog>> | undefined;
+  if (product.relatedProductIds.length > 0) {
+    related = await getCatalog(
+      locale,
+      JSON.stringify({ productIds: product.relatedProductIds.slice(0, 24) }),
+    );
+  } else if (category !== undefined) {
+    related = await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+  }
   const relatedLimit = product.relatedProductIds.length > 0 ? 24 : 4;
   const relatedCatalog =
     related?.state === "ready"

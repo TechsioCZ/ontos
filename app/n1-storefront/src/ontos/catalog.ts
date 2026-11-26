@@ -54,12 +54,14 @@ export const loadCatalog = (locale: string, query: CatalogQuery) =>
         pageSize: full ? 1 : 24,
         storefrontAppId: config.appId,
       };
-      const storefrontCatalog =
-        productIds !== undefined
-          ? { ...catalogQuery, productIds }
-          : productId === undefined
-            ? catalogQuery
-            : { ...catalogQuery, productIds: [productId] };
+      const storefrontCatalog: typeof catalogQuery & { productIds?: readonly string[] } = {
+        ...catalogQuery,
+      };
+      if (productIds !== undefined) {
+        storefrontCatalog.productIds = productIds;
+      } else if (productId !== undefined) {
+        storefrontCatalog.productIds = [productId];
+      }
       const body = yield* readOwner(
         config,
         "merchandise",

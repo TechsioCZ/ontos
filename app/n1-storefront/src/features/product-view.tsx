@@ -58,6 +58,21 @@ const productStockLabel = (
     .trim();
 };
 
+const parametersWithProductCode = (
+  selected: ReturnType<typeof selectProductDetail>["parameters"],
+  sku: string,
+  label: string,
+) => {
+  const hasProductCode = selected.some((parameter) =>
+    [getDictionary("cs").productCode, getDictionary("en").productCode].some(
+      (code) => parameter.label.trim().toLowerCase() === code.toLowerCase(),
+    ),
+  );
+  return sku.trim().length > 0 && !hasProductCode
+    ? [{ label, unit: "", value: sku }, ...selected]
+    : selected;
+};
+
 /** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
   categories = emptyCategories,
@@ -87,15 +102,7 @@ export const ProductView = ({
     selectionRequired,
     variant,
   } = selection;
-  const hasProductCode = selectedParameters.some((parameter) =>
-    [getDictionary("cs").productCode, getDictionary("en").productCode].some(
-      (label) => parameter.label.trim().toLowerCase() === label.toLowerCase(),
-    ),
-  );
-  const parameters =
-    current.sku.trim().length > 0 && !hasProductCode
-      ? [{ label: d.productCode, unit: "", value: current.sku }, ...selectedParameters]
-      : selectedParameters;
+  const parameters = parametersWithProductCode(selectedParameters, current.sku, d.productCode);
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
