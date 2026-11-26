@@ -96,7 +96,6 @@ const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
 const INSTALL_APP_ACTION = './.github/actions/install-app';
 const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
-const CHANGED_FILES_LINT_SHARD = 'shards=[0]';
 /** The overlay the gates workflow binds (CI_MATRICES_OVERLAY of its env), so the tests plan from what the gates run. */
 const MATRICES_OVERLAY = Schema.decodeUnknownSync(
   Schema.Struct({ env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.NonEmptyString }) }),
@@ -3210,7 +3209,7 @@ for (const [script, proof] of [
   });
 }
 
-it('lints only the changed files of a narrowed run unless a cross-file policy input changed', () => {
+it('defaults both workflows to whole-tree lint because even regular docs Markdown can be an outside input', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT_ACTION) === true);
   // A re-run of ci-plan, whose planning can fail after this upload, replaces it instead of failing on the name.
@@ -3223,14 +3222,22 @@ it('lints only the changed files of a narrowed run unless a cross-file policy in
   expect(plan?.steps.find(({ id }) => id === 'lint-shards')?.run).toBe('bash app/scripts/ci/choose-lint-shards.sh');
   const choose = readFileSync(new URL('../ci/choose-lint-shards.sh', import.meta.url), 'utf-8');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
-  const shardsFor = (mode: string, paths: readonly string[], snapshot = '', event = 'workflow_dispatch') => {
+  execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
+  const shardsFor = (
+    mode: string,
+    paths: readonly string[],
+    snapshot = '',
+    event = 'workflow_dispatch',
+    complete = true,
+  ) => {
     const changed = path.join(directory, 'changed');
     const output = path.join(directory, 'output');
-    writeFileSync(changed, paths.map((file) => `${file}\0`).join(''));
+    writeFileSync(changed, paths.join('\0') + (complete && paths.length > 0 ? '\0' : ''));
     writeFileSync(output, '');
     const history = path.join(directory, 'history.json');
     writeFileSync(history, snapshot);
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', choose], {
+      cwd: directory,
       env: {
         CHANGED_PATHS: changed,
         COMPARISON_SNAPSHOT: history,
@@ -3245,28 +3252,40 @@ it('lints only the changed files of a narrowed run unless a cross-file policy in
     return readFileSync(output, 'utf-8').trim();
   };
   try {
-    const ordinary = ['app/scripts/a b.sh', 'app/scripts/ordinary.sh'];
-    expect(shardsFor('affected', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
-    expect(shardsFor('scoped', ordinary)).toBe(CHANGED_FILES_LINT_SHARD);
-    expect(shardsFor('full', ordinary)).toBe(WHOLE_TREE_LINT_SHARDS);
+    const documents = ['docs/x.md', 'app/docs/y/z.md'];
+    for (const document of documents) {
+      mkdirSync(path.dirname(path.join(directory, document)), { recursive: true });
+      writeFileSync(path.join(directory, document), '# Before\n');
+      execFileSync(NATIVE_GIT, ['add', '--', document], { cwd: directory });
+    }
+    for (const document of documents) {
+      // Even real regular Markdown, added/modified/deleted, cannot earn changed-file lint:
+      // native-external-inputs.test.mts proves an enabled rule parses explicit .md imports.
+      expect(shardsFor('affected', [document]), `added ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
+      writeFileSync(path.join(directory, document), '# After\n');
+      expect(shardsFor('scoped', [document]), `modified ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
+      execFileSync(NATIVE_GIT, ['rm', '-f', '--', document], { cwd: directory });
+      expect(shardsFor('affected', [document]), `deleted ${document}`).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
+    expect(shardsFor('affected', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('scoped', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('full', documents)).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('scoped', [])).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('affected', [])).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(
-      shardsFor(
-        'affected',
-        Array.from({ length: 2001 }, (_, index) => `app/scripts/${index}.sh`),
-      ),
-    ).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(
-      shardsFor(
-        'affected',
-        Array.from({ length: 2000 }, (_, index) => `app/scripts/${index}.sh`),
-      ),
-    ).toBe(CHANGED_FILES_LINT_SHARD);
+    expect(shardsFor('affected', ['docs/a b.md', 'app/docs/line\nbreak.md'])).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('affected', ['docs/x.md'], '', 'push', false)).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('affected', ['docs/x.md', ''], '', 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
+    for (const count of [2000, 2001]) {
+      expect(
+        shardsFor(
+          'affected',
+          Array.from({ length: count }, (_, index) => `docs/${index}.md`),
+        ),
+      ).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
     const comparison = { ancestor: true, base: 'a'.repeat(40), changedPaths: [], truncated: false };
     expect(shardsFor('affected', [], JSON.stringify({ comparison }))).toBe('shards=["proof"]');
     expect(shardsFor('affected', [], JSON.stringify({ comparison }), 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
-    expect(shardsFor('affected', ordinary, JSON.stringify({ comparison }))).toBe(CHANGED_FILES_LINT_SHARD);
     for (const unknown of [
       null,
       { ...comparison, ancestor: false },
@@ -3277,72 +3296,38 @@ it('lints only the changed files of a narrowed run unless a cross-file policy in
     ]) {
       expect(shardsFor('affected', [], JSON.stringify({ comparison: unknown }))).toBe(WHOLE_TREE_LINT_SHARDS);
     }
-    for (const configuration of [
-      '.editorconfig',
-      'app/verticals/catalog/.editorconfig',
-      'app/.eslintignore',
-      'app/.prettierignore',
-      'app/.gitignore',
-      'app/verticals/catalog/.oxlintrc.jsonc',
-      'app/verticals/catalog/oxfmt.config.mts',
-      'app/oxlint.config.ts',
-      'app/.oxfmtrc.json',
-      LEFTHOOK_CONFIG,
-      'app/verticals/catalog/tsconfig.json',
-      'app/tools/oxlint/effect-native/rules/index.mts',
-      'app/patches/x.patch',
-      APP_PACKAGE_PATH,
+    // These regressions are examples of outside inputs, not a census for a denylist.
+    for (const outsideDocument of [
       'app/packages/shared-contracts/package.json',
-      'app/verticals/catalog/package.json',
-      'app/apps/shell-super-app/package.json',
-      'app/pnpm-lock.yaml',
-      'app/.mise.toml',
-      '.npmrc',
-      '.node-version',
-      '.tool-versions',
-      'mise.toml',
-      // Rule -> external inputs -> selector class (keep this census with new rule inputs).
-      // no-ambient-process-env + no-hand-parsed-environment-value -> compiler owner -> modern.config.*
       'app/verticals/facility-operations/modern.config.ts',
-      // no-effect-run-in-tests -> manifest + selected setup entries -> rstest.config.*
-      'app/verticals/party-registry/rstest.config.mjs',
-      // no-unregistered-native-test-imports -> root Rstest, workflow, base/overlay -> metadata
-      'app/rstest.config.ts',
-      GATES_WORKFLOW_PATH,
-      'app/scripts/ci-matrices.json',
       'app/scripts/ci-matrices.demo.json',
-      // The parser imported by that rule is executable policy, not just a linted script.
-      'app/scripts/ci/ci-matrices.mts',
-      'app/scripts/ci/ci-matrices-rules.mts',
-      'app/scripts/quality-cli-lifecycle.mts',
-      // no-service-constructor-imports -> data/passive factory imports + package source census -> source
-      // React Doctor no-barrel-import and import/{default,namespace,no-cycle,no-named-as-default,
-      // no-named-as-default-member,export} also follow source, including generated/ignored source.
-      'app/packages/core-runtime/src/data.ts',
-      'app/packages/tooling/outside-program.cjs',
-      'app/verticals/catalog/shared/ultramodern-build.ts',
-      // React Doctor no-img-without-dimensions -> sibling stylesheet imports -> styles
-      'app/verticals/catalog/src/preview.css',
-      'app/verticals/catalog/src/preview.scss',
-      // React Doctor project/DOM census -> HTML/MDX consumers -> markup
-      'app/verticals/catalog/index.html',
-      'app/verticals/catalog/docs/component.mdx',
-      'app/verticals/catalog/INDEX.HTML',
-      'app/verticals/catalog/docs/COMPONENT.MDX',
-      // React Doctor curated framework detection -> workspace/Expo/Nx metadata -> JSON/YAML/properties
-      'app/pnpm-workspace.yml',
-      'app/verticals/catalog/jsconfig.json',
-      'app/verticals/catalog/aliases.jsonc',
-      'app/verticals/catalog/app.json',
-      'app/verticals/catalog/project.json',
-      'app/nx.json',
-      'app/verticals/catalog/android/gradle.properties',
-      // Repository policy's managed-asset exemption -> lock + pinned generated asset -> managed assets
-      'app/.agents/skills-lock.json',
-      'app/.codex/skills/mf/assets/observability-chrome-devtool.iife.js',
+      GATES_WORKFLOW_PATH,
+      'app/verticals/catalog/Panel.vue',
+      'app/packages/tooling/README.md',
+      'settings.txt',
+      '.editorconfig',
+      'docs/UPPER.MD',
+      'Docs/x.md',
+      'app/DOCS/x.md',
+      'README.md',
+      'docs/x.mdx',
+      'docs/a b.sh',
+      'app/scripts/line\nbreak.sh',
     ]) {
-      expect(shardsFor('affected', [...ordinary, configuration]), configuration).toBe(WHOLE_TREE_LINT_SHARDS);
+      expect(shardsFor('affected', [outsideDocument]), outsideDocument).toBe(WHOLE_TREE_LINT_SHARDS);
+      expect(shardsFor('scoped', [...documents, outsideDocument]), outsideDocument).toBe(WHOLE_TREE_LINT_SHARDS);
     }
+    mkdirSync(path.join(directory, 'docs'), { recursive: true });
+    writeFileSync(path.join(directory, 'README.md'), '# Repository\n');
+    const docLink = 'docs/link.md';
+    const executableDoc = 'docs/executable.md';
+    symlinkSync('../README.md', path.join(directory, docLink));
+    execFileSync(NATIVE_GIT, ['add', '--', docLink], { cwd: directory });
+    expect(shardsFor('affected', [docLink])).toBe(WHOLE_TREE_LINT_SHARDS);
+    writeFileSync(path.join(directory, executableDoc), '# Executable\n');
+    execFileSync(NATIVE_GIT, ['add', '--', executableDoc], { cwd: directory });
+    execFileSync(NATIVE_GIT, ['update-index', '--chmod=+x', '--', executableDoc], { cwd: directory });
+    expect(shardsFor('affected', [executableDoc])).toBe(WHOLE_TREE_LINT_SHARDS);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -3359,8 +3344,9 @@ it('lints only the changed files of a narrowed run unless a cross-file policy in
 
 it('runs the lint rules and the whole-tree repository policy once in every plan, beside the lint', () => {
   const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
-  // The row every plan runs: shard 0 of a narrowed run, shard 1 of a whole-tree sweep. A scoped plan skips the
-  // Typecheck row, and the policy lints the whole app tree, so it runs here whatever the hook found.
+  // Every plan now selects whole-tree shard 1 here, even when scoped. A scoped plan skips the Typecheck
+  // row, and the policy lints the whole app tree, so it runs here whatever the hook found.
+  // The action still supports shard 0 for direct callers, but the selector cannot grant it.
   const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1");
   expect(lint.filter((step) => step.if === once).map(({ run }) => run)).toEqual([
     'mise exec -- pnpm typecheck:lint-rules',

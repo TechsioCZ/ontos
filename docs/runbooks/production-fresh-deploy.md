@@ -31,9 +31,11 @@ Zerops pricing for the services in `app/zerops-import.yaml` before you create an
    service IDs. Keep planning and unit builds parallel with lint, but require lint success before either
    delivering job can sync secrets or push. Red lint means stage was not changed by that run, even if
    its builds succeeded. Fix the findings and push again; the verified base has not advanced.
-   Use changed-file lint only with a complete comparison against a verified ancestor. Tool configuration
-   changes or unknown history require whole-tree lint. A recovery dispatch of an exact already verified
-   commit uses one global-check `proof` row, not skipped lint, and still delivers every service.
+   Both workflows lint the whole tree, even when the delivery plan narrows other gates. Regular Markdown
+   under `docs/` or `app/docs/` is not an exception: an enabled rule can parse explicit `.md` imports and
+   change an untouched file's result. Unknown history also requires whole-tree lint.
+   A recovery dispatch of an exact already verified commit with a complete empty comparison
+   uses one global-check `proof` row, not skipped lint, and still delivers every service.
 3. Import the services from `app/zerops-import.yaml` into a new Zerops project.
 4. As a human operator, create the identity secrets on `app` and the `spicedb` secrets on `spicedb`.
 5. Route the custom domain to the `app` service.

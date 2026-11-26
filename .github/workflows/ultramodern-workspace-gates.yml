@@ -241,10 +241,9 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           bash scripts/plan-ci-without-install.sh "${args[@]}"
-      # A narrowed (affected or scoped) run lints only its changed files, on one runner (shard 0), through the same
-      # hook. The one real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
-      # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
-      # every complete run keep the three whole-tree shards.
+      # Both workflows lint the whole tree even for narrowed plans. Regular docs Markdown is not an exception:
+      # the enabled service-constructor rule can read explicit .md imports. Only exact verified-SHA dispatches
+      # with a complete empty comparison earn the global-only proof row; unknown history never narrows lint.
       - name: Choose the format and lint shards
         id: lint-shards
         if: steps.selection.outputs.mode != ''
@@ -842,14 +841,15 @@ jobs:
         run: mise exec -- pnpm authorization:catalog:artifact:check
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
-  # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
+  # over the selected files; the hook's own globs choose what each tool checks. Whole-tree rows collectively cover
+  # every tracked file (`git ls-files`), even when the plan narrows other gates.
   # The type-aware rules and the lint type check run on Effect's patched tsgolint, which reports type errors of the
   # files the hook lists, each under its own tsconfig. tsrs-lint (0.23 and later) reports every file of every program
   # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
   # script under the vertical's options, and a script importing vertical source checked that source under the script
   # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
   # so each shard takes one contiguous slice of the tracked files that starts at a package root: a slice loads only the
-  # programs of the packages in it, and lefthook still cuts a slice into command lines that each fit a runner (one run
+  # programs of the packages in it, and CI's lint-files.sh cuts each slice into bounded hook batches (one run
   # over all verticals did not). The slices are cut by measured lint seconds, not file counts: a scripts file costs about
   # 0.13 s, a Shell or Core Runtime file 0.07 s and a vertical file 0.04 to 0.08 s (the 24 lint command lines of runs
   # 44523282275, 44508998551 and 44498704633). Shard 1 holds the Shell, Core Runtime and the contracts packages and runs
@@ -860,8 +860,8 @@ jobs:
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
-  # candidate check, over every file.
-  # The first shard (0 on a narrowed run, 1 otherwise) also typechecks and tests the Effect lint rules and runs the
+  # candidate check. Every tracked file is covered only on the whole-tree rows.
+  # Whole-tree shard 1 also typechecks and tests the Effect lint rules and runs the
   # repository policy, as main's lint job does. The policy lints the whole app tree, the storefronts and every script
   # included, which the hook's lint globs leave out or check with milder rules, and the rule tests lint real storefront
   # files, so they belong to this row that every plan runs: a scoped plan skips the Typecheck row.
@@ -875,7 +875,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [0] on a narrowed run without tool configuration changes: the changed files only. [1, 2, 3] otherwise.
+        # [1, 2, 3] even for narrowed plans. The shared selector cannot grant changed-file lint.
         shard: ${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}
     steps:
       - name: Harden Runner

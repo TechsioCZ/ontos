@@ -105,3 +105,100 @@ it('removing only the production-declarations matrix invocation invalidates its 
     ]);
     expect(readFileSync(path.join(root, target), 'utf-8')).toBe(source);
   }));
+
+for (const suffix of ['vue', 'svelte', 'astro', 'md']) {
+  it(`a ${suffix} edit ${suffix === 'md' ? 'does not enter' : 'changes'} the untouched importer's cycle graph`, () =>
+    fixture((root) => {
+      const target = 'entry.ts';
+      const source = `import { panel } from './docs/Panel.${suffix}';\nexport const entry = panel;\n`;
+      write(root, target, source);
+      const wrap = (script: string) =>
+        suffix === 'astro' ? `---\n${script}\n---\n` : `<script>\n${script}\n</script>\n`;
+      write(root, `docs/Panel.${suffix}`, wrap('export const panel = 1;'));
+      const configuration = path.join(root, 'import-config.json');
+      writeFileSync(configuration, JSON.stringify({ plugins: ['import'], rules: { 'import/no-cycle': 'error' } }));
+      expect(runOxlint(configuration, [target], root).exitCode).toBe(0);
+      write(root, `docs/Panel.${suffix}`, wrap("import { entry } from '../entry';\nexport const panel = entry;"));
+      const after = runOxlint(configuration, [target], root);
+      expect(after.exitCode).toBe(suffix === 'md' ? 0 : 1);
+      expect(after.diagnostics.map(({ code }) => code)).toEqual(suffix === 'md' ? [] : ['import(no-cycle)']);
+      expect(readFileSync(path.join(root, target), 'utf-8')).toBe(source);
+    }));
+}
+
+it('a package README symlink invalidates an untouched registered tooling command', () =>
+  fixture((root) => {
+    const owner = 'packages/tooling';
+    const target = `${owner}/commands/audit.mts`;
+    const source = `import { NodeServices } from '@effect/platform-node';
+import { Effect, Exit, ManagedRuntime } from 'effect';
+import { makeParser } from './parser.mts';
+export const inspect = (source: string) => { const parser = makeParser(source); return parser.parse(); };
+const main = Effect.gen(function* () { inspect('const value = 1'); });
+const [, invokedPath] = process.argv;
+if (invokedPath === import.meta.filename) {
+  const runtime = ManagedRuntime.make(NodeServices.layer);
+  const exit = await runtime.runPromiseExit(main);
+  process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
+}`;
+    write(root, target, source);
+    write(
+      root,
+      `${owner}/package.json`,
+      JSON.stringify({ name: 'tooling-owner', scripts: { audit: 'node ./commands/audit.mts' } }),
+    );
+    write(
+      root,
+      `${owner}/commands/parser.mts`,
+      `import { parseSync } from 'oxc-parser';
+export const makeParser = (source: string) => {
+  const cache = new Map();
+  return { parse: () => { cache.set(source, parseSync('input.ts', source)); return cache.get(source); } };
+};`,
+    );
+    const configuration = path.join(root, 'tooling-config.json');
+    writeFileSync(
+      configuration,
+      JSON.stringify({
+        categories: { correctness: 'off' },
+        jsPlugins: [{ name: 'anti-slop-effect', specifier: './tools/oxlint/anti-slop/effect/index.ts' }],
+        rules: { 'anti-slop-effect/no-service-constructor-imports': 'error' },
+      }),
+    );
+    const before = runOxlint(configuration, [target], root);
+    expect(before.exitCode, JSON.stringify(before.diagnostics)).toBe(0);
+    write(root, 'README.md', '# Repository\n');
+    symlinkSync('../../README.md', path.join(root, owner, 'README.md'));
+    const after = runOxlint(configuration, [target], root);
+    expect(after.exitCode).toBe(1);
+    expect(after.diagnostics.map(({ code }) => code)).toEqual(['anti-slop-effect(no-service-constructor-imports)']);
+    expect(readFileSync(path.join(root, target), 'utf-8')).toBe(source);
+  }));
+
+it('a regular docs Markdown import can change an untouched service-constructor finding', () =>
+  fixture((root) => {
+    const target = 'src/runtime.ts';
+    const source = "import { makeParser } from '../docs/parser.md';\nexport const parser = makeParser('value');\n";
+    write(root, target, source);
+    write(root, 'docs/parser.md', 'export const makeParser = (source) => ({ source });\n');
+    const configuration = path.join(root, 'markdown-config.json');
+    writeFileSync(
+      configuration,
+      JSON.stringify({
+        categories: { correctness: 'off' },
+        jsPlugins: [{ name: 'anti-slop-effect', specifier: './tools/oxlint/anti-slop/effect/index.ts' }],
+        rules: { 'anti-slop-effect/no-service-constructor-imports': 'error' },
+      }),
+    );
+    const before = runOxlint(configuration, [target], root);
+    expect(before.exitCode, JSON.stringify(before.diagnostics)).toBe(0);
+    write(
+      root,
+      'docs/parser.md',
+      "import { Effect } from 'effect';\nexport const makeParser = () => Effect.succeed(1);\n",
+    );
+    const after = runOxlint(configuration, [target], root);
+    expect(after.exitCode).toBe(1);
+    expect(after.diagnostics.map(({ code }) => code)).toEqual(['anti-slop-effect(no-service-constructor-imports)']);
+    expect(readFileSync(path.join(root, target), 'utf-8')).toBe(source);
+  }));
