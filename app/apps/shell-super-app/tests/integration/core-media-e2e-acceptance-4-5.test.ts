@@ -330,6 +330,36 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
+      'row 4: SpiceDB UNAVAILABLE never lets a byte PUT succeed or close the asset (CONTROLLED FAULT INJECTION: engine partition)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* engineDownDuringUpload() {
+              const injection = yield* requireFaultInjection(ctx, world);
+              const uploader = person(world, 'uploader');
+              yield* world.grant(uploader, uploaderCapabilities);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('an upload with no decision is no upload');
+              const id = (yield* reserve(world, uploader, bytes, { idempotencyKey: 'engine-put' })).mediaAssetRef
+                .resourceId;
+
+              injection.engine.setDown(true);
+              const put = yield* putBytes(edge, uploader, id, bytes);
+              injection.engine.setDown(false);
+              // Whether or not any byte reached the store (decision 5 accepts bytes before confirm is decided), a
+              // missing decision is a retryable refusal: nothing is sealed and nothing is closed.
+              expect(put.status).toBe(503);
+              expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'uploaded', sealed_at: null });
+
+              const recovered = yield* untilStatus(world, putBytes(edge, uploader, id, bytes), 200);
+              expect(recovered.status).toBe(200);
+              expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'ready' });
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
       'row 4: a foreign principal naming this tenant in the reference learns nothing, and a grant aimed at one asset reaches that asset and no other',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
