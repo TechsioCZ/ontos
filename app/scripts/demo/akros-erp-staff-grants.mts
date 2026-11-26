@@ -54,12 +54,6 @@ export const AKROS_ERP = {
 
 /** The modules the ERP product editor drives: Catalog (product, category, media), Pricing and Inventory. */
 export const ERP_EDITOR_MODULES: readonly string[] = ['commerce.catalog', 'commerce.pricing', 'commerce.inventory'];
-
-/** Single cells of other modules the editor reads: the company's Price Groups it lists one group Price row for. */
-export const ERP_EDITOR_CAPABILITIES: readonly string[] = [
-  'pricing.price-group-catalog.price-group-source-associations.read',
-];
-
 /** The two reviewed AKROS roles of the e-shop operator, by name; company role first. */
 export const ERP_ROLES = [
   { legalEntityId: AKROS_ERP.legalEntityId, name: 'Správce e-shopu' },
@@ -76,7 +70,7 @@ export const erpEditorCells = (catalog: CatalogSnapshot) =>
   Effect.forEach(
     catalog.entries.filter(
       (entry) =>
-        (ERP_EDITOR_MODULES.includes(String(entry.moduleKey)) || ERP_EDITOR_CAPABILITIES.includes(String(entry.key))) &&
+        ERP_EDITOR_MODULES.includes(String(entry.moduleKey)) &&
         entry.modes.includes('run') &&
         entry.kind !== 'admin' &&
         entry.baseline === undefined &&

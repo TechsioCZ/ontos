@@ -1,83 +1,40 @@
-// The company's Price Groups the ERP editor lists one Price row each for: Price Group Catalog's source associations of
-// the company's Symmy price-list route (each group the ERP price lists created), read with the staff member's session.
-import { makeOperationGateway } from '@app/shared-contracts';
-import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Effect, Redacted, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+// The company's customer Price Groups the ERP editor lists one Price row each for. Demo shortcut: the AKROS groups the
+// ERP price lists created (Price Group Catalog, Symmy route 9e355544…) are named here like the company's ERP offer in
+// erp-offer.ts; staff cannot read the catalog's source associations with a company selected yet.
+import { Effect } from 'effect';
 
 import type { ErpOffer } from './erp-offer.ts';
 
-const RefSchema = Schema.Struct({
-  moduleId: Schema.String,
-  resourceId: Schema.String,
-  resourceType: Schema.String,
-  tenantId: Schema.String,
-});
-
-const PriceGroupSourceAssociationsApi = HttpApi.make('PriceGroupSourceAssociationsApi').add(
-  HttpApiGroup.make('priceGroupSourceAssociations').add(
-    HttpApiEndpoint.post('execute', '/reads/price-group-source-associations', {
-      payload: Schema.Struct({
-        issuer: Schema.String,
-        limit: Schema.Number,
-        namespace: Schema.String,
-        offset: Schema.Number,
-        routeId: Schema.String,
-      }),
-      success: Schema.Struct({
-        associations: Schema.Array(
-          Schema.Struct({ priceGroupRef: RefSchema, sourceCorrelation: Schema.Struct({ recordKey: Schema.String }) }),
-        ),
-        count: Schema.Number,
-      }),
-    }),
-  ),
-);
-
-/** The Symmy price-list route each company's ERP price groups were imported through (AKROS only today). */
-const priceGroupSources: Readonly<Record<string, { issuer: string; namespace: string; routeId: string }>> = {
-  akros: { issuer: 'symmy-akros', namespace: 'akros-erp', routeId: '9e355544-4242-4704-a9d3-0ef0832fc328' },
-};
-
-const gateway = makeOperationGateway('price-group-catalog');
-
 export interface ErpPriceGroup {
   readonly label: string;
-  readonly priceGroupRef: typeof RefSchema.Type;
+  readonly priceGroupRef: {
+    readonly moduleId: 'pricing.price-group-catalog';
+    readonly resourceId: string;
+    readonly resourceType: 'pricing.price-group-catalog.price-group';
+    readonly tenantId: string;
+  };
 }
 
-/** The company's Price Groups by their ERP code, or none when the offer's company has no ERP price-list route. */
-export const readErpPriceGroups = (offer: ErpOffer, requestCorrelation: string) => {
-  const source = priceGroupSources[offer.customerConfigurationId];
-  if (source === undefined) {
-    return Effect.succeed<readonly ErpPriceGroup[]>([]);
-  }
-  return gateway
-    .invoke((credential, { apiBaseUrl, compositionRevision }) =>
-      makeGovernedEffectBffClient(
-        {
-          api: PriceGroupSourceAssociationsApi,
-          credential: Redacted.make(credential),
-          defaultApiPrefix: '/price-group-catalog-api',
-          requestCorrelation,
-        },
-        { baseUrl: apiBaseUrl, compositionRevision },
-      ).pipe(
-        Effect.flatMap((client) =>
-          client.priceGroupSourceAssociations.execute({ payload: { ...source, limit: 100, offset: 0 } }),
-        ),
-      ),
-    )
-    .pipe(
-      Effect.map(({ associations }) => {
-        const seen = new Set<string>();
-        return associations.flatMap(({ priceGroupRef, sourceCorrelation }): ErpPriceGroup[] => {
-          if (seen.has(priceGroupRef.resourceId)) {
-            return [];
-          }
-          seen.add(priceGroupRef.resourceId);
-          return [{ label: sourceCorrelation.recordKey, priceGroupRef }];
-        });
-      }),
-    );
+const group = (tenantId: string, resourceId: string, label: string): ErpPriceGroup => ({
+  label,
+  priceGroupRef: {
+    moduleId: 'pricing.price-group-catalog',
+    resourceId,
+    resourceType: 'pricing.price-group-catalog.price-group',
+    tenantId,
+  },
+});
+
+const akrosTenant = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
+const groupsByConfiguration: Readonly<Record<string, readonly ErpPriceGroup[]>> = {
+  akros: [
+    group(akrosTenant, '64cc6324-0de4-418d-bbec-7fe26077db8c', 'Velkoobchod'),
+    group(akrosTenant, 'a7bbc612-21a4-44da-9835-7645ccf49927', 'Cenová třída 0'),
+    group(akrosTenant, '28103be6-1089-48a8-99a4-c2764c51458a', 'Cenová třída 2'),
+    group(akrosTenant, 'e1834b20-a336-4b3e-91e4-7c619179ff21', 'Cenová třída 3'),
+  ],
 };
+
+/** The company's Price Groups, or none when the offer's company has no ERP price lists. */
+export const readErpPriceGroups = (offer: ErpOffer, _requestCorrelation: string) =>
+  Effect.succeed<readonly ErpPriceGroup[]>(groupsByConfiguration[offer.customerConfigurationId] ?? []);
