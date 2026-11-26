@@ -695,6 +695,7 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
     callers: [
       { authMethod: 'session', principalId: fixture.integration.issuerPrincipalId },
       { authMethod: 'api_key', principalId: fixture.integration.principalId },
+      { authMethod: 'system', principalId: fixture.systemId },
     ],
     connections: fixture.isolated.connections,
     expectedPartyRevision: known.facts.partyRevision,
@@ -1044,6 +1045,7 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
       callers: [
         { authMethod: 'session', principalId: fixture.integration.issuerPrincipalId },
         { authMethod: 'api_key', principalId: fixture.integration.principalId },
+        { authMethod: 'system', principalId: fixture.systemId },
       ],
       connections: fixture.isolated.connections,
       expectedPartyRevision: after.partyRevision,

@@ -113,6 +113,7 @@ const groupOperation = (entrypointKey: string) => ({
 });
 const inventoryOwner = 'commerce.inventory';
 const groupAppId = 'commerce-customer-context';
+const symmyAppId = 'symmy-integration';
 const groupPath = 'customer-groups/batch';
 const stockPath = 'inventory/stock/batch';
 const productsPath = 'products/batch';
@@ -320,7 +321,7 @@ it.live(
           inventory: `http://127.0.0.1:${stockBarrierPort}/`,
           'price-group-catalog': `http://127.0.0.1:${priceGroupPort}/`,
           pricing: `http://127.0.0.1:${pricingPort}/`,
-          'symmy-integration': `http://127.0.0.1:${retryPort}/`,
+          [symmyAppId]: `http://127.0.0.1:${retryPort}/`,
         };
         const { contracts, snapshot } = yield* productComposition(backends);
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -331,6 +332,10 @@ it.live(
         const authority = yield* prepareInternalSyncAuthority(isolated, snapshot);
         const { admin, environment, ingressKey, integration, legalEntityId, shell, systemPrincipalId, tenantId } =
           authority;
+        const symmyModuleKey = yield* Effect.fromOption(
+          Option.fromUndefinedOr(authority.moduleCredentials.get(symmyAppId)),
+          () => new SymmyC14ProductFixtureUnavailable({ message: 'The provisioned Symmy module key is missing' }),
+        );
         const spiceEnvironment = yield* Config.all({
           SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
           SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
@@ -518,9 +523,6 @@ it.live(
         ]);
         const ownerDiagnostics: Effect.Effect<string>[] = [];
         const ownerOutput = new Map<string, Queue.Queue<string>>();
-        const moduleEnvironments = new Map(
-          [...authority.moduleCredentials].map(([appId, key]) => [appId, { ONTOS_GATEWAY_MODULE_API_KEY: key }]),
-        );
         for (const [appId, port, prefix] of [
           ['catalog', catalogPort, '/catalog-api'],
           [groupAppId, commercePort, '/commerce-customer-context-api'],
@@ -528,7 +530,7 @@ it.live(
           ['pricing', pricingPort, '/pricing-api'],
           ['price-group-catalog', priceGroupPort, '/price-group-catalog-api'],
           ['commerce-market-catalog', marketPort, '/commerce-market-catalog-api'],
-          ['symmy-integration', symmyPort, '/symmy-integration-api'],
+          [symmyAppId, symmyPort, '/symmy-integration-api'],
         ] as const) {
           const contract = contracts.find(({ deployment }) => deployment.appId === appId);
           assert.isOk(contract);
@@ -537,10 +539,10 @@ it.live(
             contract,
             environment: {
               ...ownerEnvironment,
-              ...moduleEnvironments.get(appId),
               ...faultByOwner.get(appId),
               ONTOS_C14_PROVISIONING_RESPONSE_LOSS_MARKER: provisioningFaultMarker,
             },
+            moduleKey: authority.moduleCredentials.get(appId),
             port,
             prefix,
           });
@@ -774,7 +776,7 @@ it.live(
           jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
           status: Schema.Literal('queued'),
         });
-        const symmyContract = contracts.find(({ deployment }) => deployment.appId === 'symmy-integration');
+        const symmyContract = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
         assert.isDefined(symmyContract);
         const workerArtifact = yield* buildProductWorker(symmyContract);
         const runSourceJob = Effect.fn('InternalC14Sync.runRegisteredSourceJob')(function* runSourceJob(input: {
@@ -796,10 +798,14 @@ it.live(
           }
           expect(accepted.status).toBe(202);
           const { jobId } = yield* accepted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)));
-          const worker = yield* startProductWorker(workerArtifact, {
-            ...ownerEnvironment,
-            ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
-          });
+          const worker = yield* startProductWorker(
+            workerArtifact,
+            {
+              ...ownerEnvironment,
+              ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+            },
+            symmyModuleKey,
+          );
           const activeWorker = yield* interrupted
             ? Effect.gen(function* restartAfterLostAck() {
                 const output = ownerOutput.get('inventory');
@@ -822,10 +828,14 @@ it.live(
                 yield* worker.child.kill();
                 yield* worker.child.exitCode.pipe(Effect.timeout(Duration.seconds(20)));
                 yield* fs.remove(provisioningFaultMarker);
-                const restarted = yield* startProductWorker(workerArtifact, {
-                  ...ownerEnvironment,
-                  ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
-                });
+                const restarted = yield* startProductWorker(
+                  workerArtifact,
+                  {
+                    ...ownerEnvironment,
+                    ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+                  },
+                  symmyModuleKey,
+                );
                 const recovery = yield* Stream.fromQueue(output).pipe(
                   Stream.filterMap((line) =>
                     Schema.decodeUnknownResult(
@@ -1683,10 +1693,14 @@ it.live(
         });
         expect(categoryFree.status).toBe(202);
         const negativeJob = yield* categoryFree.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)));
-        const negativeWorker = yield* startProductWorker(workerArtifact, {
-          ...ownerEnvironment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
-        });
+        const negativeWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...ownerEnvironment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+          },
+          symmyModuleKey,
+        );
         yield* admin`select count(distinct e.effect_id)::integer as count
           from symmy_integration.job_effects e
           join core.action_invocations i on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id

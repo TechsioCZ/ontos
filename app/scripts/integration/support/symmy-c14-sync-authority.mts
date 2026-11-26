@@ -89,7 +89,7 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
       sourceAppId: (typeof callingOwners)[number],
     ) {
       const key = yield* shell.provisionModuleSource(sourceAppId);
-      return [sourceAppId, Redacted.value(key.secret)] as const;
+      return [sourceAppId, key.secret] as const;
     }),
     { concurrency: 1 },
   );
@@ -117,8 +117,8 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     ingressKey,
     integration,
     legalEntityId,
-    moduleCredentials: new Map<string, string>([
-      ['symmy-integration', Redacted.value(symmyKey.secret)],
+    moduleCredentials: new Map<string, Redacted.Redacted>([
+      ['symmy-integration', symmyKey.secret],
       ...moduleCredentials,
     ]),
     shell,

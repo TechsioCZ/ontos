@@ -508,6 +508,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       routeRef: sourceRouteId,
     };
     const flatSource = { ...sourceIdentity, occurrenceId, recordId };
+    const partySourceReference = { occurrenceId, recordId, source: sourceIdentity };
     const privacy = yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: [
@@ -536,7 +537,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           request: {
             consumerModuleId: commerceModuleId,
             operation: 'PROFILE_CREATE',
-            partySourceReference: { occurrenceId, recordId, source: sourceIdentity },
+            partySourceReference,
             source: flatSource,
             target: null,
           },
@@ -985,7 +986,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       ...customerContexts(scope, roundTripKey, [{ kind: 'existing', recordId }]),
       ...customerContexts(scope, beforeDisableKey, [{ kind: 'existing', recordId }]),
     ];
-    const readContexts = readbackContexts(scope, flatSource);
+    const readContexts = readbackContexts(scope, flatSource, partySourceReference);
     // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
     const sourceReadback = yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
@@ -1216,7 +1217,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     // The first customer's binding moved to its newest observation, which the profile read now names.
     const roundTripReadback = yield* seedCommittedProfileSourceProcessingNativeFixture({
       connections: isolated.connections,
-      contexts: readbackContexts(scope, roundTripSource).filter(
+      contexts: readbackContexts(scope, roundTripSource, partySourceReference).filter(
         ({ request }) => request.operation === 'customer-profile-source.read',
       ),
       contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_ROUND_TRIP_READ_CONTRACT',
@@ -1313,6 +1314,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       contexts: readbackContexts(
         { ...scope, partyId: secondParty.partyRef.resourceId, profileId: secondProfile.profileRef.resourceId },
         secondFlatSource,
+        { occurrenceId: secondFlatSource.occurrenceId, recordId: secondRecordId, source: sourceIdentity },
       ),
       contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_READ_CONTRACT',
       controllerRef: customerController,
