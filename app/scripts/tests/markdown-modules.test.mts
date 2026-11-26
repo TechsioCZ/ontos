@@ -23,7 +23,7 @@ const literal = (node: Expression | Argument | undefined): string | undefined =>
 const markdownModules = (file: string, source: string) => {
   const modules: string[] = [];
   const add = (value: string | undefined) => {
-    if (value !== undefined && /\.mdx?(?:[?#]|$)/u.test(value)) {
+    if (value !== undefined && /^[^?#]*\.mdx?(?:[?#]|$)/u.test(value)) {
       modules.push(value);
     }
   };
@@ -58,6 +58,8 @@ const markdownModules = (file: string, source: string) => {
 // This fixture is source text, not an import. No tracked source file is exempt from the guard.
 // This guard is a tripwire against an accidental Markdown import, not a defence against deliberate obfuscation.
 const fixture = `
+import './loader.ts?doc=guide.md#intro';
+import './loader.ts#guide.md';
 import './side-effect.md';
 import doc from './guide.md#intro' with { type: 'text' };
 import {
