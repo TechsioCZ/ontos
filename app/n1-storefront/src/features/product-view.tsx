@@ -22,6 +22,8 @@ import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
 import { FavoriteToggle } from "./favorite-toggle";
+import { formatMarketAmount } from "./price-props";
+import { ProductLabels } from "./product-labels";
 
 const emptyCategories: CatalogModel["categories"] = [];
 const galleryItems = (images: readonly string[], imageAlt: string) =>
@@ -56,6 +58,29 @@ const productStockLabel = (
     .replace("{quantity}", () => quantity)
     .replace("{unit}", () => current.unit)
     .trim();
+};
+
+const formatQuantity = (quantity: number, locale: string) =>
+  new Intl.NumberFormat(locale === "en" ? "en-GB" : "cs-CZ", { maximumFractionDigits: 3 }).format(
+    quantity,
+  );
+
+/** Weight and dimensions staff enter in OntOS, listed with the product parameters. */
+const physicalParameters = (
+  product: ProductDetailModel,
+  variant: ProductDetailModel["variants"][number] | undefined,
+  d: Dictionary,
+  locale: string,
+) => {
+  const weight = variant?.weightGrams ?? product.weightGrams;
+  return [
+    ...(weight === null
+      ? []
+      : [{ label: d.productWeight, unit: "g", value: formatQuantity(weight, locale) }]),
+    ...(product.dimensionsText === null
+      ? []
+      : [{ label: d.productDimensions, unit: "", value: product.dimensionsText }]),
+  ];
 };
 
 const parametersWithProductCode = (
@@ -102,7 +127,12 @@ export const ProductView = ({
     selectionRequired,
     variant,
   } = selection;
-  const parameters = parametersWithProductCode(selectedParameters, current.sku, d.productCode);
+  const parameters = [
+    ...parametersWithProductCode(selectedParameters, current.sku, d.productCode),
+    ...physicalParameters(product, variant, d, locale),
+  ];
+  const labels = [...new Set([...(product.labels ?? []), ...(variant?.labels ?? [])])];
+  const quantityPrices = variant === undefined ? product.priceTiers : variant.priceTiers;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -154,6 +184,7 @@ export const ProductView = ({
         </h1>
         <div aria-hidden="true" className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block" />
       </div>
+      <ProductLabels className="-mt-4 mb-6" dictionary={d} labels={labels} />
       <div className="grid gap-8 md:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]">
         <div className="min-w-0">
           <Gallery
@@ -228,6 +259,11 @@ export const ProductView = ({
                 {variant.name}
               </p>
             )}
+            {variant !== undefined && variant.description.length > 0 && (
+              <p className="order-2 whitespace-pre-line text-fg-secondary md:order-none md:basis-full">
+                {variant.description}
+              </p>
+            )}
             <div className="hidden md:ml-auto md:block">
               <Link as={NextLink} href={`/${locale}/doprava`}>
                 {d.shippingOptions}
@@ -236,6 +272,31 @@ export const ProductView = ({
           </div>
           <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
             <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
+            {current.packageQuantity !== undefined && current.packageQuantity > 1 && (
+              <p className="mt-1 text-sm text-fg-secondary">
+                {d.packageQuantity
+                  .replace("{quantity}", () => formatQuantity(current.packageQuantity ?? 0, locale))
+                  .replace("{unit}", () => current.unit ?? "")
+                  .trim()}
+              </p>
+            )}
+            {quantityPrices.length > 0 && (
+              <div className="mt-2">
+                <p className="text-sm font-semibold">{d.quantityPrices}</p>
+                <ul className="text-sm">
+                  {quantityPrices.map((tier) => (
+                    <li key={tier.minimumQuantity}>
+                      {d.quantityPriceFrom
+                        .replace("{quantity}", () => formatQuantity(tier.minimumQuantity, locale))
+                        .replace("{unit}", () => current.unit ?? "")
+                        .replace("{price}", () =>
+                          formatMarketAmount(tier.priceMinor, locale, current.currency),
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <div className="order-5 md:hidden">
             <Link as={NextLink} href={`/${locale}/doprava`}>

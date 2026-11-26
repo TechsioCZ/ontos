@@ -4,6 +4,37 @@ import { isStorefrontMediaPath, productMediaPath } from "./media-path";
 
 const optionalNumber = Schema.optionalKey(Schema.Number);
 const optionalString = Schema.optionalKey(Schema.String);
+// Staff-edited OntOS fields the N1 design did not originally render; read leniently so one odd value never hides the catalogue.
+const optionalUnknown = Schema.optionalKey(Schema.Unknown);
+const ownerFlagFields = {
+  flags: optionalUnknown,
+  isAction: optionalUnknown,
+  isNew: optionalUnknown,
+  isRecommended: optionalUnknown,
+  isSale: optionalUnknown,
+  labels: optionalUnknown,
+  originalPriceMinor: optionalUnknown,
+  sourceUnit: optionalUnknown,
+  weightGrams: optionalUnknown,
+};
+export const ProductLabelSchema = Schema.Literals(["action", "new", "recommended", "sale"]);
+export type ProductLabel = typeof ProductLabelSchema.Type;
+const productLabels: readonly ProductLabel[] = ["action", "new", "recommended", "sale"];
+const flagKey = { action: "isAction", new: "isNew", recommended: "isRecommended", sale: "isSale" };
+/** The four OntOS storefront labels, set as booleans, a nested flags object or a labels list. */
+const labelsOf = (record: Readonly<Record<string, unknown>>): ProductLabel[] => {
+  const nested =
+    typeof record.flags === "object" && record.flags !== null
+      ? (record.flags as Readonly<Record<string, unknown>>)
+      : {};
+  const all = { ...record, ...nested };
+  const listed = Array.isArray(all.labels) ? all.labels : [];
+  return productLabels.filter((label) => all[flagKey[label]] === true || listed.includes(label));
+};
+const positive = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+const filled = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 const StoreCurrencySchema = Schema.Literals(["CZK", "EUR", "PLN"]);
 const VariantPreviewItemsSchema = Schema.Array(
   Schema.Struct({ id: Schema.String, name: Schema.String }),
@@ -46,8 +77,12 @@ export const CatalogResponseSchema = Schema.Struct({
     Schema.Struct({
       active: Schema.optionalKey(Schema.Boolean),
       availability: optionalString,
+      ...ownerFlagFields,
       brand: optionalString,
       categoryId: optionalString,
+      heightMm: optionalUnknown,
+      lengthMm: optionalUnknown,
+      widthMm: optionalUnknown,
       currency: optionalString,
       currentPriceMinor: optionalNumber,
       description: optionalString,
@@ -86,8 +121,10 @@ export const CatalogResponseSchema = Schema.Struct({
         Schema.Array(
           Schema.Struct({
             active: Schema.Boolean,
+            ...ownerFlagFields,
             attributes: Schema.String,
             availability: Schema.String,
+            description: optionalUnknown,
             grossPriceMinor: Schema.Number,
             id: Schema.String,
             imageSrc: optionalString,
@@ -120,8 +157,10 @@ export const ProductCardModelSchema = Schema.Struct({
   description: Schema.String,
   id: Schema.String,
   image: Schema.NullOr(Schema.String),
+  labels: Schema.optionalKey(Schema.Array(ProductLabelSchema)),
   minimumQuantity: optionalNumber,
   name: Schema.String,
+  originalPriceMinor: optionalNumber,
   packageQuantity: optionalNumber,
   priceExcludingVatMinor: Schema.optionalKey(
     Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -141,12 +180,22 @@ export const ProductCardModelSchema = Schema.Struct({
 
 export type ProductCardModel = typeof ProductCardModelSchema.Type;
 
+export interface QuantityPriceModel {
+  readonly minimumQuantity: number;
+  readonly priceMinor: number;
+}
+
 interface ProductVariantModel {
   readonly attributes: string;
+  readonly description: string;
   readonly id: string;
   readonly image: string | null;
+  readonly labels?: readonly ProductLabel[];
   readonly minimumQuantity: number;
   readonly name: string;
+  readonly originalPriceMinor?: number | null;
+  readonly priceTiers: readonly QuantityPriceModel[];
+  readonly weightGrams: number | null;
   readonly packageQuantity?: number;
   readonly parameters: typeof ParametersSchema.Type;
   readonly priceExcludingVatMinor: number | null;
@@ -159,6 +208,7 @@ interface ProductVariantModel {
 
 export interface ProductDetailModel extends ProductCardModel {
   readonly categoryId: string | null;
+  readonly dimensionsText: string | null;
   readonly documents: readonly { readonly label: string; readonly url: string }[];
   readonly imageAlt: string;
   readonly images: readonly string[];
@@ -167,13 +217,38 @@ export interface ProductDetailModel extends ProductCardModel {
   readonly paragraphs: readonly string[];
   readonly parameters: typeof ParametersSchema.Type;
   readonly priceExcludingVatMinor: number | null;
+  readonly priceTiers: readonly QuantityPriceModel[];
   readonly relatedProductIds: readonly string[];
   readonly seoDescription: string;
   readonly seoTitle: string;
   readonly stockQuantity: number | null;
   readonly unit: string;
   readonly variants: readonly ProductVariantModel[];
+  readonly weightGrams: number | null;
 }
+
+/** Quantity prices above the base price, lowest quantity first. */
+const quantityPricesOf = (
+  tiers: typeof PriceTiersSchema.Type | undefined,
+  minimum: number,
+): QuantityPriceModel[] =>
+  (tiers ?? [])
+    .filter(
+      (tier) =>
+        Number.isSafeInteger(tier.priceMinor) &&
+        tier.priceMinor > 0 &&
+        Number.isFinite(tier.minimumQuantity) &&
+        tier.minimumQuantity > minimum,
+    )
+    .map((tier) => ({ minimumQuantity: tier.minimumQuantity, priceMinor: tier.priceMinor }))
+    .sort((a, b) => a.minimumQuantity - b.minimumQuantity);
+
+const originalOf = (original: unknown, price: number | null): number | null => {
+  const amount = positive(original);
+  return amount !== undefined && price !== null && Number.isSafeInteger(amount) && amount > price
+    ? amount
+    : null;
+};
 
 /** Only approved public image origins; media references need an owner media read, never a guessed URL. */
 export const publicImage = (
@@ -304,12 +379,19 @@ const variantDetailsOf = (
       stockOnHand: variant.stockOnHand,
       stockTracked: product.stockTracked ?? true,
     };
+    const priceMinor = priceOf(individual, card.currency);
+    const minimumQuantity = variant.minimumQuantity ?? 1;
     variants.push({
       attributes: variant.attributes,
+      description: filled(variant.description) ?? "",
       id: variant.id,
       image: imageOf(product.id, variant.imageSrc, hosts),
-      minimumQuantity: variant.minimumQuantity ?? 1,
+      labels: labelsOf(variant),
+      minimumQuantity,
       name: variant.name,
+      originalPriceMinor: originalOf(variant.originalPriceMinor, priceMinor),
+      priceTiers: quantityPricesOf(variant.priceTiers, minimumQuantity),
+      weightGrams: positive(variant.weightGrams) ?? null,
       ...Struct.pick(variant, ["packageQuantity"]),
       parameters: variant.parameters ?? [],
       priceExcludingVatMinor: netPriceOf(
@@ -321,7 +403,12 @@ const variantDetailsOf = (
       sku: variant.sku,
       stock: stockStatus(individual),
       stockQuantity: stockQuantityOf(individual),
-      unit: variant.unit ?? product.unit ?? "",
+      unit:
+        filled(variant.sourceUnit) ??
+        variant.unit ??
+        filled(product.sourceUnit) ??
+        product.unit ??
+        "",
     });
   }
   return variants;
@@ -373,6 +460,25 @@ const detailParagraphsOf = (product: OwnerProduct, fallback: string) => {
   return description.length > 0 ? [description] : [];
 };
 
+const dimensionsOf = (product: OwnerProduct): string | null => {
+  const sizes = [product.lengthMm, product.widthMm, product.heightMm].flatMap((value) => {
+    const mm = positive(value);
+    return mm === undefined ? [] : [mm.toLocaleString("cs-CZ")];
+  });
+  return sizes.length > 0 ? `${sizes.join(" × ")} mm` : null;
+};
+
+/** A group shows the struck price of its cheapest active variant; a simple product its own. */
+const cardOriginalOf = (product: OwnerProduct, price: number | null): number | null => {
+  if ((product.variantSummary?.count ?? 0) === 0) {
+    return originalOf(product.originalPriceMinor, price);
+  }
+  const cheapest = (product.variantRecords ?? []).find(
+    (variant) => variant.active && variant.grossPriceMinor === price,
+  );
+  return cheapest === undefined ? null : originalOf(cheapest.originalPriceMinor, price);
+};
+
 const detailOf = (
   product: OwnerProduct,
   card: ProductCardModel,
@@ -383,6 +489,7 @@ const detailOf = (
   const detail: ProductDetailModel = {
     ...card,
     categoryId: product.categoryId ?? null,
+    dimensionsText: dimensionsOf(product),
     documents: (product.documents ?? []).filter(
       (document) =>
         document.label.trim().length > 0 &&
@@ -401,14 +508,17 @@ const detailOf = (
       variants.length > 0 || (product.variantSummary?.count ?? 0) > 0
         ? null
         : netPriceOf(product.currentPriceMinor, product.priceTiers, card.priceMinor),
+    priceTiers:
+      variants.length > 0 ? [] : quantityPricesOf(product.priceTiers, product.minimumQuantity ?? 1),
     relatedProductIds: (product.relatedProductIds ?? []).filter(
       (id) => id.length > 0 && id !== product.id,
     ),
     seoDescription: product.seoDescription?.trim() ?? "",
     seoTitle: product.seoTitle?.trim() ?? "",
     stockQuantity: stockQuantityOf(product),
-    unit: product.unit ?? "",
+    unit: card.unit ?? "",
     variants,
+    weightGrams: variants.length > 0 ? null : (positive(product.weightGrams) ?? null),
   };
   return manufacturer === undefined ? detail : { ...detail, manufacturer };
 };
@@ -447,8 +557,10 @@ export const projectCatalog = (
     if (product.active === false || product.published === false) {
       continue;
     }
+    const unit = filled(product.sourceUnit) ?? product.unit;
     const card: ProductCardModel = {
-      ...Struct.pick(product, ["minimumQuantity", "packageQuantity", "unit"]),
+      ...Struct.pick(product, ["minimumQuantity", "packageQuantity"]),
+      ...(unit === undefined ? {} : { unit }),
       currency: body.market.currency,
       description:
         (product.shortDescription ?? "").length > 0
@@ -460,6 +572,7 @@ export const projectCatalog = (
         product.gallery === undefined ? product.imageSrc : product.gallery[0],
         hosts,
       ),
+      labels: labelsOf(product),
       name: product.name,
       priceFrom: (product.variantSummary?.count ?? 0) > 1,
       priceMinor: priceOf(product, body.market.currency),
@@ -472,6 +585,10 @@ export const projectCatalog = (
     const variantCount = variantCountOf(product);
     if (variantCount !== undefined) {
       Object.assign(card, { variantCount });
+    }
+    const originalPriceMinor = cardOriginalOf(product, card.priceMinor);
+    if (originalPriceMinor !== null) {
+      Object.assign(card, { originalPriceMinor });
     }
     const priceExcludingVatMinor = cardNetPriceOf(product, card);
     if (priceExcludingVatMinor !== null) {

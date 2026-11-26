@@ -33,8 +33,9 @@ export const formatMarketAmount = (
 
 /** Display the owner amount in the Figma price slot; variant count is not proof of a price range. */
 export const priceProps = (
-  product: Pick<ProductCardModel, "currency" | "priceFrom" | "priceMinor">,
-  d: Pick<Dictionary, "priceExcludingVat" | "priceUnavailable">,
+  product: Pick<ProductCardModel, "currency" | "originalPriceMinor" | "priceFrom" | "priceMinor">,
+  d: Pick<Dictionary, "priceExcludingVat" | "priceUnavailable"> &
+    Partial<Pick<Dictionary, "originalPrice">>,
   locale: string,
   priceExcludingVatMinor: number | null = null,
 ): PriceBlockProps => {
@@ -42,14 +43,22 @@ export const priceProps = (
     return { label: d.priceUnavailable, state: "on-request" };
   }
   const amountLabel = formatMarketAmount(product.priceMinor, locale, product.currency);
+  const original =
+    product.originalPriceMinor !== undefined && product.originalPriceMinor > product.priceMinor
+      ? {
+          originalLabel: formatMarketAmount(product.originalPriceMinor, locale, product.currency),
+          originalSrLabel: d.originalPrice ?? "",
+          state: "discounted" as const,
+        }
+      : { state: "known" as const };
   if (priceExcludingVatMinor !== null && !product.priceFrom) {
     return {
       amountLabel,
-      state: "known",
+      ...original,
       taxLabel: d.priceExcludingVat.replace("{amount}", () =>
         formatMarketAmount(priceExcludingVatMinor, locale, product.currency),
       ),
     };
   }
-  return { amountLabel, state: "known" };
+  return { amountLabel, ...original };
 };

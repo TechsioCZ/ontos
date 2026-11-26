@@ -5,8 +5,11 @@ export const productCardForVariant = (
   product: ProductDetailModel,
   variant: ProductDetailModel["variants"][number],
 ) => ({
-  ...Struct.omit(product, ["packageQuantity"]),
+  ...Struct.omit(product, ["packageQuantity", "originalPriceMinor"]),
   ...Struct.pick(variant, ["packageQuantity"]),
+  ...(variant.originalPriceMinor === null || variant.originalPriceMinor === undefined
+    ? {}
+    : { originalPriceMinor: variant.originalPriceMinor }),
   image: variant.image ?? product.image,
   minimumQuantity: variant.minimumQuantity,
   priceExcludingVatMinor: variant.priceExcludingVatMinor,
