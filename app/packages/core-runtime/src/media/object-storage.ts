@@ -150,6 +150,7 @@ const notConfigured = () =>
 /**
  * The port of a host that has no object store configured: it never reaches a provider, and its identity matches no
  * asset, so every read of bytes ends as an unavailable request (a retryable 503), never as corruption or absence.
+ * The reserve Action refuses on it, so no asset is ever recorded against it.
  */
 export const unconfiguredObjectStorage: ObjectStorageService = {
   get: notConfigured,
