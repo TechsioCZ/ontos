@@ -53,6 +53,7 @@ import { executeSymmyJobStatusWithAuthorization } from '../../src/api/symmy-job-
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 import { symmyIntegrationRegistration } from '../../vertical.registration.ts';
 import { fixtureOperation } from '../support/symmy-job-execution-native.fixture.ts';
+import { symmyBrowserComposition, symmyContractComponents } from '../support/symmy-browser-contract.fixture.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const audience = 'symmy-integration';
@@ -98,7 +99,7 @@ const makeComposition = Effect.fn('SymmyJobNative.composition')(function* makeCo
       publicSurface: {
         actions: owner.actions,
         api: apis,
-        components: [],
+        components: symmyContractComponents(owner.shellContributions),
         events: [],
         operationContracts: owner.operationContracts,
         reports: [],
@@ -117,6 +118,7 @@ const makeComposition = Effect.fn('SymmyJobNative.composition')(function* makeCo
     ...snapshot.composition,
     modules: snapshot.composition.modules.map((module) => ({
       ...module,
+      ...symmyBrowserComposition(contract),
       contract: { ...module.contract, sha256 },
       contractDocument,
       moduleId: owner.moduleId,

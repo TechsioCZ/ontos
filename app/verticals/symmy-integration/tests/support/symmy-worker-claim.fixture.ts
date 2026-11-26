@@ -27,6 +27,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { executeSymmyJobWorker } from '../../src/workers/execute-symmy-job.worker.ts';
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 import { symmyIntegrationRegistration } from '../../vertical.registration.ts';
+import { symmyBrowserComposition, symmyContractComponents } from './symmy-browser-contract.fixture.ts';
 
 /**
  * The genuine Core worker claim the Symmy job worker runs under. Its conditional owner operation
@@ -61,7 +62,7 @@ const symmyContract = decodeContract({
             ]
           : [],
       ),
-      components: [],
+      components: symmyContractComponents(owner.shellContributions),
       events: [],
       operationContracts: owner.operationContracts,
       reports: [],
@@ -137,9 +138,10 @@ const compositionModule = (contract: ModuleContract) => {
 };
 
 const composition: ApplicationComposition = sealApplicationCompositionFixture({
-  modules: [symmyContract, ...ownerDeployments.map(({ appId, moduleId }) => providerContract(appId, moduleId))].map(
-    compositionModule,
-  ),
+  modules: [
+    { ...compositionModule(symmyContract), ...symmyBrowserComposition(symmyContract) },
+    ...ownerDeployments.map(({ appId, moduleId }) => compositionModule(providerContract(appId, moduleId))),
+  ],
   revision: '0'.repeat(64),
   schemaVersion: '2',
   shell: {
