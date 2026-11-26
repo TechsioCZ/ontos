@@ -34,6 +34,78 @@ import {
 import type { CategoryDraft, NewCategoryDraft } from './category-save.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { fieldError } from './product-form-validation.ts';
+import { loadProductRecord } from './product-reads.ts';
+import type { ProductRecordState } from './product-reads.ts';
+import { ProductSearchCombobox } from './product-search.tsx';
+import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+
+/** Picks an uploaded product photo (a 'media:' gallery ref) and returns its same-origin /obrazky path. */
+const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => void }) => {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<ProductRecord | null>(null);
+  const [state, setState] = useState<ProductRecordState>({ status: 'idle' });
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)} size="sm" type="button" variant="secondary">
+        Vybrat z fotek produktu
+      </Button>
+    );
+  }
+  const select = (product: ProductRecord | null) => {
+    setPicked(product);
+    if (product === null) {
+      setState({ status: 'idle' });
+      return;
+    }
+    setState({ status: 'loading' });
+    loadProductRecord(product.id, setState);
+  };
+  const refs = state.status === 'ready' ? (state.product.images ?? []).filter((ref) => ref.startsWith('media:')) : [];
+  return (
+    <div className="flex flex-col gap-100 rounded border border-border-secondary p-150">
+      <ProductSearchCombobox
+        errorMessage="Hledání selhalo."
+        id="category-image-product"
+        label="Produkt s nahranými fotkami"
+        loadingMessage="Hledám…"
+        noResultsMessage="Nic nenalezeno."
+        onSelect={select}
+        placeholder="Název nebo kód produktu"
+        retryLabel="Zkusit znovu"
+        selected={picked}
+      />
+      {state.status === 'loading' ? <p className="text-fg-secondary text-sm">Načítám fotky…</p> : null}
+      {state.status === 'error' ? <p className="text-fg-secondary text-sm">Načtení produktu selhalo.</p> : null}
+      {state.status === 'ready' && refs.length === 0 ? (
+        <p className="text-fg-secondary text-sm">Produkt nemá nahrané fotky.</p>
+      ) : null}
+      {state.status === 'ready' ? (
+        <div className="flex flex-wrap gap-100">
+          {refs.map((ref) => {
+            const src = `/obrazky/${encodeURIComponent(state.product.id)}/${ref.slice('media:'.length)}`;
+            return (
+              <button
+                aria-label="Použít tuto fotku"
+                className="h-[80px] w-[80px] overflow-hidden rounded border border-border-secondary"
+                key={ref}
+                onClick={() => {
+                  onPick(src);
+                  setOpen(false);
+                }}
+                type="button"
+              >
+                <img alt="" className="h-full w-full object-cover" src={src} />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <Button onClick={() => setOpen(false)} size="sm" type="button" variant="secondary">
+        Zavřít
+      </Button>
+    </div>
+  );
+};
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
@@ -175,7 +247,7 @@ const CategoryEditor = ({
         value={draft.longDescription}
       />
       <FormInput
-        helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá."
+        helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá. Tlačítko Vybrat z fotek produktu vloží cestu /obrazky/… k nahrané fotce; funguje, dokud je ten produkt zveřejněný."
         id="category-image-src"
         label="Obrázek kategorie (adresa)"
         maxLength={500}
@@ -183,6 +255,7 @@ const CategoryEditor = ({
         onChange={(event) => patchDraft({ imageSrc: event.target.value })}
         value={draft.imageSrc}
       />
+      <CategoryImagePicker onPick={(src) => patchDraft({ imageSrc: src })} />
       <FormInput
         id="category-image-alt"
         label="Popis obrázku"
