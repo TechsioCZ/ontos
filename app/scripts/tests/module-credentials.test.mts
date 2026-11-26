@@ -1,5 +1,4 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { MODULE_INTERNAL_WORKLOADS } from '../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
@@ -11,6 +10,7 @@ import {
   earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
+  MODULE_INTERNAL_WORKLOADS,
   INTERNAL_WORKLOAD_LABELS,
   noProvisionedCredentials,
   providerKeyIdsOf,
@@ -261,6 +261,32 @@ describe('MODULE_INTERNAL_WORKLOADS', () => {
       }
     }
   });
+});
+
+describe('MODULE_INTERNAL_WORKLOADS and the module manifests', () => {
+  it.live(
+    'hands each module exactly the internal workloads its module contract declares (`internalWorkloads`)',
+    () =>
+      Effect.gen(function* internalWorkloadsMatchManifests() {
+        const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+          readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
+        );
+        const contracts = yield* Effect.forEach(
+          topology.verticals,
+          ({ path: directory }) =>
+            deriveOntosModuleDeploymentContract({ vertical: path.basename(directory), workspaceRoot: workspace }),
+          { concurrency: 2 },
+        );
+        const declared = contracts.flatMap(({ deployment, manifest }) =>
+          (manifest.internalWorkloads ?? []).map((workload: string) => [deployment.appId, workload]),
+        );
+        const handed = [...MODULE_INTERNAL_WORKLOADS].flatMap(([appId, workloads]) =>
+          workloads.map((workload) => [appId, workload]),
+        );
+        expect(handed.toSorted(byWorkloadIdentity)).toEqual(declared.toSorted(byWorkloadIdentity));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 300_000 },
+  );
 });
 
 describe('module credential handover', () => {

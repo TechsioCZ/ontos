@@ -11,14 +11,16 @@ import {
 
 /*
  * The installed contracts a connector-partner workload registration reads: a partner module whose admission Action
- * admits the partner's workload and which declares its own job as a system workload, and a module, kept inactive in
- * the Tenant, whose read Action admits another workload of the same namespace.
+ * admits the partner's workload and which declares its own job as a system workload and its own server's read as an
+ * internal workload, and a module, kept inactive in the Tenant, whose read Action admits another workload of the same
+ * namespace.
  */
 export const PARTNER_MODULE = 'partner.ingress';
 export const DORMANT_MODULE = 'partner.dormant';
 export const PARTNER_ADMISSION_WORKLOAD = 'partner.ingress.admit-sync';
 export const PARTNER_READ_WORKLOAD = 'partner.ingress.read-catalog';
 export const PARTNER_SYSTEM_WORKLOAD = 'partner.ingress.execute-job';
+export const PARTNER_INTERNAL_WORKLOAD = 'partner.ingress.read-own-facts';
 export const DORMANT_WORKLOAD = 'partner.dormant.read-source';
 
 const workloadAction = (moduleKey: string, slug: string, workloads: readonly [string, ...string[]]) =>
@@ -51,6 +53,7 @@ const workloadAction = (moduleKey: string, slug: string, workloads: readonly [st
 const publishedContract = (input: {
   readonly actions: readonly ReturnType<typeof workloadAction>[];
   readonly appId: string;
+  readonly internalWorkloads: readonly string[];
   readonly moduleId: string;
   readonly systemWorkloads: readonly string[];
 }) => {
@@ -79,6 +82,7 @@ const publishedContract = (input: {
   };
   const manifest = defineOntosModuleManifest({
     activation,
+    internalWorkloads: input.internalWorkloads,
     module,
     publicSurface: {
       actions: input.actions,
@@ -97,6 +101,7 @@ const publishedContract = (input: {
     deployment: { appId: input.appId, buildMarker: 'integration-workload-registration' },
     manifest: {
       activation,
+      internalWorkloads: input.internalWorkloads,
       module,
       originatorActions: [],
       publicSurface: {
@@ -123,14 +128,17 @@ export const integrationWorkloadCatalog = () =>
       actions: [
         workloadAction(PARTNER_MODULE, 'admit-sync', [PARTNER_ADMISSION_WORKLOAD]),
         workloadAction(PARTNER_MODULE, 'read-catalog', [PARTNER_READ_WORKLOAD]),
+        workloadAction(PARTNER_MODULE, 'read-own-facts', [PARTNER_INTERNAL_WORKLOAD]),
       ],
       appId: 'partner-ingress',
+      internalWorkloads: [PARTNER_INTERNAL_WORKLOAD],
       moduleId: PARTNER_MODULE,
       systemWorkloads: [PARTNER_SYSTEM_WORKLOAD],
     }),
     publishedContract({
       actions: [workloadAction(DORMANT_MODULE, 'read-source', [DORMANT_WORKLOAD])],
       appId: 'partner-dormant',
+      internalWorkloads: [],
       moduleId: DORMANT_MODULE,
       systemWorkloads: [],
     }),

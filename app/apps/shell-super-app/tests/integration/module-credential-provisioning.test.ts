@@ -65,8 +65,8 @@ import { liveModuleKeyIds } from '../../../../scripts/zerops/module-credential-l
 import {
   INTERNAL_WORKLOAD_LABELS,
   ProvisioningOutputJsonSchema,
+  MODULE_INTERNAL_WORKLOADS,
 } from '../../../../scripts/zerops/module-credentials.mts';
-import { MODULE_INTERNAL_WORKLOADS } from '../../../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import { validateManagedApiKeyTarget } from '../../../../packages/core-runtime/src/auth/managed-api-key-scope.ts';
 import { findPostgresFailure } from '../../../../packages/core-runtime/src/database/postgres-failure.ts';
 

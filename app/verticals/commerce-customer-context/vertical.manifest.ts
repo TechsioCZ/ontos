@@ -310,6 +310,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     { uses: ['assertion', 'recovery'], workloadKey: 'commerce.customer-context.source-read' },
     { uses: ['assertion', 'recovery'], workloadKey: 'commerce.customer-context.organization-ico-facts.read' },
   ],
+  internalWorkloads: ['commerce.customer-context.organization-ico-facts.read'],
   module: {
     description: 'Commerce Customer Context business capability.',
     displayName: 'Commerce Customer Context',

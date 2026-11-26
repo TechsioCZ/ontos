@@ -44,6 +44,27 @@ export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCred
 ) {}
 
 /**
+ * The internal workloads (O73) each calling module runs as itself, by app: the keys its manifest declares as
+ * `internalWorkloads`. Where the operator registered a principal for one (in a tenant), the platform issues that
+ * principal's key next to the module key and hands it to the module, which then authenticates as the registered
+ * workload exactly as before; nobody issues or copies such a key by hand.
+ */
+export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['crm', ['demo.crm.party-intake']],
+  ['party-registry', ['party.registry.source-write', 'party.registry.source-read']],
+  [
+    'privacy',
+    [
+      'privacy.core.source-processing-check',
+      'privacy.core.organization-business-check',
+      'privacy.core.organization-profile-ico-check',
+    ],
+  ],
+  ['commerce-customer-context', ['commerce.customer-context.organization-ico-facts.read']],
+  ['symmy-integration', ['integration.symmy.source-organization-facts.read']],
+]);
+
+/**
  * What a person reads for each internal workload's registrations, before the company's name: the platform names its
  * principal `<label> · <company>`, in Czech like its other own principals (the release actor is `OntOS · vydání
  * oprávnění`). Every internal workload has one; the release step refuses to run otherwise.

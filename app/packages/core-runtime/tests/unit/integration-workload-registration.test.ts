@@ -5,6 +5,7 @@ import {
   DORMANT_MODULE,
   DORMANT_WORKLOAD,
   PARTNER_ADMISSION_WORKLOAD,
+  PARTNER_INTERNAL_WORKLOAD,
   PARTNER_MODULE,
   PARTNER_READ_WORKLOAD,
   PARTNER_SYSTEM_WORKLOAD,
@@ -22,11 +23,12 @@ const catalog = {
 };
 const symmy = {
   manifest: {
+    internalWorkloads: ['integration.symmy.source-organization-facts.read'],
     module: { id: 'integration.symmy' },
     publicSurface: {
       actions: [
         { accessWorkload: { workloads: ['integration.symmy.admit-symmy-sync'] } },
-        // Symmy's own server reads source organization facts as this internal workload; the platform holds it.
+        // Symmy's own server reads source organization facts as this internal workload, which it declares.
         { accessWorkload: { workloads: ['integration.symmy.source-organization-facts.read'] } },
       ],
     },
@@ -40,7 +42,7 @@ it('binds an integration only to a receiver workload an installed module publish
   expect(bindableWorkloadOwner([catalog, symmy], 'integration.symmy.admit-symmy-sync')).toBe('integration.symmy');
 });
 
-it('never binds a module internal workload the platform declares, even where no Tenant holds it', () => {
+it('never binds an internal workload its module declares, even where no Tenant holds it', () => {
   expect(bindableWorkloadOwner([catalog, symmy], 'integration.symmy.source-organization-facts.read')).toBeUndefined();
 });
 
@@ -56,4 +58,5 @@ it('reads the bindable workloads from installed, decoded module contracts', () =
   expect(bindableWorkloadOwner(contracts, PARTNER_READ_WORKLOAD)).toBe(PARTNER_MODULE);
   expect(bindableWorkloadOwner(contracts, DORMANT_WORKLOAD)).toBe(DORMANT_MODULE);
   expect(bindableWorkloadOwner(contracts, PARTNER_SYSTEM_WORKLOAD)).toBeUndefined();
+  expect(bindableWorkloadOwner(contracts, PARTNER_INTERNAL_WORKLOAD)).toBeUndefined();
 });

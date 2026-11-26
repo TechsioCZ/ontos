@@ -825,6 +825,25 @@ it('declares the system workloads its own code registers: genuine registrations,
   );
 });
 
+it('declares the internal workloads its own server runs as: once each, in its own namespace, never a system workload', () => {
+  const declared = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    internalWorkloads: ['property.registry-read'],
+  });
+  expect(declared.internalWorkloads).toEqual(['property.registry-read']);
+  expect(Object.isFrozen(declared.internalWorkloads)).toBe(true);
+  const refused = (internalWorkloads: readonly string[]) => () =>
+    defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      internalWorkloads,
+      systemWorkloads: [registerSystemWorkload({ jobKey: 'property.registry-job' })],
+    });
+  expect(refused(['commerce.catalog-read'])).toThrow(/must belong/u);
+  expect(refused(['property_registry_read'])).toThrow();
+  expect(refused(['property.registry-read', 'property.registry-read'])).toThrow();
+  expect(refused(['property.registry-job'])).toThrow(/not also be a system workload/u);
+});
+
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   expect(() =>
     defineOntosModuleManifest({

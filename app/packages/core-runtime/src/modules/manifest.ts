@@ -298,6 +298,12 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
   /** Receiver-owned executor selection policy. An absent workload/use remains SYSTEM-only. */
   executorEnrollments: Schema.optionalKey(OntosExecutorEnrollmentsSchema),
+  /**
+   * The internal workloads (O73) this module's own server runs as (absent: none): keys its own Actions declare, held by
+   * the platform's principal and handed to the module with its key. No integration is ever bound to one
+   * (`core.identity.register-integration-workloads`), whether or not a Tenant holds it.
+   */
+  internalWorkloads: Schema.optionalKey(Schema.Array(WorkloadKeySchema).check(Schema.isUnique())),
   module: OntosModuleIdentitySchema,
   /**
    * The Action keys whose recorded invocations this module may act for when it delegates an Originator
@@ -414,6 +420,8 @@ export interface OntosAuthoredPublicSurface {
 export interface OntosModuleManifestInput {
   readonly activation: OntosModuleActivation;
   readonly executorEnrollments?: readonly OntosExecutorEnrollmentInput[];
+  /** See `OntosSerializedModuleManifestSchema.internalWorkloads`. */
+  readonly internalWorkloads?: readonly string[];
   readonly module: OntosModuleIdentity;
   /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
   readonly originatorActions?: readonly string[];
@@ -615,6 +623,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
     [
       'activation',
       'executorEnrollments',
+      'internalWorkloads',
       'module',
       'originatorActions',
       'publicSurface',
@@ -734,6 +743,32 @@ const declaredSystemWorkloads = (
   return declared;
 };
 
+/**
+ * The serialized `internalWorkloads` of the module's own internal workload keys, each once, in its own namespace and
+ * never one of its system workloads.
+ */
+const serializedInternalWorkloads = (
+  keys: readonly string[] | undefined,
+  moduleId: string,
+  systemWorkloads: readonly SystemWorkloadRegistration[],
+): { readonly internalWorkloads: readonly string[] } | undefined => {
+  if (keys === undefined) {
+    return undefined;
+  }
+  const declared = keys.map((candidate) => {
+    const key = exactDecode(WorkloadKeySchema, candidate);
+    if (!workloadKeyBelongsToModule(key, moduleId)) {
+      throw invalidManifest(`internal workload ${key} must belong to module ${moduleId}`);
+    }
+    if (systemWorkloads.some(({ jobKey }) => jobKey === key)) {
+      throw invalidManifest(`internal workload ${key} must not also be a system workload`);
+    }
+    return key;
+  });
+  assertUnique(declared, 'internal workload key');
+  return { internalWorkloads: Object.freeze(declared) };
+};
+
 const serializedExecutorEnrollments = (declarations: readonly OntosExecutorEnrollmentInput[] | undefined) =>
   declarations === undefined
     ? undefined
@@ -762,6 +797,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       ? undefined
       : exactDecode(OntosRegisteredWorkloadCallsSchema, input.registeredWorkloadCalls);
   const systemWorkloads = declaredSystemWorkloads(input.systemWorkloads, input.module.id);
+  const internalWorkloads = serializedInternalWorkloads(input.internalWorkloads, input.module.id, systemWorkloads);
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -949,6 +985,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   if (input.systemWorkloads !== undefined) {
     Object.assign(manifest, { systemWorkloads: Object.freeze(systemWorkloads) });
   }
+  Object.assign(manifest, internalWorkloads);
   return Object.freeze(manifest);
 };
 

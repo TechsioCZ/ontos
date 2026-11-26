@@ -10,14 +10,13 @@ import { workloadKeyBelongsToModule } from '../../authorization/access-declarati
 import { accessWorkloadBindings, accessWorkloadCompanyBindings, principals } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import type { AccessIntentError } from '../intent/errors.ts';
-import { MODULE_INTERNAL_WORKLOADS } from './module-internal-workloads.ts';
 
 /*
  * The workloads a Tenant administrator binds to one of the Tenant's integration Principals (a connector partner such as
  * Symmy) and registers for the selected company: `core.identity.register-integration-workloads`. A workload is
  * bindable when an installed, active module publishes it as a receiver workload of one of its Actions or operations.
- * A module's system workload (`systemWorkloads`, the Tenant's enrolled system Principal) and a workload the platform
- * holds through its own internal-workload Principal are never bound to an integration.
+ * A module's system workload (`systemWorkloads`, the Tenant's enrolled system Principal) and its internal workload
+ * (`internalWorkloads`, held by the platform's own Principal) are never bound to an integration.
  */
 
 const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
@@ -46,14 +45,12 @@ export const integrationWorkloadStoreFailure = (failure: AccessIntentError) =>
     }),
   );
 
-/** Every module internal workload the platform declares; it is never an integration's, held in a Tenant or not. */
-const moduleInternalWorkloads: ReadonlySet<string> = new Set([...MODULE_INTERNAL_WORKLOADS.values()].flat());
-
 /**
- * Which installed module publishes the workload as a receiver, unless it is that module's system workload or a module
- * internal workload the platform declares.
+ * Which installed module publishes the workload as a receiver, unless it is that module's system workload or one of
+ * its internal workloads, held in a Tenant or not.
  */
 export interface WorkloadPublishingManifest {
+  readonly internalWorkloads?: readonly string[] | undefined;
   readonly module: { readonly id: string };
   readonly publicSurface: {
     readonly actions: readonly { readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined }[];
@@ -68,23 +65,21 @@ export const bindableWorkloadOwner = (
   contracts: readonly { readonly manifest: WorkloadPublishingManifest }[],
   workloadKey: string,
 ): string | undefined =>
-  moduleInternalWorkloads.has(workloadKey)
-    ? undefined
-    : contracts.find(({ manifest }) => {
-        if (!workloadKeyBelongsToModule(workloadKey, manifest.module.id)) {
-          return false;
-        }
-        const isKey = (declared: string) => declared === workloadKey;
-        if ((manifest.systemWorkloads ?? []).some(isKey)) {
-          return false;
-        }
-        return (
-          manifest.publicSurface.actions.some((action) => (action.accessWorkload?.workloads ?? []).some(isKey)) ||
-          (manifest.publicSurface.operationContracts ?? []).some((operation) =>
-            (operation.workloadCarrier?.workloads ?? []).some(isKey),
-          )
-        );
-      })?.manifest.module.id;
+  contracts.find(({ manifest }) => {
+    if (!workloadKeyBelongsToModule(workloadKey, manifest.module.id)) {
+      return false;
+    }
+    const isKey = (declared: string) => declared === workloadKey;
+    if ((manifest.systemWorkloads ?? []).some(isKey) || (manifest.internalWorkloads ?? []).some(isKey)) {
+      return false;
+    }
+    return (
+      manifest.publicSurface.actions.some((action) => (action.accessWorkload?.workloads ?? []).some(isKey)) ||
+      (manifest.publicSurface.operationContracts ?? []).some((operation) =>
+        (operation.workloadCarrier?.workloads ?? []).some(isKey),
+      )
+    );
+  })?.manifest.module.id;
 
 /** The target must be an active integration Principal of the Tenant that the platform did not make. */
 export const requireTenantIntegration = Effect.fn('IntegrationWorkloadRegistration.requireTenantIntegration')(

@@ -26,6 +26,7 @@ export const crmManifest = defineOntosModuleManifest({
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  internalWorkloads: ['demo.crm.party-intake'],
   publicSurface: {
     ...crmRuntimeManifest.publicSurface,
     components: {

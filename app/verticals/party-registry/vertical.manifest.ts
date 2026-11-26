@@ -40,6 +40,7 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
     { uses: ['admission', 'assertion', 'recovery'], workloadKey: 'party.registry.source-write' },
     { uses: ['assertion', 'recovery'], workloadKey: 'party.registry.source-read' },
   ],
+  internalWorkloads: ['party.registry.source-write', 'party.registry.source-read'],
   originatorActions: partyRegistryOriginatorActions,
   publicSurface: {
     ...partyRegistryRuntimeManifest.publicSurface,

@@ -88,8 +88,8 @@ import {
 import {
   encodeModuleCredentialHandover,
   INTERNAL_WORKLOAD_LABELS,
+  MODULE_INTERNAL_WORKLOADS,
 } from '../../../../scripts/zerops/module-credentials.mts';
-import { MODULE_INTERNAL_WORKLOADS } from '../../../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';

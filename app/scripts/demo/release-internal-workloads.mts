@@ -14,7 +14,6 @@
  *
  *   node scripts/demo/release-internal-workloads.mts [--run <reference>]
  */
-import { MODULE_INTERNAL_WORKLOADS } from '../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import { randomUUID } from 'node:crypto';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -32,7 +31,7 @@ import type { InternalWorkloadDeclaration } from '../../packages/core-runtime/sr
 import { registerReleaseInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import type { ReleaseInternalWorkloadTenantReport } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
-import { INTERNAL_WORKLOAD_LABELS } from '../zerops/module-credentials.mts';
+import { INTERNAL_WORKLOAD_LABELS, MODULE_INTERNAL_WORKLOADS } from '../zerops/module-credentials.mts';
 
 const LOG_PREFIX = '[release-internal-workloads]';
 const CATALOG_ARTIFACT = new URL('../../topology/authorization-catalog.json', import.meta.url);

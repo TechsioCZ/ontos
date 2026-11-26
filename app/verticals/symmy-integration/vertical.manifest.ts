@@ -192,6 +192,7 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
   executorEnrollments: [
     { uses: ['assertion', 'recovery'], workloadKey: 'integration.symmy.source-organization-facts.read' },
   ],
+  internalWorkloads: ['integration.symmy.source-organization-facts.read'],
   module: {
     description: 'Durable admission and authorized status for scoped integration fixtures.',
     displayName: 'Symmy Integration',

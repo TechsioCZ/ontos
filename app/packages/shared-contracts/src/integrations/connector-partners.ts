@@ -24,8 +24,6 @@ export interface ConnectorPartnerDeclaration<RouteFamily extends string = string
   readonly ingressPrefix: `/${string}`;
   /** Shown wherever the Tenant's integrations are listed. */
   readonly label: string;
-  /** The module that owns the partner's ingress and enrolls its routes for one company. */
-  readonly ownerModuleKey: string;
   /** The route families the partner's ingress serves. */
   readonly routeFamilies: readonly RouteFamily[];
 }
@@ -40,7 +38,6 @@ export const CONNECTOR_PARTNERS = {
     docsPath: `${SYMMY_REST_PREFIX}/docs`,
     ingressPrefix: SYMMY_REST_PREFIX,
     label: 'Symmy',
-    ownerModuleKey: 'integration.symmy',
     routeFamilies: symmyRouteFamilies,
   },
 } as const satisfies Readonly<Record<string, ConnectorPartnerDeclaration>>;

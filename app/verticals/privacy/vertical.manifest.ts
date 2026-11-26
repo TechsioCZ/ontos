@@ -32,6 +32,11 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
     { uses: ['assertion', 'recovery'], workloadKey: 'privacy.core.organization-business-check' },
     { uses: ['assertion', 'recovery'], workloadKey: 'privacy.core.organization-profile-ico-check' },
   ],
+  internalWorkloads: [
+    'privacy.core.source-processing-check',
+    'privacy.core.organization-business-check',
+    'privacy.core.organization-profile-ico-check',
+  ],
   originatorActions: ['privacy.core.dispatch-privacy-measure'],
   publicSurface: {
     ...privacyRuntimeManifest.publicSurface,

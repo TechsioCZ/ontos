@@ -20,7 +20,6 @@
  *
  * Logs name modules and counts only, never a key. Every pass is audited in the platform tenant.
  */
-import { MODULE_INTERNAL_WORKLOADS } from '../../packages/core-runtime/src/access/workloads/module-internal-workloads.ts';
 import { Socket } from 'node:net';
 
 import { CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
@@ -49,6 +48,7 @@ import {
 import {
   MODULE_CREDENTIAL_CALLERS,
   MODULE_CREDENTIAL_CHANNEL_FD,
+  MODULE_INTERNAL_WORKLOADS,
   ModuleCredentialHandoverError,
   ProvisioningOutputJsonSchema,
 } from './module-credentials.mts';
