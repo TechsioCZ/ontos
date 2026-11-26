@@ -704,7 +704,7 @@ export const StaticAccessActorSchema = Schema.Struct({
 export const RECEIVING_HOST_CALLER_BINDING = 'receiving-host';
 export const HostBoundRightsActorSchema = Schema.Struct({
   callerBinding: Schema.Literal(RECEIVING_HOST_CALLER_BINDING),
-  callers: Schema.Tuple([]),
+  callers: Schema.Array(Schema.Never).check(Schema.isMaxLength(0)),
   reason: Schema.String.check(Schema.isMaxLength(400), Schema.isMinLength(1), Schema.isTrimmed()),
   subject: Schema.Literal('rights'),
   subjectWorkloadCallers: Schema.optionalKey(Schema.Never),
