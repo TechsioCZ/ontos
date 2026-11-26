@@ -352,9 +352,11 @@ export const actionCommandQuestionsV2 = (command: ActionCommandV2): readonly Act
   return Object.freeze(questions);
 };
 
-/** Existing durable outer command and digest APIs remain unchanged; the version is inside payload. */
-export const freezeActionCommandV2 = (command: ActionCommandV2) =>
-  Schema.decodeUnknownResult(ActionCommandV2Schema, { onExcessProperty: 'error' })(command).pipe(
+const encodeCommandJson = Schema.encodeResult(Schema.toCodecJson(ActionCommandV2Schema), { onExcessProperty: 'error' });
+
+/** Both durable boundaries encode the complete forward document, including either kind of actor. */
+export const encodeActionCommandV2 = (command: ActionCommandV2) =>
+  encodeCommandJson(command).pipe(
     Result.mapError(
       () =>
         new CommandNotCanonicalError({
@@ -362,8 +364,13 @@ export const freezeActionCommandV2 = (command: ActionCommandV2) =>
           reason: 'Only a complete forward Action command can be frozen',
         }),
     ),
-    Result.flatMap((decoded) =>
-      freezeCommand({ capabilityKey: CapabilityKeySchema.make(decoded.declaration.key), payload: decoded }),
+  );
+
+/** Existing durable outer command and digest APIs remain unchanged; the version is inside payload. */
+export const freezeActionCommandV2 = (command: ActionCommandV2) =>
+  encodeActionCommandV2(command).pipe(
+    Result.flatMap((payload) =>
+      freezeCommand({ capabilityKey: CapabilityKeySchema.make(command.declaration.key), payload }),
     ),
   );
 

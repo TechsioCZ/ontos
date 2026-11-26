@@ -1,18 +1,22 @@
 import { Effect, Exit, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { freezeCommand, FrozenCommandSchema } from '../../src/access/approvals/command.ts';
+import { AccessActorSchema } from '../../src/authorization/access-declaration.ts';
+
 import {
   ActionCommandV2Schema,
   actionCommandGateQuestionV2,
   actionCommandQuestionsV2,
   decodeActionCommandV2,
+  encodeActionCommandV2,
   freezeActionCommandV2,
   resolveActionCommandV2,
   rebindActionCommandV2,
   rebindRegisteredActionCommandV2,
 } from '../../src/access/approvals/action-command-v2.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
-import { LegalEntityIdSchema, RecordKeySchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { CapabilityKeySchema, LegalEntityIdSchema, RecordKeySchema, TenantIdSchema } from '../../src/access/ids.ts';
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import { defineAction, getRegisteredActionCommandReader } from '../../src/actions/definition.ts';
 import { getVerticalRuntimeActions } from '../../src/modules/runtime-registration.ts';
@@ -146,6 +150,61 @@ it.effect(
       expect(freezeActionCommandV2(changed)).not.toEqual(original);
       expect(yield* rebindActionCommandV2(action, command, scope)).toEqual(payload);
     }),
+);
+
+it.effect('freezes both actor variants, including the governing Read actor, through JSON storage', () =>
+  Effect.gen(function* actorRoundTrip() {
+    const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
+    const { governingRead } = command;
+    if (governingRead === undefined) {
+      expect.unreachable('The record command must retain its governing Read');
+    }
+    const decodeActor = Schema.decodeUnknownEffect(AccessActorSchema);
+    const staticActor = yield* decodeActor({
+      callers: ['shell-super-app'],
+      reason: 'Relay owner rights',
+      subject: 'rights',
+    });
+    const hostActor = yield* decodeActor({
+      callerBinding: 'receiving-host',
+      callers: [],
+      reason: 'Bind the known receiving host',
+      subject: 'rights',
+    });
+    const storage = Schema.fromJsonString(FrozenCommandSchema);
+    const original = {
+      ...command,
+      accessActor: staticActor,
+      governingRead: { ...governingRead, accessActor: hostActor },
+    };
+    const originalDigest = yield* Effect.fromResult(freezeActionCommandV2(original));
+    const digests = [];
+    for (const [accessActor, readActor] of [
+      [staticActor, hostActor],
+      [hostActor, hostActor],
+      [staticActor, staticActor],
+    ] as const) {
+      const bound = { ...command, accessActor, governingRead: { ...governingRead, accessActor: readActor } };
+      const frozenPayload = yield* Effect.fromResult(encodeActionCommandV2(bound));
+      expect(frozenPayload).toMatchObject({ accessActor, governingRead: { accessActor: readActor } });
+      const digest = yield* Effect.fromResult(freezeActionCommandV2(bound));
+      const serialized = yield* Schema.encodeEffect(storage)({
+        capabilityKey: CapabilityKeySchema.make(command.declaration.key),
+        payload: frozenPayload,
+      });
+      const stored = yield* Schema.decodeEffect(storage)(serialized);
+      const decoded = yield* decodeActionCommandV2(stored.payload);
+      expect(decoded).toEqual(bound);
+      expect(yield* Effect.fromResult(freezeCommand(stored))).toBe(digest);
+      expect(yield* Effect.fromResult(freezeActionCommandV2(decoded))).toBe(digest);
+      digests.push(digest);
+    }
+    expect(digests[0]).toBe(originalDigest);
+    expect(digests[1]).not.toBe(originalDigest);
+    expect(digests[2]).not.toBe(originalDigest);
+    const actorWithExcessProperty = { ...hostActor, extra: 'unbound' };
+    expect(Result.isFailure(freezeActionCommandV2({ ...command, accessActor: actorWithExcessProperty }))).toBe(true);
+  }),
 );
 
 it.effect('requester proofs ask PROPOSE for every changed field and its Action parent on every target', () =>

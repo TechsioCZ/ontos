@@ -73,16 +73,16 @@ export interface DispatchContract {
   readonly topic: string;
   readonly workerKey: string;
 }
-interface WorkloadEvidence {
+export interface WorkloadEvidence {
   readonly principal: TrustedPrincipalContext;
   readonly sourceKey: string;
   readonly workload: RegisteredGatewayWorkload;
 }
-interface Receiver {
+export interface Receiver {
   readonly bindingIncarnation: string;
   readonly principalId: TrustedPrincipalContext['principalId'];
 }
-interface NativeReadReceiver extends Receiver {
+export interface NativeReadReceiver extends Receiver {
   readonly originalWorkloadBindingIncarnation: string;
   readonly originalWorkloadKey: string;
 }

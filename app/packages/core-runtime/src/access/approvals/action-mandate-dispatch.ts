@@ -55,7 +55,7 @@ import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityScope } from '../../operations/legal-entity-scope.ts';
 import type { AnyActionRegistration } from '../../actions/definition.ts';
 import { computeCanonicalValueHash } from '../../actions/repository.ts';
-import { decodeActionCommandV2, rebindRegisteredActionCommandV2 } from './action-command-v2.ts';
+import { decodeActionCommandV2, encodeActionCommandV2, rebindRegisteredActionCommandV2 } from './action-command-v2.ts';
 import type { ActionCommandV2 } from './action-command-v2.ts';
 import {
   actionProposalBindingV2,
@@ -701,7 +701,11 @@ const constructDrizzleActionMandateDispatchEffect = Effect.fn('ActionMandateDisp
         ) {
           return yield* refusedProposal('The proposal is not the exact forward registered command');
         }
-        const command = { capabilityKey: input.capabilityKey, payload: binding.command };
+        const encoded = encodeActionCommandV2(binding.command);
+        if (Result.isFailure(encoded)) {
+          return yield* proposalFailure(encoded.failure);
+        }
+        const command = { capabilityKey: input.capabilityKey, payload: encoded.success };
         const parked = yield* ports
           .approvalsFor(input.scope)
           .propose(

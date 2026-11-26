@@ -5448,7 +5448,38 @@ export class ShellAuthenticationApiRuntime extends Context.Service<
 
 export const ShellAuthenticationApiRuntimeLive = Layer.effect(
   ShellAuthenticationApiRuntime,
-  ShellAuthenticationApiRuntimeConfiguration.pipe(Effect.map((args) => makeShellAuthenticationApiRuntime(...args))),
+  ShellAuthenticationApiRuntimeConfiguration.pipe(
+    Effect.map(
+      ([
+        authenticationLayer,
+        issuerLayer,
+        moduleStateLayer,
+        loadInstalledModuleCatalog,
+        enableInstalledOutboxMatcher,
+        contextAccessLayer = defaultContextAccessLive,
+        resourceGateways,
+        scopedModuleStateFactory,
+        externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
+        accessDecisionLayer,
+        shellReadAuthority,
+        runtimeDatabase,
+      ]) =>
+        makeShellAuthenticationApiRuntime(
+          authenticationLayer,
+          issuerLayer,
+          moduleStateLayer,
+          loadInstalledModuleCatalog,
+          enableInstalledOutboxMatcher,
+          contextAccessLayer,
+          resourceGateways,
+          scopedModuleStateFactory,
+          externalIdentityDeploymentLayer,
+          accessDecisionLayer,
+          shellReadAuthority,
+          runtimeDatabase,
+        ),
+    ),
+  ),
 );
 
 /**
