@@ -360,7 +360,8 @@ const optionalQuantityInvalid = (text: string) => text.trim() !== '' && parseQua
 
 /** Whether the detail fields of a variant cannot be saved. */
 const variantDetailsInvalid = (draft: VariantDetailDraft) =>
-  draft.parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '') ||
+  // Imported parameters may carry an empty value; only a value without a name blocks the save.
+  draft.parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '') ||
   optionalQuantityInvalid(draft.minimumQuantityText) ||
   optionalQuantityInvalid(draft.packageQuantityText) ||
   (draft.tiersEdited && tierRowsInvalid(draft.tiers, parseQuantityText(draft.minimumQuantityText) ?? 1)) ||
@@ -409,11 +410,12 @@ const withVariantDetails = (kept: ProductVariant | EditableVariant, draft: Varia
     ...rest
   } = kept;
   const variant: EditableVariant = { ...rest };
-  const parameters = draft.parameters.map(({ label, unit, value }) => ({
-    label: label.trim(),
-    unit: unit.trim(),
-    value: value.trim(),
-  }));
+  const parameters: { label: string; unit: string; value: string }[] = [];
+  for (const { label, unit, value } of draft.parameters) {
+    if (label.trim() !== '') {
+      parameters.push({ label: label.trim(), unit: unit.trim(), value: value.trim() });
+    }
+  }
   if (parameters.length > 0) {
     variant.parameters = parameters;
   }
