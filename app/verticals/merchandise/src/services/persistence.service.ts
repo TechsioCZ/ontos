@@ -504,6 +504,36 @@ const enteredRateOf = (
   product: { readonly id: string; readonly taxClassificationCode: CzVatClassificationCode },
 ): number | undefined => heldRateOf(tax.held, product) ?? tax.rates[product.taxClassificationCode];
 
+type StoredTiers = NonNullable<Product['priceTiers']>;
+const tiersAtRate = (tiers: StoredTiers, rate: number): StoredTiers =>
+  tiers.map((tier) => ({ ...tier, priceMinor: grossUnitPriceMinor(tier.priceExcludingVatMinor, rate) }));
+
+/**
+ * A changed VAT classification re-enters every gross the product stores (its own, its quantity tiers', each priced
+ * variant's and theirs) at the new classification's rate: the net prices stay, the shown and charged gross follow.
+ */
+const reclassifiedGross = (next: Product, previous: Product, tax: CommandTax): Product => {
+  const rate = enteredRateOf(tax, next);
+  if (next.taxClassificationCode === previous.taxClassificationCode || rate === undefined) {
+    return next;
+  }
+  const variants = next.variants?.map((variant) => {
+    const withGross =
+      variant.priceMinor === undefined || variant.grossPriceMinor === undefined
+        ? variant
+        : { ...variant, grossPriceMinor: grossUnitPriceMinor(variant.priceMinor, rate) };
+    return withGross.priceTiers === undefined
+      ? withGross
+      : { ...withGross, priceTiers: tiersAtRate(withGross.priceTiers, rate) };
+  });
+  const own =
+    next.grossPriceMinor === undefined
+      ? next
+      : { ...next, grossPriceMinor: grossUnitPriceMinor(next.currentPriceMinor, rate) };
+  const tiered = own.priceTiers === undefined ? own : { ...own, priceTiers: tiersAtRate(own.priceTiers, rate) };
+  return variants === undefined ? tiered : { ...tiered, variants };
+};
+
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
 const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
   product: Product,
@@ -829,7 +859,7 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
     categorized = yield* assignCategory(merged, patchCategoryId, state.categories);
   }
   const withVariants: Product = variants === undefined ? categorized : { ...categorized, variants };
-  const updated = withContentHistory(product, withVariants, input);
+  const updated = withContentHistory(product, reclassifiedGross(withVariants, product, input.tax), input);
   const entity = yield* entityIdOf(product.id);
   return { entityIds: [entity], state: withProduct(state, updated) };
 });
