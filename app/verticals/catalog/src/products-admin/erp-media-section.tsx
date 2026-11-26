@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/promise-function-async, effect-native/no-failure-discarding-error-callback, effect-native/require-timeout-on-external-effect, effect-native/prefer-effect-fn-for-operations, effect-native/no-imperative-loop-in-effect-gen, react/exhaustive-effect-dependencies, react/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change, react-doctor/no-chain-state-updates, react-doctor/js-combine-iterations, sonarjs/no-nested-template-literals, sonarjs/no-duplicate-string -- ERP image editor hotfix: Effect.tryPromise bridges the browser image APIs (the typecheck forbids async there, TS377081); the older findings wait for the polish pass; expires: 2026-12-31. */
 // "Obrázek" section of the ERP product dialog: the Product's main image. An upload is stored in Core Media and
 // assigned to the Product in the same Catalog Action (assign-catalog-media); remove ends the assignment. The Akros
 // storefront shows the main assignment on Novinky z ERP through Catalog's governed image read.
@@ -36,6 +37,8 @@ const THUMB_EDGE = 480;
 interface Current {
   readonly assetId: string | undefined;
   readonly assignmentId: string | undefined;
+  /** Every main-image assignment the Product holds, so a replace or a removal clears all of them. */
+  readonly mainAssignmentIds: readonly string[];
   readonly setRevision: number;
 }
 
@@ -48,6 +51,9 @@ const readCurrent = (item: ProductPageItem) =>
         assetId:
           main?.assignment.resourceRef.moduleId === MEDIA_MODULE ? main.assignment.resourceRef.resourceId : undefined,
         assignmentId: main?.assignment.assignmentId,
+        mainAssignmentIds: answer.ordered
+          .filter(({ assignment }) => assignment.purpose === MAIN_PURPOSE)
+          .map(({ assignment }) => assignment.assignmentId),
         setRevision: answer.setRevision,
       };
     }),
@@ -99,6 +105,37 @@ const prepareUpload = (file: File) =>
     (bitmap) => Effect.sync(() => bitmap.close()),
   );
 
+const removeAssignment = (item: ProductPageItem, assignmentId: string, setRevision: number, reason: string) =>
+  Effect.gen(function* removeImage() {
+    const payload = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
+      assignmentId,
+      evidenceRefs: [],
+      expectedSetRevision: setRevision,
+      reason,
+      subjectRef: item.productRef,
+    }).pipe(Effect.mapError((problem) => describe('Odebrání obrázku', problem)));
+    const [id, key] = yield* Effect.all([requestId, freshUuid], { concurrency: 1 }).pipe(
+      Effect.mapError(() => 'Nelze vytvořit identifikátor'),
+    );
+    yield* executeRemoveCatalogMedia(payload, id, { idempotencyKey: key }).pipe(
+      Effect.mapError((problem: Problem) => describe('Odebrání obrázku', problem)),
+    );
+  });
+
+/** Ends every main assignment except `keep`, one at a time against the set revision read just before. */
+const MAX_REMOVALS = 20;
+const removeMainImages = (item: ProductPageItem, keep: string | undefined, reason: string) =>
+  Effect.gen(function* removeMainImagesEffect() {
+    for (let attempt = 0; attempt < MAX_REMOVALS; attempt += 1) {
+      const now = yield* readCurrent(item);
+      const target = now.mainAssignmentIds.find((assignmentId) => assignmentId !== keep);
+      if (target === undefined) {
+        return;
+      }
+      yield* removeAssignment(item, target, now.setRevision, reason);
+    }
+  });
+
 const upload = (item: ProductPageItem, current: Current, file: File, reason: string) =>
   Effect.gen(function* uploadImage() {
     const image = yield* prepareUpload(file);
@@ -126,26 +163,8 @@ const upload = (item: ProductPageItem, current: Current, file: File, reason: str
     yield* executeAssignCatalogMedia(payload, id, { idempotencyKey: assignmentId }).pipe(
       Effect.mapError((problem: Problem) => describe('Uložení obrázku', problem)),
     );
-  });
-
-const remove = (item: ProductPageItem, current: Current, reason: string) =>
-  Effect.gen(function* removeImage() {
-    if (current.assignmentId === undefined) {
-      return;
-    }
-    const payload = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
-      assignmentId: current.assignmentId,
-      evidenceRefs: [],
-      expectedSetRevision: current.setRevision,
-      reason,
-      subjectRef: item.productRef,
-    }).pipe(Effect.mapError((problem) => describe('Odebrání obrázku', problem)));
-    const [id, key] = yield* Effect.all([requestId, freshUuid], { concurrency: 1 }).pipe(
-      Effect.mapError(() => 'Nelze vytvořit identifikátor'),
-    );
-    yield* executeRemoveCatalogMedia(payload, id, { idempotencyKey: key }).pipe(
-      Effect.mapError((problem: Problem) => describe('Odebrání obrázku', problem)),
-    );
+    // The new image replaces the main image: every earlier main assignment ends.
+    yield* removeMainImages(item, assignmentId, reason);
   });
 
 interface ErpMediaSectionProps {
@@ -227,11 +246,11 @@ export const ErpMediaSection = ({ item, reason }: ErpMediaSectionProps) => {
               type="file"
             />
           </label>
-          {current.assignmentId !== undefined && (
+          {current.mainAssignmentIds.length > 0 && (
             <Button
               disabled={busy}
               isLoading={busy}
-              onClick={() => run(remove(item, current, why))}
+              onClick={() => run(removeMainImages(item, undefined, why))}
               size="sm"
               theme="outlined"
               type="button"

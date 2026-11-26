@@ -769,6 +769,41 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
   Effect.tapError(({ reason }) => Console.error(`[app-host] ${reason}`)),
 );
 
+/** The settings the AKROS ERP editor grants step reads (`scripts/demo/akros-erp-staff-grants.mts`). */
+const AKROS_ERP_GRANTS_SETTINGS = [
+  'DATABASE_URL',
+  'SPICEDB_CA_CERT',
+  'SPICEDB_ENDPOINT',
+  'SPICEDB_PRESHARED_KEY',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+] as const;
+
+/**
+ * Hotfix: on every boot of the deployment with the demo fixtures, the AKROS e-shop operator's two roles get every
+ * ERP editor cell of this release (Catalog, Pricing, Inventory), additively. A failure is one loud line and never
+ * holds the boot.
+ */
+export const bootstrapStageAkrosErpGrants = Effect.gen(function* bootstrapStageAkrosErpGrants() {
+  if (!(yield* demoFixturesEnabled)) {
+    return;
+  }
+  const settings: ChildEnvironment = {};
+  for (const key of AKROS_ERP_GRANTS_SETTINGS) {
+    const value = yield* Config.option(Config.String(key));
+    if (Option.isSome(value)) {
+      settings[key] = value.value;
+    }
+  }
+  yield* runChild(
+    'akros-erp-staff-grants',
+    process.execPath,
+    ['scripts/demo/akros-erp-staff-grants.mts'],
+    workspaceRoot,
+    settings,
+    false,
+  );
+}).pipe(Effect.catchCause(() => Console.error('[app-host] AKROS ERP editor grants failed; publishing anyway')));
+
 /**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
  * only. It never holds or fails the boot: a failure is one loud line, and the registrations stay as they were until
@@ -2510,6 +2545,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       timedBootStage('host.symmy-demo-bootstrap'),
       Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
     );
+    yield* bootstrapStageAkrosErpGrants.pipe(timedBootStage('host.akros-erp-grants'));
     const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
