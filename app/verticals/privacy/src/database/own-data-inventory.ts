@@ -130,6 +130,7 @@ export const TABLES_PREDATING_OWN_DATA_INVENTORY: readonly PrivacyTable[] = Obje
   'applicability_policies',
   'consent_decisions',
   'consent_scope_bindings',
+  'demo_source_processing_policies',
   'disposition_decisions',
   'dsr_cases',
   'dsr_deadlines',
