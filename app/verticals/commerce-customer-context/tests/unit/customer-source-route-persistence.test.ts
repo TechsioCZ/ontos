@@ -61,8 +61,10 @@ it('counts no reader the company gate refuses in the legal entity, nor a princip
 it('admits a native SYSTEM source reader only through that exact workload binding in the company', () => {
   for (const registration of ['binding', 'other_binding', 'none'] as const) {
     const result = customerSourceRouteEnrollment({
-      readers: [holder('system', reader, registration)], requestedReaders: [reader],
-      writer: enrolledWriter, writers: [holder('system', writer, 'binding')],
+      readers: [holder('system', reader, registration)],
+      requestedReaders: [reader],
+      writer: enrolledWriter,
+      writers: [holder('system', writer, 'binding')],
     });
     expect(result.enrolledReaderPrincipalIds).toEqual(registration === 'binding' ? [reader] : []);
   }

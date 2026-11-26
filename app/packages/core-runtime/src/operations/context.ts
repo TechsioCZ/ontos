@@ -598,8 +598,7 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
     const workload = readVerifiedGatewayWorkload(input.principal);
     const readRoute = readVerifiedGatewayRouteScope(input.principal);
     const registeredCompany =
-      workload?.legalEntityId ??
-      (readRoute?.nativeReadReceiver === undefined ? undefined : readRoute.legalEntityId);
+      workload?.legalEntityId ?? (readRoute?.nativeReadReceiver === undefined ? undefined : readRoute.legalEntityId);
     const principal =
       registeredCompany === undefined
         ? input.principal

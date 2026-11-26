@@ -373,13 +373,9 @@ export const savedAddressSourceReadService = (
     }
     const actor = recovery?.originalPrincipalId ?? scope.principalId;
     if (input.mode === 'CURRENT') {
-      yield* privacyCheck(
-        scope,
-        input.source,
-        input.profile,
-        'saved-address-source.current',
-        privacyRequirement,
-      ).pipe(Effect.mapError(readUnavailable));
+      yield* privacyCheck(scope, input.source, input.profile, 'saved-address-source.current', privacyRequirement).pipe(
+        Effect.mapError(readUnavailable),
+      );
     }
     const [row] = yield* invoker
       .invoke(readRoutine, [scope.principalId, actor, recovery?.originalAuthContextRef ?? null, input])
@@ -404,13 +400,9 @@ export const savedAddressSourceReadService = (
       ) {
         return yield* readUnavailable();
       }
-      yield* privacyCheck(
-        scope,
-        input.source,
-        input.profile,
-        'saved-address-source.receipt',
-        privacyRequirement,
-      ).pipe(Effect.mapError(readUnavailable));
+      yield* privacyCheck(scope, input.source, input.profile, 'saved-address-source.receipt', privacyRequirement).pipe(
+        Effect.mapError(readUnavailable),
+      );
     }
     return yield* Schema.decodeUnknownEffect(SavedAddressSourceReceiptResponseSchema, { onExcessProperty: 'error' })(
       row.result,

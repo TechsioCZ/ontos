@@ -195,7 +195,9 @@ it.live('counts programming import failures but keeps configuration and TypeErro
     expect(failures).toHaveLength(3);
     expect(failures[0]).toContain('reference.mjs: ReferenceError: TrustedCompanyPrincipalContextSchema is not defined');
     expect(failures[1]).toContain('syntax.mjs: SyntaxError:');
-    expect(failures[2]).toContain("named.mjs: SyntaxError: The requested module './valid.mjs' does not provide an export named 'missingLayer'");
+    expect(failures[2]).toContain(
+      "named.mjs: SyntaxError: The requested module './valid.mjs' does not provide an export named 'missingLayer'",
+    );
     expect(notes).toHaveLength(3);
     expect(notes[0]).toContain('config.mjs (not counted): Error: needs DATABASE_URL');
     expect(notes[1]).toContain('type.mjs (not counted): TypeError: runtime configuration unavailable');
