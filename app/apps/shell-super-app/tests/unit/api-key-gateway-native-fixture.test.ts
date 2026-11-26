@@ -27,7 +27,6 @@ import {
   ShellNativeProvisionedResponseSchema,
   ShellNativeRelaySourceProvisionCommandSchema,
   decodeShellNativeRegionsEnvironment,
-  decodeShellNativePriceReadEnvironment,
   ShellNativeStartupEventSchema,
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
@@ -737,37 +736,6 @@ it('keeps startup phases and private human setup commands closed to bounded data
     ),
   ).toBe(true);
 });
-
-it.effect('forwards only the typed price-read source mapping to the child environment', () =>
-  Effect.gen(function* priceEnvironment() {
-    expect(yield* decodeShellNativePriceReadEnvironment()).toEqual({});
-    const route = {
-      issuerId: 'fixture-issuer',
-      legalEntityId: '22222222-2222-4222-8222-222222222222',
-      routeId: '33333333-3333-4333-8333-333333333333',
-      sourceNamespace: 'fixture-source',
-      sourceSystem: { ownerModuleId: 'integration.symmy', sourceSystemRef: 'native-price-source' },
-      tenantId: '11111111-1111-4111-8111-111111111111',
-    };
-    const json = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
-    const value = { routes: [route], schemaVersion: 1 };
-    const environment = yield* decodeShellNativePriceReadEnvironment(json(value));
-    expect(Object.keys(environment)).toEqual(['ONTOS_SYMMY_PRICE_READ_SOURCES']);
-    const decoded = yield* Schema.decodeUnknownEffect(
-      Schema.Struct({ ONTOS_SYMMY_PRICE_READ_SOURCES: Schema.fromJsonString(Schema.Json) }),
-    )(environment);
-    expect(decoded.ONTOS_SYMMY_PRICE_READ_SOURCES).toEqual(value);
-    for (const invalid of [
-      '{',
-      json({ ...value, secret: 'credential' }),
-      json({ ...value, schemaVersion: 2 }),
-      json({ routes: [{ ...route, routeId: 'invalid' }], schemaVersion: 1 }),
-    ]) {
-      const failure = yield* decodeShellNativePriceReadEnvironment(invalid).pipe(Effect.flip);
-      expect(Schema.is(ApiKeyGatewayNativeFixtureError)(failure)).toBe(true);
-    }
-  }),
-);
 
 it('lets the parent ask only for the platform to provision the relay source, choosing nothing about it', () => {
   const decode = Schema.decodeUnknownResult(ShellNativeRelaySourceProvisionCommandSchema, {

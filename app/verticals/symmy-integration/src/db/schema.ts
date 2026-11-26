@@ -1,6 +1,7 @@
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   foreignKey,
@@ -45,6 +46,8 @@ export const SYMMY_INTEGRATION_TABLES = [
   'job_routes',
   'privacy_measure_executions',
   'route_enrollment_records',
+  'route_price_read_sources',
+  'route_retention_policies',
   'sync_admission_attempts',
   'sync_admissions',
 ] as const;
@@ -94,7 +97,11 @@ const durableRoutes = [
 ] as const;
 export type SymmyDurableRouteKey = (typeof durableRoutes)[number];
 
-/** Trusted, administrator-managed enrollment. Runtime can only read these records. */
+/**
+ * The enrolled routes. A tenant administrator enrolls, replaces and deactivates them through
+ * `integration.symmy.manage-symmy-routes` under the runtime role, which writes only its own Tenant's rows (RLS); the
+ * change-token and execution-gate triggers run for every writer.
+ */
 export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
   'job_routes',
   {
@@ -103,9 +110,7 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
      * Replaced with every change of the row by a token of `symmyRouteChangeTokens`, which never hands one out twice
      * (`advance_route_change_token`): an operator replaces or deactivates the route at the token it read.
      */
-    changeToken: integer('change_token')
-      .default(sql`nextval('symmy_integration.job_route_change_tokens'::regclass)`)
-      .notNull(),
+    changeToken: integer('change_token').default(0).notNull(),
     fixtureIds: text('fixture_ids').array().notNull(),
     fixturePlan: jsonb('fixture_plan').$type<SymmyFixtureExecutionPlan>(),
     legalEntityId: uuid('legal_entity_id'),
@@ -226,6 +231,73 @@ export const symmyRouteEnrollmentRecords = symmyIntegrationSchema.table.withRLS(
         and char_length(${table.routeRevision}) between 1 and 80
         and (${table.previousRevision} is null or char_length(${table.previousRevision}) between 1 and 80)`,
     ),
+    ...tenantRlsPolicies('symmy_route_enrollment_records_tenant', table.tenantId),
+  ],
+);
+
+/**
+ * The retention of the work a write route admits, one row per lifecycle policy revision a route pins
+ * (`job_routes.lifecycle_policy`). The admission requires exactly one row matching the route's pinned policy; the
+ * retention Action erases the intents of the route's work once `retention_ms` has elapsed. Rows are never changed: a new
+ * retention is a new revision, pinned by a replacement of the route.
+ */
+export const symmyRouteRetentionPolicies = symmyIntegrationSchema.table.withRLS(
+  'route_retention_policies',
+  {
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    governanceLegalEntityId: uuid('governance_legal_entity_id').notNull(),
+    policyId: text('policy_id').notNull(),
+    retentionMs: bigint('retention_ms', { mode: 'number' }).notNull(),
+    revision: text('revision').notNull(),
+    /** The standing AKROS demo membership family policy (`SYMMY_DEMO_MEMBERSHIP_RETENTION`); null for every route policy. */
+    routeFamily: text('route_family', { enum: ['DEMO_GROUP_MEMBERSHIP'] }),
+    routeId: uuid('route_id').notNull(),
+    targetLegalEntityId: uuid('target_legal_entity_id'),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('symmy_route_retention_policies_uq').on(table.tenantId, table.routeId, table.policyId, table.revision),
+    foreignKey({
+      columns: [table.tenantId, table.routeId],
+      foreignColumns: [symmyJobRoutes.tenantId, symmyJobRoutes.routeId],
+      name: 'symmy_route_retention_policies_route_fk',
+    }).onDelete('restrict'),
+    check(
+      'symmy_route_retention_policies_values_ck',
+      sql`${table.retentionMs} between 1 and 315576000000
+        and char_length(${table.policyId}) between 1 and 120 and char_length(${table.revision}) between 1 and 120
+        and (${table.routeFamily} is null or ${table.routeFamily} = 'DEMO_GROUP_MEMBERSHIP')
+        and (${table.targetLegalEntityId} is null or ${table.targetLegalEntityId} = ${table.governanceLegalEntityId})`,
+    ),
+    ...tenantRlsPolicies('symmy_route_retention_policies_tenant', table.tenantId),
+  ],
+);
+
+/**
+ * The price source system a `priceLists` read route pages a list's prices from, and through which the Shell reads the
+ * current price of a REVISE. Without a row both answer 422 projection_not_configured.
+ */
+export const symmyRoutePriceReadSources = symmyIntegrationSchema.table.withRLS(
+  'route_price_read_sources',
+  {
+    ownerModuleId: text('owner_module_id').notNull(),
+    routeId: uuid('route_id').notNull(),
+    sourceSystemRef: text('source_system_ref').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('symmy_route_price_read_sources_route_uq').on(table.tenantId, table.routeId),
+    foreignKey({
+      columns: [table.tenantId, table.routeId],
+      foreignColumns: [symmyJobRoutes.tenantId, symmyJobRoutes.routeId],
+      name: 'symmy_route_price_read_sources_route_fk',
+    }).onDelete('restrict'),
+    check(
+      'symmy_route_price_read_sources_values_ck',
+      sql`char_length(${table.ownerModuleId}) between 1 and 120 and char_length(${table.sourceSystemRef}) between 1 and 200`,
+    ),
+    ...tenantRlsPolicies('symmy_route_price_read_sources_tenant', table.tenantId),
   ],
 );
 
@@ -398,6 +470,8 @@ export const symmyIntegrationRelations = defineRelations({
   symmyJobRetentionTombstones,
   symmyJobRoutes,
   symmyRouteEnrollmentRecords,
+  symmyRoutePriceReadSources,
+  symmyRouteRetentionPolicies,
   symmySyncAdmissionAttempts,
   symmySyncAdmissions,
 });

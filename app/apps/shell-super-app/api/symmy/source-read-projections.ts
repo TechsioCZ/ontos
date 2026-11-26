@@ -15,8 +15,6 @@ import {
   CustomerProfileSourcePartiesRequestSchema,
 } from '@app/commerce-customer-context/api/customer-profile-source-parties';
 import { executeCustomerProfileSourcePartiesWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source-parties/client';
-import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
-import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   SOURCE_PARTY_SEARCH_MAX_TERMS,
   SourcePartySearchRequestSchema,
@@ -30,13 +28,12 @@ import { executePriceGroupSourceAssociationsWithAuthorization } from '@app/price
 import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';
 import type { PriceGroupSourceAssociationSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceGroupSourceAssociationsRequestSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
-import { PriceSourceSystemSchema } from '@app/pricing-contracts/domain/price-source-provenance';
+import type { PriceSourceSystem } from '@app/pricing-contracts/domain/price-source-provenance';
 import { executePriceGroupSourcePricesWithAuthorization } from '@app/pricing/api/client';
 import { PriceGroupSourcePricesRequestSchema } from '@app/pricing/apis/price-group-source-prices';
 import type { PriceGroupSourcePricesResponse } from '@app/pricing/apis/price-group-source-prices';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
-import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
-import { Config, DateTime, Effect, Match, Option, Schema, Redacted } from 'effect';
+import { DateTime, Effect, Match, Option, Schema, Redacted } from 'effect';
 
 import { symmyInvalidProblem, symmyUnavailableProblem, symmyUnsupportedProblem } from './contract.ts';
 import type { SymmyCustomerFieldName, SymmyInternalReadQuerySchema, SymmyIngressProblem } from './contract.ts';
@@ -59,6 +56,7 @@ export interface SymmySourceReadScope {
   readonly issuerId: string;
   readonly legalEntityId?: string;
   readonly mappingVersion: string;
+  readonly priceReadSourceSystem?: PriceSourceSystem;
   readonly routeId: string;
   readonly routeRevision: string;
   readonly sourceEntityKind?: string;
@@ -629,42 +627,24 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
     unsupported_fields: customerUnsupportedFields(scope, customers),
   };
 });
-export const SymmyPriceReadProjectionConfigurationSchema = Schema.Struct({
-  routes: Schema.Array(
-    Schema.Struct({
-      issuerId: SymmyRouteContextSchema.fields.issuerId,
-      legalEntityId: LegalEntityIdSchema,
-      routeId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyReadRouteId')),
-      sourceNamespace: SymmyRouteContextSchema.fields.sourceNamespace,
-      sourceSystem: PriceSourceSystemSchema,
-      tenantId: TenantIdSchema,
-    }),
-  ).check(Schema.isMaxLength(64)),
-  schemaVersion: Schema.Literal(1),
-});
-export type PriceReadSource = (typeof SymmyPriceReadProjectionConfigurationSchema.Type.routes)[number];
-export const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSource')(function* priceSource(
-  scope: SymmySourceReadScope,
-) {
-  const configuration = yield* Config.option(
-    Config.schema(Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema), 'ONTOS_SYMMY_PRICE_READ_SOURCES'),
-  ).pipe(Effect.catchTag('ConfigError', () => Effect.fail(symmyUnavailableProblem)));
-  if (Option.isNone(configuration)) {
-    return Option.none<PriceReadSource>();
-  }
-  const matches = configuration.value.routes.filter(
-    (entry) =>
-      entry.tenantId === scope.tenantId &&
-      entry.routeId === scope.routeId &&
-      entry.issuerId === scope.issuerId &&
-      entry.sourceNamespace === scope.sourceNamespace &&
-      entry.legalEntityId === scope.legalEntityId,
-  );
-  if (matches.length > 1) {
-    return yield* Effect.fail(symmyUnavailableProblem);
-  }
-  return Option.fromNullishOr(matches[0]);
-});
+/** The price source a priceLists read route pages prices from: its company and the source system the route names. */
+export interface PriceReadSource {
+  readonly legalEntityId: string;
+  readonly sourceSystem: PriceSourceSystem;
+  readonly tenantId: string;
+}
+/**
+ * The price read source of a priceLists route, as its route context carries it (`route_price_read_sources`, set through
+ * integration.symmy.manage-symmy-routes). A route without one, or without a company, pages no prices.
+ */
+export const configuredPriceSource = (scope: SymmySourceReadScope): Option.Option<PriceReadSource> =>
+  scope.legalEntityId === undefined || scope.priceReadSourceSystem === undefined
+    ? Option.none()
+    : Option.some({
+        legalEntityId: scope.legalEntityId,
+        sourceSystem: scope.priceReadSourceSystem,
+        tenantId: scope.tenantId,
+      });
 export const sourcePricesAreValid = (
   page: PriceGroupSourcePricesResponse,
   request: typeof PriceGroupSourcePricesRequestSchema.Type,
@@ -811,7 +791,7 @@ export const projectSymmySourcePriceLists: (
   const input = yield* Schema.decodeUnknownEffect(PriceGroupSourceAssociationsRequestSchema)(
     query.code === undefined ? raw : { ...raw, recordKey: query.code },
   ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
-  const source = yield* configuredPriceSource(scope);
+  const source = configuredPriceSource(scope);
   if (Option.isSome(source)) {
     yield* requireRouteRead(scope, 'commerce.pricing', 'commerce.pricing.api.price-group-source-prices');
   }

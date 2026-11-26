@@ -12,7 +12,7 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { ConfigProvider, Deferred, Duration, Effect, Fiber, Layer, Redacted, Schedule, Schema } from 'effect';
+import { Deferred, Duration, Effect, Fiber, Layer, Redacted, Schedule, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -28,6 +28,7 @@ import {
   symmyJobNotifications,
   symmyJobRetentionTombstones,
   symmyJobRoutes,
+  symmyRouteRetentionPolicies,
 } from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
@@ -71,6 +72,7 @@ const fixture = Effect.gen(function* nativeRaceFixture() {
       yield* adminDb.delete(symmyJobNotifications).where(eq(symmyJobNotifications.tenantId, tenantId));
       yield* adminDb.delete(symmyJobEffects).where(eq(symmyJobEffects.tenantId, tenantId));
       yield* adminDb.delete(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId));
+      yield* adminDb.delete(symmyRouteRetentionPolicies).where(eq(symmyRouteRetentionPolicies.tenantId, tenantId));
       yield* adminDb.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId));
     }).pipe(Effect.orDie),
   );
@@ -309,26 +311,39 @@ it.effect(
       });
       const companyA = state.purgeInput.policy.governanceLegalEntityId;
       const companyB = Schema.decodeUnknownSync(LegalEntityIdSchema)(crypto.randomUUID());
-      const run = (scope: OperationalScope) =>
-        state.firstDb
-          .transaction((tx) =>
-            installOperationalScope(tx, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
-              Effect.flatMap((executor) => symmyJobRetentionService(executor, scope)),
-              Effect.flatMap((service) => service.purge(handoff)),
-              Effect.map((result) => result.status),
-            ),
-          )
+      // The route's retention is route data, written here by the administrative login with the target under test.
+      const configure = Effect.suspend(() =>
+        state.adminDb
+          .delete(symmyRouteRetentionPolicies)
+          .where(eq(symmyRouteRetentionPolicies.tenantId, state.purgeInput.policy.tenantId))
           .pipe(
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromUnknown({
-                ONTOS_SYMMY_JOB_RETENTION_POLICIES: JSON.stringify([
-                  { ...state.purgeInput.policy, targetLegalEntityId: configuredTarget },
-                ]),
+            Effect.andThen(
+              state.adminDb.insert(symmyRouteRetentionPolicies).values({
+                governanceLegalEntityId: state.purgeInput.policy.governanceLegalEntityId,
+                policyId: state.purgeInput.policy.policyId,
+                retentionMs: state.purgeInput.policy.retentionMs,
+                revision: state.purgeInput.policy.revision,
+                routeId: state.purgeInput.policy.routeId,
+                targetLegalEntityId: configuredTarget,
+                tenantId: state.purgeInput.policy.tenantId,
               }),
             ),
-            Effect.provideService(SymmyJobPrivacy, privacy),
-          );
+          ),
+      );
+      const run = (scope: OperationalScope) =>
+        configure.pipe(
+          Effect.andThen(
+            state.firstDb
+              .transaction((tx) =>
+                installOperationalScope(tx, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+                  Effect.flatMap((executor) => symmyJobRetentionService(executor, scope)),
+                  Effect.flatMap((service) => service.purge(handoff)),
+                  Effect.map((result) => result.status),
+                ),
+              )
+              .pipe(Effect.provideService(SymmyJobPrivacy, privacy)),
+          ),
+        );
       const wrong = yield* run({ ...state.scope, legalEntityId: companyB }).pipe(Effect.flip);
       expect(wrong).toMatchObject({ code: 'retention_scope_denied' });
       expect(privacyCalls).toBe(0);

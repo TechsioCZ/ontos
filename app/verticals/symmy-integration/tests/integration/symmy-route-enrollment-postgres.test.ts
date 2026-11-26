@@ -1,8 +1,5 @@
-import {
-  findPostgresFailure,
-  loadDatabaseConnectionPair,
-  makeActiveApplicationCompositionLayer,
-} from '@app/core-runtime';
+import { TrustedPrincipalContextSchema, findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -26,18 +23,25 @@ import { SYMMY_JOB_KEY } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRequiredBinding } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
 import { SymmyRouteEnrollmentUnavailable } from '../../src/ops/symmy-route-enrollment-unavailable.ts';
-import {
-  deactivateSymmyRoute,
-  enrollSymmyRoute,
-  runSymmyRouteEnrollment,
-} from '../../src/ops/symmy-route-enrollment-store.ts';
-import type { SymmyRouteEnrollmentRun } from '../../src/ops/symmy-route-enrollment-store.ts';
+import { applySymmyRouteEnrollment, deactivateSymmyRoute } from '../../src/ops/symmy-route-enrollment-store.ts';
+import type { SymmyRouteEnrollmentAttribution } from '../../src/ops/symmy-route-enrollment-store.ts';
+import { symmyIntegrationRelations } from '../../src/db/schema.ts';
 import {
   SymmyRouteEnrollmentRequestSchema,
+  SymmyRouteReferenceSchema,
   symmyRouteEnrollmentLockKey,
   symmyRouteInventoryOf,
 } from '../../src/ops/symmy-route-enrollment.ts';
-import type { SymmyEnrollmentRouteKey, SymmyRouteChange } from '../../src/ops/symmy-route-enrollment.ts';
+import type {
+  SymmyEnrollmentRouteKey,
+  SymmyRouteChange,
+  SymmyRouteReference,
+} from '../../src/ops/symmy-route-enrollment.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+
+const identityEnrollment = defineDatabaseIdentityEnrollment([]);
 
 const admitWorkload = 'integration.symmy-admit';
 const importWorkload = 'commerce.catalog.symmy-product-import';
@@ -93,7 +97,6 @@ const attribution = {
   operatorRef: 'operator:route-enrollment-test',
   reason: 'Enroll the products route for the import',
 };
-const operator: SymmyRouteEnrollmentRun = { attribution, mode: 'apply' };
 const enroll: SymmyRouteChange = { kind: 'enroll' };
 const replaceAt = (expectedChangeToken: number) => ({ expectedChangeToken, kind: 'replace' }) as const;
 const deactivateAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'deactivate' });
@@ -268,32 +271,60 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
     }
     return Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)(route);
   };
+  // The administrator's Action runs under the runtime role in the Tenant's scope.
+  const runtimeClient = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
+  const runtimeDatabase = yield* makeWithDefaults({ relations: symmyIntegrationRelations }).pipe(
+    Effect.provideService(PgClient.PgClient, runtimeClient),
+  );
+  const administrator: OperationalScope = {
+    ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authBindingId: crypto.randomUUID(),
+      authContextRef: 'better-auth-session:route-enrollment-test',
+      authMethod: 'session',
+      principalId: crypto.randomUUID(),
+      tenantId,
+    }),
+    correlationId: 'symmy-route-enrollment-test',
+  };
   const run = (input: {
+    readonly attribution?: SymmyRouteEnrollmentAttribution;
     readonly change?: SymmyRouteChange;
-    readonly request: ReturnType<typeof request>;
+    /** A deactivation names the route by its reference alone. */
+    readonly request: ReturnType<typeof request> | SymmyRouteReference;
     readonly required?: readonly SymmyRequiredBinding[];
-    readonly run: SymmyRouteEnrollmentRun;
   }) =>
-    Effect.gen(function* runEnrollment() {
-      const change = input.change ?? enroll;
-      if (change.kind === 'deactivate') {
-        // The store reads only the reference fields of the enrolled request.
-        return input.run.mode === 'verify'
-          ? yield* Effect.die('A deactivation is never verified')
-          : yield* deactivateSymmyRoute({ change, reference: input.request, run: input.run });
-      }
-      const found = symmyRouteInventoryOf(input.request.routeKey);
-      const inventory = yield* Option.isSome(found)
-        ? Effect.succeed(found.value)
-        : Effect.die(`${input.request.routeKey} has an inventory`);
-      return yield* enrollSymmyRoute({
-        change,
-        inventory,
-        plan: { bindings: input.required ?? bindings, moduleKeys: [catalogModule, 'integration.symmy'] },
-        request: input.request,
-        run: input.run,
-      });
-    }).pipe(Effect.provideService(PgClient.PgClient, admin));
+    runtimeDatabase.transaction((transaction) =>
+      Effect.gen(function* runEnrollment() {
+        const executor = yield* installOperationalScope(transaction, administrator, identityEnrollment);
+        const change = input.change ?? enroll;
+        const stated = input.attribution ?? attribution;
+        if (change.kind === 'deactivate') {
+          // The store reads only the reference fields of the enrolled request.
+          return yield* deactivateSymmyRoute(executor, {
+            attribution: stated,
+            expectedChangeToken: change.expectedChangeToken,
+            reference: input.request,
+          });
+        }
+        const enrollment = input.request;
+        if (!('configuration' in enrollment)) {
+          return yield* Effect.die('An enrollment names its configuration');
+        }
+        const found = symmyRouteInventoryOf(enrollment.routeKey);
+        const inventory = yield* Option.isSome(found)
+          ? Effect.succeed(found.value)
+          : Effect.die(`${enrollment.routeKey} has an inventory`);
+        return yield* applySymmyRouteEnrollment(executor, {
+          attribution: stated,
+          change,
+          inventory,
+          plan: { bindings: input.required ?? bindings, moduleKeys: [catalogModule, 'integration.symmy'] },
+          priceReadSource: Option.none(),
+          request: enrollment,
+          retentionPolicy: Option.none(),
+        });
+      }),
+    );
   return {
     admin,
     bind,
@@ -352,38 +383,28 @@ it.effect(
         purpose: 'recovery',
         workloads: ['commerce.catalog.symmy-product-read'],
       };
-      expect(yield* codesOf(run({ request: v1, required: [...bindings, unheld], run: operator }))).toEqual([
+      expect(yield* codesOf(run({ request: v1, required: [...bindings, unheld] }))).toEqual([
         'executor_binding_missing',
       ]);
-      const planned = yield* run({ request: v1, run: { mode: 'dry-run' } });
-      expect(planned.outcome).toBe('would_enroll');
-      expect(planned).not.toHaveProperty('changeToken');
       expect(yield* routes).toEqual([]);
 
-      const enrolled = yield* run({ request: v1, run: operator });
+      const enrolled = yield* run({ request: v1 });
       expect(enrolled.outcome).toBe('enrolled');
       const enrolledAt = tokenOf(enrolled);
       expect(enrolled.executors).toEqual(
         expect.arrayContaining([{ principalId: expect.any(String), workloadKey: SYMMY_JOB_KEY }]),
       );
-      expect(enrolled.runtimePrerequisites.map(({ configuration }) => configuration)).toEqual([
-        'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-      ]);
       const first = yield* gate;
       expect(first).toMatchObject({ active: true, revision: 'route-v1' });
-      expect(yield* run({ request: v1, run: operator })).toMatchObject({
+      expect(yield* run({ request: v1 })).toMatchObject({
         changeToken: enrolledAt,
         outcome: 'unchanged',
-      });
-      expect(yield* run({ request: v1, run: { mode: 'verify' } })).toMatchObject({
-        changeToken: enrolledAt,
-        outcome: 'verified',
       });
       expect((yield* gate).epoch).toBe(first.epoch);
 
       const remapped = request('productsBatch', { mappingVersion: 'map-v2', routeId });
-      expect(yield* codesOf(run({ request: remapped, run: operator }))).toEqual(['route_drift']);
-      expect(yield* codesOf(run({ change: replaceAt(enrolledAt), request: remapped, run: operator }))).toEqual([
+      expect(yield* codesOf(run({ request: remapped }))).toEqual(['route_drift']);
+      expect(yield* codesOf(run({ change: replaceAt(enrolledAt), request: remapped }))).toEqual([
         'revision_not_advanced',
       ]);
 
@@ -411,7 +432,7 @@ it.effect(
         JSON.stringify({ effectId: crypto.randomUUID(), owner: catalogModule, status: 'denied' }),
       );
       expect(yield* originalRouteActive(plannedJob)).toBe(true);
-      const outstanding = yield* refusals(run({ change: replaceAt(enrolledAt), request: v2, run: operator }));
+      const outstanding = yield* refusals(run({ change: replaceAt(enrolledAt), request: v2 }));
       expect(outstanding.map(({ code }) => code)).toEqual(['outstanding_work', 'outstanding_work']);
       expect(outstanding[0]?.detail).toContain(`${plannedJob} (planned)`);
       expect(outstanding[0]?.detail).toContain(`${blockedJob} (blocked)`);
@@ -427,12 +448,7 @@ it.effect(
         listedAll: true,
         resolvedBy: 'integration.symmy.execute-symmy-retention',
       };
-      expect(yield* run({ change: deactivateAt(enrolledAt), request: v1, run: { mode: 'dry-run' } })).toMatchObject({
-        changeToken: enrolledAt,
-        outcome: 'would_deactivate',
-        strandedWork: stranded,
-      });
-      const stopped = yield* run({ change: deactivateAt(enrolledAt), request: v1, run: operator });
+      const stopped = yield* run({ change: deactivateAt(enrolledAt), request: v1 });
       expect(stopped).toMatchObject({ outcome: 'deactivated', strandedWork: stranded });
       const stoppedAt = tokenOf(stopped);
       expect(yield* gate).toEqual({ active: false, epoch: first.epoch, revision: 'route-v1' });
@@ -441,39 +457,31 @@ it.effect(
       ]);
 
       // A replacement prepared before the stop, at the revision the stopped route still carries, is refused.
-      expect(yield* codesOf(run({ change: replaceAt(enrolledAt), request: v2, run: operator }))).toEqual([
-        'change_token_not_current',
-      ]);
+      expect(yield* codesOf(run({ change: replaceAt(enrolledAt), request: v2 }))).toEqual(['change_token_not_current']);
 
       // The planned effect settles and retention erases the blocked job: a replacement at the current token
       // reactivates the route and rotates the epoch, and its retry changes nothing.
       yield* admin`update symmy_integration.job_effects set state='settled', outcome=${JSON.stringify({ effectId: plannedEffect, owner: catalogModule, status: 'accepted_change' })}::jsonb where effect_id=${plannedEffect}`;
       yield* admin`insert into symmy_integration.job_retention_tombstones(tenant_id,job_id,policy_id,policy_revision,authority_receipt_ref,authority_revision,retained_effect_ids)
         values(${tenantId},${blockedJob},'akros-symmy-jobs','r1','retention-receipt','authority-1','[]'::jsonb)`;
-      expect(yield* run({ change: replaceAt(stoppedAt), request: v2, run: { mode: 'dry-run' } })).toMatchObject({
-        changeToken: stoppedAt,
-        outcome: 'would_replace',
-      });
-      const replaced = yield* run({ change: replaceAt(stoppedAt), request: v2, run: operator });
+      const replaced = yield* run({ change: replaceAt(stoppedAt), request: v2 });
       expect(replaced.outcome).toBe('replaced');
       const replacedAt = tokenOf(replaced);
       const rotated = yield* gate;
       expect(rotated).toMatchObject({ active: true, revision: 'route-v2' });
       expect(rotated.epoch).not.toBe(first.epoch);
       expect(yield* originalRouteActive(plannedJob)).toBe(false);
-      expect(yield* run({ change: replaceAt(stoppedAt), request: v2, run: operator })).toMatchObject({
+      expect(yield* run({ change: replaceAt(stoppedAt), request: v2 })).toMatchObject({
         changeToken: replacedAt,
         outcome: 'unchanged',
       });
 
       // Back from route-v2 to route-v1: retrying the earlier route-v1 -> route-v2 replacement writes nothing.
-      const restored = yield* run({ change: replaceAt(replacedAt), request: v1, run: operator });
+      const restored = yield* run({ change: replaceAt(replacedAt), request: v1 });
       expect(restored.outcome).toBe('replaced');
       const restoredAt = tokenOf(restored);
-      expect(yield* codesOf(run({ change: replaceAt(stoppedAt), request: v2, run: operator }))).toEqual([
-        'change_token_not_current',
-      ]);
-      expect(yield* codesOf(run({ change: deactivateAt(replacedAt), request: v1, run: operator }))).toEqual([
+      expect(yield* codesOf(run({ change: replaceAt(stoppedAt), request: v2 }))).toEqual(['change_token_not_current']);
+      expect(yield* codesOf(run({ change: deactivateAt(replacedAt), request: v1 }))).toEqual([
         'change_token_not_current',
       ]);
       expect(yield* routes).toEqual([
@@ -481,14 +489,14 @@ it.effect(
       ]);
 
       const beforeStop = yield* gate;
-      const stoppedAgain = yield* run({ change: deactivateAt(restoredAt), request: v1, run: operator });
+      const stoppedAgain = yield* run({ change: deactivateAt(restoredAt), request: v1 });
       expect(stoppedAgain).toMatchObject({
         outcome: 'deactivated',
         strandedWork: { admissions: [], jobs: [], listedAll: true },
       });
       const stoppedAgainAt = tokenOf(stoppedAgain);
       expect(yield* gate).toEqual({ ...beforeStop, active: false });
-      expect(yield* run({ change: deactivateAt(restoredAt), request: v1, run: operator })).toMatchObject({
+      expect(yield* run({ change: deactivateAt(restoredAt), request: v1 })).toMatchObject({
         changeToken: stoppedAgainAt,
         outcome: 'unchanged',
       });
@@ -497,7 +505,8 @@ it.effect(
 
       // Every change is recorded with the token and revision before and after it, the operator's statement and the
       // database login that wrote it.
-      const [{ user }] = yield* admin`select session_user as user`.pipe(
+      const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
+      const [{ user }] = yield* runtime`select session_user as user`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(SessionUserSchema)),
       );
       const attributed = {
@@ -527,7 +536,7 @@ it.effect(
       ]);
 
       // The records are append-only and untruncatable even for the administrative role, the login is stamped by the
-      // database, and the runtime role can neither read nor write them.
+      // database, and the runtime role neither reads them nor writes one outside a Tenant scope.
       expect(
         yield* refusedWith(
           admin`update symmy_integration.route_enrollment_records set reason='rewritten' where tenant_id=${tenantId}`,
@@ -544,7 +553,6 @@ it.effect(
         'replace',
         'deactivate',
       ]);
-      const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
       expect(yield* refusedWith(runtime`select record_id from symmy_integration.route_enrollment_records`)).toBe(
         '42501',
       );
@@ -570,7 +578,7 @@ it.effect(
           Effect.flatMap(Schema.decodeUnknownEffect(TokenSchema)),
           Effect.map(([row]) => row.change_token),
         );
-      const enrolledAt = tokenOf(yield* run({ request: v1, run: operator }));
+      const enrolledAt = tokenOf(yield* run({ request: v1 }));
       expect(yield* stored).toBe(enrolledAt);
 
       // A change written outside the command, which no record names, still takes a new token; a write that changes
@@ -584,13 +592,11 @@ it.effect(
       // Deleted and enrolled again, the route takes a token none of its earlier states had, so a deactivation prepared
       // against the unrecorded state is refused.
       yield* admin`delete from symmy_integration.job_routes where tenant_id=${tenantId} and route_id=${routeId}`;
-      const again = yield* run({ request: v1, run: operator });
+      const again = yield* run({ request: v1 });
       expect(again.outcome).toBe('enrolled');
       expect([enrolledAt, unrecordedAt]).not.toContain(tokenOf(again));
       expect(
-        (yield* refusals(run({ change: deactivateAt(unrecordedAt), request: v1, run: operator }))).map(
-          ({ code }) => code,
-        ),
+        (yield* refusals(run({ change: deactivateAt(unrecordedAt), request: v1 }))).map(({ code }) => code),
       ).toEqual(['change_token_not_current']);
 
       // Only the migration's role may take or set a token.
@@ -605,18 +611,16 @@ it.effect(
   30_000,
 );
 
-it.effect('refuses an integration principal without an active API-key binding, in apply and in verify', () =>
+it.effect('refuses an integration principal without an active API-key binding', () =>
   Effect.gen(function* disabledBindingPrincipal() {
     const { disabledBindingIntegrationId, request, run } = yield* makeFixture();
     const unbound = request('productsBatch', {
       principalId: disabledBindingIntegrationId,
       routeId: crypto.randomUUID(),
     });
-    for (const mode of [operator, { mode: 'verify' } as const]) {
-      expect((yield* refusals(run({ request: unbound, run: mode }))).map(({ code }) => code)).toEqual([
-        'integration_api_key_binding_missing',
-      ]);
-    }
+    expect((yield* refusals(run({ request: unbound }))).map(({ code }) => code)).toEqual([
+      'integration_api_key_binding_missing',
+    ]);
   }).pipe(Effect.scoped, Effect.provide(services)),
 );
 
@@ -624,7 +628,7 @@ it.effect(
   'deactivates a stored stock route without enrollment configuration or composition, naming what it strands',
   () =>
     Effect.gen(function* deactivateStock() {
-      const { admin, integrationId, legalEntityId, tenantId } = yield* makeFixture();
+      const { admin, integrationId, legalEntityId, run, tenantId } = yield* makeFixture();
       const stockRouteId = crypto.randomUUID();
       const admissionId = crypto.randomUUID();
       yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,mapping_version,route_key,route_revision)
@@ -643,67 +647,17 @@ it.effect(
         routeKey: 'inventoryStockBatch',
         tenantId,
       };
-      // This incomplete enrollment omits the Inventory policy, resolution read, and lifecycle policy.
-      const enrollment = {
-        ...reference,
-        configuration: {
-          items: [
-            {
-              effects: [
-                {
-                  effectKey: 'stock',
-                  operation: {
-                    entrypointKey: 'commerce.inventory.import-source-assertion',
-                    moduleId: 'commerce.inventory',
-                    schemaVersion: '1',
-                  },
-                },
-              ],
-              itemKey: 'stock',
-              source: {
-                entityKind: 'STOCK',
-                issuerId: 'AKROS_SYMMY',
-                sourceNamespace: 'AKROS',
-                sourceRecordId: 'stock',
-              },
-            },
-          ],
-        },
-        mappingVersion: 'map-v1',
-        routeRevision: 'route-v1',
-      };
-      const command = (
-        change: SymmyRouteChange,
-        mode: 'apply' | 'dry-run',
-        request: typeof enrollment | typeof reference = reference,
-      ) =>
-        runSymmyRouteEnrollment({
-          change,
-          request,
-          run: mode === 'apply' ? { attribution, mode } : { mode },
-        }).pipe(
-          Effect.provideService(PgClient.PgClient, admin),
-          // A deactivation reads no Application Composition: a read of this one dies.
-          Effect.provide(makeActiveApplicationCompositionLayer(Effect.die('A deactivation reads no composition'))),
-        );
       const stranded = {
         admissions: [admissionId],
         jobs: [],
         listedAll: true,
         resolvedBy: 'integration.symmy.execute-symmy-retention',
       };
-      // A deactivation request carrying more than the reference is refused, not read in part.
-      expect((yield* refusals(command(deactivateAt(storedAt), 'dry-run', enrollment))).map(({ code }) => code)).toEqual(
-        ['invalid_request'],
-      );
-      expect(yield* command(deactivateAt(storedAt), 'dry-run')).toMatchObject({
-        changeToken: storedAt,
-        outcome: 'would_deactivate',
-        requiredBindings: [],
-        strandedWork: stranded,
+      const stopped = yield* run({
+        change: deactivateAt(storedAt),
+        request: Schema.decodeUnknownSync(SymmyRouteReferenceSchema)(reference),
       });
-      const stopped = yield* command(deactivateAt(storedAt), 'apply');
-      expect(stopped).toMatchObject({ outcome: 'deactivated', strandedWork: stranded });
+      expect(stopped).toMatchObject({ outcome: 'deactivated', requiredBindings: [], strandedWork: stranded });
       expect(tokenOf(stopped)).not.toBe(storedAt);
       // The record of the stop holds what the stored route held.
       const [stopRecord] =
@@ -717,12 +671,6 @@ it.effect(
         route_key: 'inventoryStockBatch',
         route_revision: 'route-v1',
       });
-      // Fresh enrollment still requires the stock route's full supported configuration.
-      expect((yield* refusals(command(enroll, 'dry-run', enrollment))).map(({ code }) => code)).toEqual([
-        'configuration_field_not_allowed',
-        'required_operation_missing',
-        'lifecycle_policy_required',
-      ]);
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000,
 );
@@ -731,12 +679,11 @@ it.effect('rolls a route change back when its record cannot be written', () =>
   Effect.gen(function* recordOrNothing() {
     const { admin, request, run, tenantId } = yield* makeFixture();
     const routeId = crypto.randomUUID();
-    // The record allows at most 200 characters of operator statement; the command's own decoder is bypassed here.
-    const unrecordable: SymmyRouteEnrollmentRun = {
-      attribution: { operatorRef: 'o'.repeat(201), reason: 'An over-long operator statement' },
-      mode: 'apply',
-    };
-    const failure = yield* Effect.flip(run({ request: request('productsBatch', { routeId }), run: unrecordable }));
+    // The record allows at most 200 characters of operator statement; the Action's own reference never exceeds it.
+    const unrecordable = { operatorRef: 'o'.repeat(201), reason: 'An over-long operator statement' };
+    const failure = yield* Effect.flip(
+      run({ attribution: unrecordable, request: request('productsBatch', { routeId }) }),
+    );
     expect(Schema.is(SymmyRouteEnrollmentUnavailable)(failure) ? failure.reason : undefined).toBe(
       'The route change could not be recorded',
     );
@@ -787,8 +734,7 @@ const raceBehindHeldLocks = Effect.fn('SymmyRouteEnrollmentPostgres.race')(funct
   const holderPid = yield* Deferred.await(held);
   const attempts = yield* Effect.forEach(
     input.requests,
-    (request) =>
-      fixture.run({ request, required: input.required, run: operator }).pipe(Effect.result, Effect.forkScoped),
+    (request) => fixture.run({ request, required: input.required }).pipe(Effect.result, Effect.forkScoped),
     { concurrency: 'unbounded' },
   );
   const waitingOnHolder = monitor`select count(*)::int as waiting from pg_catalog.pg_stat_activity
@@ -884,7 +830,7 @@ it.live(
         fixture.request('productsBatch', { principalId: fixture.otherIntegrationId, routeId: secondRouteId }),
       ];
       for (const request of enrolled) {
-        expect((yield* fixture.run({ request, run: operator })).outcome).toBe('enrolled');
+        expect((yield* fixture.run({ request })).outcome).toBe('enrolled');
       }
       // Each names its own selector with the other's route id. Each locks its selector's row while the holder lets go
       // of both; locking the other row next would deadlock the two.

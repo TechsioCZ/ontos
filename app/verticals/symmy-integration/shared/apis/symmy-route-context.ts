@@ -9,6 +9,7 @@ import { SymmyLifecycleRouteIdSchema } from '../domain/symmy-job-notification.ts
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { AdmitSymmyJobPayloadSchema } from '../domain/symmy-job-admission.ts';
+import { PriceSourceSystemSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 
 export const SymmyRouteContextRequestSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300))),
@@ -36,6 +37,8 @@ export const SymmyRouteContextResponseSchema = Schema.Struct({
   issuerId: SymmyRouteContextSchema.fields.issuerId,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   mappingVersion: SymmyRouteContextSchema.fields.mappingVersion,
+  /** Only on a priceLists read route with a price read source: the source system its prices are paged from. */
+  priceReadSourceSystem: Schema.optionalKey(PriceSourceSystemSchema),
   replayIdempotencyDigest: RegisteredGatewayRouteScopeSchema.fields.replayIdempotencyDigest,
   resolvedCode: Schema.optionalKey(
     Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300)),

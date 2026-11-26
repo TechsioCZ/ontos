@@ -783,7 +783,7 @@ export const symmyRetentionRefusals = (
   return refuseWhen(
     matches.length !== 1,
     'lifecycle_policy_not_configured',
-    `ONTOS_SYMMY_JOB_RETENTION_POLICIES must name policy ${lifecyclePolicy.policyId}@${
+    `The route retention policies must name policy ${lifecyclePolicy.policyId}@${
       lifecyclePolicy.revision
     } for route ${request.routeId} exactly once`,
   );
@@ -1167,79 +1167,6 @@ export const symmyRelatedRouteRefusals = (
 
 /** The governed Action that erases the intents of a route's outstanding work once its retention has elapsed. */
 export const SYMMY_RETENTION_ACTION = 'integration.symmy.execute-symmy-retention';
-
-/**
- * Runtime configuration a route depends on that the command cannot read, because it is the Shell's or Symmy's own
- * process configuration: what it is, which process reads it, whether the command saw it, and what a sender observes
- * while the running process lacks the entry for this route.
- */
-export const SymmyRuntimePrerequisiteSchema = Schema.Struct({
-  checked: Schema.Literals(['not_checked', 'operator_copy_only']),
-  configuration: Schema.Literals([
-    'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-    'ONTOS_SYMMY_PRICE_READ_SOURCES',
-    'ONTOS_SYMMY_REGIONS_PROJECTION',
-  ]),
-  runtime: Schema.Literals(['shell', 'symmy-integration']),
-  whenMissing: Schema.String,
-});
-type SymmyRuntimePrerequisite = typeof SymmyRuntimePrerequisiteSchema.Type;
-
-/**
- * The runtime prerequisites of one route: the regions projection (`SymmyGovernedDispatch.read`), the price read source
- * of the principal's priceLists route (`configuredPriceSource`, read for a price list page and for a REVISE price by
- * `readSymmyPriceBatchFacts`), and the retention policy every write is admitted under (`requireLifecyclePolicy`).
- */
-export const symmyRuntimePrerequisites = (
-  request: SymmyRouteEnrollmentRequest,
-): readonly SymmyRuntimePrerequisite[] => [
-  ...(request.routeKey === 'adminRegions'
-    ? [
-        {
-          checked: 'not_checked',
-          configuration: 'ONTOS_SYMMY_REGIONS_PROJECTION',
-          runtime: 'shell',
-          whenMissing: 'GET admin/regions answers 422 SymmyUnsupportedProblem projection_not_configured',
-        } as const,
-      ]
-    : []),
-  ...(request.routeKey === 'priceLists'
-    ? [
-        {
-          checked: 'not_checked',
-          configuration: 'ONTOS_SYMMY_PRICE_READ_SOURCES',
-          runtime: 'shell',
-          whenMissing:
-            'GET price-lists answers its lists without prices (unsupported_fields: prices) and 422 SymmyUnsupportedProblem projection_not_configured when it pages prices',
-        } as const,
-      ]
-    : []),
-  ...(request.routeKey === 'priceListPricesBatch'
-    ? [
-        {
-          checked: 'not_checked',
-          configuration: 'ONTOS_SYMMY_PRICE_READ_SOURCES',
-          runtime: 'shell',
-          whenMissing:
-            "A batch with a REVISE price answers 422 SymmyUnsupportedProblem projection_not_configured; the entry names the principal's priceLists route",
-        } as const,
-      ]
-    : []),
-  ...(request.lifecyclePolicy === undefined
-    ? []
-    : [
-        {
-          checked: 'operator_copy_only',
-          configuration: 'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-          runtime: 'symmy-integration',
-          whenMissing: `Every write is refused as route denied, which the Shell answers ${
-            symmyRouteInventories.get(request.routeKey)?.admission === 'sync'
-              ? 'as 503 SymmyUnavailableProblem'
-              : 'as 403 gateway forbidden'
-          }, and ${SYMMY_RETENTION_ACTION} cannot erase what the route admitted`,
-        } as const,
-      ]),
-];
 
 /**
  * The outstanding work of a route: jobs with an effect that has not settled and whose intents retention has not

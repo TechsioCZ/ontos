@@ -33,11 +33,12 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
   client: PgClient.PgClient,
 ) {
   const [records] = yield* client<{
-    readonly change_token_default: boolean;
+    readonly change_token_definer: boolean;
     readonly change_token_sequence: boolean;
     readonly change_token_sequence_private: boolean;
     readonly constraints: readonly string[] | null;
     readonly primary_key: boolean;
+    readonly route_gate_definer: boolean;
     readonly route_index: boolean;
   }>`
     select
@@ -65,18 +66,18 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
         cross join lateral aclexplode(coalesce(c.relacl, acldefault('s', c.relowner))) a
         where c.oid = 'symmy_integration.job_route_change_tokens'::regclass and a.grantee <> c.relowner)
         as change_token_sequence_private,
-      exists(select 1 from pg_catalog.pg_attrdef d
-        join pg_catalog.pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
-        join pg_catalog.pg_depend dep on dep.classid = 'pg_catalog.pg_attrdef'::regclass and dep.objid = d.oid
-        where d.adrelid = 'symmy_integration.job_routes'::regclass and a.attname = 'change_token'
-          and dep.refobjid = 'symmy_integration.job_route_change_tokens'::regclass) as change_token_default
+      (select p.prosecdef from pg_catalog.pg_proc p
+        where p.oid = to_regprocedure('symmy_integration.advance_route_change_token()')) as change_token_definer,
+      (select p.prosecdef from pg_catalog.pg_proc p
+        where p.oid = to_regprocedure('symmy_integration.publish_route_execution_gate()')) as route_gate_definer
   `;
   if (
     !records?.primary_key ||
     !records.route_index ||
     !records.change_token_sequence ||
     !records.change_token_sequence_private ||
-    !records.change_token_default ||
+    !records.change_token_definer ||
+    !records.route_gate_definer ||
     records.constraints?.join(',') !==
       [
         'route_enrollment_records_pkey:p:true',
@@ -267,17 +268,16 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'gateway_assertion_redemptions',
             'import_jobs',
             'job_effects',
+            'job_routes',
+            'route_enrollment_records',
+            'route_price_read_sources',
+            'route_retention_policies',
             'sync_admissions',
             'sync_admission_attempts',
           ].includes(name) ||
         read_allowed !==
-          ![
-            'job_notifications',
-            'job_retention_tombstones',
-            'privacy_measure_executions',
-            'route_enrollment_records',
-          ].includes(name) ||
-        unsafe_mutation,
+          !['job_notifications', 'privacy_measure_executions', 'route_enrollment_records'].includes(name) ||
+        unsafe_mutation !== ['job_routes', 'route_price_read_sources'].includes(name),
     )
   ) {
     yield* new SymmySchemaVerificationError({

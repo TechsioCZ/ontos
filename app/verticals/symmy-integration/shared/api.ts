@@ -11,11 +11,13 @@ import { identity } from 'effect';
 import { AdmitSymmyJobActionApi } from './apis/admit-symmy-job-action.ts';
 import { AdmitSymmySyncActionApi } from './apis/admit-symmy-sync-action.ts';
 import { ExecuteSymmyRetentionActionApi } from './apis/execute-symmy-retention-action.ts';
+import { ManageSymmyRoutesActionApi } from './apis/manage-symmy-routes-action.ts';
 import { SymmyJobPrivacyExecutionApi } from './apis/symmy-job-privacy-execution.ts';
 import { SymmyJobStatusApi } from './apis/symmy-job-status.ts';
 import { SymmyRouteContextApi } from './apis/symmy-route-context.ts';
 import { SymmySourceOrganizationFactsApi } from './apis/symmy-source-organization-facts.ts';
 import { SymmySyncAdmissionApi } from './apis/symmy-sync-admission.ts';
+import { SymmyCompanyRoutesApi } from './apis/symmy-company-routes.ts';
 // </generated-governed-http-api-imports>
 
 export const symmyIntegrationMarkerSchema = Schema.Struct({
@@ -43,11 +45,13 @@ export const symmyIntegrationApi = HttpApi.make('SymmyIntegrationApi')
   .addHttpApi(AdmitSymmyJobActionApi)
   .addHttpApi(AdmitSymmySyncActionApi)
   .addHttpApi(ExecuteSymmyRetentionActionApi)
+  .addHttpApi(ManageSymmyRoutesActionApi)
   .addHttpApi(SymmyJobPrivacyExecutionApi)
   .addHttpApi(SymmyJobStatusApi)
   .addHttpApi(SymmyRouteContextApi)
   .addHttpApi(SymmySourceOrganizationFactsApi)
   .addHttpApi(SymmySyncAdmissionApi)
+  .addHttpApi(SymmyCompanyRoutesApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

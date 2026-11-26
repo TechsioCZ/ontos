@@ -21,6 +21,11 @@ export {
   executeExecuteSymmyRetentionWithAuthorization,
 } from '../src/api/execute-symmy-retention-action-client.ts';
 export type { ExecuteSymmyRetentionActionClientOptions } from '../src/api/execute-symmy-retention-action-client.ts';
+export {
+  executeManageSymmyRoutes,
+  executeManageSymmyRoutesWithAuthorization,
+} from '../src/api/manage-symmy-routes-action-client.ts';
+export type { ManageSymmyRoutesActionClientOptions } from '../src/api/manage-symmy-routes-action-client.ts';
 // </generated-action-http-client-exports>
 
 const foundationClient = Effect.gen(function* makeSymmyIntegrationFoundationClient() {

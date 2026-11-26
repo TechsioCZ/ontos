@@ -8,12 +8,14 @@ import { admitSymmyJobAction } from './src/actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from './src/actions/admit-symmy-sync.action.ts';
 import { executeSymmyJobWorker } from './src/workers/execute-symmy-job.worker.ts';
 import { executeSymmyRetentionAction } from './src/actions/execute-symmy-retention.action.ts';
+import { manageSymmyRoutesAction } from './src/actions/manage-symmy-routes.action.ts';
 import { symmyJobPrivacyDispatchWorker } from './src/workers/symmy-job-privacy-dispatch.worker.ts';
 import { symmyJobPrivacyExecutionRead } from './src/api/symmy-job-privacy-execution.read.ts';
 import { symmyJobStatusRead } from './src/api/symmy-job-status.read.ts';
 import { symmyRouteContextRead } from './src/api/symmy-route-context.read.ts';
 import { symmySourceOrganizationFactsRead } from './src/api/symmy-source-organization-facts.read.ts';
 import { symmySyncAdmissionRead } from './src/api/symmy-sync-admission.read.ts';
+import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
 // </generated-module-registration-imports>
 
 export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
@@ -22,6 +24,7 @@ export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
     admitSymmyJobAction,
     admitSymmySyncAction,
     executeSymmyRetentionAction,
+    manageSymmyRoutesAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -60,6 +63,7 @@ export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    symmyCompanyRoutesRead,
     symmyJobPrivacyExecutionRead,
     symmyJobStatusRead,
     symmyRouteContextRead,

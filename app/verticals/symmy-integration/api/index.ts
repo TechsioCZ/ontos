@@ -49,11 +49,13 @@ import {
 import { admitSymmyJobActionApiLive } from './admit-symmy-job-action-server.ts';
 import { admitSymmySyncActionApiLive } from './admit-symmy-sync-action-server.ts';
 import { executeSymmyRetentionActionApiLive } from './execute-symmy-retention-action-server.ts';
+import { manageSymmyRoutesActionApiLive } from './manage-symmy-routes-action-server.ts';
 import { symmyJobPrivacyExecutionReadApiLive } from './symmy-job-privacy-execution-read-server.ts';
 import { symmyJobStatusReadApiLive } from './symmy-job-status-read-server.ts';
 import { symmyRouteContextReadApiLive } from './symmy-route-context-read-server.ts';
 import { symmySourceOrganizationFactsReadApiLive } from './symmy-source-organization-facts-read-server.ts';
 import { symmySyncAdmissionReadApiLive } from './symmy-sync-admission-read-server.ts';
+import { symmyCompanyRoutesReadApiLive } from './symmy-company-routes-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedModuleStateGateLive = ModuleStateGateLive.pipe(
@@ -123,11 +125,13 @@ const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   admitSymmyJobActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   admitSymmySyncActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   executeSymmyRetentionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageSymmyRoutesActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   symmyJobPrivacyExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmyJobStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmyRouteContextReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmySourceOrganizationFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   symmySyncAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  symmyCompanyRoutesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   GovernedReadLayer.provide(governedReadRuntimeLive),

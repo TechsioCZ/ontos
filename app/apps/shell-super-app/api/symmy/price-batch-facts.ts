@@ -228,7 +228,7 @@ export const readSymmyPriceBatchFacts = Effect.fn('SymmyPriceBatch.facts')(funct
   const scope = yield* priceReadScope;
   yield* requireRouteRead(scope, pricingModule, 'commerce.pricing.api.price-schedule');
   yield* requireRouteRead(scope, pricingModule, 'commerce.pricing.api.price-group-source-prices');
-  const source = yield* configuredPriceSource(scope);
+  const source = configuredPriceSource(scope);
   if (Option.isNone(source)) {
     return yield* Effect.fail(symmyUnsupportedProblem('projection_not_configured'));
   }

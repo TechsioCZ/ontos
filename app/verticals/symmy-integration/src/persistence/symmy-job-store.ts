@@ -11,7 +11,7 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { SQLWrapper } from 'drizzle-orm';
-import { Array as EffectArray, Config, DateTime, Duration, Effect, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Duration, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
   SymmyFixtureExecutionPlanSchema,
@@ -38,10 +38,7 @@ import {
   SymmyPartyCommerceOwnerReceiptSchema,
   materializeSymmyPartyCommerceIntent,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
-import {
-  SymmyJobRetentionPolicySchema,
-  symmyRetentionPolicyMatchesRoute,
-} from '../../shared/domain/symmy-job-retention.ts';
+import { symmyRetentionPolicyMatchesRoute } from '../../shared/domain/symmy-job-retention.ts';
 import {
   prepareSymmyCatalogPricingInventoryRequestHash,
   materializeSymmyCatalogPricingInventorySourceOccurrence,
@@ -78,6 +75,8 @@ import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
 import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
+import { readSymmyPriceReadSource, readSymmyRetentionPolicies } from './symmy-route-settings-store.ts';
+import type { PriceSourceSystem } from '@app/pricing-contracts/domain/price-source-provenance';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import type { AdmitSymmySyncPayload } from '../../shared/actions/admit-symmy-sync.ts';
@@ -266,6 +265,7 @@ const inputPlanAllowed = (
 };
 
 const requireLifecyclePolicy = Effect.fn('SymmyJobStore.requireLifecyclePolicy')(function* requirePolicy(
+  transaction: ScopedTransactionExecutor,
   route: typeof symmyJobRoutes.$inferSelect,
   privatePayload: boolean,
 ) {
@@ -275,13 +275,8 @@ const requireLifecyclePolicy = Effect.fn('SymmyJobStore.requireLifecyclePolicy')
   if (route.lifecyclePolicy === null) {
     return yield* routeDenied();
   }
-  const configured = yield* Config.option(
-    Config.schema(
-      Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)),
-      'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-    ),
-  ).pipe(Effect.mapError(unavailable));
-  const matches = Option.getOrElse(configured, () => []).filter(
+  const configured = yield* readSymmyRetentionPolicies(transaction, route).pipe(Effect.mapError(unavailable));
+  const matches = configured.filter(
     (policy) =>
       symmyRetentionPolicyMatchesRoute(policy, route) &&
       policy.policyId === route.lifecyclePolicy?.policyId &&
@@ -827,6 +822,7 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
       return yield* routeDenied();
     }
     yield* requireLifecyclePolicy(
+      transaction,
       route,
       carriesCallerPlan(input) ||
         template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
@@ -1129,6 +1125,8 @@ interface ConfiguredRouteContext {
   readonly issuerId: SymmyFixtureExecutionPlan['items'][number]['source']['issuerId'];
   readonly legalEntityId?: string;
   readonly mappingVersion: string;
+  /** The price source system a priceLists read route pages prices from (`route_price_read_sources`). */
+  readonly priceReadSourceSystem?: PriceSourceSystem;
   readonly replayIdempotencyDigest?: NonNullable<typeof SymmyRouteContextResponseSchema.Type.replayIdempotencyDigest>;
   readonly resolvedCode?: string;
   readonly routeId: string;
@@ -1429,6 +1427,7 @@ const syncPlanSource = Effect.fn('SymmyJobStore.syncPlanSource')(function* syncP
 });
 
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
+  transaction: ScopedTransactionExecutor,
   route: typeof symmyJobRoutes.$inferSelect,
   input: AdmitSymmySyncPayload,
   scope: OperationalScope,
@@ -1445,7 +1444,7 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
     return yield* routeDenied();
   }
   // Public groups and stock rows are caller payload the admission retains.
-  yield* requireLifecyclePolicy(route, true);
+  yield* requireLifecyclePolicy(transaction, route, true);
   const source = yield* syncPlanSource(route, input, template);
   if (Option.isNone(source)) {
     return yield* new SymmyJobStoreError({
@@ -1755,7 +1754,7 @@ export const symmyJobStoreFactory = (
         yield* verifySyncReplay(existing, intentDigest);
         return yield* syncAdmissionReceipt(transaction, existing, { invocationId: admissionId, replayed: true });
       }
-      const plan = yield* prepareSyncPlan(route, input, scope, template);
+      const plan = yield* prepareSyncPlan(transaction, route, input, scope, template);
       const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(plan).pipe(
         Effect.mapError(unavailable),
       );
@@ -1969,7 +1968,17 @@ export const symmyJobStoreFactory = (
       const matches = checked.flatMap(Option.toArray);
       const [match] = matches;
       if (matches.length === 1 && match !== undefined) {
-        return match;
+        if (input.routeKey !== 'priceLists') {
+          return match;
+        }
+        const priceReadSource = yield* readSymmyPriceReadSource(transaction, {
+          routeId: match.routeId,
+          tenantId: scope.tenantId,
+        }).pipe(Effect.mapError(unavailable));
+        return Option.match(priceReadSource, {
+          onNone: () => match,
+          onSome: (priceReadSourceSystem): ConfiguredRouteContext => ({ ...match, priceReadSourceSystem }),
+        });
       }
       if (matches.length > 1 || input.replayIdempotencyKey === undefined) {
         return yield* routeDenied();

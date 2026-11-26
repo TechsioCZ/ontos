@@ -41,7 +41,6 @@ import {
   symmyRouteEnrollmentLockKey,
   symmyRouteInventoryOf,
   symmyRouteRequestRefusals,
-  symmyRuntimePrerequisites,
 } from '../../src/ops/symmy-route-enrollment.ts';
 import type {
   SymmyEnrollmentRouteKey,
@@ -1031,28 +1030,5 @@ describe('Symmy route write decisions', () => {
     expect(symmyRouteEnrollmentLockKey(request('inventoryStockBatch'))).toBe(
       `symmy-route-enrollment:${tenantId}:${principalId}:inventoryStockBatch`,
     );
-  });
-});
-
-const prerequisitesOf = (routeKey: Enrollable) =>
-  symmyRuntimePrerequisites(request(routeKey)).map(({ checked, configuration }) => `${configuration}:${checked}`);
-
-describe('Symmy route runtime prerequisites', () => {
-  it('names the Shell and Symmy configuration a route needs and what a sender observes without it', () => {
-    expect(prerequisitesOf('adminRegions')).toEqual(['ONTOS_SYMMY_REGIONS_PROJECTION:not_checked']);
-    expect(prerequisitesOf('priceLists')).toEqual(['ONTOS_SYMMY_PRICE_READ_SOURCES:not_checked']);
-    expect(prerequisitesOf('priceListPricesBatch')).toEqual([
-      'ONTOS_SYMMY_PRICE_READ_SOURCES:not_checked',
-      'ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only',
-    ]);
-    expect(prerequisitesOf('productsBatch')).toEqual(['ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only']);
-    expect(prerequisitesOf('adminProducts')).toEqual([]);
-    // A synchronous admission refused for its policy answers 503, a job admission 403.
-    expect(symmyRuntimePrerequisites(request('inventoryStockBatch')).map(({ whenMissing }) => whenMissing)).toEqual([
-      expect.stringContaining('as 503 SymmyUnavailableProblem'),
-    ]);
-    for (const prerequisite of symmyRuntimePrerequisites(request('adminRegions'))) {
-      expect(prerequisite.whenMissing).toContain('projection_not_configured');
-    }
   });
 });

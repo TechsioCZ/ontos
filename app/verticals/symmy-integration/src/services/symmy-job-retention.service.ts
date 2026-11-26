@@ -2,12 +2,11 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { cancelScopedSourceExecutionFence } from '@app/core-runtime/access/enforcement';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { Clock, Config, Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Option } from 'effect';
 import { and, eq } from 'drizzle-orm';
 import type { Crypto } from 'effect';
 import type { HttpClient } from 'effect/http';
 import {
-  SymmyJobRetentionPolicySchema,
   symmyRetentionPolicyMatchesRoute,
   symmyRetentionTargetForPrivacyHandoff,
   symmyJobIntentContentRef,
@@ -22,6 +21,7 @@ import type { SymmyJobPrivacyAuthority } from './symmy-job-privacy.service.ts';
 import { SymmyJobPrivacyError } from './symmy-job-privacy-error.ts';
 import { symmyIntegrationEvidenceCall } from '../declared-evidence-calls.ts';
 import { symmyJobRoutes } from '../db/schema.ts';
+import { readSymmyRetentionPolicies } from '../persistence/symmy-route-settings-store.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(new SymmyJobRetentionError({ code: 'retention_configuration_unavailable' }), 'cause', {
@@ -62,17 +62,7 @@ const requireRecheckedAuthority = (
   return Effect.succeed(authority);
 };
 
-export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(function* makeScopedRetention(
-  transaction: ScopedTransactionExecutor,
-  scope: OperationalScope,
-) {
-  const configured = yield* Config.option(
-    Config.schema(
-      Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)),
-      'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-    ),
-  ).pipe(Effect.mapError(unavailable));
-  const policies = Option.getOrElse(configured, () => []);
+const makeScopedRetention = (transaction: ScopedTransactionExecutor, scope: OperationalScope) => {
   const store = symmyJobRetentionStore(transaction);
   return SymmyJobRetention.of({
     purge: Effect.fn('SymmyJobRetention.purge')(function* purge(handoff) {
@@ -88,6 +78,10 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       const job = maybeJob.value;
       const targetLegalEntityId = Option.getOrNull(job.legalEntityId);
       const pinned = Option.getOrUndefined(job.policy);
+      const policies = yield* readSymmyRetentionPolicies(transaction, {
+        routeId: job.routeId,
+        tenantId: scope.tenantId,
+      }).pipe(Effect.mapError(unavailable));
       const [familyRoute] = policies.some((policy) => policy.routeFamily === 'DEMO_GROUP_MEMBERSHIP')
         ? yield* transaction
             .select()
@@ -170,4 +164,8 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       );
     }),
   });
-});
+};
+
+/** The scoped retention service; every purge reads the route's retention policies from route data. */
+export const symmyJobRetentionService = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
+  Effect.sync(() => makeScopedRetention(transaction, scope));

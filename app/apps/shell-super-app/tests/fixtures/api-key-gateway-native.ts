@@ -63,9 +63,6 @@ import {
 } from '../../shared/browser-api.ts';
 import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
-import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
-
-export { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
 
 export class ApiKeyGatewayNativeFixtureError extends Schema.TaggedError<ApiKeyGatewayNativeFixtureError>()(
   'ApiKeyGatewayNativeFixtureError',
@@ -88,7 +85,6 @@ const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
   readonly additionalRelaySources?: readonly Pick<typeof ShellNativeAdditionalRelaySourceSchema.Type, 'sourceAppId'>[];
   readonly ownedDatabase: ShellNativeOwnedDatabase;
-  readonly priceReadProjectionJson?: string;
   /** Exercise the actual Core/SpiceDB gate and both production Shell prefixes. */
   readonly productionGate?: true;
   readonly regionsProjectionJson?: string;
@@ -522,23 +518,6 @@ export const decodeShellNativeRegionsEnvironment = Effect.fn('ShellNativeFixture
     };
   },
 );
-export const decodeShellNativePriceReadEnvironment = Effect.fn('ShellNativeFixture.priceReadEnvironment')(
-  function* decodeShellNativePriceReadEnvironment(priceReadProjectionJson?: string) {
-    if (priceReadProjectionJson === undefined) {
-      return {};
-    }
-    const configuration = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
-      { onExcessProperty: 'error' },
-    )(priceReadProjectionJson).pipe(Effect.mapError(unavailable));
-    return {
-      ONTOS_SYMMY_PRICE_READ_SOURCES: yield* Schema.encodeEffect(
-        Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
-      )(configuration).pipe(Effect.mapError(unavailable)),
-    };
-  },
-);
-
 export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from './application-composition.ts';
 
 /**
@@ -830,7 +809,6 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     )(options.snapshotJson).pipe(Effect.mapError(unavailable));
     yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.mapError(unavailable));
     const regionsEnvironment = yield* decodeShellNativeRegionsEnvironment(options.regionsProjectionJson);
-    const priceReadEnvironment = yield* decodeShellNativePriceReadEnvironment(options.priceReadProjectionJson);
     const additionalRelaySources = yield* resolveAdditionalRelaySources(options, snapshot);
     const { artifact, receiverDeployment } = yield* bundleChild(snapshot.composition.shell.deployment.buildMarker);
     if (
@@ -909,7 +887,6 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     const privateChannel = yield* openShellNativePrivateChannel();
     yield* authRuntime.assertCurrent().pipe(Effect.mapError(unavailable));
     const childEnvironment = {
-      ...priceReadEnvironment,
       ...regionsEnvironment,
       BETTER_AUTH_SECRET: secret,
       // The Shell's MCP resource accepts only HTTPS or a loopback development origin.

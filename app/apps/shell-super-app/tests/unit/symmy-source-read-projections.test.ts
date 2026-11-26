@@ -679,21 +679,11 @@ const fixture = (
 };
 
 const withoutPrices = ConfigProvider.fromUnknown({});
-const withPrices = ConfigProvider.fromUnknown({
-  ONTOS_SYMMY_PRICE_READ_SOURCES: JSON.stringify({
-    routes: [
-      {
-        issuerId: scope.issuerId,
-        legalEntityId,
-        routeId,
-        sourceNamespace: scope.sourceNamespace,
-        sourceSystem: { ownerModuleId: 'integration.symmy', sourceSystemRef: 'explicit-owner-source-system' },
-        tenantId,
-      },
-    ],
-    schemaVersion: 1,
-  }),
-});
+/** The price read source a priceLists route carries in its route context (`route_price_read_sources`). */
+const pricedScope: SymmySourceReadScope = {
+  ...scope,
+  priceReadSourceSystem: { ownerModuleId: 'integration.symmy', sourceSystemRef: 'explicit-owner-source-system' },
+};
 
 const projectQualifiedReadback = (selectedScope: SymmySourceReadScope) => {
   const current = fixture(
@@ -1447,14 +1437,11 @@ describe('Symmy source-qualified public owner read projections', () => {
         yield* TestClock.setTime(0);
         const current = fixture();
         const result = yield* projectSymmySourcePriceLists(
-          scope,
+          pricedScope,
           query,
           current.admission,
           current.newRequestIdentifier,
-        ).pipe(
-          Effect.provideService(ConfigProvider.ConfigProvider, withPrices),
-          Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
-        );
+        ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
         expect(result.price_lists[0]).toMatchObject({
           name: 'Native owner name',
           prices: { count: 0, prices: [] },

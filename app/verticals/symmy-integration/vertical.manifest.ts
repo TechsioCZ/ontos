@@ -9,6 +9,9 @@ import { admitSymmyJobAction } from './src/actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from './src/actions/admit-symmy-sync.action.ts';
 import { executeSymmyRetentionAction } from './src/actions/execute-symmy-retention.action.ts';
 import { importJobResourceDescriptor } from './shared/resources/import-job.ts';
+import { manageSymmyRoutesAction } from './src/actions/manage-symmy-routes.action.ts';
+import { SymmyCompanyRoutesApi } from './shared/apis/symmy-company-routes.ts';
+import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
 import { SymmyJobPrivacyExecutionApi } from './shared/apis/symmy-job-privacy-execution.ts';
 import { symmyJobPrivacyExecutionRead } from './src/api/symmy-job-privacy-execution.read.ts';
 import { SymmyJobStatusApi } from './shared/apis/symmy-job-status.ts';
@@ -207,10 +210,12 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       admitSymmyJobAction,
       admitSymmySyncAction,
       executeSymmyRetentionAction,
+      manageSymmyRoutesAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'symmy-company-routes': SymmyCompanyRoutesApi,
       'symmy-job-privacy-execution': SymmyJobPrivacyExecutionApi,
       'symmy-job-status': SymmyJobStatusApi,
       'symmy-route-context': SymmyRouteContextApi,
@@ -225,6 +230,11 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'symmy-company-routes',
+        operationKey: 'symmyCompanyRoutes.execute',
+        registration: symmyCompanyRoutesRead,
+      },
       {
         apiKey: 'symmy-job-privacy-execution',
         operationKey: 'symmyJobPrivacyExecution.execute',
