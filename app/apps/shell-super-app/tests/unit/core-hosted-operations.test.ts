@@ -209,11 +209,12 @@ it.effect('refuses a module whose own installed release does not declare the hos
 );
 
 it.effect(
-  'refuses a module that declares a DIFFERENT hosted operation than the one this endpoint serves (no confused deputy)',
+  'would refuse an asset-current declaration at an endpoint serving another operation (no second hosted one exists)',
   () =>
     Effect.gen(function* otherHostedOperation() {
-      // The module is approved and declares a hosted operation, but asset-current is not it: a second hosted
-      // operation of the Shell must never be reachable through the declaration of the first.
+      // The served side is hypothetical: Current is the only Core operation the Shell hosts for modules, and a manifest
+      // may name callers for no other. This pins that the check compares the entrypoint, so that a second hosted
+      // operation would not be reachable through the declaration of the first.
       const { consumed, issue, receive } = yield* world();
       const { token } = yield* issue('shell-super-app');
       const refusal = yield* Effect.flip(

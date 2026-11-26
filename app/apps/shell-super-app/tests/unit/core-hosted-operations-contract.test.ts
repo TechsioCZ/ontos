@@ -8,7 +8,8 @@ import { ShellAuthenticationApi } from '../../shared/browser-api.ts';
 
 /*
  * The Shell endpoint that hosts Core Media Current V1 for a module (#1443 P2): one POST, the Core operation's own
- * schemas, only Bearer problems (no session), and a source that never reads a cookie or resolves a session.
+ * schemas, only Bearer problems (no session), and a source that never reads a cookie or resolves a session. Which
+ * operation the mounted route authenticates against and serves is proven by request in the HTTP integration suite.
  */
 
 const { coreHostedOperations: group } = ShellAuthenticationApi.groups;
@@ -65,10 +66,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       const end = index.indexOf('const coreMediaObjectStorageLive');
       expect(start).toBeGreaterThan(0);
       const handler = index.slice(start, end);
-      // The authenticator is built from the very registration the handler serves, so the caller check cannot name
-      // another operation than the one answered.
-      expect(handler).toContain('authenticatePrincipal: authenticateHostedOperation(assetCurrentRead)');
-      expect(handler).toContain('registration: assetCurrentRead');
       expect(handler).not.toMatch(/resolveTenantContext|AuthenticationService|cookie/iu);
     }),
   );
