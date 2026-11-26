@@ -1,7 +1,7 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { SourceProcessingEligibilityResponse } from '@app/privacy/api/source-processing-eligibility';
-import { Config, DateTime, Effect } from 'effect';
+import { Config, DateTime, Effect, Option, Predicate } from 'effect';
 import type { CommerceSourceProcessingRequest } from './source-processing-eligibility.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
 
@@ -14,14 +14,40 @@ export type SourceSyncProcessingPermit = Extract<
 /** Selects an owner path, never grants authority. Invalid configuration fails closed. */
 export const sourceSyncProcessingSelected = Config.Boolean('ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED').pipe(
   Config.withDefault(false),
-  Effect.mapError(
-    () =>
+  Effect.mapError((cause) =>
+    Object.defineProperty(
       new CommerceSourceProcessingRejected({
         code: 'UNAVAILABLE',
         reason: 'Source-sync processing mode is invalid',
       }),
+      'cause',
+      { configurable: true, value: cause },
+    ),
   ),
 );
+
+const denied = () =>
+  Effect.fail(
+    new CommerceSourceProcessingRejected({
+      code: 'DENIED',
+      reason: 'Exact current source-sync processing authority is required',
+    }),
+  );
+
+const isCurrentDecision = (now: string, evaluatedAt: string, validUntil: string): boolean => {
+  const current = DateTime.make(now);
+  const evaluated = DateTime.make(evaluatedAt);
+  if (Option.isNone(current) || Option.isNone(evaluated)) {
+    return false;
+  }
+  const currentMillis = DateTime.toEpochMillis(current.value);
+  const ageMillis = currentMillis - DateTime.toEpochMillis(evaluated.value);
+  return (
+    ageMillis >= 0 &&
+    ageMillis <= 30_000 &&
+    !Option.exists(DateTime.make(validUntil), (expiry) => DateTime.toEpochMillis(expiry) <= currentMillis)
+  );
+};
 
 /** Only a fresh, exact Privacy source-sync decision can authorize the selected source-sync path. */
 export const requireSourceSyncProcessingPermit = (
@@ -30,20 +56,10 @@ export const requireSourceSyncProcessingPermit = (
   decision: SourceProcessingEligibilityResponse,
   now: string,
 ): Effect.Effect<SourceSyncProcessingPermit, CommerceSourceProcessingRejected> => {
-  const denied = () =>
-    Effect.fail(
-      new CommerceSourceProcessingRejected({
-        code: 'DENIED',
-        reason: 'Exact current source-sync processing authority is required',
-      }),
-    );
-  if (
-    decision.outcome !== 'ALLOWED' ||
-    !('_tag' in decision.evidence) ||
-    decision.evidence._tag !== 'SOURCE_SYNC_PROCESSING_POLICY'
-  )
+  if (decision.outcome !== 'ALLOWED' || !Predicate.isTagged(decision.evidence, 'SOURCE_SYNC_PROCESSING_POLICY')) {
     return denied();
-  const evidence = decision.evidence;
+  }
+  const { evidence } = decision;
   if (
     evidence.tenantId !== scope.tenantId ||
     evidence.legalEntityId !== scope.legalEntityId ||
@@ -56,38 +72,30 @@ export const requireSourceSyncProcessingPermit = (
     evidence.policyId !== decision.authorityIncarnation ||
     evidence.policyRevision !== decision.authorityRevision ||
     evidence.trustedDecisionTime !== decision.evaluatedAt ||
-    !Number.isFinite(Date.parse(now)) ||
-    !Number.isFinite(Date.parse(decision.evaluatedAt)) ||
-    Date.parse(decision.evaluatedAt) > Date.parse(now) ||
-    Date.parse(now) - Date.parse(decision.evaluatedAt) > 30_000 ||
-    Date.parse(evidence.validUntil) <= Date.parse(now) ||
+    !isCurrentDecision(now, decision.evaluatedAt, evidence.validUntil) ||
     request.source === null ||
     computeCanonicalValueHash(evidence.source) !== computeCanonicalValueHash(request.source) ||
     computeCanonicalValueHash(evidence.target) !== computeCanonicalValueHash(request.target)
-  )
+  ) {
     return denied();
+  }
   return Effect.succeed(evidence);
 };
 
+/** Run the deferred Privacy decision only in the selected mode, then validate its exact permit. */
 export const acquireSourceSyncProcessingPermit = Effect.fn('Commerce.acquireSourceSyncProcessingPermit')(
   function* acquire(
     scope: OperationalScope,
-    authority: {
-      readonly check: (
-        scope: OperationalScope,
-        request: CommerceSourceProcessingRequest,
-        requirement: string,
-      ) => Effect.Effect<CommerceSourceProcessingAuthority, CommerceSourceProcessingRejected>;
-    },
     request: CommerceSourceProcessingRequest,
-    requirement: string,
+    decision: Effect.Effect<CommerceSourceProcessingAuthority, CommerceSourceProcessingRejected>,
   ) {
-    if (!(yield* sourceSyncProcessingSelected))
+    if (!(yield* sourceSyncProcessingSelected)) {
       return yield* new CommerceSourceProcessingRejected({
         code: 'DENIED',
         reason: 'Source-sync processing mode is not selected',
       });
-    const decision = yield* authority.check(scope, request, requirement);
-    return yield* requireSourceSyncProcessingPermit(scope, request, decision, DateTime.formatIso(yield* DateTime.now));
+    }
+    const authority = yield* decision;
+    return yield* requireSourceSyncProcessingPermit(scope, request, authority, DateTime.formatIso(yield* DateTime.now));
   },
 );

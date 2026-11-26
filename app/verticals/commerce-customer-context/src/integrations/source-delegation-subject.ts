@@ -35,9 +35,9 @@ export const commerceSourceDelegationSubject = (
   if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
     return {
       _tag: 'NativeRouteRead',
-      scope,
       operationRequirementKey,
       requestHash: computeCanonicalValueHash(decodedReadInput),
+      scope,
     };
   }
   if (scope.authMethod !== 'system' && readVerifiedGatewayWorkload(scope) === undefined && recovery === undefined) {

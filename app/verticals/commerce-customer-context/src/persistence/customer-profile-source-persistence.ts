@@ -1,6 +1,6 @@
 import {
-  sourceSyncProcessingSelected,
   acquireSourceSyncProcessingPermit,
+  sourceSyncProcessingSelected,
 } from '../integrations/source-sync-processing.ts';
 import { CommerceOrganizationBusinessEligibility } from '../integrations/organization-business-eligibility.ts';
 import {
@@ -46,6 +46,7 @@ import type {
 } from '../../shared/apis/customer-profile-source-page.ts';
 import type { CustomerProfileSourceAssertion } from '../../shared/domain/customer-profile-source.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
+import type { CommerceSourceProcessingRequest } from '../integrations/source-processing-eligibility.ts';
 import { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 import { readSourceProfileAddresses } from './source-profile-addresses.ts';
@@ -64,6 +65,7 @@ type StoredSourceResponse = typeof storedSourceResponseSchema.Type;
 const OWNER_MODULE_KEY = 'commerce.customer-context';
 const DATABASE_SCHEMA = 'commerce_customer_context';
 const SOURCE_READ_ROUTINE_KEY = 'customer-profile-source.read';
+const SOURCE_RECOVERY_OPERATION = 'customer-profile-source.recover';
 /** The dependency requirement keys of one read entrypoint: each entrypoint declares and executes its own. */
 interface SourceReadRequirements {
   readonly counterparty: string;
@@ -225,9 +227,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       },
     };
     if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
-      return yield* acquireSourceSyncProcessingPermit(scope, privacy, request, requirements.privacy).pipe(
-        Effect.mapError(customerProfileSourcePrivacyFailure),
-      );
+      return yield* acquireSourceSyncProcessingPermit(
+        scope,
+        request,
+        Effect.suspend(() => privacy.check(scope, request, requirements.privacy)),
+      ).pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
     }
     return yield* privacy
       .check(scope, request, requirements.privacy)
@@ -264,8 +268,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       if (result.outcome !== 'ELIGIBLE' || result.partyResourceId !== item.partyRef.resourceId) {
         return yield* unavailable();
       }
-      if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure)))
+      if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
         return result.currentAdmission;
+      }
       const personKey = requirements.counterpartyPerson;
       yield* requireModuleOperation(personKey).pipe(Effect.mapError(unavailable));
       const person = yield* proof
@@ -453,15 +458,18 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const { icoAuthority: _classification, ...sourceSyncItem } = item;
       const selected = { ...sourceSyncItem, sourceProcessingMode: 'SOURCE_SYNC' as const };
       return includeSourceAddresses
-        ? { ...selected, sourceAddresses: yield* readSourceProfileAddresses(
-            transaction, scope, selected, requirements.privacy,
-          ) }
+        ? {
+            ...selected,
+            sourceAddresses: yield* readSourceProfileAddresses(transaction, scope, selected, requirements.privacy),
+          }
         : selected;
     }
-    if (includeSourceAddresses) return yield* new ReadPermissionDenied({
-      code: 'read_permission_denied',
-      reason: 'Source address values require current source-sync processing authority',
-    });
+    if (includeSourceAddresses) {
+      return yield* new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'Source address values require current source-sync processing authority',
+      });
+    }
     if (item.profile.subject.kind === 'RETAIL') {
       yield* checkItem(item);
       return { ...item, icoAuthority: 'PERSONAL' as const };
@@ -493,6 +501,46 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       return recovery;
     },
   );
+  const checkOrganizationReceiptSourceSync = Effect.fnUntraced(function* checkOrganizationReceiptSourceSync({
+    current,
+    receipt: safe,
+  }: typeof organizationReceiptResultSchema.Type) {
+    if (current.counterpartyRef.resourceId !== safe.intent.subject.counterpartyRef.resourceId) {
+      return yield* unavailable();
+    }
+    yield* requireModuleOperation(requirements.counterparty).pipe(Effect.mapError(unavailable));
+    const native = yield* proof
+      .counterparty(
+        scope,
+        current.counterpartyRef.resourceId,
+        safe.intent.source,
+        safe.intent.partySourceReference,
+        requirements.counterparty,
+      )
+      .pipe(Effect.mapError(unavailable));
+    if (native.outcome !== 'ELIGIBLE' || native.partyResourceId !== current.partyRef.resourceId) {
+      return yield* unavailable();
+    }
+    yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
+    const request: CommerceSourceProcessingRequest = {
+      operation: SOURCE_RECOVERY_OPERATION,
+      partySourceReference: safe.intent.partySourceReference,
+      source: {
+        issuer: safe.intent.source.issuer,
+        namespace: safe.intent.source.namespace,
+        occurrenceId: safe.intent.source.occurrenceId,
+        recordId: safe.intent.source.recordId,
+        recordType: safe.intent.source.recordType,
+        routeRef: safe.intent.source.route.id,
+      },
+      target: { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: safe.result.profileRef.resourceId },
+    };
+    return yield* acquireSourceSyncProcessingPermit(
+      scope,
+      request,
+      Effect.suspend(() => privacy.check(scope, request, requirements.privacy)),
+    ).pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
+  });
   const recoverOrganizationReceipt = Effect.fn('CustomerProfileSourceRead.organizationReceipt')(
     function* organizationReceipt(input: CustomerProfileSourceRequest) {
       if (input.mode !== 'ORG_RECEIPT') {
@@ -525,42 +573,12 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
         onExcessProperty: 'error',
       })(row.result).pipe(Effect.mapError(unavailable));
       if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
-        if (current.counterpartyRef.resourceId !== safe.intent.subject.counterpartyRef.resourceId)
-          return yield* unavailable();
-        yield* requireModuleOperation(requirements.counterparty).pipe(Effect.mapError(unavailable));
-        const native = yield* proof
-          .counterparty(
-            scope,
-            current.counterpartyRef.resourceId,
-            safe.intent.source,
-            safe.intent.partySourceReference,
-            requirements.counterparty,
-          )
-          .pipe(Effect.mapError(unavailable));
-        if (native.outcome !== 'ELIGIBLE' || native.partyResourceId !== current.partyRef.resourceId)
-          return yield* unavailable();
-        yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
-        yield* acquireSourceSyncProcessingPermit(
-          scope,
-          privacy,
-          {
-            operation: 'customer-profile-source.recover',
-            source: {
-              issuer: safe.intent.source.issuer,
-              namespace: safe.intent.source.namespace,
-              occurrenceId: safe.intent.source.occurrenceId,
-              recordId: safe.intent.source.recordId,
-              recordType: safe.intent.source.recordType,
-              routeRef: safe.intent.source.route.id,
-            },
-            partySourceReference: safe.intent.partySourceReference,
-            target: { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: safe.result.profileRef.resourceId },
-          },
-          requirements.privacy,
-        ).pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
+        yield* checkOrganizationReceiptSourceSync({ current, receipt: safe });
         return { _tag: 'ORG_RECEIPT' as const, receipt: safe };
       }
-      if (Option.isNone(organizationBusiness)) return yield* unavailable();
+      if (Option.isNone(organizationBusiness)) {
+        return yield* unavailable();
+      }
       const authority = yield* organizationBusiness.value
         .check(
           scope,
@@ -574,7 +592,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
               ),
             ),
             kind: 'COUNTERPARTY_PROFILE',
-            operation: 'customer-profile-source.recover',
+            operation: SOURCE_RECOVERY_OPERATION,
             profileRef: safe.result.profileRef,
             profileSource: safe.intent.source,
             projectionVersion: ORGANIZATION_PROFILE_SOURCE_RECEIPT_VERSION,
@@ -617,9 +635,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const items =
         page.items.length === 0
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-          : yield* Effect.forEach(
-              page.items, (item) => projectCurrentItem(item, includeSourceAddresses === true), { concurrency: 1 },
-            );
+          : yield* Effect.forEach(page.items, (item) => projectCurrentItem(item, includeSourceAddresses === true), {
+              concurrency: 1,
+            });
       return { ...page, items };
     }),
     readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(
@@ -713,7 +731,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
               partySourceReference: originalPartyReference,
               source: original,
             });
-            yield* privacyCheck(original, current, 'customer-profile-source.recover');
+            yield* privacyCheck(original, current, SOURCE_RECOVERY_OPERATION);
             return { _tag: 'RECEIPT' as const, current, currentAdmission, receipt };
           }),
         }),

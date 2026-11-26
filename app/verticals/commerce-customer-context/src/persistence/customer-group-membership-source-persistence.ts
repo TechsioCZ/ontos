@@ -1,6 +1,6 @@
 import {
-  sourceSyncProcessingSelected,
   acquireSourceSyncProcessingPermit,
+  sourceSyncProcessingSelected,
 } from '../integrations/source-sync-processing.ts';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ReadServiceFactory } from '@app/core-runtime';
@@ -20,6 +20,7 @@ import type {
 } from '../../shared/domain/customer-group-membership-snapshot.ts';
 import { ReactivationProfileFactsSchema } from '../integrations/profile-reconfirmation-policy.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
+import type { CommerceSourceProcessingRequest } from '../integrations/source-processing-eligibility.ts';
 import type { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceOrganizationBusinessEligibility } from '../integrations/organization-business-eligibility.ts';
 import {
@@ -244,33 +245,29 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       yield* organization.value.check(scope, request, operationRequirementKey).pipe(Effect.mapError(privacyRejected));
       return yield* Effect.void;
     }
-    const check = (
-      scope: Parameters<typeof privacy.check>[0],
-      request: Parameters<typeof privacy.check>[1],
-      requirement: string,
-    ): Effect.Effect<void, CommerceSourceProcessingRejected> =>
-      sourceSync
-        ? acquireSourceSyncProcessingPermit(scope, privacy, request, requirement).pipe(Effect.asVoid)
-        : privacy.check(scope, request, requirement).pipe(Effect.asVoid);
-    yield* check(
-      scope,
-      {
-        operation,
-        source: {
-          issuer: input.manager.issuer,
-          namespace: input.manager.sourceNamespace,
-          occurrenceId: source.assertionId,
-          recordId: source.sourceRecordId,
-          recordType: input.manager.factFamily,
-          routeRef: input.route.id,
-        },
-        target: {
-          kind: profile.profileKind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
-          resourceId: profile.profileId,
-        },
+    const request: CommerceSourceProcessingRequest = {
+      operation,
+      source: {
+        issuer: input.manager.issuer,
+        namespace: input.manager.sourceNamespace,
+        occurrenceId: source.assertionId,
+        recordId: source.sourceRecordId,
+        recordType: input.manager.factFamily,
+        routeRef: input.route.id,
       },
-      operationRequirementKey,
-    ).pipe(Effect.mapError(privacyRejected));
+      target: {
+        kind: profile.profileKind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
+        resourceId: profile.profileId,
+      },
+    };
+    const check = sourceSync
+      ? acquireSourceSyncProcessingPermit(
+          scope,
+          request,
+          Effect.suspend(() => privacy.check(scope, request, operationRequirementKey)),
+        ).pipe(Effect.asVoid)
+      : privacy.check(scope, request, operationRequirementKey).pipe(Effect.asVoid);
+    yield* check.pipe(Effect.mapError(privacyRejected));
     return yield* Effect.void;
   });
   return {

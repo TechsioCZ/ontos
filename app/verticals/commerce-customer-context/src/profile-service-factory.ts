@@ -26,8 +26,8 @@ import { accessPortalWritesForTransaction } from '@app/core-runtime/access/porta
 import type { AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
 import { Crypto, Effect, Option, Schema } from 'effect';
 import {
-  sourceSyncProcessingSelected,
   acquireSourceSyncProcessingPermit,
+  sourceSyncProcessingSelected,
 } from './integrations/source-sync-processing.ts';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CommerceSourceProcessingEligibility } from './integrations/source-processing-eligibility.ts';
@@ -79,6 +79,7 @@ const preserveOrganizationFallbackFailure =
   (organization: CommerceSourceProcessingRejected) => (person: ProfilePersistenceDependencyFailure) =>
     sourceDependencyFailure({ organization, person });
 const COMMERCE_MODULE_KEY = 'commerce.customer-context';
+const PROFILE_SOURCE_WRITE_OPERATION = 'customer-profile-source.write';
 const ENROLLMENT_CONTINUATION_APP_ID = 'commerce-customer-context';
 
 /**
@@ -111,7 +112,7 @@ const sourceProfileDependencies = (
         : 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
     const profileCreate = profileKind === 'RETAIL' && target.kind === 'PARTY';
     const baseRequest: CommerceSourceProcessingRequest = {
-      operation: profileCreate ? 'PROFILE_CREATE' : 'customer-profile-source.write',
+      operation: profileCreate ? 'PROFILE_CREATE' : PROFILE_SOURCE_WRITE_OPERATION,
       source: {
         issuer: source.issuer,
         namespace: source.namespace,
@@ -409,7 +410,7 @@ const profileServicesFor = (
                   ),
                 ),
                 kind: 'COUNTERPARTY_PROFILE',
-                operation: 'customer-profile-source.write',
+                operation: PROFILE_SOURCE_WRITE_OPERATION,
                 profileRef: result.profileRef,
                 profileSource: payload.source,
                 projectionVersion: ORGANIZATION_PROFILE_SOURCE_CURRENT_VERSION,
@@ -434,18 +435,20 @@ const profileServicesFor = (
         payload: CreateCounterpartyPurchasingProfilePayload,
       ) {
         if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(sourceDependencyFailure))) {
-          if (Option.isNone(sourcePrivacy) || Option.isNone(sourceProof))
+          if (Option.isNone(sourcePrivacy) || Option.isNone(sourceProof)) {
             return yield* sourceDependencyFailure('Missing native source-sync processing dependencies');
+          }
           const witness = payload.sourceOrganizationWitness;
           if (
             witness !== undefined &&
             (witness.semanticProjectionVersion !== ORGANIZATION_PROFILE_SOURCE_CREATE_TEMPLATE_VERSION ||
               witness.effectId !== source.effectId ||
               witness.originalAdmissionInvocationId !== readVerifiedGatewayWorkload(scope)?.admissionInvocationId)
-          )
+          ) {
             return yield* sourceDependencyFailure(
               'Source-sync processing requires the genuine admitted source witness',
             );
+          }
           const roleKey = 'commerce.customer-context.requirement.create-counterparty-profile-source-role';
           yield* requireModuleOperation(roleKey).pipe(Effect.mapError(sourceDependencyFailure));
           const role = yield* sourceProof.value.counterparty(
@@ -455,25 +458,28 @@ const profileServicesFor = (
             partySourceReference,
             roleKey,
           );
-          if (role.outcome !== 'ELIGIBLE' || role.partyResourceId === undefined) return role;
+          if (role.outcome !== 'ELIGIBLE' || role.partyResourceId === undefined) {
+            return role;
+          }
           const requirement = 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
           yield* requireModuleOperation(requirement).pipe(Effect.mapError(sourceDependencyFailure));
+          const { value: privacy } = sourcePrivacy;
+          const request: CommerceSourceProcessingRequest = {
+            operation: PROFILE_SOURCE_WRITE_OPERATION,
+            source: {
+              issuer: source.issuer,
+              namespace: source.namespace,
+              occurrenceId: source.occurrenceId,
+              recordId: source.recordId,
+              recordType: source.recordType,
+              routeRef: source.route.id,
+            },
+            target: { kind: 'PARTY', resourceId: role.partyResourceId },
+          };
           const sourceSyncPermit = yield* acquireSourceSyncProcessingPermit(
             scope,
-            sourcePrivacy.value,
-            {
-              operation: 'customer-profile-source.write',
-              source: {
-                issuer: source.issuer,
-                namespace: source.namespace,
-                recordType: source.recordType,
-                routeRef: source.route.id,
-                recordId: source.recordId,
-                occurrenceId: source.occurrenceId,
-              },
-              target: { kind: 'PARTY', resourceId: role.partyResourceId },
-            },
-            requirement,
+            request,
+            Effect.suspend(() => privacy.check(scope, request, requirement)),
           ).pipe(Effect.mapError(sourceDependencyFailure));
           return role.outcome === 'ELIGIBLE' ? { ...role, sourceSyncPermit } : role;
         }
