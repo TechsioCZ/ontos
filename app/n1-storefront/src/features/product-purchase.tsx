@@ -44,8 +44,14 @@ export const ProductPurchase = ({
   const cart = useCart();
   const toaster = useToast();
   const selectionKey = JSON.stringify([product.id, variant?.id ?? null]);
-  const [draft, setDraft] = useState({ key: selectionKey, value: String(current.minimumQuantity) });
-  const quantity = draft.key === selectionKey ? draft.value : String(current.minimumQuantity);
+  // The owner sells whole packages: the first orderable quantity is the minimum rounded up to a package.
+  const firstQuantity =
+    current.packageQuantity !== undefined && current.packageQuantity > 0
+      ? Math.ceil(current.minimumQuantity / current.packageQuantity - 1e-6) *
+        current.packageQuantity
+      : current.minimumQuantity;
+  const [draft, setDraft] = useState({ key: selectionKey, value: String(firstQuantity) });
+  const quantity = draft.key === selectionKey ? draft.value : String(firstQuantity);
   const parsedQuantity = Number(quantity);
   const existingQuantity =
     cart?.entries.find((entry) => cartLineKey(entry) === selectionKey)?.quantity ?? 0;
@@ -53,7 +59,7 @@ export const ProductPurchase = ({
     current.stockQuantity === null ? null : Math.max(0, current.stockQuantity - existingQuantity),
     current.packageQuantity,
   );
-  const exhausted = maximum < current.minimumQuantity;
+  const exhausted = maximum < firstQuantity;
   const invalidQuantity = !validCartQuantity(
     parsedQuantity,
     current.minimumQuantity,
@@ -87,7 +93,7 @@ export const ProductPurchase = ({
     const added =
       variant === undefined ? cart.add(entry) : cart.add({ ...entry, variantId: variant.id });
     if (added) {
-      setDraft({ key: selectionKey, value: String(current.minimumQuantity) });
+      setDraft({ key: selectionKey, value: String(firstQuantity) });
     }
     toaster.create({
       description: added ? `${parsedQuantity} × ${product.name}` : undefined,
@@ -122,8 +128,8 @@ export const ProductPurchase = ({
             formatOptions={{ maximumFractionDigits: 20, useGrouping: false }}
             invalid={showQuantityError}
             locale={locale}
-            max={Math.max(current.minimumQuantity, maximum)}
-            min={current.minimumQuantity}
+            max={Math.max(firstQuantity, maximum)}
+            min={firstQuantity}
             onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
             size="md"
             step={cartQuantityStep(current.packageQuantity)}
