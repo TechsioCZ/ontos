@@ -1,6 +1,8 @@
 ------------------------------------------------------------------------------------------------
+--arrow-down
 --arrow-left
 --arrow-right
+--arrow-up
 --cart-outline
 --close
 --delete-outline
@@ -43,6 +45,7 @@ divide-y
 filter
 fixed
 flex
+flex-1
 flex-col
 flex-shrink
 flex-wrap
@@ -64,8 +67,10 @@ grow
 h-1
 h-auto
 hidden
+icon-[mdi--arrow-down]
 icon-[mdi--arrow-left]
 icon-[mdi--arrow-right]
+icon-[mdi--arrow-up]
 icon-[mdi--cart-outline]
 icon-[mdi--close]
 icon-[mdi--delete-outline]
@@ -146,6 +151,7 @@ sm:grid-cols-[minmax(0,1fr)_10rem]
 sm:grid-cols-[minmax(0,1fr)_12rem_8rem_auto]
 sm:grid-cols-[minmax(0,1fr)_9rem_auto]
 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]
+sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]
 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]
 sr-only
 start-0

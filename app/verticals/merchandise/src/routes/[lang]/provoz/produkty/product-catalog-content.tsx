@@ -12,6 +12,9 @@ import type { ProductPatch } from '../../../../../shared/actions/apply-command.t
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { ContentExtrasError, ContentExtrasSections } from './product-content-extras.tsx';
+import { addContentExtrasPatch, contentExtrasInvalid, contentExtrasOf } from './product-content-extras-draft.ts';
+import type { ContentExtras } from './product-content-extras-draft.ts';
 
 export interface CatalogContentPanelProps {
   /** The editor shows this tab; the form's Save button is rendered only then. */
@@ -44,6 +47,7 @@ interface Flags {
 /** The content form's draft. `category` is the tree category picked here; `keep` keeps the product's own. */
 interface ContentDraft {
   readonly category: CategoryTrail | null | 'keep';
+  readonly extras: ContentExtras;
   readonly flags: Flags;
   readonly imageAlt: string;
   readonly parameters: readonly ParameterDraft[];
@@ -51,6 +55,7 @@ interface ContentDraft {
 
 const contentDraftOf = (product: ProductRecord): ContentDraft => ({
   category: 'keep',
+  extras: contentExtrasOf(product),
   flags: {
     isAction: product.isAction === true,
     isNew: product.isNew === true,
@@ -87,6 +92,7 @@ const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, pro
   patch.isRecommended = draft.flags.isRecommended;
   patch.isSale = draft.flags.isSale;
   patch.imageAlt = draft.imageAlt.trim();
+  addContentExtrasPatch(patch, draft.extras, product);
   return patch;
 };
 
@@ -117,7 +123,7 @@ export const CatalogContentPanel = ({
     setForm((current) => ({ ...current, parameters: update(current.parameters) }));
   const save = useProductTabSave<ContentDraft>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, category, product) }),
-    isValid: (value) => !parametersInvalidOf(value.parameters),
+    isValid: (value) => !parametersInvalidOf(value.parameters) && !contentExtrasInvalid(value.extras),
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
     reset: (next) => {
@@ -299,6 +305,16 @@ export const CatalogContentPanel = ({
           Obrázky přidáte nebo odeberete na kartě E-shop a obrázky; název a popisy na kartě Detail.
         </p>
       </SectionCard>
+
+      <ContentExtrasSections
+        canWrite={canWrite}
+        extras={form.extras}
+        hasCategoryTree={hasCategoryTree}
+        hasPrimaryCategory={(picked?.id ?? product.categoryId) !== undefined}
+        onChange={(update) => setForm((current) => ({ ...current, extras: update(current.extras) }))}
+        product={product}
+      />
+      <ContentExtrasError invalid={contentExtrasInvalid(form.extras)} />
 
       {canWrite ? <ProductTabSaveBar active={active} save={save} /> : null}
 
