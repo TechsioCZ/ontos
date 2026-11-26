@@ -1,21 +1,23 @@
 import { createHash } from 'node:crypto';
 
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { ActionPermissionDenied, ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { betterAuth } from 'better-auth/minimal';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { DateTime, Effect, Exit, Predicate, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ApiKeyProviderUnavailableError } from '../../api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
 import {
   CreateNonHumanPrincipalPayloadSchema,
   IssueManagedApiKeyPayloadSchema,
+  ManagedApiKeyIssueResponseSchema,
   ManagedApiKeyListItemSchema,
   RotateManagedApiKeyPayloadSchema,
 } from '../../shared/browser-api.ts';
 import { integrationEntries } from '../../src/routes/people/integrations-model.ts';
-import { actionSuccess, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
+import { actionCoreFailure, actionSuccess, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -28,16 +30,16 @@ const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
 });
 const integrationPrincipalId = '00000000-0000-4000-8000-000000000010';
 const existingValue = 'SymmyHeldKeyValue0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ';
-const issued = {
+const registered = {
   createdAt: '2026-11-26T00:00:00.000Z',
   enabled: true,
   expiresAt: null,
   name: 'symmy',
   providerKeyId: 'provider-key-of-the-registered-value',
-  secret: Redacted.make(existingValue),
   start: existingValue.slice(0, 6),
 };
-const issueInput = {
+const authBindingId = '00000000-0000-4000-8000-000000000004';
+const registerInput = {
   correlationId: 'correlation-import',
   idempotencyKey: 'import-1',
   managedPrincipalId: integrationPrincipalId,
@@ -47,48 +49,160 @@ const issueInput = {
   requestHeaders: new Headers(),
   suppliedSecret: Redacted.make(existingValue),
 };
+const noPendingCleanup = () => Effect.succeed({ hasMore: false, providerKeyIds: [] });
+const providerUnavailable = new ApiKeyProviderUnavailableError({
+  code: 'api_key_provider_unavailable',
+  reason: 'The provider is unavailable',
+});
+const bindingHolder = (principalId: string) => ({
+  authBindingId,
+  displayName: 'Symmy',
+  principalId,
+  principalKind: 'integration' as const,
+  tenantId: principal.tenantId,
+});
 
-it.effect('registers an existing key value through the provider and binds it like a generated tenant key', () =>
+it.effect('registers an existing value, binds it like a generated tenant key and never answers the value', () =>
   Effect.gen(function* registersExistingValue() {
-    const supplied: (string | undefined)[] = [];
-    const actions = makeActionRuntimeDouble([
-      actionSuccess({ authBindingId: '00000000-0000-4000-8000-000000000004', status: 'active' }),
-    ]);
+    const supplied: string[] = [];
+    const actions = makeActionRuntimeDouble([actionSuccess({ authBindingId, status: 'active' })]);
     const service = makeIdentityLifecycleService(
       actions.runtime,
       makeApiKeyServiceDouble({
         clearPendingCleanup: () => Effect.void,
-        isRegistered: () => Effect.succeed(false),
-        issue: (_headers, input) => {
-          supplied.push(input.suppliedSecret === undefined ? undefined : Redacted.value(input.suppliedSecret));
-          return Effect.succeed(issued);
+        pendingCleanup: noPendingCleanup,
+        register: (_headers, input) => {
+          supplied.push(Redacted.value(input.secret));
+          return Effect.succeed(registered);
         },
-        pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+        registeredKeyId: () => Effect.succeed(Option.none()),
       }),
       makePrincipalResolverDouble(),
     );
-    const result = yield* service.issue(issueInput);
+    const result = yield* service.register(registerInput);
     expect(supplied).toEqual([existingValue]);
     expect(actions.payloads).toEqual([
-      { principalId: integrationPrincipalId, providerSubjectId: issued.providerKeyId, scope: 'tenant-managed' },
+      { principalId: integrationPrincipalId, providerSubjectId: registered.providerKeyId, scope: 'tenant-managed' },
     ]);
-    expect(result.authBindingId).toBe('00000000-0000-4000-8000-000000000004');
+    expect(result.authBindingId).toBe(authBindingId);
     expect(Object.hasOwn(result, 'providerKeyId')).toBe(false);
+    // The value is the integration's own: neither the result nor its HTTP answer carries it.
+    expect(Object.hasOwn(result, 'secret')).toBe(false);
+    const answered = yield* Schema.encodeEffect(Schema.toCodecJson(ManagedApiKeyIssueResponseSchema))(
+      yield* Schema.decodeUnknownEffect(ManagedApiKeyIssueResponseSchema)(result),
+    );
+    expect(JSON.stringify(answered)).not.toContain('"secret"');
+    expect(JSON.stringify(answered)).not.toContain(existingValue);
   }),
 );
 
-it.effect('refuses a key value that is already registered, in any state, before the provider stores anything', () =>
+it.effect('refuses a value another principal holds, without running a bind or storing anything', () =>
   Effect.gen(function* refusesRegisteredValue() {
+    const actions = makeActionRuntimeDouble([]);
+    const service = makeIdentityLifecycleService(
+      actions.runtime,
+      makeApiKeyServiceDouble({
+        pendingCleanup: noPendingCleanup,
+        registeredKeyId: () => Effect.succeed(Option.some(registered.providerKeyId)),
+      }),
+      makePrincipalResolverDouble({
+        resolveBetterAuthApiKey: () => Effect.succeed(bindingHolder('00000000-0000-4000-8000-000000000099')),
+      }),
+    );
+    const failure = yield* Effect.flip(service.register(registerInput));
+    expect(Predicate.isTagged(failure, 'IdentityLifecycleConflictError')).toBe(true);
+    expect(actions.payloads).toEqual([]);
+  }),
+);
+
+it.effect('answers the original result when the same request is retried after it registered the value', () =>
+  Effect.gen(function* replaysRegistration() {
+    const actions = makeActionRuntimeDouble([actionSuccess({ authBindingId, status: 'active' })]);
+    const service = makeIdentityLifecycleService(
+      actions.runtime,
+      makeApiKeyServiceDouble({
+        metadata: () => Effect.succeed(registered),
+        pendingCleanup: noPendingCleanup,
+        registeredKeyId: () => Effect.succeed(Option.some(registered.providerKeyId)),
+      }),
+      makePrincipalResolverDouble({
+        resolveBetterAuthApiKey: () => Effect.succeed(bindingHolder(integrationPrincipalId)),
+      }),
+    );
+    const result = yield* service.register(registerInput);
+    expect(result).toMatchObject({ authBindingId, cleanupPending: false, start: registered.start });
+    expect(Object.hasOwn(result, 'secret')).toBe(false);
+    // The same bind again, under the same idempotency key, so the runtime answers its saved reply.
+    expect(actions.payloads).toEqual([
+      { principalId: integrationPrincipalId, providerSubjectId: registered.providerKeyId, scope: 'tenant-managed' },
+    ]);
+  }),
+);
+
+it.effect('refuses the loser of two concurrent registrations of one value as already registered', () =>
+  Effect.gen(function* losesRace() {
+    const lookups: string[] = [];
     const service = makeIdentityLifecycleService(
       makeActionRuntimeDouble([]).runtime,
       makeApiKeyServiceDouble({
-        isRegistered: (value) => Effect.succeed(Redacted.value(value) === existingValue),
-        pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+        pendingCleanup: noPendingCleanup,
+        // The twin committed between the check and the create; auth.apikey(key) refused this one.
+        register: () => Effect.fail(providerUnavailable),
+        registeredKeyId: () => {
+          lookups.push('lookup');
+          return Effect.succeed(lookups.length === 1 ? Option.none() : Option.some(registered.providerKeyId));
+        },
       }),
       makePrincipalResolverDouble(),
     );
-    const failure = yield* Effect.flip(service.issue(issueInput));
+    const failure = yield* Effect.flip(service.register(registerInput));
     expect(Predicate.isTagged(failure, 'IdentityLifecycleConflictError')).toBe(true);
+  }),
+);
+
+it.effect('removes the provider key of a refused binding, so the value can be registered again', () =>
+  Effect.gen(function* removesRefused() {
+    const removed: string[] = [];
+    const disabled: string[] = [];
+    const denied = new ActionPermissionDenied({ code: 'action_permission_denied', reason: 'Not an administrator' });
+    const service = makeIdentityLifecycleService(
+      makeActionRuntimeDouble([actionCoreFailure(denied)]).runtime,
+      makeApiKeyServiceDouble({
+        pendingCleanup: noPendingCleanup,
+        register: () => Effect.succeed(registered),
+        registeredKeyId: () => Effect.succeed(Option.none()),
+        removeUnbound: (keyId) => Effect.sync(() => removed.push(keyId)),
+        setEnabled: (keyId) => Effect.sync(() => disabled.push(keyId)).pipe(Effect.as(registered)),
+      }),
+      makePrincipalResolverDouble(),
+    );
+    const failure = yield* Effect.flip(service.register(registerInput));
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+    expect(removed).toEqual([registered.providerKeyId]);
+    expect(disabled).toEqual([]);
+  }),
+);
+
+it.effect('keeps, disabled, the provider key of a bind that may have committed', () =>
+  Effect.gen(function* keepsIndeterminate() {
+    const removed: string[] = [];
+    const disabled: string[] = [];
+    const transactionFailed = new ActionTransactionError({ code: 'action_transaction_failed', reason: 'Lost commit' });
+    const service = makeIdentityLifecycleService(
+      makeActionRuntimeDouble([actionCoreFailure(transactionFailed)]).runtime,
+      makeApiKeyServiceDouble({
+        clearPendingCleanup: () => Effect.void,
+        pendingCleanup: noPendingCleanup,
+        register: () => Effect.succeed(registered),
+        registeredKeyId: () => Effect.succeed(Option.none()),
+        removeUnbound: (keyId) => Effect.sync(() => removed.push(keyId)),
+        setEnabled: (keyId) => Effect.sync(() => disabled.push(keyId)).pipe(Effect.as(registered)),
+      }),
+      makePrincipalResolverDouble(),
+    );
+    yield* Effect.flip(service.register(registerInput));
+    expect(disabled).toEqual([registered.providerKeyId]);
+    expect(removed).toEqual([]);
   }),
 );
 

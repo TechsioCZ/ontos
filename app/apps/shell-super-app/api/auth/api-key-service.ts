@@ -92,8 +92,6 @@ interface PendingApiKeyCleanupBatch {
 
 export interface ApiKeyServiceContract {
   readonly clearPendingCleanup: (keyId: string) => Effect.Effect<void, ApiKeyProviderError>;
-  /** Whether a key with this value exists in any state, so the same value is never registered twice. */
-  readonly isRegistered: (rawKey: Redacted.Redacted) => Effect.Effect<boolean, ApiKeyProviderError>;
   readonly issue: (
     requestHeaders: Headers,
     input: {
@@ -102,11 +100,6 @@ export interface ApiKeyServiceContract {
       readonly lifecycleOperationId: string;
       readonly name?: string;
       readonly prefix?: string;
-      /**
-       * An existing key value to register instead of a generated one. Better Auth stores it exactly as a key it
-       * generated (its hash and starting characters); the value itself is never stored.
-       */
-      readonly suppliedSecret?: Redacted.Redacted;
       readonly tenantId: string;
     },
   ) => Effect.Effect<IssuedApiKey, ApiKeyProviderError>;
@@ -130,6 +123,24 @@ export interface ApiKeyServiceContract {
     readonly nowEpochMillis?: number;
     readonly tenantId: string;
   }) => Effect.Effect<PendingApiKeyCleanupBatch, ApiKeyProviderError>;
+  /**
+   * Registers a key value the integration already holds instead of a generated one. Better Auth stores it exactly as a
+   * key it generated (its hash and starting characters); the value is never stored and never handed back.
+   */
+  readonly register: (
+    requestHeaders: Headers,
+    input: {
+      readonly issuerPrincipalId: string;
+      readonly lifecycleOperationId: string;
+      readonly name?: string;
+      readonly secret: Redacted.Redacted;
+      readonly tenantId: string;
+    },
+  ) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
+  /** The provider key holding this value, in any state; `auth.apikey(key)` is unique, so there is at most one. */
+  readonly registeredKeyId: (rawKey: Redacted.Redacted) => Effect.Effect<Option.Option<string>, ApiKeyProviderError>;
+  /** Removes a provider key no binding ever referenced: a registration whose binding was refused. */
+  readonly removeUnbound: (keyId: string) => Effect.Effect<void, ApiKeyProviderError>;
   readonly setEnabled: (keyId: string, enabled: boolean) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
   readonly verify: (rawKey: string) => Effect.Effect<VerifiedApiKey, ApiKeyProviderError>;
 }
@@ -295,6 +306,43 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
     retainedProvider ??= makeProvider();
     return retainedProvider;
   };
+  /** Better Auth's own create path, which hashes the key and keeps the pending-binding marker until it is bound. */
+  const createKey = (
+    provider: () => ReturnType<typeof makeProvider>,
+    input: {
+      readonly expiresIn?: number;
+      readonly issuerPrincipalId: string;
+      readonly lifecycleOperationId: string;
+      readonly name?: string;
+      readonly prefix?: string;
+      readonly requestHeaders: Headers;
+      readonly tenantId: string;
+    },
+  ) =>
+    Effect.try({ catch: mapProviderError, try: provider }).pipe(
+      Effect.flatMap(({ api }) =>
+        Effect.tryPromise({
+          catch: mapProviderError,
+          try: api.createApiKey.bind(api, {
+            body: withOptionalProperty(
+              withOptionalProperty(
+                { expiresIn: input.expiresIn ?? null },
+                input.name !== undefined,
+                'name',
+                input.name,
+                {},
+              ),
+              input.prefix !== undefined,
+              'prefix',
+              input.prefix,
+              { metadata: pendingBindingMarker(input), remaining: null },
+            ),
+            headers: input.requestHeaders,
+          }),
+        }),
+      ),
+      apiKeyExternalTimeout,
+    );
   const metadata = (keyId: string) =>
     database
       .select({
@@ -327,55 +375,9 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         ),
         Effect.asVoid,
       ),
-    isRegistered: (rawKey) =>
-      apiKeyLookupHash(crypto, Redacted.value(rawKey)).pipe(
-        Effect.flatMap((keyHash) =>
-          database
-            .select({ id: apikey.id })
-            .from(apikey)
-            .where(eq(apikey.key, keyHash))
-            .limit(1)
-            .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout),
-        ),
-        Effect.map((rows) => rows.length > 0),
-      ),
     issue: (requestHeaders, input) =>
-      Effect.try({
-        catch: mapProviderError,
-        // A supplied value needs a provider of its own: the key generator is per provider, not per call.
-        try: () => (input.suppliedSecret === undefined ? getProvider() : makeProvider(input.suppliedSecret)),
-      }).pipe(
-        Effect.flatMap(({ api }) =>
-          Effect.tryPromise({
-            catch: mapProviderError,
-            try: api.createApiKey.bind(api, {
-              body: withOptionalProperty(
-                withOptionalProperty(
-                  {
-                    expiresIn: input.expiresIn ?? null,
-                  },
-                  input.name !== undefined,
-                  'name',
-                  input.name,
-                  {},
-                ),
-                input.prefix !== undefined,
-                'prefix',
-                input.prefix,
-                {
-                  metadata: pendingBindingMarker(input),
-                  remaining: null,
-                },
-              ),
-              headers: requestHeaders,
-            }),
-          }),
-        ),
-        apiKeyExternalTimeout,
-        Effect.map((created) => ({
-          ...toSafe(created),
-          secret: Redacted.make(created.key),
-        })),
+      createKey(getProvider, { ...input, requestHeaders }).pipe(
+        Effect.map((created) => ({ ...toSafe(created), secret: Redacted.make(created.key) })),
       ),
     // No headers and no request: Better Auth then takes the owner from `userId`, which it refuses on any client call.
     issueServerOwned: (input) =>
@@ -439,6 +441,26 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         providerKeyIds,
       };
     }),
+    // A supplied value needs a provider of its own: the key generator is per provider, not per call.
+    register: (requestHeaders, { secret, ...input }) =>
+      createKey(() => makeProvider(secret), { ...input, requestHeaders }).pipe(Effect.map(toSafe)),
+    registeredKeyId: (rawKey) =>
+      apiKeyLookupHash(crypto, Redacted.value(rawKey)).pipe(
+        Effect.flatMap((keyHash) =>
+          database
+            .select({ id: apikey.id })
+            .from(apikey)
+            .where(eq(apikey.key, keyHash))
+            .limit(1)
+            .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout),
+        ),
+        Effect.map(([row]) => Option.fromUndefinedOr(row?.id)),
+      ),
+    removeUnbound: (keyId) =>
+      database
+        .delete(apikey)
+        .where(eq(apikey.id, keyId))
+        .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout, Effect.asVoid),
     setEnabled: (keyId, enabled) =>
       DateTime.nowAsDate.pipe(
         Effect.flatMap((updatedAt) =>

@@ -120,6 +120,7 @@ import type {
   ShellInternalProblem,
   IdentityProblem,
   ApiKeyIssueResponse,
+  ManagedApiKeyIssueResponse,
   ApiKeyLifecycleResponse,
   ChangePrincipalStatusPayload,
   CreateNonHumanPrincipalPayload,
@@ -517,7 +518,7 @@ export const listSelfApiKeys = (
 export const issueManagedApiKey = (
   payload: IssueManagedApiKeyPayload,
   options: IdentityClientOptions,
-): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+): Effect.Effect<ManagedApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.issueManagedApiKey({
       headers: identityHeaders(options),
@@ -581,7 +582,7 @@ export const rotateSelfApiKey = (
 export const rotateManagedApiKey = (
   payload: RotateManagedApiKeyPayload,
   options: IdentityClientOptions,
-): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+): Effect.Effect<ManagedApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.rotateManagedApiKey({
       headers: identityHeaders(options),

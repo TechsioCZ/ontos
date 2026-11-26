@@ -344,6 +344,14 @@ export const ApiKeyIssueResponseSchema = Schema.Struct({
   ...ApiKeyLifecycleResponseSchema.fields,
   secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))),
 });
+/**
+ * A managed key's issue or rotation: a generated key with its one-time secret, or a registered existing value, which is
+ * the integration's own and is never sent back.
+ */
+export const ManagedApiKeyIssueResponseSchema = Schema.Union([
+  ApiKeyIssueResponseSchema,
+  ApiKeyLifecycleResponseSchema,
+]);
 export const IdentityListPayloadSchema = Schema.Struct({
   limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
@@ -424,6 +432,7 @@ export type RotateManagedApiKeyPayload = Schema.Schema.Type<typeof RotateManaged
 export type IdentityListPayload = Schema.Schema.Type<typeof IdentityListPayloadSchema>;
 export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleResponseSchema>;
 export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
+export type ManagedApiKeyIssueResponse = Schema.Schema.Type<typeof ManagedApiKeyIssueResponseSchema>;
 export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
 export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
 export type ManagedApiKeyListPayload = Schema.Schema.Type<typeof ManagedApiKeyListPayloadSchema>;
@@ -1355,7 +1364,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
           payload: IssueManagedApiKeyPayloadSchema,
-          success: ApiKeyIssueResponseSchema,
+          success: ManagedApiKeyIssueResponseSchema,
         }),
       )
       .add(
@@ -1394,7 +1403,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
           payload: RotateManagedApiKeyPayloadSchema,
-          success: ApiKeyIssueResponseSchema,
+          success: ManagedApiKeyIssueResponseSchema,
         }),
       )
       .add(

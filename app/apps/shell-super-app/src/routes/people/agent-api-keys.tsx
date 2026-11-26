@@ -237,8 +237,8 @@ const useManagedKeys = (subject: ManagedKeySubject) => {
         Effect.flatMap((token) => keyCommand(command, subject, draft, token)),
         Effect.tap((response) =>
           Effect.sync(() => {
-            // A registered existing value is already held by the integration; only a generated one is shown.
-            if (Schema.is(ApiKeyIssueResponseSchema)(response) && draft.suppliedSecret === undefined) {
+            // Only a generated key's secret comes back; a registered existing value is the integration's own.
+            if (Schema.is(ApiKeyIssueResponseSchema)(response)) {
               setSecret(response.secret);
             }
             let bindingStatus: KeyProjection['bindingStatus'] = 'active';

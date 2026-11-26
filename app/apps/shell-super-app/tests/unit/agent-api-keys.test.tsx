@@ -24,6 +24,7 @@ import {
 import type {
   ApiKeyIssueResponse,
   ApiKeyLifecycleResponse,
+  ManagedApiKeyIssueResponse,
   IssueManagedApiKeyPayload,
   ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
@@ -122,7 +123,7 @@ let statuses: Received<SetManagedApiKeyStatusPayload>[] = [];
 /** What the list answers next; a case replaces it to change what the server holds. */
 const firstPage = ({ offset }: ManagedApiKeyListPayload) => listOf(offset === 0 ? [row] : []);
 let listAnswer: (payload: ManagedApiKeyListPayload) => Effect.Effect<ManagedApiKeyListResponse> = firstPage;
-let issueAnswer: Effect.Effect<ApiKeyIssueResponse, typeof ShellInternalProblemSchema.Type> = Effect.succeed(
+let issueAnswer: Effect.Effect<ManagedApiKeyIssueResponse, typeof ShellInternalProblemSchema.Type> = Effect.succeed(
   issued(false),
 );
 /** The answer of a server that may or may not have issued the key: the client cannot know. */
@@ -529,6 +530,8 @@ it.live('registers a key value an integration already holds, sends it once and n
     yield* type(integrationCopy('suppliedSecret'), 'too-short');
     expect(screen.getByText(integrationCopy('suppliedSecretInvalid'))).toBeTruthy();
     yield* type(integrationCopy('suppliedSecret'), heldValue);
+    // A registered value is answered without a secret: the integration already holds it.
+    issueAnswer = Effect.succeed({ ...lifecycle, cleanupPending: false });
     yield* click(button(labels.save));
     yield* waitUntil(() => issues.length === 1);
     yield* networkIdle;
@@ -538,7 +541,7 @@ it.live('registers a key value an integration already holds, sends it once and n
     expect(
       payload?.scope === 'tenant-managed' && payload.secret !== undefined ? Redacted.value(payload.secret) : null,
     ).toBe(heldValue);
-    // The partner already holds the value: the answer's secret is not shown again.
+    // The partner already holds the value: nothing is shown as a one-time secret.
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     expect(screen.queryByDisplayValue(heldValue)).toBeNull();
   }).pipe(Effect.provide(network)),

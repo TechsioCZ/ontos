@@ -301,6 +301,7 @@ import { symmyOwnerReleaseFetchLive } from './symmy/owner-release-transport.ts';
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
   ApiKeyIssueResponseSchema,
+  ManagedApiKeyIssueResponseSchema,
   ApiKeyLifecycleResponseSchema,
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
@@ -2212,28 +2213,24 @@ const safeIdentity = <Value, Error, Requirements>(
     ),
   );
 
-/** A tenant-managed key may register a value the integration already holds; an agent key is always generated. */
-const suppliedSecretOf = (
-  payload:
-    | { readonly scope: 'company-agent' }
-    | { readonly scope: 'tenant-managed'; readonly secret?: Redacted.Redacted },
-): { readonly suppliedSecret?: Redacted.Redacted } =>
-  payload.scope === 'tenant-managed' && payload.secret !== undefined ? { suppliedSecret: payload.secret } : {};
 const isConnectorPartnerKind = Schema.is(ConnectorPartnerKindSchema);
 /** An agent's key is managed in its company; a tenant-managed key in the tenant context. */
 const callerContextOf = (scope: 'company-agent' | 'tenant-managed') =>
   scope === 'company-agent' ? 'company' : 'tenant';
 
-const keyIssuanceResponse = <Value extends object, Requirements>(
-  effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
-) =>
-  Effect.matchEffect(
-    Effect.tap(effect, () => noStore),
-    {
-      onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
-      onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
-    },
-  );
+const keyResponse =
+  <ResponseSchema extends Schema.Constraint>(schema: ResponseSchema) =>
+  <Value extends object, Requirements>(effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>) =>
+    Effect.matchEffect(
+      Effect.tap(effect, () => noStore),
+      {
+        onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
+        onSuccess: (response) => decodeResponse(schema, response, shellInternalProblem),
+      },
+    );
+const keyIssuanceResponse = keyResponse(ApiKeyIssueResponseSchema);
+/** A managed key's issue or rotation answers a generated key's secret, or no secret for a registered value. */
+const managedKeyIssuanceResponse = keyResponse(ManagedApiKeyIssueResponseSchema);
 
 const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity', (handlers) => {
   const authenticated = Effect.fn('shell.identity.authenticated')((request: RequestWithHeaders) =>
@@ -2468,24 +2465,19 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         request,
         Effect.gen(function* issueManagedApiKeyHandler() {
           const { context, service } = yield* mutationContext(request, headers, callerContextOf(payload.scope));
-          return yield* service
-            .issue(
-              withOptionalProperty(
-                {
-                  ...context,
-                  ...suppliedSecretOf(payload),
-                  managedPrincipalId: payload.principalId,
-                  managedScope: payload.scope,
-                },
-                payload.name !== undefined,
-                'name',
-                payload.name,
-                {
-                  requestHeaders: requestHeaders(request.headers),
-                },
-              ),
-            )
-            .pipe(keyIssuanceResponse);
+          const input = withOptionalProperty(
+            { ...context, managedPrincipalId: payload.principalId, managedScope: payload.scope },
+            payload.name !== undefined,
+            'name',
+            payload.name,
+            { requestHeaders: requestHeaders(request.headers) },
+          );
+          // A tenant-managed key may register a value the integration already holds; an agent key is always generated.
+          return yield* (
+            payload.scope === 'tenant-managed' && payload.secret !== undefined
+              ? service.register({ ...input, suppliedSecret: payload.secret })
+              : service.issue(input)
+          ).pipe(managedKeyIssuanceResponse);
         }),
       ),
     )
@@ -2644,27 +2636,23 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         request,
         Effect.gen(function* rotateManagedKeyHandler() {
           const { context, service } = yield* mutationContext(request, headers, callerContextOf(payload.scope));
-          return yield* service
-            .rotate(
-              withOptionalProperty(
-                {
-                  ...context,
-                  ...suppliedSecretOf(payload),
-                  managedPrincipalId: payload.principalId,
-                  managedScope: payload.scope,
-                },
-                payload.name !== undefined,
-                'name',
-                payload.name,
-                {
-                  oldAuthBindingId: payload.oldAuthBindingId,
-                  oldManagedPrincipalId: payload.principalId,
-                  reason: payload.reason,
-                  requestHeaders: requestHeaders(request.headers),
-                },
-              ),
-            )
-            .pipe(keyIssuanceResponse);
+          const input = withOptionalProperty(
+            { ...context, managedPrincipalId: payload.principalId, managedScope: payload.scope },
+            payload.name !== undefined,
+            'name',
+            payload.name,
+            {
+              oldAuthBindingId: payload.oldAuthBindingId,
+              oldManagedPrincipalId: payload.principalId,
+              reason: payload.reason,
+              requestHeaders: requestHeaders(request.headers),
+            },
+          );
+          return yield* (
+            payload.scope === 'tenant-managed' && payload.secret !== undefined
+              ? service.rotateRegistering({ ...input, suppliedSecret: payload.secret })
+              : service.rotate(input)
+          ).pipe(managedKeyIssuanceResponse);
         }),
       ),
     )
