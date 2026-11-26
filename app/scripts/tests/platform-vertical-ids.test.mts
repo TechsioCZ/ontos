@@ -105,6 +105,22 @@ it('admits Payment only in the Payment gateway relay files that carry its contra
   }
 });
 
+it.effect('admits the real finite Privacy dispatch registry but not another consumer or another file', () =>
+  Effect.gen(function* finiteDispatchRegistry() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
+    const file = 'packages/shared-contracts/src/privacy-dispatch-consumers.ts';
+    const source = yield* fileSystem.readFileString(path.join(root, file));
+    const deployed = yield* discoverPlatformVerticals(fileSystem, root, path);
+    expect(platformVerticalIdViolations(file, source, deployed)).toEqual([]);
+    expect(named(file, "const other = 'demo.crm';")).toEqual(['1 platform source names MicroVertical demo.crm']);
+    expect(named(coreFile, "const consumer = 'privacy.core';")).toEqual([
+      '1 platform source names MicroVertical privacy.core',
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live('rejects another Payment gateway file that names a vertical in a workspace tree', () =>
   Effect.acquireUseRelease(
     Effect.promise(() => mkdtemp(nodePath.join(os.tmpdir(), 'platform-vertical-ids-'))),

@@ -77,20 +77,31 @@ const importsOf = (directory: string, specifier: string) =>
 const SHELL_DIRECTORY = 'apps/shell-super-app';
 const leanCoreAndStaffDirectories = ['packages/core-runtime', 'packages/gateway-principal-verifier', SHELL_DIRECTORY];
 
-it('keeps lean Core, staff Auth and the Shell free of any Communications or provider dependency', () => {
+it('keeps Core and Shell free of Communications and retains only the demo staff mail provider', () => {
   for (const directory of leanCoreAndStaffDirectories) {
     const dependencies = declaredDependencies(directory);
     expect([directory, dependencies.has(COMMUNICATIONS_PACKAGE)]).toEqual([directory, false]);
     expect([directory, dependencies.has(COMMUNICATIONS_CONTRACTS_PACKAGE)]).toEqual([directory, false]);
-    expect([directory, dependencies.has(EMAIL_DELIVERY_PACKAGE)]).toEqual([directory, false]);
+    // Demo's staff e-mail API predates Communications and remains Shell-owned.
+    expect([directory, dependencies.has(EMAIL_DELIVERY_PACKAGE)]).toEqual([directory, directory === SHELL_DIRECTORY]);
   }
 });
 
-it('never imports Communications source from lean Core, staff Auth or the Shell', () => {
+it('never imports Communications source from Core or Shell and pins demo staff mail imports', () => {
   for (const directory of leanCoreAndStaffDirectories) {
     expect(importsOf(directory, COMMUNICATIONS_PACKAGE)).toEqual([]);
     expect(importsOf(directory, COMMUNICATIONS_CONTRACTS_PACKAGE)).toEqual([]);
-    expect(importsOf(directory, EMAIL_DELIVERY_PACKAGE)).toEqual([]);
+    expect(importsOf(directory, EMAIL_DELIVERY_PACKAGE).toSorted()).toEqual(
+      directory === SHELL_DIRECTORY
+        ? [
+            'apps/shell-super-app/api/email/http-error-seam.ts',
+            'apps/shell-super-app/api/email/transport.ts',
+            'apps/shell-super-app/api/index.ts',
+            'apps/shell-super-app/shared/browser-api.ts',
+            'apps/shell-super-app/tests/unit/email-transport.test.ts',
+          ]
+        : [],
+    );
   }
 });
 
@@ -262,14 +273,12 @@ it('keeps the Communications contracts schema-only and independent of the deploy
 
 const ReviewedTopologySchema = Schema.Struct({
   shell: Schema.Struct({
-    cloudflare: Schema.Struct({ workerName: Schema.NonEmptyString }),
     id: Schema.String,
     package: Schema.NonEmptyString,
     path: Schema.NonEmptyString,
   }),
   verticals: Schema.Array(
     Schema.Struct({
-      cloudflare: Schema.Struct({ workerName: Schema.NonEmptyString }),
       id: Schema.String,
       package: Schema.NonEmptyString,
       path: Schema.NonEmptyString,
@@ -283,7 +292,6 @@ const available = [topology.shell, ...topology.verticals].map((unit) => ({
   id: unit.id,
   packageName: unit.package,
   path: unit.path,
-  workerName: unit.cloudflare.workerName,
 }));
 const reviewedIntent = Schema.decodeUnknownSync(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
   readFileSync(path.join(appRoot, 'topology/application-release-intent.json'), 'utf-8'),
@@ -349,11 +357,6 @@ const COMMUNICATIONS_MODULE = 'communications.core';
 const REVIEWED_COMMUNICATIONS_CONSTANTS = {
   'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts': [RECEIPT_TAG],
   'packages/core-runtime/src/auth/system-principal-context-provenance.ts': [RECEIPT_TAG],
-  'packages/core-runtime/src/install/stage-accounts-file.ts': [
-    'commerce.customer-context.portal-auth-communication-relay',
-    'communications.core.messaging-adapter',
-    'communications.core.request-source',
-  ],
   'packages/shared-contracts/src/gateway-context.ts': [
     RECEIPT_TAG,
     'communications',
@@ -437,17 +440,13 @@ it('keeps the Communications dispatch consumer inert, frozen data that no other 
   expect(privacyDispatchConsumerOfWorker('unrelated.worker')).toBeUndefined();
 });
 
-it('declares no Communications deployment configuration on the Shell service of the deployment manifest', () => {
+it('keeps Communications in the topology-driven app host, never a standalone demo service', () => {
   const manifest = readFileSync(path.join(appRoot, 'zerops.yaml'), 'utf-8');
-  const section = (setup: string) => {
-    const start = manifest.indexOf(`  - setup: '${setup}'`);
-    const next = manifest.indexOf('\n  - setup:', start + 1);
-    return manifest.slice(start, next === -1 ? manifest.length : next);
-  };
-  expect(section('shellsuperapp').length).toBeGreaterThan(0);
-  expect(section('shellsuperapp')).not.toMatch(/communications/iu);
-  // the control: the section that DOES belong to Communications names it, so the pattern is not simply blind
-  expect(section('communications')).toMatch(/communications/iu);
+  const importManifest = readFileSync(path.join(appRoot, 'zerops-import.yaml'), 'utf-8');
+  expect(manifest).toMatch(/- setup: app\n/u);
+  expect(manifest).not.toMatch(/- setup: ['"]?communications/iu);
+  expect(importManifest).not.toMatch(/hostname: ['"]?communications/iu);
+  expect(available.map(({ id }) => id)).toContain(COMMUNICATIONS_APP_ID);
 });
 
 it.effect('releases every single business module without selecting Communications unless it is named', () =>

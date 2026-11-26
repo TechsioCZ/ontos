@@ -59,6 +59,7 @@ it.effect(
           'verticals/tax/scripts/verify-db-schema.mts',
           'verticals/projects/scripts/verify-db-schema.mts',
           'verticals/promotion/scripts/verify-db-schema.mts',
+          'verticals/communications/scripts/verify-db-schema.mts',
           'verticals/symmy-integration/scripts/verify-db-schema.mts',
         ].toSorted(),
       );

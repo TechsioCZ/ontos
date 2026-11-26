@@ -1000,12 +1000,13 @@ const PLATFORM_EXEMPT = [
   'packages/shared-contracts/src/gateway-context.ts',
   'packages/shared-contracts/src/gateway-context-server.ts',
 ];
+const SYMMY_DEPLOYMENT_ID = 'symmy-integration';
 /** Mixed files: only the audiences main's integration layer names there, never another vertical. */
 const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
   ['apps/shell-super-app/api/auth/gateway-delegation-issuer.ts', ['privacy']],
-  ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', 'symmy-integration']],
+  ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', SYMMY_DEPLOYMENT_ID]],
   ['apps/shell-super-app/api/auth/gateway-originator-evidence.ts', ['privacy.core']],
-  ['apps/shell-super-app/api/index.ts', ['symmy-integration']],
+  ['apps/shell-super-app/api/index.ts', [SYMMY_DEPLOYMENT_ID]],
   // The Payment gateway relay names only Payment, and only in the files that carry its relay contract and transport.
   ['apps/shell-super-app/api/payment-gateway/contract.ts', ['payment']],
   ['apps/shell-super-app/api/payment-gateway/notification-boundary.ts', ['payment']],
@@ -1015,6 +1016,11 @@ const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
   ['apps/shell-super-app/api/payment-gateway/transport.ts', ['payment']],
   ['apps/shell-super-app/server/modern.server.ts', ['payment']],
   ['apps/shell-super-app/shared/api.ts', ['payment']],
+  // Main #1392's finite Privacy dispatch authority is inert integration metadata, not a platform dependency.
+  [
+    'packages/shared-contracts/src/privacy-dispatch-consumers.ts',
+    [SYMMY_DEPLOYMENT_ID, 'integration.symmy', 'privacy.core', 'communications', 'communications.core'],
+  ],
 ]);
 
 const isPlatformGuarded = (relative: string): boolean =>

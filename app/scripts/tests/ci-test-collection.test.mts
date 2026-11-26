@@ -152,7 +152,11 @@ const playwrightTestCommand = 'playwright test';
 const weightedShardScript = 'scripts/ci/rstest-weighted-shard.sh';
 const absoluteWeightedShardScript = `$PWD/${weightedShardScript}`;
 const integrationShellSource = `\${BASH_SOURCE[0]}`;
-const promotionGenerator = '../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist';
+const contractGenerators = new Set(
+  ['promotion', 'communications', 'privacy'].map(
+    (vertical) => `../../scripts/generate-ontos-module-contract.mts --vertical ${vertical} --target dist`,
+  ),
+);
 const integrationNodeRunner =
   '--import ../../scripts/ci/integration-worker-setup.mts ../../node_modules/@rstest/core/bin/rstest.js';
 const creditlessPnpmScripts = new Set([
@@ -569,9 +573,10 @@ const unwrapCommand = (input: readonly string[]) => {
 // Simple commands are pnpm, rstest, vitest, playwright, echo (no credit), the exact node/bash adapters below, and the
 // shared-contracts typecheck. No other shell executable, expansion, control operator or redirection is accepted.
 // Other AND lists (including the root test:unit script, unused by today's matrices) fail with the complete input.
-// These two exact package scripts are the only AND lists in the credited call graph today. They have a known
+// These exact package scripts are the only AND lists in the credited call graph today. They have a known
 // generator/typecheck prerequisite and a required-success RHS; a successful CI job therefore executed both.
 const understoodAndLists = new Set([
+  'node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && rstest --project integration',
   'node ../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist && rstest --project integration',
   'ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json',
 ]);
@@ -584,7 +589,7 @@ const supportedQuote = (quote: string, literal: string, terminalExec: boolean) =
   quote === '"' ? supportedDoubleQuote(literal, terminalExec) : !literal.includes('$');
 const creditlessCommand = (executable: string, args: readonly string[]) =>
   executable === 'echo' ||
-  (executable === 'node' && args.join(' ') === promotionGenerator) ||
+  (executable === 'node' && contractGenerators.has(args.join(' '))) ||
   (executable === 'ultramodern-create' &&
     /^ultramodern typecheck --project tests\/(?:tsconfig|client-runtime-types\.tsconfig)\.json$/u.test(args.join(' ')));
 // Only a literal, complete native suite grants credit. Filters, patterns and plain imports do not.
@@ -619,7 +624,7 @@ const validateShellCommands = (commands: string[][], text: string, terminalExec:
   }
 };
 const shellCommands = (text: string, terminalExec = false) => {
-  const input = understoodAndLists.has(text.trim()) ? text.trim().replace(' && ', '\n') : text;
+  const input = understoodAndLists.has(text.trim()) ? text.trim().replaceAll(' && ', '\n') : text;
   const unsupported = () => expect.fail(`Unsupported CI command syntax or executable in line: ${text}`);
   const commands: string[][] = [];
   let tokens: string[] = [];
