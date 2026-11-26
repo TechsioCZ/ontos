@@ -21,36 +21,39 @@ import {
 } from './symmy-demo-exchange-authority.mts';
 import { stageWorkloadBindingIds, stageWorkloadCompanyIds } from './register-stage-workloads.mts';
 
+const demoModuleId = 'demo.merchandise';
+const catalogRevisionEntrypoint = 'demo.merchandise.api.demo-catalog-revision';
+const updateRoute = 'update symmy_integration.job_routes';
 const readRouteId = 'b0000000-0000-4000-8000-000000000001';
 const ownerId = 'b0000000-0000-4000-8000-000000000002';
 const originalConfiguration = () => ({
   extension: { keepUnknownOwnerConfiguration: true },
-  sourceMappingVersion: 'actual-mapping-v7',
-  sourceRouteId: 'b0000000-0000-4000-8000-000000000003',
-  sourceRouteRevision: 'actual-source-v4',
   items: [
     {
-      itemKey: 'actual-source-template',
+      effects: [
+        {
+          effectKey: 'original-catalog-operation',
+          extension: { untouchedEffectMetadata: true },
+          operation: {
+            entrypointKey: 'commerce.catalog.create-product',
+            moduleId: 'commerce.catalog',
+            schemaVersion: '1',
+          },
+        },
+      ],
       extension: { untouchedItemMetadata: true },
+      itemKey: 'actual-source-template',
       source: {
         entityKind: 'PRODUCT',
         issuerId: 'actual-symmy-issuer',
         sourceNamespace: 'actual-erp-namespace',
         sourceRecordId: 'original-template-record',
       },
-      effects: [
-        {
-          effectKey: 'original-catalog-operation',
-          operation: {
-            moduleId: 'commerce.catalog',
-            entrypointKey: 'commerce.catalog.create-product',
-            schemaVersion: '1',
-          },
-          extension: { untouchedEffectMetadata: true },
-        },
-      ],
     },
   ],
+  sourceMappingVersion: 'actual-mapping-v7',
+  sourceRouteId: 'b0000000-0000-4000-8000-000000000003',
+  sourceRouteRevision: 'actual-source-v4',
 });
 const route = (routeKey: 'productsBatch' | 'adminProducts') =>
   Schema.decodeUnknownSync(SymmyDemoExchangeRouteSchema)({
@@ -136,8 +139,8 @@ it.effect(
               {
                 effectKey: 'existing-demo-import',
                 operation: {
-                  moduleId: 'demo.merchandise',
                   entrypointKey: 'demo.merchandise.import-source-catalog',
+                  moduleId: demoModuleId,
                   schemaVersion: '1',
                 },
               },
@@ -153,8 +156,8 @@ it.effect(
         operations.filter(({ entrypointKey }) => entrypointKey === 'demo.merchandise.api.demo-catalog-revision'),
       ).toEqual([
         {
-          moduleId: 'demo.merchandise',
-          entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+          entrypointKey: catalogRevisionEntrypoint,
+          moduleId: demoModuleId,
           schemaVersion: '1',
         },
       ]);
@@ -162,8 +165,8 @@ it.effect(
         operations.filter(({ entrypointKey }) => entrypointKey === 'demo.merchandise.import-source-catalog'),
       ).toHaveLength(1);
       expect(demoCatalogRevisionOperation).toMatchObject({
-        moduleId: 'demo.merchandise',
-        entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+        entrypointKey: catalogRevisionEntrypoint,
+        moduleId: demoModuleId,
         schemaVersion: '1',
         workloadKey: 'demo.merchandise.symmy-catalog-import',
       });
@@ -181,7 +184,7 @@ it.effect('refuses conflicting versions and effect keys rather than replacing ex
       },
       {
         effectKey: symmyDemoExchangeOperations.productsBatch.effectKey,
-        operation: { moduleId: 'commerce.catalog', entrypointKey: 'commerce.catalog.other', schemaVersion: '1' },
+        operation: { entrypointKey: 'commerce.catalog.other', moduleId: 'commerce.catalog', schemaVersion: '1' },
       },
     ]) {
       const original = originalConfiguration();
@@ -202,7 +205,9 @@ const fixture = (
   const routes = [route('productsBatch'), route('adminProducts')].map((row) => ({ ...row }));
   if (options.tenantReader === true) {
     const reader = routes.find(({ routeKey }) => routeKey === 'adminProducts');
-    if (reader !== undefined) reader.legalEntityId = null;
+    if (reader !== undefined) {
+      reader.legalEntityId = null;
+    }
   }
   const statements: string[] = [];
   const keys = Object.values(symmyDemoExchangeOperations).map(({ workloadKey }) => workloadKey);
@@ -210,78 +215,108 @@ const fixture = (
   const companies = new Set<string>();
   let role = 'stage_admin';
   let scoped = false;
-  const { tenantId, principalId, legalEntityId } = symmyDemoExchangeScope;
+  const { legalEntityId, principalId, tenantId } = symmyDemoExchangeScope;
   const bindingId = (key: string) => stageWorkloadBindingIds(tenantId, principalId, key).bindingId;
+  const coreStatement = (sql: string, parameters: readonly unknown[]) => {
+    if (sql.includes('from core.access_workload_bindings')) {
+      expect(scoped).toBe(true);
+      const key = String(parameters[2]);
+      return bindings.has(key) || options.revoked === true
+        ? [{ bindingId: bindingId(key), status: options.revoked === true ? 'revoked' : 'active' }]
+        : [];
+    }
+    if (sql.includes('from core.access_workload_company_bindings')) {
+      const key = keys.find((candidate) => bindingId(candidate) === parameters[1]);
+      return key !== undefined && companies.has(key)
+        ? [
+            {
+              companyBindingId: stageWorkloadCompanyIds(tenantId, bindingId(key), legalEntityId).companyBindingId,
+              legalEntityId,
+              status: 'active',
+            },
+          ]
+        : [];
+    }
+    if (sql.includes('insert into "core"."access_workload_bindings"')) {
+      const key = keys.find((candidate) => parameters.includes(candidate));
+      if (key === undefined) {
+        throw new Error('The Core writer must bind a declared demo workload');
+      }
+      bindings.add(key);
+    }
+    if (sql.includes('insert into "core"."access_workload_company_bindings"')) {
+      const key = keys.find((candidate) => parameters.includes(bindingId(candidate)));
+      if (key === undefined) {
+        throw new Error('The Core writer must register the actual workload binding');
+      }
+      companies.add(key);
+    }
+    if (sql.includes('"core"."access_scope_fences"')) {
+      return [{ state: 'Ready' }];
+    }
+    if (sql.includes('left join "core"."access_workload_company_bindings"')) {
+      return keys
+        .filter((key) => bindings.has(key))
+        .map((key) => ({
+          legalEntityId: companies.has(key) ? legalEntityId : null,
+          workloadKey: key,
+        }));
+    }
+    return null;
+  };
+  const routeStatement = (sql: string, parameters: readonly unknown[]) => {
+    if (sql.startsWith(updateRoute)) {
+      const selected = routes.find((entry) => parameters.includes(entry.routeId));
+      if (selected === undefined) {
+        throw new Error('Only a discovered exchange route may be updated');
+      }
+      const [parameter] = parameters;
+      expect(PgTypes.isParameter(parameter)).toBe(true);
+      if (!PgTypes.isParameter(parameter)) {
+        throw new Error('Expected the native PostgreSQL JSON parameter');
+      }
+      selected.configuration = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(parameter.value);
+      if (sql.includes('legal_entity_id=')) {
+        selected.legalEntityId = legalEntityId;
+      }
+      selected.changeToken += 1;
+      return [{ changeToken: selected.changeToken }];
+    }
+    if (sql.includes('select route_id as "routeId" from symmy_integration.job_routes')) {
+      const selected = routes.find((entry) => parameters.includes(entry.routeId));
+      return selected === undefined ? [] : [{ routeId: selected.routeId }];
+    }
+    return [];
+  };
   const execute = (sql: string, parameters: readonly unknown[]) =>
     Effect.sync(() => {
       statements.push(sql);
-      if (sql === 'set local role ontos_runtime') role = 'ontos_runtime';
-      if (sql === 'reset role') role = 'stage_admin';
+      if (sql === 'set local role ontos_runtime') {
+        role = 'ontos_runtime';
+      }
+      if (sql === 'reset role') {
+        role = 'stage_admin';
+      }
       if (sql.includes('set_config(')) {
         scoped = true;
-        return [{ role, tenant_id: tenantId, legal_entity_id: '' }];
+        return [{ legal_entity_id: '', role, tenant_id: tenantId }];
       }
-      if (sql === 'select current_user::text as role') return [{ role }];
-      if (sql.includes('from symmy_integration.job_routes') && sql.includes('for update')) return routes;
+      if (sql === 'select current_user::text as role') {
+        return [{ role }];
+      }
+      if (sql.includes('from symmy_integration.job_routes') && sql.includes('for update')) {
+        return routes;
+      }
       if (sql.includes('as jobs') && sql.includes('as admissions')) {
-        return [{ jobs: options.outstanding ?? false, admissions: false }];
+        return [{ admissions: false, jobs: options.outstanding ?? false }];
       }
-      if (sql.includes('from core.access_memberships')) return [{ principalId: ownerId }];
-      if (sql.includes('as principal,') && sql.includes('as company')) return [{ principal: true, company: true }];
-      if (sql.includes('from core.access_workload_bindings')) {
-        expect(scoped).toBe(true);
-        const key = String(parameters[2]);
-        return bindings.has(key) || options.revoked === true
-          ? [{ bindingId: bindingId(key), status: options.revoked === true ? 'revoked' : 'active' }]
-          : [];
+      if (sql.includes('from core.access_memberships')) {
+        return [{ principalId: ownerId }];
       }
-      if (sql.includes('from core.access_workload_company_bindings')) {
-        const key = keys.find((key) => bindingId(key) === parameters[1]);
-        return key !== undefined && companies.has(key)
-          ? [
-              {
-                companyBindingId: stageWorkloadCompanyIds(tenantId, bindingId(key), legalEntityId).companyBindingId,
-                legalEntityId,
-                status: 'active',
-              },
-            ]
-          : [];
+      if (sql.includes('as principal,') && sql.includes('as company')) {
+        return [{ company: true, principal: true }];
       }
-      if (sql.includes('insert into "core"."access_workload_bindings"')) {
-        const key = keys.find((key) => parameters.includes(key));
-        if (key === undefined) throw new Error('The Core writer must bind a declared demo workload');
-        bindings.add(key);
-      }
-      if (sql.includes('insert into "core"."access_workload_company_bindings"')) {
-        const key = keys.find((key) => parameters.includes(bindingId(key)));
-        if (key === undefined) throw new Error('The Core writer must register the actual workload binding');
-        companies.add(key);
-      }
-      if (sql.includes('"core"."access_scope_fences"')) return [{ state: 'Ready' }];
-      if (sql.includes('left join "core"."access_workload_company_bindings"')) {
-        return keys
-          .filter((key) => bindings.has(key))
-          .map((key) => ({
-            legalEntityId: companies.has(key) ? legalEntityId : null,
-            workloadKey: key,
-          }));
-      }
-      if (sql.startsWith('update symmy_integration.job_routes')) {
-        const selected = routes.find((entry) => parameters.includes(entry.routeId));
-        if (selected === undefined) throw new Error('Only a discovered exchange route may be updated');
-        const parameter = parameters[0];
-        expect(PgTypes.isParameter(parameter)).toBe(true);
-        if (!PgTypes.isParameter(parameter)) throw new Error('Expected the native PostgreSQL JSON parameter');
-        selected.configuration = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(parameter.value);
-        if (sql.includes('legal_entity_id=')) selected.legalEntityId = legalEntityId;
-        selected.changeToken += 1;
-        return [{ changeToken: selected.changeToken }];
-      }
-      if (sql.includes('select route_id as "routeId" from symmy_integration.job_routes')) {
-        const selected = routes.find((entry) => parameters.includes(entry.routeId));
-        return selected === undefined ? [] : [{ routeId: selected.routeId }];
-      }
-      return [];
+      return coreStatement(sql, parameters) ?? routeStatement(sql, parameters);
     });
   const live = scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provide(Reactivity.layer));
   const run = (mode: 'apply' | 'verify', environment = 'stage') =>
@@ -294,7 +329,7 @@ const fixture = (
         }),
       ),
     );
-  return { run, statements, routes, bindings, companies };
+  return { bindings, companies, routes, run, statements };
 };
 
 it.effect('applies through Core writers and real route rows; a second apply and verify rotate no further epochs', () =>
@@ -310,7 +345,7 @@ it.effect('applies through Core writers and real route rows; a second apply and 
     expect(repeated.routes.map(({ outcome }) => outcome)).toEqual(['verified', 'verified']);
     yield* state.run('verify');
     expect(state.routes.map(({ changeToken }) => changeToken)).toEqual(tokens);
-    expect(state.statements.filter((sql) => sql.startsWith('update symmy_integration.job_routes'))).toHaveLength(2);
+    expect(state.statements.filter((sql) => sql.startsWith(updateRoute))).toHaveLength(2);
     expect(
       state.statements.filter((sql) => sql.startsWith('insert into symmy_integration.route_enrollment_records')),
     ).toHaveLength(2);
@@ -331,7 +366,7 @@ it.effect('refuses outstanding work, revoked grants and verify-before-apply with
     ] as const) {
       const state = fixture(options);
       expect(Exit.isFailure(yield* Effect.exit(state.run(mode)))).toBe(true);
-      expect(state.statements.some((sql) => sql.startsWith('update symmy_integration.job_routes'))).toBe(false);
+      expect(state.statements.some((sql) => sql.startsWith(updateRoute))).toBe(false);
       expect(
         state.statements.some((sql) => sql.startsWith('insert into symmy_integration.route_enrollment_records')),
       ).toBe(false);
@@ -352,7 +387,7 @@ it.effect('narrows the actual tenant-only reader without creating ambiguous dupl
     expect(state.routes).toHaveLength(2);
     yield* state.run('apply');
     yield* state.run('verify');
-    expect(state.statements.filter((sql) => sql.startsWith('update symmy_integration.job_routes'))).toHaveLength(2);
+    expect(state.statements.filter((sql) => sql.startsWith(updateRoute))).toHaveLength(2);
   }),
 );
 
@@ -367,7 +402,7 @@ it.effect('refuses narrowing an unrelated reader or another company instead of b
         true,
       );
     }
-    const blocked = fixture({ tenantReader: true, outstanding: true });
+    const blocked = fixture({ outstanding: true, tenantReader: true });
     expect(Exit.isFailure(yield* Effect.exit(blocked.run('apply')))).toBe(true);
     expect(blocked.routes.find(({ routeKey }) => routeKey === 'adminProducts')?.legalEntityId).toBeNull();
   }),

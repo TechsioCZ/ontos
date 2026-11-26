@@ -1,8 +1,10 @@
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
-import { planAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
-import { ReleaseInternalWorkloadError } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import {
+  planAdditiveCompanyInternalWorkloads,
+  ReleaseInternalWorkloadError,
+} from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
@@ -40,12 +42,29 @@ import {
   symmyDemoCustomerWorkloadRequirements,
 } from './symmy-demo-customer-authority.mts';
 
+const partyReaderWorkload = 'party.registry.source-read';
+const createPurposePath = '/privacy/actions/create-processing-purpose';
+const foreignCompany = '72000000-0000-4000-8000-000000000099';
+const PartyBindingsEnvironmentSchema = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      authMethod: Schema.Literals(['api_key', 'system']),
+      issuer: Schema.String,
+      namespace: Schema.String,
+      principalId: PrincipalIdSchema,
+      recordType: Schema.String,
+      routeRef: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyDemoRouteId')),
+      tenantId: TenantIdSchema,
+    }),
+  ),
+);
+
 const identities = {
-  partyReaderId: '72000000-0000-4000-8000-000000000025',
-  privacyReceiverId: '72000000-0000-4000-8000-000000000026',
   commerceWriterId: '72000000-0000-4000-8000-000000000023',
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
+  partyReaderId: '72000000-0000-4000-8000-000000000025',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
+  privacyReceiverId: '72000000-0000-4000-8000-000000000026',
 };
 
 it.effect('external integrations keep admit/poll only and retire only exact bootstrap-owned receiver aliases', () =>
@@ -55,17 +74,16 @@ it.effect('external integrations keep admit/poll only and retire only exact boot
       'integration.symmy-poll',
     ]);
     const principalId = identities.integrationPrincipalId;
-    const workloadKey = 'party.registry.source-read';
-    const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
+    const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, partyReaderWorkload);
     const owned = {
       bindingId: ids.bindingId,
-      incarnation: ids.bindingIncarnation,
-      principalId,
-      tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
-      workloadKey,
-      kind: 'integration',
-      status: 'active',
       foreignCompany: false,
+      incarnation: ids.bindingIncarnation,
+      kind: 'integration',
+      principalId,
+      status: 'active',
+      tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+      workloadKey: partyReaderWorkload,
     };
     expect(
       yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
@@ -81,10 +99,12 @@ it.effect('external integrations keep admit/poll only and retire only exact boot
       ]),
     ).toEqual([ids.bindingId]);
     expect(
-      (yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [{ ...owned, foreignCompany: true }]).pipe(
-        Effect.result,
-      ))._tag,
-    ).toBe('Failure');
+      Result.isFailure(
+        yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [{ ...owned, foreignCompany: true }]).pipe(
+          Effect.result,
+        ),
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -95,13 +115,13 @@ it.effect('retires exact bootstrap-owned source-writer aliases without touching 
       const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
       const owned = {
         bindingId: ids.bindingId,
+        foreignCompany: false,
         incarnation: ids.bindingIncarnation,
+        kind: 'integration',
         principalId,
+        status: 'active',
         tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
         workloadKey,
-        kind: 'integration',
-        status: 'active',
-        foreignCompany: false,
       };
       expect(
         yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
@@ -124,10 +144,11 @@ it.effect(
       expect(yield* symmyDemoCompanyBindingNeedsCreate([])).toBe(true);
       expect(yield* symmyDemoCompanyBindingNeedsCreate([{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }])).toBe(false);
       for (const active of [
-        [{ legalEntityId: '72000000-0000-4000-8000-000000000099' }],
+        [{ legalEntityId: foreignCompany }],
         [{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }, { legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }],
-      ])
-        expect((yield* symmyDemoCompanyBindingNeedsCreate(active).pipe(Effect.result))._tag).toBe('Failure');
+      ]) {
+        expect(Result.isFailure(yield* symmyDemoCompanyBindingNeedsCreate(active).pipe(Effect.result))).toBe(true);
+      }
     }),
 );
 
@@ -137,11 +158,11 @@ it.effect(
     Effect.gen(function* test() {
       const scope = {
         ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
-          principalId: identities.integrationPrincipalId,
-          authMethod: 'session',
           authBindingId: identities.partyReaderId,
           authContextRef: 'bootstrap-runtime-regression',
+          authMethod: 'session',
+          principalId: identities.integrationPrincipalId,
+          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
         }),
         correlationId: 'bootstrap-runtime-regression',
       };
@@ -149,16 +170,19 @@ it.effect(
         let inserted = false;
         const executor = yield* makeTestDatabase(
           (sql) => {
-            if (sql.includes("set_config('ontos.tenant_id'"))
+            if (sql.includes("set_config('ontos.tenant_id'")) {
               return Effect.succeed([
                 {
-                  role,
-                  tenant_id: scope.tenantId,
                   legal_entity_id: '',
                   operation_at: new Date('2026-11-23T00:00:00Z'),
+                  role,
+                  tenant_id: scope.tenantId,
                 },
               ]);
-            if (sql.startsWith('insert into')) inserted = true;
+            }
+            if (sql.startsWith('insert into')) {
+              inserted = true;
+            }
             return Effect.succeed([]);
           },
           { currentRole: role },
@@ -171,15 +195,15 @@ it.effect(
           bindings: [
             {
               bindingId: AccessWorkloadBindingIdSchema.make(identities.partyReaderId),
+              createdAt: new Date('2026-11-23T00:00:00Z'),
               incarnation: AccessWorkloadBindingIdSchema.make(identities.partyWriterId),
               principalId: PrincipalIdSchema.make(identities.integrationPrincipalId),
               tenantId: TenantIdSchema.make(scope.tenantId),
-              createdAt: new Date('2026-11-23T00:00:00Z'),
-              workloadKey: WorkloadKeySchema.make('party.registry.source-read'),
+              workloadKey: WorkloadKeySchema.make(partyReaderWorkload),
             },
           ],
         }).pipe(Effect.result);
-        expect(result._tag).toBe(role === 'ontos_runtime' ? 'Success' : 'Failure');
+        expect(Result.isSuccess(result)).toBe(role === 'ontos_runtime');
         expect(inserted).toBe(role === 'ontos_runtime');
       }
     }),
@@ -190,8 +214,9 @@ it('retains only typed fixed enrollment categories and strips arbitrary reasons 
     new SymmyDemoCustomerAuthorityError({ reason: 'enrollment-database-config' }),
     new ReleaseInternalWorkloadError({ reason: 'additive-release-scope' }),
     new ReleaseInternalWorkloadError({ reason: 'additive-step-create-principal' }),
-  ])
+  ]) {
     expect(safeSymmyDemoEnrollmentFailure(error).reason.startsWith(error.reason)).toBe(true);
+  }
   for (const error of [
     new Error('credential-bearing driver diagnostic'),
     new ReleaseInternalWorkloadError({ reason: 'raw private diagnostic' }),
@@ -204,9 +229,9 @@ it('retains only typed fixed enrollment categories and strips arbitrary reasons 
   expect(
     safeSymmyDemoEnrollmentFailure(
       new ReleaseInternalWorkloadError({
+        databaseConstraint: 'core_principals_platform_role_ck',
         reason: 'additive-step-create-principal',
         sqlState: '23514',
-        databaseConstraint: 'core_principals_platform_role_ck',
       }),
     ).reason,
   ).toBe('additive-step-create-principal:23514:core_principals_platform_role_ck');
@@ -215,27 +240,26 @@ it('retains only typed fixed enrollment categories and strips arbitrary reasons 
 it('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
   const tenantId = SYMMY_DEMO_CUSTOMER_TENANT;
   const legalEntityId = SYMMY_DEMO_CUSTOMER_COMPANY;
-  const foreignCompany = '72000000-0000-4000-8000-000000000099';
   const plan = planAdditiveCompanyInternalWorkloads(
     {
-      tenantId,
       activeCompanies: new Set([legalEntityId, foreignCompany]),
       activeModuleKeys: new Set(symmyDemoCustomerInternalWorkloadDeclarations.map(({ moduleKey }) => moduleKey)),
       companyNames: new Map([[legalEntityId, 'AKROS']]),
       registrations: [
         {
-          principalId: identities.partyWriterId,
-          legalEntityId: foreignCompany,
-          workloadKey: 'demo.crm.party-intake',
-          principalStatus: 'active',
-          displayName: 'Existing CRM',
-          activeWorkloadBindingId: identities.partyWriterId,
           activeCompanyBindingId: identities.partyReaderId,
+          activeWorkloadBindingId: identities.partyWriterId,
           companyBindingCount: 1,
-          workloadBindingCount: 1,
+          displayName: 'Existing CRM',
           extraCompanyBindingIds: [],
+          legalEntityId: foreignCompany,
+          principalId: identities.partyWriterId,
+          principalStatus: 'active',
+          workloadBindingCount: 1,
+          workloadKey: 'demo.crm.party-intake',
         },
       ],
+      tenantId,
     },
     symmyDemoCustomerInternalWorkloadDeclarations,
     legalEntityId,
@@ -248,7 +272,7 @@ it('plans exactly seven canonical AKROS company registrations without retiring u
       if (step.kind === 'create-principal') {
         expect(step.legalEntityId).toBe(legalEntityId);
         expect(step.principalId).toBe(
-          internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey: step.workloadKey }),
+          internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: step.workloadKey }),
         );
       }
     }
@@ -259,16 +283,18 @@ it('replaces all discovery causes with fixed phase codes and retains no raw caus
   for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader'] as const) {
     const failure = symmyDemoDiscoveryFailure(phase)();
     expect(failure.reason).toBe(phase);
-    expect(failure._tag).toBe('SymmyDemoCustomerAuthorityError');
+    expect(Schema.is(SymmyDemoCustomerAuthorityError)(failure)).toBe(true);
     expect('cause' in failure).toBe(false);
   }
 });
 
 it('discovers only required receiver identities before owner startup, and the full chain after registration', () => {
-  expect(symmyDemoReceiverWorkloadsForPhase('pre-owner')).toEqual(['party.registry.source-read']);
+  expect(symmyDemoReceiverWorkloadsForPhase('pre-owner')).toEqual([partyReaderWorkload]);
   const registered = symmyDemoReceiverWorkloadsForPhase('post-registration');
   expect(registered).toHaveLength(8);
-  for (const key of symmyDemoReceiverWorkloadsForPhase('pre-owner')) expect(registered).toContain(key);
+  for (const key of symmyDemoReceiverWorkloadsForPhase('pre-owner')) {
+    expect(registered).toContain(key);
+  }
   expect(registered).toContain('privacy.core.organization-profile-ico-check');
   expect(registered).toContain('pricing.price-group-catalog.source-read');
 });
@@ -317,13 +343,15 @@ it.effect('preserves the native tenant-wide SYSTEM writer before any company reg
       legacyWriter.principalId,
     );
     expect(
-      (yield* selectSymmyDemoSourceWriter(workloadKey, [
-        {
-          ...serviceWriter,
-          legalEntityId: null,
-        },
-      ]).pipe(Effect.result))._tag,
-    ).toBe('Failure');
+      Result.isFailure(
+        yield* selectSymmyDemoSourceWriter(workloadKey, [
+          {
+            ...serviceWriter,
+            legalEntityId: null,
+          },
+        ]).pipe(Effect.result),
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -336,7 +364,9 @@ it.effect('rejects foreign company, unmarked or falsely identified service write
       [legacyWriter, { ...legacyWriter, principalId: identities.commerceWriterId }, serviceWriter],
       [],
     ]) {
-      expect((yield* selectSymmyDemoSourceWriter(workloadKey, candidates).pipe(Effect.result))._tag).toBe('Failure');
+      expect(Result.isFailure(yield* selectSymmyDemoSourceWriter(workloadKey, candidates).pipe(Effect.result))).toBe(
+        true,
+      );
     }
   }),
 );
@@ -399,14 +429,14 @@ it('replays deterministic selected routes without deriving a native group identi
 
 it('merges only exact tenant-local Party source bindings and never fabricates Privacy authority', () => {
   const first = symmyDemoCustomerEnvironment(identities);
-  const entries = JSON.parse(first.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS);
+  const entries = Schema.decodeUnknownSync(PartyBindingsEnvironmentSchema)(first.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS);
   expect(entries).toHaveLength(4);
   expect(symmyDemoCustomerEnvironment(identities, entries)).toEqual(first);
   expect(Object.keys(first)).toEqual([
     'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
     'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED',
   ]);
-  expect(entries.map((entry: { principalId: string }) => entry.principalId)).toEqual([
+  expect(entries.map(({ principalId }) => principalId)).toEqual([
     identities.integrationPrincipalId,
     identities.partyWriterId,
     identities.commerceWriterId,
@@ -414,8 +444,7 @@ it('merges only exact tenant-local Party source bindings and never fabricates Pr
   ]);
   expect(
     entries.every(
-      (entry: { tenantId: string; routeRef: string }) =>
-        entry.tenantId === SYMMY_DEMO_CUSTOMER_TENANT && entry.routeRef === SYMMY_DEMO_CUSTOMERS_ROUTE,
+      ({ routeRef, tenantId }) => tenantId === SYMMY_DEMO_CUSTOMER_TENANT && routeRef === SYMMY_DEMO_CUSTOMERS_ROUTE,
     ),
   ).toBe(true);
 });
@@ -423,19 +452,15 @@ it('merges only exact tenant-local Party source bindings and never fabricates Pr
 it.effect('rejects invented integration identities before any deployment I/O', () =>
   buildSymmyDemoCustomerRoutes('not-a-principal', []).pipe(
     Effect.flip,
-    Effect.map((failure) => expect(failure._tag).toBe('SchemaError')),
+    Effect.map((failure) => expect(Schema.isSchemaError(failure)).toBe(true)),
   ),
 );
 
 it.effect('reuses a native Action key after a lost response and separates changed approved commands', () =>
   Effect.gen(function* test() {
-    const key = yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":1}');
-    expect(key).toBe(
-      yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":1}'),
-    );
-    expect(key).not.toBe(
-      yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-processing-purpose', '{"a":2}'),
-    );
+    const key = yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":1}');
+    expect(key).toBe(yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":1}'));
+    expect(key).not.toBe(yield* symmyDemoCustomerWriteKey('privacy', createPurposePath, '{"a":2}'));
     expect(key).not.toBe(
       yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-privacy-subject', '{"a":1}'),
     );
@@ -460,8 +485,8 @@ it.effect('retires only explicitly identified duplicate aliases, preserving a un
     const alias = { ...legacyWriter, bindingId: '72000000-0000-4000-8000-000000000031' };
     const other = {
       ...legacyWriter,
-      principalId: identities.commerceWriterId,
       bindingId: '72000000-0000-4000-8000-000000000032',
+      principalId: identities.commerceWriterId,
     };
     expect(yield* symmyDemoReceiverCandidates([alias, serviceWriter], [alias.bindingId])).toEqual([
       alias,
@@ -482,22 +507,24 @@ it.effect(
       const external = identities.integrationPrincipalId;
       const reader = '72000000-0000-4000-8000-000000000027';
       expect(
-        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external], managed: false }, external, reader),
+        yield* symmyDemoNativeReaderNeedsEnrollment({ managed: false, readers: [external] }, external, reader),
       ).toBe(true);
       expect(
-        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external, reader], managed: true }, external, reader),
+        yield* symmyDemoNativeReaderNeedsEnrollment({ managed: true, readers: [external, reader] }, external, reader),
       ).toBe(false);
-      expect(yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [reader], managed: true }, external, reader)).toBe(
+      expect(yield* symmyDemoNativeReaderNeedsEnrollment({ managed: true, readers: [reader] }, external, reader)).toBe(
         false,
       );
       for (const [readers, managed, receiver] of [
         [[external], true, reader],
         [[], false, reader],
         [[external], false, external],
-      ] as const)
+      ] as const) {
         expect(
-          (yield* symmyDemoNativeReaderNeedsEnrollment({ readers, managed }, external, receiver).pipe(Effect.result))
-            ._tag,
-        ).toBe('Failure');
+          Result.isFailure(
+            yield* symmyDemoNativeReaderNeedsEnrollment({ managed, readers }, external, receiver).pipe(Effect.result),
+          ),
+        ).toBe(true);
+      }
     }),
 );
