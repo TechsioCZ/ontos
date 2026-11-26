@@ -110,6 +110,38 @@ const loadShellMediaCode = Effect.all(
   { concurrency: 1 },
 );
 
+/** A statement that creates or alters a media table. */
+const MEDIA_TABLE_STATEMENT =
+  /^\s*(?:create|alter) table (?:if (?:not )?exists )?(?:only )?(?:"?core"?\.)?"?(?<table>media_\w+)"?/iu;
+/** A column definition of a CREATE TABLE body, and a column an ALTER TABLE adds or renames to. */
+const CREATED_COLUMN = /^\s*"?(?<column>\w+)"?\s+\S/u;
+const ALTERED_COLUMN = /\b(?:add(?: column)?(?: if not exists)?|rename(?: column)? "?\w+"? to)\s+"?(?<column>\w+)"?/giu;
+const TABLE_CONSTRAINT_WORD = /^(?:constraint|primary|unique|check|foreign|exclude|like)$/iu;
+/** What a column holding a version, a revision, a Current pointer or a replacement chain would be called. */
+const REVISION_LIKE =
+  /revision|version|(?:^|_)rev(?:_|$)|current|publi|supersed|replac|previous|predecessor|document/iu;
+
+/** Every `table.column` a migration gives a media table. */
+const mediaColumnsOf = (sql: string): readonly string[] =>
+  sql
+    .replaceAll('--> statement-breakpoint', '')
+    .split(';')
+    .flatMap((statement) => {
+      const table = MEDIA_TABLE_STATEMENT.exec(statement)?.groups?.['table'];
+      if (table === undefined) {
+        return [];
+      }
+      const columns = /^\s*create/iu.test(statement)
+        ? statement
+            .slice(statement.indexOf('(') + 1)
+            .split(/[,\n]/u)
+            .map((part) => CREATED_COLUMN.exec(part)?.groups?.['column'])
+        : [...statement.matchAll(ALTERED_COLUMN)].map((match) => match.groups?.['column']);
+      return columns
+        .filter((column) => column !== undefined && !TABLE_CONSTRAINT_WORD.test(column))
+        .map((column) => `${table}.${column}`);
+    });
+
 const forbid = (sources: readonly (readonly [string, string])[], name: string, pattern: RegExp) => {
   for (const [file, code] of sources) {
     expect(code, `${file} must not contain ${name}`).not.toMatch(pattern);
@@ -195,7 +227,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
   );
 
   suite.effect(
-    'adds no Core table beyond media assets and media links, and no document or revision table in any migration',
+    'adds no Core table beyond media assets and media links, no revision-like column on them, and no document or revision table in any migration',
     () =>
       Effect.gen(function* noExtraTables() {
         const migrations = (yield* walk('packages/core-runtime/drizzle')).filter((file) =>
@@ -203,15 +235,27 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
         );
         expect(migrations.length).toBeGreaterThan(0);
         const created = new Set<string>();
+        const columns = new Set<string>();
         for (const file of migrations) {
           // A commented-out statement is not a table.
           const sql = (yield* readText(file)).replaceAll(/^\s*--.*$/gmu, '');
           for (const match of sql.matchAll(/create table (?:if not exists )?"?(?:core"?\.)?"?(?<table>\w+)"?/giu)) {
             created.add(match.groups?.['table'] ?? '');
           }
+          for (const column of mediaColumnsOf(sql)) {
+            columns.add(column);
+          }
         }
         // The only media tables ever created in Core: the asset and the link a business owner writes.
         expect([...created].filter((name) => /media/iu.test(name)).toSorted()).toEqual(['media_assets', 'media_links']);
+        // Both tables' columns were read, and the one revision-like name among them is the provider's technical pin of
+        // the stored object: integrity evidence, never a version of the asset.
+        expect([...columns]).toEqual(
+          expect.arrayContaining(['media_assets.processing_status', 'media_links.link_kind']),
+        );
+        expect([...columns].filter((column) => REVISION_LIKE.test(column))).toEqual([
+          'media_assets.storage_object_version_ref',
+        ]);
         // Other owners' revision tables (the access role revisions) exist; none belongs to a document or an asset.
         expect(
           [...created].filter((name) => /document|(?:media|asset|file)\w*(?:revision|version)/iu.test(name)),
