@@ -12,8 +12,10 @@ import { SymmyJobRetentionPolicySchema } from '../../shared/domain/symmy-job-ret
 const formerRetention =
   '[{"policyId":"akros-symmy-products","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"1a24b716-0542-40d5-8906-c78554b7436d","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000},{"policyId":"akros-symmy-stock","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"042ef863-a837-48d6-81de-59a239148312","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":null,"retentionMs":2592000000},{"policyId":"akros-symmy-price-lists","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"9e355544-4242-4704-a9d3-0ef0832fc328","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000},{"policyId":"akros-symmy-prices","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"3276fa39-f868-4be3-942c-501a6996a74a","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000},{"policyId":"akros-symmy-customer-groups","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"f637a6ec-865b-43bc-9c28-57783757f367","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000},{"policyId":"akros-symmy-stock-source-v1","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"20f8cb1e-ecc1-8fda-912d-699274afc835","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":null,"retentionMs":2592000000},{"policyId":"akros-symmy-customers","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"5158ef08-7315-57e1-a9ed-b0fef8cd9ac1","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000},{"policyId":"akros-symmy-memberships","revision":"v1","tenantId":"bceaa540-13eb-5508-9ac0-9ed7e40a2ee9","routeId":"f637a6ec-865b-43bc-9c28-57783757f367","governanceLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","targetLegalEntityId":"c0c78a3e-6e2a-57e0-9d0d-86253499fee7","retentionMs":2592000000,"routeFamily":"DEMO_GROUP_MEMBERSHIP"}]';
 const formerPriceReadSource = {
+  issuerId: 'symmy-akros',
   legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
   routeId: '6d1d4cdb-72f9-4485-8c07-5806ec9468fe',
+  sourceNamespace: 'akros-erp',
   sourceSystem: { ownerModuleId: 'external.symmy', sourceSystemRef: 'symmy-akros' },
   tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
 } as const;
@@ -67,7 +69,7 @@ describe('the demo route data migration', () => {
     }
   });
 
-  it('writes the former price read source of the demo priceLists route', () => {
+  it('writes the former price read source of the demo priceLists route, only where the env entry matched it', () => {
     const statement = statementOf('route_price_read_sources');
     const route = formerPriceReadSource;
     expect(statement).toContain(
@@ -75,6 +77,9 @@ describe('the demo route data migration', () => {
     );
     expect(statement).toContain(`r.route_id = '${route.routeId}'::uuid`);
     expect(statement).toContain(`r.legal_entity_id = '${route.legalEntityId}'::uuid`);
+    // The env entry matched the route context's issuer and namespace too, which the first item's source decides.
+    expect(statement).toContain(`r.fixture_plan #>> '{items,0,source,issuerId}' = '${route.issuerId}'`);
+    expect(statement).toContain(`r.fixture_plan #>> '{items,0,source,sourceNamespace}' = '${route.sourceNamespace}'`);
     expect(tenantOf(statement)).toBe(route.tenantId);
   });
 });

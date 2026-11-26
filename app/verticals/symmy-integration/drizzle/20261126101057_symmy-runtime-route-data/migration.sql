@@ -102,4 +102,7 @@ FROM symmy_integration.job_routes r
 WHERE r.tenant_id = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9'::uuid
   AND r.route_id = '6d1d4cdb-72f9-4485-8c07-5806ec9468fe'::uuid
   AND r.legal_entity_id = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7'::uuid
+  -- The env entry applied only while the route's context named its issuer and namespace (the first item's source).
+  AND r.fixture_plan #>> '{items,0,source,issuerId}' = 'symmy-akros'
+  AND r.fixture_plan #>> '{items,0,source,sourceNamespace}' = 'akros-erp'
 ON CONFLICT DO NOTHING;
