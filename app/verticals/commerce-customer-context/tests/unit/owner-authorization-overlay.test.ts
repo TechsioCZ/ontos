@@ -753,12 +753,12 @@ it.effect(
       const sourceScope = trustVerifiedGatewayPrincipalContext(
         {
           ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-            authMethod: 'api_key',
             authBindingId: '70000000-0000-4000-8000-000000000001',
             authContextRef: 'api_key:source-address-unit',
+            authMethod: 'api_key',
+            legalEntityId: company,
             principalId: storefrontPrincipal,
             tenantId: tenant,
-            legalEntityId: company,
           }),
           correlationId: 'source-counterparty-address',
         },
@@ -766,9 +766,9 @@ it.effect(
       );
       const decision = yield* gateFor(['commerce.customer-context.source-write']).decide({
         carrier,
-        scope: sourceScope,
         legalEntityScope: 'required',
         now,
+        scope: sourceScope,
       });
       expect(decision.outcome).toBe('ALLOWED');
       const calls: string[] = [];
@@ -777,7 +777,7 @@ it.effect(
           calls.push(key);
           return [];
         }),
-        scope: { tenantId: tenant, legalEntityId: company },
+        scope: { legalEntityId: company, tenantId: tenant },
       };
       const admission = bindScopedWorkloadAdmission(native, { carrier, scope: sourceScope }, decision);
       const input: OwnerAuthorizationInput = {

@@ -1,109 +1,118 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
-import { ConfigProvider, Effect, Schema } from 'effect';
+import { ConfigProvider, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import type { CommerceSourceProcessingRequest } from '../../src/integrations/source-processing-eligibility.ts';
 import {
+  acquireSourceSyncProcessingPermit,
   requireSourceSyncProcessingPermit,
   sourceSyncProcessingSelected,
-  acquireSourceSyncProcessingPermit,
 } from '../../src/integrations/source-sync-processing.ts';
-import type { CommerceSourceProcessingRequest } from '../../src/integrations/source-processing-eligibility.ts';
+
+const tenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
+const legalEntityId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
 const scope: OperationalScope = {
   authMethod: 'system',
   correlationId: 'source-sync-unit',
+  legalEntityId,
   principalId: '10000000-0000-4000-8000-000000000001',
-  tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
-  legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
+  tenantId,
 };
 const now = '2026-11-23T12:00:00.000Z';
-const request: CommerceSourceProcessingRequest = {
+const request = {
   operation: 'customer-profile-source.read',
   source: {
     issuer: 'symmy-akros',
     namespace: 'akros-erp',
-    routeRef: '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1',
-    recordType: 'CUSTOMER',
-    recordId: 'source-org',
     occurrenceId: 'source-import-1',
+    recordId: 'source-org',
+    recordType: 'CUSTOMER',
+    routeRef: '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1',
   },
   target: { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: '10000000-0000-4000-8000-000000000002' },
-};
+} satisfies CommerceSourceProcessingRequest;
+type AllowedResponse = Extract<typeof SourceProcessingEligibilityResponseSchema.Encoded, { outcome: 'ALLOWED' }>;
+type SyncEvidence = Extract<AllowedResponse['evidence'], { _tag: 'SOURCE_SYNC_PROCESSING_POLICY' }>;
+
 const evidence = {
   _tag: 'SOURCE_SYNC_PROCESSING_POLICY',
-  tenantId: scope.tenantId,
-  legalEntityId: scope.legalEntityId,
   consumerModuleId: 'commerce.customer-context',
+  dataUse: 'SOURCE_CUSTOMER_SYNC',
+  legalEntityId,
   operation: request.operation,
-  source: request.source,
-  target: request.target,
   policyId: 'akros-symmy-source-sync-v2',
   policyRevision: 'v2',
-  dataUse: 'SOURCE_CUSTOMER_SYNC',
   purpose: 'CUSTOMER_IMPORT',
+  source: request.source,
+  target: request.target,
+  tenantId,
   trustedDecisionTime: now,
   validUntil: '2026-11-24T00:00:00.000Z',
-};
-const response = (change: Readonly<Record<string, unknown>> = {}, top: Readonly<Record<string, unknown>> = {}) =>
+} satisfies SyncEvidence;
+const response = (change: Partial<SyncEvidence> = {}, top: Partial<AllowedResponse> = {}) =>
   Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
-    outcome: 'ALLOWED',
     authorityIncarnation: evidence.policyId,
     authorityRevision: 'v2',
     evaluatedAt: now,
     evidence: { ...evidence, ...change },
+    outcome: 'ALLOWED',
     ...top,
   });
 it.effect('retains exact native source-sync evidence without business classification', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* retainsSourceEvidence() {
     const permit = yield* requireSourceSyncProcessingPermit(scope, request, response(), now);
-    expect(permit._tag).toBe('SOURCE_SYNC_PROCESSING_POLICY');
+    expect(
+      Match.value(permit).pipe(
+        Match.tag('SOURCE_SYNC_PROCESSING_POLICY', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
     expect('classification' in permit).toBe(false);
   }),
 );
 for (const [name, change] of Object.entries({
   consumer: { consumerModuleId: 'party.registry' },
+  decisionTime: { trustedDecisionTime: '2026-11-23T11:59:59.000Z' },
+  expired: { validUntil: now },
+  occurrence: { source: { ...request.source, occurrenceId: 'different-import' } },
   operation: { operation: 'customer-profile-source.write' },
   source: { source: { ...request.source, recordId: 'different-record' } },
-  occurrence: { source: { ...request.source, occurrenceId: 'different-import' } },
   target: { target: null },
-  expired: { validUntil: now },
-  decisionTime: { trustedDecisionTime: '2026-11-23T11:59:59.000Z' },
 })) {
   it.effect(`rejects mismatched ${name}`, () =>
-    Effect.gen(function* () {
-      expect(
-        (yield* requireSourceSyncProcessingPermit(scope, request, response(change), now).pipe(Effect.flip)).code,
-      ).toBe('DENIED');
+    Effect.gen(function* rejectsMismatchedEvidence() {
+      const denied = yield* requireSourceSyncProcessingPermit(scope, request, response(change), now).pipe(Effect.flip);
+      expect(denied.code).toBe('DENIED');
     }),
   );
 }
 it.effect('does not replace a native denial with business-only authority', () =>
-  Effect.gen(function* () {
-    expect(
-      (yield* requireSourceSyncProcessingPermit(
-        scope,
-        request,
-        { outcome: 'DENIED', evaluatedAt: now, reason: 'PROTECTED_MATERIAL' },
-        now,
-      ).pipe(Effect.flip)).code,
-    ).toBe('DENIED');
+  Effect.gen(function* refusesNativeDenial() {
+    const denied = yield* requireSourceSyncProcessingPermit(
+      scope,
+      request,
+      { evaluatedAt: now, outcome: 'DENIED', reason: 'PROTECTED_MATERIAL' },
+      now,
+    ).pipe(Effect.flip);
+    expect(denied.code).toBe('DENIED');
   }),
 );
 it.effect('refuses retained stale authority', () =>
-  Effect.gen(function* () {
-    expect(
-      (yield* requireSourceSyncProcessingPermit(
-        scope,
-        request,
-        response(
-          {},
-          {
-            evaluatedAt: '2026-11-23T11:58:00.000Z',
-            evidence: { ...evidence, trustedDecisionTime: '2026-11-23T11:58:00.000Z' },
-          },
-        ),
-        now,
-      ).pipe(Effect.flip)).code,
-    ).toBe('DENIED');
+  Effect.gen(function* refusesStaleAuthority() {
+    const denied = yield* requireSourceSyncProcessingPermit(
+      scope,
+      request,
+      response(
+        {},
+        {
+          evaluatedAt: '2026-11-23T11:58:00.000Z',
+          evidence: { ...evidence, trustedDecisionTime: '2026-11-23T11:58:00.000Z' },
+        },
+      ),
+      now,
+    ).pipe(Effect.flip);
+    expect(denied.code).toBe('DENIED');
   }),
 );
 for (const [name, values, selected] of [
@@ -112,26 +121,24 @@ for (const [name, values, selected] of [
   ['on', { ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true' }, true],
 ] as const) {
   it.effect(`explicit mode selection ${name}`, () =>
-    Effect.gen(function* () {
-      expect(
-        yield* sourceSyncProcessingSelected.pipe(
-          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(values)),
-        ),
-      ).toBe(selected);
+    Effect.gen(function* selectsMode() {
+      const actual = yield* sourceSyncProcessingSelected.pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(values)),
+      );
+      expect(actual).toBe(selected);
     }),
   );
 }
 it.effect('invalid mode fails closed', () =>
-  Effect.gen(function* () {
-    expect(
-      (yield* sourceSyncProcessingSelected.pipe(
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown({ ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'invalid' }),
-        ),
-        Effect.flip,
-      )).code,
-    ).toBe('UNAVAILABLE');
+  Effect.gen(function* rejectsInvalidMode() {
+    const unavailable = yield* sourceSyncProcessingSelected.pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'invalid' }),
+      ),
+      Effect.flip,
+    );
+    expect(unavailable.code).toBe('UNAVAILABLE');
   }),
 );
 
@@ -140,10 +147,9 @@ for (const [name, alteredScope] of [
   ['company', { ...scope, legalEntityId: '10000000-0000-4000-8000-000000000004' }],
 ] as const) {
   it.effect(`rejects foreign ${name}`, () =>
-    Effect.gen(function* () {
-      expect(
-        (yield* requireSourceSyncProcessingPermit(alteredScope, request, response(), now).pipe(Effect.flip)).code,
-      ).toBe('DENIED');
+    Effect.gen(function* rejectsForeignScope() {
+      const denied = yield* requireSourceSyncProcessingPermit(alteredScope, request, response(), now).pipe(Effect.flip);
+      expect(denied.code).toBe('DENIED');
     }),
   );
 }
@@ -152,46 +158,38 @@ for (const [field, value] of [
   ['authorityRevision', 'v1'],
 ] as const) {
   it.effect(`rejects uncorrelated ${field}`, () =>
-    Effect.gen(function* () {
-      expect(
-        (yield* requireSourceSyncProcessingPermit(scope, request, response({}, { [field]: value }), now).pipe(
-          Effect.flip,
-        )).code,
-      ).toBe('DENIED');
+    Effect.gen(function* rejectsUncorrelatedAuthority() {
+      const denied = yield* requireSourceSyncProcessingPermit(
+        scope,
+        request,
+        response({}, { [field]: value }),
+        now,
+      ).pipe(Effect.flip);
+      expect(denied.code).toBe('DENIED');
     }),
   );
 }
 
 it.effect('does not contact source-sync authority when the owner has not selected source-sync mode', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* skipsUnselectedAuthority() {
     let calls = 0;
-    const denied = yield* acquireSourceSyncProcessingPermit(
-      scope,
-      {
-        check: () => {
-          calls++;
-          return Effect.die('Unselected mode must never acquire authority');
-        },
-      },
-      request,
-      'unit-requirement',
-    ).pipe(Effect.flip);
+    const decision = Effect.suspend(() => {
+      calls += 1;
+      return Effect.die('Unselected mode must never acquire authority');
+    });
+    const denied = yield* acquireSourceSyncProcessingPermit(scope, request, decision).pipe(Effect.flip);
     expect(denied.code).toBe('DENIED');
     expect(calls).toBe(0);
   }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({}))),
 );
 it.effect('does not confuse ordinary processing evidence with a source-sync permit', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* rejectsOrdinaryEvidence() {
     const ordinary = response(
       {},
       {
         evidence: {
           authoritativeReferences: [],
           currentnessConditions: [],
-          policyRevisions: [],
-          reasonCodes: ['native-current-processing'],
-          trustedDecisionTime: now,
-          outcome: 'ALLOWED',
           evaluatedScope: {
             controllerRef: 'controller',
             dataCategoryRefs: ['category'],
@@ -207,6 +205,10 @@ it.effect('does not confuse ordinary processing evidence with a source-sync perm
               tenantId: scope.tenantId,
             },
           },
+          outcome: 'ALLOWED',
+          policyRevisions: [],
+          reasonCodes: ['native-current-processing'],
+          trustedDecisionTime: now,
         },
       },
     );

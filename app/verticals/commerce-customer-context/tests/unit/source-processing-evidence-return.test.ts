@@ -1,107 +1,197 @@
-import { NodeCrypto } from '@effect/platform-node';
-import { rstest } from '@rstest/core';
-import { ConfigProvider, DateTime, Effect, Layer, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { TrustedPrincipalContextSchema, loadCheckedActiveApplicationComposition } from '@app/core-runtime';
+import {
+  RegisteredGatewayWorkloadSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { GatewayDelegatedContextRequestSchema, GatewayRegisteredAssertionSubjectSchema } from '@app/shared-contracts';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { expect, it } from 'effect-rstest';
+
+import { privacyRegistration } from '../../../privacy/vertical.registration.ts';
+import { withModuleOperationExecution } from '../../../../packages/core-runtime/src/modules/module-operation-execution.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
+import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
+import type { CommerceSourceProcessingRequest } from '../../src/integrations/source-processing-eligibility.ts';
 import {
   CommerceSourceProcessingEligibility,
   commerceSourceProcessingEligibilityLive,
 } from '../../src/integrations/source-processing-eligibility.ts';
 
-const relay = rstest.hoisted(() => ({ response: undefined as unknown, calls: 0 }));
-rstest.mock('@app/shared-contracts/gateway-context-server', () => ({
-  acquireDelegatedGatewayContext: () =>
-    Effect.succeed({
-      authorization: 'Bearer unit-only-not-a-credential',
-      apiBaseUrl: 'https://privacy.invalid/',
-      compositionRevision: 'a'.repeat(64),
-    }),
-}));
-rstest.mock('@app/privacy/api/source-processing-eligibility/client', () => ({
-  executeSourceProcessingEligibilityWithAuthorization: () => {
-    relay.calls++;
-    return Effect.succeed(relay.response);
-  },
-}));
-const scope = {
-  authMethod: 'system' as const,
-  correlationId: 'source-sync-evidence',
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+
+const operationRequirementKey = 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
+const sourceAssertion = 'unit-only-source-assertion';
+const evaluatedAt = '2026-11-23T12:00:00.000Z';
+const tenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
+const legalEntityId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
+  authContextRef: 'job:symmy:run:source-sync-evidence',
+  authMethod: 'system',
   principalId: '10000000-0000-4000-8000-000000000001',
-  tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
-  legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
-};
+  tenantId,
+});
+const { descriptor } = createCounterpartyPurchasingProfileAction;
+const workload = Schema.decodeSync(RegisteredGatewayWorkloadSchema)({
+  admissionInvocationId: '10000000-0000-4000-8000-000000000003',
+  bindingIncarnation: '10000000-0000-4000-8000-000000000004',
+  declarationKey: 'commerce.customer-context.counterparty-purchasing-profile.create',
+  entrypointKey: descriptor.entrypoint.entrypointKey,
+  jobKey: 'symmy-integration.apply',
+  legalEntityId,
+  legalEntityScope: 'required',
+  originalOwnerBindingIncarnation: '10000000-0000-4000-8000-000000000005',
+  originalPrincipalId: '10000000-0000-4000-8000-000000000006',
+  originalWorkloadBindingIncarnation: '10000000-0000-4000-8000-000000000007',
+  originalWorkloadKey: 'symmy-integration.customer-source-write',
+  runReference: '10000000-0000-4000-8000-000000000008',
+  schemaVersion: descriptor.schemaVersion,
+  sourceAppId: 'symmy-integration',
+  sourceBuildMarker: 'fixture-build',
+  sourceMode: 'admission',
+  workloadKey: 'commerce.customer-context.source-write',
+});
 const request = {
   operation: 'customer-profile-source.write',
   source: {
     issuer: 'symmy-akros',
     namespace: 'akros-erp',
-    routeRef: '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1',
-    recordType: 'CUSTOMER',
-    recordId: 'source-org',
     occurrenceId: 'source-occurrence',
+    recordId: 'source-org',
+    recordType: 'CUSTOMER',
+    routeRef: '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1',
   },
-  target: { kind: 'PARTY' as const, resourceId: '10000000-0000-4000-8000-000000000002' },
+  target: { kind: 'PARTY', resourceId: '10000000-0000-4000-8000-000000000002' },
+} satisfies CommerceSourceProcessingRequest;
+const layers = Layer.mergeAll(
+  commerceSourceProcessingEligibilityLive.pipe(Layer.provide(nodeCryptoLayer)),
+  ConfigProvider.layer(
+    ConfigProvider.fromUnknown({
+      ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true',
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid/shell-super-app-api',
+    }),
+  ),
+  Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-customer-context': 'unit-only-module-credential' })),
+  TestClock.layer(),
+);
+const positive = Schema.decodeSync(SourceProcessingEligibilityResponseSchema)({
+  authorityIncarnation: 'akros-symmy-source-sync-v2',
+  authorityRevision: 'v2',
+  evaluatedAt,
+  evidence: {
+    _tag: 'SOURCE_SYNC_PROCESSING_POLICY',
+    consumerModuleId: 'commerce.customer-context',
+    dataUse: 'SOURCE_CUSTOMER_SYNC',
+    legalEntityId,
+    operation: request.operation,
+    policyId: 'akros-symmy-source-sync-v2',
+    policyRevision: 'v2',
+    purpose: 'CUSTOMER_IMPORT',
+    source: request.source,
+    target: request.target,
+    tenantId,
+    trustedDecisionTime: evaluatedAt,
+    validUntil: '2099-01-01T00:00:00.000Z',
+  },
+  outcome: 'ALLOWED',
+});
+
+// Run both real clients over a scripted Fetch peer; count only calls to the Privacy authority.
+const privacyPeer = (decision: typeof SourceProcessingEligibilityResponseSchema.Type, compositionRevision: string) => {
+  const reads: Request[] = [];
+  const fetch: typeof globalThis.fetch = (input, init) => {
+    const sent = new Request(input, init);
+    const { pathname } = new URL(sent.url);
+    if (pathname === '/shell-super-app-api/auth/delegated/gateway-context') {
+      return sent
+        .json()
+        .then(Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema))
+        .then((asked) => {
+          expect(asked.audience).toBe('privacy');
+          expect(asked.compositionRevision).toBe(compositionRevision);
+          const subject = Schema.decodeUnknownSync(Schema.toType(GatewayRegisteredAssertionSubjectSchema))(
+            asked.subject,
+          );
+          expect(subject.declarationKey).toBe('privacy.core.source-processing-eligibility.read');
+          expect(subject.operationRequirementKey).toBe(operationRequirementKey);
+          expect(Redacted.value(subject.sourceAssertion)).toBe(sourceAssertion);
+          return Response.json({
+            apiBaseUrl: '/privacy-api',
+            compositionRevision,
+            expiresAt: 2_000_000_000,
+            token: 'unit-only-privacy-assertion',
+          });
+        });
+    }
+    if (pathname === '/privacy-api/reads/source-processing-eligibility') {
+      reads.push(sent);
+      return Promise.resolve(Response.json(Schema.encodeSync(SourceProcessingEligibilityResponseSchema)(decision)));
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  };
+  return { fetch, reads };
 };
-const layers = commerceSourceProcessingEligibilityLive.pipe(Layer.provide(NodeCrypto.layer));
-const config = ConfigProvider.fromUnknown({ ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true' });
-const positive = (at: string) =>
-  Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
-    outcome: 'ALLOWED',
-    authorityIncarnation: 'akros-symmy-source-sync-v2',
-    authorityRevision: 'v2',
-    evaluatedAt: at,
-    evidence: {
-      _tag: 'SOURCE_SYNC_PROCESSING_POLICY',
-      dataUse: 'SOURCE_CUSTOMER_SYNC',
-      purpose: 'CUSTOMER_IMPORT',
-      tenantId: scope.tenantId,
-      legalEntityId: scope.legalEntityId,
-      policyId: 'akros-symmy-source-sync-v2',
-      policyRevision: 'v2',
-      consumerModuleId: 'commerce.customer-context',
-      operation: request.operation,
-      source: request.source,
-      target: request.target,
-      trustedDecisionTime: at,
-      validUntil: '2099-01-01T00:00:00.000Z',
-    },
+
+const prepareCheck = Effect.fn('SourceProcessingEvidenceTest.prepareCheck')(function* prepareCheck(
+  decision: typeof SourceProcessingEligibilityResponseSchema.Type,
+) {
+  yield* TestClock.setTime(Date.parse(evaluatedAt));
+  const { applicationComposition } = yield* makeOwnerApplicationCompositionFixture({
+    additionalOwners: [{ appId: 'privacy', ownerRegistration: privacyRegistration }],
+    appId: 'commerce-customer-context',
+    ownerRegistration: commerceCustomerContextRegistration,
   });
+  const { catalog, snapshot } = yield* loadCheckedActiveApplicationComposition(applicationComposition);
+  const { revision } = snapshot.composition;
+  const scope = trustVerifiedGatewayPrincipalContext(
+    { ...principal, correlationId: 'source-sync-evidence', legalEntityId },
+    revision,
+    { assertion: Redacted.make(sourceAssertion), audience: 'commerce-customer-context' },
+    undefined,
+    workload,
+  );
+  const { fetch, reads } = privacyPeer(decision, revision);
+  const authority = yield* CommerceSourceProcessingEligibility;
+  const check = (input: CommerceSourceProcessingRequest) =>
+    withModuleOperationExecution(
+      {
+        loadCatalog: Effect.succeed(catalog),
+        ownerRegistration: commerceCustomerContextRegistration,
+        phase: 'execution',
+        registration: createCounterpartyPurchasingProfileAction,
+        revision,
+        scope,
+      },
+      authority.check(scope, input, operationRequirementKey),
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+  return { check, reads };
+});
 
 it.effect('returns the real fresh Privacy evidence instead of discarding the owner decision', () =>
-  Effect.gen(function* () {
-    relay.response = positive(DateTime.formatIso(yield* DateTime.now));
-    relay.calls = 0;
-    const authority = yield* CommerceSourceProcessingEligibility;
-    const decision = yield* authority.check(
-      scope,
-      request,
-      'commerce.customer-context.requirement.create-counterparty-profile-source-privacy',
-    );
-    expect(decision).toEqual(relay.response);
-    expect(relay.calls).toBe(1);
-  }).pipe(Effect.provide(layers), Effect.provideService(ConfigProvider.ConfigProvider, config)),
+  Effect.gen(function* returnsFreshEvidence() {
+    const { check, reads } = yield* prepareCheck(positive);
+    const decision = yield* check(request);
+    expect(decision).toEqual(positive);
+    expect(reads).toHaveLength(1);
+  }).pipe(Effect.provide(layers)),
 );
 it.effect('selected source-sync path fails closed on native denial without another authority call', () =>
-  Effect.gen(function* () {
-    relay.response = {
-      outcome: 'DENIED',
-      reason: 'PROTECTED_MATERIAL',
-      evaluatedAt: DateTime.formatIso(yield* DateTime.now),
-    };
-    relay.calls = 0;
-    const authority = yield* CommerceSourceProcessingEligibility;
-    const denied = yield* authority.check(scope, request, 'unit-required-provider').pipe(Effect.flip);
+  Effect.gen(function* refusesPrivacyDenial() {
+    const { check, reads } = yield* prepareCheck({ evaluatedAt, outcome: 'DENIED', reason: 'PROTECTED_MATERIAL' });
+    const denied = yield* check(request).pipe(Effect.flip);
     expect(denied.code).toBe('DENIED');
-    expect(relay.calls).toBe(1);
-  }).pipe(Effect.provide(layers), Effect.provideService(ConfigProvider.ConfigProvider, config)),
+    expect(reads).toHaveLength(1);
+  }).pipe(Effect.provide(layers)),
 );
 it.effect('rejects an ALLOWED decision for a different target', () =>
-  Effect.gen(function* () {
-    relay.response = positive(DateTime.formatIso(yield* DateTime.now));
-    const authority = yield* CommerceSourceProcessingEligibility;
-    const denied = yield* authority
-      .check(scope, { ...request, target: null }, 'unit-required-provider')
-      .pipe(Effect.flip);
+  Effect.gen(function* refusesDifferentTarget() {
+    const { check, reads } = yield* prepareCheck(positive);
+    const denied = yield* check({ ...request, target: null }).pipe(Effect.flip);
     expect(denied.code).toBe('DENIED');
-  }).pipe(Effect.provide(layers), Effect.provideService(ConfigProvider.ConfigProvider, config)),
+    expect(reads).toHaveLength(1);
+  }).pipe(Effect.provide(layers)),
 );
