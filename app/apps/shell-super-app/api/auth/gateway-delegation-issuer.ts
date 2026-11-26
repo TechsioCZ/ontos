@@ -33,6 +33,7 @@ import {
   GatewayOrganizationGovernanceReadSubjectSchema,
   GatewayNativeRouteReadSubjectSchema,
   GatewayTrustedPrincipalContextSchema,
+  SymmyGatewayRouteScopeSchema,
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
@@ -61,6 +62,7 @@ import {
 } from './gateway-organization-governance-evidence.ts';
 import { admitPrivacyDispatch, readAdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
 import { GatewayDelegationExchangeLedger } from './gateway-delegation-exchanges.service.ts';
+import type { GatewayDelegationExchangeInput } from './gateway-delegation-exchanges.service.ts';
 import {
   GatewayDelegationPolicyUnavailable,
   gatewayPublishedOperationAccess,
@@ -231,13 +233,19 @@ const nativeRouteReadFingerprintFields = Struct.assign(
     audience: Schema.String,
     compositionRevision: Schema.String,
     principal: GatewayTrustedPrincipalContextSchema,
-    routeScope: RegisteredGatewayRouteScopeSchema,
+    routeScope: RegisteredGatewayRouteScopeSchema.check(Schema.makeFilter(Schema.is(SymmyGatewayRouteScopeSchema))),
   },
   { requirementKey: Schema.String },
 );
 
-export const fingerprintNativeRouteRead = (input: Schema.Struct<typeof nativeRouteReadFingerprintFields>['Type']) =>
-  fingerprintOf(nativeRouteReadFingerprintFields, input);
+/** Validate the native witness while encoding it, before its one-use exchange is reserved. */
+export const reserveNativeRouteReadExchange = (
+  exchange: Omit<GatewayDelegationExchangeInput, 'requestFingerprint'>,
+  request: Schema.Struct<typeof nativeRouteReadFingerprintFields>['Type'],
+) =>
+  fingerprintOf(nativeRouteReadFingerprintFields, request).pipe(
+    Effect.flatMap((requestFingerprint) => reserveExchange({ ...exchange, requestFingerprint })),
+  );
 
 type ModuleAccess = Parameters<typeof tenantStatesAllowingAccess>[0];
 
@@ -787,20 +795,21 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
       admitted.moduleAccess.map((item) => item.moduleKey),
     );
     yield* requireModuleStates(states, admitted.moduleAccess);
-    const requestFingerprint = yield* fingerprintNativeRouteRead({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal: admitted.principal,
-      requirementKey: payload.subject.operationRequirementKey,
-      routeScope: admitted.routeScope,
-    });
-    yield* reserveExchange({
-      exchangeId: payload.exchangeId,
-      expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
-      requestFingerprint,
-      sourceJti: admitted.sourceKey,
-    });
+    yield* reserveNativeRouteReadExchange(
+      {
+        exchangeId: payload.exchangeId,
+        expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
+        sourceJti: admitted.sourceKey,
+      },
+      {
+        actor,
+        audience: payload.audience,
+        compositionRevision: payload.compositionRevision,
+        principal: admitted.principal,
+        requirementKey: payload.subject.operationRequirementKey,
+        routeScope: admitted.routeScope,
+      },
+    );
     return yield* issueNativeRouteReadGatewayContextAssertion(witness);
   }
   if (Schema.is(GatewayOrganizationGovernanceReadSubjectSchema)(payload.subject)) {

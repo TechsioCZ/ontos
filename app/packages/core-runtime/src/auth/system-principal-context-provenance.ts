@@ -145,7 +145,7 @@ export const NativeRouteReadReceiverSchema = Schema.Struct({
   enrollmentLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   originalPrincipalId: PrincipalIdSchema,
   originalWorkloadBindingIncarnation: uuid,
-  originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+  originalWorkloadKey: WorkloadKeySchema,
   requestHash: Schema.optionalKey(RequestHashSchema),
   workloadKey: WorkloadKeySchema,
 });
