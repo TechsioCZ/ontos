@@ -110,7 +110,7 @@ registerHooks({
   });
 });
 
-const perfectionistRules = await loadPluginRules('eslint-plugin-perfectionist');
+const perfectionistRules = loadPluginRules('eslint-plugin-perfectionist');
 const perfectionistRule = (name: string) => {
   const rule = perfectionistRules[name];
   if (rule === undefined) {

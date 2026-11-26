@@ -5,7 +5,7 @@ import { loadPluginRules, ruleTester, virtualFile } from './rule-tester.mts';
  * `@rstest/core` or `effect-rstest`, Vitest's `vi`, Jest's `jest`, in any alias or through a namespace,
  * plus the unresolved globals. Local values that shadow those names are not the framework.
  */
-const antiSlopRules = await loadPluginRules('../../anti-slop/index.ts');
+const antiSlopRules = loadPluginRules('../../anti-slop/index.ts');
 const rule = antiSlopRules['no-module-mocking'];
 if (rule === undefined) {
   throw new Error('anti-slop does not register no-module-mocking');

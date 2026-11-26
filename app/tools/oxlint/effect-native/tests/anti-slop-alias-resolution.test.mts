@@ -7,7 +7,7 @@ import type { InvalidCase, ValidCase } from './rule-tester.mts';
  * every binder that shadows a module alias (type parameters, mapped keys, `infer`, interfaces,
  * classes and imports). Cases run through Oxlint's own parser and rule runtime.
  */
-const antiSlopRules = await loadPluginRules('../../anti-slop/index.ts');
+const antiSlopRules = loadPluginRules('../../anti-slop/index.ts');
 const filename = virtualFile('anti-slop/alias-resolution.ts');
 
 type InvalidEntry = readonly [code: string, errors: InvalidCase['errors']];

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { Schema } from 'effect';
+import { Predicate, Schema } from 'effect';
 import { afterAll, beforeAll, describe, it } from 'effect-rstest';
 import { RuleTester } from 'oxlint/plugins-dev';
 
@@ -43,19 +43,22 @@ const lookup = (rules: Readonly<Record<string, TesterRule>>, plugin: string, nam
 /** The rule object registered by the production `effect-native` plugin. */
 export const effectNativeRule = (name: string): TesterRule => lookup(effectNativePlugin.rules, 'effect-native', name);
 
-/**
- * Rules of a plugin outside this tool's strict typecheck: the vendored anti-slop plugin and
- * ESLint-typed packages. Oxlint loads them as JavaScript plugins, so they are imported by URL.
- */
-export const loadPluginRules = async (specifier: string): Promise<Readonly<Record<string, TesterRule>>> => {
-  const url = specifier.startsWith('.')
-    ? new URL(specifier, import.meta.url).href
-    : pathToFileURL(createRequire(nodePath.join(appRoot, 'package.json')).resolve(specifier)).href;
-  const plugin: { readonly default: { readonly rules: Readonly<Record<string, TesterRule>> } } = await import(url);
-  return plugin.default.rules;
+const PluginRule = Schema.declare<TesterRule>(
+  (value): value is TesterRule =>
+    Predicate.isObject(value) &&
+    (('create' in value && Predicate.isFunction(value.create)) ||
+      ('createOnce' in value && Predicate.isFunction(value.createOnce))),
+);
+const PluginModule = Schema.Struct({ default: Schema.Struct({ rules: Schema.Record(Schema.String, PluginRule) }) });
+
+/** Rules of a synchronous JavaScript plugin outside this tool's strict typecheck. */
+export const loadPluginRules = (specifier: string): Readonly<Record<string, TesterRule>> => {
+  const requirePlugin = createRequire(nodePath.join(appRoot, 'package.json'));
+  const filename = specifier.startsWith('.') ? fileURLToPath(new URL(specifier, import.meta.url)) : specifier;
+  return Schema.decodeUnknownSync(PluginModule)(requirePlugin(filename)).default.rules;
 };
 
-const antiSlopEffectRules = await loadPluginRules('../../anti-slop/effect/index.ts');
+const antiSlopEffectRules = loadPluginRules('../../anti-slop/effect/index.ts');
 
 /** The rule object registered by the production `anti-slop-effect` plugin. */
 export const antiSlopEffectRule = (name: string): TesterRule => lookup(antiSlopEffectRules, 'anti-slop-effect', name);
@@ -63,7 +66,7 @@ export const antiSlopEffectRule = (name: string): TesterRule => lookup(antiSlopE
 /** Register valid and invalid cases for one production rule under `effect-native/<name>`. */
 export const testEffectNativeRule = (
   name: string,
-  cases: { readonly valid?: readonly ValidCase[]; readonly invalid?: readonly InvalidCase[] },
+  cases: { readonly invalid?: readonly InvalidCase[]; readonly valid?: readonly ValidCase[] },
   title = `effect-native/${name}`,
 ): void => {
   ruleTester.run(title, effectNativeRule(name), {
@@ -104,14 +107,14 @@ export interface WorkspaceEntry {
 }
 
 export interface Workspace {
-  readonly directory: string;
-  readonly file: (logicalPath: string) => string;
   /** Write every entry into a fresh directory. */
   readonly create: () => void;
-  /** Remove the directory and everything below it. */
-  readonly remove: () => void;
+  readonly directory: string;
+  readonly file: (logicalPath: string) => string;
   /** Case hooks that create the workspace before one case and remove it afterwards. */
   readonly hooks: { readonly after: () => void; readonly before: () => void };
+  /** Remove the directory and everything below it. */
+  readonly remove: () => void;
 }
 
 /**
@@ -162,7 +165,18 @@ export const describeWorkspace = (
   });
 };
 
-const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+type RuleOptions = NonNullable<ValidCase['options']>;
+const RuleOption: Schema.Codec<RuleOptions[number]> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.Null,
+    Schema.Boolean,
+    Schema.Number,
+    Schema.String,
+    Schema.mutable(Schema.Array(RuleOption)),
+    Schema.Record(Schema.String, RuleOption),
+  ]),
+);
+const RuleSetting = Schema.Union([Schema.String, Schema.Array(RuleOption)]);
 const RuleMap = Schema.Record(Schema.String, RuleSetting);
 const FixtureConfig = Schema.fromJsonString(
   Schema.Struct({
@@ -176,30 +190,12 @@ const FixtureConfig = Schema.fromJsonString(
 );
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
 
-type RuleOptions = NonNullable<ValidCase['options']>;
-const isRuleOption = (value: unknown): value is RuleOptions[number] => {
-  if (value === null || ['boolean', 'number', 'string'].includes(typeof value)) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every(isRuleOption);
-  }
-  return typeof value === 'object' && Object.values(value).every(isRuleOption);
-};
-const decodeOptions = (options: readonly unknown[], label: string): RuleOptions => {
-  const decoded = options.filter(isRuleOption);
-  if (decoded.length !== options.length) {
-    throw new Error(`${label} has options that are not JSON values`);
-  }
-  return decoded;
-};
-
 const settingOptions = (setting: typeof RuleSetting.Type, label: string): RuleOptions | undefined => {
-  const [severity, ...options] = typeof setting === 'string' ? [setting] : setting;
+  const [severity, ...options] = Schema.is(Schema.String)(setting) ? [setting] : setting;
   if (severity !== 'error') {
     throw new Error(`${label} must enable its rule as an error`);
   }
-  return options.length === 0 ? undefined : decodeOptions(options, label);
+  return options.length === 0 ? undefined : options;
 };
 
 /**
@@ -226,14 +222,86 @@ export const fixtureOptions = (rule: string, filename?: string): RuleOptions | u
   return settingOptions(setting, fixtureConfigPath(rule));
 };
 
-const ProductionConfigModule = Schema.Struct({ default: Schema.Struct({ rules: RuleMap }) });
+const ProductionConfigModule = Schema.Struct({
+  default: Schema.Struct({
+    ignorePatterns: Schema.Array(Schema.String),
+    overrides: Schema.Array(
+      Schema.Struct({
+        excludeFiles: Schema.optional(Schema.Array(Schema.String)),
+        files: Schema.Array(Schema.String),
+        rules: RuleMap,
+      }),
+    ),
+    rules: RuleMap,
+  }),
+});
 const productionConfig = Schema.decodeUnknownSync(ProductionConfigModule)(
   await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href),
 );
 
-/** Base options `app/oxlint.config.ts` assigns to a plugin rule. */
-export const productionOptions = (key: string): RuleOptions | undefined => {
-  const setting = productionConfig.default.rules[key];
+// Production uses the Git wildmatch subset of literals, *, ?, and whole-segment **.
+// Reject unsupported syntax rather than silently treating a future pattern as a different glob.
+const productionIgnores = productionConfig.default.ignorePatterns.map((pattern) => {
+  if (
+    !/^\/?(?:[\w.*?-]+\/)*[\w.*?-]+\/?$/u.test(pattern) ||
+    pattern.split('/').some((part) => part !== '**' && part.includes('**'))
+  ) {
+    throw new Error(`Unsupported production ignore pattern: ${pattern}`);
+  }
+  const path = pattern.replaceAll(/^\/|\/$/gu, '');
+  // A slash in the beginning or middle anchors the pattern. Git wildcards also match leading dots.
+  const glob = !pattern.startsWith('/') && !path.includes('/') ? `**/${path}` : path;
+  return { directoryOnly: pattern.endsWith('/'), matcher: globToRegExp(glob) };
+});
+
+/** Whether production ignores a file or one of its parent directories. */
+export const isProductionIgnored = (filename: string): boolean =>
+  filename.split('/').some((_, index, parts) => {
+    const path = parts.slice(0, index + 1).join('/');
+    return productionIgnores.some(
+      ({ directoryOnly, matcher }) => (!directoryOnly || index < parts.length - 1) && matcher.test(path),
+    );
+  });
+
+// Oxlint override globs match leading dots, and patterns without a slash match basenames at any depth.
+// Compile the production subset; fail if a new pattern needs syntax the shared matcher does not implement.
+const compileOverrideGlob = (pattern: string): RegExp => {
+  if (
+    pattern
+      .split('/')
+      .some((part) => part !== '**' && (part.includes('**') || !/^(?:[\w.*?-]|\{[\w.-]+(?:,[\w.-]+)+\})+$/u.test(part)))
+  ) {
+    throw new Error(`Unsupported production override pattern: ${pattern}`);
+  }
+  return globToRegExp(pattern.includes('/') ? pattern : `**/${pattern}`);
+};
+const productionOverrides = productionConfig.default.overrides.map(({ excludeFiles, files, rules }) => ({
+  excludeFiles: (excludeFiles ?? []).map(compileOverrideGlob),
+  files: files.map(compileOverrideGlob),
+  rules,
+}));
+
+/**
+ * Options selected by production's ordered overrides for a non-ignored application-relative filename.
+ * Omitting the filename selects only the base setting, for assertions about global rules.
+ */
+export const productionOptions = (key: string, filename?: string): RuleOptions | undefined => {
+  if (filename !== undefined && isProductionIgnored(filename)) {
+    throw new Error(`File is ignored in production: ${filename}`);
+  }
+  let setting = productionConfig.default.rules[key];
+  if (filename !== undefined) {
+    for (const override of productionOverrides) {
+      const overridden = override.rules[key];
+      if (
+        overridden !== undefined &&
+        override.files.some((matcher) => matcher.test(filename)) &&
+        !override.excludeFiles.some((matcher) => matcher.test(filename))
+      ) {
+        setting = overridden;
+      }
+    }
+  }
   if (setting === undefined) {
     throw new Error(`Rule is not enabled in production: ${key}`);
   }

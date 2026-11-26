@@ -267,6 +267,10 @@
     "count": 3,
     "file": "apps/shell-super-app/api/auth/evasion-decorators.ts"
   },
+  "no-unregistered-native-test-imports": {
+    "count": 2,
+    "file": "unregistered.test.mts"
+  },
   "no-unsignaled-spy-poll": {
     "count": 2,
     "file": "apps/demo/tests/unit/spy-polling.test.tsx"
