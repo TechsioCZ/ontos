@@ -322,6 +322,7 @@ import {
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
   SystemWorkloadEnrollmentResponseSchema,
+  RegisterIntegrationWorkloadsResponseSchema,
 } from '../shared/browser-api.ts';
 import { ConnectorPartnerKindSchema } from '@app/shared-contracts/integrations/connector-partners';
 import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
@@ -2219,6 +2220,9 @@ const suppliedSecretOf = (
 ): { readonly suppliedSecret?: Redacted.Redacted } =>
   payload.scope === 'tenant-managed' && payload.secret !== undefined ? { suppliedSecret: payload.secret } : {};
 const isConnectorPartnerKind = Schema.is(ConnectorPartnerKindSchema);
+/** An agent's key is managed in its company; a tenant-managed key in the tenant context. */
+const callerContextOf = (scope: 'company-agent' | 'tenant-managed') =>
+  scope === 'company-agent' ? 'company' : 'tenant';
 
 const keyIssuanceResponse = <Value extends object, Requirements>(
   effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
@@ -2268,13 +2272,13 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       principal,
     };
   });
+  /** `company`: the caller acts in its selected company (an agent's key, an integration's registrations). */
   const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
     request: RequestWithHeaders,
     headers: RequestHeaders,
-    managedScope?: 'company-agent' | 'tenant-managed',
+    callerContext: 'company' | 'tenant' = 'tenant',
   ) {
-    const resolved =
-      managedScope === 'company-agent' ? yield* demoAccountCaller(request) : yield* authenticated(request);
+    const resolved = callerContext === 'company' ? yield* demoAccountCaller(request) : yield* authenticated(request);
     const idempotencyKey = yield* requiredIdempotencyKey(headers);
     const service = yield* IdentityLifecycle;
     return {
@@ -2340,6 +2344,19 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(SystemWorkloadEnrollmentResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
+    .handle('registerIntegrationWorkloads', ({ headers, payload, request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* registerIntegrationWorkloadsHandler() {
+          // The registrations name the selected company, so the caller acts in that company.
+          const { context, service } = yield* mutationContext(request, headers, 'company');
+          const response = yield* service
+            .registerIntegrationWorkloads({ ...context, payload })
+            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+          return yield* decodeResponse(RegisterIntegrationWorkloadsResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
@@ -2450,7 +2467,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* issueManagedApiKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers, payload.scope);
+          const { context, service } = yield* mutationContext(request, headers, callerContextOf(payload.scope));
           return yield* service
             .issue(
               withOptionalProperty(
@@ -2591,7 +2608,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* setManagedKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers, payload.scope);
+          const { context, service } = yield* mutationContext(request, headers, callerContextOf(payload.scope));
           const { principalId, scope, ...statusPayload } = payload;
           const response = yield* service
             .setStatus({
@@ -2626,7 +2643,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* rotateManagedKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers, payload.scope);
+          const { context, service } = yield* mutationContext(request, headers, callerContextOf(payload.scope));
           return yield* service
             .rotate(
               withOptionalProperty(

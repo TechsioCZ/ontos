@@ -1266,6 +1266,7 @@ export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordAssetIntegrityFailureAction } from './modules/actions/record-asset-integrity-failure.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { registerIntegrationWorkloadsAction } from './modules/actions/register-integration-workloads.action.ts';
 export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
 export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';

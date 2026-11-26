@@ -15277,6 +15277,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "core.identity.integration-workloads.register",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.register-integration-workloads",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.identity.legal-entity.read",
             "kind": "read",
             "modes": [

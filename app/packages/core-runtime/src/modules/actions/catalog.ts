@@ -18,6 +18,7 @@ import { manageDemoAccountAction } from './manage-demo-account.action.ts';
 import { mutateAgentProposalsAction } from './mutate-agent-proposals.action.ts';
 import { recordAssetIntegrityFailureAction } from './record-asset-integrity-failure.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
+import { registerIntegrationWorkloadsAction } from './register-integration-workloads.action.ts';
 import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
 import { replaceAgentOperatorsAction } from './replace-agent-operators.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
@@ -46,6 +47,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   mutateAgentProposalsAction.descriptor,
   recordAssetIntegrityFailureAction.descriptor,
   recordSupportImpersonationAction.descriptor,
+  registerIntegrationWorkloadsAction.descriptor,
   renameDisplayFilenameAction.descriptor,
   replaceAgentOperatorsAction.descriptor,
   reservePrincipalBindingAction.descriptor,

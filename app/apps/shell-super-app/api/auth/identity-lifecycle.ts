@@ -16,6 +16,7 @@ import {
   configureDemoCompaniesAction,
   IdentityLifecycleConflictError,
   PrincipalResolver,
+  registerIntegrationWorkloadsAction,
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 } from '@app/core-runtime';
@@ -434,6 +435,21 @@ export const makeIdentityLifecycleService = (
         transport: transport(input),
       }),
     issue,
+    /** Binds a connector partner's workloads to an integration Principal in the caller's selected company. */
+    registerIntegrationWorkloads: (
+      input: RequestIdentity & {
+        readonly payload: unknown;
+        readonly principal: TrustedPrincipalContext;
+      },
+    ) =>
+      actionRuntime.runAction({
+        payload: input.payload,
+        principal: input.principal,
+        registration: registerIntegrationWorkloadsAction,
+        // Served as-is by the Shell's HTTP endpoint: its client's same-key retry gets the saved reply.
+        savedReply: 'answer',
+        transport: transport(input),
+      }),
     rotate: (
       input: Parameters<typeof issue>[0] & {
         readonly oldAuthBindingId: string;

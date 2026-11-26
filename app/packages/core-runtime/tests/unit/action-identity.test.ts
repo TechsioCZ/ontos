@@ -9,6 +9,7 @@ import {
   changeSystemWorkloadEnrollmentAction,
   createNonHumanPrincipalAction,
   recordSupportImpersonationAction,
+  registerIntegrationWorkloadsAction,
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 } from '../../src/index.ts';
@@ -20,6 +21,7 @@ const registrations = [
   changeSystemWorkloadEnrollmentAction,
   createNonHumanPrincipalAction,
   recordSupportImpersonationAction,
+  registerIntegrationWorkloadsAction,
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 ] as const;
@@ -46,6 +48,7 @@ it.effect('identity administration declares its own admin capability, and only a
       [changeSystemWorkloadEnrollmentAction, 'core.identity.system-workload-enrollment.change'],
       [createNonHumanPrincipalAction, 'core.identity.principal.create-non-human'],
       [recordSupportImpersonationAction, 'core.identity.support.impersonate'],
+      [registerIntegrationWorkloadsAction, 'core.identity.integration-workloads.register'],
       [setManagedApiKeyBindingStatusAction, 'core.identity.managed-api-key.change-status'],
       [setSelfApiKeyBindingStatusAction, 'core.identity.self-api-key.change-status'],
     ] as const;

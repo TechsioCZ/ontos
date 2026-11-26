@@ -126,6 +126,8 @@ import type {
   IdentityListPayload,
   IssueApiKeyPayload,
   IssueManagedApiKeyPayload,
+  RegisterIntegrationWorkloadsPayload,
+  RegisterIntegrationWorkloadsResponse,
   ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
@@ -448,6 +450,18 @@ export const createNonHumanPrincipal = (
 ): Effect.Effect<PrincipalMutationResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.createNonHumanPrincipal({
+      headers: identityHeaders(options),
+      payload,
+    }),
+  );
+
+/** Binds a connector partner's workloads to an integration Principal in the selected company. */
+export const registerIntegrationWorkloads = (
+  payload: RegisterIntegrationWorkloadsPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<RegisterIntegrationWorkloadsResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.identity.registerIntegrationWorkloads({
       headers: identityHeaders(options),
       payload,
     }),

@@ -197,13 +197,13 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
 const SystemWorkloadModuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)).pipe(
   Schema.brand('ModuleKey'),
 );
-const SystemWorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+const WorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
   Schema.brand('WorkloadKey'),
 );
 const systemWorkloadEnrollmentChange = {
   moduleKey: SystemWorkloadModuleKeySchema,
   reason: identityReason,
-  workloadKey: SystemWorkloadKeySchema,
+  workloadKey: WorkloadKeySchema,
 };
 /**
  * `core.identity.change-system-workload-enrollment`: the Tenant's system Principal for one system workload an active
@@ -217,7 +217,7 @@ const systemWorkloadEnrollment = {
   bindingIncarnation: Schema.String,
   moduleKey: SystemWorkloadModuleKeySchema,
   principalId: PrincipalIdSchema,
-  workloadKey: SystemWorkloadKeySchema,
+  workloadKey: WorkloadKeySchema,
 };
 export const SystemWorkloadEnrollmentResponseSchema = Schema.Union([
   Schema.TaggedStruct('ENROLLED', systemWorkloadEnrollment),
@@ -231,9 +231,33 @@ export const SystemWorkloadEnrollmentResponseSchema = Schema.Union([
   }),
   Schema.TaggedStruct('NOT_ENROLLED', {
     moduleKey: SystemWorkloadModuleKeySchema,
-    workloadKey: SystemWorkloadKeySchema,
+    workloadKey: WorkloadKeySchema,
   }),
 ]);
+/**
+ * `core.identity.register-integration-workloads`: binds the workloads a connector partner's routes run under to one
+ * of the Tenant's integration Principals and registers them for the selected company.
+ */
+export const RegisterIntegrationWorkloadsPayloadSchema = Schema.Struct({
+  principalId: PrincipalIdSchema,
+  workloadKeys: Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isMaxLength(64), Schema.isUnique()),
+});
+const WorkloadBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AccessWorkloadBindingId'));
+const WorkloadCompanyBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AccessWorkloadCompanyBindingId'),
+);
+export const RegisterIntegrationWorkloadsResponseSchema = Schema.Struct({
+  legalEntityId: LegalEntityIdSchema,
+  principalId: PrincipalIdSchema,
+  workloads: Schema.Array(
+    Schema.Struct({
+      bindingId: WorkloadBindingIdSchema,
+      companyBindingId: WorkloadCompanyBindingIdSchema,
+      outcome: Schema.Literals(['REGISTERED', 'ALREADY_REGISTERED']),
+      workloadKey: WorkloadKeySchema,
+    }),
+  ),
+});
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
@@ -382,6 +406,10 @@ export const SupportImpersonationResponseSchema = Schema.Struct({
 });
 
 export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
+export type RegisterIntegrationWorkloadsPayload = Schema.Schema.Type<typeof RegisterIntegrationWorkloadsPayloadSchema>;
+export type RegisterIntegrationWorkloadsResponse = Schema.Schema.Type<
+  typeof RegisterIntegrationWorkloadsResponseSchema
+>;
 export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayloadSchema>;
 export type IssueApiKeyPayload = Schema.Schema.Type<typeof IssueApiKeyPayloadSchema>;
 export type IssueManagedApiKeyPayload = Schema.Schema.Type<typeof IssueManagedApiKeyPayloadSchema>;
@@ -1293,6 +1321,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           headers: IdentityRequestHeadersSchema,
           payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
           success: SystemWorkloadEnrollmentResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('registerIntegrationWorkloads', '/auth/identity/integration-workloads', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: RegisterIntegrationWorkloadsPayloadSchema,
+          success: RegisterIntegrationWorkloadsResponseSchema,
         }),
       )
       .add(

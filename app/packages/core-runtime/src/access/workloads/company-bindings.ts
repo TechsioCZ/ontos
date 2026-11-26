@@ -67,7 +67,7 @@ const insertValues = (binding: RegisterWorkloadCompanyBindingInput) => ({
 });
 
 const writeCompanyBindingRows = (
-  transaction: CoreTransaction,
+  transaction: Pick<CoreTransaction, 'insert'>,
   bindings: readonly RegisterWorkloadCompanyBindingInput[],
 ): Effect.Effect<void, AccessIntentError> =>
   bindings.length === 0
@@ -81,6 +81,23 @@ const writeCompanyBindingRows = (
         // violates the live-registration unique index and is refused, never silently dropped.
         .onConflictDoNothing({ target: [accessWorkloadCompanyBindings.companyBindingId] })
         .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
+
+/**
+ * Registers active company registrations inside a transaction a Core Action opened in its own scope, with the same
+ * refusals as `writeWorkloadCompanyBindings`. The Action already holds its prepared tenant fence to commit, so it takes
+ * no fence of its own; `core.identity.register-integration-workloads` registers an integration's company this way, in
+ * the same transaction as the workload bindings it registers.
+ */
+export const registerWorkloadCompanyBindingsIn = (
+  transaction: Pick<CoreTransaction, 'insert'>,
+  scope: OperationalScope,
+  input: RegisterWorkloadCompanyBindingsInput,
+): Effect.Effect<void, AccessIntentError> => {
+  const issue = commandIssue(scope, input.bindings);
+  return issue === null
+    ? writeCompanyBindingRows(transaction, input.bindings)
+    : Effect.fail(intentConflict(issue.code, issue.reason));
+};
 
 /**
  * Registers active company registrations in the caller's own scope, refusing a command that names
