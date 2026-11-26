@@ -2980,8 +2980,9 @@ export const makeCoreMediaDigestStepTimeoutLive = (options: Parameters<typeof me
 const coreMediaDigestStepTimeoutLive = makeCoreMediaDigestStepTimeoutLive();
 
 /**
- * The object store of Core Media. A host without a valid S3 configuration still boots: every download then ends as
- * a retryable 503, because the unconfigured port matches no asset and reaches no provider.
+ * The object store of Core Media. A host without a valid S3 configuration still boots: a reservation is refused with
+ * no row, and every download ends as a retryable 503, because the unconfigured port matches no asset and reaches no
+ * provider.
  */
 const coreMediaObjectStoreLive = Layer.effect(
   ObjectStorage,

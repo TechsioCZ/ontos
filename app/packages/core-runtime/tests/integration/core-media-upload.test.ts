@@ -24,7 +24,7 @@ import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/con
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
-import { ObjectStorage, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
+import { ObjectStorage, ObjectStorageTimeout, unconfiguredObjectStorage } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import type { UploadAssetPayloadSchema } from '../../src/media/upload-contract.ts';
 import {
@@ -440,6 +440,30 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
           ),
         );
         expect(Exit.isFailure(duplicate)).toBe(true);
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'refuses a reservation on a host with no object store: no row, and the same key works once one exists',
+    () =>
+      Effect.gen(function* unconfigured() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reserve = () =>
+          harness.runtimeFor('human').runAction({
+            payload: reservationPayload(content),
+            principal: principalOf(world, world.human),
+            registration: uploadAssetAction,
+            transport: transportOf('unconfigured-store'),
+          });
+        const refused = yield* Effect.exit(
+          reserve().pipe(Effect.provideService(ObjectStorage, unconfiguredObjectStorage)),
+        );
+        expect(failureTagOf(refused)).toBe('MediaUnavailable');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(0);
+        const reserved = yield* reserve().pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+        expect(reserved.processingStatus).toBe('uploaded');
         expect(yield* harness.rowCount(world.tenantId)).toBe(1);
       }).pipe(Effect.scoped),
   );

@@ -6,7 +6,7 @@ import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { MediaAssetIdSchema, MediaTenantIdSchema, mediaAssetRefFor } from '../../media/identity.ts';
 import { MediaForbidden, MediaUnavailable, mediaUnavailable } from '../../media/errors.ts';
-import { ObjectStorage } from '../../media/object-storage.ts';
+import { ObjectStorage, unconfiguredObjectStorage } from '../../media/object-storage.ts';
 import { isOriginConsistentWithPrincipalKind } from '../../media/origin.ts';
 import { mediaAssetRepositoryFromTransaction } from '../../media/repository.ts';
 import { UploadAssetPayloadSchema, UploadAssetResultSchema } from '../../media/upload-contract.ts';
@@ -42,6 +42,10 @@ const handleUploadAsset = Effect.fn('UploadAssetAction.handle')(function* handle
   const tenantId = yield* Schema.decodeUnknownEffect(MediaTenantIdSchema)(context.scope.tenantId).pipe(
     Effect.mapError((cause) => mediaUnavailable('The trusted tenant is not a tenant id', cause)),
   );
+  // A row records the provider every later step must match, so a row reserved on no store could never complete.
+  if (context.services.providerId === unconfiguredObjectStorage.providerId) {
+    return yield* mediaUnavailable('No object store is configured');
+  }
   // BR-06 (#1430): the stated origin must not contradict the principal that uploads. Refused before the row exists.
   const kind = yield* context.services.repository.principalKind(context.scope.principalId);
   if (Option.isNone(kind)) {
