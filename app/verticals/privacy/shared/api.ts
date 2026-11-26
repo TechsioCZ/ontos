@@ -352,21 +352,9 @@ export {
   CreateProcessingPurposeResultSchema,
 } from './actions/create-processing-purpose.ts';
 export { CreateNoticeVersionPayloadSchema, CreateNoticeVersionResultSchema } from './actions/create-notice-version.ts';
-export {
-  CreatePrivacySubjectPayloadSchema,
-  CreatePrivacySubjectResultSchema,
-} from './actions/create-privacy-subject.ts';
+export { CreatePrivacySubjectPayloadSchema } from './actions/create-privacy-subject.ts';
 export { SourceProcessingContextSchema } from './domain/source-processing-context.ts';
 export type { SourceProcessingContext } from './domain/source-processing-context.ts';
-export {
-  SourceProcessingIdentitySchema,
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy-contracts/source-processing-eligibility';
-export type {
-  SourceProcessingEligibilityRequest,
-  SourceProcessingEligibilityResponse,
-} from '@app/privacy-contracts/source-processing-eligibility';
 
 export {
   MeasureExecutionEligibilityRequestSchema,

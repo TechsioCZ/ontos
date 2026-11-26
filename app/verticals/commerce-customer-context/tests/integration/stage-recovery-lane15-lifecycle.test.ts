@@ -13,6 +13,7 @@ import {
   CommercePortalAuthAccountCreationProviderLive,
   CommercePortalAuthAccountLookupService,
 } from '../../api/portal-auth/provider/account-create.ts';
+import { directVerificationReplayLayer } from '../../src/portal-auth/communications/verification-replay.ts';
 import { CommercePortalAuthInstance, makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import {
@@ -136,6 +137,7 @@ const makeScenario = Effect.fn('Lane15.makeScenario')(function* makeScenario() {
     Layer.provide(
       Layer.mergeAll(
         lookupLive,
+        directVerificationReplayLayer,
         CommercePortalAuthAccountCreationProviderLive.pipe(
           Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
         ),

@@ -93,6 +93,7 @@ export {
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
 export { humanPrincipalCandidatesForTransaction } from '../permissions/human-principal-candidates.ts';
 export {
+  ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -107,7 +108,8 @@ export {
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../db/scoped-transaction.ts';
-export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
+export { openDatabaseClient } from '../db/database-client.ts';
+export { DatabaseConfig, DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
 export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
 // Worker hosts enrol their database identities through this entrypoint, never a Core `db/` subpath.
 export { defineDatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
