@@ -145,34 +145,36 @@ it.effect('stops additive enrollment at the failed step without starting the nex
     });
     expect(error.sqlState).toBe('42501');
     expect(error.databaseConstraint).toBe('core_principals_platform_role_ck');
-    expect(JSON.stringify(error)).not.toContain('private database detail');
+    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).not.toContain(
+      'private database detail',
+    );
   }),
 );
 
 it.effect('preserves bounded database diagnostics through tenant-read and release-scope failures', () =>
-  Effect.gen(function* failureMetadata() {
-    yield* Effect.forEach(
-      ['read', 'scope'] as const,
-      (point) =>
-        Effect.gen(function* checkFailure() {
-          const current = fixture(point);
-          const error = yield* current.enroll.pipe(Effect.flip);
-          expect(error.reason).toBe(point === 'read' ? 'additive-read-tenant' : 'additive-release-scope');
-          expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
-            enumerable: false,
-            value: {
-              reason: expect.stringContaining(
-                point === 'read' ? 'the tenant could not be read (' : 'the release actor could not be ensured:',
-              ),
-            },
-          });
-          expect(error.sqlState).toBe('42501');
-          expect(error.databaseConstraint).toBe('core_principals_platform_role_ck');
-          expect(current.writes).toEqual([]);
-          expect(current.statements).toContain('ROLLBACK');
-          expect(JSON.stringify(error)).not.toContain('private database detail');
-        }),
-      { concurrency: 1, discard: true },
-    );
-  }),
+  Effect.forEach(
+    ['read', 'scope'] as const,
+    (point) =>
+      Effect.gen(function* checkFailure() {
+        const current = fixture(point);
+        const error = yield* current.enroll.pipe(Effect.flip);
+        expect(error.reason).toBe(point === 'read' ? 'additive-read-tenant' : 'additive-release-scope');
+        expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
+          enumerable: false,
+          value: {
+            reason: expect.stringContaining(
+              point === 'read' ? 'the tenant could not be read (' : 'the release actor could not be ensured:',
+            ),
+          },
+        });
+        expect(error.sqlState).toBe('42501');
+        expect(error.databaseConstraint).toBe('core_principals_platform_role_ck');
+        expect(current.writes).toEqual([]);
+        expect(current.statements).toContain('ROLLBACK');
+        expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).not.toContain(
+          'private database detail',
+        );
+      }),
+    { concurrency: 1, discard: true },
+  ),
 );
