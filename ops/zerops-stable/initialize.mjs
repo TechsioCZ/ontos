@@ -227,6 +227,22 @@ const program = Effect.gen(function* () {
       });
     }
   }).pipe(client.withTransaction);
+  // Each login must authenticate as itself, as the app's migrator preflight will on its first start.
+  for (const role of explicitRoles) {
+    const url = new URL(input.adminUrl);
+    url.username = encodeURIComponent(role);
+    url.password = encodeURIComponent(input.passwords[role]);
+    const login = yield* PgClient.makeClient({ connectTimeout: '10 seconds', url: Redacted.make(url.href) }).pipe(
+      Effect.flatMap((roleClient) => roleClient.unsafe('select current_database() as database, session_user as role')),
+      Effect.scoped,
+      Effect.mapError((failure) => ({
+        refusal: 'the ' + role + ' login does not authenticate after initialization (' + String(failure?.cause?.code ?? failure?._tag ?? 'unknown') + ')',
+      })),
+    );
+    if (login[0]?.database !== before.database || login[0]?.role !== role) {
+      return yield* refuse('the ' + role + ' login reads back as another identity');
+    }
+  }
   return yield* inspect(client);
 });
 const exit = await Effect.runPromiseExit(program.pipe(Effect.scoped, Effect.provide(Reactivity.layer)));
