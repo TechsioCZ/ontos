@@ -19,15 +19,15 @@ import { constVoid } from 'effect/Function';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 
 import { ShellPolicyConflictProblemSchema, ShellTargetForbiddenProblemSchema } from '../../../shared/browser-api.ts';
-import type { ManagedApiKeyListResponse } from '../../../shared/browser-api.ts';
+import type { ManagedApiKeyListResponse, ShellIntegrationComponent } from '../../../shared/browser-api.ts';
 import { createNonHumanPrincipal, listManagedApiKeys } from '../../api/auth-client.ts';
 import type { IdentityClientError } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ManagedKeyDetail } from './agent-api-keys.tsx';
+import { IntegrationPartnerComponent } from './integration-partner-component.tsx';
 import { integrationEntries } from './integrations-model.ts';
 import type { IntegrationEntry } from './integrations-model.ts';
 import { newRequestToken } from './people-client.ts';
-import { SymmyRoutesPanel } from './symmy-routes-panel.tsx';
 
 const copyKey = 'shell.integrations';
 const keysCopyKey = 'shell.integrations.keys';
@@ -212,14 +212,23 @@ const subscribeToNothing = () => constVoid;
 const pageOrigin = () => globalThis.location.origin;
 const serverOrigin = () => '';
 
-/** Each connector partner's own route administration in the selected company, run through the partner's Actions. */
-const partnerRoutePanels = { symmy: SymmyRoutesPanel } satisfies Record<ConnectorPartnerKind, typeof SymmyRoutesPanel>;
+/** What the person's composition offers on the Integrace cards: its revision and one component per partner kind. */
+export interface IntegrationComponentOffers {
+  readonly components: readonly ShellIntegrationComponent[];
+  readonly compositionRevision: string;
+}
 
-const IntegrationCard = ({ entry }: { readonly entry: IntegrationEntry }) => {
+const IntegrationCard = ({
+  entry,
+  offers,
+}: {
+  readonly entry: IntegrationEntry;
+  readonly offers: IntegrationComponentOffers | undefined;
+}) => {
   const { t } = useModernI18n();
   const partner = entry.integrationKind === null ? null : CONNECTOR_PARTNERS[entry.integrationKind];
   const origin = useSyncExternalStore(subscribeToNothing, pageOrigin, serverOrigin);
-  const RoutePanel = entry.integrationKind === null ? null : partnerRoutePanels[entry.integrationKind];
+  const offered = offers?.components.find(({ connectorPartner }) => connectorPartner === entry.integrationKind);
   return (
     <li className="flex min-w-0 flex-col gap-100 rounded-md border border-border-primary/60 p-200">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
@@ -246,13 +255,22 @@ const IntegrationCard = ({ entry }: { readonly entry: IntegrationEntry }) => {
           subject={{ principalId: entry.principalId, scope: 'tenant-managed' }}
         />
       )}
-      {entry.principalStatus === 'active' && RoutePanel !== null && <RoutePanel principalId={entry.principalId} />}
+      {entry.principalStatus === 'active' && offers !== undefined && offered !== undefined && (
+        <IntegrationPartnerComponent
+          compositionRevision={offers.compositionRevision}
+          integrationPrincipalId={entry.principalId}
+          offered={offered}
+        />
+      )}
     </li>
   );
 };
 
-/** The Tenant's integrations and their keys; every change is a native, audited identity Action. */
-export const IntegrationsSection = () => {
+/**
+ * The Tenant's integrations and their keys; every change is a native, audited identity Action. Each active
+ * integration also shows the component its connector partner's module offers, when the composition offers one.
+ */
+export const IntegrationsSection = ({ offers }: { readonly offers: IntegrationComponentOffers | undefined }) => {
   const { t } = useModernI18n();
   const { entries, failure, load } = useIntegrations();
   const [creating, setCreating] = useState(false);
@@ -288,7 +306,7 @@ export const IntegrationsSection = () => {
       {entries?.length === 0 && <p className="text-fg-secondary text-sm">{t(`${copyKey}.empty`)}</p>}
       <ul className="flex min-w-0 flex-col gap-150">
         {entries?.map((entry) => (
-          <IntegrationCard entry={entry} key={`${entry.principalId}:${entry.principalStatus}`} />
+          <IntegrationCard entry={entry} key={`${entry.principalId}:${entry.principalStatus}`} offers={offers} />
         ))}
       </ul>
       {creating && (

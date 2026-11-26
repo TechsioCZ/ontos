@@ -19678,6 +19678,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "integration.symmy.integration-routes.view",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "integration-routes",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.component.integration-routes",
+            "moduleKey": "integration.symmy",
+            "role": "public_component",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "integration.symmy.privacy-measure.read-receipt",
             "kind": "read",
             "modes": [

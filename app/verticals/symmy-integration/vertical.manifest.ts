@@ -2,13 +2,15 @@
 // @ontos-deployment-app-id symmy-integration
 // @ontos-module-id integration.symmy
 import { symmyOwnerOperationRequirementKey } from './shared/domain/symmy-owner-operation-requirements.ts';
-import { defineOntosModuleManifest } from '@app/core-runtime';
+import { defineOntosModuleManifest, ShellPublicComponentContributionSchema } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
+import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { admitSymmyJobAction } from './src/actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from './src/actions/admit-symmy-sync.action.ts';
 import { executeSymmyRetentionAction } from './src/actions/execute-symmy-retention.action.ts';
 import { importJobResourceDescriptor } from './shared/resources/import-job.ts';
+import { IntegrationRoutes } from './src/components/integration-routes.tsx';
 import { manageSymmyRoutesAction } from './src/actions/manage-symmy-routes.action.ts';
 import { SymmyCompanyRoutesApi } from './shared/apis/symmy-company-routes.ts';
 import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
@@ -26,6 +28,9 @@ import { syncAdmissionResourceDescriptor } from './shared/resources/sync-admissi
 // </generated-module-manifest-imports>
 import { symmyIntegrationRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 import { symmyExecutionRegistration } from './src/services/symmy-worker-identity.service.ts';
+
+const publicComponentContribution = (value: typeof ShellPublicComponentContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 
 const privacyModuleId = 'privacy.core' as const;
 const ownerOperationProviders = [
@@ -226,6 +231,7 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     },
     components: {
       // <generated-module-manifest-components>
+      'integration-routes': IntegrationRoutes,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -281,6 +287,28 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       ],
       publicComponents: [
         // <generated-module-shell-components>
+        publicComponentContribution({
+          accessDeclaration: {
+            key: 'integration.symmy.integration-routes.view',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'integration-routes', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          componentKey: 'integration.symmy.integration-routes',
+          contributionKey: 'integration.symmy.component.integration-routes',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: 'integration.symmy.component.integration-routes',
+            moduleKey: 'integration.symmy',
+            role: 'public_component',
+            scope: 'tenant',
+          },
+          expose: './IntegrationRoutes',
+          integration: { connectorPartner: 'symmy' },
+        }),
         // </generated-module-shell-components>
       ],
       reports: [

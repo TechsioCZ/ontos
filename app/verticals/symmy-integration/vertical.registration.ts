@@ -40,6 +40,7 @@ export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
     },
     components: {
       // <generated-module-registration-components>
+      'integration-routes': () => import('./src/components/integration-routes.tsx'),
       // </generated-module-registration-components>
     },
     pages: {

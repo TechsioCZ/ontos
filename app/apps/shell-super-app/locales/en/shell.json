@@ -1274,48 +1274,7 @@
         "suppliedSecretDescription": "Fill in only when the partner already holds the key and keeps using it. Only its hash is stored. Leave empty to generate a new key.",
         "suppliedSecretInvalid": "The key value must be 32 to 256 characters of letters, digits and _ . ~ -."
       },
-      "symmyRoutes": {
-        "title": "Routes in the selected company",
-        "description": "Which data routes the partner may read and write in this company. Enabling is an audited Symmy action. The panel lists any missing access first and writes it only after you confirm.",
-        "empty": "The integration has no routes in this company yet.",
-        "readFailed": "The routes could not be loaded.",
-        "active": "Enabled",
-        "inactive": "Disabled",
-        "retention": "Kept {{days}} days",
-        "disable": "Disable",
-        "issuerId": "Source issuer ID",
-        "sourceNamespace": "Source namespace",
-        "retentionDays": "Write retention (days)",
-        "enable": "Enable selected routes",
-        "working": "Working…",
-        "refused": "The routes cannot be enabled:",
-        "failed": "The route change failed. Try again.",
-        "invalid": "Check the issuer, namespace and days (1–3650).",
-        "confirmPrerequisites": "The route change needs these writes first:",
-        "confirm": "Write and repeat the change",
-        "cancel": "Cancel",
-        "prerequisite": {
-          "enrollExecutor": "Enroll the system workload {{workloadKey}} of module {{moduleKey}} in the tenant (Symmy's job writer)",
-          "registerWorkloads": "Register these workloads for the integration in this company:"
-        },
-        "retryFailed": "The confirmed writes went through, but repeating the route change failed.",
-        "prerequisiteFailed": "This write could not be confirmed; it may or may not have happened:",
-        "prerequisitesDone": "Already written:",
-        "route": {
-          "adminProducts": "Read products",
-          "adminCustomers": "Read customers",
-          "adminRegions": "Read regions",
-          "priceLists": "Read price lists",
-          "productsBatch": "Write products",
-          "customersBatch": "Write customers",
-          "customerGroupsBatch": "Write customer groups",
-          "priceListsBatchUpsert": "Write price lists",
-          "priceListPricesBatch": "Write prices",
-          "inventoryStockBatch": "Write stock",
-          "customerGroupCustomersBatch": "Customer group memberships"
-        },
-        "readForbidden": "Only a tenant administrator in the selected company can manage this integration's routes."
-      }
+      "partnerComponentUnavailable": "The partner's panel for this integration could not be loaded."
     }
   }
 }

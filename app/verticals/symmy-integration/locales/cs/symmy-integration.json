@@ -16,6 +16,50 @@
     "role": "symmy-integration",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Symmy Integration Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu."
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "integrationRoutes": {
+      "title": "Trasy ve vybrané firmě",
+      "description": "Které datové trasy smí partner v této firmě číst a zapisovat. Zapnutí je auditovaná akce Symmy. Chybějící oprávnění panel nejdřív vypíše a zapíše je až po vašem potvrzení.",
+      "empty": "Integrace v této firmě zatím nemá žádné trasy.",
+      "readFailed": "Trasy se nepodařilo načíst.",
+      "active": "Zapnutá",
+      "inactive": "Vypnutá",
+      "retention": "Uchování {{days}} dní",
+      "disable": "Vypnout",
+      "issuerId": "Identifikátor zdroje (issuer)",
+      "issuerIdPlaceholder": "např. symmy-akros",
+      "sourceNamespace": "Jmenný prostor zdroje",
+      "sourceNamespacePlaceholder": "např. akros-erp",
+      "retentionDays": "Uchování zápisů (dny)",
+      "enable": "Zapnout vybrané trasy",
+      "working": "Zpracovává se…",
+      "refused": "Trasy nelze zapnout:",
+      "failed": "Změnu tras se nepodařilo provést. Zkuste to znovu.",
+      "invalid": "Zkontrolujte identifikátor, jmenný prostor a počet dní (1–3650).",
+      "confirmPrerequisites": "Změnu tras nelze provést, dokud se nezapíše toto:",
+      "confirm": "Zapsat a změnu zopakovat",
+      "cancel": "Zrušit",
+      "prerequisite": {
+        "enrollExecutor": "Zapsat do tenanta systémový workload {{workloadKey}} modulu {{moduleKey}} (zapisovač úloh Symmy)",
+        "registerWorkloads": "Zaregistrovat integraci v této firmě workloady:"
+      },
+      "retryFailed": "Potvrzené zápisy proběhly, ale opakovaná změna tras se nezdařila.",
+      "prerequisiteFailed": "Tento zápis se nepodařilo potvrdit; mohl, ale nemusel proběhnout:",
+      "prerequisitesDone": "Už zapsáno:",
+      "route": {
+        "adminProducts": "Čtení produktů",
+        "adminCustomers": "Čtení zákazníků",
+        "adminRegions": "Čtení regionů",
+        "priceLists": "Čtení ceníků",
+        "productsBatch": "Zápis produktů",
+        "customersBatch": "Zápis zákazníků",
+        "customerGroupsBatch": "Zápis zákaznických skupin",
+        "priceListsBatchUpsert": "Zápis ceníků",
+        "priceListPricesBatch": "Zápis cen",
+        "inventoryStockBatch": "Zápis skladových zásob",
+        "customerGroupCustomersBatch": "Členství zákazníků ve skupinách"
+      },
+      "readForbidden": "Trasy této integrace může spravovat jen správce tenanta ve vybrané firmě."
+    }
   }
 }
