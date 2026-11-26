@@ -49,8 +49,6 @@ export const CustomerProfileSourceRequestSchema = Schema.Union([
 export type CustomerProfileSourceRequest = typeof CustomerProfileSourceRequestSchema.Type;
 export const CustomerProfileSourceItemSchema = Schema.Struct({
   icoAuthority: Schema.optionalKey(Schema.Literals(['PERSONAL', 'ORGANIZATION'])),
-  sourceProcessingMode: Schema.optionalKey(Schema.Literal('SOURCE_SYNC')),
-  sourceAddresses: Schema.optionalKey(Schema.Array(ActiveSavedAddressSchema)),
   partyRef: PartyRefSchema,
   partySourceReference: CustomerProfilePartySourceReferenceSchema,
   profile: Schema.Struct({
@@ -60,6 +58,8 @@ export const CustomerProfileSourceItemSchema = Schema.Struct({
     subject: CommerceCustomerProfileSubjectSchema,
   }),
   source: CustomerProfileSourceAssertionSchema,
+  sourceAddresses: Schema.optionalKey(Schema.Array(ActiveSavedAddressSchema)),
+  sourceProcessingMode: Schema.optionalKey(Schema.Literal('SOURCE_SYNC')),
 });
 export type CustomerProfileSourceItem = typeof CustomerProfileSourceItemSchema.Type;
 const RetailSourceReceiptSchema = Schema.Struct({
