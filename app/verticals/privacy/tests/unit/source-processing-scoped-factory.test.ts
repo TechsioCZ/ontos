@@ -1,15 +1,13 @@
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { NodeCrypto } from '@effect/platform-node';
-import { Reactivity } from 'effect/reactivity';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SourceSyncProcessingPolicySchema } from '../../shared/domain/source-sync-processing-policy.ts';
 import { sourceProcessingEligibilityRead } from '../../src/api/source-processing-eligibility.read.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../../database/identity-enrollment.ts';
 import { installOperationalScopeAt } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { makeSourceSyncProcessingFixture } from '../support/source-sync-processing.fixture.ts';
 
 const policy = Schema.decodeUnknownSync(SourceSyncProcessingPolicySchema)({
   active: true,
@@ -44,24 +42,7 @@ const at = '2026-11-23T01:00:00.000Z';
 it.effect(
   'loads the stage sourceSync policy through the real registered factory and native restricted scoped executor',
   () => {
-    const statements: { readonly sql: string; readonly parameters: readonly unknown[] }[] = [];
-    const connection = testSqlConnection((sql, parameters) => {
-      statements.push({ sql, parameters });
-      if (/^(?:begin|commit|rollback|savepoint|release savepoint)\b/iu.test(sql.trim())) return Effect.succeed([]);
-      if (sql.includes('current_user')) {
-        return Effect.succeed([
-          {
-            role: 'ontos_runtime',
-            tenant_id: scope.tenantId,
-            legal_entity_id: scope.legalEntityId,
-            operation_at: new Date(at),
-          },
-        ]);
-      }
-      if (sql.includes('demo_source_processing_policies')) return Effect.succeed([{ record: policy }]);
-      return Effect.die('Unexpected SQL in readonly sourceSync-policy factory proof');
-    });
-    const database = scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provide(Reactivity.layer));
+    const { layer, statements } = makeSourceSyncProcessingFixture(scope, at, policy);
     return Effect.gen(function* registeredFactory() {
       const executor = yield* testCoreDatabase;
       const actual = yield* executor.transaction((transaction) =>
@@ -77,16 +58,7 @@ it.effect(
       expect(query?.parameters).toContain(scope.tenantId);
       expect(query?.parameters).toContain(scope.legalEntityId);
       expect(query?.parameters).toContain('akros-symmy-source-sync-v2');
-    }).pipe(
-      Effect.provide(database),
-      Effect.provide(NodeCrypto.layer),
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromUnknown({
-          ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: true,
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-        }),
-      ),
-    );
+      expect(statements.some(({ sql }) => sql.includes('anti_resurrection_protections'))).toBe(false);
+    }).pipe(Effect.provide(layer));
   },
 );
