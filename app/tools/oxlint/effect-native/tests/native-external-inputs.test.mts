@@ -177,8 +177,9 @@ export const makeParser = (source: string) => {
 
 it('a regular docs Markdown import can change an untouched service-constructor finding', () =>
   fixture((root) => {
-    const target = 'src/runtime.ts';
-    const source = "import { makeParser } from '../docs/parser.md';\nexport const parser = makeParser('value');\n";
+    const target = 'packages/document-reader/src/runtime.ts';
+    const source =
+      "import { makeParser } from '../../../docs/parser.md';\nexport const parser = makeParser('value');\n";
     write(root, target, source);
     write(root, 'docs/parser.md', 'export const makeParser = (source) => ({ source });\n');
     const configuration = path.join(root, 'markdown-config.json');
