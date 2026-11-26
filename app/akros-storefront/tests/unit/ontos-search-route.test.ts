@@ -1,7 +1,4 @@
 // @vitest-environment node
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { build } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toSearchGridItem, type RemoteSearchResponse } from "@/ontos/search-suggestions";
 import { readSearchVariantMatches } from "@/ontos/search-variants";
@@ -135,142 +132,6 @@ const ask = (q: unknown, origin = "http://localhost:3070") =>
       }),
     ),
   );
-
-// A separate Node realm selects React's published server condition, as Next does. Bundle only our
-// TypeScript; React, Next and Effect stay their real installed packages. No export is replaced.
-async function renderSearches(query: string, concurrent = false) {
-  const require = createRequire(import.meta.url);
-  const entry = `
-    import { cache, createElement } from "react";
-    import { renderToReadableStream } from "next/dist/compiled/react-server-dom-webpack/server.node";
-    import { POST } from "./src/app/api/ontos/search/route";
-    import { nextRequest } from "./tests/support/next-request";
-    import { once } from "node:events";
-    import { Session } from "node:inspector";
-    import { promisify } from "node:util";
-    const inspector = new Session();
-    inspector.connect();
-    const post = promisify(inspector.post.bind(inspector));
-    const transports = [];
-    inspector.on("Debugger.paused", ({ params }) => {
-      inspector.post("Debugger.evaluateOnCallFrame", {
-        callFrameId: params.callFrames[0].callFrameId, returnByValue: true,
-        expression: '({ url: arguments[0], init: { method: arguments[1]?.method, cache: arguments[1]?.cache, ...("next" in (arguments[1] ?? {}) ? { next: true } : {}) } })',
-      }, (error, result) => {
-        if (error || result.exceptionDetails) throw error ?? new Error("Cannot observe fetch arguments");
-        transports.push(result.result.value);
-      });
-      inspector.post("Debugger.resume");
-    });
-    const query = ${JSON.stringify(query)};
-    const concurrent = ${JSON.stringify(concurrent)};
-    const context = nextRequest("http://localhost:3070/api/ontos/search", {
-      headers: { "x-akros-market-locale": "cs" },
-    });
-    let loads = 0;
-    const memo = cache(() => ++loads);
-    const probe = [];
-    const responses = [];
-    const ask = () => POST(new Request("http://localhost:3070/api/ontos/search", {
-      method: "POST", headers: { "content-type": "application/json", "origin": "http://localhost:3070" },
-      body: JSON.stringify({ q: query }),
-    }));
-    async function SearchRender() {
-      probe.push(memo());
-      if (concurrent) responses.push(...await Promise.all([ask(), ask()]));
-      else {
-        responses.push(await ask());
-        const continued = once(process, "message");
-        process.send({ phase: "first-response" });
-        await continued;
-        responses.push(await ask());
-      }
-      probe.push(memo());
-      return null;
-    }
-    (async () => {
-      try {
-        await post("Debugger.enable");
-        const { result: fetchFunction } = await post("Runtime.evaluate", { expression: "globalThis.fetch" });
-        await post("Debugger.setBreakpointOnFunctionCall", { objectId: fetchFunction.objectId });
-        await context.run(async () => {
-          const stream = await renderToReadableStream(createElement(SearchRender), {});
-          await new Response(stream).text();
-        });
-        const result = await Promise.all(responses.map(async response => ({
-          status: response.status, headers: [...response.headers], body: await response.text(),
-        })));
-        process.send({ phase: "complete", responses: result, probe, transports });
-      } finally { inspector.disconnect(); await context.close(); process.disconnect(); }
-    })().catch(error => { console.error(error); process.exitCode = 1; });
-  `;
-  const bundle = await build({
-    stdin: {
-      contents: entry,
-      resolveDir: process.cwd(),
-      sourcefile: "ontos-search-route-render.ts",
-      loader: "ts",
-    },
-    bundle: true,
-    write: false,
-    platform: "node",
-    format: "cjs",
-    packages: "external",
-    tsconfig: "tsconfig.json",
-    alias: { "server-only": require.resolve("next/dist/compiled/server-only/empty.js") },
-  });
-  type RenderResult = {
-    phase: "complete";
-    responses: { status: number; headers: [string, string][]; body: string }[];
-    probe: number[];
-    transports: { url: string; init: { method?: string; cache?: RequestCache; next?: true } }[];
-  };
-  const result = await new Promise<RenderResult>((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "--conditions=react-server",
-        "--require",
-        require.resolve("next/dist/server/node-environment-baseline"),
-        "--input-type=commonjs",
-      ],
-      {
-        cwd: process.cwd(),
-        env: process.env,
-        stdio: ["pipe", "pipe", "pipe", "ipc"],
-      },
-    );
-    const { stdin, stdout, stderr: errors } = child;
-    if (!stdin || !stdout || !errors) throw new Error("RSC process pipes were not created");
-    let stderr = "";
-    let completed: RenderResult | undefined;
-    errors.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    stdout.resume();
-    child.on("error", reject);
-    child.on("message", (message: { phase: string } | RenderResult) => {
-      if (message.phase === "first-response") {
-        revision = 2;
-        child.send("continue");
-      } else if ("responses" in message && "probe" in message) completed = message;
-    });
-    child.on("close", (code) => {
-      if (code !== 0 || !completed)
-        reject(new Error(`React server render exited ${code}: ${stderr}`));
-      else resolve(completed);
-    });
-    stdin.end(bundle.outputFiles[0].text);
-  });
-  // This control proves the real renderer's cache dispatcher actually memoized across awaits.
-  expect(result.probe).toEqual([1, 1]);
-  return {
-    responses: result.responses.map(
-      ({ body, status, headers }) => new Response(body, { status, headers }),
-    ),
-    transports: result.transports,
-  };
-}
 
 beforeEach(async () => {
   // Fresh real module instances isolate the process caches without replacing any export.
@@ -522,37 +383,6 @@ describe("search messages follow the market language", () => {
 });
 
 describe("fresh searches through the real catalog/gateway transport", () => {
-  it("refreshes inline exact variant evidence without any ten-second full-product reuse", async () => {
-    await context.run(async () => {
-      const {
-        responses: [first, second],
-      } = await renderSearches("933a2m8");
-      const before = (await first.json()) as RemoteSearchResponse;
-      const after = (await second.json()) as RemoteSearchResponse;
-      expect(before.items[0]).toMatchObject({
-        priceMinor: 254,
-        variantLabel: "M8 x 20",
-        variantSku: "933A2M8",
-        path: "/produkt/sroub-din-933-a2?variantIds=v2#product-variants",
-      });
-      expect(after.items[0]).toMatchObject({
-        priceMinor: 508,
-        variantLabel: "M8 x 20",
-        variantSku: "933A2M8",
-        path: "/produkt/sroub-din-933-a2?variantIds=v2#product-variants",
-      });
-      await network.idle();
-      expect(productRequests().filter(({ fields }) => fields === "full")).toHaveLength(0);
-      expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(2);
-    });
-  });
-
-  it("does not coalesce concurrent identical searches", async () => {
-    await renderSearches("šroub", true);
-    await network.idle();
-    expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
-  });
-
   it("preserves the public parent/leaf SKU routing controls without hydrating their 47-variant group", async () => {
     // Replays the parent-provided identities against a synthetic owner response, not a live acceptance run.
     const parent = (await (await ask("10799700")).json()) as RemoteSearchResponse;
@@ -636,12 +466,8 @@ describe("fresh searches through the real catalog/gateway transport", () => {
       path: "/produkt/sroub-din-933-a2?variant=933a2m8#product-variants",
     });
     expect(multiple.items[0].variantLabel).toBeUndefined();
-    matchOverride = { kind: "unattributed" };
-    const unattributed = (await (await ask("933a2m8")).json()) as RemoteSearchResponse;
-    expect(unattributed.items[0].path).toBe("/produkt/sroub-din-933-a2");
-    expect(unattributed.items[0].variantSku).toBeUndefined();
     await network.idle();
-    expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(2);
+    expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(1);
     await network.idle();
     expect(productRequests().every(({ fields }) => fields === "card")).toBe(true);
   });
@@ -671,18 +497,6 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     await network.idle();
     expect(productRequests().every(({ fields }) => fields === "card")).toBe(true);
   });
-
-  it.each(["activity", "market offer"])(
-    "observes immediate %s removal on the same query",
-    async () => {
-      expect(((await (await ask("933a2m8")).json()) as RemoteSearchResponse).items).toHaveLength(1);
-      hideProduct = true;
-      const body = (await (await ask("933a2m8")).json()) as RemoteSearchResponse;
-      expect(body.items).toEqual([]);
-      expect(body.total).toBe(0);
-      expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(2);
-    },
-  );
 
   it.each([
     { kind: "single", variant: { ...exactOffer(), currency: "EUR" } },

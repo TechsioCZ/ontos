@@ -17,7 +17,10 @@ const entries = new Map<string, Entry>();
 const MAX_ENTRIES = 200;
 // Older stale values are not served; they reload with a blocking read.
 const MAX_STALE_MS = 10 * 60_000;
+// Least recently used goes first: every hit and write moves its key to the end, so the market directory and the
+// tree, hit on every request, are never evicted by a burst of distinct search terms.
 const put = (key: string, entry: Entry) => {
+  entries.delete(key);
   entries.set(key, entry);
   if (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
 };
@@ -75,6 +78,10 @@ function read<A>(
   stale: boolean,
 ): Promise<A> {
   const held = entries.get(key);
+  if (held !== undefined) {
+    entries.delete(key);
+    entries.set(key, held);
+  }
   if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
     return held.value as Promise<A>;
   if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {

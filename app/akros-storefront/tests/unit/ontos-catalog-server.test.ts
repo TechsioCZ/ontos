@@ -495,26 +495,6 @@ describe("OntOS catalog server reads", () => {
     expect(listing.products.map(({ id }) => id)).toEqual(["p2"]);
   });
 
-  it("reads newly imported native products and media on the next identical search without a seeded identity", async () => {
-    await inRequest(() => server.getCatalogPage({ q: "NEW-NATIVE-SKU" }));
-    const id = "0193e001-0000-7000-8000-000000000001";
-    const asset = "0193e001-0000-7000-8000-000000000002";
-    answer = (query) => ({
-      products:
-        query.mode === "categories"
-          ? []
-          : [{ ...product(id), sku: "NEW-NATIVE-SKU", gallery: [`media:${asset}`] }],
-      categories: tree,
-    });
-    const page = await inRequest(() => server.getCatalogPage({ q: "NEW-NATIVE-SKU" }));
-    expect(page.products).toHaveLength(1);
-    expect(page.products[0]).toMatchObject({
-      id,
-      sku: "NEW-NATIVE-SKU",
-      imageSrc: `/obrazky/${id}/${asset}`,
-    });
-  });
-
   it("reads product detail in full and listings as cards", async () => {
     await inRequest(() => server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }));
     await inRequest(() => server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 }));

@@ -129,10 +129,6 @@ const loadProducts = (key: string, operation: Operation) => async () => {
     await readCatalog(typeof marketId === "string" ? marketId : undefined, query, operation),
   );
 };
-// One owner read per render for equal queries, keyed by the serialized owner query.
-const cachedProducts = cache((operation: Operation, key: string): Promise<ProductPage> =>
-  loadProducts(key, operation)(),
-);
 
 /**
  * One bounded product read without the category tree. Equal reads share only the current render.
@@ -147,8 +143,6 @@ export async function readProducts(
   return catalogWork(options, async (operation) => {
     const key = productKey(await marketIdOf(operation), query, fields);
     if (fresh) return await loadProducts(key, operation)();
-    // Text search is per render only (search path owns its own caching).
-    if (query.q) return await cachedProducts(operation, key);
     return await sharedRead(
       `products:${key}`,
       CATALOG_TTL_MS,
