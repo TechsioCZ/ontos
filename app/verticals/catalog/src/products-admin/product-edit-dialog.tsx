@@ -4,11 +4,15 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 
 import { AddProductCategoryAssignmentPayloadSchema } from '../../shared/actions/add-product-category-assignment.ts';
 import { AssignSkuPayloadSchema } from '../../shared/actions/assign-sku.ts';
+import {
+  CreateProductCategoryPayloadSchema,
+  CreateProductCategoryResultSchema,
+} from '../../shared/actions/create-product-category.ts';
 import {
   SetProductLocalizedFactsPayloadSchema,
   SetVariantLocalizedFactsPayloadSchema,
@@ -23,6 +27,7 @@ import { UpdateProductPayloadSchema } from '../../shared/actions/update-product.
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { executeAddProductCategoryAssignment } from '../api/add-product-category-assignment-action-client.ts';
 import { executeAssignSku } from '../api/assign-sku-action-client.ts';
+import { executeCreateProductCategory } from '../api/create-product-category-action-client.ts';
 import { executeReactivateProduct } from '../api/reactivate-product-action-client.ts';
 import { executeReactivateVariant } from '../api/reactivate-variant-action-client.ts';
 import { executeRemoveProductCategoryAssignment } from '../api/remove-product-category-assignment-action-client.ts';
@@ -265,6 +270,8 @@ interface ProductEditDialogProps {
 export const ProductEditDialog = ({ categories, item, locale, onClose }: ProductEditDialogProps) => {
   const [draft, setDraft] = useState<Draft>(() => draftOf(item));
   const [newCategory, setNewCategory] = useState('');
+  const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>([]);
+  const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const update = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
@@ -298,7 +305,10 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
     }
     setBusy(true);
     setFailure(null);
-    const steps = saveSteps(item, { ...draft, reason: draft.reason.trim() }, locale, categories);
+    const steps = saveSteps(item, { ...draft, reason: draft.reason.trim() }, locale, [
+      ...categories,
+      ...createdCategories,
+    ]);
     browserRuntime.runFork(
       Effect.forEach(steps, (step) => step, { concurrency: 1, discard: true }).pipe(
         Effect.match({ onFailure: (text: string) => text, onSuccess: () => null }),
@@ -308,7 +318,50 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
   };
   const lifecycles: readonly Lifecycle[] = ['DRAFT', 'ACTIVE', 'RETIRED'];
   const title = draft.name === '' ? 'Upravit produkt' : `Upravit produkt: ${draft.name}`;
-  const known = new Map(categories.map(({ categoryRef, name }) => [categoryRef.resourceId, name]));
+  const createCategory = () => {
+    const name = newCategory.trim();
+    if (name === '') {
+      return;
+    }
+    setCreating(true);
+    setFailure(null);
+    browserRuntime.runFork(
+      send(
+        'Vytvoření kategorie',
+        CreateProductCategoryPayloadSchema,
+        { name, reason: draft.reason.trim() === '' ? 'Nová kategorie z administrace' : draft.reason.trim() },
+        executeCreateProductCategory,
+      ).pipe(
+        Effect.match({
+          onFailure: (text: string) => {
+            setCreating(false);
+            setFailure(`Kategorii se nepodařilo vytvořit – ${text}.`);
+          },
+          onSuccess: (result) => {
+            setCreating(false);
+            const created = Schema.decodeUnknownOption(CreateProductCategoryResultSchema)(result);
+            if (Option.isSome(created)) {
+              const { category } = created.value;
+              setCreatedCategories((current) => [
+                ...current,
+                { categoryRef: category.categoryRef, name: category.name },
+              ]);
+              setDraft((current) => ({
+                ...current,
+                categoryIds: [...new Set([...current.categoryIds, category.categoryRef.resourceId])],
+              }));
+              setNewCategory('');
+              return;
+            }
+            setFailure('Vytvoření kategorie čeká na schválení.');
+          },
+        }),
+      ),
+    );
+  };
+  const known = new Map(
+    [...categories, ...createdCategories].map(({ categoryRef, name }) => [categoryRef.resourceId, name]),
+  );
   const shownCategories = [...new Set([...known.keys(), ...draft.categoryIds])];
   return (
     <Dialog
@@ -385,26 +438,24 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
           ))}
           <div className="flex gap-100">
             <Input
-              aria-label="ID kategorie"
+              aria-label="Název nové kategorie"
+              maxLength={240}
               onChange={(event) => setNewCategory(event.target.value)}
-              placeholder="ID další kategorie (UUID)"
+              placeholder={`Název nové kategorie (${locale})`}
               size="sm"
               value={newCategory}
             />
             <Button
-              onClick={() => {
-                const id = newCategory.trim();
-                if (id !== '') {
-                  toggleCategory(id, true);
-                  setNewCategory('');
-                }
-              }}
+              disabled={busy}
+              isLoading={creating}
+              loadingText="Vytvářím…"
+              onClick={createCategory}
               size="sm"
               theme="outlined"
               type="button"
               variant="secondary"
             >
-              Přidat
+              Vytvořit a přidat
             </Button>
           </div>
         </fieldset>
