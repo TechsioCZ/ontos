@@ -10,6 +10,7 @@
  */
 import { stableUuid } from '@app/core-runtime/access/catalog';
 import { Option, Schema } from 'effect';
+import type { Result } from 'effect';
 
 import type { SymmyManagedRouteKey, SymmyRouteSettings } from '../../shared/actions/manage-symmy-routes.ts';
 import { SymmyJobRetentionPolicySchema } from '../../shared/domain/symmy-job-retention.ts';
@@ -122,7 +123,7 @@ export const symmyManagedRouteConfiguration = (
   scope: SymmyManagedRouteScope,
   routeKey: SymmyManagedRouteKey,
   settings: SymmyRouteSettings,
-) => {
+): SymmyRouteConfigurationDraft => {
   const byKind = new Map<string, SymmyOwnerOperation[]>();
   for (const operation of servedOperations(routeKey, settings)) {
     const kind =
@@ -188,7 +189,7 @@ export const symmyManagedRouteRequest = (input: {
   readonly routeKey: SymmyManagedRouteKey;
   readonly scope: SymmyManagedRouteScope;
   readonly settings: SymmyRouteSettings;
-}) => {
+}): Result.Result<SymmyRouteEnrollmentRequest, Schema.SchemaError> => {
   const { expectedChangeToken, routeCode, routeKey, scope, settings } = input;
   const legalEntityId = symmyManagedRouteCompany(routeKey, scope);
   const request: SymmyRouteEnrollmentRequestDraft = {
