@@ -50,6 +50,7 @@ import { establishStockPositionAction } from './src/actions/establish-stock-posi
 import { establishStockSharingEligibilityAction } from './src/actions/establish-stock-sharing-eligibility.action.ts';
 import { externalStockCorrelationResourceDescriptor } from './shared/resources/external-stock-correlation.ts';
 import { importedCommittedObligationResourceDescriptor } from './shared/resources/imported-committed-obligation.ts';
+import { grantStaffStockSourceAuthorityAction } from './src/actions/grant-staff-stock-source-authority.action.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
 import { ImportSourceAssertionActionApi } from './shared/apis/import-source-assertion-action.ts';
 import { InventoryBackendConfigurationCurrentApi } from './shared/apis/inventory-backend-configuration-current.ts';
@@ -134,6 +135,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       establishExternalStockCorrelationAction,
       establishStockPositionAction,
       establishStockSharingEligibilityAction,
+      grantStaffStockSourceAuthorityAction,
       importSourceAssertionAction,
       provisionSourceStockItemAction,
       recoverInventoryEffectAction,

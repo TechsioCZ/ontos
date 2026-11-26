@@ -11379,6 +11379,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.staff-stock-source-authority.grant",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.grant-staff-stock-source-authority",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.stock-item.register",
             "kind": "action",
             "modes": [

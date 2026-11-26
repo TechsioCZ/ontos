@@ -30,6 +30,7 @@ import { EstablishCommitmentProtectionActionApi } from './apis/establish-commitm
 import { EstablishExternalStockCorrelationActionApi } from './apis/establish-external-stock-correlation-action.ts';
 import { EstablishStockPositionActionApi } from './apis/establish-stock-position-action.ts';
 import { EstablishStockSharingEligibilityActionApi } from './apis/establish-stock-sharing-eligibility-action.ts';
+import { GrantStaffStockSourceAuthorityActionApi } from './apis/grant-staff-stock-source-authority-action.ts';
 import { ImportSourceAssertionActionApi } from './apis/import-source-assertion-action.ts';
 import { InventoryBackendConfigurationCurrentApi } from './apis/inventory-backend-configuration-current.ts';
 import { InventoryEffectOutcomeApi } from './apis/inventory-effect-outcome.ts';
@@ -96,6 +97,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof EstablishExternalStockCorrelationActionApi
   | typeof EstablishStockPositionActionApi
   | typeof EstablishStockSharingEligibilityActionApi
+  | typeof GrantStaffStockSourceAuthorityActionApi
   | typeof ImportSourceAssertionActionApi
   | typeof InventoryBackendConfigurationCurrentApi
   | typeof InventoryEffectOutcomeApi
@@ -145,6 +147,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(EstablishExternalStockCorrelationActionApi)
   .addHttpApi(EstablishStockPositionActionApi)
   .addHttpApi(EstablishStockSharingEligibilityActionApi)
+  .addHttpApi(GrantStaffStockSourceAuthorityActionApi)
   .addHttpApi(ImportSourceAssertionActionApi)
   .addHttpApi(InventoryBackendConfigurationCurrentApi)
   .addHttpApi(InventoryEffectOutcomeApi)

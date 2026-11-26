@@ -31,6 +31,7 @@ export * from './establish-commitment-protection-action-client.ts';
 export * from './establish-external-stock-correlation-action-client.ts';
 export * from './establish-stock-position-action-client.ts';
 export * from './establish-stock-sharing-eligibility-action-client.ts';
+export * from './grant-staff-stock-source-authority-action-client.ts';
 export * from './import-source-assertion-action-client.ts';
 export * from './provision-source-stock-item-action-client.ts';
 export * from './recover-inventory-effect-action-client.ts';

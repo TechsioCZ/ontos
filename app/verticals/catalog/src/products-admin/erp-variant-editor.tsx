@@ -1,6 +1,10 @@
 // Staff dialog for one ERP Variant on Novinky z ERP: its Price (Pricing revise-price, value only, under the staff
 // source authority) and its stock on hand (Inventory). Each figure goes to its owner; the list reloads afterwards.
 import { executeCatalogVariantOnHandPage } from '@app/inventory/api/catalog-variant-on-hand-page-client';
+import { GrantStaffStockSourceAuthorityPayloadSchema } from '@app/inventory/api/grant-staff-stock-source-authority';
+import { executeGrantStaffStockSourceAuthority } from '@app/inventory/api/grant-staff-stock-source-authority-action-client';
+import { executeImportSourceAssertion } from '@app/inventory/api/import-source-assertion-action-client';
+import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { executeStockIssue } from '@app/inventory/api/stock-issue-action-client';
 import { executeStockReceipt } from '@app/inventory/api/stock-receipt-action-client';
 import { CatalogVariantOnHandPageRequestSchema } from '@app/inventory/api/catalog-variant-on-hand-page';
@@ -195,6 +199,85 @@ const canonical = (value: string): string | null => {
   return trimmed.includes('.') ? trimmed.replace(/0+$/u, '').replace(/\.$/u, '') : trimmed;
 };
 
+type StockAnswer = Extract<StockPage['items'][number], { readonly outcome: 'ON_HAND' | 'ON_HAND_UNKNOWN' }>;
+
+/**
+ * An ERP-held Position: Inventory grants the staff source authority for exactly this Position (the ERP keys, the next
+ * ordering evidence and the effects to cover), then the typed figure is imported as the source-reported on-hand.
+ * The business observation and the receipt are one instant, a few seconds back to absorb clock skew.
+ */
+const writeSourceStock = Effect.fn('ErpVariantEditor.writeSourceStock')(function* sourceStock(
+  positionRef: StockAnswer['positions'][number]['positionRef'],
+  unitRef: StockAnswer['stockItem']['unitRef'],
+  target: string,
+  offer: ErpOffer,
+  reason: string,
+) {
+  const [grantKey, importKey, assertionId, evidence] = yield* Effect.all([freshUuid, freshUuid, freshUuid, freshUuid], {
+    concurrency: 1,
+  });
+  const grantId = yield* requestId;
+  const grant = yield* Schema.decodeEffect(GrantStaffStockSourceAuthorityPayloadSchema)({
+    customerConfigurationId: offer.customerConfigurationId,
+    positionRef,
+    reason: reason.slice(0, 300).trim(),
+  }).pipe(
+    Effect.mapError((problem) => describe('Oprávnění zdroje skladu', problem)),
+    Effect.flatMap((payload) =>
+      executeGrantStaffStockSourceAuthority(payload, grantId, { idempotencyKey: grantKey }).pipe(
+        Effect.mapError((problem) => describe('Oprávnění zdroje skladu', problem)),
+      ),
+    ),
+  );
+  if (!('issuer' in grant)) {
+    return yield* Effect.fail('Oprávnění zdroje skladu čeká na schválení');
+  }
+  const now = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: 5 }));
+  const at = now < grant.selectedAt ? grant.selectedAt : now;
+  const importId = yield* requestId;
+  const imported = yield* Schema.decodeEffect(ImportSourceAssertionPayloadSchema)({
+    authorizationTargetRef: positionRef,
+    items: [
+      {
+        assertionId,
+        businessObservedAt: at,
+        coverage: grant.coverageEffectIds.map((effectId) => ({
+          assertionId,
+          effectId,
+          ownerEvidenceRef: `ontos-staff:${evidence}`,
+          relation: 'INCLUDES',
+        })),
+        customerConfigurationId: offer.customerConfigurationId,
+        factMeaning: 'ABSOLUTE_PHYSICAL_ON_HAND',
+        issuer: grant.issuer,
+        itemExternalKey: grant.itemExternalKey,
+        locationExternalKey: grant.locationExternalKey,
+        orderingEvidence: grant.orderingEvidence,
+        ownerEvidenceRef: `ontos-staff:${evidence}`,
+        positionRef,
+        quantity: { amount: target, unitRef },
+        receivedAt: at,
+        sourceReference: `ontos-staff:${assertionId}`,
+      },
+    ],
+  }).pipe(
+    Effect.mapError((problem) => describe('Zápis skladu', problem)),
+    Effect.flatMap((payload) =>
+      executeImportSourceAssertion(payload, importId, { idempotencyKey: importKey }).pipe(
+        Effect.mapError((problem) => describe('Zápis skladu', problem)),
+      ),
+    ),
+  );
+  if (!('items' in imported)) {
+    return yield* Effect.fail('Zápis skladu čeká na schválení');
+  }
+  const [outcome] = imported.items;
+  if (outcome === undefined || outcome.status !== 'ACCEPTED') {
+    return yield* Effect.fail(`Sklad nepřijal nový stav (${outcome?.status ?? 'bez odpovědi'})`);
+  }
+  return outcome;
+});
+
 /** Sets the on-hand figure of the Variant's one Position: a receipt or an issue of the difference (OntOS WMS). */
 const writeStock = Effect.fn('ErpVariantEditor.writeStock')(function* stock(
   page: StockPage,
@@ -206,12 +289,10 @@ const writeStock = Effect.fn('ErpVariantEditor.writeStock')(function* stock(
   if (answer === undefined || (answer.outcome !== 'ON_HAND' && answer.outcome !== 'ON_HAND_UNKNOWN')) {
     return yield* Effect.fail(`Varianta nemá skladovou pozici (${answer?.outcome ?? 'bez odpovědi'})`);
   }
-  if (page.backend.kind === 'external_business_system') {
-    return yield* Effect.fail(
-      'Sklad této varianty spravuje externí systém (ERP); OntOS ho přepíše jen import ze zdroje, ne ruční úprava',
-    );
-  }
   const [position] = answer.positions;
+  if (page.backend.kind === 'external_business_system') {
+    return yield* writeSourceStock(position.positionRef, answer.stockItem.unitRef, target, offer, reason);
+  }
   const current = Match.valueTags(position.onHand, {
     NOT_ESTABLISHED: () => 0,
     OWNER_RECORDED: ({ quantity }) => Number(quantity.amount),
