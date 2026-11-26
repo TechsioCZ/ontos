@@ -2,7 +2,7 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
-import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
@@ -12,7 +12,6 @@ import { AccessWorkloadBindingSourceLive } from '../../packages/core-runtime/src
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../packages/core-runtime/src/testing/isolated-native-database.ts';
-import { SymmyJobRetentionPolicySchema } from '../../verticals/symmy-integration/shared/domain/symmy-job-retention.ts';
 import { ApplicationCompositionAuthorityAdminDatabaseLive } from '../application-composition-authority-publication.mts';
 import {
   bootstrapSymmyDemoCustomerAuthority,
@@ -21,7 +20,6 @@ import {
   SYMMY_DEMO_GROUPS_ROUTE,
   SYMMY_DEMO_GROUPS_SOURCE_ROUTE,
   symmyDemoCustomerInternalWorkloadDeclarations,
-  symmyDemoCustomerRetentionRefs,
   SymmyDemoCustomerAuthorityLive,
 } from '../demo/symmy-demo-customer-authority.mts';
 import {
@@ -173,19 +171,6 @@ it.live('bootstraps AKROS twice under a prebuilt admin database and preserves na
     const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
     yield* seedScope(admin);
     yield* seedRoutes(admin);
-    const retentionSchema = Schema.Array(SymmyJobRetentionPolicySchema);
-    const retention = yield* Schema.decodeUnknownEffect(retentionSchema)(
-      symmyDemoCustomerRetentionRefs()
-        .filter(({ routeId }) => routeId === SYMMY_DEMO_CUSTOMERS_ROUTE)
-        .map((ref) => ({
-          ...ref,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: 86_400_000,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        })),
-    );
-    const policies = yield* Schema.encodeEffect(Schema.fromJsonString(retentionSchema))(retention);
     yield* Effect.gen(function* runStageAuthority() {
       const adminDatabase = yield* CoreDatabase;
       const adminStore = yield* AccessReleaseStore;
@@ -218,6 +203,12 @@ it.live('bootstraps AKROS twice under a prebuilt admin database and preserves na
       expect(firstInventory.outcome).toBe('ENROLLED');
       expect(firstExchange.routes.map(({ outcome }) => outcome)).toEqual(['replaced', 'replaced']);
       expect(firstCustomer.receipts).toHaveLength(2);
+      // The customers route's retention is route data the bootstrap recorded with it.
+      expect(
+        yield* admin`select policy_id as "policyId", retention_ms::float8 as "retentionMs"
+          from symmy_integration.route_retention_policies
+          where tenant_id=${tenantId} and route_id=${SYMMY_DEMO_CUSTOMERS_ROUTE}`,
+      ).toEqual([{ policyId: 'akros-symmy-customers', retentionMs: 2_592_000_000 }]);
       expect(yield* discover).toEqual(firstDiscovery);
       const secondInventory = yield* inventoryBoot;
       expect(secondInventory.outcome).toBe('ALREADY_ENROLLED');
@@ -236,7 +227,6 @@ it.live('bootstraps AKROS twice under a prebuilt admin database and preserves na
           ConfigProvider.fromUnknown({
             DATABASE_ADMIN_URL: connections.admin.connectionString,
             DATABASE_URL: connections.runtime.connectionString,
-            ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
             ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
           }),
         ),

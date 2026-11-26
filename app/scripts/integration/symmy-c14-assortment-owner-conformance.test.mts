@@ -195,6 +195,7 @@ it.live(
         });
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${routeId},${tenantId},${integration.principalId},${sellerId},true,array[${fixtureId}],${yield* routePlan(fixture)}::jsonb,${mappingVersion},${routeKey},${fixture.routeRevision},${yield* encodeJson(lifecyclePolicy)}::jsonb)`;
+        yield* runtime.recordRetention;
         const capability = randomUUID();
         const permits = yield* encodeJson([
           { command: fixture.command, permit: capability, principalId: system.principalId },

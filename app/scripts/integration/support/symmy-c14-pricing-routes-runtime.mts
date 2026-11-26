@@ -3,13 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import {
-  makeApiKeyGatewayNativeFixture,
-  SymmyPriceReadProjectionConfigurationSchema,
-} from '@app/shell-super-app/testing/api-key-gateway-native';
+import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import {
   SymmyRouteExecutionConfigurationSchema,
-  SymmyJobRetentionPolicySchema,
   SymmyJobLifecyclePolicyRefSchema,
 } from '@app/symmy-integration/symmy-internal-contracts';
 import { PgClient } from '@effect/sql-pg';
@@ -17,6 +13,7 @@ import { Config, DateTime, Duration, Effect, Redacted, Schema } from 'effect';
 import { assert } from 'effect-rstest';
 
 import { installInternalC14PriceDispatchBarrier } from './symmy-c14-pricing-routes-barrier.mts';
+import { recordSymmyPriceReadSource, recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 
 import {
   bindCustomerFixtureProviderKey,
@@ -75,7 +72,6 @@ const enrolled = (
 });
 const encodeRoute = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
 const encodePolicy = Schema.encodeEffect(Schema.fromJsonString(SymmyJobLifecyclePolicyRefSchema));
-const encodePolicies = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)));
 
 /** Starts genuine owner HTTP runtimes with platform-provisioned module keys; no owner business rows are seeded. */
 export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingRoutes.fixture')(
@@ -139,25 +135,9 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     const readRouteId = randomUUID();
     const selectedRouteId = randomUUID();
     const sourceRouteId = randomUUID();
-    const priceReadSources = yield* Schema.decodeUnknownEffect(SymmyPriceReadProjectionConfigurationSchema)({
-      routes: [
-        {
-          issuerId: internalPricingRouteSource.issuerId,
-          legalEntityId,
-          routeId: readRouteId,
-          sourceNamespace: internalPricingRouteSource.namespace,
-          sourceSystem: internalPricingNativeSourceSystem,
-          tenantId,
-        },
-      ],
-      schemaVersion: 1,
-    });
     const shell = yield* makeApiKeyGatewayNativeFixture({
       additionalRelaySources: [{ sourceAppId: 'pricing' }, { sourceAppId: 'catalog' }, { sourceAppId: marketApp }],
       ownedDatabase: isolated,
-      priceReadProjectionJson: yield* Schema.encodeEffect(
-        Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
-      )(priceReadSources),
       productionGate: true,
       relaySource: { sourceAppId: 'symmy-integration' },
       // A price-list read composes several owner reads, each behind its own gateway assertion.
@@ -302,26 +282,8 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     };
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision)
       values(${readRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(readPlan))}::jsonb,${internalPricingRouteSource.mappingVersion},'priceLists',${internalPricingRouteSource.routeRevision})`;
-    const policies = yield* encodePolicies(
-      yield* Schema.decodeUnknownEffect(Schema.Array(SymmyJobRetentionPolicySchema))([
-        {
-          ...lifecyclePolicy,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: Duration.toMillis(Duration.minutes(1)),
-          routeId,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        },
-        {
-          ...lifecyclePolicy,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: Duration.toMillis(Duration.minutes(1)),
-          routeId: selectedRouteId,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        },
-      ]),
-    );
+    // The priceLists read route pages its prices from the fixture's source system: route data, as an enable writes it.
+    yield* recordSymmyPriceReadSource(admin, { ...internalPricingNativeSourceSystem, routeId: readRouteId, tenantId });
     const environment = {
       APP_ENV_PATH: '/dev/null',
       DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
@@ -331,7 +293,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ONTOS_GATEWAY_ISSUER: shell.issuer,
       ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-      ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
     };
     // Receiver readiness binds the local HTTP listener; no peer operation runs until a request arrives.
     // Every calling owner's module key is already provisioned above and goes on its own private channel.
@@ -436,6 +397,24 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     });
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
       values(${selectedRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(pricesPlan)}::jsonb,${internalPricingRouteSource.mappingVersion},'priceListPricesBatch',${internalPricingRouteSource.routeRevision},${yield* encodePolicy(lifecyclePolicy)}::jsonb)`;
+    yield* recordSymmyRetentionPolicies(admin, [
+      {
+        ...lifecyclePolicy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: Duration.toMillis(Duration.minutes(1)),
+        routeId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+      {
+        ...lifecyclePolicy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: Duration.toMillis(Duration.minutes(1)),
+        routeId: selectedRouteId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+    ]);
     return {
       admin,
       at,

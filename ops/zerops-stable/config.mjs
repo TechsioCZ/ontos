@@ -73,37 +73,6 @@ const sender = (value, path) => {
   return value;
 };
 
-/** Symmy write-route retention policies (SymmyJobRetentionPolicySchema); the Symmy owner checks every field. */
-const retentionPolicies = (value, path) => {
-  const policies = json(value, path);
-  if (!Array.isArray(policies) || policies.length === 0) fail(path, 'must be a non-empty JSON array');
-  const ids = new Set();
-  for (const [index, policy] of policies.entries()) {
-    const at = `${path}[${String(index)}]`;
-    if (!isObject(policy)) fail(at, 'must be an object');
-    text(policy.policyId, `${at}.policyId`);
-    if (ids.has(policy.policyId)) fail(`${at}.policyId`, 'must be unique');
-    ids.add(policy.policyId);
-    for (const key of ['tenantId', 'routeId', 'governanceLegalEntityId']) text(policy[key], `${at}.${key}`, UUID, 'a UUID');
-    if (!Number.isSafeInteger(policy.retentionMs) || policy.retentionMs <= 0) fail(`${at}.retentionMs`, 'must be a positive integer');
-  }
-  return JSON.stringify(policies);
-};
-
-/** Symmy price read sources (SymmyPriceReadProjectionConfigurationSchema); the Shell checks every field. */
-const priceReadSources = (value, path) => {
-  const sources = json(value, path);
-  if (!isObject(sources) || sources.schemaVersion !== 1 || !Array.isArray(sources.routes) || sources.routes.length === 0) {
-    fail(path, 'must be {"schemaVersion":1,"routes":[…]} with at least one route');
-  }
-  for (const [index, route] of sources.routes.entries()) {
-    const at = `${path}.routes[${String(index)}]`;
-    if (!isObject(route)) fail(at, 'must be an object');
-    for (const key of ['tenantId', 'legalEntityId', 'routeId']) text(route[key], `${at}.${key}`, UUID, 'a UUID');
-  }
-  return JSON.stringify(sources);
-};
-
 /** One storefront's ERP offer, keyed by its own Legal Entity only (akros-storefront/src/ontos/erp-config.ts). */
 const erpOffers = (value, path, legalEntityId) => {
   const offers = json(value, path);
@@ -152,8 +121,6 @@ export const STABLE_VARIABLES = {
       CLOUDFLARE_EMAIL_ACCOUNT_ID: (value, path) => text(value, path, /^[\da-f]{32}$/u, 'a Cloudflare account id'),
     },
     optional: {
-      ONTOS_SYMMY_JOB_RETENTION_POLICIES: retentionPolicies,
-      ONTOS_SYMMY_PRICE_READ_SOURCES: priceReadSources,
       ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: (value, path) => text(value, path, /^(?:true|false)$/u, 'true or false'),
     },
   },

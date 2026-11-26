@@ -21,6 +21,7 @@ import {
   productComposition,
 } from './symmy-c14-product-runtime.mts';
 import type { C14PolicyFixtureOwner } from './symmy-c14-product-runtime.mts';
+import { recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 
 const assortmentCurrentnessWorkload = 'commerce.assortment.symmy-fixture-currentness';
 /** The Assortment fixture's owners that call other modules, each holding its own platform-provisioned key. */
@@ -199,17 +200,18 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     ONTOS_GATEWAY_ISSUER: shell.issuer,
     ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
     ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-    ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* encodePolicyFixtureJson([
-      {
-        ...lifecyclePolicy,
-        governanceLegalEntityId: sellerId,
-        retentionMs: Duration.toMillis(Duration.minutes(10)),
-        routeId,
-        targetLegalEntityId: sellerId,
-        tenantId,
-      },
-    ]),
   };
+  // The route is the consumer's to enroll; its retention is route data recorded once that route exists.
+  const recordRetention = recordSymmyRetentionPolicies(admin, [
+    {
+      ...lifecyclePolicy,
+      governanceLegalEntityId: sellerId,
+      retentionMs: Duration.toMillis(Duration.minutes(10)),
+      routeId,
+      targetLegalEntityId: sellerId,
+      tenantId,
+    },
+  ]);
   return {
     admin,
     apiKey: key.secret,
@@ -222,6 +224,7 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     ownerContract,
     ownerModuleKey: moduleKeys.get(owner),
     ownerPort,
+    recordRetention,
     routeId,
     sellerId,
     shell,

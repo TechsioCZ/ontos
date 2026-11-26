@@ -66,6 +66,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
+import { recordSymmyRetentionPolicies } from './support/symmy-route-data-fixture.mts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
 const catalogImport = 'commerce.catalog.symmy-product-import';
@@ -478,15 +479,8 @@ it.live(
         };
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision)
     values(${randomUUID()},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${json(readPlan)}::jsonb,${internalProductSource.mappingVersion},'adminProducts',${internalProductSource.routeRevision})`;
-        const policies = json([
-          {
-            ...lifecyclePolicy,
-            governanceLegalEntityId,
-            retentionMs: Duration.toMillis(Duration.minutes(1)),
-            routeId,
-            targetLegalEntityId: null,
-            tenantId,
-          },
+        // One policy revision per route: a second, tenant-wide copy of the same revision is not representable.
+        yield* recordSymmyRetentionPolicies(admin, [
           {
             ...lifecyclePolicy,
             governanceLegalEntityId,
@@ -505,7 +499,6 @@ it.live(
           ONTOS_GATEWAY_ISSUER: shell.issuer,
           ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
           ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-          ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
         };
         const fs = yield* FileSystem.FileSystem;
         const faultDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_PRODUCT_' });

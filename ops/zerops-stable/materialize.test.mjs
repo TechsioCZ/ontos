@@ -101,15 +101,11 @@ test('storefront, shop and N1 carry only the identities the config states', () =
 
 test('inherits no stage host, policy or identity the config does not state', () => {
   const config = example();
-  delete config.variables.app.ONTOS_SYMMY_JOB_RETENTION_POLICIES;
-  delete config.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES;
   delete config.variables.app.ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED;
   delete config.variables.storefront.ONTOS_STOREFRONT_ERP_OFFERS;
   const { combined } = materializeStableZerops(canonicalText, config);
   const { app, storefront } = setupsOf(combined);
-  for (const key of ['ONTOS_SYMMY_JOB_RETENTION_POLICIES', 'ONTOS_SYMMY_PRICE_READ_SOURCES', 'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED']) {
-    assert.equal(app.run.envVariables[key], undefined);
-  }
+  assert.equal(app.run.envVariables.ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED, undefined);
   assert.equal(storefront.run.envVariables.ONTOS_STOREFRONT_ERP_OFFERS, undefined);
   for (const host of stageHosts) assert.ok(!combined.includes(host), host);
   for (const value of [canonical.app.run.envVariables.CLOUDFLARE_EMAIL_ACCOUNT_ID, canonical.n1.run.envVariables.ONTOS_STOREFRONT_TENANT_ID]) {

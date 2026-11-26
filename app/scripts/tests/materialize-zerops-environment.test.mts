@@ -10,8 +10,6 @@ import {
   materializeZeropsSetupFiles,
   SYMMY_INGRESS_VARIABLE,
   SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE,
-  SYMMY_PRICE_READ_SOURCES_VARIABLE,
-  SYMMY_RETENTION_POLICIES_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { DEMO_FIXTURES_ENABLED_VARIABLE, N1_STOREFRONT_ORIGIN_VARIABLE } from '../zerops/deployment-profile.mts';
@@ -200,7 +198,7 @@ it.effect('unmounts the Symmy ingress in every production setup and keeps it on 
 );
 
 it.effect(
-  'drops the stage Symmy routes, demo fixture opt-in and N1 origin from every production setup and keeps them on stage',
+  'drops the stage source sync, demo fixture opt-in and N1 origin from every production setup and keeps them on stage',
   () =>
     Effect.gen(function* dropsSymmyStageRoutes() {
       const input = parseDocument(fixture);
@@ -208,22 +206,6 @@ it.effect(
         {
           path: ['zerops', 1, 'run', 'envVariables', SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE],
           value: 'true',
-        },
-        {
-          path: ['zerops', 1, 'run', 'envVariables', SYMMY_RETENTION_POLICIES_VARIABLE],
-          value: '[{"policyId":"stage-route","revision":"v1"}]',
-        },
-        {
-          path: ['zerops', 2, 'run', 'envVariables', SYMMY_RETENTION_POLICIES_VARIABLE],
-          value: '[{"policyId":"stage-route","revision":"v1"}]',
-        },
-        {
-          path: ['zerops', 1, 'run', 'envVariables', SYMMY_PRICE_READ_SOURCES_VARIABLE],
-          value: '{"schemaVersion":1,"routes":[]}',
-        },
-        {
-          path: ['zerops', 2, 'run', 'envVariables', SYMMY_PRICE_READ_SOURCES_VARIABLE],
-          value: '{"schemaVersion":1,"routes":[]}',
         },
         { path: ['zerops', 1, 'run', 'envVariables', DEMO_FIXTURES_ENABLED_VARIABLE], value: 'true' },
         {

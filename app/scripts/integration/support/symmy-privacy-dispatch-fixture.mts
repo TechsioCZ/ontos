@@ -20,6 +20,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './symmy-c14-product-runtime.mts';
+import { recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 
 const marketApp = 'commerce-market-catalog';
 const symmyApp = 'symmy-integration';
@@ -217,6 +218,16 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   const template = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(yield* planFor('INTERNAL_TEMPLATE'));
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
     values(${routeId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json({ ...template, sourceRouteId })}::jsonb,'v1','productsBatch','v1',${yield* json(policy)}::jsonb)`;
+  yield* recordSymmyRetentionPolicies(admin, [
+    {
+      ...policy,
+      governanceLegalEntityId: legalEntityId,
+      retentionMs: 1,
+      routeId,
+      targetLegalEntityId: null,
+      tenantId,
+    },
+  ]);
   const environment = {
     APP_ENV_PATH: '/dev/null',
     DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
@@ -226,16 +237,6 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     ONTOS_GATEWAY_ISSUER: shell.issuer,
     ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
     ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-    ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-      {
-        ...policy,
-        governanceLegalEntityId: legalEntityId,
-        retentionMs: 1,
-        routeId,
-        targetLegalEntityId: null,
-        tenantId,
-      },
-    ]),
   };
   const prefixes = {
     catalog: '/catalog-api',

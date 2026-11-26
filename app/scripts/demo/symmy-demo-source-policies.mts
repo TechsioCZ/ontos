@@ -770,6 +770,13 @@ const rolloverDemoStockRoute = (transaction: CoreTransaction, prepared: Prepared
         'Stage-approved source-policy stock route; prior inactive route and all retained admissions preserved',
         ${targetRouteId}::uuid, ${route.route_key}, ${route.route_revision},
         'ontos:stage:akros-symmy:source-policies:v1', ${tenantId}::uuid)`);
+    // The fresh route's retention is route data recorded with it, which the Symmy owner admits its writes against.
+    const retention = symmyDemoStockSourceRetention;
+    yield* transaction.execute(sql`insert into symmy_integration.route_retention_policies
+      (tenant_id, route_id, policy_id, revision, governance_legal_entity_id, target_legal_entity_id, retention_ms)
+      values (${retention.tenantId}::uuid, ${retention.routeId}::uuid, ${retention.policyId}, ${retention.revision},
+        ${retention.governanceLegalEntityId}::uuid, null, ${retention.retentionMs})
+      on conflict do nothing`);
     return { outcome: 'ENROLLED', retainedRouteId: route.route_id, routeId: targetRouteId };
   });
 

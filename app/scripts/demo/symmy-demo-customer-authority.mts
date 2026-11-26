@@ -10,8 +10,8 @@
  * Initialize missing owner routes. On an active bootstrap-owned route the canonical reader may be appended;
  * conflicting or operator-managed policy is never replaced. The Symmy execution epoch is not rotated.
  *
- * Required: ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage, DATABASE_URL, DATABASE_ADMIN_URL,
- * ONTOS_SYMMY_JOB_RETENTION_POLICIES. No published-composition URL is needed.
+ * Required: ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage, DATABASE_URL, DATABASE_ADMIN_URL. No published-composition URL
+ * is needed. The retention policies its routes pin are route data it records with them, never configuration.
  * Customer synchronization uses the persisted, operator-authorized source policy. Publish the environment builder's
  * ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED and ONTOS_PARTY_CLIENT_SOURCE_BINDINGS before starting owners.
  * Source-sync evidence authorizes this integration; it never fabricates consent or a business-only exemption.
@@ -572,15 +572,42 @@ const configuration = (
   sourceRouteRevision: revision,
 });
 
-/** Retention IDs are stable deployment configuration, not generated per boot. */
-export const symmyDemoCustomerRetentionRefs = () => [
-  { policyId: 'akros-symmy-customers', revision, routeId: SYMMY_DEMO_CUSTOMERS_ROUTE },
+const DEMO_RETENTION_MS = 2_592_000_000;
+
+/**
+ * The retention route data the customer routes pin, kept 30 days in the AKROS company: the customers route's own, and
+ * the membership family policy on the group route, which every selected membership route resolves to.
+ */
+export const symmyDemoCustomerRetentionPolicies = () => [
   {
-    policyId: SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
+    governanceLegalEntityId: legalEntityId,
+    policyId: 'akros-symmy-customers',
+    retentionMs: DEMO_RETENTION_MS,
     revision,
+    routeFamily: null,
+    routeId: SYMMY_DEMO_CUSTOMERS_ROUTE,
+    targetLegalEntityId: legalEntityId,
+    tenantId,
+  },
+  {
+    governanceLegalEntityId: legalEntityId,
+    policyId: SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
+    retentionMs: DEMO_RETENTION_MS,
+    revision,
+    routeFamily: 'DEMO_GROUP_MEMBERSHIP' as const,
     routeId: SYMMY_DEMO_GROUPS_ROUTE,
+    targetLegalEntityId: legalEntityId,
+    tenantId,
   },
 ];
+
+/** Retention IDs are stable route data, not generated per boot. */
+export const symmyDemoCustomerRetentionRefs = () =>
+  symmyDemoCustomerRetentionPolicies().map(({ policyId, revision: policyRevision, routeId }) => ({
+    policyId,
+    revision: policyRevision,
+    routeId,
+  }));
 
 export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readonly Group[]) =>
   Effect.gen(function* buildRoutes() {
@@ -1284,20 +1311,27 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
         and source_intent #>> '{payload,source,route,id}'=${SYMMY_DEMO_GROUPS_SOURCE_ROUTE}`;
     const groups = yield* Schema.decodeUnknownEffect(Schema.Array(GroupSchema))(groupRows);
     const routes = yield* buildSymmyDemoCustomerRoutes(existing.principalId, groups);
-    const policies = yield* Config.schema(
-      Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)),
-      'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
-    );
+    const StoredRetentionSchema = Schema.Array(Schema.Struct({ policy: SymmyJobRetentionPolicySchema }));
+    // The policies a route can resolve to: its own and the standing family policy, as the Symmy owner reads them.
+    const storedRetention = (routeId: string) =>
+      sql`select jsonb_build_object('tenantId',tenant_id,'routeId',route_id,'policyId',policy_id,'revision',revision,
+            'governanceLegalEntityId',governance_legal_entity_id,'targetLegalEntityId',target_legal_entity_id,
+            'retentionMs',retention_ms)
+          || case when route_family is null then '{}'::jsonb else jsonb_build_object('routeFamily',route_family) end
+          as policy
+        from symmy_integration.route_retention_policies
+        where tenant_id=${tenantId} and (route_id=${routeId} or route_family is not null)
+        order by route_id, policy_id, revision`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(StoredRetentionSchema)),
+        Effect.map((stored) => stored.map(({ policy }) => policy)),
+      );
     const receipts: { outcome: string; routeId: string; routeKey: string }[] = [];
     for (const request of routes) {
       const inventory = symmyRouteInventoryOf(request.routeKey);
       if (Option.isNone(inventory)) {
         return yield* fail(`No production inventory for ${request.routeKey}`);
       }
-      const refusals = [
-        ...symmyRouteRequestRefusals(request, inventory.value),
-        ...symmyRetentionRefusals(request, policies),
-      ];
+      const refusals = symmyRouteRequestRefusals(request, inventory.value);
       if (refusals.length > 0) {
         return yield* fail(refusals.map(({ code, detail }) => `${code}: ${detail}`).join('; '));
       }
@@ -1326,6 +1360,21 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           values(${tenantId},${legalEntityId},${existing.principalId},${request.routeId},${request.routeKey},
             ${planned.routeCode},${revision},${revision},${planned.fixtureIds},
             ${sql.json(encoded)},${policy === null ? null : sql.json(policy)},true) on conflict do nothing`;
+            // The retention the route pins is recorded with it; a recorded policy revision is never rewritten.
+            for (const retention of symmyDemoCustomerRetentionPolicies()) {
+              yield* sql`insert into symmy_integration.route_retention_policies
+            (tenant_id,route_id,policy_id,revision,governance_legal_entity_id,target_legal_entity_id,retention_ms,
+              route_family)
+            select tenant_id,route_id,${retention.policyId}::text,${retention.revision}::text,
+              ${retention.governanceLegalEntityId}::uuid,${retention.targetLegalEntityId}::uuid,
+              ${retention.retentionMs}::bigint,${retention.routeFamily}::text
+            from symmy_integration.job_routes where tenant_id=${retention.tenantId} and route_id=${retention.routeId}
+            on conflict do nothing`;
+            }
+          }
+          const retentionRefusals = symmyRetentionRefusals(request, yield* storedRetention(request.routeId));
+          if (retentionRefusals.length > 0) {
+            return yield* fail(retentionRefusals.map(({ code, detail }) => `${code}: ${detail}`).join('; '));
           }
           const observed = yield* sql`select route_id as "routeId" from symmy_integration.job_routes
         where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and principal_id=${existing.principalId}

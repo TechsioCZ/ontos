@@ -58,6 +58,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './symmy-c14-product-runtime.mts';
+import { recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -685,6 +686,16 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     const readRouteId = yield* uuid;
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision)
           values(${readRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb,${internalCustomerSource.mappingVersion},'adminCustomers',${internalCustomerSource.routeRevision})`;
+    yield* recordSymmyRetentionPolicies(admin, [
+      {
+        ...lifecyclePolicy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: Duration.toMillis(Duration.minutes(1)),
+        routeId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+    ]);
     const partyUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_DATABASE_URL')));
     partyUrl.pathname = `/${isolated.connections.runtime.database}`;
     partyUrl.hostname = isolated.connections.runtime.host;
@@ -709,16 +720,6 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
       )(privacy.contexts),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-      ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-        {
-          ...lifecyclePolicy,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: Duration.toMillis(Duration.minutes(1)),
-          routeId,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        },
-      ]),
       PARTY_REGISTRY_DATABASE_URL: partyUrl.href,
       PARTY_REGISTRY_WORKER_DATABASE_URL: partyWorkerUrl.href,
     };

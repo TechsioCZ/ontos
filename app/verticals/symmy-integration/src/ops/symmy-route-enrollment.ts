@@ -269,7 +269,7 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  *   the whole Customer Configuration (ADR-0026), and the synchronous admission passes the route's company to every
  *   call. A position is served only once Inventory holds, for its Customer Configuration, the External Business System
  *   selection of the route's backend, the position's Stock Item, Stock Location and Stock Position, and the
- *   correlations of its item and location keys, which the command cannot read (`scripts/route-enrollment.mts`).
+ *   correlations of its item and location keys, which the enrollment cannot read.
  * - adminProducts, adminCustomers, priceLists, adminRegions: the reads `SymmyGovernedDispatch.read` and its
  *   projections require (`requireRouteRead`, `requireReadOperation`) or use when the route enrolls them
  *   (`routeAllows`). The customer page read is published for a company only (its `legalEntityScope: 'required'`)

@@ -34,7 +34,6 @@ const CUSTOMER_SETTINGS = {
   DATABASE_URL: 'postgres://ontos_runtime:never-log-runtime@db/stage',
   ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: '[]',
   ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: '[]',
-  ONTOS_SYMMY_JOB_RETENTION_POLICIES: '[]',
 };
 const STAGE = {
   ...CUSTOMER_SETTINGS,

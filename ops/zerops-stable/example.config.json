@@ -21,9 +21,7 @@
     "app": {
       "SMTP_FROM": "OntOS <noreply@ontos.example.com>",
       "CLOUDFLARE_EMAIL_ACCOUNT_ID": "00000000000000000000000000000000",
-      "ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED": "true",
-      "ONTOS_SYMMY_JOB_RETENTION_POLICIES": "[{\"policyId\":\"example-symmy-products\",\"revision\":\"v1\",\"tenantId\":\"00000000-0000-4000-8000-000000000001\",\"routeId\":\"00000000-0000-4000-8000-000000000010\",\"governanceLegalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"targetLegalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"retentionMs\":2592000000}]",
-      "ONTOS_SYMMY_PRICE_READ_SOURCES": "{\"schemaVersion\":1,\"routes\":[{\"tenantId\":\"00000000-0000-4000-8000-000000000001\",\"legalEntityId\":\"00000000-0000-4000-8000-000000000002\",\"routeId\":\"00000000-0000-4000-8000-000000000011\",\"issuerId\":\"symmy-example\",\"sourceNamespace\":\"example-erp\",\"sourceSystem\":{\"ownerModuleId\":\"external.symmy\",\"sourceSystemRef\":\"symmy-example\"}}]}"
+      "ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED": "true"
     },
     "storefront": {
       "STOREFRONT_BRAND": "akros",

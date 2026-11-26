@@ -10,8 +10,6 @@ import {
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
   SYMMY_INGRESS_VARIABLE,
-  SYMMY_PRICE_READ_SOURCES_VARIABLE,
-  SYMMY_RETENTION_POLICIES_VARIABLE,
   SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
@@ -399,8 +397,6 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     let environmentCount = 0;
     let endpointCount = 0;
     let ingressCount = 0;
-    let retentionCount = 0;
-    let priceReadCount = 0;
     let sourceSyncCount = 0;
     let demoOnlyCount = 0;
     for (const [index] of zerops.entries()) {
@@ -429,18 +425,6 @@ it.effect('materializes every Zerops setup with the deploying environment named 
           source.setIn(ingress, '0');
           ingressCount += 1;
         }
-        const retention = [...environment, SYMMY_RETENTION_POLICIES_VARIABLE];
-        if (source.hasIn(retention)) {
-          expect(actual.hasIn(retention)).toBe(false);
-          source.deleteIn(retention);
-          retentionCount += 1;
-        }
-        const priceRead = [...environment, SYMMY_PRICE_READ_SOURCES_VARIABLE];
-        if (source.hasIn(priceRead)) {
-          expect(actual.hasIn(priceRead)).toBe(false);
-          source.deleteIn(priceRead);
-          priceReadCount += 1;
-        }
         for (const demoOnly of [DEMO_FIXTURES_ENABLED_VARIABLE, N1_STOREFRONT_ORIGIN_VARIABLE]) {
           const path = [...environment, demoOnly];
           if (source.hasIn(path)) {
@@ -461,8 +445,6 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     expect(environmentCount).toBeGreaterThan(0);
     expect(endpointCount).toBeGreaterThan(0);
     expect(ingressCount).toBeGreaterThan(0);
-    expect(retentionCount).toBeGreaterThan(0);
-    expect(priceReadCount).toBeGreaterThan(0);
     expect(sourceSyncCount).toBeGreaterThan(0);
     expect(demoOnlyCount).toBe(2);
     expect(Schema.decodeUnknownSync(Schema.Unknown)(actual.toJS())).toEqual(

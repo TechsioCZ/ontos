@@ -41,6 +41,7 @@ import {
   makeSymmyC14CustomerFixture as makeAssignmentFixture,
   observeCustomerFixtureUntil as observeAssignmentUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
+import { recordSymmyRetentionPolicies } from './support/symmy-route-data-fixture.mts';
 
 const commerceModuleId = 'commerce.customer-context';
 const commerceApp = 'commerce-customer-context';
@@ -73,7 +74,6 @@ const carrierEffectSchema = Schema.Struct({
   owner_receipt: Schema.Unknown,
   state: Schema.String,
 });
-const symmyApp = 'symmy-integration';
 const carrierCode = 'INTERNAL_C14_ASSIGNMENT_CARRIER';
 const priceGroupRecordId = 'INTERNAL_C14_EXPLICIT_GROUP';
 const carrierGroupRecordId = 'INTERNAL_C14_CARRIER_GROUP';
@@ -184,39 +184,18 @@ const enrollInternalPlanCarrier = Effect.fn('SymmyC14Assignment.carrier')(functi
   const policy = { policyId: 'INTERNAL_C14_ASSIGNMENT_CARRIER_RETENTION', revision: '1' };
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_code,route_revision,lifecycle_policy)
     values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuration)}::jsonb,${internalCustomerSource.mappingVersion},'customerGroupCustomersBatch',${carrierCode},${internalCustomerSource.routeRevision},${yield* json(policy)}::jsonb)`;
-  const existing = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Json)))(
-    fixture.environment.ONTOS_SYMMY_JOB_RETENTION_POLICIES,
-  );
-  const environment = {
-    ...fixture.environment,
-    ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-      ...existing,
-      {
-        ...policy,
-        governanceLegalEntityId: legalEntityId,
-        retentionMs: 60_000,
-        routeId,
-        targetLegalEntityId: legalEntityId,
-        tenantId,
-      },
-    ]),
-  };
-  const symmyRuntime = fixture.ownerRuntimes.get(symmyApp);
-  if (symmyRuntime === undefined) {
-    return yield* unavailable('The actual Symmy receiver is required');
-  }
-  yield* symmyRuntime.receiver.child.kill();
-  yield* symmyRuntime.receiver.child.exitCode;
-  const restarted = yield* startProductOwner({
-    artifacts: symmyRuntime.artifacts,
-    contract: symmyRuntime.contract,
-    environment,
-    moduleKey: symmyRuntime.moduleKey,
-    port: symmyRuntime.port,
-    prefix: '/symmy-integration-api',
-  });
-  fixture.ownerRuntimes.set(symmyApp, { ...symmyRuntime, receiver: restarted });
-  fixture.ownerDiagnostics.set(symmyApp, restarted.diagnostic);
+  // The carrier route's retention is route data the running Symmy owner reads per admission: no restart.
+  yield* recordSymmyRetentionPolicies(admin, [
+    {
+      ...policy,
+      governanceLegalEntityId: legalEntityId,
+      retentionMs: 60_000,
+      routeId,
+      targetLegalEntityId: legalEntityId,
+      tenantId,
+    },
+  ]);
+  const { environment } = fixture;
   const selectedCode = encodeSymmySourceSelector(
     {
       issuerId: sourceIdentity.issuer,

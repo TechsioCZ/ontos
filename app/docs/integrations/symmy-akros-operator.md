@@ -31,23 +31,11 @@ enrollments and the integration principal's workloads) is already in place on th
    `commercialScope` `{channelId: "B2C", marketId: <AKROS-CZ market id>, sellingLegalEntityId: <company id>}`,
    `currencyCode: "CZK"`, `priceGroupSelector: {"kind": "NO_GROUP"}`, `unitBasis` `{quantity: "1", unitRef: <ks>}`,
    plus `reason` and `verificationRef`. The answer is `{"outcome": "STORED"}`. One grant per exact key.
-7. **Stock route:** add one `stockScope` row to the `inventoryStockBatch` route request and re-enroll it:
-
-   ```json
-   {
-     "customerConfigurationId": "akros",
-     "issuerBackendId": "akros-erp",
-     "itemKey": "<ERP variant id>",
-     "locationKey": "AKROS-SKLAD-1",
-     "namespace": "akros-erp",
-     "scope": "akros",
-     "positionRef": "<position ref from step 3>"
-   }
-   ```
-
-   `pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json --replace <token>`, then
-   `apply … --operator <ref> --reason <text> --replace <token>`, then `verify --request route.json`. The change token
-   is in every receipt of the stored route. On the stage this change raised `routeRevision` from v1 to v2.
+7. **Stock route:** a tenant administrator re-enables the `inventoryStockBatch` route through
+   `integration.symmy.manage-symmy-routes` (`/symmy-integration/actions/manage-symmy-routes`, in the Akros company context):
+   one `enable` change with the route's `settings.inventorySource` and the `expectedChangeToken` that
+   `integration.symmy.api.symmy-company-routes` reports for the stored route. The Action refuses while the route has
+   outstanding work and records the administrator and reason with the change.
 
 8. **Price list price:** one more step 6 grant for each price of a list, per exact key: `mapping`
    `akros-symmy-price-lists-price` v1 and the list's price group as selector. Example (Akros stage),

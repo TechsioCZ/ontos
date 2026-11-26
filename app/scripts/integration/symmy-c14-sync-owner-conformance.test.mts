@@ -71,6 +71,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
+import { recordSymmyRetentionPolicies } from './support/symmy-route-data-fixture.mts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -461,7 +462,8 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
   };
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${groupRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(groupConfiguration))}::jsonb,${internalSyncSource.mappingVersion},'customerGroupsBatch',${internalSyncSource.routeRevision},${yield* json(groupPolicy)}::jsonb)`;
-  const lifecycle = yield* json([
+  // Each route's retention is route data, recorded once its route is enrolled.
+  const lifecycle = [
     {
       ...listPolicy,
       governanceLegalEntityId: legalEntityId,
@@ -494,8 +496,13 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
       targetLegalEntityId: null,
       tenantId,
     },
-  ]);
-  const ownerEnvironment = { ...environment, ONTOS_SYMMY_JOB_RETENTION_POLICIES: lifecycle };
+  ];
+  const recordRetentionOf = (...routeIds: readonly string[]) =>
+    recordSymmyRetentionPolicies(
+      admin,
+      lifecycle.filter(({ routeId }) => routeIds.includes(routeId)),
+    );
+  yield* recordRetentionOf(groupRouteId);
   const fs = yield* FileSystem.FileSystem;
   const faultDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_SYNC_ACK_' });
   const groupFaultMarker = `${faultDirectory}/group-committed-response-loss`;
@@ -536,7 +543,7 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
       artifacts: yield* buildProductOwner(contract),
       contract,
       environment: {
-        ...ownerEnvironment,
+        ...environment,
         ...faultByOwner.get(appId),
         ONTOS_C14_PROVISIONING_RESPONSE_LOSS_MARKER: provisioningFaultMarker,
       },
@@ -729,6 +736,7 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
   });
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${productRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(productEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'productsBatch',${internalSyncSource.routeRevision},${yield* json(productPolicy)}::jsonb)`;
+  yield* recordRetentionOf(stockRouteId, productRouteId);
   const early = yield* postStockRaw(stockBody([stockRevision2]), 'INTERNAL_C14_EARLY_STOCK');
   expect(early.status).toBe(503);
   const earlyProblem = yield* early.json.pipe(
@@ -755,6 +763,7 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
   const listEnrollment = yield* makeInternalSyncListEnrollment(stockLogicalRouteId);
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${priceListRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(listEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'priceListsBatchUpsert',${internalSyncSource.routeRevision},${yield* json(listPolicy)}::jsonb)`;
+  yield* recordRetentionOf(priceListRouteId);
   const configuredRoutes = admin`select route_id,fixture_plan,mapping_version,route_revision from symmy_integration.job_routes
           where tenant_id=${tenantId} and route_id in (${stockRouteId},${productRouteId},${priceListRouteId}) order by route_id`;
   const initialRoutes = yield* configuredRoutes;
@@ -793,7 +802,7 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
     const worker = yield* startProductWorker(
       workerArtifact,
       {
-        ...ownerEnvironment,
+        ...environment,
         ONTOS_C14_WORKER_CLAIM_OWNER: yield* nextId,
       },
       symmyModuleKey,
@@ -823,7 +832,7 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
           const restarted = yield* startProductWorker(
             workerArtifact,
             {
-              ...ownerEnvironment,
+              ...environment,
               ONTOS_C14_WORKER_CLAIM_OWNER: yield* nextId,
             },
             symmyModuleKey,

@@ -46,6 +46,7 @@ import {
   SymmyC14ProductFixtureUnavailable,
 } from './support/symmy-c14-product-runtime.mts';
 import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
+import { recordSymmyRetentionPolicies } from './support/symmy-route-data-fixture.mts';
 
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const planJson = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
@@ -185,26 +186,17 @@ it.live(
         const memberPolicy = { policyId: 'INTERNAL_C14_MEMBERSHIP_ASSIGN_RETENTION', revision: '1' };
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
     values(${groupRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* planJson(groupConfiguration)}::jsonb,${internalSyncSource.mappingVersion},'customerGroupsBatch',${internalSyncSource.routeRevision},${yield* json(groupPolicy)}::jsonb)`;
-        const existingPolicies = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Json)))(
-          fixture.environment.ONTOS_SYMMY_JOB_RETENTION_POLICIES,
-        );
-        const environment = {
-          ...fixture.environment,
-          ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-            ...existingPolicies,
-            ...[
-              { ...groupPolicy, routeId: groupRouteId },
-              { ...memberPolicy, routeId: memberRouteId },
-            ].map((policy) => ({
-              ...policy,
-              governanceLegalEntityId: legalEntityId,
-              retentionMs: 60_000,
-              targetLegalEntityId: legalEntityId,
-              tenantId,
-            })),
-          ]),
-        };
-        yield* restartOwner(fixture, 'symmy-integration', environment);
+        // Each route's retention is route data the running Symmy owner reads per admission, written once its route is.
+        const retentionOf = (policy: { readonly policyId: string; readonly revision: string }, routeId: string) => ({
+          ...policy,
+          governanceLegalEntityId: legalEntityId,
+          retentionMs: 60_000,
+          routeId,
+          targetLegalEntityId: legalEntityId,
+          tenantId,
+        });
+        yield* recordSymmyRetentionPolicies(admin, [retentionOf(groupPolicy, groupRouteId)]);
+        const { environment } = fixture;
         // The manual setup binds the human administrator's session, which then names the Group definition route reader:
         // the Shell reads each code's current definition as the API-key integration principal before it admits.
         const manual = yield* prepareManualMembershipNativeFixture(fixture);
@@ -366,6 +358,7 @@ it.live(
         });
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_code,route_revision,lifecycle_policy)
     values(${memberRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* planJson(memberConfiguration)}::jsonb,${internalSyncSource.mappingVersion},'customerGroupCustomersBatch',${selectedRouteCode},${internalSyncSource.routeRevision},${yield* json(memberPolicy)}::jsonb)`;
+        yield* recordSymmyRetentionPolicies(admin, [retentionOf(memberPolicy, memberRouteId)]);
         const selectorScope = {
           issuerId: groupSource.issuer,
           routeId: sourceRouteId,

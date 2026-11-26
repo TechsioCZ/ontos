@@ -30,14 +30,14 @@ test('the example config is valid, normalized and frozen', async () => {
 test('normalizes UUIDs and JSON policies', () => {
   const config = example();
   config.variables.shop.ONTOS_STOREFRONT_LEGAL_ENTITY_ID = '00000000-0000-4000-8000-00000000000A';
-  config.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES = JSON.stringify(
-    JSON.parse(config.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES),
+  config.variables.storefront.ONTOS_STOREFRONT_ERP_OFFERS = JSON.stringify(
+    JSON.parse(config.variables.storefront.ONTOS_STOREFRONT_ERP_OFFERS),
     null,
     2,
   );
   const normalized = validateStableConfig(config);
   assert.equal(normalized.variables.shop.ONTOS_STOREFRONT_LEGAL_ENTITY_ID, '00000000-0000-4000-8000-00000000000a');
-  assert.doesNotMatch(normalized.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES, /\n/u);
+  assert.doesNotMatch(normalized.variables.storefront.ONTOS_STOREFRONT_ERP_OFFERS, /\n/u);
 });
 
 test('the stable project is not the demo project', () => {
@@ -75,15 +75,6 @@ test('mail sender and account are explicit', () => {
   rejects((config) => delete config.variables.app.SMTP_FROM, 'variables.app');
   rejects((config) => (config.variables.app.SMTP_FROM = 'OntOS'), 'variables.app.SMTP_FROM');
   rejects((config) => (config.variables.app.CLOUDFLARE_EMAIL_ACCOUNT_ID = 'account'), 'variables.app.CLOUDFLARE_EMAIL_ACCOUNT_ID');
-});
-
-test('Symmy policies must be well-formed when stated', () => {
-  rejects((config) => (config.variables.app.ONTOS_SYMMY_JOB_RETENTION_POLICIES = '[]'), 'ONTOS_SYMMY_JOB_RETENTION_POLICIES');
-  rejects((config) => (config.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES = '{"schemaVersion":2,"routes":[]}'), 'ONTOS_SYMMY_PRICE_READ_SOURCES');
-  const config = example();
-  delete config.variables.app.ONTOS_SYMMY_JOB_RETENTION_POLICIES;
-  delete config.variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES;
-  assert.equal(validateStableConfig(config).variables.app.ONTOS_SYMMY_PRICE_READ_SOURCES, undefined);
 });
 
 test('takes no variable outside its setup allow-list and never echoes a value', () => {

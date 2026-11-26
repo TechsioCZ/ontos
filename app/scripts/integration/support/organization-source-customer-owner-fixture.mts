@@ -57,6 +57,7 @@ import {
   seedCustomerFixtureProviderPrincipal,
 } from './symmy-c14-customer-native-authority.mts';
 import { customerIntakeContext } from './symmy-c14-customer-rules.mts';
+import { recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 import {
   buildProductOwner,
   buildProductWorker,
@@ -544,6 +545,16 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     });
     const lifecyclePolicy = { policyId: 'INTERNAL_ORGANIZATION_SOURCE_RETENTION', revision: '1' };
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_code,route_revision,lifecycle_policy) values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuration)}::jsonb,${organizationSourceFixture.mappingRevision},'customerGroupCustomersBatch',${carrierCode},${organizationSourceFixture.routeRevision},${yield* json(lifecyclePolicy)}::jsonb)`;
+    yield* recordSymmyRetentionPolicies(admin, [
+      {
+        ...lifecyclePolicy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: Duration.toMillis(Duration.minutes(5)),
+        routeId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+    ]);
     const partyUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_DATABASE_URL')));
     const partyWorkerUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_WORKER_DATABASE_URL')));
     for (const url of [partyUrl, partyWorkerUrl]) {
@@ -564,16 +575,6 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         { ...sourceReference.source, authMethod: 'system', principalId: systemId, tenantId },
       ]),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-      ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-        {
-          ...lifecyclePolicy,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: Duration.toMillis(Duration.minutes(5)),
-          routeId,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        },
-      ]),
       PARTY_REGISTRY_DATABASE_URL: partyUrl.href,
       PARTY_REGISTRY_WORKER_DATABASE_URL: partyWorkerUrl.href,
     };

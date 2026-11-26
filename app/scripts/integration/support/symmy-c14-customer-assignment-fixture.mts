@@ -37,6 +37,7 @@ import {
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
 import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
+import { recordSymmyRetentionPolicies } from './symmy-route-data-fixture.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
@@ -457,6 +458,16 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const lifecyclePolicy = { policyId: 'INTERNAL_C14_CUSTOMER_RETENTION', revision: 'v1' };
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuredPlan)}::jsonb,${internalCustomerSource.mappingVersion},'customersBatch',${internalCustomerSource.routeRevision},${yield* json(lifecyclePolicy)}::jsonb)`;
+    yield* recordSymmyRetentionPolicies(admin, [
+      {
+        ...lifecyclePolicy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: Duration.toMillis(Duration.minutes(1)),
+        routeId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+    ]);
     const partyUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_DATABASE_URL')));
     partyUrl.pathname = `/${isolated.connections.runtime.database}`;
     partyUrl.hostname = isolated.connections.runtime.host;
@@ -481,16 +492,6 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
       )(privacy.contexts),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
-      ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
-        {
-          ...lifecyclePolicy,
-          governanceLegalEntityId: legalEntityId,
-          retentionMs: Duration.toMillis(Duration.minutes(1)),
-          routeId,
-          targetLegalEntityId: legalEntityId,
-          tenantId,
-        },
-      ]),
       PARTY_REGISTRY_DATABASE_URL: partyUrl.href,
       PARTY_REGISTRY_WORKER_DATABASE_URL: partyWorkerUrl.href,
     };

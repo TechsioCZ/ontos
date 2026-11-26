@@ -121,6 +121,7 @@ it.live(
           (route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${routeId},${tenantId},${integration.principalId},${sellerId},true,array[${fixtureId}],${yield* routePlan(source)}::jsonb,
             ${mappingVersion},${routeKey},${routeRevision},${yield* encodeJson(lifecyclePolicy)}::jsonb)`;
+        yield* runtime.recordRetention;
 
         const fs = yield* FileSystem.FileSystem;
         const faultDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_SELLER_VAT_' });
