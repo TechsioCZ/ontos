@@ -22,6 +22,7 @@ import {
 } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
+import { ErpVariantEditor } from '../../../../products-admin/erp-variant-editor.tsx';
 import { ProductEditDialog } from '../../../../products-admin/product-edit-dialog.tsx';
 import type { ProductListInput, VariantFiguresInput } from '../../../../products-admin/page-data.ts';
 import {
@@ -117,6 +118,7 @@ const PriceText = ({ cell }: { readonly cell: PriceCell }) => {
 const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
   const { t } = useModernI18n();
   const figures = useData(variantFiguresData, input);
+  const [editing, setEditing] = useState<string | null>(null);
   if (figures.state === 'pending') {
     return <StatusText status="default">{t(`${key}.variants.loading`)}</StatusText>;
   }
@@ -134,6 +136,7 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
           <Table.ColumnHeader>{t(`${key}.variants.lifecycle`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.variants.price`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.variants.stock`)}</Table.ColumnHeader>
+          <Table.ColumnHeader />
         </Table.Row>
       </Table.Header>
       <Table.Body>
@@ -151,6 +154,27 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
             </Table.Cell>
             <Table.Cell>
               <StockText cell={row.stock} />
+            </Table.Cell>
+            <Table.Cell>
+              {Option.isSome(input.offer) && (
+                <Button
+                  onClick={() => setEditing(row.variantId)}
+                  size="sm"
+                  theme="outlined"
+                  type="button"
+                  variant="secondary"
+                >
+                  Cena a sklad
+                </Button>
+              )}
+              {editing === row.variantId && Option.isSome(input.offer) && (
+                <ErpVariantEditor
+                  item={input.item}
+                  offer={input.offer.value}
+                  onClose={() => setEditing(null)}
+                  variantId={row.variantId}
+                />
+              )}
             </Table.Cell>
           </Table.Row>
         ))}

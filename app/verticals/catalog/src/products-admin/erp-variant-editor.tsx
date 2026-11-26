@@ -1,0 +1,404 @@
+// Staff dialog for one ERP Variant on Novinky z ERP: its Price (Pricing revise-price, value only, under the staff
+// source authority) and its stock on hand (Inventory). Each figure goes to its owner; the list reloads afterwards.
+import { executeCatalogVariantOnHandPage } from '@app/inventory/api/catalog-variant-on-hand-page-client';
+import { executeStockIssue } from '@app/inventory/api/stock-issue-action-client';
+import { executeStockReceipt } from '@app/inventory/api/stock-receipt-action-client';
+import { CatalogVariantOnHandPageRequestSchema } from '@app/inventory/api/catalog-variant-on-hand-page';
+import { executeCatalogPagePrices } from '@app/pricing-contracts/catalog-page-prices/client';
+import { CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
+import { GrantExternalPriceSourceAuthorityPayloadSchema } from '@app/pricing-contracts/grant-external-price-source-authority';
+import { executeGrantExternalPriceSourceAuthority } from '@app/pricing-contracts/grant-external-price-source-authority/client';
+import { executePriceSchedule } from '@app/pricing-contracts/price-schedule/client';
+import { RevisePricePayloadSchema } from '@app/pricing-contracts/revise-price';
+import { executeRevisePrice } from '@app/pricing-contracts/revise-price/client';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
+
+import type { ProductPageItem } from '../../shared/apis/product-page.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { freshUuid as newUuid, requestId as newRequestId } from './browser-crypto.ts';
+import type { ErpOffer } from './erp-offer.ts';
+import { variantFiguresData } from './page-data.ts';
+import { onHandRequestOf, pricesRequestOf } from './products-model.ts';
+
+const freshUuid = newUuid.pipe(Effect.mapError((failure) => `Nelze vytvořit identifikátor (${failure._tag})`));
+const requestId = newRequestId.pipe(Effect.mapError((failure) => `Nelze vytvořit identifikátor (${failure._tag})`));
+
+const staffSource = 'ontos-staff-erp-editor';
+const staffAuthority = { sourceAuthorityRef: staffSource, sourceAuthorityVersion: '1' } as const;
+const staffMapping = { mappingContractRef: staffSource, mappingContractVersion: '1' } as const;
+/** A fixed grant start, so a repeated grant for the same key is the same grant. */
+const grantFrom = '2020-01-01T00:00:00.000Z';
+
+interface Problem {
+  readonly _tag: string;
+}
+/** Inventory's Physical Stock Effect id: a UUID the caller mints, so a retried effect stays one effect. */
+const PhysicalStockEffectIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PhysicalStockEffectId'));
+
+/** Inventory's exact Stock Quantity amount; Inventory checks its canonical form when it decodes the payload. */
+const StockAmountSchema = Schema.String.pipe(Schema.brand('ExactStockQuantityAmount'));
+
+const ProblemCodeSchema = Schema.Struct({ code: Schema.String });
+
+/** The owner's problem tag and, when it names one, its code. */
+const describe = (step: string, problem: Problem): string => {
+  const code = Schema.decodeUnknownOption(ProblemCodeSchema)(problem);
+  const detail = Option.isSome(code) ? ` (${code.value.code})` : '';
+  return `${step}: ${problem._tag}${detail}`;
+};
+
+type Variant = ProductPageItem['variants'][number];
+
+/** One product holding only this Variant: the owner page reads then answer for it alone. */
+const single = (item: ProductPageItem, variant: Variant) => ({ ...item, variants: [variant] });
+
+type PageAnswer = Effect.Success<ReturnType<typeof executeCatalogPagePrices>>;
+type PageAnswerPrice = Extract<PageAnswer, { readonly _tag: 'CATALOG_PAGE_PRICED' }>['prices'][number];
+
+const foundOf = (price: PageAnswerPrice) =>
+  Match.valueTags(price, {
+    NO_APPLICABLE_PRICE: () => [],
+    PRICE_FOUND: (found) => [found],
+    PRICING_CONFIGURATION_ERROR: () => [],
+    PRICING_CONFLICT: () => [],
+    PRICING_INDETERMINATE: () => [],
+  });
+
+const foundPrices = (answer: PageAnswer) =>
+  Match.valueTags(answer, {
+    CATALOG_PAGE_PRICED: ({ prices }) => prices.flatMap(foundOf),
+    CURRENCY_SUPPORT_NOT_CURRENT: () => [],
+  });
+
+const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
+  Schema.decodeUnknownEffect(CatalogPagePricesRequestSchema)(pricesRequestOf(offer, single(item, variant))).pipe(
+    Effect.mapError((problem) => describe('Čtení ceny', problem)),
+    Effect.flatMap((request) =>
+      requestId.pipe(
+        Effect.flatMap((id) =>
+          executeCatalogPagePrices(request, id).pipe(Effect.mapError((problem) => describe('Čtení ceny', problem))),
+        ),
+      ),
+    ),
+    Effect.map((answer) => {
+      const [found] = foundPrices(answer);
+      return found;
+    }),
+  );
+
+const readStock = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
+  Schema.decodeUnknownEffect(CatalogVariantOnHandPageRequestSchema)(onHandRequestOf(offer, single(item, variant))).pipe(
+    Effect.mapError((problem) => describe('Čtení skladu', problem)),
+    Effect.flatMap((request) =>
+      requestId.pipe(
+        Effect.flatMap((id) =>
+          executeCatalogVariantOnHandPage(request, id).pipe(
+            Effect.mapError((problem) => describe('Čtení skladu', problem)),
+          ),
+        ),
+      ),
+    ),
+  );
+
+type PriceFound = NonNullable<Effect.Success<ReturnType<typeof readPrice>>>;
+type StockPage = Effect.Success<ReturnType<typeof readStock>>;
+
+/** Pricing's Current Revision of the Price, revised value-only under the staff source authority. */
+const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
+  found: PriceFound,
+  amount: string,
+  reason: string,
+) {
+  const id = yield* requestId;
+  const schedule = yield* executePriceSchedule({ priceRef: found.priceRef }, id).pipe(
+    Effect.mapError((problem) => describe('Rozvrh ceny', problem)),
+  );
+  if (schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+    return yield* Effect.fail(`Cena nemá platnou aktuální revizi (${schedule.outcome})`);
+  }
+  const { current } = schedule.schedule;
+  const { identityKey } = current.definition;
+  const grantKey = yield* freshUuid;
+  // A key granted before answers a conflict; the revision below is what decides.
+  const grantProblem = yield* Schema.decodeEffect(GrantExternalPriceSourceAuthorityPayloadSchema)({
+    authority: staffAuthority,
+    effectivePeriod: { effectiveFrom: grantFrom },
+    exactIdentityKey: identityKey,
+    mapping: staffMapping,
+    reason,
+    verificationRef: staffSource,
+  }).pipe(
+    Effect.flatMap((payload) => executeGrantExternalPriceSourceAuthority(payload, id, { idempotencyKey: grantKey })),
+    Effect.match({ onFailure: (problem) => describe('Oprávnění zdroje ceny', problem), onSuccess: () => '' }),
+  );
+  const now = DateTime.formatIso(yield* DateTime.now);
+  const [assertionId, version, revisionKey] = yield* Effect.all([freshUuid, freshUuid, freshUuid], { concurrency: 1 });
+  const monetaryAmount = { amount, currencyCode: identityKey.currencyCode };
+  const reviseId = yield* requestId;
+  const result = yield* Schema.decodeEffect(RevisePricePayloadSchema)({
+    expectedCurrent: {
+      effectivePeriod: current.effectivePeriod,
+      priceRef: found.priceRef,
+      revision: current.definition.revision.revision,
+      revisionId: current.definition.revision.revisionId,
+      scheduleRevision: schedule.schedule.scheduleRevision,
+    },
+    intent: 'VALUE_ONLY_CURRENT',
+    monetaryAmount,
+    priceRef: found.priceRef,
+    reason,
+    sourceAssertion: {
+      lineage: { kind: 'INITIAL' },
+      mapping: staffMapping,
+      originalAssertion: { monetaryAmount, monetaryBoundary: 'PRE_TAX', unitBasis: identityKey.unitBasis },
+      sourceAssertionId: assertionId,
+      sourceAuthority: staffAuthority,
+      sourceRecord: {
+        sourceChangeCorrelation: `ontos-admin:${version}`,
+        sourceRecordRef: found.priceRef.resourceId,
+        sourceRecordVersion: version,
+        sourceSystem: { ownerModuleId: 'commerce.catalog', sourceSystemRef: staffSource },
+      },
+      timing: { importedAt: now, ownerBusinessEffectiveAt: now, sourceEffectiveAt: now },
+    },
+  }).pipe(
+    Effect.flatMap((payload) => executeRevisePrice(payload, reviseId, { idempotencyKey: revisionKey })),
+    Effect.mapError((problem) =>
+      grantProblem === '' ? describe('Změna ceny', problem) : `${describe('Změna ceny', problem)}; ${grantProblem}`,
+    ),
+  );
+  return result;
+});
+
+const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
+/** A canonical decimal text: no leading zeros, no trailing fractional zeros; null when it is no decimal. */
+const canonical = (value: string): string | null => {
+  const trimmed = value.trim().replace(',', '.');
+  if (!decimalPattern.test(trimmed)) {
+    return null;
+  }
+  return trimmed.includes('.') ? trimmed.replace(/0+$/u, '').replace(/\.$/u, '') : trimmed;
+};
+
+/** Sets the on-hand figure of the Variant's one Position: a receipt or an issue of the difference (OntOS WMS). */
+const writeStock = Effect.fn('ErpVariantEditor.writeStock')(function* stock(
+  page: StockPage,
+  target: string,
+  offer: ErpOffer,
+  reason: string,
+) {
+  const [answer] = page.items;
+  if (answer === undefined || (answer.outcome !== 'ON_HAND' && answer.outcome !== 'ON_HAND_UNKNOWN')) {
+    return yield* Effect.fail(`Varianta nemá skladovou pozici (${answer?.outcome ?? 'bez odpovědi'})`);
+  }
+  if (page.backend.kind === 'external_business_system') {
+    return yield* Effect.fail(
+      'Sklad této varianty spravuje externí systém (ERP); OntOS ho přepíše jen import ze zdroje, ne ruční úprava',
+    );
+  }
+  const [position] = answer.positions;
+  const current = Match.valueTags(position.onHand, {
+    NOT_ESTABLISHED: () => 0,
+    OWNER_RECORDED: ({ quantity }) => Number(quantity.amount),
+    SOURCE_REPORTED: ({ quantity }) => Number(quantity.amount),
+  });
+  const delta = Number(target) - current;
+  if (delta === 0) {
+    return yield* Effect.void;
+  }
+  const amount = canonical(String(Math.abs(Math.round(delta * 1000) / 1000)));
+  const [effectId, key] = yield* Effect.all([freshUuid, freshUuid], { concurrency: 1 });
+  const [brandedEffectId, brandedAmount] = yield* Effect.all(
+    [Schema.decodeEffect(PhysicalStockEffectIdSchema)(effectId), Schema.decodeEffect(StockAmountSchema)(amount ?? '0')],
+    { concurrency: 1 },
+  ).pipe(Effect.mapError((problem) => describe('Změna skladu', problem)));
+  const decoded = {
+    customerConfigurationId: offer.customerConfigurationId,
+    effectId: brandedEffectId,
+    positionRef: position.positionRef,
+    quantity: { amount: brandedAmount, unitRef: answer.stockItem.unitRef },
+    reason: { code: delta > 0 ? 'STAFF_RECEIPT' : 'STAFF_ISSUE', reference: reason.slice(0, 300) },
+    stockItemRef: answer.stockItem.stockItemRef,
+  };
+  const id = yield* requestId;
+  return yield* delta > 0
+    ? executeStockReceipt(decoded, id, { idempotencyKey: key }).pipe(
+        Effect.mapError((problem) => describe('Příjem na sklad', problem)),
+      )
+    : executeStockIssue(decoded, id, { idempotencyKey: key }).pipe(
+        Effect.mapError((problem) => describe('Výdej ze skladu', problem)),
+      );
+});
+
+interface ErpVariantEditorProps {
+  readonly item: ProductPageItem;
+  readonly offer: ErpOffer;
+  readonly onClose: () => void;
+  readonly variantId: string;
+}
+
+interface Loaded {
+  readonly price: PriceFound | undefined;
+  readonly stock: StockPage;
+}
+
+export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariantEditorProps) => {
+  const variant = item.variants.find(({ variantRef }) => variantRef.resourceId === variantId);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [amount, setAmount] = useState('');
+  const [stock, setStock] = useState('');
+  const [reason, setReason] = useState('Úprava ceny a skladu v administraci');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  useEffect(() => {
+    if (variant === undefined) {
+      return;
+    }
+    browserRuntime.runFork(
+      Effect.all(
+        { price: readPrice(item, variant, offer), stock: readStock(item, variant, offer) },
+        { concurrency: 2 },
+      ).pipe(
+        Effect.match({
+          onFailure: (text: string) => setFailure(text),
+          onSuccess: (value) => {
+            setLoaded(value);
+            setAmount(value.price?.priceRevision.monetaryAmount.amount ?? '');
+            const [answer] = value.stock.items;
+            setStock(answer?.outcome === 'ON_HAND' ? answer.total.amount : '');
+          },
+        }),
+      ),
+    );
+  }, [item, offer, variant]);
+  const save = () => {
+    if (loaded === null || variant === undefined) {
+      return;
+    }
+    const why = reason.trim();
+    if (why === '') {
+      setFailure('Vyplňte důvod změny.');
+      return;
+    }
+    const nextAmount = canonical(amount);
+    const nextStock = canonical(stock);
+    const priceChanged =
+      loaded.price !== undefined &&
+      nextAmount !== null &&
+      nextAmount !== loaded.price.priceRevision.monetaryAmount.amount;
+    const [first] = loaded.stock.items;
+    const stockChanged = nextStock !== null && !(first?.outcome === 'ON_HAND' && first.total.amount === nextStock);
+    if ((amount.trim() !== '' && nextAmount === null) || (stock.trim() !== '' && nextStock === null)) {
+      setFailure('Cena i sklad musí být nezáporná čísla.');
+      return;
+    }
+    setBusy(true);
+    setFailure(null);
+    const steps = [
+      ...(priceChanged && loaded.price !== undefined && nextAmount !== null
+        ? [Effect.asVoid(revisePrice(loaded.price, nextAmount, why))]
+        : []),
+      ...(stockChanged ? [Effect.asVoid(writeStock(loaded.stock, nextStock, offer, why))] : []),
+    ];
+    browserRuntime.runFork(
+      Effect.forEach(steps, (step) => step, { concurrency: 1, discard: true }).pipe(
+        Effect.match({
+          onFailure: (text: string) => {
+            setBusy(false);
+            setFailure(`Uložení se nezdařilo – ${text}.`);
+            variantFiguresData.invalidate();
+          },
+          onSuccess: () => {
+            setBusy(false);
+            variantFiguresData.invalidate();
+            onClose();
+          },
+        }),
+      ),
+    );
+  };
+  const currency = loaded?.price?.priceRevision.monetaryAmount.currencyCode ?? offer.currencyCode;
+  return (
+    <Dialog
+      actions={
+        <div className="flex w-full flex-wrap justify-end gap-100">
+          <Button disabled={busy} onClick={onClose} theme="outlined" type="button" variant="secondary">
+            Zrušit
+          </Button>
+          <Button
+            disabled={loaded === null}
+            isLoading={busy}
+            loadingText="Ukládám…"
+            onClick={save}
+            type="button"
+            variant="primary"
+          >
+            Uložit
+          </Button>
+        </div>
+      }
+      closeLabel="Zavřít"
+      customTrigger
+      onOpenChange={({ open }) => {
+        if (!open && !busy) {
+          onClose();
+        }
+      }}
+      open
+      size="md"
+      title={`Cena a sklad: ${variant?.sku ?? variantId.slice(0, 8)}`}
+    >
+      <div className="flex flex-col gap-200">
+        {loaded === null && failure === null && <StatusText status="default">Načítám cenu a sklad…</StatusText>}
+        {loaded !== null && (
+          <>
+            {loaded.price === undefined ? (
+              <span className="text-fg-secondary text-sm">Varianta nemá v Cenách cenu pro tuto nabídku.</span>
+            ) : (
+              <label className="flex flex-col gap-50 text-sm" htmlFor="erp-variant-price">
+                <span className="font-medium">Cena bez DPH ({currency})</span>
+                <Input
+                  id="erp-variant-price"
+                  inputMode="decimal"
+                  onChange={(event) => setAmount(event.target.value)}
+                  size="sm"
+                  value={amount}
+                />
+              </label>
+            )}
+            <label className="flex flex-col gap-50 text-sm" htmlFor="erp-variant-stock">
+              <span className="font-medium">Skladem (ks)</span>
+              <Input
+                id="erp-variant-stock"
+                inputMode="decimal"
+                onChange={(event) => setStock(event.target.value)}
+                size="sm"
+                value={stock}
+              />
+            </label>
+            <label className="flex flex-col gap-50 text-sm" htmlFor="erp-variant-reason">
+              <span className="font-medium">Důvod změny</span>
+              <Input
+                id="erp-variant-reason"
+                maxLength={300}
+                onChange={(event) => setReason(event.target.value)}
+                size="sm"
+                value={reason}
+              />
+            </label>
+          </>
+        )}
+        {failure !== null && (
+          <StatusText showIcon status="error">
+            {failure}
+          </StatusText>
+        )}
+      </div>
+    </Dialog>
+  );
+};

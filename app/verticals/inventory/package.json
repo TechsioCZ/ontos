@@ -8,6 +8,8 @@
     "./api/client": "./src/api/inventory-client.ts",
     "./api/catalog-variant-on-hand-page": "./shared/apis/catalog-variant-on-hand-page.ts",
     "./api/catalog-variant-on-hand-page-client": "./src/api/catalog-variant-on-hand-page-client.ts",
+    "./api/stock-issue-action-client": "./src/api/stock-issue-action-client.ts",
+    "./api/stock-receipt-action-client": "./src/api/stock-receipt-action-client.ts",
     "./api/provision-source-stock-item-action": "./shared/apis/provision-source-stock-item-action.ts",
     "./api/source-stock-item-provisioning-receipt": "./shared/apis/source-stock-item-provisioning-receipt.ts",
     "./api/source-stock-position-resolution": "./shared/apis/source-stock-position-resolution.ts",
