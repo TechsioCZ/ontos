@@ -482,6 +482,9 @@ it.effect('leaves malformed comparison file records unknown rather than granting
       [{ filename: '' }],
       [{ filename: 'valid.ts' }, {}],
       [{ filename: 'new.ts', previous_filename: null }],
+      [{ filename: 'new.ts', status: 'renamed' }],
+      [{ filename: 'new.ts', previous_filename: '', status: 'renamed' }],
+      [{ filename: 'new.ts', previous_filename: null, status: 'renamed' }],
     ]) {
       const history = yield* readHistory({
         [COMPARE]: JSON.stringify({ files, status: 'identical' }),
@@ -489,6 +492,21 @@ it.effect('leaves malformed comparison file records unknown rather than granting
       });
       expect(history).toMatchObject({ comparison: null });
     }
+  }),
+);
+
+it.effect('retains both names when a renamed configuration makes unchanged files lint differently', () =>
+  Effect.gen(function* renamedConfiguration() {
+    const history = yield* readHistory({
+      [COMPARE]: JSON.stringify({
+        files: [{ filename: 'notes/old-config.txt', previous_filename: '.editorconfig', status: 'renamed' }],
+        status: 'ahead',
+      }),
+      [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+    });
+    expect(history).toMatchObject({
+      comparison: { changedPaths: ['.editorconfig', 'notes/old-config.txt'], truncated: false },
+    });
   }),
 );
 

@@ -76,6 +76,7 @@ if [[ "$mode" == comparison ]]; then
   comparison="$(gh api "$repository/compare/$base_sha...$GITHUB_SHA?per_page=1" \
     --jq 'if (.files | type == "array") and
       all(.files[]; type == "object" and (.filename | type == "string" and length > 0) and
+        (if .status == "renamed" then (.previous_filename | type == "string" and length > 0) else true end) and
         (if has("previous_filename") then (.previous_filename | type == "string" and length > 0) else true end))
       then . else error("unreadable comparison files") end'" | {base: \"$base_sha\", ancestor: (.status == \"ahead\" or .status == \"identical\"),
            changedPaths: ([.files[]? | .filename, (.previous_filename // empty)] | unique),
