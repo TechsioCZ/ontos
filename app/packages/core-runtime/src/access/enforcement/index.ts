@@ -70,7 +70,12 @@ export type {
   RevokeWorkloadBindingInput,
 } from '../workloads/store.ts';
 export { AccessWorkloadBindingSourceLive, makeDrizzleAccessWorkloadBindings } from '../workloads/bindings.ts';
-export { AccessWorkloadBindingStoreLive, makeAccessWorkloadBindingDrizzleStore } from '../workloads/binding-store.ts';
+export {
+  AccessWorkloadBindingStoreLive,
+  makeAccessWorkloadBindingDrizzleStore,
+  registerWorkloadBindingsIn,
+  revokeWorkloadBindingIn,
+} from '../workloads/binding-store.ts';
 export type {
   AccessWorkloadCompanyBinding,
   AccessWorkloadCompanyBindingStoreService,
@@ -87,6 +92,8 @@ export {
 export {
   AccessWorkloadCompanyBindingStoreLive,
   makeAccessWorkloadCompanyBindingDrizzleStore,
+  registerWorkloadCompanyBindingsIn,
+  revokeWorkloadCompanyBindingIn,
   writeWorkloadCompanyBindings,
 } from '../workloads/company-bindings.ts';
 export type { TestAccessDecision, TestAccessDecisionSpec, TestGateAnswer } from './testing.ts';
@@ -117,8 +124,11 @@ export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspect
 export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
 
 export { readScopedWorkloadEnrollment } from '../workloads/system-enrollment.ts';
+export { readSystemWorkloadEnrollmentHolders } from '../workloads/system-workload-enrollment.ts';
+export type { SystemWorkloadEnrollmentHolder } from '../workloads/system-workload-enrollment.ts';
 export { readWorkerWorkloadPrincipalEligibility } from '../../outbox/workload-principal-eligibility.ts';
 export { readActiveWorkloadBindingHolders } from '../workloads/binding-holders.ts';
+export { WorkloadKeySchema } from '../../authorization/access-declaration.ts';
 export type { WorkloadBindingHolder } from '../workloads/binding-holders.ts';
 
 export { computeActionRequestHash, computeCanonicalValueHash } from '../../actions/repository.ts';

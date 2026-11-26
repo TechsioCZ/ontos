@@ -99,6 +99,24 @@ export const registerWorkloadCompanyBindingsIn = (
     : Effect.fail(intentConflict(issue.code, issue.reason));
 };
 
+/** Ends one active company registration of the caller's scope inside the transaction the caller opened. */
+export const revokeWorkloadCompanyBindingIn = (
+  transaction: Pick<CoreTransaction, 'update'>,
+  scope: OperationalScope,
+  input: RevokeWorkloadCompanyBindingInput,
+): Effect.Effect<void, AccessIntentError> =>
+  transaction
+    .update(accessWorkloadCompanyBindings)
+    .set({ revokedAt: input.revokedAt, status: 'revoked' })
+    .where(
+      and(
+        eq(accessWorkloadCompanyBindings.tenantId, scope.tenantId),
+        eq(accessWorkloadCompanyBindings.companyBindingId, input.companyBindingId),
+        eq(accessWorkloadCompanyBindings.status, 'active'),
+      ),
+    )
+    .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
+
 /**
  * Registers active company registrations in the caller's own scope, refusing a command that names
  * another tenant or two companies for one binding. A bootstrap writer (the stage and local
