@@ -3,7 +3,7 @@
 // @ontos-action-slug end-external-stock-correlation
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import {
   EndExternalStockCorrelationErrorSchema,
@@ -15,8 +15,6 @@ import {
   ExternalStockCorrelationInstantSchema,
   ExternalStockTargetSchema,
   InventoryBackendOriginSchema,
-  // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Action composes the owner-local pure lifecycle with transaction-scoped persistence; expires: 2027-03-31.
-  makeExternalStockCorrelationLifecycle,
 } from '../../shared/domain/external-stock-correlation.ts';
 import type {
   ExternalStockCorrelationPersistence,
@@ -26,6 +24,7 @@ import { ExternalStockCorrelationRejected } from '../../shared/domain/external-s
 import { CustomerConfigurationIdSchema } from '../../shared/inventory-launch-scope.ts';
 import { ExternalStockCorrelationRefSchema } from '../../shared/resources/external-stock-correlation.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';
+import { ExternalStockCorrelationLifecycle } from '../services/external-stock-correlation-lifecycle.service.ts';
 
 export {
   EndExternalStockCorrelationErrorSchema,
@@ -96,12 +95,19 @@ export const handleEndExternalStockCorrelation = Effect.fn('EndExternalStockCorr
   if (current.lifecycle !== 'CURRENT') {
     return yield* reject('CORRELATION_NOT_CURRENT', payload.correlationRef);
   }
-  const correlation = yield* makeExternalStockCorrelationLifecycle(context.services, {
-    makeCorrelationId: () => payload.correlationRef.resourceId,
-  }).end({
-    endedAt: payload.endedAt,
-    externalKey: payload.externalKey,
-  });
+  const correlation = yield* Layer.build(
+    ExternalStockCorrelationLifecycle.layer(context.services, {
+      makeCorrelationId: () => payload.correlationRef.resourceId,
+    }),
+  ).pipe(
+    Effect.flatMap((services) =>
+      Context.get(services, ExternalStockCorrelationLifecycle).end({
+        endedAt: payload.endedAt,
+        externalKey: payload.externalKey,
+      }),
+    ),
+    Effect.scoped,
+  );
   if (
     correlation.correlationRef.tenantId !== payload.correlationRef.tenantId ||
     correlation.correlationRef.resourceId !== payload.correlationRef.resourceId

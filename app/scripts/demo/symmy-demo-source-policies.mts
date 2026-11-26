@@ -32,7 +32,7 @@ import { coreRelations } from '../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { DefineSourceProvisioningPolicyPayloadSchema } from '../../verticals/inventory/shared/actions/define-source-provisioning-policy.ts';
-import { ExternalStockCorrelationLifecycle } from '../../verticals/inventory/shared/domain/external-stock-correlation.ts';
+import { ExternalStockCorrelationLifecycle } from '../../verticals/inventory/src/services/external-stock-correlation-lifecycle.service.ts';
 import type { ExternalStockCorrelationPersistence } from '../../verticals/inventory/shared/domain/external-stock-correlation.ts';
 import type { SourceProvisioningCorrelationEstablishment } from '../../verticals/inventory/src/services/source-provisioning.service.ts';
 import { externalStockCorrelationPersistenceForScope } from '../../verticals/inventory/src/persistence/external-stock-correlation-repository.ts';

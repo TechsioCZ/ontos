@@ -5,11 +5,9 @@ import {
   AmbiguousExternalStockCorrelationSchema,
   ExternalStockCorrelationSchema,
   EstablishExternalStockCorrelationInputSchema,
-  ExternalStockCorrelationLifecycle,
   ExternalStockItemTargetSchema,
   ExternalStockKeySchema,
   ExternalStockTargetSchema,
-  makeExternalStockCorrelationLifecycle,
   makeExternalStockCorrelationResolver,
   ResolvedExternalStockCorrelationSchema,
   UnresolvedExternalStockCorrelationSchema,
@@ -20,6 +18,7 @@ import type {
   ExternalStockKey,
 } from '../../shared/domain/external-stock-correlation.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
+import { ExternalStockCorrelationLifecycle } from '../../src/services/external-stock-correlation-lifecycle.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const itemId = '22222222-2222-4222-8222-222222222222';
@@ -358,7 +357,7 @@ describe('Inventory External Stock Correlation lifecycle', () => {
     Effect.gen(function* correctExternalMeaning() {
       const { persistence } = yield* makeMemoryPersistence([correlation()]);
       const ids = ['55555555-5555-4555-8555-555555555555'];
-      const lifecycle = makeExternalStockCorrelationLifecycle(persistence, {
+      const layer = ExternalStockCorrelationLifecycle.layer(persistence, {
         makeCorrelationId: () => ids.shift() ?? '77777777-7777-4777-8777-777777777777',
       });
       const replacementTarget = Schema.decodeUnknownSync(ExternalStockTargetSchema)({
@@ -369,12 +368,17 @@ describe('Inventory External Stock Correlation lifecycle', () => {
         },
       });
 
-      const replacement = yield* lifecycle.correct({
-        correctedAt: correctionInstant,
-        externalKey: itemKey,
-        ownerEvidenceRef: 'erp-a:correlation-proof:2',
-        target: replacementTarget,
-      });
+      const replacement = yield* ExternalStockCorrelationLifecycle.pipe(
+        Effect.flatMap((lifecycle) =>
+          lifecycle.correct({
+            correctedAt: correctionInstant,
+            externalKey: itemKey,
+            ownerEvidenceRef: 'erp-a:correlation-proof:2',
+            target: replacementTarget,
+          }),
+        ),
+        Effect.provide(layer),
+      );
       const historical = yield* persistence.findEffective(itemKey, currentInstant);
       const current = yield* persistence.findEffective(itemKey, correctionInstant);
 
@@ -394,11 +398,14 @@ describe('Inventory External Stock Correlation lifecycle', () => {
   it.effect('ends a correlation without deleting its historical meaning', () =>
     Effect.gen(function* endCorrelation() {
       const { persistence } = yield* makeMemoryPersistence([correlation()]);
-      const lifecycle = makeExternalStockCorrelationLifecycle(persistence, {
+      const layer = ExternalStockCorrelationLifecycle.layer(persistence, {
         makeCorrelationId: () => '55555555-5555-4555-8555-555555555555',
       });
 
-      const ended = yield* lifecycle.end({ endedAt: endInstant, externalKey: itemKey });
+      const ended = yield* ExternalStockCorrelationLifecycle.pipe(
+        Effect.flatMap((lifecycle) => lifecycle.end({ endedAt: endInstant, externalKey: itemKey })),
+        Effect.provide(layer),
+      );
 
       expect(ended.lifecycle).toBe('ENDED');
       expect(Schema.is(ExternalStockItemTargetSchema)(ended.target)).toBe(true);

@@ -17,10 +17,8 @@ import type {
   CatalogToStockBinding,
   CatalogToStockBindingPersistence,
 } from '../../shared/domain/catalog-to-stock-binding.ts';
-import {
-  ExternalStockCorrelationSchema,
-  makeExternalStockCorrelationLifecycle,
-} from '../../shared/domain/external-stock-correlation.ts';
+import { ExternalStockCorrelationSchema } from '../../shared/domain/external-stock-correlation.ts';
+import { ExternalStockCorrelationLifecycle } from '../../src/services/external-stock-correlation-lifecycle.service.ts';
 import type {
   ExternalStockCorrelation,
   ExternalStockCorrelationPersistence,
@@ -271,9 +269,14 @@ const makeOwnerState = (selected: InventoryBackendConfiguration = configuration(
     current: correlationPersistence,
     lifecycle: {
       establish: ({ correlationResourceId, input }) =>
-        makeExternalStockCorrelationLifecycle(correlationPersistence, {
-          makeCorrelationId: () => correlationResourceId,
-        }).establish(input),
+        ExternalStockCorrelationLifecycle.pipe(
+          Effect.flatMap((lifecycle) => lifecycle.establish(input)),
+          Effect.provide(
+            ExternalStockCorrelationLifecycle.layer(correlationPersistence, {
+              makeCorrelationId: () => correlationResourceId,
+            }),
+          ),
+        ),
     },
   };
   const bindingPersistence: CatalogToStockBindingPersistence = {

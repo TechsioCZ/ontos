@@ -3,7 +3,7 @@
 // @ontos-action-slug define-source-provisioning-policy
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 
 import {
   DefineSourceProvisioningPolicyErrorSchema,
@@ -11,12 +11,12 @@ import {
   DefineSourceProvisioningPolicyResultSchema,
 } from '../../shared/actions/define-source-provisioning-policy.ts';
 import type { DefineSourceProvisioningPolicyPayload } from '../../shared/actions/define-source-provisioning-policy.ts';
-import { makeExternalStockCorrelationLifecycle } from '../../shared/domain/external-stock-correlation.ts';
 import { SourceProvisioningPolicySchema } from '../../shared/domain/source-provisioning.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import { sourceProvisioningPolicyPersistenceForScope } from '../persistence/source-provisioning-repository.ts';
 import { stockLocationPersistenceForScope } from '../persistence/stock-location-repository.ts';
+import { ExternalStockCorrelationLifecycle } from '../services/external-stock-correlation-lifecycle.service.ts';
 import { recordSourceProvisioningPolicy } from '../services/source-provisioning.service.ts';
 import type { SourceProvisioningPolicyPorts } from '../services/source-provisioning.service.ts';
 
@@ -101,9 +101,14 @@ export const defineSourceProvisioningPolicyAction = defineAction(
         current: correlations,
         lifecycle: {
           establish: ({ correlationResourceId, input }) =>
-            makeExternalStockCorrelationLifecycle(correlations, {
-              makeCorrelationId: () => correlationResourceId,
-            }).establish(input),
+            Layer.build(
+              ExternalStockCorrelationLifecycle.layer(correlations, {
+                makeCorrelationId: () => correlationResourceId,
+              }),
+            ).pipe(
+              Effect.flatMap((services) => Context.get(services, ExternalStockCorrelationLifecycle).establish(input)),
+              Effect.scoped,
+            ),
         },
       },
       locations: stockLocationPersistenceForScope(transaction, scope),

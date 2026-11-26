@@ -3,7 +3,7 @@
 // @ontos-action-slug establish-external-stock-correlation
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 
 import {
   EstablishExternalStockCorrelationErrorSchema,
@@ -15,14 +15,13 @@ import {
   ExternalStockCorrelationInstantSchema,
   ExternalStockTargetSchema,
   InventoryBackendOriginSchema,
-  // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Action composes the owner-local pure lifecycle with transaction-scoped persistence; expires: 2027-03-31.
-  makeExternalStockCorrelationLifecycle,
 } from '../../shared/domain/external-stock-correlation.ts';
 import type { ExternalStockCorrelationPersistence } from '../../shared/domain/external-stock-correlation.ts';
 import { ExternalStockCorrelationRejected } from '../../shared/domain/external-stock-correlation-rejected.ts';
 import { CustomerConfigurationIdSchema } from '../../shared/inventory-launch-scope.ts';
 import { ExternalStockCorrelationRefSchema } from '../../shared/resources/external-stock-correlation.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';
+import { ExternalStockCorrelationLifecycle } from '../services/external-stock-correlation-lifecycle.service.ts';
 
 export {
   EstablishExternalStockCorrelationErrorSchema,
@@ -62,14 +61,21 @@ export const handleEstablishExternalStockCorrelation = Effect.fn('EstablishExter
         reason: 'TENANT_SCOPE_MISMATCH',
       });
     }
-    const correlation = yield* makeExternalStockCorrelationLifecycle(context.services, {
-      makeCorrelationId: () => payload.correlationRef.resourceId,
-    }).establish({
-      effectiveFrom: payload.effectiveFrom,
-      externalKey: payload.externalKey,
-      ownerEvidenceRef: payload.ownerEvidenceRef,
-      target: payload.target,
-    });
+    const correlation = yield* Layer.build(
+      ExternalStockCorrelationLifecycle.layer(context.services, {
+        makeCorrelationId: () => payload.correlationRef.resourceId,
+      }),
+    ).pipe(
+      Effect.flatMap((services) =>
+        Context.get(services, ExternalStockCorrelationLifecycle).establish({
+          effectiveFrom: payload.effectiveFrom,
+          externalKey: payload.externalKey,
+          ownerEvidenceRef: payload.ownerEvidenceRef,
+          target: payload.target,
+        }),
+      ),
+      Effect.scoped,
+    );
     if (
       correlation.correlationRef.tenantId !== payload.correlationRef.tenantId ||
       correlation.correlationRef.resourceId !== payload.correlationRef.resourceId

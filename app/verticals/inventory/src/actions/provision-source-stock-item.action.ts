@@ -3,7 +3,7 @@
 // @ontos-action-slug provision-source-stock-item
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import {
   ProvisionSourceStockItemErrorSchema,
@@ -11,7 +11,6 @@ import {
 } from '../../shared/actions/provision-source-stock-item.ts';
 import type { ProvisionSourceStockItemPayload } from '../../shared/domain/source-provisioning.ts';
 import { makeCatalogToStockBindingLifecycle } from '../../shared/domain/catalog-to-stock-binding.ts';
-import { makeExternalStockCorrelationLifecycle } from '../../shared/domain/external-stock-correlation.ts';
 import {
   ProvisionSourceStockItemPayloadSchema,
   SourceStockItemProvisioningInvocationIdSchema,
@@ -28,6 +27,7 @@ import {
 } from '../persistence/source-provisioning-repository.ts';
 import { makeDrizzleStockItemRepository } from '../persistence/stock-item-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
+import { ExternalStockCorrelationLifecycle } from '../services/external-stock-correlation-lifecycle.service.ts';
 import { provisionSourceStockItem } from '../services/source-provisioning.service.ts';
 import type { SourceStockItemProvisioningPorts } from '../services/source-provisioning.service.ts';
 
@@ -137,9 +137,14 @@ export const provisionSourceStockItemAction = defineAction(
         current: correlations,
         lifecycle: {
           establish: ({ correlationResourceId, input }) =>
-            makeExternalStockCorrelationLifecycle(correlations, {
-              makeCorrelationId: () => correlationResourceId,
-            }).establish(input),
+            Layer.build(
+              ExternalStockCorrelationLifecycle.layer(correlations, {
+                makeCorrelationId: () => correlationResourceId,
+              }),
+            ).pipe(
+              Effect.flatMap((services) => Context.get(services, ExternalStockCorrelationLifecycle).establish(input)),
+              Effect.scoped,
+            ),
         },
       },
       policies: sourceProvisioningPolicyPersistenceForScope(transaction, scope),

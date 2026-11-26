@@ -65,10 +65,8 @@ import {
   SourceStockPositionResolutionRequestSchema,
   SourceStockPositionResolutionResponseSchema,
 } from '../../shared/apis/source-stock-position-resolution.ts';
-import {
-  ExternalStockKeySchema,
-  makeExternalStockCorrelationLifecycle,
-} from '../../shared/domain/external-stock-correlation.ts';
+import { ExternalStockKeySchema } from '../../shared/domain/external-stock-correlation.ts';
+import { ExternalStockCorrelationLifecycle } from '../../src/services/external-stock-correlation-lifecycle.service.ts';
 import { SourceStockItemProvisioningReceiptResponseSchema } from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
 import {
   ProvisionSourceStockItemPayloadSchema,
@@ -754,14 +752,21 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     const correlationId = yield* nextId;
     yield* fixture
       .prepareOwner((transaction, scope) =>
-        makeExternalStockCorrelationLifecycle(externalStockCorrelationPersistenceForScope(transaction, scope), {
-          makeCorrelationId: () => correlationId,
-        }).establish({
-          effectiveFrom: defined.policy.effectiveFrom,
-          externalKey: lateKey,
-          ownerEvidenceRef: 'annex',
-          target: { _tag: 'STOCK_LOCATION', ref: late.ref },
-        }),
+        ExternalStockCorrelationLifecycle.pipe(
+          Effect.flatMap((lifecycle) =>
+            lifecycle.establish({
+              effectiveFrom: defined.policy.effectiveFrom,
+              externalKey: lateKey,
+              ownerEvidenceRef: 'annex',
+              target: { _tag: 'STOCK_LOCATION', ref: late.ref },
+            }),
+          ),
+          Effect.provide(
+            ExternalStockCorrelationLifecycle.layer(externalStockCorrelationPersistenceForScope(transaction, scope), {
+              makeCorrelationId: () => correlationId,
+            }),
+          ),
+        ),
       )
       .pipe(Effect.provide(ownerRuntimeLayer));
     const beforeExpansion = yield* observe();
