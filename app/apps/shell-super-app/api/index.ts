@@ -108,6 +108,7 @@ import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principa
 import {
   assetByteSourceRead,
   assetDownloadRead,
+  checkConfirmedBytes,
   confirmAssetAction,
   confirmAssetRequest,
   confirmReservedUpload,
@@ -2807,8 +2808,15 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
       if (Option.isNone(offered)) {
         return yield* failIdentityProblem(shellCapabilityUnavailableProblem());
       }
-      // HEAD falls back to this GET route: it is its own decision too, but it reads no provider byte and drops no stream.
+      // HEAD falls back to this GET route: it is its own decision too. It stats the stored object and reads no byte,
+      // so it never answers success for an object GET would refuse before its first byte.
       if (request.method === 'HEAD') {
+        yield* checkConfirmedBytes(offered.value).pipe(
+          Effect.catchTags({
+            MediaNotReady: () => failIdentityProblem(shellPolicyConflictProblem()),
+            MediaUnavailable: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
+          }),
+        );
         return HttpServerResponse.empty({ headers: downloadResponseHeaders(authorization) });
       }
       const download = yield* streamConfirmedBytes(offered.value, authorization).pipe(

@@ -338,6 +338,26 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
   return outcome;
 });
 
+/**
+ * The refusals that need no byte: the row, the provider identity and the provider's declared length against the
+ * recorded one. It opens no body.
+ */
+export const statRecordedObject = Effect.fn('MediaVerifiedRead.statRecorded')(function* statRecordedObject(
+  asset: MediaVerifiableAsset,
+) {
+  const recorded = yield* recordedIdentityOf(asset);
+  const storage = yield* ObjectStorage;
+  if (storage.providerId !== asset.storageProvider) {
+    return yield* interrupted({ outcome: 'unavailable', reason: 'provider_mismatch' });
+  }
+  const stat = yield* storage.stat(recorded.storageKey).pipe(Effect.mapError(providerInterruption));
+  const refusal = statRefusalOf(stat, recorded);
+  if (refusal !== undefined) {
+    return yield* interrupted({ outcome: 'inconsistent_metadata', reason: refusal });
+  }
+  return { recorded, stat };
+});
+
 /** What a stat of a ready asset's stored object found: no byte was read, so nothing here proves corruption. */
 export type MediaStatOutcome =
   | Exclude<MediaUnverifiedRead, { readonly outcome: 'integrity_failed' }>
@@ -354,16 +374,7 @@ export const statReadyMediaAsset = Effect.fn('MediaVerifiedRead.stat')(function*
   asset: MediaVerifiableAsset,
 ) {
   const check = Effect.gen(function* check() {
-    const recorded = yield* recordedIdentityOf(asset);
-    const storage = yield* ObjectStorage;
-    if (storage.providerId !== asset.storageProvider) {
-      return yield* interrupted({ outcome: 'unavailable', reason: 'provider_mismatch' });
-    }
-    const stat = yield* storage.stat(recorded.storageKey).pipe(Effect.mapError(providerInterruption));
-    const refusal = statRefusalOf(stat, recorded);
-    if (refusal !== undefined) {
-      return yield* interrupted({ outcome: 'inconsistent_metadata', reason: refusal });
-    }
+    const { recorded, stat } = yield* statRecordedObject(asset);
     // A pin that was recorded must still be the provider's: another one is another stored object.
     if (recorded.versionRef !== undefined && stat.versionRef !== recorded.versionRef) {
       return yield* interrupted({ outcome: 'inconsistent_metadata', reason: 'object_replaced' });
