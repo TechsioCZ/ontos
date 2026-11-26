@@ -133,6 +133,7 @@ it.live(
         const observedPartyCitations: unknown[] = [];
         const observedPrivacyRequirements = new Set<string>();
         const observedPartyRequirements = new Set<string>();
+        const now = DateTime.formatIso(yield* DateTime.now);
         // INTERNAL_CONTRACT: Party and Privacy prove their own receivers separately; this fixture
         // provides exact current decisions to exercise Commerce's actual transactional owner boundary.
         const ordinary = Layer.mergeAll(
@@ -258,7 +259,38 @@ it.live(
                       reason: 'Internal current protected-material decision',
                     }),
                   )
-                : Effect.void;
+                : Effect.succeed({
+                    authorityIncarnation: 'internal-current-protected-material',
+                    authorityRevision: '1',
+                    evaluatedAt: now,
+                    evidence: {
+                      authoritativeReferences: [],
+                      currentnessConditions: [],
+                      evaluatedScope: {
+                        controllerRef: fixture.legalEntityId,
+                        dataCategoryRefs: ['customer-profile'],
+                        operation: input.operation,
+                        processingScopeRef: {
+                          scopeId: operationRequirementKey,
+                          scopeType: 'privacy.processing-scope',
+                        },
+                        purposeRef: 'customer-profile-source',
+                        purposeVersionId: '1',
+                        recipientRefs: [],
+                        subjectRef: {
+                          moduleId: 'privacy.core',
+                          resourceId: partyId,
+                          resourceType: 'privacy.core.privacy-subject',
+                          tenantId: fixture.tenantId,
+                        },
+                      },
+                      outcome: 'ALLOWED',
+                      policyRevisions: [],
+                      reasonCodes: ['internal-current-protected-material'],
+                      trustedDecisionTime: now,
+                    },
+                    outcome: 'ALLOWED',
+                  } as const);
             },
           }),
           profileReactivationEligibilityEvaluatorFactoryLive,
@@ -266,7 +298,6 @@ it.live(
         ).pipe(Layer.provideMerge(ContextAccessLive), Layer.provide(profileReconfirmationPolicyUnavailableLive));
         const context = yield* Layer.build(ordinary.pipe(Layer.provideMerge(fixture.layer)));
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-        const now = DateTime.formatIso(yield* DateTime.now);
         const source = {
           effectId: 'profile-effect-1',
           issuer: 'internal-ebs',
@@ -579,7 +610,7 @@ it.live(
           code: 'read_handler_unavailable',
         });
         expect(yield* Effect.flip(read({ ...authority, effectId: source.effectId, mode: 'RECEIPT' }))).toMatchObject({
-          code: 'read_handler_unavailable',
+          code: 'read_permission_denied',
         });
         expect(yield* Effect.flip(ensure())).toMatchObject({ code: 'PRIVACY_DENIED' });
         expect(privacyChecks).toBeGreaterThan(callsBefore);
