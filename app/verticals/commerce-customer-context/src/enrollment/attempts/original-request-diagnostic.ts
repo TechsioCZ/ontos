@@ -1,6 +1,6 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import type { ActionRuntime, TrustedPrincipalContext } from '@app/core-runtime';
-import { computeActionRequestHash } from '@app/core-runtime/actions/runtime-wiring';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Context, Effect, Schema } from 'effect';
 
 import { StartPortalEnrollmentPayloadSchema } from '../../../shared/actions/start-portal-enrollment.ts';

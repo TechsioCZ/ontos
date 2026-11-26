@@ -72,5 +72,5 @@ export type {
   ActionAuthorityService,
   ScopedActionAuthority,
 } from '../permissions/action-authority.ts';
-export { ActionRepositoryLive, computeActionRequestHash } from './repository.ts';
+export { ActionRepositoryLive } from './repository.ts';
 export type { ActionPermissionService } from '../permissions/service.ts';

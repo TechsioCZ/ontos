@@ -4,7 +4,7 @@ import {
   scopedRoutineInvokerFromTransaction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import { computeActionRequestHash } from '@app/core-runtime/actions/runtime-wiring';
+import { computeActionRequestHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
