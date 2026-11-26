@@ -295,6 +295,28 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
+      'row 4: a byte PUT replayed on a ready asset is decided again: after the real revoke it is refused',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* revokedReplay() {
+              const uploader = person(world, 'uploader');
+              const grant = yield* world.grant(uploader, uploaderCapabilities);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('a replay is a request of its own');
+              const id = yield* readyAsset(world, edge, bytes, 'replay-1');
+              const sealed = yield* rowOf(world, id);
+
+              expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
+              yield* world.revoke(grant.incarnationId);
+              expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(403);
+              expect(yield* rowOf(world, id)).toEqual(sealed);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
       'row 4: SpiceDB UNAVAILABLE keeps both the metadata and the bytes back and changes nothing (CONTROLLED FAULT INJECTION: engine partition)',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>

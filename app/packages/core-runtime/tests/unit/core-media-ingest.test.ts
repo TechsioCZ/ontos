@@ -4,10 +4,11 @@ import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import type { MediaByteSourceOffer } from '../../src/media/byte-source-contract.ts';
-import { MediaIngestUncertain, MediaIntegrityFailed } from '../../src/media/errors.ts';
+import { MediaForbidden, MediaIngestUncertain, MediaIntegrityFailed } from '../../src/media/errors.ts';
 import { confirmAssetRequest, ingestMediaBytes, parseContentLength } from '../../src/media/ingest.ts';
 import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { ObjectStorage, ObjectStorageNetworkError } from '../../src/media/object-storage.ts';
+import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import type { ConfirmAssetResultSchema } from '../../src/media/upload-contract.ts';
 import type { MediaStoredObjectVerification } from '../../src/media/verification.ts';
@@ -72,6 +73,13 @@ const confirmOutcome = (
 const lengthOf = (stated: number | 'absent' | undefined): number | undefined =>
   stated === 'absent' ? undefined : (stated ?? content.byteLength);
 
+const sealedContent = Schema.decodeUnknownSync(
+  Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema }),
+)({ byteSize: content.byteLength, contentSha256: digestOf(content) });
+
+/** What the real confirm Action answers for a row that is already sealed: it follows the row, whatever the evidence. */
+const followsSealedRow = Effect.succeed<ConfirmResult>({ ...sealedContent, mediaAssetRef, processingStatus: 'ready' });
+
 const setup = Effect.fn('IngestTest.setup')(function* setup() {
   const storage = yield* makeInMemoryObjectStorage();
   const confirms = yield* Ref.make<readonly MediaStoredObjectVerification['outcome'][]>([]);
@@ -87,6 +95,8 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
       readonly body?: Stream.Stream<Uint8Array, unknown>;
       readonly contentLength?: number | 'absent';
       readonly principalId?: string;
+      /** The decision for a sealed row; a refusal stands for a caller without the confirm capability. */
+      readonly sealedDecision?: Effect.Effect<ConfirmResult, MediaForbidden>;
       readonly selectedLegalEntityId?: string | undefined;
       readonly storageOverride?: typeof storage.service;
     } = {},
@@ -94,7 +104,12 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
     ingestMediaBytes({
       asset: options.asset ?? reserved(),
       body: options.body ?? pieces(content),
-      confirm,
+      confirm: (verification) =>
+        options.asset?.processingStatus === 'ready'
+          ? Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(
+              Effect.andThen(options.sealedDecision ?? followsSealedRow),
+            )
+          : confirm(verification),
       contentLength: lengthOf(options.contentLength),
       mediaAssetRef,
       principalId: options.principalId ?? reserving,
@@ -283,9 +298,9 @@ it.effect('answers a replay of the same bytes with the sealed identity and no se
     const sealed = reserved({ processingStatus: 'ready', sealedAt });
     const result = yield* ingest({ asset: sealed });
     expect(result).toMatchObject({ contentSha256: digestOf(content), processingStatus: 'ready' });
-    // The body was compared, nothing was written or read from the provider, and no confirm ran.
+    // The body was compared and nothing was written or read from the provider; the one effect is the decision.
     expect(yield* callsOf).toEqual([]);
-    expect(yield* confirms).toEqual([]);
+    expect(yield* confirms).toEqual(['unverifiable']);
   }),
 );
 
@@ -337,7 +352,25 @@ it.effect('never writes for a sealed, failed or scanning asset, even for the pri
       'MediaNotReady',
     );
     expect(yield* callsOf).toEqual([]);
-    expect(yield* confirms).toEqual([]);
+    // Only the sealed asset asked for a decision; nothing was verified or written.
+    expect(yield* confirms).toEqual(['unverifiable']);
+  }),
+);
+
+it.effect('decides a replay on a sealed asset again: without the confirm capability no body byte is read', () =>
+  Effect.gen(function* deniedReplay() {
+    const { callsOf, ingest } = yield* setup();
+    const pulled = yield* Ref.make(0);
+    const exit = yield* Effect.exit(
+      ingest({
+        asset: reserved({ processingStatus: 'ready', sealedAt }),
+        body: pieces(content).pipe(Stream.tap(() => Ref.update(pulled, (count) => count + 1))),
+        sealedDecision: Effect.fail(new MediaForbidden({ code: 'media_forbidden', reason: 'revoked' })),
+      }),
+    );
+    expect(failureTag(exit)).toBe('MediaForbidden');
+    expect(yield* Ref.get(pulled)).toBe(0);
+    expect(yield* callsOf).toEqual([]);
   }),
 );
 

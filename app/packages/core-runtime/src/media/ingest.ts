@@ -7,6 +7,7 @@ import type { MediaAssetRef } from '../resources/media-asset.ts';
 import { streamMediaObject } from './byte-stream.ts';
 import { isCallersReservation } from './byte-source-contract.ts';
 import type { MediaByteSourceOffer } from './byte-source-contract.ts';
+import { confirmReservedUpload } from './confirm-upload.ts';
 import {
   MediaContentConflict,
   MediaIngestUncertain,
@@ -122,6 +123,17 @@ export const ingestMediaBytes = Effect.fn('MediaIngest.ingest')(function* ingest
   // As at confirm: another caller gets the unknown-id answer, so this edge cannot be used to probe asset ids.
   if (asset.storageKey !== namedKey || !isCallersReservation(asset, input)) {
     return yield* mediaAssetNotFound();
+  }
+  // A replay on a sealed asset is a request of its own: the Action decides it under the confirm capability (it follows
+  // the row, so it needs no evidence about the object), before a body byte is read.
+  if (asset.processingStatus === 'ready') {
+    yield* confirmReservedUpload({
+      asset,
+      confirm: input.confirm,
+      mediaAssetRef: input.mediaAssetRef,
+      principalId: input.principalId,
+      selectedLegalEntityId: input.selectedLegalEntityId,
+    });
   }
   // A body that breaks mid-flight (a dropped connection, a short body) is a transfer that did not finish: the put
   // aborts and leaves nothing readable, and the stored object is judged by the verification below.
