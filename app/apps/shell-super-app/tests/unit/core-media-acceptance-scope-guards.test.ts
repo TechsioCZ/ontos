@@ -9,7 +9,9 @@ import { expect, it } from 'effect-rstest';
  * size cap or MIME allowlist, a new MicroVertical. An absent concept leaves nothing to assert on but its absence, so
  * this test reads the SHIPPED source as text, on purpose, across the whole surface the earlier per-lane guards left
  * unscanned (the S3 adapter and its signer, the byte edge, the Shell host and its hosted-operation receiver, the
- * Catalog binding, every Core migration and the Shell UI sources). Comments are stripped first: they name what is
+ * Catalog binding, every Core migration and the UI sources). It judges Core Media's own surfaces and what reaches
+ * them, never a name another domain may take: a documents or gallery feature of its own is not Core Media's
+ * business. Comments are stripped first: they name what is
  * excluded, and only code can contain it. The behavior rules these guards stand beside are proven by executed
  * tests; nothing here claims one.
  */
@@ -142,6 +144,30 @@ const mediaColumnsOf = (sql: string): readonly string[] =>
         .map((column) => `${table}.${column}`);
     });
 
+/** The Core Media routes. */
+const CORE_MEDIA_ROUTE =
+  /core\/(?:media|operations\/asset-current|actions\/(?:upload-asset|confirm-asset|rename-display-filename)|reads\/asset-metadata)/u;
+/** The other ways to them: the generated browser client's functions, its contracts and the Core Media modules. */
+const CORE_MEDIA_CLIENT =
+  /\bexecute(?:UploadAsset|ConfirmAsset|RenameDisplayFilename|AssetMetadata)\b|\bcore(?:Action(?:UploadAsset|ConfirmAsset|RenameDisplayFilename)|ReadAssetMetadata)\b|core-(?:actions|reads)\/(?:upload-asset|confirm-asset|rename-display-filename|asset-metadata)|@app\/core-runtime\/media\b/u;
+/** The generated Shell browser client: it declares the Core Media calls and is no UI. */
+const SHELL_BROWSER_CLIENT = 'apps/shell-super-app/src/api/auth-client.ts';
+
+/** Every `.tsx` file in the `src` of each package below `root`. */
+const componentsOf = Effect.fn('CoreMediaScopeGuards.components')(function* componentsOf(root: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const found: string[] = [];
+  for (const name of (yield* fileSystem.readDirectory(yield* pathOf(root)).pipe(Effect.orDie)).toSorted()) {
+    const source = `${root}/${name}/src`;
+    const directory = yield* pathOf(source);
+    if (yield* fileSystem.exists(directory).pipe(Effect.orDie)) {
+      const files = yield* fileSystem.readDirectory(directory, { recursive: true }).pipe(Effect.orDie);
+      found.push(...files.filter((file) => file.endsWith('.tsx')).map((file) => `${source}/${file}`));
+    }
+  }
+  return found;
+});
+
 const forbid = (sources: readonly (readonly [string, string])[], name: string, pattern: RegExp) => {
   for (const [file, code] of sources) {
     expect(code, `${file} must not contain ${name}`).not.toMatch(pattern);
@@ -263,33 +289,40 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
       }),
   );
 
-  suite.effect('has no Shell UI source that reaches Core Media and no UI file in a media directory', () =>
+  suite.effect('has no Core Media UI: no UI source reaches it and its own source directory holds no UI file', () =>
     Effect.gen(function* noUi() {
       const shellSources = (yield* walk('apps/shell-super-app/src')).filter((file) => CODE_FILE.test(file));
-      expect(shellSources.length).toBeGreaterThan(0);
-      for (const file of shellSources) {
+      const components = (yield* Effect.all(['apps', 'packages', 'verticals'].map(componentsOf), {
+        concurrency: 1,
+      })).flat();
+      expect(components.length).toBeGreaterThan(0);
+      // The control: the client patterns recognise the Core Media calls the generated client really declares.
+      expect(shellSources).toContain(SHELL_BROWSER_CLIENT);
+      expect(codeOf(yield* readText(SHELL_BROWSER_CLIENT))).toMatch(CORE_MEDIA_CLIENT);
+      for (const file of new Set([...shellSources, ...components])) {
         const code = codeOf(yield* readText(file));
-        expect(code, `${file} must not call a Core Media route`).not.toMatch(
-          /core\/media|core\/actions\/(?:upload-asset|confirm-asset|rename-display-filename)|core\/reads\/asset-metadata|asset-current/u,
-        );
+        expect(code, `${file} must not call a Core Media route`).not.toMatch(CORE_MEDIA_ROUTE);
+        if (file !== SHELL_BROWSER_CLIENT) {
+          expect(code, `${file} must not use a Core Media client or contract`).not.toMatch(CORE_MEDIA_CLIENT);
+        }
       }
-      const roots = ['apps', 'packages', 'verticals'];
-      for (const root of roots) {
-        const files = yield* walk(root);
-        const uiInMedia = files.filter(
-          (file) => /\.(?:tsx|css|html)$/u.test(file) && /\/(?:media|documents?|gallery)\b/u.test(file),
-        );
-        expect(uiInMedia).toEqual([]);
-      }
+      const own = yield* walk(PRODUCT_ROOTS.coreMedia);
+      expect(own.filter((file) => /\.(?:tsx|css|html)$/u.test(file))).toEqual([]);
     }),
   );
 
-  suite.effect('introduces no vertical or deployable for media or documents: Core Media is a Core capability', () =>
+  suite.effect('gives Core Media no deployable of its own: no vertical or app is named for it or takes its id', () =>
     Effect.gen(function* noNewVertical() {
       const fileSystem = yield* FileSystem.FileSystem;
       for (const root of ['verticals', 'apps']) {
         const names = yield* fileSystem.readDirectory(yield* pathOf(root)).pipe(Effect.orDie);
-        expect(names.filter((name) => /media|document|file-storage|upload/iu.test(name))).toEqual([]);
+        expect(names.filter((name) => /core-?media|media-?assets?/iu.test(name))).toEqual([]);
+      }
+      for (const name of yield* fileSystem.readDirectory(yield* pathOf('verticals')).pipe(Effect.orDie)) {
+        const manifest = yield* readText(`verticals/${name}/vertical.manifest.ts`).pipe(Effect.orDie);
+        const moduleId = /^\/\/ @ontos-module-id (?<id>\S+)$/mu.exec(manifest)?.groups?.['id'];
+        expect(moduleId, `${name} states its module id`).toBeDefined();
+        expect(moduleId, `${name} must not take the Core Media module id`).not.toMatch(/^core\.media(?:\.|$)/u);
       }
     }),
   );
