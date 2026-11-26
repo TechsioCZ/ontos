@@ -184,6 +184,7 @@ interface CategoryEditorProps {
   readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
   readonly selected: CategoryNode;
   readonly siblings: readonly CategoryNode[];
+  readonly slugError: 'invalid' | undefined;
 }
 
 /** The category's own fields. Editing them changes the draft only; the panel's Save button sends it. */
@@ -195,6 +196,7 @@ const CategoryEditor = ({
   positionError,
   selected,
   siblings,
+  slugError,
 }: CategoryEditorProps) => {
   const { t } = useModernI18n();
   const siblingNames = siblings
@@ -228,6 +230,36 @@ const CategoryEditor = ({
         required
         value={draft.name}
         {...(nameError === undefined ? {} : { helpText: nameMessage, validateStatus: 'error' as const })}
+      />
+      <FormInput
+        helpText="Adresa stránky kategorie v e-shopu (/kategorie/…). Po změně přestane platit stará adresa."
+        id="category-slug"
+        label="Adresa (slug)"
+        maxLength={200}
+        name="slug"
+        onChange={(event) => patchDraft({ slug: event.target.value })}
+        value={draft.slug}
+        {...(slugError === undefined
+          ? {}
+          : { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const })}
+      />
+      <CategorySearchCombobox
+        allLabel="Kořen (hlavní kategorie)"
+        errorMessage="Kategorie se nepodařilo načíst."
+        helpText={draft.parent === null ? 'Kořen (hlavní kategorie).' : `Pod: ${draft.parent.trail}`}
+        id="category-parent"
+        label="Nadřazená kategorie"
+        loadingMessage="Načítám kategorie…"
+        moreMessage={(shown, total) => `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání.`}
+        noResultsMessage="Žádná kategorie neodpovídá hledání."
+        onSelect={(parent) => patchDraft({ parent })}
+        placeholder="Hledat nadřazenou kategorii"
+        retryLabel="Zkusit znovu"
+        selected={
+          draft.parent === null
+            ? null
+            : { id: CatalogCategoryIdSchema.make(draft.parent.id), trail: draft.parent.trail }
+        }
       />
       <FormInput
         id="category-heading"
@@ -473,7 +505,7 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
           }),
         ),
       ),
-    server: draftOf(category),
+    server: draftOf(category, parentName),
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
@@ -524,6 +556,7 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
             positionError={errors.position}
             selected={category}
             siblings={siblings}
+            slugError={errors.slug}
           />
         </form>
       </SidePanel>

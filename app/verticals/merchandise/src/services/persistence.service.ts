@@ -2315,7 +2315,13 @@ export const workingSetRequestOf = (
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       // A sync touches only the head row and the stored prices, which persistence reprices in place.
       SyncTaxRates: (): WorkingSetRequest => ({}),
-      UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
+      UpdateCategory: (value): WorkingSetRequest => {
+        const parentId = value.patch.parentId === undefined ? null : Option.getOrNull(value.patch.parentId);
+        const request = {
+          categoryIds: parentId === null ? [value.id] : [value.id, parentId],
+        } satisfies WorkingSetRequest;
+        return value.patch.slug === undefined ? request : { ...request, categorySlug: value.patch.slug };
+      },
       UpdateProduct: (value): WorkingSetRequest => {
         const request = {
           movements: value.patch.variants !== undefined,

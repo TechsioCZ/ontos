@@ -1855,6 +1855,97 @@ const persistStockUpdates = Effect.fn('MerchandiseStore.persistStockUpdates')(fu
   );
 });
 
+const CATEGORY_WRITE_FAILED = 'Category could not be written';
+const CategoryIdListSchema = Schema.Array(Schema.String);
+const decodeCategoryIdList = Schema.decodeUnknownOption(CategoryIdListSchema);
+
+/**
+ * After a category moved under another parent: the old parent's hasChildren follows its remaining children, and every
+ * product whose stored category path names the moved category gets its path recomputed from the stored tree.
+ */
+const repathMovedCategory = Effect.fn('MerchandiseStore.repathMovedCategory')(function* repathMovedCategory(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  movedId: string,
+  previousParentId: string | null,
+) {
+  if (previousParentId !== null) {
+    const children = yield* query(
+      db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(and(whereScope(categories, scope), eq(categories.parentId, previousParentId)))
+        .limit(1),
+      'Category children could not be read',
+    );
+    yield* query(
+      db
+        .update(categories)
+        .set({ hasChildren: children.length > 0 })
+        .where(and(whereScope(categories, scope), eq(categories.id, previousParentId))),
+      CATEGORY_WRITE_FAILED,
+    );
+  }
+  const treeRows = yield* query(
+    db
+      .select({ id: categories.id, parentId: categories.parentId })
+      .from(categories)
+      .where(whereScope(categories, scope)),
+    'Categories could not be read',
+  );
+  const parentOf = new Map(treeRows.map((row) => [row.id, row.parentId] as const));
+  const affected = yield* query(
+    db
+      .select({
+        additional: sql<unknown>`${products.document}->'additionalCategoryIds'`,
+        categoryId: products.categoryId,
+        id: products.id,
+      })
+      .from(products)
+      .where(and(whereScope(products, scope), sql`${products.categoryPathIds} @> array[${movedId}]::text[]`)),
+    'Category products could not be read',
+  );
+  const groups = new Map<string, { readonly ids: string[]; readonly path: readonly string[] }>();
+  for (const row of affected) {
+    if (row.categoryId === null) {
+      continue;
+    }
+    const additional = Option.getOrElse(decodeCategoryIdList(row.additional), () => [])
+      .filter((id) => id !== row.categoryId)
+      .toSorted();
+    const path: string[] = [];
+    for (const start of [row.categoryId, ...new Set(additional)]) {
+      let next: string | null | undefined = start;
+      while (next !== null && next !== undefined && !path.includes(next)) {
+        path.push(next);
+        next = parentOf.get(next);
+      }
+    }
+    const key = path.join('\u0000');
+    const group = groups.get(key) ?? { ids: [], path };
+    group.ids.push(row.id);
+    groups.set(key, group);
+  }
+  yield* Effect.forEach(
+    [...groups.values()],
+    (group) =>
+      query(
+        db
+          .update(products)
+          .set({
+            categoryPathIds: [...group.path],
+            document: sql`jsonb_set(${products.document}, '{categoryPathIds}', to_jsonb(array[${sql.join(
+              group.path.map((id) => sql`${id}`),
+              sql`, `,
+            )}]::text[]))`,
+          })
+          .where(and(whereScope(products, scope), inArray(products.id, group.ids))),
+        'Category products could not be moved',
+      ),
+    { concurrency: 1, discard: true },
+  );
+});
+
 const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(function* persistCategoryDocuments(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -1870,7 +1961,7 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
       const previous = previousCategories.get(category.id);
       if (previous === undefined) {
         // A category the company just added (CreateCategory): the tree may grow after it has products.
-        yield* query(db.insert(categories).values(row), 'Category could not be written');
+        yield* query(db.insert(categories).values(row), CATEGORY_WRITE_FAILED);
         return;
       }
       yield* query(
@@ -1878,8 +1969,12 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
           .update(categories)
           .set(upsertSet(row))
           .where(and(whereScope(categories, scope), eq(categories.id, category.id))),
-        'Category could not be written',
+        CATEGORY_WRITE_FAILED,
       );
+      const previousParentId = Option.getOrNull(previous.parentId);
+      if (previousParentId !== Option.getOrNull(category.parentId)) {
+        yield* repathMovedCategory(db, scope, category.id, previousParentId);
+      }
       const renamed = previous.name !== category.name;
       if (renamed) {
         // Products of the category carry its name; one statement renames all of them, loaded or not.

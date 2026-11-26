@@ -97,7 +97,7 @@ export const BulkProductPatchSchema = Schema.Struct({
 });
 export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
-/** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
+/** Editable storefront category content, its public URL slug and its place in the tree (parent; null = root). */
 export const CategoryPatchSchema = Schema.Struct({
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
   heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
@@ -105,8 +105,12 @@ export const CategoryPatchSchema = Schema.Struct({
   imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
   longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
   name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  parentId: Schema.optionalKey(Schema.OptionFromNullOr(CatalogCategoryIdSchema)),
   position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   published: Schema.optionalKey(Schema.Boolean),
+  slug: Schema.optionalKey(
+    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200), Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)),
+  ),
 });
 export type CategoryPatch = typeof CategoryPatchSchema.Type;
 
