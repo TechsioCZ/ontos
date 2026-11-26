@@ -76,6 +76,12 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   const category = getCategoryBySlug(slug);
   if (!category) notFound();
   const description = categoryDescription(category.description);
+  // The staff-edited page heading and long text; the name stays the navigation label.
+  const heading = category.heading?.trim() || category.name;
+  const longDescription = (categoryDescription(category.longDescription) ?? "")
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
 
   const childCategories = getChildCategories(category.id);
   const hasVisualChildCategories =
@@ -106,7 +112,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       <StorefrontBreadcrumbs items={breadcrumbItems} />
       <section className="sf-section sf-product-listing-section" aria-labelledby="category-title">
         <div className="sf-category-heading sf-category-heading--centered">
-          <h1 id="category-title">{category.name}</h1>
+          <h1 id="category-title">{heading}</h1>
           {description && <p>{description}</p>}
         </div>
         {hasVisualChildCategories && <CategoryGrid categories={childCategories} dictionary={cs} />}
@@ -136,6 +142,14 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         <p className="sf-empty-state">
           {filtersActive ? cs.catalog.noFilteredProducts : cs.catalog.emptyCategory}
         </p>
+      )}
+
+      {longDescription.length > 0 && (
+        <section className="sf-section sf-category-description" aria-label={category.name}>
+          {longDescription.map((paragraph) => (
+            <p key={paragraph}>{paragraph}</p>
+          ))}
+        </section>
       )}
 
       {recommendations.length > 0 && (
