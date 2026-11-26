@@ -5,6 +5,8 @@
 // Steps (default all, in this order; name some to run only those):
 //   catalog  category tree, products with variants, prices, parameters, public image URLs (skips by id / SKU)
 //   stock    every product's and variant's stock on hand set to stage's (RECEIPT/ADJUSTMENT of the difference)
+//   photos   ŠroubShop only: its own stage photos (stage media, read from the public stage shop) uploaded into
+//            the stable gallery in stage order, replacing the AKROS photos the catalog step used
 //   samples  the 8 synthetic sales-bootstrap products (SALES_PRODUCTS) hidden and archived out of the admin list
 //   verify   products, in-stock products and stock differences versus stage
 // Reads app/.zerops-stable/config.json and bootstrap-bundle.json (owner passwords; never printed). Every step is
@@ -21,6 +23,7 @@ import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/mer
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
+  ChangeProductImagesPayloadSchema,
   CleanupDemoPayloadSchema,
   ManageCatalogPayloadSchema,
   RecordStockMovementPayloadSchema,
@@ -31,7 +34,7 @@ import { parseBootstrapBundle, SALES_PRODUCTS } from '../../../ops/zerops-stable
 
 const enc = Schema.toEncoded;
 const slug = process.argv[2];
-const STEPS = process.argv.length > 3 ? process.argv.slice(3) : ['catalog', 'stock', 'samples', 'verify'];
+const STEPS = process.argv.length > 3 ? process.argv.slice(3) : ['catalog', 'stock', 'photos', 'samples', 'verify'];
 const D = `${process.env.ONTOS_COPY_DIR ?? path.join(tmpdir(), 'ontos-stable-catalog-copy')}/`;
 mkdirSync(D, { recursive: true });
 const STABLE = fileURLToPath(new URL('../../.zerops-stable/', import.meta.url));
@@ -129,8 +132,8 @@ const makeClient = (label, connect) => {
       }
     });
   return {
-    call: (path, schema, payload) =>
-      run((c) => c.call('merchandise', path, enc(schema), payload, enc(ApplyCommandResultSchema), true), true),
+    call: (path, schema, payload, result = ApplyCommandResultSchema) =>
+      run((c) => c.call('merchandise', path, enc(schema), payload, enc(result), true), true),
     read: (view) =>
       run((c) =>
         c.call('merchandise', '/reads/records', enc(RecordsRequestSchema), { view }, enc(RecordsResponseSchema)),
@@ -422,12 +425,21 @@ const program = Effect.gen(function* program() {
         },
         [],
       );
-      const r = yield* target
-        .call('/merchandise/actions/record-stock-movement', RecordStockMovementPayloadSchema, {
-          command,
-          expectedRevision: revision,
-        })
-        .pipe(Effect.result);
+      let r;
+      // A stale revision (another writer, e.g. the photos step) is refused unapplied, so a fresh revision may retry.
+      for (let attempt = 1; ; attempt += 1) {
+        r = yield* target
+          .call('/merchandise/actions/record-stock-movement', RecordStockMovementPayloadSchema, {
+            command,
+            expectedRevision: revision,
+          })
+          .pipe(Effect.result);
+        const reason = r._tag === 'Failure' ? reasonOf(r.failure) : '';
+        if (r._tag === 'Success' || attempt >= 4 || !/HTTP 409/u.test(reason) || /lifecycle_conflict/u.test(reason)) {
+          break;
+        }
+        revision = (yield* target.read({ limit: 0, summary: true })).revision;
+      }
       if (r._tag === 'Success') {
         revision = r.success.revision;
         ok += 1;
@@ -441,6 +453,99 @@ const program = Effect.gen(function* program() {
       }
     }
     log('STOCK DONE movements', ok, 'failed', fail);
+  }
+  if (STEPS.includes('photos') && slug === 'sroubshop') {
+    const shopOrigin = 'https://ontos-stage-shop.web-revolution.cz';
+    const ImageResult = Schema.Struct({ image: Schema.optionalKey(Schema.String), revision: Schema.Int });
+    const stable = new Map();
+    for (let offset = 0; ;) {
+      const res = yield* target.read({ limit: 250, offset, productSort: 'sku', summary: true });
+      for (const p of res.products) {
+        stable.set(p.sku.trim().toLowerCase(), p);
+      }
+      offset += res.products.length;
+      if (res.products.length === 0 || offset >= res.indicators.productCount) {
+        break;
+      }
+    }
+    let { revision } = yield* target.read({ limit: 0, summary: true });
+    // One gallery change; a stale revision (another writer) is refused unapplied, so a fresh one may retry.
+    const imageCall = (id, change) =>
+      Effect.gen(function* imageCall() {
+        for (let attempt = 1; ; attempt += 1) {
+          const r = yield* target
+            .call(
+              '/merchandise/actions/change-product-images',
+              ChangeProductImagesPayloadSchema,
+              { command: { _tag: 'ChangeProductImages', change, id }, expectedRevision: revision },
+              ImageResult,
+            )
+            .pipe(Effect.result);
+          if (r._tag === 'Success') {
+            ({ revision } = r.success);
+            return r;
+          }
+          revision = (yield* target.read({ limit: 0, summary: true })).revision;
+          if (attempt >= 4 || !/HTTP 409/u.test(reasonOf(r.failure))) {
+            return r;
+          }
+        }
+      });
+    let done = 0;
+    let fail = 0;
+    for (const p of yield* dump(source, `${D}src-${slug}.jsonl`)) {
+      const media = (p.images ?? []).filter(isMedia).slice(0, 20);
+      const t = stable.get(p.sku.trim().toLowerCase());
+      if (media.length === 0 || !t) {
+        continue;
+      }
+      // Uploads go in stage order, so a rerun continues after the ones an interrupted run stored.
+      const uploaded = (t.images ?? []).filter(isMedia).slice(0, media.length);
+      if (uploaded.length === media.length && (t.images ?? []).length === media.length) {
+        continue;
+      }
+      for (const ref of media.slice(uploaded.length)) {
+        const id = ref.slice('media:'.length);
+        const bytes = yield* Effect.tryPromise({
+          catch: (e) => ({ reason: `TransportError photo ${e}` }),
+          try: async () => {
+            const r = await fetch(`${shopOrigin}/cs/obrazky/${p.id}/${id}`);
+            if (!r.ok) {
+              throw new Error(`HTTP ${r.status}`);
+            }
+            return Buffer.from(await r.arrayBuffer());
+          },
+        }).pipe(Effect.result);
+        if (bytes._tag === 'Failure') {
+          log('photo read fail', p.sku, id, reasonOf(bytes.failure).slice(0, 200));
+          continue;
+        }
+        const u = yield* imageCall(t.id, {
+          _tag: 'Upload',
+          image: { filename: `${id}.jpg`, full: { contentBase64: bytes.success.toString('base64') } },
+        });
+        if (u._tag === 'Success' && u.success.image) {
+          uploaded.push(u.success.image);
+        } else {
+          log('photo upload fail', p.sku, id, u._tag === 'Failure' ? reasonOf(u.failure).slice(0, 300) : 'no image');
+        }
+      }
+      if (uploaded.length === 0) {
+        fail += 1;
+        continue;
+      }
+      const s = yield* imageCall(t.id, { _tag: 'Set', images: uploaded });
+      if (s._tag === 'Success') {
+        done += 1;
+      } else {
+        fail += 1;
+        log('photo set fail', p.sku, reasonOf(s.failure).slice(0, 300));
+      }
+      if ((done + fail) % 50 === 0) {
+        log('photos progress', done, 'fail', fail);
+      }
+    }
+    log('PHOTOS DONE products', done, 'failed', fail);
   }
   if (STEPS.includes('samples')) {
     for (const { sku } of SALES_PRODUCTS) {
