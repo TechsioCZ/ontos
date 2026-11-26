@@ -415,6 +415,7 @@
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "created": "Produkt vytvořen",
           "failed": "Akci se nepodařilo provést. Zkuste to znovu.",
+          "newVersion": "Mezitím byla nasazena nová verze aplikace a změnu se zatím nepodařilo uložit. Vaše úpravy zůstaly ve formuláři, zkuste je za chvíli uložit znovu.",
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",

@@ -411,6 +411,7 @@
           "conflict": "Someone else changed this record. Reload it and try again.",
           "created": "Product created",
           "failed": "The action could not be completed. Try again.",
+          "newVersion": "A new version of the application was deployed meanwhile and the change could not be saved yet. Your edits stay in the form; try saving again in a moment.",
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",

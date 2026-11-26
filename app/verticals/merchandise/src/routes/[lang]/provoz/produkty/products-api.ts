@@ -169,6 +169,8 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'RecordStockMovementActionInvalidProblem',
       (): FailureReason => 'invalid',
     ),
+    // The gateway's automatic recovery (operation-gateway.ts) could not move this tab to the new release.
+    Match.tag('GatewayReloadRequiredProblem', 'DocumentCompositionRevisionError', (): FailureReason => RELOAD_REQUIRED),
     Match.orElse((): FailureReason => 'unavailable'),
   );
 

@@ -41,6 +41,9 @@ export const useCommandFailure = () => {
     if (reason === 'rejected') {
       return label('messages.rejected');
     }
+    if (reason === 'reload-required') {
+      return label('messages.newVersion');
+    }
     return label('messages.failed');
   };
 };
