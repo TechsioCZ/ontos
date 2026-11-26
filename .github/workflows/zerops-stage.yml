@@ -263,7 +263,7 @@ jobs:
     if: needs.deliver.outputs.build_units == 'true'
     concurrency:
       group: zerops-stage-build-${{ matrix.shard }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -452,14 +452,29 @@ jobs:
 
       # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
       # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
-      - name: Skip when a newer push is the stage head
+      # Every built run delivers, superseded or not, so constant pushes never starve stage. Only a run whose first
+      # planned service already runs a newer commit (a later run delivered first) skips, so stage never goes back.
+      - name: Skip when stage already runs a newer commit
         id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          PLANNED: ${{ format('app:{0}:{1} storefront:{2}:{3} shop:{4}:{5} n1:{6}:{7}', vars.ZEROPS_APP_SERVICE_ID, needs.deliver.outputs.app, vars.ZEROPS_STOREFRONT_SERVICE_ID, needs.deliver.outputs.storefront, vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID, needs.deliver.outputs.shop, vars.ZEROPS_N1_STOREFRONT_SERVICE_ID, needs.deliver.outputs.n1) }}
         run: |
-          if [ "$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)" = "$GITHUB_SHA" ]; then
-            echo 'current=true' >>"$GITHUB_OUTPUT"
-          else
-            echo '::notice::a newer push is the stage head; its run delivers'
-          fi
+          for entry in $PLANNED; do
+            IFS=: read -r name id planned <<<"$entry"
+            [ "$planned" = true ] || continue
+            deployed="$(curl -fsS -H "Authorization: Bearer $ZEROPS_TOKEN" \
+              "https://api.app-prg1.zerops.io/api/rest/public/service-stack/$id" \
+              | jq -r '.userData[]? | select(.key == "appVersionName") | .content' || true)"
+            if [ -n "$deployed" ] && [ "$deployed" != "$GITHUB_SHA" ] &&
+              [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$deployed" --jq .status 2>/dev/null)" = ahead ]; then
+              echo "::notice::$name already runs $deployed, newer than this run; nothing to deliver"
+              exit 0
+            fi
+            break
+          done
+          echo 'current=true' >>"$GITHUB_OUTPUT"
 
       - name: Mark the actual deployment attempt
         id: mark
