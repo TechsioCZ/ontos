@@ -85,8 +85,31 @@ fi
 
 # Did any attempt of the run reach the mutation marker? The jobs of every attempt, not only the latest one.
 mutated() {
-  gh api "$repository/actions/runs/$1/jobs?filter=all&per_page=100" \
-    --jq "[.jobs[].steps[]? | select(.name == \"$marker\" and (.conclusion == \"success\" or .status == \"in_progress\"))] | length > 0"
+  local page=1 total='' response count expected suffix='' collected="$work/jobs-$1.jsonl"
+  : >"$collected"
+  while :; do
+    response="$(gh api "$repository/actions/runs/$1/jobs?filter=all&per_page=100$suffix")" || return 1
+    # Missing counts, jobs or step lists are not evidence that the marker was absent.
+    jq -e '(.total_count | type == "number" and . >= 0 and floor == .) and
+      (.jobs | type == "array" and length <= 100) and
+      all(.jobs[]; (.id | type == "number") and (.steps | type == "array") and
+        all(.steps[]; (.name | type == "string") and (.status | type == "string") and
+          (.conclusion == null or (.conclusion | type == "string"))))' <<<"$response" >/dev/null || return 1
+    expected="$(jq -r '.total_count' <<<"$response")"
+    if [[ -z "$total" ]]; then total="$expected"; fi
+    [[ "$total" == "$expected" ]] || return 1
+    jq -c '.jobs[]' <<<"$response" >>"$collected"
+    count="$(wc -l <"$collected" | tr -d ' ')"
+    ((count <= total)) || return 1
+    if ((count == total)); then break; fi
+    # A short/missing page before total_count, or repeated IDs, cannot prove a negative.
+    [[ "$(jq '.jobs | length' <<<"$response")" == 100 ]] || return 1
+    page=$((page + 1))
+    suffix="&page=$page"
+  done
+  jq -se --argjson total "$total" '([.[].id] | unique | length) == $total' "$collected" >/dev/null || return 1
+  jq -s --arg marker "$marker" '[.[].steps[] |
+    select(.name == $marker and (.conclusion == "success" or .status == "in_progress"))] | length > 0' "$collected"
 }
 # The services of the run's own plan artifact (zerops-delivery-plan, uploaded before its first mutation).
 planned_services() {

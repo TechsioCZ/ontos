@@ -32,6 +32,7 @@ const run = (id: number, number: number, conclusion: string | null, status = 'co
 const jobs = (markerConclusion: string | null) => ({
   jobs: [
     {
+      id: 1,
       steps: [
         { conclusion: 'success', name: 'Checkout', status: 'completed' },
         ...(markerConclusion === null
@@ -40,6 +41,7 @@ const jobs = (markerConclusion: string | null) => ({
       ],
     },
   ],
+  total_count: 1,
 });
 
 /**
@@ -189,6 +191,34 @@ it.effect('requires exact-commit lint success for both delivery paths, even when
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect('feeds the verified comparison snapshot into the shared lint selector', () =>
+  Effect.gen(function* verifiedComparisonInput() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Struct({
+          'lint-plan': Schema.Struct({
+            steps: Schema.Array(
+              Schema.Struct({
+                env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+                run: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        }),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    const selector = workflow.jobs['lint-plan'].steps.find(
+      ({ run: command }) => command === 'bash app/scripts/ci/choose-lint-shards.sh',
+    );
+    expect(selector?.env).toMatchObject({
+      CHANGED_PATHS: `\${{ runner.temp }}/zerops-delivery/changed-paths`,
+      COMPARISON_SNAPSHOT: `\${{ runner.temp }}/zerops-delivery/history.json`,
+      PLAN_MODE: 'affected',
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 /** The API answers, as JSON text by route, and the services of each plan artifact, by its zip route. */
 const readHistory = (
   fixtures: Readonly<Record<string, string>>,
@@ -286,6 +316,55 @@ it.effect('reads the newest green run as the base, every later run that changed 
         { mutated: false, runId: 12, services: null },
       ],
     });
+  }),
+);
+
+it.effect('reads mutation markers beyond 100 jobs and treats incomplete attempts as unknown', () =>
+  Effect.gen(function* paginatedMutations() {
+    const first = {
+      jobs: Array.from({ length: 100 }, (_, id) => ({ id, steps: [] })),
+      total_count: 101,
+    };
+    const second = { jobs: [{ id: 100, steps: jobs('success').jobs[0]?.steps }], total_count: 101 };
+    const common = {
+      [artifactsOf(13)]: JSON.stringify({ artifacts: [{ id: 77 }] }),
+      [COMPARE]: JSON.stringify({ files: [], status: 'identical' }),
+      [jobsOf(13)]: JSON.stringify(first),
+      [RUNS]: JSON.stringify({ workflow_runs: [run(13, 13, 'failure'), run(10, 10, 'success')] }),
+    };
+    const history = yield* readHistory(
+      { ...common, [`${jobsOf(13)}&page=2`]: JSON.stringify(second) },
+      { 'repos/owner/repo/actions/artifacts/77/zip': ['app'] },
+    );
+    expect(history).toMatchObject({ mutations: [{ mutated: true, runId: 13, services: ['app'] }] });
+    const untouched = yield* readHistory({
+      ...common,
+      [`${jobsOf(13)}&page=2`]: JSON.stringify({ jobs: [{ id: 100, steps: [] }], total_count: 101 }),
+    });
+    expect(untouched).toMatchObject({ mutations: [{ mutated: false, runId: 13, services: null }] });
+    for (const page of [
+      null,
+      {},
+      { jobs: [], total_count: 101 },
+      { ...second, total_count: 102 },
+      { jobs: [{ id: 100 }], total_count: 101 },
+    ]) {
+      const partial = yield* readHistory(
+        page === null ? common : { ...common, [`${jobsOf(13)}&page=2`]: JSON.stringify(page) },
+      );
+      expect(partial).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
+    }
+    // Even a marker on the readable page cannot turn an unreadable remainder into a complete answer.
+    const incomplete = yield* readHistory({
+      ...common,
+      [jobsOf(13)]: JSON.stringify({ jobs: jobs('success').jobs, total_count: 101 }),
+    });
+    expect(incomplete).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
+    const duplicate = yield* readHistory({
+      ...common,
+      [`${jobsOf(13)}&page=2`]: JSON.stringify({ jobs: [{ id: 0, steps: [] }], total_count: 101 }),
+    });
+    expect(duplicate).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
   }),
 );
 
