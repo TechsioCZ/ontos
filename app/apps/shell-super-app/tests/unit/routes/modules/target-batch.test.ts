@@ -69,6 +69,7 @@ const batchBff = (overrides: ShellBffScript = {}) =>
           deniedAppIds: [],
           gatewayAudiences: [],
           homeComponents: [],
+          integrationComponents: [],
           navigation: [],
           state: 'available',
           unavailableDeployments: [],

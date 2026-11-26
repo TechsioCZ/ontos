@@ -74,7 +74,19 @@ it('preserves only exact typed discovery phases and replaces every other source 
       `[app-host] stopped: AKROS customer discovery failed phase=${phase}`,
     );
   }
+  for (const reason of [
+    'customer-workload-enrollment',
+    'enrollment-source-read',
+    'additive-step-bind-workload:23505:x_uk',
+  ]) {
+    const error = customerDiscoveryHostError(new SymmyDemoCustomerAuthorityError({ reason }));
+    expect(formatAppHostStop(Cause.fail(error))).toBe(
+      `[app-host] stopped: AKROS customer workload enrollment failed reason=${reason}`,
+    );
+  }
   for (const problem of [
+    new SymmyDemoCustomerAuthorityError({ reason: `enrollment-source-read:${ADMIN_URL}` }),
+    new SymmyDemoCustomerAuthorityError({ reason: 'additive-step-bind-workload:23505' }),
     new SymmyDemoCustomerAuthorityError({ reason: `${ADMIN_URL}; ${SQL_TEXT}` }),
     new Error(`${ADMIN_URL}; ${SQL_TEXT}`),
     { _tag: 'SymmyDemoCustomerAuthorityError', reason: 'party-writer' },

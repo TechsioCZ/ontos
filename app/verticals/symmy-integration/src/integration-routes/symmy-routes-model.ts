@@ -1,17 +1,17 @@
+import {
+  ConnectorPartnerModuleKeySchema,
+  ConnectorPartnerWorkloadKeySchema,
+} from '@app/shared-contracts/integrations/connector-partner-component';
 import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
-import { ManageSymmyRoutesActionIneligibleProblemSchema } from '@app/symmy-integration/api/manage-symmy-routes-action';
-import { SYMMY_BULK_IMPORT_ROUTE_KEYS } from '@app/symmy-integration/actions/manage-symmy-routes';
-import type {
-  SymmyManagedRouteKey,
-  SymmyRouteChangeRequestSchema,
-} from '@app/symmy-integration/actions/manage-symmy-routes';
-import type { SymmyCompanyRoutesResponse } from '@app/symmy-integration/api/symmy-company-routes';
 import { Effect, Option, Schema } from 'effect';
 
-import { SystemWorkloadModuleKeySchema, WorkloadKeySchema } from '../../../shared/browser-api.ts';
+import { SYMMY_BULK_IMPORT_ROUTE_KEYS } from '../../shared/actions/manage-symmy-routes.ts';
+import type { SymmyManagedRouteKey, SymmyRouteChangeRequestSchema } from '../../shared/actions/manage-symmy-routes.ts';
+import { ManageSymmyRoutesActionIneligibleProblemSchema } from '../../shared/apis/manage-symmy-routes-action.ts';
+import type { SymmyCompanyRoutesResponse } from '../../shared/apis/symmy-company-routes.ts';
 
 /*
- * What the Shell's Symmy panel asks `integration.symmy.manage-symmy-routes` for. Symmy is a connector partner: the
+ * What Symmy's routes panel on the Shell's Integrace card asks `integration.symmy.manage-symmy-routes` for. Symmy is a connector partner: the
  * administrator names the partner's source identity once, and the panel enables the route families the partner reads
  * and writes in the selected company: Symmy's own bulk-import set (`SYMMY_BULK_IMPORT_ROUTE_KEYS`) and the region read.
  * Route families that need owner references (stock, prices of a list, customer group memberships) are enabled outside
@@ -92,19 +92,19 @@ const bindingRefusals = new Set(['integration_binding_missing', 'integration_com
 
 /** Symmy's background job writer: the system workload `core.identity.change-system-workload-enrollment` enrolls. */
 export const SYMMY_EXECUTOR = {
-  moduleKey: SystemWorkloadModuleKeySchema.make('integration.symmy'),
-  workloadKey: WorkloadKeySchema.make('integration.symmy.execute-symmy-job'),
+  moduleKey: ConnectorPartnerModuleKeySchema.make('integration.symmy'),
+  workloadKey: ConnectorPartnerWorkloadKeySchema.make('integration.symmy.execute-symmy-job'),
 };
 
-const WorkloadKeysSchema = Schema.NonEmptyArray(WorkloadKeySchema);
+const WorkloadKeyListSchema = Schema.NonEmptyArray(ConnectorPartnerWorkloadKeySchema);
 /** One write the panel makes, only after the administrator confirmed it, before it repeats a refused route change. */
 export const SymmyPrerequisiteSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('enrollExecutor'),
-    moduleKey: SystemWorkloadModuleKeySchema,
-    workloadKey: WorkloadKeySchema,
+    moduleKey: ConnectorPartnerModuleKeySchema,
+    workloadKey: ConnectorPartnerWorkloadKeySchema,
   }),
-  Schema.Struct({ kind: Schema.Literal('registerWorkloads'), workloadKeys: WorkloadKeysSchema }),
+  Schema.Struct({ kind: Schema.Literal('registerWorkloads'), workloadKeys: WorkloadKeyListSchema }),
 ]);
 export type SymmyPrerequisite = typeof SymmyPrerequisiteSchema.Type;
 export type SymmyPrerequisites = readonly [SymmyPrerequisite, ...SymmyPrerequisite[]];
@@ -132,7 +132,7 @@ export const symmyMissingPrerequisites = (refusals: readonly Refusal[]): SymmyPr
   if (firsts.length < bindings.length) {
     return null;
   }
-  const registration = Schema.decodeUnknownOption(WorkloadKeysSchema)([...new Set(firsts)]);
+  const registration = Schema.decodeUnknownOption(WorkloadKeyListSchema)([...new Set(firsts)]);
   if (bindings.length > 0 && Option.isNone(registration)) {
     return null;
   }

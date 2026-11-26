@@ -648,6 +648,17 @@ export const ShellHomeComponentSchema = Schema.Struct({
 export type ShellHomeComponent = typeof ShellHomeComponentSchema.Type;
 
 /**
+ * A public component a module offers on the Integrace card of one connector partner's integrations (see the core
+ * `integration` placement). The Shell picks it by the partner kind of the integration, never by module.
+ */
+export const ShellIntegrationComponentSchema = Schema.Struct({
+  connectorPartner: ConnectorPartnerKindSchema,
+  entrypointKey: EntrypointKeySchema,
+  moduleId: ModuleIdSchema,
+});
+export type ShellIntegrationComponent = typeof ShellIntegrationComponentSchema.Type;
+
+/**
  * The owner page that opens one record type: the owning module, the route template and the single parameter that
  * selects the record. The template is owner data, never a Shell path; the Shell substitutes the validated record ID.
  */
@@ -700,6 +711,8 @@ export const ShellCompositionSchema = Schema.Union([
     gatewayAudiences: Schema.Array(AppIdSchema),
     /** Home summary components of modules the person may open, lowest order first. */
     homeComponents: Schema.Array(ShellHomeComponentSchema),
+    /** Integrace card components of modules the person may open, at most one per connector partner. */
+    integrationComponents: Schema.Array(ShellIntegrationComponentSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
     /** Record destinations the composed modules declare; absent when no page declares one. */
     recordDestinations: Schema.optionalKey(Schema.Array(ShellRecordDestinationSchema)),

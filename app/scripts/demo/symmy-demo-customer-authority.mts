@@ -739,7 +739,8 @@ export const symmyDemoCustomerEnvironment = (
   };
 };
 
-const AdminLive = Layer.unwrap(
+/** The administrator connection the pre-migration discovery reads through; it builds none of Core's writers. */
+export const SymmyDemoCustomerDiscoveryLive = Layer.unwrap(
   Effect.gen(function* adminLayer() {
     const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
     if (environment !== 'stage') {
@@ -789,7 +790,7 @@ const EnrollmentLive = Layer.unwrap(
     );
   }),
 );
-export const SymmyDemoCustomerAuthorityLive = Layer.mergeAll(AdminLive, EnrollmentLive);
+export const SymmyDemoCustomerAuthorityLive = Layer.mergeAll(SymmyDemoCustomerDiscoveryLive, EnrollmentLive);
 
 const safeEnrollmentCodes: ReadonlySet<string> = new Set([
   enrollmentDatabaseConfig,
@@ -811,6 +812,17 @@ const safeEnrollmentCodes: ReadonlySet<string> = new Set([
   'additive-step-revoke-workload',
   'additive-step-disable-principal',
 ]);
+/**
+ * An enrollment failure reason is a fixed code, plus PostgreSQL's SQLSTATE and constraint name for a Core write.
+ * Neither carries a value, so the host may print it.
+ */
+export const isSafeSymmyDemoEnrollmentReason = (reason: string) => {
+  const [code = '', ...detail] = reason.split(':');
+  return (
+    (code === 'customer-workload-enrollment' || safeEnrollmentCodes.has(code)) &&
+    (detail.length === 0 || (detail.length === 2 && detail.every((part) => /^[A-Za-z0-9_-]{1,63}$/u.test(part))))
+  );
+};
 export const safeSymmyDemoEnrollmentFailure = (cause: unknown) => {
   if (
     !(Schema.is(SymmyDemoCustomerAuthorityError)(cause) || Schema.is(ReleaseInternalWorkloadError)(cause)) ||
@@ -916,12 +928,15 @@ export const symmyDemoExternalReceiverBindingsToRevoke = (
     Effect.flatMap((rows) => selectObsoleteExternalReceiverBindings(integrationPrincipalId, rows)),
   );
 
-/** Read this before starting Party. No composition, operator session, new identity or write is needed. */
+/**
+ * Read this before starting Party. No composition, operator session, new identity or write is needed. The host runs it
+ * before the release's migrations, against the previous release's schema, so it only reads columns every schema has;
+ * enrollment writes through Core's current writers and runs in the post-migration `apply` bootstrap.
+ */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {
   if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
     return yield* fail(stageOnlyReason);
   }
-  yield* ensureSymmyDemoCustomerInternalWorkloads;
   const sql = yield* PgClient.PgClient;
   const [integration] = yield* sql`select principal_id as "principalId" from symmy_integration.job_routes
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}

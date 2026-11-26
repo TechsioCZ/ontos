@@ -93,7 +93,8 @@
     "finance-billing": "http://localhost:4118/mf-manifest.json",
     "crm-activities": "http://localhost:4119/mf-manifest.json",
     "facility-operations": "http://localhost:4126/mf-manifest.json",
-    "crm": "http://localhost:4125/mf-manifest.json"
+    "crm": "http://localhost:4125/mf-manifest.json",
+    "symmy-integration": "http://localhost:4132/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -1665,19 +1666,22 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/symmy-integration",
-        "buildMarker": "d271b1bd0da558f4"
+        "buildMarker": "e7c041e6c6967cd9"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
         "workerName": "app-symmy-integration",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SYMMY_INTEGRATION",
-        "api": {
+        "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
-          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
         },
         "zephyr": {
-          "runtime": "api-worker",
+          "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
           "snapshotIdEnv": "ZEPHYR_SYMMY_INTEGRATION_SNAPSHOT_ID",
           "versionIdEnv": "ZEPHYR_SYMMY_INTEGRATION_VERSION_ID",
@@ -1704,7 +1708,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/symmy-integration",
-          "buildMarker": "d271b1bd0da558f4"
+          "buildMarker": "e7c041e6c6967cd9"
         }
       }
     },

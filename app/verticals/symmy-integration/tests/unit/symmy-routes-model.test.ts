@@ -1,9 +1,9 @@
-import { ManageSymmyRoutesActionIneligibleProblemSchema } from '@app/symmy-integration/api/manage-symmy-routes-action';
-import { SymmyCompanyRouteSchema } from '@app/symmy-integration/api/symmy-company-routes';
+import { ConnectorPartnerWorkloadKeySchema } from '@app/shared-contracts/integrations/connector-partner-component';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { WorkloadKeySchema } from '../../shared/browser-api.ts';
+import { ManageSymmyRoutesActionIneligibleProblemSchema } from '../../shared/apis/manage-symmy-routes-action.ts';
+import { SymmyCompanyRouteSchema } from '../../shared/apis/symmy-company-routes.ts';
 import {
   SYMMY_EXECUTOR,
   SYMMY_INITIAL_ROUTE_CHOICE,
@@ -13,8 +13,8 @@ import {
   symmyMissingPrerequisites,
   symmyPendingRoutes,
   symmySubmitChange,
-} from '../../src/routes/people/symmy-routes-model.ts';
-import type { SymmyPrerequisite } from '../../src/routes/people/symmy-routes-model.ts';
+} from '../../src/integration-routes/symmy-routes-model.ts';
+import type { SymmyPrerequisite } from '../../src/integration-routes/symmy-routes-model.ts';
 
 const decodeRoute = Schema.decodeUnknownSync(SymmyCompanyRouteSchema);
 const route = (routeKey: string, active: boolean, changeToken = 3) =>
@@ -66,10 +66,10 @@ it('starts with no route chosen, so an untouched form sends nothing', () => {
 
 const executorWorkload = 'integration.symmy.execute-symmy-job';
 const enrollExecutor = { kind: 'enrollExecutor', ...SYMMY_EXECUTOR } as const;
-const registration = {
+const registration: SymmyPrerequisite = {
   kind: 'registerWorkloads',
-  workloadKeys: [WorkloadKeySchema.make('commerce.symmy-product-read')],
-} as const;
+  workloadKeys: [ConnectorPartnerWorkloadKeySchema.make('commerce.symmy-product-read')],
+};
 
 it('writes only what every refusal names: the executor enrollment, then the first workload of each binding', () => {
   expect(

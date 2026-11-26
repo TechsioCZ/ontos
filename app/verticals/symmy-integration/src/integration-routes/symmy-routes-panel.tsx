@@ -1,32 +1,31 @@
-// The Symmy routes of one integration in the selected company. Enabling a route family runs Symmy's own audited
+// Symmy's routes of one integration in the selected company, offered on the Shell's Integrace card of every Symmy
+// integration (the core `integration` placement). Enabling a route family runs Symmy's own audited
 // `integration.symmy.manage-symmy-routes`. When that refuses for a Symmy executor the Tenant has not enrolled or for
 // integration workloads the principal does not hold yet, the panel lists exactly those writes and, only after the
-// administrator confirms them, makes them through Core's `core.identity.change-system-workload-enrollment` and
-// `core.identity.register-integration-workloads`, then repeats the change once.
+// administrator confirms them, asks the Shell to make them through Core's
+// `core.identity.change-system-workload-enrollment` and `core.identity.register-integration-workloads`, then repeats
+// the change once.
 import { FormInput } from '@app/admin-ui/form-controls';
-import { ManageSymmyRoutesPayloadSchema } from '@app/symmy-integration/actions/manage-symmy-routes';
-import type { ManageSymmyRoutesPayload } from '@app/symmy-integration/actions/manage-symmy-routes';
-import { ManageSymmyRoutesActionIneligibleProblemSchema } from '@app/symmy-integration/api/manage-symmy-routes-action';
-import { executeManageSymmyRoutes } from '@app/symmy-integration/api/manage-symmy-routes-action/client';
-import type { SymmyCompanyRoutesResponse } from '@app/symmy-integration/api/symmy-company-routes';
-import { executeSymmyCompanyRoutes } from '@app/symmy-integration/api/symmy-company-routes/client';
-import { SymmyCompanyRoutesForbiddenProblemSchema } from '@app/symmy-integration/api/symmy-company-routes';
+import type {
+  ConnectorPartnerComponentProps,
+  ConnectorPartnerCoreWriteOutcome,
+} from '@app/shared-contracts/integrations/connector-partner-component';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Effect, Schema } from 'effect';
+import { Effect, Random, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
-import {
-  ChangeSystemWorkloadEnrollmentPayloadSchema,
-  RegisterIntegrationWorkloadsPayloadSchema,
-} from '../../../shared/browser-api.ts';
-import type { ManagedApiKeyListResponse } from '../../../shared/browser-api.ts';
-import { changeSystemWorkloadEnrollment, registerIntegrationWorkloads } from '../../api/auth-client.ts';
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import { newRequestToken } from './people-client.ts';
+import { ManageSymmyRoutesPayloadSchema } from '../../shared/actions/manage-symmy-routes.ts';
+import type { ManageSymmyRoutesPayload } from '../../shared/actions/manage-symmy-routes.ts';
+import { ManageSymmyRoutesActionIneligibleProblemSchema } from '../../shared/apis/manage-symmy-routes-action.ts';
+import { SymmyCompanyRoutesForbiddenProblemSchema } from '../../shared/apis/symmy-company-routes.ts';
+import type { SymmyCompanyRoutesResponse } from '../../shared/apis/symmy-company-routes.ts';
+import { executeManageSymmyRoutes } from '../api/manage-symmy-routes-action-client.ts';
+import { executeSymmyCompanyRoutes } from '../api/symmy-company-routes-client.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import {
   SYMMY_DEFAULT_RETENTION_DAYS,
   SYMMY_INITIAL_ROUTE_CHOICE,
@@ -38,13 +37,13 @@ import {
 } from './symmy-routes-model.ts';
 import type { SymmyPrerequisite, SymmyPrerequisites, SymmyRouteChangeInput } from './symmy-routes-model.ts';
 
-const copyKey = 'shell.integrations.symmyRoutes';
+const copyKey = 'symmy-integration.integrationRoutes';
 const timeout = '60 seconds';
 const enableReason = 'Tenant administrator enabled Symmy routes for this company';
 const disableReason = 'Tenant administrator disabled a Symmy route for this company';
 const enrollReason = 'Tenant administrator confirmed enrolling the Symmy executor to change Symmy routes';
 
-type PrincipalId = ManagedApiKeyListResponse['items'][number]['principalId'];
+type PrincipalId = ConnectorPartnerComponentProps['integrationPrincipalId'];
 type CompanyRoute = SymmyCompanyRoutesResponse['routes'][number];
 type Refusals = NonNullable<typeof ManageSymmyRoutesActionIneligibleProblemSchema.Type.refusals>;
 
@@ -56,6 +55,15 @@ class SymmyRoutesInputInvalid extends Schema.TaggedError<SymmyRoutesInputInvalid
 }) {}
 const inputInvalid = (cause: unknown) => new SymmyRoutesInputInvalid({ cause });
 
+/** A random UUID-shaped token: one request correlation, or one idempotency key per write. */
+const newRequestToken = Effect.gen(function* symmyRequestToken() {
+  const words = yield* Effect.forEach([0, 1, 2, 3], () => Random.nextIntBetween(0, 0x1_00_00_00_00), {
+    concurrency: 1,
+  });
+  const hex = words.map((word) => word.toString(16).padStart(8, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+});
+
 const readRoutes = (principalId: PrincipalId) =>
   newRequestToken.pipe(
     Effect.flatMap((correlation) => executeSymmyCompanyRoutes({ integrationPrincipalId: principalId }, correlation)),
@@ -65,39 +73,26 @@ const readRoutes = (principalId: PrincipalId) =>
 const submitRoutes = (payload: ManageSymmyRoutesPayload) =>
   newRequestToken.pipe(Effect.flatMap((token) => executeManageSymmyRoutes(payload, token, { idempotencyKey: token })));
 
-const registerMissing = Effect.fn('SymmyRoutesPanel.registerMissing')(function* registerMissing(
-  principalId: PrincipalId,
-  workloadKeys: readonly [string, ...string[]],
-) {
-  const registration = yield* Schema.decodeUnknownEffect(RegisterIntegrationWorkloadsPayloadSchema)({
-    principalId,
-    workloadKeys,
-  }).pipe(Effect.mapError(inputInvalid));
-  return yield* registerIntegrationWorkloads(registration, { idempotencyKey: yield* newRequestToken });
-});
+type WriteCore = ConnectorPartnerComponentProps['writeCore'];
 
-const enrollExecutor = Effect.fn('SymmyRoutesPanel.enrollExecutor')(function* enrollExecutor(
-  moduleKey: string,
-  workloadKey: string,
-) {
-  const enrollment = yield* Schema.decodeUnknownEffect(ChangeSystemWorkloadEnrollmentPayloadSchema)({
-    _tag: 'ENROLL',
-    moduleKey,
-    reason: enrollReason,
-    workloadKey,
-  }).pipe(Effect.mapError(inputInvalid));
-  return yield* changeSystemWorkloadEnrollment(enrollment, { idempotencyKey: yield* newRequestToken });
-});
-
-const fulfil = Effect.fn('SymmyRoutesPanel.fulfil')(function* fulfil(
-  principalId: PrincipalId,
-  prerequisite: SymmyPrerequisite,
-) {
-  if (prerequisite.kind === 'enrollExecutor') {
-    return yield* enrollExecutor(prerequisite.moduleKey, prerequisite.workloadKey);
-  }
-  return yield* registerMissing(principalId, prerequisite.workloadKeys);
-});
+/** One confirmed Core identity write, made by the Shell; it fails when the Shell answers that it did not go through. */
+const fulfil = (writeCore: WriteCore, prerequisite: SymmyPrerequisite) =>
+  Effect.callback<ConnectorPartnerCoreWriteOutcome>((resume) => {
+    writeCore(
+      prerequisite.kind === 'enrollExecutor'
+        ? {
+            kind: 'enrollSystemWorkload',
+            moduleKey: prerequisite.moduleKey,
+            reason: enrollReason,
+            workloadKey: prerequisite.workloadKey,
+          }
+        : { kind: 'registerIntegrationWorkloads', workloadKeys: prerequisite.workloadKeys },
+      (outcome) => resume(Effect.succeed(outcome)),
+    );
+  }).pipe(
+    Effect.timeout(timeout),
+    Effect.flatMap((outcome) => (outcome === 'done' ? Effect.void : Effect.fail(outcome))),
+  );
 
 /** A route change as the administrator asked for it, kept to repeat it after confirmed writes. */
 interface Attempt {
@@ -119,12 +114,17 @@ const changeRoutes = (principalId: PrincipalId, attempt: Attempt) =>
   );
 
 /** The confirmed writes, then the same route change once more. */
-const confirmAndRetry = (principalId: PrincipalId, attempt: Attempt, prerequisites: SymmyPrerequisites) =>
+const confirmAndRetry = (
+  principalId: PrincipalId,
+  writeCore: WriteCore,
+  attempt: Attempt,
+  prerequisites: SymmyPrerequisites,
+) =>
   routePayload(principalId, attempt).pipe(
     Effect.flatMap((payload) =>
       symmyFulfilThenRetry(
         prerequisites,
-        (prerequisite) => fulfil(principalId, prerequisite).pipe(Effect.timeout(timeout)),
+        (prerequisite) => fulfil(writeCore, prerequisite),
         submitRoutes(payload).pipe(Effect.timeout(timeout)),
       ),
     ),
@@ -303,7 +303,10 @@ const ConfirmedRunFailure = ({
 };
 
 /** Symmy's routes of this integration in the selected company, and the form that enables more of them. */
-export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: PrincipalId }) => {
+export const SymmyRoutesPanel = ({
+  integrationPrincipalId: principalId,
+  writeCore,
+}: ConnectorPartnerComponentProps) => {
   const { t } = useModernI18n();
   const [routes, setRoutes] = useState<readonly CompanyRoute[] | null>(null);
   const [readFailure, setReadFailure] = useState<'readFailed' | 'readForbidden' | null>(null);
@@ -357,7 +360,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
     }
     setChange({ kind: 'saving' });
     browserRuntime.runFork(
-      confirmAndRetry(principalId, change.attempt, change.prerequisites).pipe(
+      confirmAndRetry(principalId, writeCore, change.attempt, change.prerequisites).pipe(
         Effect.match({ onFailure: (problem) => setChange(confirmedRunFailureState(problem)), onSuccess: settled }),
       ),
     );
@@ -416,7 +419,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
               maxLength={300}
               name="symmyIssuerId"
               onChange={(event) => setIssuerId(event.target.value)}
-              placeholder="symmy-akros"
+              placeholder={t(`${copyKey}.issuerIdPlaceholder`)}
               required
               value={issuerId}
             />
@@ -426,7 +429,7 @@ export const SymmyRoutesPanel = ({ principalId }: { readonly principalId: Princi
               maxLength={300}
               name="symmySourceNamespace"
               onChange={(event) => setSourceNamespace(event.target.value)}
-              placeholder="akros-erp"
+              placeholder={t(`${copyKey}.sourceNamespacePlaceholder`)}
               required
               value={sourceNamespace}
             />

@@ -20,11 +20,15 @@
     "server",
     "api",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "vertical.runtime-declaration.ts"
   ],
   "references": [
     {
       "path": "../../packages/shared-contracts"
+    },
+    {
+      "path": "../../packages/shared-design-tokens"
     },
     {
       "path": "../../packages/core-runtime"

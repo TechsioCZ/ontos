@@ -20,6 +20,7 @@ const signedInDocument = Schema.decodeUnknownSync(ShellDocumentContextSchema)({
     deniedAppIds: [],
     gatewayAudiences: [],
     homeComponents: [],
+    integrationComponents: [],
     navigation: [],
     state: 'available',
     unavailableDeployments: [],

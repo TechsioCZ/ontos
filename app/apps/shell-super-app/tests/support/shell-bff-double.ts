@@ -139,6 +139,7 @@ export const signedInShellReads = (session: CurrentSession) =>
           deniedAppIds: [],
           gatewayAudiences: [],
           homeComponents: [],
+          integrationComponents: [],
           navigation: [],
           state: 'available',
           unavailableDeployments: [],

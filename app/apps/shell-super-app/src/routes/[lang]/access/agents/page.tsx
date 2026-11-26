@@ -44,7 +44,13 @@ const AgentsPage = () => {
             onNotify={(title, description) => setNotification([title, description].filter(Boolean).join(' '))}
           />
         )}
-        <IntegrationsSection />
+        <IntegrationsSection
+          offers={
+            shell.compositionRevision === undefined
+              ? undefined
+              : { components: shell.integrationComponents ?? [], compositionRevision: shell.compositionRevision }
+          }
+        />
       </ShellContentLayout>
     );
   }

@@ -51,13 +51,9 @@ import { Array as EffectArray, Effect, Layer, Option, Order, Schema } from 'effe
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { symmyCompanyRoutesRead } from '../../src/api/symmy-company-routes.read.ts';
-import { symmyJobPrivacyExecutionRead } from '../../src/api/symmy-job-privacy-execution.read.ts';
-import { symmyJobStatusRead } from '../../src/api/symmy-job-status.read.ts';
-import { symmyRouteContextRead } from '../../src/api/symmy-route-context.read.ts';
-import { symmySourceOrganizationFactsRead } from '../../src/api/symmy-source-organization-facts.read.ts';
-import { symmySyncAdmissionRead } from '../../src/api/symmy-sync-admission.read.ts';
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
+import { symmyIntegrationRuntimeDeclaration } from '../../vertical.runtime-declaration.ts';
+import { symmyBrowserComposition, symmyContractComponents } from './symmy-browser-contract.fixture.ts';
 
 const fixtureModuleId = 'integration.symmy';
 const fixtureDomainEvents = {};
@@ -229,15 +225,8 @@ export const makeNativeExecutionRegistration = (
     actions: [...manifest.publicSurface.actions],
     manifest,
     outboxWorkers: [...workers],
-    reads: [
-      symmyCompanyRoutesRead,
-      symmyJobPrivacyExecutionRead,
-      symmyJobStatusRead,
-      symmyRouteContextRead,
-      symmySourceOrganizationFactsRead,
-      symmySyncAdmissionRead,
-      fixtureRecoveryRead,
-    ],
+    // Every read Symmy registers, so each operation contract still binds its own registration, plus the fixture's.
+    reads: [...(symmyIntegrationRuntimeDeclaration.reads ?? []), fixtureRecoveryRead],
   });
   return { manifest, registration };
 };
@@ -269,7 +258,7 @@ export const makeNativeExecutionSnapshot = Effect.fn('SymmyNativeFixture.composi
       publicSurface: {
         actions: owner.actions,
         api: apis,
-        components: [],
+        components: symmyContractComponents(owner.shellContributions),
         events: [],
         operationContracts: owner.operationContracts,
         reports: [],
@@ -290,6 +279,7 @@ export const makeNativeExecutionSnapshot = Effect.fn('SymmyNativeFixture.composi
     ...snapshot.composition,
     modules: snapshot.composition.modules.map((module) => ({
       ...module,
+      ...symmyBrowserComposition(contract),
       contract: { ...module.contract, sha256 },
       contractDocument,
       moduleId: owner.moduleId,

@@ -37,6 +37,7 @@ const signedInDocument = (target?: ShellDocumentTarget): ShellDocumentContext =>
       deniedAppIds: [],
       gatewayAudiences: [],
       homeComponents: [],
+      integrationComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
