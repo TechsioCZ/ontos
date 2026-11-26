@@ -87,6 +87,7 @@ export const en: Dictionary = {
       recommended: "Recommended",
       sale: "Clearance",
       action: "Special offer",
+      new: "New",
       saleVariants: "Clearance of selected variants. See the product page for details.",
       actionVariants: "Special offer on selected variants. See the product page for details.",
     },

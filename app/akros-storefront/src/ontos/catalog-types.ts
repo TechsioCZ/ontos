@@ -59,6 +59,7 @@ export type CatalogSearchVariantOffer = Pick<
   | "packageQuantity"
   | "quantityStep"
   | "unit"
+  | "originalPriceMinor"
 > & {
   currency: StoreCurrency;
   /** Owner-selected net display amount after market conversion and tier deduplication. */
@@ -174,7 +175,7 @@ export type CatalogPurchaseProduct = Pick<
 > & { detail: Pick<CatalogProductDetail, "priceTiers"> };
 export type CatalogPurchaseVariant = Omit<
   CatalogProductVariant,
-  "sourceId" | "vatRate" | "originalPriceMinor" | "isAction" | "isRecommended" | "isSale" | "isNew"
+  "sourceId" | "vatRate" | "isAction" | "isRecommended" | "isSale" | "isNew"
 >;
 
 export interface CatalogPromotionItem {

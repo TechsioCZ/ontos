@@ -70,7 +70,7 @@ describe("ProductGrid", () => {
     expect(screen.queryByText("Doprodej")).toBeNull();
   });
 
-  it("does not invent recommendation, video or novelty tags from fallback selections", () => {
+  it("shows the operator's Novinka label without inventing recommendation or video tags", () => {
     const product = getProducts().find(
       (item) => item.isNew && !item.isRecommended && !item.isSale && !item.isAction,
     )!;
@@ -78,8 +78,9 @@ describe("ProductGrid", () => {
       <ProductGrid action="detail" products={[toProductSummary(product)]} />,
     );
 
-    expect(container.querySelector("[data-sf-product-tags]")).toBeNull();
-    expect(screen.queryByText("Novinka")).toBeNull();
+    expect(container.querySelector("[data-sf-product-tags]")?.children).toHaveLength(1);
+    expect(screen.getByText("Novinka")).toBeDefined();
+    expect(screen.queryByText("Doporučujeme")).toBeNull();
     expect(screen.queryByText("Video")).toBeNull();
   });
 

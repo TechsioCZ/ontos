@@ -85,6 +85,7 @@ export const cs = {
       recommended: "Doporučujeme",
       sale: "Doprodej",
       action: "Akce",
+      new: "Novinka",
       saleVariants: "Doprodej vybraných variant. Podrobnosti najdete v detailu produktu.",
       actionVariants: "Akční nabídka vybraných variant. Podrobnosti najdete v detailu produktu.",
     },

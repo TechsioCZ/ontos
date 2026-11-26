@@ -87,6 +87,7 @@ export const sk: Dictionary = {
       recommended: "Odporúčame",
       sale: "Dopredaj",
       action: "Akcia",
+      new: "Novinka",
       saleVariants: "Dopredaj vybraných variantov. Podrobnosti nájdete v detaile produktu.",
       actionVariants: "Akciová ponuka vybraných variantov. Podrobnosti nájdete v detaile produktu.",
     },

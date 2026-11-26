@@ -618,6 +618,12 @@ export function ProductPurchaseForm({
                             </span>
                           ) : (
                             <>
+                              {item.originalPriceMinor !== undefined &&
+                                item.originalPriceMinor > item.priceMinor && (
+                                  <s className="text-xs text-fg-secondary">
+                                    {formatPrice(item.originalPriceMinor)}
+                                  </s>
+                                )}
                               <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
                                 {formatPrice(item.priceMinor).replace(/\s(?=\S+$)/u, " ")}
                                 <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline! @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal">

@@ -68,7 +68,6 @@ export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProdu
 export const purchaseVariantOf = ({
   sourceId: _sourceId,
   vatRate: _vatRate,
-  originalPriceMinor: _originalPriceMinor,
   isAction: _isAction,
   isRecommended: _isRecommended,
   isSale: _isSale,
@@ -212,6 +211,7 @@ const searchOfferOf = (
     "minimumQuantity",
     "packageQuantity",
     "imageSrc",
+    "originalPriceMinor",
   ]);
   const id = searchText(raw.id);
   if (!id.trim() || !isStoreCurrency(raw.currency) || raw.currency !== money.currency)
@@ -234,6 +234,8 @@ const searchOfferOf = (
   const ownerUnit = searchText(raw.unit);
   const unit = raw.sourceUnit === undefined ? ownerUnit : searchText(raw.sourceUnit);
   const image = raw.imageSrc === undefined ? undefined : searchText(raw.imageSrc);
+  const original =
+    raw.originalPriceMinor === undefined ? undefined : searchMinor(raw.originalPriceMinor);
   const priceIssue = priceUnavailableReason(gross, net, raw.currency, money);
   const availabilityUnknown = isAvailabilityUnknown(availability, product.stockTracked);
   return {
@@ -244,6 +246,9 @@ const searchOfferOf = (
     unit,
     priceMinor: priceIssue ? 0 : gross,
     ...(!priceIssue && displayNet !== undefined ? { priceExcludingVatMinor: displayNet } : {}),
+    ...(!priceIssue && original !== undefined && original > gross
+      ? { originalPriceMinor: original }
+      : {}),
     ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
     stockCount: availabilityUnknown ? 0 : stockOf(stock, availability),
     ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
@@ -465,7 +470,8 @@ export function projectProducts(body: Raw): ProductPage {
     const productOriginal = productPriceIssue
       ? undefined
       : isGroup
-        ? first?.originalPriceMinor
+        ? (first?.originalPriceMinor ??
+          (ownOriginal !== undefined && ownOriginal > productGross ? ownOriginal : undefined))
         : ownOriginal !== undefined && ownOriginal > productGross
           ? ownOriginal
           : undefined;
