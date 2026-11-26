@@ -25,6 +25,7 @@
     "scripts/legacy-completion-connections.ts",
     "scripts/legacy-completion-runtime-pair.ts",
     "vertical.runtime-declaration.ts",
+    "tests/support/owner-descriptors.ts",
     "tests/support/source-processing-native.ts",
     "tests/support/organization-ico-native.ts",
     "tests/support/source-processing-governance-native.ts",

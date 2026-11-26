@@ -24,7 +24,7 @@ import type { ApplicationComposition, ApplicationCompositionModule } from '../mo
 import { OntosModuleDeploymentContractSchema } from '../modules/manifest.ts';
 import type { OntosModuleActivation, OntosModuleDeploymentContract } from '../modules/manifest.ts';
 import { extractVerticalRuntimeSafeDescriptors } from '../modules/runtime-registration.ts';
-import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import type { VerticalRuntimeRegistration, VerticalRuntimeSafeDescriptors } from '../modules/runtime-registration.ts';
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
 
 interface ModuleContractFixtureOptions<Subscription extends object> {
@@ -165,20 +165,19 @@ const buildCompositionSnapshotFixture = Effect.fn('CoreTesting.buildCompositionS
       readonly appIds?: readonly string[];
       readonly buildMarker?: string | Readonly<Record<string, string>>;
       readonly coreCapabilities?: (typeof OntosShellRuntimeContractSchema.Type)['coreCapabilities'];
-      readonly owners?: ReadonlyMap<string, VerticalRuntimeRegistration>;
+      readonly owners?: ReadonlyMap<string, VerticalRuntimeSafeDescriptors>;
     } = {},
   ) {
     const {
       appIds = [],
       buildMarker = 'fixture-build',
       coreCapabilities = [],
-      owners = new Map<string, VerticalRuntimeRegistration>(),
+      owners = new Map<string, VerticalRuntimeSafeDescriptors>(),
     } = input;
     const modules = yield* Effect.forEach(
       appIds,
       Effect.fnUntraced(function* createModuleFixture(appId: string) {
-        const owner = owners.get(appId);
-        const projection = owner === undefined ? undefined : extractVerticalRuntimeSafeDescriptors(owner);
+        const projection = owners.get(appId);
         const moduleId = projection?.moduleId ?? `${appId.replaceAll('-', '.')}.module`;
         const selectedBuildMarker = Schema.is(Schema.String)(buildMarker) ? buildMarker : buildMarker[appId];
         if (selectedBuildMarker === undefined) {
@@ -292,15 +291,15 @@ export const makeApplicationCompositionSnapshotFixture = Effect.fn(
 });
 
 /**
- * Public operation-lifecycle fixture for genuine owner registrations. The caller retains the same
- * private registration identities; only their official safe projections enter the validated catalog.
+ * Public operation-lifecycle fixture for a genuine owner registration. Other deployments
+ * contribute only their official safe descriptor data to the validated catalog.
  * Missing dependency owners or required Shell capabilities fail ordinary bundle validation.
  */
 export const makeOwnerApplicationCompositionFixture = Effect.fn('CoreTesting.makeOwnerApplicationCompositionFixture')(
   function* makeOwnerApplicationCompositionFixture(input: {
     readonly additionalOwners?: readonly {
       readonly appId: string;
-      readonly ownerRegistration: VerticalRuntimeRegistration;
+      readonly descriptors: VerticalRuntimeSafeDescriptors;
     }[];
     readonly appId?: string;
     readonly buildMarker?: string;
@@ -311,8 +310,10 @@ export const makeOwnerApplicationCompositionFixture = Effect.fn('CoreTesting.mak
     const appId = input.appId ?? input.ownerRegistration.moduleId.replaceAll('.', '-');
     const buildMarker = input.buildMarker ?? 'fixture-owner-build';
     const owners = new Map([
-      [appId, input.ownerRegistration] as const,
-      ...(input.additionalOwners ?? []).map((owner) => [owner.appId, owner.ownerRegistration] as const),
+      [appId, extractVerticalRuntimeSafeDescriptors(input.ownerRegistration)] as const,
+      ...(input.additionalOwners ?? []).map(
+        ({ appId: additionalAppId, descriptors }) => [additionalAppId, descriptors] as const,
+      ),
     ]);
     if (owners.size !== 1 + (input.additionalOwners?.length ?? 0)) {
       return yield* fixtureUnavailable('Owner fixture deployment identities must be unique');

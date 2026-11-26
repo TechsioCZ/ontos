@@ -1,4 +1,9 @@
-import { defineRead, defineTenantModuleEntrypoint, defineVerticalRuntimeRegistration } from '@app/core-runtime';
+import {
+  defineRead,
+  defineTenantModuleEntrypoint,
+  defineVerticalRuntimeRegistration,
+  extractVerticalRuntimeSafeDescriptors,
+} from '@app/core-runtime';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { PartyDetailApi, PartyDetailRequestSchema, PartyDetailResponseSchema } from '@app/party-registry/api';
 import {
@@ -125,6 +130,8 @@ const syntheticPartyProvider = defineVerticalRuntimeRegistration({
 
 /** The actual Privacy owner composed with the synthetic Party provider of its Subject-read contracts. */
 export const privacySubjectsPartyProviderComposition = makeOwnerApplicationCompositionFixture({
-  additionalOwners: [{ appId: 'party-registry', ownerRegistration: syntheticPartyProvider }],
+  additionalOwners: [
+    { appId: 'party-registry', descriptors: extractVerticalRuntimeSafeDescriptors(syntheticPartyProvider) },
+  ],
   ownerRegistration: privacyRegistration,
 });

@@ -6,6 +6,7 @@ import {
   InstalledModuleCatalogServiceLive,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
+  extractVerticalRuntimeSafeDescriptors,
   scopedRoutineInvokerFromTransaction,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
@@ -271,7 +272,12 @@ const ownerTable = (scope: OperationalScope, initialRows: readonly AdmissionRow[
  */
 const ownerFixture = Effect.fn('MarketRetirementAdmissionPhaseBoundary.ownerFixture')(function* ownerFixture() {
   const owner = yield* makeOwnerApplicationCompositionFixture({
-    additionalOwners: [{ appId: 'commerce-customer-context', ownerRegistration: commerceCustomerContextRegistration }],
+    additionalOwners: [
+      {
+        appId: 'commerce-customer-context',
+        descriptors: extractVerticalRuntimeSafeDescriptors(commerceCustomerContextRegistration),
+      },
+    ],
     appId: 'commerce-market-catalog',
     ownerRegistration: commerceMarketCatalogBackendRegistration,
   });

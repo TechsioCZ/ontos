@@ -5,6 +5,7 @@ import {
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { privacyOwnerDescriptors } from '@app/privacy/testing/owner-descriptors';
 import { GatewayDelegatedContextRequestSchema, GatewayRegisteredAssertionSubjectSchema } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
@@ -12,7 +13,6 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { privacyRegistration } from '../../../privacy/vertical.registration.ts';
 import { withModuleOperationExecution } from '../../../../packages/core-runtime/src/modules/module-operation-execution.ts';
 import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
@@ -141,7 +141,7 @@ const prepareCheck = Effect.fn('SourceProcessingEvidenceTest.prepareCheck')(func
 ) {
   yield* TestClock.setTime(Date.parse(evaluatedAt));
   const { applicationComposition } = yield* makeOwnerApplicationCompositionFixture({
-    additionalOwners: [{ appId: 'privacy', ownerRegistration: privacyRegistration }],
+    additionalOwners: [{ appId: 'privacy', descriptors: privacyOwnerDescriptors }],
     appId: 'commerce-customer-context',
     ownerRegistration: commerceCustomerContextRegistration,
   });

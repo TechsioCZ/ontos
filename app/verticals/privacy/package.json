@@ -56,6 +56,7 @@
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/widget.tsx",
     "./admin/legacy-completion": "./scripts/legacy-completion-publication.ts",
+    "./testing/owner-descriptors": "./tests/support/owner-descriptors.ts",
     "./testing/source-processing-native": "./tests/support/source-processing-native.ts",
     "./testing/organization-ico-native": "./tests/support/organization-ico-native.ts",
     "./testing/source-processing-governance-native": "./tests/support/source-processing-governance-native.ts",
