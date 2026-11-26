@@ -181,6 +181,19 @@ export function ProductVariantDetail({
                 </>
               )}
             </div>
+            {variant.priceTiers.length > 1 && !variant.priceUnavailableReason && (
+              <dl className="sf-price-tiers" aria-label={cs.product.quantityPricing}>
+                {variant.priceTiers.map((tier) => (
+                  <div key={tier.minimumQuantity}>
+                    <dt>
+                      {cs.product.from} {tier.minimumQuantity.toLocaleString(money.locale)}{" "}
+                      {variant.unit}
+                    </dt>
+                    <dd>{formatPrice(tier.priceMinor)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
             <ProductPurchaseForm key={variant.id} product={product} variant={variant} />
             <div
               className="sf-product-actions flex flex-wrap gap-x-(--sf-product-actions-column-gap) gap-y-(--dimension-8)"

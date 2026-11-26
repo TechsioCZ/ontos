@@ -466,8 +466,26 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
     const { priceTiers: inheritedTiers, ...originalFields } = original ?? {};
     const kept = original?.priceMinor === priceMinor ? original : originalFields;
     void inheritedTiers;
+    // Edited tiers are sent as typed, so the row that repeats the old price follows the new one (the server rescales
+    // only tiers it is not sent).
+    const oldPrice = original?.priceMinor;
+    const details =
+      draft.tiersEdited && oldPrice !== undefined && oldPrice > 0 && oldPrice !== priceMinor
+        ? {
+            ...draft,
+            tiers: draft.tiers.map((tier) =>
+              parseCzkText(tier.netText) === oldPrice
+                ? {
+                    ...tier,
+                    grossText: czkText(Math.round(((parseCzkText(tier.grossText) ?? 0) * priceMinor) / oldPrice)),
+                    netText: czkText(priceMinor),
+                  }
+                : tier,
+            ),
+          }
+        : draft;
     const variant = {
-      ...withVariantDetails(kept, draft),
+      ...withVariantDetails(kept, details),
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),

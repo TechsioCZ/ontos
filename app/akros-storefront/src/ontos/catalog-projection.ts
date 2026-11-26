@@ -344,6 +344,9 @@ export function projectProducts(body: Raw): ProductPage {
   const products: CatalogProduct[] = [];
   for (const p of rows(body.products)) {
     if (p.active === false || p.published === false || !text(p.id) || !text(p.slug)) continue;
+    // A product sold as its one variant shows the weight staff enter on the product when the variant has none.
+    const singleVariantProductWeight =
+      rows(p.variantRecords).length === 1 ? number(p.weightGrams) : undefined;
     const convert = (v: Raw): CatalogProductVariant | null => {
       const gross = number(v.grossPriceMinor);
       const net = number(v.priceMinor);
@@ -365,7 +368,7 @@ export function projectProducts(body: Raw): ProductPage {
       const packageQuantity = rawPackage !== undefined && rawPackage > 0 ? rawPackage : undefined;
       const unit =
         filled(v.sourceUnit) ?? filled(v.unit) ?? filled(p.sourceUnit) ?? filled(p.unit) ?? "ks";
-      const variantWeightGrams = number(v.weightGrams);
+      const variantWeightGrams = number(v.weightGrams) || singleVariantProductWeight;
       const sourceNetWeight =
         variantWeightGrams !== undefined && variantWeightGrams > 0
           ? variantWeightGrams / 1000
