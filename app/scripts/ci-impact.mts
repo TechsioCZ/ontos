@@ -318,7 +318,7 @@ export const taskDirectory = (task: string) =>
 /** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
   /^root:\d+\/\d+$/u.test(task) ||
-  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|core-media|preproposal-basis|preproposal-approval)$/u.test(
     task,
   ) ||
   taskDirectory(task) !== undefined;
@@ -397,6 +397,9 @@ export const planCiChecks = (input: {
       }
       if (task === 'whole:party-worker') {
         return affectedDirectories.has('verticals/party-registry');
+      }
+      if (task === 'whole:core-media') {
+        return affectedDirectories.has('apps/shell-super-app') || affectedDirectories.has('packages/core-runtime');
       }
       if (task.startsWith('whole:')) {
         return true;

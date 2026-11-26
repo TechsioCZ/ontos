@@ -140,7 +140,8 @@ CI and deployment share the fixed-point consumer traversal. The checked-in
 `scripts/ci-matrices.json` owns the complete source, unit and integration matrices. Every
 integration row lists the tasks it runs: package shards, root shards and whole-owner proofs. An
 affected plan keeps a package task when its package is affected, root tasks when the root package
-is, and the preproposal proofs when one of their declared proof packages is; a row with no task
+is, the preproposal proofs when one of their declared proof packages is, and the required Core Media
+proof ([Core Media](CORE_MEDIA.md)) when the Shell or Core runtime is; a row with no task
 left is dropped. A task in an unknown form requires the full suite.
 
 An affected plan omits unrelated package tests; source checks, lint, static contracts and the
