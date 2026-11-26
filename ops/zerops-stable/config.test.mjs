@@ -44,7 +44,7 @@ test('the stable project is not the demo project', () => {
   rejects((config) => (config.projectId = config.demoProjectId), 'projectId');
   rejects((config) => (config.services.app = config.demoProjectId), 'services.app');
   rejects((config) => (config.services.shop = config.services.storefront), 'services.shop');
-  rejects((config) => delete config.services.migrator, 'services');
+  rejects((config) => delete config.services.db18, 'services');
 });
 
 test('origins are distinct bare https origins', () => {

@@ -67,8 +67,8 @@ export async function initializeSecrets({ config, generateTls = generateTlsMater
       projectId: config.projectId,
       schemaVersion: 1,
       services: {
-        app: { ONTOS_OWNER_SECRETS_JSON: JSON.stringify(ownerSecrets) },
-        migrator: {
+        app: {
+          ONTOS_OWNER_SECRETS_JSON: JSON.stringify(ownerSecrets),
           PARTY_REGISTRY_DB_PASSWORD: secret(),
           PARTY_REGISTRY_WORKER_DB_PASSWORD: secret(),
           SHELL_GATEWAY_ISSUER_DB_PASSWORD: secret(),

@@ -3,8 +3,6 @@ services:
     type: postgresql:single@18
   - hostname: spicedb
     type: docker@26.1.5
-  - hostname: migrator
-    type: alpine/nodejs@26
   - hostname: app
     type: alpine/nodejs@26
     enableSubdomainAccess: true

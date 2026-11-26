@@ -16,7 +16,6 @@ export const fixtureConfig = () => ({
     n1: 'STABLEn10000000000000',
     spicedb: 'STABLEspicedb000000000',
     db18: 'STABLEdb18000000000000',
-    migrator: 'STABLEmigrator00000000',
   },
   origins: {
     shell: 'https://ontos.example.com',

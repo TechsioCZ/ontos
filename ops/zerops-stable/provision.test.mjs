@@ -44,7 +44,7 @@ const serviceTable = (rows) => ['│ ID │ NAME │ STATUS │', ...rows.map((r
 const ORG = 'KyBprR6GQHePj6ahY0i0ew';
 const DEMO = 't1ljmn3DRDafgi8AuPvhdQ';
 const NEW_PROJECT = 'NewStableProject0001';
-const HOSTS = ['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18', 'migrator'];
+const HOSTS = ['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18'];
 const serviceId = (host) => `svc-${host}-0000000000000`.slice(0, 22);
 const listedServices = serviceTable(HOSTS.map((host) => [serviceId(host), host, 'ACTIVE']));
 const demoRow = [DEMO, 'OntOS', 'BDA', ORG, 'ACTIVE', 'LIGHT'];

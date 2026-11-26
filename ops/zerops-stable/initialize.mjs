@@ -16,12 +16,13 @@
 // loop once, with the repository's own primitives and the project's fresh secrets:
 //
 //   1. Zerops: the project is not the demo, every configured service is its own, no workload was ever deployed, and
-//      the migrator and spicedb secrets stored on Zerops equal the bundle (compared, never printed).
+//      the app's database identity passwords and the spicedb secrets stored on Zerops equal the bundle (compared,
+//      never printed).
 //   2. Database: DATABASE_ADMIN_URL names the project's db18 (host, port, database and superuser of its env), and the
 //      cluster is either fresh (no application schema, no marker) or marked as this project's. On apply the database
 //      comment becomes the marker `ontos-stable:<projectId>`, so a VPN pointed at another project's db18 is refused.
 //   3. On apply, in one transaction: `ensureDatabaseLoginRole` (scripts/postgres/database-login-roles.mts) for each
-//      explicit manifest role with the password of the migrator secret its URL names in app/zerops.yaml; then
+//      explicit manifest role with the password of the app secret its URL names in app/zerops.yaml; then
 //      `scripts/postgres/bootstrap-spicedb-database.mts` with SPICEDB_DATABASE_PASSWORD. Both create only what is
 //      missing and set the given passwords; neither drops, truncates or resets data. Grants stay the migrator's.
 //   4. On apply, unless spicedb is already ACTIVE: `zcli push` of the tag's spicedb snapshot (its deployFiles from
@@ -62,17 +63,17 @@ const fail = (message) => {
 export const projectMarker = (config) => `ontos-stable:${config.projectId}`;
 
 /**
- * Each explicit login role and the migrator secret holding its password, as the app setup's database URLs name them
- * (`postgresql://<role>:${migrator_<KEY>}@…` in app/zerops.yaml), so the password set here is the one the app uses.
+ * Each explicit login role and the app secret holding its password, as the app setup's database URLs name them
+ * (`postgresql://<role>:${<KEY>}@…` in app/zerops.yaml), so the password set here is the one the app uses.
  */
 export const roleSecretsOf = (zeropsYamlText) => {
   const app = parseYaml(zeropsYamlText)?.zerops?.find((entry) => entry.setup === 'app');
   const roles = new Map();
   for (const value of Object.values(app?.run?.envVariables ?? {})) {
-    const match = /^postgresql:\/\/([a-z_]+):\$\{migrator_([A-Z][A-Z0-9_]*)\}@/u.exec(String(value));
+    const match = /^postgresql:\/\/([a-z_]+):\$\{([A-Z][A-Z0-9_]*)\}@/u.exec(String(value));
     if (match === null) continue;
     const [, role, key] = match;
-    if (roles.has(role) && roles.get(role) !== key) fail(`app/zerops.yaml gives ${role} two migrator secrets`);
+    if (roles.has(role) && roles.get(role) !== key) fail(`app/zerops.yaml gives ${role} two password secrets`);
     roles.set(role, key);
   }
   return roles;
@@ -356,18 +357,25 @@ export const initialize = async ({ adminUrl, apply, bundle, config, deps, log = 
   const release = deps.release(tag);
   const services = await deps.assertServices(config);
   const { spicedbDeploy } = assertFirstInstall(services);
-  assertSecretsStored(
-    bundle,
-    { migrator: await deps.userData(config.services.migrator), spicedb: await deps.userData(config.services.spicedb) },
-    ['migrator', 'spicedb'],
-  );
   const zeropsYaml = deps.gitShow(`${release.commit}:app/zerops.yaml`).toString('utf8');
   const roleSecrets = roleSecretsOf(zeropsYaml);
   const { explicitRoles } = deps.database({ mode: 'roles' });
   const unmapped = explicitRoles.filter((role) => !roleSecrets.has(role));
   if (unmapped.length > 0 || explicitRoles.length === 0) {
-    fail(`app/zerops.yaml names no migrator secret for ${unmapped.join(', ') || 'any explicit role'}`);
+    fail(`app/zerops.yaml names no password secret for ${unmapped.join(', ') || 'any explicit role'}`);
   }
+  // The app's other bundle secrets (its owner settings) are merged into what Zerops holds, so only the passwords compare.
+  const passwordSecrets = Object.fromEntries(
+    [...new Set(explicitRoles.map((role) => roleSecrets.get(role)))].map((key) => [
+      key,
+      bundle.services.app?.[key] ?? fail(`the bundle has no ${key}`),
+    ]),
+  );
+  assertSecretsStored(
+    { services: { app: passwordSecrets, spicedb: bundle.services.spicedb } },
+    { app: await deps.userData(config.services.app), spicedb: await deps.userData(config.services.spicedb) },
+    ['app', 'spicedb'],
+  );
   const admin = parseAdminUrl(adminUrl);
   assertAdminUrlOfProject(admin, await deps.projectEnv(config.projectId));
   const marker = projectMarker(config);
@@ -383,12 +391,7 @@ export const initialize = async ({ adminUrl, apply, bundle, config, deps, log = 
     `stable ${config.projectId} at ${release.commit}: database ${decision.state}, roles to create ${decision.missingRoles.join(', ') || 'none'}, spicedb database ${decision.spicedbDatabase}, spicedb deploy ${spicedbDeploy ? 'needed' : 'done'}`,
   );
   if (!apply) return { applied: false, plan };
-  const passwords = Object.fromEntries(
-    explicitRoles.map((role) => [
-      role,
-      bundle.services.migrator[roleSecrets.get(role)] ?? fail(`the bundle has no ${roleSecrets.get(role)}`),
-    ]),
-  );
+  const passwords = Object.fromEntries(explicitRoles.map((role) => [role, passwordSecrets[roleSecrets.get(role)]]));
   const after = deps.database({ adminUrl, marker, mode: 'apply', passwords });
   if (after.marker !== marker || explicitRoles.some((role) => !after.roles.includes(role))) {
     fail('the database did not read back as initialized');

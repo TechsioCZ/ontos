@@ -15,7 +15,7 @@ import {
 
 const config = {
   projectId: 'stable-project',
-  services: { app: 'app-id', migrator: 'migrator-id', spicedb: 'spicedb-id' },
+  services: { app: 'app-id', spicedb: 'spicedb-id' },
 };
 const tls = async ({ name }) => ({ certificate: `${name}-certificate`, key: `${name}-private-key` });
 const bundle = () => ({
@@ -56,7 +56,11 @@ test('initialization creates fresh private credentials without overwriting an ex
     const owners = JSON.parse(a.services.app.ONTOS_OWNER_SECRETS_JSON);
     assert.ok(owners['shell-super-app'].ONTOS_EMAIL_DISPATCH_SECRET.length >= 32);
     for (const key of ['REF', 'VERSION', 'LINEAGE_REF']) assert.ok(owners.pricing[`ONTOS_PRICING_CONFIRMATION_KEY_${key}`]);
-    assert.notEqual(a.services.migrator.PARTY_REGISTRY_DB_PASSWORD, b.services.migrator.PARTY_REGISTRY_DB_PASSWORD);
+    assert.deepEqual(Object.keys(a.services).sort(), ['app', 'spicedb']);
+    for (const key of ['PARTY_REGISTRY_DB_PASSWORD', 'PARTY_REGISTRY_WORKER_DB_PASSWORD', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD']) {
+      assert.ok(a.services.app[key].length >= 32, key);
+      assert.notEqual(a.services.app[key], b.services.app[key]);
+    }
     assert.notEqual(a.services.spicedb.SPICEDB_DATABASE_PASSWORD, b.services.spicedb.SPICEDB_DATABASE_PASSWORD);
     const before = await readFile(first, 'utf-8');
     await assert.rejects(initializeSecrets({ config, generateTls: tls, output: first }), { code: 'EEXIST' });
@@ -70,6 +74,7 @@ test('rejects cross-project and malformed bundles without echoing secret values'
   for (const value of [
     { ...bundle(), projectId: 'demo-project' },
     { ...bundle(), services: { unknown: { TOKEN: 'never-log-this' } } },
+    { ...bundle(), services: { migrator: { SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'never-log-this' } } },
     { ...bundle(), services: { app: { TOKEN: '' } } },
     { ...bundle(), services: { app: { 'bad-key': 'never-log-this' } } },
     { ...bundle(), services: {} },
@@ -180,6 +185,26 @@ const liveStore = (content, { failNew = false } = {}) => {
     },
   };
 };
+
+test('storing the app secrets on a project that already holds them changes nothing', async () => {
+  const passwords = { PARTY_REGISTRY_DB_PASSWORD: 'party', SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'issuer', SMTP_PASSWORD: 'smtp' };
+  const stored = Object.entries(passwords).map(([key, content], index) => ({ content, id: String(index), key }));
+  const result = await applySecrets({
+    apply: true,
+    assertServices: async () => {},
+    bundle: { ...bundle(), services: { app: passwords } },
+    config,
+    store: {
+      create: () => assert.fail('nothing is created'),
+      list: async () => stored,
+      remove: () => assert.fail('nothing is removed'),
+    },
+  });
+  assert.deepEqual(
+    result.changes.map(({ action, key, service }) => `${service}.${key} ${action}`),
+    Object.keys(passwords).map((key) => `app.${key} unchanged`),
+  );
+});
 
 test('a second fresh bundle cannot silently rotate any existing live secret', async () => {
   const store = liveStore('old-private-value');

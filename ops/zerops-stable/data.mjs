@@ -9,8 +9,8 @@
 //
 // Credentials come only from the environment and reach the PostgreSQL tools only through their PG* variables, never an
 // argument or a log line:
-//   DATABASE_ADMIN_URL             db18 superuser URL to the application database (the `migrator`/`app` variable of
-//                                  that name), reached over `zcli vpn up <projectId>`; backup and restore
+//   DATABASE_ADMIN_URL             db18 superuser URL to the application database (the `app` variable of that name),
+//                                  reached over `zcli vpn up <projectId>`; backup and restore
 //   REHEARSAL_DATABASE_ADMIN_URL   superuser URL to a disposable PostgreSQL 18 cluster; rehearse only
 //   ZEROPS_TOKEN                   Zerops API token; backup and restore
 //   CLOUDFLARE_API_TOKEN, STABLE_EDGE_FILE   the maintenance gate read (maintenance.mjs); backup and restore

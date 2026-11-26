@@ -467,14 +467,12 @@ it('connects the application container to each database identity only through it
   expect(databaseUrlKeys(app)).toStrictEqual(DATABASE_URL_KEYS);
   expect(app.DATABASE_URL).toBe(identityUrl('ontos_runtime', 'db18_password'));
   expect(app.COMMERCE_PORTAL_AUTH_DATABASE_URL).toBe(identityUrl('ontos_runtime', 'db18_password'));
-  expect(app.PARTY_REGISTRY_DATABASE_URL).toBe(
-    identityUrl('party_registry_runtime', 'migrator_PARTY_REGISTRY_DB_PASSWORD'),
-  );
+  expect(app.PARTY_REGISTRY_DATABASE_URL).toBe(identityUrl('party_registry_runtime', 'PARTY_REGISTRY_DB_PASSWORD'));
   expect(app.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(
-    identityUrl('party_registry_worker', 'migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD'),
+    identityUrl('party_registry_worker', 'PARTY_REGISTRY_WORKER_DB_PASSWORD'),
   );
   expect(app.SHELL_GATEWAY_ISSUER_DATABASE_URL).toBe(
-    identityUrl('shell_gateway_issuer', 'migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+    identityUrl('shell_gateway_issuer', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
   );
 });
 
@@ -493,7 +491,7 @@ it('uses the superuser only in the admin URLs the application supervisor reads',
   ]);
 });
 
-it('references each identity password only from the application container', () => {
+it('reads each identity password from the application secrets and references it only there', () => {
   const environments = serviceEnvironments();
   const owners = {
     PARTY_REGISTRY_DB_PASSWORD: ['app'],
@@ -502,15 +500,18 @@ it('references each identity password only from the application container', () =
   };
 
   for (const [secretKey, expected] of Object.entries(owners)) {
-    const reference = new RegExp(`\\$\\{(?:migrator_)?${secretKey}\\}`, 'u');
+    const reference = new RegExp(`\\$\\{(?:[a-z0-9]+_)?${secretKey}\\}`, 'u');
     const referencing = [...environments]
       .filter(([, environment]) => Object.values(environment).some((value) => reference.test(value)))
       .map(([setup]) => setup);
     expect(referencing).toStrictEqual(expected);
+    // A zerops.yaml variable of the same name would override the app's secret.
+    const declaring = [...environments].filter(([, environment]) => Object.hasOwn(environment, secretKey));
+    expect(declaring).toStrictEqual([]);
   }
 });
 
-it('declares the import list of the data plane, the migrator secrets, the app and the three storefronts only', () => {
+it('declares the import list of the data plane, the app and the three storefronts only', () => {
   const { services } = Schema.decodeUnknownSync(ZeropsImportSchema)(parse(readFileSync(zeropsImportPath, 'utf-8')));
 
   expect(
@@ -520,7 +521,6 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   ).toStrictEqual([
     'db18 postgresql:single@18 false',
     'spicedb docker@26.1.5 false',
-    'migrator alpine/nodejs@26 false',
     'app alpine/nodejs@26 true',
     'storefront alpine/nodejs@26 true',
     'shop alpine/nodejs@26 true',
@@ -608,7 +608,7 @@ it('declares no project-level variable that could carry a database credential', 
     parse(readFileSync(zeropsImportPath, 'utf-8')),
   );
 
-  // Every service inherits project variables, so identity passwords stay service secrets on the migrator.
+  // Every service inherits project variables, so identity passwords stay secrets of the app service.
   expect(Object.keys(deployment)).toStrictEqual(['zerops']);
   expect(Object.keys(imports)).toStrictEqual(['services']);
   expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);

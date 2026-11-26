@@ -21,7 +21,6 @@ Stage is the Zerops project `t1ljmn3DRDafgi8AuPvhdQ` (LIGHT core).
 - `shop`: ŠroubShop, the demo tenant's pseudonymous storefront, built from the same artifact. It runs as the storefront application `sroubshop-storefront` with its own managed key: the deploy workflow syncs `ONTOS_STOREFRONT_APP_ID` and `ONTOS_AKROS_STOREFRONT_API_KEY` (stage-edge secret `SHOP_STOREFRONT_API_KEY`) to the shop service before it pushes shop; `STOREFRONT_BRAND=sroubshop` is a service variable. The data cutover itself is the reviewed operator in `scripts/demo/pseudonymize-akros-demo.md`; deployment never runs it.
 - `db18`: PostgreSQL.
 - `spicedb`: SpiceDB.
-- `migrator`: keeps only its secrets, the database identity passwords that the app references as `${migrator_…}`. The app container runs the migrations itself.
 
 Each service runs one container, with no HA and no autoscaling. The app host keeps no local state, so it can scale out later.
 
@@ -219,7 +218,7 @@ Destructive contraction is a later release after all old readers and writers are
 
 Party Registry and the Shell gateway-grant registrar use dedicated PostgreSQL logins instead of `ontos_runtime`. The design, rotation costs and the full rollback recipe are in [Database trust boundaries](./DATABASE_TRUST_BOUNDARIES.md#operations).
 
-The three passwords are sensitive `migrator` service secrets: `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD`. A human operator, never an agent, creates them once on the `migrator` service before the first deploy that references them. `zerops.yaml` hands them to the `app` service as `${migrator_<KEY>}`, never as project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this.
+The three passwords are sensitive `app` service secrets: `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD`. A human operator, never an agent, creates them once on the `app` service before the first deploy that references them. `zerops.yaml` builds the identity URLs from them as `${<KEY>}` and never declares the keys themselves, because a `zerops.yaml` variable overrides a secret of the same name. They are never project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this.
 
 On every start the app host runs the migrator (`scripts/run-zerops-migrator.mjs`), whose role bootstrap (`scripts/postgres/bootstrap-runtime-role.mts`) creates the login roles with `LOGIN` and `CONNECT` only, re-sets the three passwords, resets role settings, re-applies the grant manifest and fails if a URL user differs from its manifest role or targets another database.
 
@@ -234,10 +233,10 @@ On every start the app host runs the migrator (`scripts/run-zerops-migrator.mjs`
 
 Rotation (human operator, during stage maintenance):
 
-1. Change the relevant sensitive `migrator` service secret.
+1. Change the relevant sensitive `app` service secret.
 2. Restart the `app` service. Its migrator pass runs `ALTER ROLE ... PASSWORD` before any hosted process starts, and every process then opens fresh connections with the new credential.
 
-`zerops.yaml` is shared with any future production project, which stays blocked until the same `migrator` secrets exist there.
+`zerops.yaml` is shared with any future production project, which stays blocked until the same `app` secrets exist there.
 
 ### Order-flow owner credentials
 
@@ -543,7 +542,7 @@ Do not report release success before all required smoke checks pass.
 
 Stage is the only deployed environment. `.github/workflows/zerops-stage.yml` deploys it from `demo/sales-crm` into the GitHub environment `stage-edge` (see [Stage on Zerops](#stage-on-zerops)). `main` deploys nothing: `ultramodern-workspace-gates.yml` only runs the gates. There is no production deploy path; a production project needs its own deploy workflow, its own `migrator` identity secrets, gateway key pair, auth origin and SpiceDB TLS pairs, and its own enforced authorization evidence and context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)) before anything deploys to it.
 
-`zerops.yaml` describes stage: SpiceDB, the storefront and the one application container (`app`), which runs the owner migrations, every owner and the Outbox Worker host. `zerops-import.yaml` lists the services those setups deploy, plus the `migrator` service that holds the identity secrets. Every service runs a single container.
+`zerops.yaml` describes stage: SpiceDB, the storefront and the one application container (`app`), which runs the owner migrations, every owner and the Outbox Worker host. `zerops-import.yaml` lists the services those setups deploy. Every service runs a single container.
 
 Outbox Workers run in the app container's one Outbox Worker host process, which runs only the workers of the units the deployment serves (`ONTOS_OUTBOX_HOST_SERVED_UNITS`). `scripts/zerops/build-app.sh` bundles it under the release identity each hosted owner's build names, and the workspace gates prove that bundle against a freshly migrated database before any deploy (`scripts/prove-outbox-worker-host-artifact.sh`).
 

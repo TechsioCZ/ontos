@@ -323,7 +323,7 @@ export const main = (argv, { demoIdentities = loadDemoIdentities(), log = consol
   }
   writeFileAtomically(options.output, renderProjectImport(spec, readFileSync(CANONICAL_IMPORT_PATH, 'utf8')), 0o644);
   log(
-    `Import for new project "${spec.projectName}" written to ${options.output} (7 services, no variables or secrets)`,
+    `Import for new project "${spec.projectName}" written to ${options.output} (${STABLE_SERVICES.length} services, no variables or secrets)`,
   );
   if (!options.apply) {
     log('Nothing was created. Create the paid project with the same command plus --apply --confirm-paid-resources.');

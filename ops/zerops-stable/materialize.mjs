@@ -10,7 +10,7 @@
 //   - `shop` gets its own copy of the `storefront` setup, so each storefront's identity is in its setup, not in
 //     hand-set service variables;
 //   - comments go: they describe stage.
-// Within-project references (${db18_…}, ${migrator_…}, ${spicedb_…}, ${SMTP_PASSWORD}, spicedb:50051, http://app:3000)
+// Within-project references (${db18_…}, ${spicedb_…}, ${SMTP_PASSWORD}, ${…_DB_PASSWORD}, spicedb:50051, http://app:3000)
 // stay as they are: they resolve to the stable project's own services and its own secret service variables.
 // Afterwards no host, UUID or long hex id of stage's removed values may remain unless the config states it itself.
 //

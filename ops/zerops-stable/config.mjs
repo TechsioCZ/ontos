@@ -9,8 +9,8 @@ export class StableConfigError extends Error {
   name = 'StableConfigError';
 }
 
-/** The stable project's services (app/zerops-import.yaml hostnames); `migrator` holds the database credentials. */
-export const STABLE_SERVICES = ['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18', 'migrator'];
+/** The stable project's services (app/zerops-import.yaml hostnames). */
+export const STABLE_SERVICES = ['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18'];
 /** Public origins: the Shell, the AKROS storefront, the pseudonymous shop and the N1 e-shop. */
 export const STABLE_ORIGINS = ['shell', 'storefront', 'shop', 'n1'];
 

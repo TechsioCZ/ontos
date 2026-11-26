@@ -7,12 +7,12 @@
 // need them.
 //
 // The state is read from Zerops and Cloudflare each time, so a crash or a retry cannot lose it:
-//   maintenance  gate closed; app, storefront, shop, n1 and migrator not running   (data restore allowed)
+//   maintenance  gate closed; app, storefront, shop and n1 not running              (data restore allowed)
 //   gated        gate closed; something running                                     (install, live verification)
 //   open         the maintenance rule off or absent; app, storefront, shop and n1 ACTIVE
 //   partial      anything else
 // `enter` closes the gate first and then stops; it never starts or opens, also on failure. `start-gated` starts the
-// app and the fronts behind the closed gate (never the migrator). `leave` is the only call that opens, and only after
+// app and the fronts behind the closed gate. `leave` is the only call that opens, and only after
 // the release's reopen evidence check (deploy-evidence.mjs assertReopenEvidence) accepted the live verification of the
 // commit every workload runs; it disables the project's own rule and nothing else.
 //
@@ -49,8 +49,6 @@ export const parseZeropsEnvFile = (envFile) =>
 
 /** Request-serving workloads, in stop order: the public fronts first, then the Shell they call. Start order reverses. */
 export const MAINTENANCE_WORKLOADS = Object.freeze(['storefront', 'shop', 'n1', 'app']);
-/** Writes to the databases when it runs; stopped by `enter`, never started here. */
-export const MAINTENANCE_MIGRATOR = 'migrator';
 /** Services that stay up through maintenance because backups, restores and migrations need them. */
 export const MAINTENANCE_DATASTORES = Object.freeze(['spicedb', 'db18']);
 
@@ -202,13 +200,12 @@ const resolveGate = async (config, { client, cloudflare, edge }) => ({
 const describe = (config, services, edgeView) => {
   const view = (names) => Object.fromEntries(names.map((name) => [name, { id: services[name].id, status: statusText(services[name].status) }]));
   const workloads = view(MAINTENANCE_WORKLOADS);
-  const migrator = view([MAINTENANCE_MIGRATOR])[MAINTENANCE_MIGRATOR];
-  const subdomains = [...MAINTENANCE_WORKLOADS, MAINTENANCE_MIGRATOR].filter((name) => services[name].subdomainAccess);
+  const subdomains = MAINTENANCE_WORKLOADS.filter((name) => services[name].subdomainAccess);
   const gateClosed = edgeView.closed && subdomains.length === 0;
   const statuses = Object.values(workloads).map(({ status }) => status);
   let state = 'partial';
   if (gateClosed) {
-    state = [...statuses, migrator.status].every((status) => NOT_RUNNING.has(status)) ? 'maintenance' : 'gated';
+    state = statuses.every((status) => NOT_RUNNING.has(status)) ? 'maintenance' : 'gated';
   } else if (['disabled', 'missing'].includes(edgeView.rule.state) && statuses.every((status) => status === 'ACTIVE')) {
     state = 'open';
   }
@@ -217,14 +214,13 @@ const describe = (config, services, edgeView) => {
     state,
     gate: { closed: gateClosed, rule: edgeView.rule.state, hosts: edgeView.hosts.map(({ host, proxied }) => ({ host, proxied })), subdomains },
     workloads,
-    migrator,
     datastores: view(MAINTENANCE_DATASTORES),
   };
 };
 
 /**
  * maintenanceStatus(config, { client?, cloudflare?, edge? } = {}) →
- *   { projectId, state, gate: { closed, rule, hosts: [{ host, proxied }], subdomains }, workloads, migrator, datastores }
+ *   { projectId, state, gate: { closed, rule, hosts: [{ host, proxied }], subdomains }, workloads, datastores }
  * read live after the ownership check.
  */
 export const maintenanceStatus = async (config, options = {}) => {
@@ -260,7 +256,7 @@ export const assertEdgeClosed = async (config, options = {}) => {
 /**
  * enterMaintenance(config, { client?, cloudflare?, edge?, log? }) → status. Checks ownership, closes the Cloudflare gate
  * (proxied hosts required), disables the native subdomains, reads the gate back closed, and only then stops every
- * running workload and the migrator. Idempotent: a rerun after a crash, a deploy or a failed verification redoes only
+ * running workload. Idempotent: a rerun after a crash, a deploy or a failed verification redoes only
  * what is still open or running. A failure throws and opens or starts nothing.
  */
 export const enterMaintenance = async (config, options = {}) => {
@@ -268,14 +264,14 @@ export const enterMaintenance = async (config, options = {}) => {
   const log = options.log ?? (() => {});
   const services = await assertProjectServices(config, { client: gate.client });
   await closeEdge(config, gate.edge, { cloudflare: gate.cloudflare, log });
-  for (const name of [...MAINTENANCE_WORKLOADS, MAINTENANCE_MIGRATOR]) {
+  for (const name of MAINTENANCE_WORKLOADS) {
     if (!services[name].subdomainAccess) continue;
     log(`disabling the ${name} zerops.app subdomain`);
     await gate.client.disableSubdomainAccess(services[name].id);
   }
   const gated = await maintenanceStatus(config, gate);
   if (!gated.gate.closed) throw new MaintenanceError('the gate does not read back closed; nothing was stopped');
-  for (const name of [...MAINTENANCE_WORKLOADS, MAINTENANCE_MIGRATOR]) {
+  for (const name of MAINTENANCE_WORKLOADS) {
     const service = await gate.client.settledService(config.services[name]);
     if (NOT_RUNNING.has(service.status)) continue;
     log(`stopping ${name}`);
@@ -286,7 +282,7 @@ export const enterMaintenance = async (config, options = {}) => {
 
 /**
  * startGated(config, { client?, cloudflare?, edge?, log? }) → status. Starts the app, then the fronts, behind the closed
- * gate so the installed candidate can be verified from a verifier IP. Never starts the migrator. Refuses while the gate
+ * gate so the installed candidate can be verified from a verifier IP. Refuses while the gate
  * is not closed or a workload was never deployed.
  */
 export const startGated = async (config, options = {}) => {
@@ -333,7 +329,7 @@ const USAGE = `Usage:
   maintenance.mjs leave       --config PATH --confirm-project PROJECT_ID --evidence VERIFICATION_JSON
 Environment: ZEROPS_TOKEN, CLOUDFLARE_API_TOKEN, STABLE_EDGE_FILE (edge settings, see edge.mjs).
 enter enables the project's Cloudflare maintenance rule (only verifier IPs reach the four stable hostnames), disables
-the zerops.app subdomains, then stops app, storefront, shop, n1 and migrator; spicedb and db18 stay up. start-gated
+the zerops.app subdomains, then stops app, storefront, shop and n1; spicedb and db18 stay up. start-gated
 starts app and fronts behind the gate. leave disables the rule only after the reopen evidence check accepts the live
 verification of what every workload runs. Nothing ever reopens on its own.
 `;

@@ -22,7 +22,8 @@ const bundle = {
   projectId: config.projectId,
   schemaVersion: 1,
   services: {
-    migrator: {
+    app: {
+      ONTOS_OWNER_SECRETS_JSON: '{"pricing":{"KEY":"bundle"}}',
       PARTY_REGISTRY_DB_PASSWORD: 'pw-party',
       PARTY_REGISTRY_WORKER_DB_PASSWORD: 'pw-worker',
       SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'pw-issuer',
@@ -35,7 +36,12 @@ const freshDatabase = { database: 'db18', marker: null, roles: [], schemas: [], 
 const marker = `ontos-stable:${config.projectId}`;
 
 /** Every dependency faked; `calls` records each write-capable call. */
-const fakes = ({ database = freshDatabase, statuses = {}, userData = bundle.services, env = {} } = {}) => {
+// Zerops holds the app's owner settings merged with others, so they differ from the bundle's and are not compared.
+const storedServices = {
+  ...bundle.services,
+  app: { ...bundle.services.app, ONTOS_OWNER_SECRETS_JSON: '{"pricing":{"KEY":"bundle"},"shell":{"KEY":"merged"}}' },
+};
+const fakes = ({ database = freshDatabase, statuses = {}, userData = storedServices, env = {} } = {}) => {
   const calls = [];
   const services = Object.fromEntries(
     Object.keys(config.services).map((name) => [name, { status: statuses[name] ?? 'READY_TO_DEPLOY' }]),
@@ -69,7 +75,7 @@ const fakes = ({ database = freshDatabase, statuses = {}, userData = bundle.serv
       settledService: async () => ({ status: 'ACTIVE' }),
       spicedbDatabase: (input) => calls.push(['spicedb-database', input]),
       userData: async (serviceId) =>
-        stored(serviceId === config.services.migrator ? userData.migrator : userData.spicedb),
+        stored(serviceId === config.services.app ? userData.app : userData.spicedb),
     },
   };
 };
@@ -100,7 +106,7 @@ test('a refused source revision never reaches service or database initialization
   assert.deepEqual(calls, []);
 });
 
-test('apply marks the database, creates the roles with the migrator passwords, then the datastore and spicedb', async () => {
+test('apply marks the database, creates the roles with the app passwords, then the datastore and spicedb', async () => {
   const { calls, deps } = fakes();
   await run(deps, true);
   assert.deepEqual(
@@ -141,7 +147,7 @@ test('refusals: a deployed workload, unsynced secrets, another db18, data withou
     [{ statuses: { spicedb: 'STOPPED' } }, /spicedb is STOPPED/u],
     [
       {
-        userData: { ...bundle.services, migrator: { ...bundle.services.migrator, PARTY_REGISTRY_DB_PASSWORD: 'old' } },
+        userData: { ...storedServices, app: { ...storedServices.app, PARTY_REGISTRY_DB_PASSWORD: 'old' } },
       },
       /sync --apply/u,
     ],
@@ -163,7 +169,7 @@ test('refusals: a deployed workload, unsynced secrets, another db18, data withou
   );
 });
 
-test('the canonical setup maps every explicit manifest role to its migrator secret', () => {
+test('the canonical setup maps every explicit manifest role to its app secret', () => {
   const { explicitRoles } = runDatabaseLauncher({ mode: 'roles' });
   const secrets = roleSecretsOf(canonicalZerops);
   assert.deepEqual([...explicitRoles].sort(), [...secrets.keys()].sort());

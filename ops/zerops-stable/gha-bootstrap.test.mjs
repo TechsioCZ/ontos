@@ -58,8 +58,10 @@ const secrets = {
   projectId: config.projectId,
   schemaVersion: 1,
   services: {
-    app: { ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"BETTER_AUTH_SECRET":"auth-secret-value"}}' },
-    migrator: { PARTY_REGISTRY_DB_PASSWORD: 'db-password-value' },
+    app: {
+      ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"BETTER_AUTH_SECRET":"auth-secret-value"}}',
+      PARTY_REGISTRY_DB_PASSWORD: 'db-password-value',
+    },
     spicedb: { SPICEDB_DATABASE_PASSWORD: 'spicedb-password-value' },
   },
 };
@@ -104,6 +106,11 @@ test('a bundle of another project, identity or module set is refused without ech
     refusal(bundleValue({ modules: undefined, salesData: undefined })),
     refusal(bundleValue({ databaseAdminUrl: 'https://db18' })),
   ];
+  // The identity passwords are the app's own secrets; a bundle still holding them for a separate service is refused.
+  assert.match(
+    refusal(bundleValue({ secrets: { ...secrets, services: { ...secrets.services, migrator: { SHELL_GATEWAY_ISSUER_DB_PASSWORD: 'db-password-value' } } } })),
+    /secrets: Secret bundle contains an unknown service/u,
+  );
   const swapped = structuredClone(accounts);
   swapped.tenants[0].legalEntity.legalEntityId = '11111111-1111-4111-8111-111111111111';
   messages.push(refusal(bundleValue({ accounts: swapped })));
@@ -127,7 +134,7 @@ test('a bundle of another project, identity or module set is refused without ech
 });
 
 const services = (status) =>
-  Object.fromEntries(['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18', 'migrator'].map((name) => [name, { status: name === 'app' ? status : 'READY_TO_DEPLOY' }]));
+  Object.fromEntries(['app', 'storefront', 'shop', 'n1', 'spicedb', 'db18'].map((name) => [name, { status: name === 'app' ? status : 'READY_TO_DEPLOY' }]));
 
 test('before-app stores the secrets with the SMTP password first, then initializes', async () => {
   const calls = [];
