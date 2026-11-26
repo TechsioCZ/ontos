@@ -2715,6 +2715,7 @@ const coreActionUploadAssetProblem = (
     ? Match.value(error).pipe(
         Match.tags({
           MediaForbidden: shellTargetForbiddenProblem,
+          MediaTooLarge: shellPolicyUnprocessableProblem,
           MediaUnavailable: shellCapabilityUnavailableProblem,
         }),
         Match.exhaustive,
@@ -2855,6 +2856,7 @@ const mediaUploadProblem = (error: IdentityRuntimeError | MediaFailure): MediaUp
       MediaIntegrityFailed: shellPolicyUnprocessableProblem,
       MediaLengthRequired: shellLengthRequiredProblem,
       MediaNotReady: shellPolicyConflictProblem,
+      MediaTooLarge: shellPolicyUnprocessableProblem,
       MediaUnavailable: shellCapabilityUnavailableProblem,
     }),
     Match.exhaustive,

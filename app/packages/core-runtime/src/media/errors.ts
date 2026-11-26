@@ -57,6 +57,17 @@ const MediaNotReadyValue = actionErrorSchema('MediaNotReady', {
 export type MediaNotReady = InstanceType<typeof MediaNotReadyValue>;
 export { MediaNotReadyValue as MediaNotReady };
 
+/**
+ * The declared size is more than the configured object store can ever write, so no reservation is made: a retry of
+ * the same size cannot succeed. It follows from the provider's protocol, never from a product size limit.
+ */
+const MediaTooLargeValue = actionErrorSchema('MediaTooLarge', {
+  code: Schema.Literal('media_too_large'),
+  ...safeReason,
+});
+export type MediaTooLarge = InstanceType<typeof MediaTooLargeValue>;
+export { MediaTooLargeValue as MediaTooLarge };
+
 /** Whether the bytes were stored is unknown; the intent stays recoverable, it is neither success nor proof of absence. */
 const MediaIngestUncertainValue = actionErrorSchema('MediaIngestUncertain', {
   code: Schema.Literal('media_ingest_uncertain'),
@@ -90,6 +101,7 @@ export type MediaFailure =
   | MediaIntegrityFailed
   | MediaLengthRequired
   | MediaNotReady
+  | MediaTooLarge
   | MediaUnavailable;
 
 export const MediaFailureSchema = Schema.Union([
@@ -101,13 +113,15 @@ export const MediaFailureSchema = Schema.Union([
   MediaIntegrityFailedValue,
   MediaLengthRequiredValue,
   MediaNotReadyValue,
+  MediaTooLargeValue,
   MediaUnavailableValue,
 ]);
 export const isMediaFailure = Schema.is(MediaFailureSchema);
 
 /**
  * The HTTP status each failure keeps at a Core Media edge (ERRORS.md): a definite denial is 403, an absent or
- * foreign-tenant asset 404, a state or idempotency conflict 409, a body of unstated length 411, proven corruption 422, and uncertainty 503.
+ * foreign-tenant asset 404, a state or idempotency conflict 409, a body of unstated length 411, proven corruption or a
+ * size the store cannot write 422, and uncertainty 503.
  * The record is keyed by tag, so a new failure cannot be added without choosing its status.
  */
 const MEDIA_FAILURE_STATUS = {
@@ -119,6 +133,7 @@ const MEDIA_FAILURE_STATUS = {
   MediaIntegrityFailed: 422,
   MediaLengthRequired: 411,
   MediaNotReady: 409,
+  MediaTooLarge: 422,
   MediaUnavailable: 503,
 } as const satisfies Record<MediaFailure['_tag'], number>;
 

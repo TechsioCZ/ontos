@@ -468,6 +468,31 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
       }).pipe(Effect.scoped),
   );
 
+  suite.effect(
+    'refuses a size the object store can never write, before any row exists, and takes the limit itself',
+    () =>
+      Effect.gen(function* tooLarge() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reserve = (key: string, maximumObjectBytes: number) =>
+          harness
+            .runtimeFor('human')
+            .runAction({
+              payload: reservationPayload(content),
+              principal: principalOf(world, world.human),
+              registration: uploadAssetAction,
+              transport: transportOf(key),
+            })
+            .pipe(Effect.provideService(ObjectStorage, { ...harness.storage.service, maximumObjectBytes }));
+        const refused = yield* Effect.exit(reserve('one-byte-over', content.byteLength - 1));
+        expect(failureTagOf(refused)).toBe('MediaTooLarge');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(0);
+        const reserved = yield* reserve('exactly-at-the-limit', content.byteLength);
+        expect(reserved.processingStatus).toBe('uploaded');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
   suite.effect('gives independent uploads of identical bytes and an identical name distinct ids and keys', () =>
     Effect.gen(function* distinct() {
       const harness = yield* openHarness();

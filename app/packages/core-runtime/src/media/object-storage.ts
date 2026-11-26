@@ -120,6 +120,11 @@ export interface ObjectStorageService {
   /** Opens the stored object as a stream with its stat, or fails with the typed provider failure. */
   readonly get: (key: MediaStorageKey) => Effect.Effect<ObjectBody, ObjectStorageFailure>;
   /**
+   * The largest object this provider's protocol can take, absent when it states none. It is what the provider can
+   * write, never a product size limit: the reserve Action refuses a declared size above it.
+   */
+  readonly maximumObjectBytes?: number;
+  /**
    * The stable identity of the provider behind this port. A reserved row records it as `storageProvider`, and
    * every later step compares it, so bytes are only ever read through the provider that holds them.
    */
