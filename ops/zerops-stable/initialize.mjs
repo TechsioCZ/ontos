@@ -27,7 +27,7 @@
 //   4. On apply, unless spicedb is already ACTIVE: `zcli push` of the tag's spicedb snapshot (its deployFiles from
 //      `git show <commit>:…` and the materialized stable spicedb setup as zerops.yaml), then waits until ACTIVE.
 //
-// It deploys no app or front: the next step is `deploy.mjs … --bootstrap-app`, which installs the app alone.
+// It deploys no app or front: the next step is `deploy.mjs install`, whose first install deploys the app alone.
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -359,7 +359,7 @@ export const initialize = async ({ adminUrl, apply, bundle, config, deps, log = 
   const plan = {
     commit: release.commit,
     database: { ...decision, explicitRoles, marker },
-    next: `node ops/zerops-stable/deploy.mjs --config <stable.json> --tag ${tag} --artifacts <dir> --maintenance-confirmed --bootstrap-app --execute`,
+    next: `node ops/zerops-stable/deploy.mjs install --config <stable.json> --tag ${tag} --artifacts <dir> --execute`,
     projectId: config.projectId,
     spicedbDeploy,
   };
