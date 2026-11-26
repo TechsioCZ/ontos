@@ -8,13 +8,14 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Effect, Order, Result, Schema } from 'effect';
+import { Array as EffectArray, Config, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -146,6 +147,7 @@ const readGateWorkflow = () => {
 };
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
+const NATIVE_GIT = '/usr/bin/git';
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -1815,7 +1817,6 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-selection-'));
   const repository = path.join(directory, 'repository');
-  const nativeGit = '/usr/bin/git';
   /** Runs the selection with this changed-path list and returns the files the hook would receive. */
   const selectFiles = (changedPaths?: readonly string[]) => {
     const planDirectory = path.join(directory, 'ci-plan');
@@ -1838,7 +1839,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   };
   try {
     mkdirSync(repository);
-    execFileSync(nativeGit, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
+    execFileSync(NATIVE_GIT, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
     const sourcePaths = [
       GATES_WORKFLOW_PATH,
       'README.md',
@@ -1864,10 +1865,10 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
       mkdirSync(path.dirname(destination), { recursive: true });
       writeFileSync(destination, EMPTY_MODULE_SOURCE);
     }
-    execFileSync(nativeGit, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
+    execFileSync(NATIVE_GIT, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
     const untrackedPath = 'app/source/untracked-negative.ts';
     writeFileSync(path.join(repository, untrackedPath), EMPTY_MODULE_SOURCE);
-    const tracked = execFileSync(nativeGit, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+    const tracked = execFileSync(NATIVE_GIT, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
       .split('\0')
       .filter(Boolean);
     expect(tracked).toHaveLength(sourcePaths.length + fixturePaths.length);
@@ -2500,10 +2501,9 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
   const repository = path.join(directory, 'repository');
-  const nativeGit = '/usr/bin/git';
   try {
     mkdirSync(repository);
-    execFileSync(nativeGit, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
+    execFileSync(NATIVE_GIT, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
     const sourcePaths = [
       GATES_WORKFLOW_PATH,
       'README.md',
@@ -2530,7 +2530,7 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       mkdirSync(path.dirname(destination), { recursive: true });
       writeFileSync(destination, EMPTY_MODULE_SOURCE);
     }
-    execFileSync(nativeGit, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
+    execFileSync(NATIVE_GIT, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
     const untrackedPath = 'app/source/untracked-negative.ts';
     writeFileSync(path.join(repository, untrackedPath), EMPTY_MODULE_SOURCE);
     const selected = Array.from({ length: shards }, (_, index) => {
@@ -2540,7 +2540,7 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       });
       return readFileSync(path.join(directory, 'shard-files'), 'utf-8').split('\0').filter(Boolean);
     });
-    const tracked = execFileSync(nativeGit, ['ls-files', '-z'], {
+    const tracked = execFileSync(NATIVE_GIT, ['ls-files', '-z'], {
       cwd: repository,
       encoding: 'utf-8',
       maxBuffer: 8 * 1024 * 1024,
@@ -3223,7 +3223,7 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   expect(plan?.steps.find(({ id }) => id === 'lint-shards')?.run).toBe('bash app/scripts/ci/choose-lint-shards.sh');
   const choose = readFileSync(new URL('../ci/choose-lint-shards.sh', import.meta.url), 'utf-8');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
-  const shardsFor = (mode: string, paths: readonly string[], snapshot = '') => {
+  const shardsFor = (mode: string, paths: readonly string[], snapshot = '', event = 'workflow_dispatch') => {
     const changed = path.join(directory, 'changed');
     const output = path.join(directory, 'output');
     writeFileSync(changed, paths.map((file) => `${file}\0`).join(''));
@@ -3234,6 +3234,7 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
       env: {
         CHANGED_PATHS: changed,
         COMPARISON_SNAPSHOT: history,
+        GITHUB_EVENT_NAME: event,
         GITHUB_OUTPUT: output,
         GITHUB_SHA: 'a'.repeat(40),
         PATH: STEP_PATH,
@@ -3264,6 +3265,7 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
     ).toBe(CHANGED_FILES_LINT_SHARD);
     const comparison = { ancestor: true, base: 'a'.repeat(40), changedPaths: [], truncated: false };
     expect(shardsFor('affected', [], JSON.stringify({ comparison }))).toBe('shards=["proof"]');
+    expect(shardsFor('affected', [], JSON.stringify({ comparison }), 'push')).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('affected', ordinary, JSON.stringify({ comparison }))).toBe(CHANGED_FILES_LINT_SHARD);
     for (const unknown of [
       null,
@@ -3290,6 +3292,9 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
       'app/tools/oxlint/effect-native/rules/index.mts',
       'app/patches/x.patch',
       APP_PACKAGE_PATH,
+      'app/packages/shared-contracts/package.json',
+      'app/verticals/catalog/package.json',
+      'app/apps/shell-super-app/package.json',
       'app/pnpm-lock.yaml',
       'app/.mise.toml',
     ]) {
@@ -3395,3 +3400,161 @@ it('keys browser apt archives by OS and pinned Playwright, and preserves bounded
   expect(scheduler).toContain('timeout --foreground --kill-after=20s 12m');
   expect(scheduler.indexOf('capture-integration-hang.sh')).toBeLessThan(scheduler.indexOf('kill -TERM'));
 });
+
+it('selects every shard for a nested workspace export change', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-manifest-choice-'));
+  try {
+    const changed = path.join(directory, 'changed');
+    const output = path.join(directory, 'output');
+    writeFileSync(changed, 'app/packages/shared-contracts/package.json\0');
+    execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/choose-lint-shards.sh', import.meta.url))], {
+      env: { CHANGED_PATHS: changed, GITHUB_OUTPUT: output, PATH: STEP_PATH, PLAN_MODE: 'affected' },
+    });
+    expect(readFileSync(output, 'utf-8').trim()).toBe(WHOLE_TREE_LINT_SHARDS);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it.effect('executes the composite lint action itself and reports findings for every selectable shard', () =>
+  Effect.gen(function* compositeLintAction() {
+    const toolsPath = yield* Config.String('PATH');
+    const home = yield* Config.String('HOME');
+    const ciDirectory = 'app/scripts/ci';
+    const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
+    const action = Schema.decodeUnknownSync(
+      Schema.Struct({
+        runs: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+              if: Schema.optionalKey(Schema.String),
+              run: Schema.String,
+              shell: Schema.String,
+            }),
+          ),
+        }),
+      }),
+    )(parse(readFileSync(path.join(sourceRepository, '.github/actions/lint-app/action.yml'), 'utf-8')));
+    for (const [workflowName, lintJob, planJob, outputName] of [
+      [GATES_WORKFLOW, FORMAT_AND_LINT_JOB, CI_PLAN_JOB, 'lint-shards'],
+      ['zerops-stage.yml', 'lint', 'lint-plan', 'shards'],
+    ]) {
+      const workflow = Schema.decodeUnknownSync(
+        Schema.Struct({
+          jobs: Schema.Record(
+            Schema.String,
+            Schema.Struct({
+              steps: Schema.Array(
+                Schema.Struct({
+                  if: Schema.optionalKey(Schema.String),
+                  run: Schema.optionalKey(Schema.String),
+                  uses: Schema.optionalKey(Schema.String),
+                  with: Schema.optionalKey(Schema.Struct({ shard: Schema.optionalKey(Schema.String) })),
+                }),
+              ),
+              strategy: Schema.optionalKey(
+                Schema.Struct({ matrix: Schema.Struct({ shard: Schema.optionalKey(Schema.Unknown) }) }),
+              ),
+            }),
+          ),
+        }),
+      )(parse(readFileSync(path.join(sourceRepository, '.github/workflows', workflowName), 'utf-8')));
+      expect(workflow.jobs[lintJob]?.strategy?.matrix.shard).toBe(
+        expression(`fromJSON(needs.${planJob}.outputs.${outputName})`),
+      );
+      const calls = workflow.jobs[lintJob]?.steps.filter((step) => step.uses === LINT_ACTION);
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.if).toBeUndefined();
+      expect(calls?.[0]?.with?.shard).toBe(expression(MATRIX_SHARD));
+      expect(
+        workflow.jobs[planJob]?.steps.some((step) => step.run === 'bash app/scripts/ci/choose-lint-shards.sh'),
+      ).toBe(true);
+    }
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-composite-lint-'));
+    try {
+      execFileSync(NATIVE_GIT, ['init', '--quiet', directory]);
+      const files = ['app/apps/fixture.ts', 'app/scripts/fixture.ts', 'app/verticals/inventory/fixture.ts'];
+      for (const file of files) {
+        mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+        writeFileSync(path.join(directory, file), EMPTY_MODULE_SOURCE);
+      }
+      mkdirSync(path.join(directory, ciDirectory), { recursive: true });
+      for (const script of ['lint-files.sh', 'lint-shard-files.sh']) {
+        writeFileSync(
+          path.join(directory, ciDirectory, script),
+          readFileSync(path.join(sourceRepository, ciDirectory, script)),
+        );
+      }
+      writeFileSync(
+        path.join(directory, LEFTHOOK_CONFIG),
+        `pre-commit:
+  jobs:
+    - name: global
+      root: app/
+      run: echo GLOBAL_FINDING; exit 1
+    - name: lint
+      root: app/
+      run: echo FILE_FINDING {staged_files}; exit 1
+`,
+      );
+      execFileSync(NATIVE_GIT, ['add', '.'], { cwd: directory });
+      execFileSync(
+        NATIVE_GIT,
+        [
+          '-c',
+          'user.name=Lint fixture',
+          '-c',
+          'user.email=lint@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'Create action fixture',
+        ],
+        { cwd: directory },
+      );
+      mkdirSync(path.join(directory, 'app/node_modules/.bin'), { recursive: true });
+      symlinkSync(
+        path.join(sourceRepository, 'app/node_modules/.bin/lefthook'),
+        path.join(directory, 'app/node_modules/.bin/lefthook'),
+      );
+      const changed = path.join(directory, 'changed');
+      writeFileSync(changed, files.map((file) => `${file}\0`).join(''));
+      for (const shard of ['0', '1', '2', '3', 'proof']) {
+        let output = '';
+        let status = 0;
+        for (const step of action.runs.steps) {
+          expect(step.if).toBeUndefined();
+          expect(step.shell).toBe('bash');
+          const environment = Object.fromEntries(
+            Object.entries(step.env ?? {}).map(([key, value]) => [
+              key,
+              value
+                .replaceAll(expression('inputs.shard'), shard)
+                .replaceAll(expression('inputs.changed-paths'), changed),
+            ]),
+          );
+          const result = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+            cwd: directory,
+            encoding: 'utf-8',
+            env: { ...environment, HOME: home, PATH: toolsPath, RUNNER_TEMP: directory },
+          });
+          output += result.stdout + result.stderr;
+          status = result.status ?? -1;
+          if (status !== 0) {
+            break;
+          }
+        }
+        expect(status, `shard ${shard}: ${output}`).toBe(1);
+        expect(output).toContain('GLOBAL_FINDING');
+        if (shard === 'proof') {
+          expect(output).not.toContain('FILE_FINDING');
+        } else {
+          expect(output, `shard ${shard}: ${output}`).toContain('FILE_FINDING');
+        }
+      }
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }),
+);

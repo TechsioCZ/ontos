@@ -12,8 +12,9 @@ cat >"$work/files"
 # Reject a hook shape or substitution we cannot exhaust rather than silently omitting a job.
 # buildCommand (Lefthook 2.1.15, internal/run/controller/command/build_command.go) joins run AND args.
 jq -e '."pre-commit" | (.jobs | length > 0) and
-  all(.jobs[]; (.name | type == "string") and (.run | type == "string") and
+  all(.jobs[]; (.name | type == "string" and test("^[a-zA-Z0-9_-]+$")) and (.run | type == "string") and
     ((.args // "") | type == "string") and (has("jobs") | not)) and
+  ([.jobs[].name] | length == (unique | length)) and
   (has("commands") | not) and (has("scripts") | not)' "$work/config.json" >/dev/null
 if ! jq -e '[."pre-commit".jobs[] | .run + " " + (.args // "") |
   scan("\\{[a-zA-Z0-9_]+\\}") | select(. != "{staged_files}")] | length == 0' "$work/config.json" >/dev/null; then
@@ -22,13 +23,25 @@ if ! jq -e '[."pre-commit".jobs[] | .run + " " + (.args // "") |
 fi
 jq -r '."pre-commit".jobs[] | .run + " " + (.args // "") |
   [utf8bytelength, ([scan("\\{staged_files\\}")] | length)] | @tsv' "$work/config.json" >"$work/jobs"
+# A named --job with no matching files is an error, but --force makes a no-template job
+# run even when its root/glob sees nothing. Execute each global job separately so one failure
+# cannot skip another; no sentinel path or synthetic file argument can leak into the file jobs.
+jq -r '."pre-commit".jobs[] | select((.run + " " + (.args // "") | contains("{staged_files}")) | not) | .name' \
+  "$work/config.json" >"$work/global-jobs"
+globals="$(paste -sd, "$work/global-jobs")"
 failed=0
+while IFS= read -r job; do
+  echo "::group::pre-commit / global $job"
+  LEFTHOOK_EXCLUDE= "$hook" run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed \
+    --job "$job" --force </dev/null || failed=1
+  echo '::endgroup::'
+done <"$work/global-jobs"
 batch=1
 run_batch() {
   echo "::group::pre-commit / batch $batch"
-  # --job exits 1 for a legitimate empty glob in Lefthook 2.1.15. The ordinary hook skips that
-  # job and still checks global invariants, even when an all-deletion diff supplies no paths.
-  "$hook" run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed \
+  # Exclude only the globals already exhausted above. The ordinary hook skips legitimate empty
+  # file globs without --job's spurious nonzero exit. File jobs keep the hook's exact filters.
+  LEFTHOOK_EXCLUDE="$globals" "$hook" run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed \
     <"$work/batch" || failed=1
   echo '::endgroup::'
 }
@@ -74,8 +87,8 @@ while IFS= read -r -d '' file; do
   printf '%s\0' "$file" >>"$work/batch"
   bytes=$((bytes + cost))
 done <"$work/files"
-# Run once even for empty input: global jobs have no file substitution and must still prove the tree.
-run_batch
+# Empty, all-deletion and proof inputs have no file work; globals already ran exactly once.
+if [[ -s "$work/batch" ]]; then run_batch; fi
 # --fix can make a failing finding disappear from the tool's exit status. Print every resulting diff even when
 # another batch/job failed, and compare both the worktree and index with the exact checked-out commit.
 git diff --exit-code HEAD || failed=1

@@ -6,7 +6,7 @@ hook="$root/app/node_modules/.bin/lefthook"
 runner="$root/app/scripts/ci/lint-files.sh"
 selector="$root/app/scripts/ci/lint-shard-files.sh"
 # Reproduce the real global job's root filter: root affects selection as well as working directory.
-global_root="$("$hook" dump --format json | jq -r '."pre-commit".jobs[] | select(.name == "shell-ui-candidates") | .root // ""')"
+global_root=app/
 work="$(mktemp -d "${TMPDIR:-/tmp}/lint-regressions.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
@@ -18,6 +18,20 @@ export FIXTURE_PROJECTION="$work/app/projection.ts"
 git add app
 git -c user.name='Lint fixture' -c user.email='lint@example.invalid' commit --quiet -m 'Create lint fixture'
 ln -s "$hook" app/node_modules/.bin/lefthook
+local_skip() {
+  cp "$root/lefthook.yml" lefthook.yml
+  mkdir -p .github
+  printf 'workflow\n' >.github/a
+  git add .github/a
+  status=0
+  mkdir -p no-dependencies
+  ln -s "$(command -v node)" no-dependencies/node
+  PATH="$work/no-dependencies:/usr/bin:/bin" "$hook" run pre-commit --no-auto-install >local.log 2>&1 || status=$?
+  test "$status" -eq 0 || { cat local.log; return 1; }
+  if grep -q 'pnpm:' local.log; then return 1; fi
+  git reset --quiet
+  echo 'Local workflow-only commit skips pnpm without installed dependencies.'
+}
 no_match() {
   cat >lefthook.yml <<'CONFIG'
 pre-commit:
@@ -33,16 +47,17 @@ CONFIG
     awk -v root="$global_root" '{print; if ($0 ~ /name: global$/) print "      root: " root}' lefthook.yml >next.yml
     mv next.yml lefthook.yml
   fi
-  for input in excluded workflow empty; do
+  for input in excluded workflow empty proof; do
     case "$input" in
       excluded) printf 'app/fixtures/excluded.ts\0' >files ;;
       workflow) printf '.github/workflows/fixture.yml\0' >files ;;
       empty) : >files ;;
+      proof) bash "$selector" proof >files ;;
     esac
     status=0
     bash "$runner" <files >"$input.log" 2>&1 || status=$?
     test "$status" -eq 0
-    grep -q '^GLOBAL' "$input.log"
+    test "$(grep -c '^GLOBAL' "$input.log")" -eq 1
     if grep -q '^FILE' "$input.log"; then exit 1; fi
   done
   # The all-deletion commit has no tracked file left in its changed-path selection. Deleting a
@@ -110,9 +125,10 @@ unsupported_templates() {
   echo 'Unsupported file templates in run and args fail closed before executing the hook.'
 }
 case "${1:-all}" in
+  local-skip) local_skip ;;
   no-match) no_match ;;
   quotes) quoted_boundary ;;
   templates) unsupported_templates ;;
-  all) no_match; quoted_boundary; unsupported_templates ;;
+  all) local_skip; no_match; quoted_boundary; unsupported_templates ;;
   *) exit 1 ;;
 esac

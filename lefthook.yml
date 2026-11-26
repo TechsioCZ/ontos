@@ -2,9 +2,9 @@
 # lefthook package's own postinstall. Never bypass them with --no-verify.
 pre-commit:
   jobs:
-    # `root` also filters staged paths. This global invariant must run on workflow-only and empty CI inputs.
     - name: shell-ui-candidates
-      run: cd app && pnpm shell:ui-candidates:check
+      root: "app/"
+      run: pnpm shell:ui-candidates:check
     # oxfmt skips unsupported file types and its own ignorePatterns, matching `pnpm format`.
     - name: format
       root: "app/"

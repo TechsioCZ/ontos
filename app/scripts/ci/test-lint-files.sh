@@ -32,7 +32,16 @@ case "$(uname -s)" in
   *) echo 'The reproduction runs on Linux and macOS.' >&2; exit 1 ;;
 esac
 padding="$(head -c "$padding_length" /dev/zero | tr '\0' x)"
-printf 'pre-commit:\n  jobs:\n' >lefthook.yml
+cat >lefthook.yml <<'CONFIG'
+pre-commit:
+  jobs:
+    - name: global-failure
+      root: app/
+      run: echo GLOBAL_FAILURE; exit 1
+    - name: global-after
+      root: app/
+      run: echo GLOBAL_AFTER
+CONFIG
 for job in format lint; do
   printf '    - name: %s\n      root: app/\n      run: |\n        : %s; HOOK_JOB=%s sh ../report.sh {staged_files}\n' \
     "$job" "$padding" "$job" >>lefthook.yml
@@ -49,6 +58,9 @@ for job in format lint; do
   test "$(grep -c "^FINDING $job " after.log)" -eq 12
   test "$(grep "^FINDING $job " after.log | sort -u | wc -l | tr -d ' ')" -eq 12
 done
+test "$(grep -c '^GLOBAL_FAILURE' after.log)" -eq 1
+test "$(grep -c '^GLOBAL_AFTER' after.log)" -eq 1
+printf 'Global jobs ran once outside every file batch, including after a failure.\n'
 printf 'Real Lefthook: before %s/24 findings, after 24/24; both exit 1.\n' "$before"
 # A fix-only finding still fails, and its diff is printed after another job fails.
 cat >lefthook.yml <<'CONFIG'
