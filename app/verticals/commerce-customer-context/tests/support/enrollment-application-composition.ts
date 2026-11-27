@@ -21,6 +21,7 @@ import { HttpApi } from 'effect/http-api';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 const digest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
 const contractJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
@@ -192,7 +193,7 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
       ),
     )(shellFederationDocument).pipe(Effect.mapError(unavailable));
     const sharedSingletons = yield* Effect.forEach(
-      shellFederation.shared.filter(({ singleton }) => singleton === true),
+      sharedPackagesOf(shellFederation.shared).filter(({ singleton }) => singleton === true),
       (entry) =>
         entry.requiredVersion === undefined
           ? Effect.fail(unavailable('Published Shell singleton has no version'))

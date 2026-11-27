@@ -16,6 +16,8 @@ import {
   Struct,
 } from 'effect/Schema';
 
+import { UI_KIT_PACKAGE } from './packages/core-runtime/src/modules/shared-packages.ts';
+
 type SharedRuntimeVersions = Readonly<
   Record<
     '@modern-js/plugin-i18n/runtime' | '@modern-js/runtime' | '@tanstack/react-router' | 'react' | 'react-dom',
@@ -23,8 +25,7 @@ type SharedRuntimeVersions = Readonly<
   >
 >;
 
-/** The design system. The Shell provides every one of its subpaths; a browser remote never ships a copy. */
-export const UI_KIT_PACKAGE = '@techsio/ui-kit';
+export { UI_KIT_PACKAGE } from './packages/core-runtime/src/modules/shared-packages.ts';
 
 /** One JavaScript subpath the kit exports and the installed file it resolves to. */
 export interface UiKitModule {
