@@ -64,7 +64,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.66.2",
+    "@techsio/ui-kit": "0.67.0",
     "better-auth": "1.7.23",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
