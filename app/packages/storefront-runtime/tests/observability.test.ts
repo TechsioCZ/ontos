@@ -1,7 +1,7 @@
 import { Effect, Fiber, FileSystem, Option, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
-import { cgroupMemoryPath, readCgroupMemory, startStorefrontObservability } from '../src/observability.ts';
+import { cgroupMemoryPath, readCgroupMemory, readStealMs, startStorefrontObservability } from '../src/observability.ts';
 import { CgroupMemorySchema, RuntimeTelemetryJson, unavailableCgroup } from '../src/telemetry.ts';
 
 const mount = '27 22 0:23 / /sys/fs/cgroup rw - cgroup2 cgroup rw';
@@ -126,6 +126,31 @@ it.effect('does not invent unlimited memory from a large finite v1 value', () =>
     );
     expect(value.limitKind).toBe('unavailable');
     expect(Option.isNone(value.limitBytes)).toBe(true);
+  }),
+);
+
+const readSteal = (stat?: string) =>
+  readStealMs.pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        readFileString: (filename) =>
+          stat === undefined || filename !== '/proc/stat'
+            ? FileSystem.makeNoop({}).readFileString(filename)
+            : Effect.succeed(stat),
+      }),
+    ),
+  );
+
+it.effect('reads the host steal time from the aggregate /proc/stat line, in 10 ms ticks', () =>
+  Effect.gen(function* stealTime() {
+    expect(
+      Option.getOrNull(
+        yield* readSteal('cpu  4705 356 584 3699 23 0 9 37 0 0\ncpu0 4705 356 584 3699 23 0 9 37 0 0\n'),
+      ),
+    ).toBe(370);
+    expect(Option.isNone(yield* readSteal())).toBe(true);
+    expect(Option.isNone(yield* readSteal('intr 1 2 3\n'))).toBe(true);
   }),
 );
 

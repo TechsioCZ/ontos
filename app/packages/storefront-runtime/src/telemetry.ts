@@ -66,10 +66,15 @@ export const RuntimeSummarySchema = Schema.Struct({
   event: Schema.Literal('storefront.runtime.summary'),
   eventLoopMaxMs: Schema.OptionFromNullOr(Measurement),
   externalBytes: Counter,
+  // Where a long event-loop delay went (absent in older records): the window's longest and summed garbage-collection
+  // pauses, and the time the host did not run this machine's CPUs (stealMs, absent where /proc/stat is unreadable).
+  gcMaxMs: Schema.optionalKey(Measurement),
+  gcTotalMs: Schema.optionalKey(Measurement),
   heapLimitBytes: PositiveCounter,
   heapTotalBytes: Counter,
   heapUsedBytes: Counter,
   rssBytes: PositiveCounter,
+  stealMs: Schema.optionalKey(Schema.OptionFromNullOr(Measurement)),
   windowMs: Measurement.check(Schema.isGreaterThan(0)),
 });
 export const RuntimeTelemetrySchema = Schema.Union([RuntimeBootSchema, RuntimeSummarySchema]);

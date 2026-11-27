@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { monitorEventLoopDelay, PerformanceObserver } from 'node:perf_hooks';
 import { getHeapStatistics } from 'node:v8';
 
 import { constVoid } from 'effect/Function';
@@ -124,6 +124,19 @@ export const readCgroupMemory = Effect.gen(function* readController() {
   return { ...measured, limitBytes: Option.none(), limitKind: 'unavailable' } satisfies CgroupMemory;
 });
 
+/** The host's steal time since boot (Linux /proc/stat, USER_HZ ticks of 10 ms): when it did not run this machine. */
+export const readStealMs = Effect.gen(function* readSteal() {
+  const fs = yield* FileSystem.FileSystem;
+  const stat = yield* fs.readFileString('/proc/stat').pipe(Effect.option);
+  return stat.pipe(
+    Option.flatMap((text) => {
+      const [label, ...ticks] = (text.split('\n', 1)[0] ?? '').trim().split(/\s+/u);
+      return label === 'cpu' ? unsigned(Option.fromUndefinedOr(ticks[7])) : Option.none();
+    }),
+    Option.map((ticks) => ticks * 10),
+  );
+});
+
 const observerHook = 'ontos:storefront-observer';
 const emit = (event: RuntimeTelemetry) =>
   Schema.encodeEffect(RuntimeTelemetryJson)(event).pipe(Effect.flatMap(Console.log));
@@ -183,6 +196,23 @@ export const startStorefrontObservability = Effect.fn('Storefront.observeProcess
           delay.disable();
         }),
     );
+    const gc = yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const pauses = { maxMs: 0, totalMs: 0 };
+        const observer = new PerformanceObserver((entries) => {
+          for (const entry of entries.getEntries()) {
+            pauses.maxMs = Math.max(pauses.maxMs, entry.duration);
+            pauses.totalMs += entry.duration;
+          }
+        });
+        observer.observe({ entryTypes: ['gc'] });
+        return { observer, pauses };
+      }),
+      ({ observer }) =>
+        Effect.sync(() => {
+          observer.disconnect();
+        }),
+    );
     yield* emit({
       ...identity,
       at: yield* Clock.currentTimeMillis,
@@ -191,8 +221,10 @@ export const startStorefrontObservability = Effect.fn('Storefront.observeProcess
     });
     let previousCpu = process.cpuUsage();
     let previousAt = yield* Clock.monotonicTimeNanos;
+    let previousSteal = yield* readStealMs;
     const sample = Effect.gen(function* sampleProcess() {
       const cgroup = yield* readCgroupMemory;
+      const steal = yield* readStealMs;
       const memory = process.memoryUsage();
       const cpu = process.cpuUsage();
       const now = yield* Clock.monotonicTimeNanos;
@@ -208,15 +240,23 @@ export const startStorefrontObservability = Effect.fn('Storefront.observeProcess
         eventLoopMaxMs:
           histogram.count === 0 ? Option.none() : Option.some(Duration.toMillis(Duration.nanos(BigInt(histogram.max)))),
         externalBytes: memory.external,
+        gcMaxMs: gc.pauses.maxMs,
+        gcTotalMs: gc.pauses.totalMs,
         heapLimitBytes: getHeapStatistics().heap_size_limit,
         heapTotalBytes: memory.heapTotal,
         heapUsedBytes: memory.heapUsed,
         rssBytes: memory.rss,
+        stealMs: Option.zipWith(steal, previousSteal, (total, before) => total - before).pipe(
+          Option.filter((ms) => ms >= 0),
+        ),
         windowMs: Duration.toMillis(Duration.nanos(now - previousAt)),
       });
       previousAt = now;
       previousCpu = cpu;
+      previousSteal = steal;
       histogram.reset();
+      gc.pauses.maxMs = 0;
+      gc.pauses.totalMs = 0;
     });
     const idle = yield* Deferred.make<boolean>();
     const stop = () => {
