@@ -495,7 +495,9 @@ const loadedFigures = (value: Loaded) => {
     amount: value.price?.priceRevision.monetaryAmount.amount ?? '',
     groupAmounts: Object.fromEntries(
       value.groups.flatMap(({ group, price }) =>
-        price === undefined ? [] : [[group.priceGroupRef.resourceId, price.priceRevision.monetaryAmount.amount] as const],
+        price === undefined
+          ? []
+          : [[group.priceGroupRef.resourceId, price.priceRevision.monetaryAmount.amount] as const],
       ),
     ),
     stock: answer?.outcome === 'ON_HAND' ? answer.total.amount : '',
@@ -577,9 +579,10 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
     const priceChanged =
       loaded.price !== undefined &&
       nextAmount !== null &&
-      nextAmount !== loaded.price.priceRevision.monetaryAmount.amount;
+      nextAmount !== canonical(loaded.price.priceRevision.monetaryAmount.amount);
     const [first] = loaded.stock.items;
-    const stockChanged = nextStock !== null && !(first?.outcome === 'ON_HAND' && first.total.amount === nextStock);
+    const stockChanged =
+      nextStock !== null && !(first?.outcome === 'ON_HAND' && canonical(first.total.amount) === nextStock);
     const keyPrice = keyPriceOf(loaded);
     const groupChanges = loaded.groups.flatMap(({ group, price, problem }) => {
       const next = canonical(groupAmounts[group.priceGroupRef.resourceId] ?? '');
@@ -587,7 +590,10 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
         return [];
       }
       if (price !== undefined) {
-        return next === price.priceRevision.monetaryAmount.amount ? [] : [Effect.asVoid(revisePrice(price, next, why))];
+        // Owners answer amounts with trailing zeros ("4.690000000"); only a different value is a change.
+        return next === canonical(price.priceRevision.monetaryAmount.amount)
+          ? []
+          : [Effect.asVoid(revisePrice(price, next, why))];
       }
       return keyPrice === undefined ? [] : [Effect.asVoid(defineGroupPrice(keyPrice, group, next, why))];
     });
