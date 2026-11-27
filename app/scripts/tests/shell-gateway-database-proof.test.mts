@@ -94,7 +94,7 @@ it.effect.each([
     registeredRoot.replace('{ api, handlers }', '{ api, handlers, "handlers": unrelated }'),
   ],
   ['mutable root factory', registeredRoot.replace('export const makeRuntime', 'export let makeRuntime')],
-])('rejects %s', ([_name, source]) => {
+] as const)('rejects %s', ([_name, source]) => {
   const sources = fixtureSources();
   sources.set(rootFile, source);
   return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));
@@ -124,7 +124,7 @@ it.effect.each([
   ['raw tag export', `${helperSource}\nexport { CoreDatabase };`],
   ['local function alias escape', `${helperSource}\nexport const leaked = evidence;`],
   ['local business function consumer', `${helperSource}\nexport const directBusiness = () => evidence();`],
-])('rejects capability escape through %s', ([_name, source]) => {
+] as const)('rejects capability escape through %s', ([_name, source]) => {
   const sources = fixtureSources();
   sources.set(helperFile, source);
   return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));
@@ -143,7 +143,7 @@ it.effect.each([
     'template substitution import',
     `const directory = '../api/auth/'; export const imported = import(\`\${directory}evidence.ts\`);`,
   ],
-])('rejects an additional %s consumer', ([_name, source]) => {
+] as const)('rejects an additional %s consumer', ([_name, source]) => {
   const sources = fixtureSources();
   sources.set(`${fixtureRoot}/apps/shell-super-app/business/action.ts`, source);
   return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));

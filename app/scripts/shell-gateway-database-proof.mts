@@ -962,12 +962,13 @@ const discoverRoot = (proof: IssuerProof): IssuerRoot | undefined => {
   if (contract === undefined || !contractHasGateway(proof, contract, gateway)) {
     return undefined;
   }
-  const groups = model.bindings
-    .filter((binding) => binding.kind === 'const' && immutable(model, binding))
-    .flatMap((binding) => {
-      const call = groupCall(proof, model, binding, contract, 'gatewayContext');
-      return call !== undefined && layerContains(proof, model, handlers, { binding, model }) ? [call] : [];
-    });
+  const groups = model.bindings.flatMap((binding) => {
+    if (binding.kind !== 'const' || !immutable(model, binding)) {
+      return [];
+    }
+    const call = groupCall(proof, model, binding, contract, 'gatewayContext');
+    return call !== undefined && layerContains(proof, model, handlers, { binding, model }) ? [call] : [];
+  });
   if (groups.length !== 1) {
     return undefined;
   }
