@@ -1000,7 +1000,8 @@ const linkSourceProduct = Effect.fn('Merchandise.linkSourceProduct')(function* l
     catalogProductId: target.catalogProductId ?? value.catalogProductId,
     erpCode: target.erpCode ?? value.erpCode,
     importedVia: 'symmy',
-    stockTracked: target.stockTracked || targets.some(({ onHand }) => onHand !== undefined),
+    // An ERP on-hand figure makes the stock tracked; without one the shop product keeps its own setting (unset = tracked).
+    ...(targets.some(({ onHand }) => onHand !== undefined) ? { stockTracked: true } : {}),
     ...(plain === undefined ? {} : { catalogVariantId: plain.catalogVariantId }),
     ...(variants === undefined ? {} : { variants }),
   };
@@ -1126,8 +1127,19 @@ const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(functio
     variant.priceMinor === undefined || variant.priceMinor <= 0 ? [] : [variant.priceMinor],
   );
   const priced = single === undefined ? multiPrices.length > 0 : repricedSingle.currentPriceMinor > 0;
+  // Never a row at 0 Kč: a Symmy product without a price is not created; a row that exists still takes its stock.
+  if (created && !priced) {
+    yield* Console.log(`[merchandise-source-upsert] ${value.sourceRecordId} not created: no price`);
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'UNCHANGED', productId: id },
+      state,
+    } satisfies SourceUpsertChange;
+  }
+  // One stock rule for every product: an Inventory on-hand figure makes the stock tracked (the ERP figure wins over a
+  // staff switch-off); without a figure the row keeps its setting, so a staff switch-on stays (unset = tracked).
   const stockTracked =
-    repricedSingle.stockTracked === true || value.variants.some((variant) => typeof variant.stockOnHand === 'number');
+    repricedSingle.stockTracked !== false || value.variants.some((variant) => typeof variant.stockOnHand === 'number');
   // RETIRED is archived exactly as ArchiveProduct archives; any other lifecycle brings the row back.
   const { demoArchive: _archive, ...unarchived } = repricedSingle;
   void _archive;
