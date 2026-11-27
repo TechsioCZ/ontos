@@ -490,7 +490,18 @@ export const ProductDetailView = ({
   const variantDestination = resolveProductVariantDestination(product, variantId);
   // The page re-reads the product after each save; the editor stays mounted across that reload
   // (`useProductDetailDraft`).
-  const { draft, record, reloadLatest } = useProductDetailDraft({ onReload, product, revision });
+  const { draft, record, reloadLatest, writeThroughError } = useProductDetailDraft({ onReload, product, revision });
+  // The Pricing/Inventory variant a stock movement of this Symmy product writes through to; none for other products.
+  const symmyStockTarget = (variantId: string | undefined) => {
+    if (product.importedVia !== 'symmy' || product.catalogProductId === undefined) {
+      return undefined;
+    }
+    const catalogVariantId =
+      variantId === undefined
+        ? product.catalogVariantId
+        : product.variants?.find((variant) => variant.id === variantId)?.catalogVariantId;
+    return catalogVariantId === undefined ? undefined : { catalogProductId: product.catalogProductId, catalogVariantId };
+  };
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
   const dirty = record.dirty || movementDirty;
@@ -590,6 +601,7 @@ export const ProductDetailView = ({
               vat={vat}
             />
             {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
+            {writeThroughError !== null && <StatusText status="error">{writeThroughError}</StatusText>}
             {canWrite && (
               <SaveBar
                 labels={labels}
@@ -683,6 +695,7 @@ export const ProductDetailView = ({
                 productId={product.id}
                 revision={revision}
                 stockOnHand={product.stockOnHand}
+                symmyTarget={symmyStockTarget}
                 variants={product.variantRecords}
               />
             )}
