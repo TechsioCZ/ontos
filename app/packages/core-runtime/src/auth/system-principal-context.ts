@@ -3,6 +3,7 @@ import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { principalEnrolledFor } from '../access/workloads/system-enrollment.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { accessWorkloadBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -128,6 +129,7 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
                 eq(accessWorkloadBindings.tenantId, input.tenantId),
                 eq(accessWorkloadBindings.workloadKey, input.jobKey),
                 eq(accessWorkloadBindings.status, 'active'),
+                principalEnrolledFor(input.jobKey),
                 eq(principals.status, 'active'),
                 eq(tenants.status, 'active'),
                 input.allowServicePrincipal

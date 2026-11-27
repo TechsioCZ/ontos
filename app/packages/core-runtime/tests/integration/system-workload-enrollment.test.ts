@@ -392,13 +392,34 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
         first.bindingIncarnation,
       );
       const [created] = yield* admin
-        .select({ displayName: principals.displayName, kind: principals.kind, status: principals.status })
+        .select({
+          displayName: principals.displayName,
+          kind: principals.kind,
+          status: principals.status,
+          systemWorkloadKey: principals.systemWorkloadKey,
+        })
         .from(principals)
         .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, first.principalId)));
-      expect(created).toEqual({ displayName: `System workload ${workerKey}`, kind: 'system', status: 'active' });
+      expect(created).toEqual({
+        displayName: `System workload ${workerKey}`,
+        kind: 'system',
+        status: 'active',
+        systemWorkloadKey: workerKey,
+      });
       expect(yield* principalBindings(first.principalId)).toEqual(
         identityKeys.map((workloadKey) => ({ status: 'active', workloadKey })),
       );
+      // The database itself refuses a second live Principal recorded for the same workload.
+      const second = yield* Effect.flip(
+        admin.insert(principals).values({
+          displayName: 'Second holder',
+          kind: 'system',
+          status: 'disabled',
+          systemWorkloadKey: workerKey,
+          tenantId,
+        }),
+      );
+      expect(second).toBeDefined();
       // The worker's own reader now finds exactly this Principal.
       expect((yield* workerIdentity(tenantId)).principalId).toBe(first.principalId);
 
@@ -641,6 +662,50 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(endedRemoved).toMatchObject({ principalId: leftEnrollment.principalId, revoked: grown.held });
       expect(Object.hasOwn(endedRemoved, 'declaredCalls')).toBe(false);
       expect(yield* activeHolders(tenantId)).toEqual([]);
+
+      // A call enrolled before the key's module declared it left the worker's Principal holding that module's system
+      // workload key. The binding never makes it that module's identity, and the module's enrollment takes it back.
+      yield* Ref.set(catalog, enrollmentCatalog());
+      yield* setModuleState(enrollmentDormantModule, 'active');
+      const borrower = yield* enrollmentOf(yield* change(yield* sessionOf(administrator), enroll));
+      yield* admin.insert(accessWorkloadBindings).values({
+        bindingId: yield* nextUuid,
+        createdAt: DateTime.toDateUtc(yield* DateTime.now),
+        incarnation: yield* nextUuid,
+        principalId: borrower.principalId,
+        status: 'active',
+        tenantId,
+        workloadKey: enrollmentDormantJob,
+      });
+      const owner = { moduleKey: enrollmentDormantModule, workloadKey: enrollmentDormantJob };
+      const ownerIdentity = Effect.fn('SystemWorkloadEnrollmentTest.ownerIdentity')(function* resolveOwner() {
+        return yield* enrolled.resolveEnrolled({
+          registration: registerSystemWorkload({ jobKey: enrollmentDormantJob }),
+          runReference: yield* nextUuid,
+          tenantId,
+        });
+      });
+      const unresolved = yield* Effect.flip(ownerIdentity());
+      expect(Predicate.isTagged(unresolved, 'SystemPrincipalContextDeniedError')).toBe(true);
+      const nothingToEnd = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(nothingToEnd, 'NOT_ENROLLED')).toBe(true);
+      const ownAnswer = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'ENROLL' });
+      expect(Predicate.isTagged(ownAnswer, 'ENROLLED')).toBe(true);
+      const own = yield* enrollmentOf(ownAnswer);
+      expect(own.principalId).not.toBe(borrower.principalId);
+      expect((yield* ownerIdentity()).principalId).toBe(own.principalId);
+      const borrowerBindings = yield* principalBindings(borrower.principalId);
+      expect(borrowerBindings.filter(({ status }) => status === 'revoked')).toEqual([
+        { status: 'revoked', workloadKey: enrollmentDormantJob },
+      ]);
+      expect(borrowerBindings.filter(({ status }) => status === 'active')).toHaveLength(borrower.held.length);
+      const reclaimAudits = yield* admin
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
+      expect(reclaimAudits).toContainEqual({
+        evidence: expect.objectContaining({ change: 'ENROLLED', reclaimedFrom: [borrower.principalId] }),
+      });
     }),
   );
 });
