@@ -12,10 +12,10 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "effect": "4.0.7"
+    "effect": "4.1.4"
   },
   "devDependencies": {
-    "@types/node": "20.19.43"
+    "@types/node": "^26.6.6"
   },
   "ontosContractOwner": {
     "appId": "party-registry",

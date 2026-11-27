@@ -28,10 +28,10 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.7"
+    "effect": "4.1.4"
   },
   "devDependencies": {
-    "@types/node": "20.19.43"
+    "@types/node": "^26.6.6"
   },
   "ontosContractOwner": {
     "appId": "privacy",

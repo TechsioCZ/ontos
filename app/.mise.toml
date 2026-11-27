@@ -1,6 +1,6 @@
 [tools]
 node = "26.13.1"
-pnpm = { version = "12.16.1", allow_builds = ["pnpm"] }
+pnpm = { version = "12.21.0", allow_builds = ["pnpm"] }
 
 # Limit APFS clone contention to this installer task; lint and builds retain their own concurrency.
 [tasks.deps]

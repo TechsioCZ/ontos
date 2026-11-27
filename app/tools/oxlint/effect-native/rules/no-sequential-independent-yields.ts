@@ -93,10 +93,11 @@ const DEFAULT_EFFECT_MODULES: readonly string[] = [
 /**
  * Callee prefixes that assert the step's position in a program is semantic. Mirrors the S1 target
  * pipeline (`lock → validate → install scope → recheck → execute → flush → commit`) plus the write /
- * observation verbs whose ordering is observable.
+ * observation verbs whose ordering is observable. Native entropy draws are stateful generation,
+ * not independent reads; a failed earlier operation must not consume the next identifier.
  */
 const DEFAULT_ORDERING_PATTERN =
-  '^(lock|acquire|begin|install|validate|verify|check|assert|ensure|require|recheck|commit|flush|transition|fail|succeed|complete|log|record|emit|publish|write|insert|update|delete|persist|claim|authenticate|authorize|reconcile|create|archive|send|notify|terminate|revoke|sync|seed|dispatch|enqueue)';
+  '^(lock|acquire|begin|install|validate|verify|check|assert|ensure|require|recheck|commit|flush|transition|fail|succeed|complete|log|record|emit|publish|write|insert|update|delete|persist|claim|authenticate|authorize|reconcile|create|archive|send|notify|terminate|revoke|sync|seed|dispatch|enqueue|uuidV[47]$|randomBytes$)';
 
 const FUNCTION_TYPES: ReadonlySet<string> = new Set([
   'ArrowFunctionExpression',

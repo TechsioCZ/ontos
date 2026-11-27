@@ -12,7 +12,7 @@
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__gateway-principal-verifier.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "*.config.ts"],
   "references": [
     {
       "path": "../core-runtime"

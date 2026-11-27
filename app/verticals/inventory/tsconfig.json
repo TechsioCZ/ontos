@@ -19,7 +19,8 @@
     "server",
     "api",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "*.config.ts"
   ],
   "references": [
     {
@@ -30,6 +31,9 @@
     },
     {
       "path": "../../packages/catalog-selection-contracts"
+    },
+    {
+      "path": "../../tsconfig.federation-shared.json"
     }
   ]
 }

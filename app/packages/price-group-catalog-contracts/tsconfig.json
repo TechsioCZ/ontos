@@ -11,7 +11,7 @@
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__price-group-catalog-contracts.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "*.config.ts"],
   "references": [
     { "path": "../core-runtime" },
     { "path": "../shared-contracts" }

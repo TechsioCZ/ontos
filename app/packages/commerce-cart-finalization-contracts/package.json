@@ -13,7 +13,7 @@
     "@app/core-runtime": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.7"
+    "effect": "4.1.4"
   },
   "ontosContractOwner": {
     "appId": "commerce-cart",

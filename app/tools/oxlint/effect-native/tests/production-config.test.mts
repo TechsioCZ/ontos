@@ -29,18 +29,34 @@ const e2eTest = 'apps/demo/tests/e2e/y.test.ts';
 const handlers = 'apps/demo/src/handlers.ts';
 const discardedAssignment = 'apps/demo/src/discarded-assignment.ts';
 const observedValues = 'apps/demo/src/observed-values.ts';
+const interleavedProperties = 'apps/demo/src/interleaved-properties.ts';
+const orderedProperties = 'apps/demo/src/ordered-properties.ts';
+const unorderedProperties = 'apps/demo/src/unordered-properties.ts';
+const mixedNamedUnordered = 'apps/demo/src/mixed-named-unordered.ts';
+const nestedConditional = 'apps/demo/src/nested-conditional.ts';
+const embeddedConditional = 'apps/demo/src/embedded-conditional.ts';
+const independentConditionals = 'apps/demo/src/independent-conditionals.ts';
+const developmentAdapter = 'packages/shared-contracts/tooling/modern-config.ts';
+const neighboringLibrary = 'packages/shared-contracts/tooling/library.ts';
+const adapterPrimitives = [
+  "import { Cause, Effect } from 'effect';",
+  'export const execute = Effect.runCallback;',
+  'export const provide = Effect.provide;',
+  'export const forward = Cause.squash;',
+].join('\n');
 
 const validRoutes = [
   'apps/shell-super-app/src/routes/[lang]/$.tsx',
   'apps/shell-super-app/src/routes/[lang]/$.data.ts',
   'apps/shell-super-app/src/routes/[lang]/$.data.client.ts',
   'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.data.client.ts',
+  'apps/another-owner/src/routes/[lang]/$.tsx',
 ];
 const invalidRoutes = [
   'apps/shell-super-app/src/routes/[lang]/$rogue.tsx',
   'apps/shell-super-app/src/routes/[lang]/$.custom.ts',
   'apps/shell-super-app/src/routes/[lang]/page.data.custom.ts',
-  'apps/another-owner/src/routes/[lang]/$.tsx',
+  'apps/another-owner/src/$.tsx',
 ];
 const routes: readonly string[] = [...validRoutes, ...invalidRoutes];
 
@@ -85,6 +101,30 @@ const staged: readonly (readonly [string, string])[] = [
     observedValues,
     'export const read = () => { let value = 1; const first = value; value = 2; return [first, value]; };\n',
   ],
+  [
+    interleavedProperties,
+    "export const grant = (audience: string) => ({ assertion: 'signed', audience, expiresAt: 1 });\n",
+  ],
+  [
+    orderedProperties,
+    "export const grant = (audience: string) => ({ audience, assertion: 'signed', expiresAt: 1 });\n",
+  ],
+  [
+    mixedNamedUnordered,
+    "export const grant = (audience: string) => ({ audience, expiresAt: 1, assertion: 'signed' });\n",
+  ],
+  [unorderedProperties, "export const grant = { expiresAt: 1, assertion: 'signed' };\n"],
+  [nestedConditional, "export const choose = (outer: boolean, inner: boolean) => outer ? (inner ? 'a' : 'b') : 'c';\n"],
+  [
+    embeddedConditional,
+    "export const choose = (outer: boolean, inner: boolean) => outer ? String(inner ? 'a' : 'b') : 'c';\n",
+  ],
+  [
+    independentConditionals,
+    "export const choose = (outer: boolean, inner: boolean) => { const value = inner ? 'a' : 'b'; return outer ? String(value) : 'c'; };\n",
+  ],
+  [developmentAdapter, adapterPrimitives],
+  [neighboringLibrary, adapterPrimitives],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
 ];
 
@@ -117,6 +157,17 @@ it('production route filename override admits exact native splat filenames and k
   expect(named).toEqual(invalidRoutes.toSorted());
 });
 
+it('production registers only the development-server adapter as an outer Effect boundary', () => {
+  for (const code of [
+    'effect-native(no-bare-effect-run)',
+    'effect-native(no-effect-provide-in-library)',
+    'effect-native(no-local-defect-seam)',
+  ]) {
+    expect(codesFor(developmentAdapter)).not.toContain(code);
+    expect(codesFor(neighboringLibrary)).toContain(code);
+  }
+});
+
 it('production SonarJS configuration accepts Match.tags and discriminator keys that mirror domain vocabulary', () => {
   const sonarCodes = codesFor(handlers).filter((code) => code.startsWith('sonarjs('));
   expect(sonarCodes, 'the SonarJS plugin must run on the fixture').toContain('sonarjs(no-all-duplicated-branches)');
@@ -126,4 +177,63 @@ it('production SonarJS configuration accepts Match.tags and discriminator keys t
 it('production rejects overwritten assignments without rejecting observed values', () => {
   expect(codesFor(discardedAssignment)).toContain('eslint(no-useless-assignment)');
   expect(codesFor(observedValues)).not.toContain('eslint(no-useless-assignment)');
+});
+
+it('production groups mixed literals and alphabetizes homogeneous literals', () => {
+  expect(codesFor(interleavedProperties)).toContain('sonarjs(shorthand-property-grouping)');
+  expect(codesFor(orderedProperties)).not.toContain('sonarjs(shorthand-property-grouping)');
+  expect(codesFor(orderedProperties)).not.toContain('perfectionist(sort-objects)');
+  expect(codesFor(unorderedProperties)).toContain('perfectionist(sort-objects)');
+  // Perfectionist 5 has no shorthand selector. Alphabetizing across groups would undo Sonar's grouping.
+  expect(codesFor(mixedNamedUnordered)).not.toContain('sonarjs(shorthand-property-grouping)');
+  expect(codesFor(mixedNamedUnordered)).not.toContain('perfectionist(sort-objects)');
+});
+
+it('production rejects directly and indirectly nested conditionals through one stricter rule', () => {
+  expect(codesFor(nestedConditional)).toContain('sonarjs(no-nested-conditional)');
+  expect(codesFor(embeddedConditional)).toContain('sonarjs(no-nested-conditional)');
+  expect(codesFor(independentConditionals)).not.toContain('sonarjs(no-nested-conditional)');
+  expect(codesFor(nestedConditional)).not.toContain('eslint(no-nested-ternary)');
+});
+
+const consumer = (method: string) =>
+  `import { read } from '@fixture/service';\nexport const load = () => read.${method}();\n`;
+
+it('tsrs resolves a referenced package and applies the production async-return override only to tests', () => {
+  const invalid = 'apps/demo/src/async-value.ts';
+  const valid = 'apps/demo/src/ordinary-value.ts';
+  const override = 'apps/demo/tests/async-value.test.ts';
+  const result = runProductionOxlint(
+    {
+      [invalid]: consumer('later'),
+      [override]: consumer('later'),
+      [valid]: consumer('now'),
+    },
+    {
+      'apps/demo/tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          paths: { '@fixture/service': ['../../packages/service/src/index.d.ts'] },
+          strict: true,
+          target: 'ES2022',
+        },
+        include: ['src', 'tests'],
+        references: [{ path: '../../packages/service' }],
+      }),
+      'packages/service/src/index.d.ts': 'export declare const read: { later(): Promise<number>; now(): number };',
+      'packages/service/tsconfig.json': JSON.stringify({
+        compilerOptions: { composite: true, target: 'ES2022' },
+        include: ['src'],
+      }),
+      'tsconfig.json': JSON.stringify({
+        files: [],
+        references: [{ path: './packages/service' }, { path: './apps/demo' }],
+      }),
+    },
+  );
+  expect(result.numberOfFiles).toBe(3);
+  const asyncRule = result.diagnostics.filter(({ code }) => code === 'typescript(promise-function-async)');
+  expect(asyncRule.map(({ filename, severity }) => [filename, severity])).toEqual([[invalid, 'error']]);
+  expect(result.diagnostics.filter(({ code }) => /TS(?:2307|6305)/u.test(code))).toEqual([]);
 });

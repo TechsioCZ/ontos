@@ -834,7 +834,7 @@ jobs:
         env:
           # Leave room for the runner and Effect diagnostics while checking the complete workspace.
           GOMEMLIMIT: 4GiB
-          ULTRAMODERN_TSGO_BUILDERS: '1'
+          ULTRAMODERN_TYPECHECK_BUILDERS: '1'
         run: mise exec -- pnpm typecheck
 
       - name: Check OntOS APIs and generator behavior
@@ -907,7 +907,7 @@ jobs:
           # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
             <"$files"
-          # Effect's tsgolint emits no Effect language-service diagnostics.
+          # The tsrs Oxlint backend does not emit Effect language-service diagnostics.
           if [[ "$LINT_ROW" == 1 ]]; then
             mise exec --cd app -- pnpm lint:effect-diagnostics
           fi
@@ -1362,7 +1362,9 @@ jobs:
           name: native-startup-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: |
             app/verticals/commerce-market-catalog/.cache/ontos-1250/startup-diagnostic-*.json
+            app/apps/shell-super-app/.cache/native-owner-startup/startup-diagnostic-*.json
             /tmp/commerce-org-http-*.diag.log
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 1
 

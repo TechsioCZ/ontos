@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/scripts__ci__rstest-report",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/scripts__ci__rstest-report.tsbuildinfo"
+  },
+  "files": [
+    "rstest-json-report.mts"
+  ]
+}
