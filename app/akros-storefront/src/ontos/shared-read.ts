@@ -14,6 +14,10 @@ interface Entry {
   refreshing: boolean;
   /** The settled answer of the generation this entry's first read replaces, for readers with `waitMs`. */
   replaced: { at: number; value: Promise<unknown> } | undefined;
+  /** When a visitor last read this key (a renewal is none). */
+  hitAt: number;
+  /** Reads this key again for a newer generation (`renewSharedReads`). */
+  renew: (generation: number) => Promise<void>;
 }
 const entries = new Map<string, Entry>();
 // Full product records are large and the heap is about 281 MB: keep the newest entries only.
@@ -62,6 +66,49 @@ export const joined = <A>(value: Promise<A>, caller: Operation | undefined): Pro
         );
       });
 
+/** Entries a visitor read within this long (as long as a stale answer is served) are read again for a new generation. */
+const RENEW_WITHIN_MS = MAX_STALE_MS;
+const RENEW_LIMIT = 24;
+const RENEW_CONCURRENCY = 4;
+// The generation the running renewal pass reads, and the newest one asked for while it runs.
+let renewing: number | undefined;
+let renewNext: number | undefined;
+
+/**
+ * Reads the entries visitors used lately again for `generation` (the owner's newer revision) in the background, newest
+ * visit first and four at a time, so the first visit after an admin save finds its answer read; no visit waits for it
+ * (a visit meanwhile takes the replaced generation's answer). One pass runs at a time: generations announced during a
+ * pass are folded into one pass for the newest of them, so a burst of writes (stock movements) reads each entry once.
+ */
+export const renewSharedReads = (generation: number) => {
+  if (renewing !== undefined) {
+    if (generation > renewing && (renewNext === undefined || generation > renewNext))
+      renewNext = generation;
+    return;
+  }
+  renewing = generation;
+  const now = Date.now();
+  const due = [...entries.values()]
+    .filter(
+      (entry) =>
+        entry.generation !== undefined &&
+        entry.generation < generation &&
+        now - entry.hitAt < RENEW_WITHIN_MS,
+    )
+    .sort((left, right) => right.hitAt - left.hitAt)
+    .slice(0, RENEW_LIMIT);
+  const work = async () => {
+    for (let entry = due.shift(); entry !== undefined; entry = due.shift())
+      await entry.renew(generation);
+  };
+  void Promise.all(Array.from({ length: RENEW_CONCURRENCY }, work)).finally(() => {
+    renewing = undefined;
+    const next = renewNext;
+    renewNext = undefined;
+    if (next !== undefined && next > generation) renewSharedReads(next);
+  });
+};
+
 /**
  * `ttlMs` fresh; with `stale`, an older settled value keeps being served while one background refresh replaces it.
  * A value read at another `generation` (the owner's revision) is served only to a reader with `waitMs` whose new
@@ -108,9 +155,11 @@ function read<A>(
   stale: boolean,
   generation: number | undefined,
   waitMs: number | undefined,
+  renewal = false,
 ): Promise<A> {
   const found = entries.get(key);
   const held = found?.generation === generation ? found : undefined;
+  if (held !== undefined && !renewal) held.hitAt = Date.now();
   if (held !== undefined) {
     entries.delete(key);
     entries.set(key, held);
@@ -131,6 +180,8 @@ function read<A>(
             done: true,
             refreshing: false,
             replaced: undefined,
+            hitAt: held.hitAt,
+            renew: held.renew,
           });
         },
         () => {
@@ -155,6 +206,16 @@ function read<A>(
     done: false,
     refreshing: false,
     replaced,
+    hitAt: renewal && found !== undefined ? found.hitAt : Date.now(),
+    renew: async (next) => {
+      const current = entries.get(key)?.generation;
+      // A visitor or an earlier renewal already reads this key at that generation or a newer one.
+      if (current !== undefined && current >= next) return;
+      await read(key, ttlMs, load, stale, next, undefined, true).then(
+        () => undefined,
+        () => undefined,
+      );
+    },
   };
   put(key, entry);
   value.then(

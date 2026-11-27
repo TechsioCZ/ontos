@@ -103,6 +103,7 @@ import {
 import {
   categoryTrailsOf,
   categoryTree,
+  storefrontListedProducts,
   hasCategoryTree,
   indicators,
   orderPage,
@@ -3145,6 +3146,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           : yield* categoryTree(transaction, store, {
               activeSlug: catalogQuery.categorySlug,
               contentOnly: catalogQuery.includeCategories === false,
+              listed: storefrontListedProducts(store, catalogQuery, market.scope),
               storefront: true,
             });
       const status =

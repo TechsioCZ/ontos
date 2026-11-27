@@ -207,12 +207,12 @@ export const emptyDefinitionForm = (): MarketDefinitionForm => ({
   validTo: '',
 });
 
-/** CZK markets sell at catalogue prices; other currencies need a rate and round to whole units by default. */
+/** CZK markets sell at catalogue prices to the haléř; other currencies need a rate and round to tenths by default. */
 export const defaultPricingForm = (currency: MarketCurrency = 'CZK'): MarketPricingForm => ({
   currency,
   exchangeRate: '1',
   offerMode: 'WHOLE_CATALOGUE',
-  roundingMinor: currency === 'CZK' ? '100' : '10',
+  roundingMinor: currency === 'CZK' ? '1' : '10',
 });
 
 export const pricingFormOf = (settings: MarketSettings): MarketPricingForm => ({

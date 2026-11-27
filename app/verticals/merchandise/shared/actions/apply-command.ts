@@ -329,13 +329,6 @@ const ApplyChangePriceCommandSchema = Schema.TaggedStruct('ChangePrice', {
   variantId: Schema.optionalKey(VariantIdSchema),
 });
 
-/** A product edit naming the product version (`expectedUpdatedAt`) it was made against. */
-export const VersionedProductEditCommandSchema = Schema.Union([
-  Schema.Struct({ ...ApplyUpdateProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
-  Schema.Struct({ ...ApplyChangePriceCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
-  Schema.Struct({ ...ApplyChangeProductImagesCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
-]);
-
 const ApplyBulkUpdateProductsCommandSchema = Schema.TaggedStruct('BulkUpdateProducts', {
   ids: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   patch: BulkProductPatchSchema,
@@ -364,13 +357,29 @@ const ApplyCreateOrderCommandSchema = Schema.TaggedStruct('CreateOrder', {
  * RestoreProduct brings it back to the lists, still inactive and hidden until someone publishes it again.
  */
 const ApplyArchiveProductCommandSchema = Schema.TaggedStruct('ArchiveProduct', {
+  /**
+   * The product's `updatedAt` the operator saw. When present archiving conflicts only if this product changed
+   * meanwhile, not when another write (another product, a stock movement, an order) moved the catalogue revision.
+   */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   id: ProductIdSchema,
   reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
 });
 
 const ApplyRestoreProductCommandSchema = Schema.TaggedStruct('RestoreProduct', {
+  /** The product's `updatedAt` the operator saw; as for ArchiveProduct. */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   id: ProductIdSchema,
 });
+
+/** A product edit naming the product version (`expectedUpdatedAt`) it was made against. */
+export const VersionedProductEditCommandSchema = Schema.Union([
+  Schema.Struct({ ...ApplyUpdateProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyChangePriceCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyChangeProductImagesCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyArchiveProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyRestoreProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+]);
 
 /** Deletes a storefront category that has no subcategory and no live (not archived) product. */
 const ApplyDeleteCategoryCommandSchema = Schema.TaggedStruct('DeleteCategory', {

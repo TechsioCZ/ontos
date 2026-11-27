@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "vitest";
-import { clearSharedReads, sharedRead } from "@/ontos/shared-read";
+import { clearSharedReads, renewSharedReads, sharedRead } from "@/ontos/shared-read";
 
 beforeEach(() => clearSharedReads());
 
@@ -19,6 +19,20 @@ it("with waitMs, serves the replaced generation's answer while the new generatio
   expect(
     await sharedRead("k", 15_000, async () => "never read", { generation: 2, waitMs: 20 }),
   ).toBe("R2");
+});
+
+it("a new generation read again in the background reaches the first visit after it, once per generation", async () => {
+  let reads = 0;
+  const load = async () => `R${(reads += 1)}`;
+  expect(await sharedRead("k", 15_000, load, { stale: true, generation: 1, waitMs: 0 })).toBe("R1");
+  renewSharedReads(2);
+  // Announced while the pass for 2 runs: folded into one more pass, for the newest only.
+  renewSharedReads(3);
+  renewSharedReads(4);
+  await later(5);
+  expect(reads).toBe(3);
+  expect(await sharedRead("k", 15_000, load, { stale: true, generation: 4, waitMs: 0 })).toBe("R3");
+  expect(reads).toBe(3);
 });
 
 it("without waitMs, a new generation waits for its own read", async () => {

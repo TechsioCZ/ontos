@@ -2,7 +2,13 @@
 
 import { useSyncExternalStore } from "react";
 
-/** Native constraints also cover browser autofill, controlled defaults and saved-address copies. */
+/**
+ * Native constraints also cover browser autofill, controlled defaults and saved-address copies.
+ * Every field is a controlled React input, so validity is read after React commits a keystroke: the
+ * commit rewrites the input's attributes, which the observer sees. A native "input" listener on the
+ * form would run before React's own handler, re-render with the previous value and swallow the
+ * keystroke whenever it changed the form's validity.
+ */
 export const useCheckoutFormValidity = (form: HTMLFormElement | null) => {
   const subscribe = (changed: () => void) => {
     if (form === null) {
@@ -26,11 +32,9 @@ export const useCheckoutFormValidity = (form: HTMLFormElement | null) => {
       childList: true,
       subtree: true,
     });
-    form.addEventListener("input", changed);
     form.addEventListener("change", changed);
     return () => {
       observer.disconnect();
-      form.removeEventListener("input", changed);
       form.removeEventListener("change", changed);
     };
   };
