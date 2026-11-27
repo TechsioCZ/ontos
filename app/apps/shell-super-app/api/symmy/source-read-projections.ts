@@ -246,7 +246,7 @@ const customerPageIsValid = (
   paging: Required<Pick<ReadQuery, 'limit' | 'offset'>>,
 ): boolean =>
   page.items.length <= paging.limit &&
-  page.count >= paging.offset + page.items.length &&
+  (page.items.length === 0 || page.count >= paging.offset + page.items.length) &&
   page.items.every((item) => customerSourceIsValid(item, scope));
 const customerIcoAuthority = (
   item: CustomerProfileSourceItem,

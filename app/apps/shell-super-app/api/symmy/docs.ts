@@ -117,6 +117,8 @@ Create categories before products that name their \`categoryCode\`. Use the prod
 \`POST /customers/batch\` imports people or organizations through Party Registry and Commerce Customer Context.
 \`POST /customer-groups/{code}/customers/batch\` assigns previously imported ERP \`customerId\` values to one group.
 Read customer results with \`GET /admin/customers\`. Personal data still requires the source's real Privacy authority.
+A customer whose Party is archived or is no longer a current customer of the company is left out of its page, so a
+page can hold fewer than \`limit\` customers; \`count\` still counts it. Page with \`offset += limit\` until \`offset >= count\`.
 
 \`GET /orders\` and \`GET /orders/{id}\` export existing orders of the credential's selected company.
 They do not create an invoice, push an order into ABRA, or confirm an ERP import.
