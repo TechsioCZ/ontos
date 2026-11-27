@@ -44,8 +44,6 @@ export const TenantThemeDefinitionSchema = Schema.Struct({
 export type TenantThemeDefinition = typeof TenantThemeDefinitionSchema.Type;
 
 /** Saving a theme sends the theme itself; a theme with the same key is replaced. */
-export const SaveTenantThemePayloadSchema = TenantThemeDefinitionSchema;
-export type SaveTenantThemePayload = typeof SaveTenantThemePayloadSchema.Type;
 export const SaveTenantThemeResultSchema = Schema.Struct({ themeKey: TenantThemeKeySchema });
 
 /** `null` detaches the tenant's theme, which brings back the default. */
@@ -53,7 +51,6 @@ export const AttachTenantThemePayloadSchema = Schema.Struct({
   themeKey: Schema.Union([TenantThemeKeySchema, Schema.Null]),
 });
 export type AttachTenantThemePayload = typeof AttachTenantThemePayloadSchema.Type;
-export const AttachTenantThemeResultSchema = AttachTenantThemePayloadSchema;
 
 /** The read names nothing: it always answers the theme of the caller's own tenant. */
 export const TenantThemeRequestSchema = Schema.Struct({});

@@ -95,10 +95,7 @@ import type { SaveTenantThemePayload, SaveTenantThemeResult } from '../../shared
 
 // @ontos-core-action attach-tenant-theme
 import { encodeAttachTenantThemePayload } from '../../shared/core-actions/attach-tenant-theme.ts';
-import type {
-  AttachTenantThemePayload,
-  AttachTenantThemeResult,
-} from '../../shared/core-actions/attach-tenant-theme.ts';
+import type { AttachTenantThemePayload } from '../../shared/core-actions/attach-tenant-theme.ts';
 // @ontos-codesmith-core-action-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
@@ -717,7 +714,7 @@ export const executeSaveTenantTheme = (
 export const executeAttachTenantTheme = (
   payload: AttachTenantThemePayload,
   options: IdentityClientOptions,
-): Effect.Effect<AttachTenantThemeResult, IdentityClientError> =>
+): Effect.Effect<AttachTenantThemePayload, IdentityClientError> =>
   encodeAttachTenantThemePayload(payload).pipe(
     Effect.flatMap((encoded) =>
       invokeShellAuthenticationClient(options, (client) =>
