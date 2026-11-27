@@ -211,7 +211,7 @@ describe("owner-backed customer account transport", () => {
       }),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ account });
+    expect(await response.json()).toEqual({ state: "authenticated", account });
     expect(ownerRequests).toHaveLength(2);
     expect(issuerRequests).toHaveLength(2);
   });
@@ -368,14 +368,16 @@ describe("owner-backed customer account transport", () => {
     const upstream = new Headers();
     upstream.append("set-cookie", "commerce-portal.session_token=real; HttpOnly; SameSite=Lax");
     upstream.append("set-cookie", "staff.session=not-the-customer-realm; HttpOnly");
-    ownerAnswer = () =>
-      Response.json(
-        {
-          outcome: "SESSION_CREATED",
-          session: { providerSubjectId: "internal", sessionRef: "internal" },
-        },
-        { headers: upstream },
-      );
+    ownerAnswer = (request) =>
+      new URL(request.url).pathname.endsWith("/enrollment/current")
+        ? Response.json({ code: "enrollment_not_found" }, { status: 404 })
+        : Response.json(
+            {
+              outcome: "SESSION_CREATED",
+              session: { providerSubjectId: "internal", sessionRef: "internal" },
+            },
+            { headers: upstream },
+          );
     const response = await submit({
       operation: "login",
       email: registration.email,
@@ -420,7 +422,7 @@ describe("owner-backed customer account transport", () => {
         headers: { cookie: "commerce-portal.session_token=real" },
       }),
     );
-    expect(await response.json()).toEqual({ account });
+    expect(await response.json()).toEqual({ state: "authenticated", account });
     expect(new URL(ownerRequests[0]!.url).pathname).toBe(
       `${ownerBase}/api/portal-auth/customer-account`,
     );
@@ -428,7 +430,53 @@ describe("owner-backed customer account transport", () => {
   it("returns anonymous for a revoked session and never invents a customer", async () => {
     ownerAnswer = () => Response.json({ code: "authentication_failed" }, { status: 401 });
     const response = await callRoute(GET, new Request(`${origin}/api/ontos/account`));
-    expect(await response.json()).toEqual({ account: null });
+    expect(await response.json()).toEqual({ state: "anonymous", account: null });
+  });
+  it("answers a signed-in person whose registration is unfinished with its real state, never 5xx", async () => {
+    ownerAnswer = (request) =>
+      new URL(request.url).pathname.endsWith("/customer-account")
+        ? Response.json({ code: "account_disabled" }, { status: 403 })
+        : Response.json({ state: "VERIFICATION_REQUIRED", revision: 3, attemptId: "private" });
+    const response = await callRoute(
+      GET,
+      new Request(`${origin}/api/ontos/account`, {
+        headers: { cookie: "commerce-portal.session_token=real" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      state: "enrollment",
+      account: null,
+      enrollment: { state: "VERIFICATION_REQUIRED", revision: 3 },
+    });
+  });
+  it("wakes a registration parked on e-mail verification at sign-in", async () => {
+    const paths: string[] = [];
+    ownerAnswer = (request) => {
+      const path = new URL(request.url).pathname;
+      paths.push(`${request.method} ${path.slice(path.indexOf("/api/portal-auth"))}`);
+      if (path.endsWith("/sign-in/email"))
+        return Response.json(
+          { outcome: "SESSION_CREATED" },
+          { headers: { "set-cookie": "commerce-portal.session_token=fresh; HttpOnly" } },
+        );
+      if (path.endsWith("/enrollment/current"))
+        return Response.json({ state: "VERIFICATION_REQUIRED", revision: 3 });
+      return Response.json({ state: "IN_PROGRESS", revision: 4 });
+    };
+    const response = await submit({
+      operation: "login",
+      email: registration.email,
+      password: registration.password,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ outcome: "SESSION_CREATED" });
+    expect(paths).toEqual([
+      "POST /api/portal-auth/sign-in/email",
+      "GET /api/portal-auth/enrollment/current",
+      "POST /api/portal-auth/enrollment/current/resume",
+    ]);
+    expect(ownerRequests[2]!.headers.get("cookie")).toBe("commerce-portal.session_token=fresh");
   });
   it.each([200, 503])(
     "preserves only host-only Portal cookies when a logout body exceeds its %s bound",
