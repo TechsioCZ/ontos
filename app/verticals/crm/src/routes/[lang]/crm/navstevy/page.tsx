@@ -4,6 +4,7 @@ import { pipe, DateTime } from 'effect';
 import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber, matchesSearch } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
@@ -155,13 +156,13 @@ const ClientFocus = ({
     <SectionCard
       actions={
         <>
-          <a
-            className="inline-flex items-center gap-50 font-medium underline text-sm underline-offset-2 hover:underline"
+          <Link
+            className="inline-flex items-center gap-50 font-medium text-sm hover:underline"
             href={`/${language ?? 'cs'}/crm/klienti?klient=${encodeURIComponent(clientId)}`}
           >
             <span aria-hidden="true" className="icon-[mdi--card-account-details-outline] size-200" />
             Karta klienta
-          </a>
+          </Link>
           {onRecord !== undefined && (
             <Button icon="icon-[mdi--plus]" onClick={onRecord} severity="primary" size="sm">
               Zapsat návštěvu

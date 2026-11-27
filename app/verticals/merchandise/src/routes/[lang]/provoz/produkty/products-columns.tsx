@@ -18,18 +18,17 @@ const ProductThumbnail = ({ image, productId }: { readonly image: string; readon
   return source.status === 'ready' ? (
     <img
       alt=""
-      className="shrink-0 rounded-sm border border-border-primary object-cover"
+      className="h-8 w-8 shrink-0 rounded-sm border border-border-primary object-cover"
       height={32}
       loading="lazy"
       onError={(event) => {
         event.currentTarget.style.visibility = 'hidden';
       }}
       src={source.src}
-      style={{ height: 32, objectFit: 'cover', width: 32 }}
       width={32}
     />
   ) : (
-    <span aria-hidden="true" className="inline-block size-8 shrink-0 rounded-sm bg-fg-secondary/10" />
+    <span aria-hidden="true" className="inline-block h-8 w-8 shrink-0 rounded-sm bg-fg-secondary/10" />
   );
 };
 
@@ -73,9 +72,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
             <span className="truncate">{product.name}</span>
             {(variants > 0 || note !== null) && (
               <span className="truncate text-fg-secondary text-xs">
-                {[variantsLabel, note]
-                  .filter((part) => part !== null)
-                  .join(' · ')}
+                {[variantsLabel, note].filter((part) => part !== null).join(' · ')}
               </span>
             )}
           </span>
@@ -86,8 +83,10 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     meta: { type: 'string', width: 240 },
   },
   {
-    accessorFn: (product) =>
-      product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
+    accessorFn: (product) => {
+      if (product.storefrontVisibility === undefined) {return '';}
+      return product.storefrontVisibility.published ? 'ano' : 'ne';
+    },
     cell: (info) => <StorefrontStatusCell product={info.row.original} />,
     enableSorting: false,
     header: 'E-shop',

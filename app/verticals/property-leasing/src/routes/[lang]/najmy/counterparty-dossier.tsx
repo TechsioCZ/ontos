@@ -2,6 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { DetailList, PageHeader, SectionCard, formatDate } from '@app/admin-ui';
 import { PartyDocuments } from '@app/facility-operations/ui/record-discussion';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect, PlatformError } from 'effect';
 import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records.ts';
@@ -37,10 +38,14 @@ const CounterpartyLeases = ({
         <ul className="space-y-2 text-sm">
           {leases.map((record) => (
             <li key={record.occupancyRef.resourceId}>
-              <a className="underline" href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}>
+              <Link
+                className="text-inherit underline-offset-auto"
+                href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
+                size="current"
+              >
                 {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
                 {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} · {stateLabels[record.state]}
-              </a>
+              </Link>
             </li>
           ))}
         </ul>
@@ -119,7 +124,7 @@ export const CounterpartyDossierView = ({
         </p>
       )}
       {entry !== undefined && (
-        <div className="grid grid-cols-1 items-start gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
           <div className="min-w-0 space-y-6">
             {snapshot !== undefined && (
               <TenantDossierCard
@@ -148,11 +153,25 @@ export const CounterpartyDossierView = ({
                   { label: 'IČO', value: entry.companyId ?? 'neuvedeno' },
                   {
                     label: 'E-mail',
-                    value: entry.email === null ? 'neuvedeno' : <a href={`mailto:${entry.email}`}>{entry.email}</a>,
+                    value:
+                      entry.email === null ? (
+                        'neuvedeno'
+                      ) : (
+                        <Link className="text-inherit no-underline" href={`mailto:${entry.email}`} size="current">
+                          {entry.email}
+                        </Link>
+                      ),
                   },
                   {
                     label: 'Telefon',
-                    value: entry.phone === null ? 'neuvedeno' : <a href={`tel:${entry.phone}`}>{entry.phone}</a>,
+                    value:
+                      entry.phone === null ? (
+                        'neuvedeno'
+                      ) : (
+                        <Link className="text-inherit no-underline" href={`tel:${entry.phone}`} size="current">
+                          {entry.phone}
+                        </Link>
+                      ),
                   },
                   { label: 'V registru od', value: formatDate(entry.createdAt.slice(0, 10)) },
                 ]}

@@ -4,6 +4,7 @@
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Option } from 'effect';
@@ -109,11 +110,13 @@ export const PairingFields = ({
           </span>
           <div className="flex flex-wrap gap-100">
             {candidates.map((candidate) => (
-              <button
+              <Button
                 className={`flex flex-col items-start gap-50 rounded-lg border px-150 py-100 text-left text-sm ${draft.clientId === candidate.clientId ? 'border-primary bg-surface' : 'border-border-primary bg-base'}`}
+                composition
                 key={candidate.clientId}
                 onClick={() => patch({ clientId: candidate.clientId })}
-                type="button"
+                size="current"
+                unstyled
               >
                 <span className="flex items-center gap-50 font-medium">
                   {draft.clientId === candidate.clientId && (
@@ -125,7 +128,7 @@ export const PairingFields = ({
                   {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
                 </span>
                 <span className="text-fg-secondary text-xs">{candidate.reason}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>

@@ -16,6 +16,7 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -395,12 +396,16 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
             <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
-                  <Table.ColumnHeader>Položka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Jednotka</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Cena bez DPH</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">DPH</Table.ColumnHeader>
-                  <Table.ColumnHeader>Stav</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end" />
+                  <Table.ColumnHeader className="whitespace-nowrap">Položka</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Jednotka</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Cena bez DPH
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    DPH
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Stav</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap" />
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -462,11 +467,13 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
             <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
-                  <Table.ColumnHeader>Doklad</Table.ColumnHeader>
-                  <Table.ColumnHeader>Položka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Sleva</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Částka slevy</Table.ColumnHeader>
-                  <Table.ColumnHeader>Důvod</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Doklad</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Položka</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Sleva</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Částka slevy
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Důvod</Table.ColumnHeader>
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -476,9 +483,9 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                 ).map(({ key, value: { invoice, line, minor } }) => (
                   <Table.Row key={key}>
                     <Table.Cell className="whitespace-nowrap">
-                      <a className="underline" href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`}>
+                      <Link href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`} size="current">
                         {invoice.number ?? invoice.documentNumber}
-                      </a>
+                      </Link>
                     </Table.Cell>
                     <Table.Cell>{line.description}</Table.Cell>
                     <Table.Cell className="whitespace-nowrap">

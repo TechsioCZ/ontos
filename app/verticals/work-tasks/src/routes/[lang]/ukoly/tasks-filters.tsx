@@ -9,6 +9,7 @@ import { TaskPrioritySchema, TaskStateSchema } from '../../../../shared/apis/rec
 import type { AssignmentPrincipal, TaskState } from '../../../../shared/apis/records.ts';
 import { DueFilterSchema, TASK_STATE_ORDER, selectOption } from './tasks-model.ts';
 import type { ObjectOption, TaskFilters } from './tasks-model.ts';
+import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 
 const SELECT_PLACEHOLDER = 'work-tasks.selectPlaceholder';
 
@@ -189,14 +190,14 @@ export const TaskFilterBar = ({
           />
         </div>
         {onShowHiddenChange !== undefined && (
-          <label className="flex items-center gap-100 pb-100 text-sm">
-            <input
-              checked={showHidden}
-              onChange={(event) => onShowHiddenChange(event.target.checked)}
-              type="checkbox"
-            />
-            {t(`${key}.filters.showHidden`)}
-          </label>
+          <FormCheckbox
+            checked={showHidden}
+            className="pb-100"
+            label={t(`${key}.filters.showHidden`)}
+            name="showHidden"
+            onCheckedChange={onShowHiddenChange}
+            size="sm"
+          />
         )}
         {active && (
           <Button appearance="outline" onClick={onClear} severity="secondary" size="sm">

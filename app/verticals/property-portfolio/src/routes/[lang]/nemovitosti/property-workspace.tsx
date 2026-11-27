@@ -56,7 +56,7 @@ const rowClass = 'flex flex-wrap items-center gap-3';
 const badgeRowClass = 'flex flex-wrap items-center gap-2';
 const unitRowClass = 'flex flex-col gap-1';
 const cardsClass = 'grid gap-4 md:grid-cols-2 2xl:grid-cols-3';
-const workspaceClass = 'grid items-start gap-6 propertyportfolio:lg:grid-cols-[21rem_minmax(0,1fr)]';
+const workspaceClass = 'grid items-start gap-6 lg:grid-cols-[21rem_minmax(0,1fr)]';
 const branchClass = 'border-s border-border-primary/60 ms-4 flex flex-col gap-2 ps-4';
 const detailClass = 'min-w-0 space-y-4';
 const titleClass = 'text-lg';
@@ -106,7 +106,7 @@ const PortfolioCards = ({
     <div className={cardsClass}>
       {properties.map((item) => (
         <article className={panelClass} key={item.id}>
-          <div className={`${rowClass} propertyportfolio:justify-between`}>
+          <div className={`${rowClass} justify-between`}>
             <span className="font-semibold">{item.code}</span>
             <StateBadges archived={item.archived} stateLabel={item.stateLabel} t={t} />
           </div>
@@ -152,7 +152,7 @@ export const PropertyWorkspace = ({
             ← {t('backToPortfolio')}
           </Button>
         )}
-        <div className={`${rowClass} propertyportfolio:ms-auto`}>
+        <div className={`${rowClass} ms-auto`}>
           {filters}
           {property === undefined && (
             <Button appearance="outline" disabled={busy} onClick={onCreateProperty} severity="primary" size="sm">

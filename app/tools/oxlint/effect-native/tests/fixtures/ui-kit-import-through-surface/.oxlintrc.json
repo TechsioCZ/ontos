@@ -1,0 +1,27 @@
+{
+  "jsPlugins": [
+    {
+      "name": "effect-native",
+      "specifier": "../../fixture-plugin.ts"
+    }
+  ],
+  "categories": {
+    "correctness": "off"
+  },
+  "rules": {
+    "effect-native/ui-kit-import-through-surface": [
+      "error",
+      {
+        "bypass": [
+          "@zag-js/*",
+          "@radix-ui/*",
+          "clsx",
+          "tailwind-variants",
+          "@tanstack/react-table",
+          "lucide-react"
+        ],
+        "surface": "@techsio/ui-kit"
+      }
+    ]
+  }
+}

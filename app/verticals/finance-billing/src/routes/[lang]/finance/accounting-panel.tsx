@@ -3,6 +3,8 @@ import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { EmptyState, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
@@ -472,7 +474,7 @@ const AccountingHistoryStatus = ({ entry }: { readonly entry: AccountingExport }
         </span>
       )}
       {entry.status === 'FAILED' && (
-        <span className="max-w-56 break-words text-xs" style={{ color: 'var(--color-danger)' }}>
+        <span className="max-w-56 break-words text-danger text-xs">
           {entry.failureReason ?? 'Chyba'}
           {entry.failedAt === undefined ? '' : ` · ${entry.failedByLabel ?? ''} ${at(entry.failedAt)}`}
         </span>
@@ -504,13 +506,17 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
           <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
-                <Table.ColumnHeader>Balíček</Table.ColumnHeader>
-                <Table.ColumnHeader>Formát</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Doklady</Table.ColumnHeader>
-                <Table.ColumnHeader>Vytvořil / kdy</Table.ColumnHeader>
-                <Table.ColumnHeader>Otisk SHA-256</Table.ColumnHeader>
-                <Table.ColumnHeader>Stav</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Balíček</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Formát</Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  Doklady
+                </Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Vytvořil / kdy</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Otisk SHA-256</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Stav</Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  Akce
+                </Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -542,23 +548,34 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                   </Table.Cell>
                   <Table.Cell>{FORMAT_LABEL[entry.format]}</Table.Cell>
                   <Table.Cell align="end" className="tabular-nums">
-                    <details>
-                      <summary className="cursor-pointer whitespace-nowrap text-sm">
-                        Doklady ({entry.invoiceResourceIds.length})
-                      </summary>
-                      <ul className="flex flex-col gap-50 py-100 text-xs">
-                        {entry.invoiceResourceIds.map((id) => {
-                          const invoice = state?.invoices.find((item) => item.ref.resourceId === id);
-                          return (
-                            <li key={id}>
-                              <a className="whitespace-nowrap underline" href={`?resourceId=${encodeURIComponent(id)}`}>
-                                {invoice?.number ?? invoice?.documentNumber ?? 'Doklad není dostupný'}
-                              </a>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </details>
+                    <Accordion appearance="ghost" collapsible size="sm">
+                      <Accordion.Item value={entry.id}>
+                        <Accordion.Header>
+                          <Accordion.Title className="whitespace-nowrap text-sm">
+                            Doklady ({entry.invoiceResourceIds.length})
+                          </Accordion.Title>
+                          <Accordion.Indicator />
+                        </Accordion.Header>
+                        <Accordion.Content>
+                          <ul className="flex flex-col gap-50 py-100 text-xs">
+                            {entry.invoiceResourceIds.map((id) => {
+                              const invoice = state?.invoices.find((item) => item.ref.resourceId === id);
+                              return (
+                                <li key={id}>
+                                  <Link
+                                    className="whitespace-nowrap"
+                                    href={`?resourceId=${encodeURIComponent(id)}`}
+                                    size="current"
+                                  >
+                                    {invoice?.number ?? invoice?.documentNumber ?? 'Doklad není dostupný'}
+                                  </Link>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </Accordion.Content>
+                      </Accordion.Item>
+                    </Accordion>
                   </Table.Cell>
                   <Table.Cell>
                     <span className="flex flex-col">

@@ -5,6 +5,7 @@ import { releaseGone } from '@app/shared-contracts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
@@ -178,150 +179,157 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
     );
   };
   return (
-    <details className="rounded-lg border border-border-primary p-250" data-erp-categories="">
-      <summary className="cursor-pointer font-semibold">Kategorie z ERP ({categories.length})</summary>
-      <div className="flex flex-col gap-150 pt-150">
-        <p className="max-w-prose text-fg-secondary text-sm">
-          Kategorii můžete přejmenovat. Prázdnou kategorii (bez produktů a podkategorií) můžete vyřadit; v nabídce
-          kategorií pak už nebude. Má-li kategorie produkty, nejdřív je z ní odeberte v úpravě produktu.
-        </p>
-        {outcome?.text === RELOAD_REQUIRED && <ReloadRequiredNotice />}
-        {outcome !== null && outcome.text !== RELOAD_REQUIRED && (
-          <StatusText showIcon status={outcome.status}>
-            {outcome.text}
-          </StatusText>
-        )}
-        {categories.length === 0 ? (
-          <span className="text-fg-secondary text-sm">Žádné kategorie.</span>
-        ) : (
-          <Table appearance="line" size="sm">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
-                <Table.ColumnHeader>Produkty</Table.ColumnHeader>
-                <Table.ColumnHeader>Podkategorie</Table.ColumnHeader>
-                <Table.ColumnHeader />
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {categories.map((category) => {
-                const id = category.categoryRef.resourceId;
-                return (
-                  <Table.Row data-category-id={id} key={id}>
-                    <Table.Cell>
-                      {renaming?.id === id ? (
-                        <div className="flex flex-wrap items-center gap-100">
-                          <Input
-                            aria-label="Nový název kategorie"
-                            maxLength={240}
-                            onChange={(event) => setRenaming({ id, name: event.target.value })}
-                            size="sm"
-                            value={renaming.name}
-                          />
-                          <Button
-                            isLoading={busy}
-                            loadingText="Ukládám…"
-                            onClick={() => saveName(category, renaming.name)}
-                            severity="primary"
-                            size="sm"
-                            type="button"
-                          >
-                            Uložit název
-                          </Button>
-                          <Button
-                            appearance="outline"
-                            disabled={busy}
-                            onClick={() => setRenaming(null)}
-                            severity="secondary"
-                            size="sm"
-                            type="button"
-                          >
-                            Zrušit
-                          </Button>
-                        </div>
-                      ) : (
-                        category.name
-                      )}
-                    </Table.Cell>
-                    <Table.Cell>{category.products}</Table.Cell>
-                    <Table.Cell>{category.children}</Table.Cell>
-                    <Table.Cell>
-                      <div className="flex flex-wrap items-center gap-100">
-                        {renaming?.id !== id && confirming !== id && (
-                          <Button
-                            appearance="ghost"
-                            disabled={busy}
-                            onClick={() => {
-                              setRenaming({ id, name: category.name });
-                              setConfirming(null);
-                              setOutcome(null);
-                            }}
-                            severity="secondary"
-                            size="sm"
-                            type="button"
-                          >
-                            Přejmenovat
-                          </Button>
-                        )}
-                        {!isEmpty(category) && <span className="text-fg-secondary text-xs">Není prázdná</span>}
-                        {isEmpty(category) && confirming !== id && renaming?.id !== id && (
-                          <Button
-                            appearance="outline"
-                            disabled={busy}
-                            onClick={() => {
-                              setConfirming(id);
-                              setRenaming(null);
-                              setReason('');
-                              setOutcome(null);
-                            }}
-                            severity="secondary"
-                            size="sm"
-                            type="button"
-                          >
-                            Vyřadit
-                          </Button>
-                        )}
-                        {isEmpty(category) && confirming === id && (
-                          <div className="flex flex-wrap items-center gap-100">
-                            <Input
-                              aria-label="Důvod vyřazení"
-                              maxLength={1000}
-                              onChange={(event) => setReason(event.target.value)}
-                              placeholder="Důvod vyřazení"
-                              size="sm"
-                              value={reason}
-                            />
-                            <Button
-                              isLoading={busy}
-                              loadingText="Vyřazuji…"
-                              onClick={() => confirm(category)}
-                              severity="primary"
-                              size="sm"
-                              type="button"
-                            >
-                              Potvrdit vyřazení
-                            </Button>
-                            <Button
-                              appearance="outline"
-                              disabled={busy}
-                              onClick={() => setConfirming(null)}
-                              severity="secondary"
-                              size="sm"
-                              type="button"
-                            >
-                              Zrušit
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </Table.Cell>
+    <Accordion collapsible data-erp-categories="">
+      <Accordion.Item value="erp-categories">
+        <Accordion.Header>
+          <Accordion.Title>Kategorie z ERP ({categories.length})</Accordion.Title>
+          <Accordion.Indicator />
+        </Accordion.Header>
+        <Accordion.Content>
+          <div className="flex flex-col gap-150">
+            <p className="max-w-prose text-fg-secondary text-sm">
+              Kategorii můžete přejmenovat. Prázdnou kategorii (bez produktů a podkategorií) můžete vyřadit; v nabídce
+              kategorií pak už nebude. Má-li kategorie produkty, nejdřív je z ní odeberte v úpravě produktu.
+            </p>
+            {outcome?.text === RELOAD_REQUIRED && <ReloadRequiredNotice />}
+            {outcome !== null && outcome.text !== RELOAD_REQUIRED && (
+              <StatusText showIcon status={outcome.status}>
+                {outcome.text}
+              </StatusText>
+            )}
+            {categories.length === 0 ? (
+              <span className="text-fg-secondary text-sm">Žádné kategorie.</span>
+            ) : (
+              <Table appearance="line" size="sm">
+                <Table.Header>
+                  <Table.Row>
+                    <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
+                    <Table.ColumnHeader>Produkty</Table.ColumnHeader>
+                    <Table.ColumnHeader>Podkategorie</Table.ColumnHeader>
+                    <Table.ColumnHeader />
                   </Table.Row>
-                );
-              })}
-            </Table.Body>
-          </Table>
-        )}
-      </div>
-    </details>
+                </Table.Header>
+                <Table.Body>
+                  {categories.map((category) => {
+                    const id = category.categoryRef.resourceId;
+                    return (
+                      <Table.Row data-category-id={id} key={id}>
+                        <Table.Cell>
+                          {renaming?.id === id ? (
+                            <div className="flex flex-wrap items-center gap-100">
+                              <Input
+                                aria-label="Nový název kategorie"
+                                maxLength={240}
+                                onChange={(event) => setRenaming({ id, name: event.target.value })}
+                                size="sm"
+                                value={renaming.name}
+                              />
+                              <Button
+                                isLoading={busy}
+                                loadingText="Ukládám…"
+                                onClick={() => saveName(category, renaming.name)}
+                                severity="primary"
+                                size="sm"
+                                type="button"
+                              >
+                                Uložit název
+                              </Button>
+                              <Button
+                                appearance="outline"
+                                disabled={busy}
+                                onClick={() => setRenaming(null)}
+                                severity="secondary"
+                                size="sm"
+                                type="button"
+                              >
+                                Zrušit
+                              </Button>
+                            </div>
+                          ) : (
+                            category.name
+                          )}
+                        </Table.Cell>
+                        <Table.Cell>{category.products}</Table.Cell>
+                        <Table.Cell>{category.children}</Table.Cell>
+                        <Table.Cell>
+                          <div className="flex flex-wrap items-center gap-100">
+                            {renaming?.id !== id && confirming !== id && (
+                              <Button
+                                appearance="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  setRenaming({ id, name: category.name });
+                                  setConfirming(null);
+                                  setOutcome(null);
+                                }}
+                                severity="secondary"
+                                size="sm"
+                                type="button"
+                              >
+                                Přejmenovat
+                              </Button>
+                            )}
+                            {!isEmpty(category) && <span className="text-fg-secondary text-xs">Není prázdná</span>}
+                            {isEmpty(category) && confirming !== id && renaming?.id !== id && (
+                              <Button
+                                appearance="outline"
+                                disabled={busy}
+                                onClick={() => {
+                                  setConfirming(id);
+                                  setRenaming(null);
+                                  setReason('');
+                                  setOutcome(null);
+                                }}
+                                severity="secondary"
+                                size="sm"
+                                type="button"
+                              >
+                                Vyřadit
+                              </Button>
+                            )}
+                            {isEmpty(category) && confirming === id && (
+                              <div className="flex flex-wrap items-center gap-100">
+                                <Input
+                                  aria-label="Důvod vyřazení"
+                                  maxLength={1000}
+                                  onChange={(event) => setReason(event.target.value)}
+                                  placeholder="Důvod vyřazení"
+                                  size="sm"
+                                  value={reason}
+                                />
+                                <Button
+                                  isLoading={busy}
+                                  loadingText="Vyřazuji…"
+                                  onClick={() => confirm(category)}
+                                  severity="primary"
+                                  size="sm"
+                                  type="button"
+                                >
+                                  Potvrdit vyřazení
+                                </Button>
+                                <Button
+                                  appearance="outline"
+                                  disabled={busy}
+                                  onClick={() => setConfirming(null)}
+                                  severity="secondary"
+                                  size="sm"
+                                  type="button"
+                                >
+                                  Zrušit
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </Table.Cell>
+                      </Table.Row>
+                    );
+                  })}
+                </Table.Body>
+              </Table>
+            )}
+          </div>
+        </Accordion.Content>
+      </Accordion.Item>
+    </Accordion>
   );
 };

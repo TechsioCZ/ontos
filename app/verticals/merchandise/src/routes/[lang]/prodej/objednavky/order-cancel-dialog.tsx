@@ -42,7 +42,6 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
               setReason('');
             }}
             severity="danger"
-            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             {single === undefined ? t(key('confirm.cancelBulkAction')) : t(key('confirm.cancelAction'))}
           </Button>

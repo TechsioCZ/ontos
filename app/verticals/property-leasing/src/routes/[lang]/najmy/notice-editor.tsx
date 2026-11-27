@@ -6,12 +6,21 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, PlatformError } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useState } from 'react';
 import { NoticeTemplateKeySchema, PreparedNoticeIdSchema } from '../../../../shared/apis/records.ts';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
+import {
+  dossierActionsClass,
+  dossierFieldsClass,
+  dossierMutedClass,
+  dossierSelectClass,
+  dossierStackClass,
+  noticeTextClass,
+} from './dossier-classes.ts';
 import { additionSaveOutcome } from './occupancy-command.ts';
 import type { AdditionSave } from './occupancy-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
@@ -182,18 +191,19 @@ export const NoticeEditor = ({
   )}&body=${encodeURIComponent(draft.body)}`;
   return (
     <form
-      className="sp-tenant-stack"
+      className={dossierStackClass}
       noValidate
       onSubmit={(event) => {
         // Enter never stores: only Uložit does.
         event.preventDefault();
       }}
     >
-      <div className="sp-tenant-fields">
-        <label className="sp-tenant-stack">
+      <div className={dossierFieldsClass}>
+        <label className={dossierStackClass}>
           <span>Šablona</span>
           <select
             aria-label={t('property-leasing.notices.template')}
+            className={dossierSelectClass}
             onChange={(event) => applyTemplate(event.target.value, draft.channel, choice.recipient)}
             value={draft.templateKey}
           >
@@ -204,10 +214,11 @@ export const NoticeEditor = ({
             ))}
           </select>
         </label>
-        <label className="sp-tenant-stack">
+        <label className={dossierStackClass}>
           <span>Kanál</span>
           <select
             aria-label={t('property-leasing.notices.channel')}
+            className={dossierSelectClass}
             onChange={(event) => applyTemplate(draft.templateKey, event.target.value === 'SMS' ? 'SMS' : 'EMAIL')}
             value={draft.channel}
           >
@@ -238,12 +249,12 @@ export const NoticeEditor = ({
           value={draft.subject}
         />
       )}
-      <label className="sp-tenant-stack">
+      <label className={dossierStackClass}>
         <span>Text oznámení</span>
         <textarea
           aria-invalid={showProblems && bodyError !== undefined}
           aria-label={t('property-leasing.notices.body')}
-          className="sp-notice-text"
+          className={noticeTextClass}
           id="notice-body"
           maxLength={2000}
           onChange={(event) => edit({ body: event.target.value })}
@@ -251,24 +262,24 @@ export const NoticeEditor = ({
           value={draft.body}
         />
       </label>
-      <span className="sp-tenant-muted">
+      <span className={dossierMutedClass}>
         {draft.channel === 'SMS'
           ? `${draft.body.length} znaků · ${smsSegments(draft.body)} SMS (text s diakritikou se počítá po 70 znacích)`
           : `${draft.body.length} znaků`}
       </span>
       {showProblems && bodyError !== undefined && (
-        <p className="sp-tenant-muted" role="alert">
+        <p className={dossierMutedClass} role="alert">
           {bodyError}
         </p>
       )}
-      <div className="sp-tenant-actions">
+      <div className={dossierActionsClass}>
         <Button appearance="outline" onClick={handleCopy} severity="secondary" size="sm">
           {copied ? 'Zkopírováno' : 'Zkopírovat text'}
         </Button>
         {draft.channel === 'EMAIL' && (
-          <a className="sp-tenant-muted" href={mailto}>
+          <Link className={`no-underline ${dossierMutedClass}`} href={mailto}>
             Otevřít v poštovním programu →
-          </a>
+          </Link>
         )}
         <SaveBar
           error={Option.match(reason, {

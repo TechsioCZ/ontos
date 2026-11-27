@@ -21,6 +21,13 @@ import { useRef, useState } from 'react';
 import type { RegistrationOccupant } from '../../../../shared/apis/records.ts';
 import { RegistrationSheetIdSchema } from '../../../../shared/apis/records.ts';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
+import {
+  dossierActionsClass,
+  dossierFieldsClass,
+  dossierSelectClass,
+  dossierStackClass,
+  dossierTileClass,
+} from './dossier-classes.ts';
 import { additionSaveOutcome } from './occupancy-command.ts';
 import type { AdditionSave } from './occupancy-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
@@ -157,7 +164,7 @@ export const RegistrationSheetForm = ({
   };
   return (
     <form
-      className="sp-tenant-stack"
+      className={dossierStackClass}
       noValidate
       onSubmit={(event) => {
         // Enter never saves: only Uložit does.
@@ -172,9 +179,9 @@ export const RegistrationSheetForm = ({
         ]}
       />
       {draft.occupants.map((occupant, index) => (
-        <fieldset className="sp-tenant-contact" key={occupant.localKey}>
+        <fieldset className={dossierTileClass} key={occupant.localKey}>
           <legend>Ubytovaná osoba {index + 1}</legend>
-          <div className="sp-tenant-fields">
+          <div className={dossierFieldsClass}>
             <FormInput
               id={`sheet-name-${index}`}
               label={t('property-leasing.registration.fullName')}
@@ -218,7 +225,7 @@ export const RegistrationSheetForm = ({
           )}
         </fieldset>
       ))}
-      <div className="sp-tenant-actions">
+      <div className={dossierActionsClass}>
         <Button
           appearance="outline"
           disabled={draft.occupants.length >= 20}
@@ -228,10 +235,11 @@ export const RegistrationSheetForm = ({
         >
           Přidat osobu
         </Button>
-        <label className="sp-tenant-stack">
+        <label className={dossierStackClass}>
           <span>Účel pobytu</span>
           <select
             aria-label={t('property-leasing.registration.purpose')}
+            className={dossierSelectClass}
             onChange={(event) => {
               const { value } = event.target;
               setDraft((current) => ({ ...current, purpose: value }));
@@ -256,7 +264,7 @@ export const RegistrationSheetForm = ({
         }}
         value={draft.note}
       />
-      <div className="sp-tenant-actions">
+      <div className={dossierActionsClass}>
         <Button appearance="outline" onClick={handleCancel} severity="secondary" size="sm">
           {t('property-leasing.demo.cancel')}
         </Button>

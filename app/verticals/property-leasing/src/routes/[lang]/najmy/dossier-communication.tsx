@@ -12,6 +12,14 @@ import { useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import { TenantActivityInputSchema } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import {
+  dossierFieldsClass,
+  dossierMutedClass,
+  dossierSelectClass,
+  dossierStackClass,
+  dossierTileClass,
+  dossierTitleClass,
+} from './dossier-classes.ts';
 import type { DossierChanges } from './leasing-save.ts';
 import { additionSaveOutcome } from './occupancy-command.ts';
 import type { OccupancyOutcome } from './occupancy-command.ts';
@@ -78,19 +86,20 @@ export const DossierCommunication = ({
   }
   return (
     <form
-      className="sp-tenant-contact"
+      className={dossierTileClass}
       noValidate
       onSubmit={(event) => {
         // Enter never logs: only Uložit does.
         event.preventDefault();
       }}
     >
-      <h3>Zapsat komunikaci</h3>
-      <div className="sp-tenant-fields">
-        <label className="sp-tenant-stack">
+      <h3 className={dossierTitleClass}>Zapsat komunikaci</h3>
+      <div className={dossierFieldsClass}>
+        <label className={dossierStackClass}>
           <span>{t('property-leasing.dossier.communicationKind')}</span>
           <select
             aria-label={t('property-leasing.dossier.communicationKind')}
+            className={dossierSelectClass}
             id="communication-kind"
             onChange={(event) => {
               const selected = Schema.decodeUnknownOption(TenantActivityInputSchema.fields.kind)(event.target.value);
@@ -119,7 +128,7 @@ export const DossierCommunication = ({
           value={draft.summary}
         />
       </div>
-      <p className="sp-tenant-muted">{t('property-leasing.dossier.communicationManual')}</p>
+      <p className={dossierMutedClass}>{t('property-leasing.dossier.communicationManual')}</p>
       <SaveBar
         error={Option.match(reason, {
           onNone: () => null,

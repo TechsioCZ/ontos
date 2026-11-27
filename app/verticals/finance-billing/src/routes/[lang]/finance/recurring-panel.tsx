@@ -5,6 +5,7 @@ import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { formatCzechDays } from '@app/shared-contracts';
 import { dialogCloseLabel, EmptyState, formatDate, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { invoiceLifecycle, LIFECYCLE_PRESENTATION } from './invoice-view.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -326,13 +327,17 @@ const RecurringTemplates = (model: ReturnType<typeof useRecurringPanel>) => {
         <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
-              <Table.ColumnHeader>Šablona</Table.ColumnHeader>
-              <Table.ColumnHeader>Nájemce</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Měsíčně s DPH</Table.ColumnHeader>
-              <Table.ColumnHeader>Vystavení / splatnost</Table.ColumnHeader>
-              <Table.ColumnHeader>Vygenerovaná období</Table.ColumnHeader>
-              <Table.ColumnHeader>Stav</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Šablona</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Nájemce</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Měsíčně s DPH
+              </Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Vystavení / splatnost</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Vygenerovaná období</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Stav</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Akce
+              </Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -475,7 +480,7 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
           <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
-                <Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">
                   <Checkbox
                     aria-label={t('finance-billing.financeUi.recurring.selectAll')}
                     checked={
@@ -489,12 +494,14 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
                     }
                   />
                 </Table.ColumnHeader>
-                <Table.ColumnHeader>Doklad</Table.ColumnHeader>
-                <Table.ColumnHeader>Nájemce</Table.ColumnHeader>
-                <Table.ColumnHeader>Období</Table.ColumnHeader>
-                <Table.ColumnHeader>Vystavení</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Celkem</Table.ColumnHeader>
-                <Table.ColumnHeader>Stav</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Doklad</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Nájemce</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Období</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Vystavení</Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  Celkem
+                </Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">Stav</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -512,9 +519,9 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
                       />
                     </Table.Cell>
                     <Table.Cell className="whitespace-nowrap font-medium">
-                      <a className="underline" href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`}>
+                      <Link href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`} size="current">
                         {invoice.number ?? invoice.documentNumber}
-                      </a>
+                      </Link>
                     </Table.Cell>
                     <Table.Cell>
                       {vm.references.customerById.get(invoice.partyId ?? invoice.counterpartyRef.resourceId)
@@ -551,7 +558,7 @@ const RecurringDuplicateDecision = (model: ReturnType<typeof useRecurringPanel>)
   return (
     <Dialog
       actions={
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>
+        <div className="flex w-full flex-wrap justify-end gap-2">
           <Button
             appearance="outline"
             className="whitespace-nowrap"

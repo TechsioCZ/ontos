@@ -148,8 +148,13 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
   return (
     <SidePanel
       actions={
-        <div className="sp-occupancy-form-actions">
-          <Button appearance="outline" onClick={requestClose} severity="secondary">
+        <div className="flex w-full flex-wrap justify-end gap-3">
+          <Button
+            appearance="outline"
+            className="max-w-full flex-none whitespace-nowrap"
+            onClick={requestClose}
+            severity="secondary"
+          >
             {t(LABEL_CLOSE)}
           </Button>
           <SaveBar

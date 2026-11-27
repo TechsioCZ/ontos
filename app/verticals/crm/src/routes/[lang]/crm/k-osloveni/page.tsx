@@ -13,6 +13,7 @@ import {
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { SelectTemplate } from '@app/admin-ui/select-template';
@@ -107,12 +108,12 @@ const PlanRow = ({
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-50">
         <span className="flex flex-wrap items-center gap-100">
-          <a
-            className="font-semibold text-sm underline-offset-2 hover:underline"
+          <Link
+            className="font-semibold text-sm hover:underline"
             href={`/${language ?? 'cs'}/crm/navstevy?klient=${encodeURIComponent(item.clientId)}`}
           >
             {clientLabel(records, item.clientId)}
-          </a>
+          </Link>
           {tone === 'plain' ? (
             <span className="text-fg-secondary text-xs">{relativeDay(item.dueDate, today)}</span>
           ) : (
@@ -287,12 +288,12 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
                 />
                 <div className="flex min-w-0 flex-1 flex-col gap-50">
                   <span className="flex flex-wrap items-center gap-100">
-                    <a
-                      className="font-semibold text-sm underline-offset-2 hover:underline"
+                    <Link
+                      className="font-semibold text-sm hover:underline"
                       href={`/${language ?? 'cs'}/crm/navstevy?klient=${encodeURIComponent(item.clientId)}`}
                     >
                       {clientLabel(records, item.clientId)}
-                    </a>
+                    </Link>
                     <Badge severity="success" size="sm">
                       Vyřízeno
                     </Badge>

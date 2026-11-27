@@ -247,18 +247,23 @@ const KindSection = ({ kind, tagId, total }: { kind: SubjectKind; tagId: TagId; 
 
   return (
     <section className="flex flex-col gap-100">
-      <button
+      <Button
         aria-expanded={open}
-        className="flex items-center justify-between gap-100 text-left font-semibold text-sm"
+        className="flex text-left font-semibold text-sm"
+        composition
         onClick={() => toggle()}
+        size="current"
         type="button"
+        unstyled
       >
-        <span className="flex items-center gap-100">
-          <span aria-hidden className={open ? 'token-icon-accordion-chevron' : 'token-icon-breadcrumb-separator'} />
-          {t(`tagging.kinds.${kind}`)}
+        <span className="flex w-full items-center justify-between gap-100">
+          <span className="flex items-center gap-100">
+            <span aria-hidden className={open ? 'token-icon-accordion-chevron' : 'token-icon-breadcrumb-separator'} />
+            {t(`tagging.kinds.${kind}`)}
+          </span>
+          <span className="tabular-nums">{total}</span>
         </span>
-        <span className="tabular-nums">{total}</span>
-      </button>
+      </Button>
       {open && <KindRows kind={kind} state={state} />}
     </section>
   );

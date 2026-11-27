@@ -4,6 +4,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import type { AgreementDocumentFound, AgreementDocumentState, AgreementSelectorIssue } from './document-selection.ts';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 interface DocumentDetailLabels {
   readonly archived: string;
@@ -156,7 +157,7 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
         </LinkButton>
       </div>
       <PageHeader description={document.kind} title={document.title} />
-      <div className="grid grid-cols-1 items-start gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-6">
           <SectionCard title={labels.document}>
             <DetailList
@@ -184,12 +185,13 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
                     { label: labels.parentPeriod, value: contractPeriod(parent, labels) },
                   ]}
                 />
-                <a
-                  className="inline-flex items-center text-sm underline underline-offset-4"
+                <Link
+                  className="inline-flex items-center text-sm underline-offset-4"
                   href={`/${language}/smlouvy?resourceId=${parent.contractRef.resourceId}`}
+                  size="current"
                 >
                   {labels.openParent}
-                </a>
+                </Link>
               </div>
             )}
           </SectionCard>

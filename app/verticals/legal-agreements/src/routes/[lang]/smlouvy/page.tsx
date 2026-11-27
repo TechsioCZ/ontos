@@ -28,6 +28,7 @@ import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/legal-agreements.json';
 import enResource from '../../../../locales/en/legal-agreements.json';
 import '../../index.css';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 /**
  * A signed document is either a reachable file (shown as a link) or a paper original recorded only by its
@@ -45,9 +46,9 @@ const SignedDocumentReference = ({
   }
   if (/^https?:\/\//u.test(reference)) {
     return (
-      <a className="underline" href={reference} rel="noreferrer" target="_blank">
+      <Link href={reference} rel="noreferrer" size="current" target="_blank">
         Otevřít podepsaný dokument
-      </a>
+      </Link>
     );
   }
   return <span>Podepsaný originál evidovaný ve spisu smlouvy (elektronická kopie není nahraná)</span>;
@@ -130,7 +131,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       {state.proposal !== undefined && (
         <output aria-live="polite">{t('legal-agreements.demo.approvalRequired')}</output>
       )}
-      <div className="grid grid-cols-1 items-start gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
             <SectionCard title={t('legal-agreements.detail.contract')}>
@@ -183,7 +184,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             )}
             {state.detailView.documents.map((record) => (
               <p
-                className={`${surfaceTileClassName} flex flex-wrap items-center gap-3 p-4 legalagreements:text-sm`}
+                className={`${surfaceTileClassName} flex flex-wrap items-center gap-3 p-4 text-sm`}
                 key={record.documentRef.resourceId}
               >
                 {record.title} · {record.fileName} ·{' '}
@@ -295,12 +296,13 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               </>
             )}
             {selected.occupancyRef !== null && (
-              <a
-                className="inline-flex items-center text-sm underline underline-offset-4"
+              <Link
+                className="inline-flex items-center text-sm underline-offset-4"
                 href={`/${language}/najmy?resourceId=${selected.occupancyRef.resourceId}`}
+                size="current"
               >
                 {t('legal-agreements.demo.occupancy')}
-              </a>
+              </Link>
             )}
           </div>
         </div>
@@ -403,7 +405,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               )}
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className={`${surfaceTileClassName} p-5 text-sm legalagreements:text-(--color-fg-secondary)`}>
+              <p className={`${surfaceTileClassName} p-5 text-fg-secondary text-sm`}>
                 {t('legal-agreements.demo.empty')}
               </p>
             )}

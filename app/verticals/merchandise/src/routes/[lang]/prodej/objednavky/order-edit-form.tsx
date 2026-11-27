@@ -769,7 +769,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                       </div>
                     </Table.Cell>
                     <Table.Cell align="end">
-                      <div className="ml-auto" style={{ minWidth: 100 }}>
+                      <div className="ml-auto min-w-25">
                         <FormNumericInput
                           clampValueOnBlur={false}
                           formatOptions={{ maximumFractionDigits: 6 }}

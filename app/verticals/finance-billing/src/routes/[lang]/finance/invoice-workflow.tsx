@@ -14,6 +14,7 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -94,11 +95,7 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
             <li className="flex items-start gap-100" key={step}>
               <span
                 aria-hidden
-                className="mt-[5px] size-2.5 shrink-0 rounded-full"
-                style={{
-                  background: reached(step) ? 'var(--color-success)' : 'transparent',
-                  border: `2px solid ${reached(step) ? 'var(--color-success)' : 'var(--color-fg-secondary)'}`,
-                }}
+                className={`mt-[5px] size-2.5 shrink-0 rounded-full border-2 ${reached(step) ? 'border-success bg-success' : 'border-fg-secondary bg-transparent'}`}
               />
               <span className="flex min-w-0 flex-col">
                 <span className={reached(step) ? 'font-medium' : 'text-fg-secondary'}>
@@ -199,12 +196,13 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
             <ul className="flex flex-col divide-y divide-border-primary">
               {settlement.entries.map((entry) => (
                 <li className="flex flex-wrap items-center justify-between gap-100 py-50" key={entry.invoiceResourceId}>
-                  <a
-                    className="inline-flex items-center gap-50 font-medium underline"
+                  <Link
+                    className="inline-flex items-center gap-50 font-medium"
                     href={`?resourceId=${encodeURIComponent(entry.invoiceResourceId)}`}
+                    size="current"
                   >
                     {entry.number}
-                  </a>
+                  </Link>
                   <span className="tabular-nums">− {formatMoney(entry.amountMinor)}</span>
                 </li>
               ))}

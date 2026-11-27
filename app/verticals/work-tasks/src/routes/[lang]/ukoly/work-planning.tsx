@@ -518,9 +518,16 @@ export const WorkPlanning = ({
                     <ul>
                       {tasks.map((task) => (
                         <li key={task.ref.resourceId}>
-                          <button className="text-left underline" onClick={() => onOpenTask(task)} type="button">
+                          <Button
+                            className="text-left underline"
+                            composition
+                            onClick={() => onOpenTask(task)}
+                            size="current"
+                            type="button"
+                            unstyled
+                          >
                             {task.title}
-                          </button>
+                          </Button>
                         </li>
                       ))}
                     </ul>

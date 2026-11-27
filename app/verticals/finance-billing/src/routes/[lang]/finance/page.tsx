@@ -11,6 +11,7 @@ import {
   dialogCloseLabel,
 } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
@@ -260,9 +261,9 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
             {vm.relatedCustomer && (
               <p className="text-fg-secondary text-sm">
                 {t(`${ns}.relatedFilter`)}{' '}
-                <a className="underline" href="?">
+                <Link href="?" size="current">
                   {t(`${ns}.clearRelatedFilter`)}
-                </a>
+                </Link>
               </p>
             )}
             <StatRow>

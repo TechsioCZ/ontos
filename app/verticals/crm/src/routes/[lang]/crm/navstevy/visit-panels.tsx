@@ -539,13 +539,15 @@ export const VisitDetailPanel = ({
                 onOpenClient === undefined ? (
                   clientLabel(records, visit.clientId)
                 ) : (
-                  <button
+                  <Button
                     className="cursor-pointer font-medium underline underline-offset-2"
+                    composition
                     onClick={() => onOpenClient(visit.clientId)}
-                    type="button"
+                    size="current"
+                    unstyled
                   >
                     {clientLabel(records, visit.clientId)}
-                  </button>
+                  </Button>
                 ),
             },
             { label: 'Typ', value: <VisitKindBadge kind={visit.kind} /> },

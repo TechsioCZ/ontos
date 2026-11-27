@@ -6,6 +6,7 @@ import { pipe, DateTime } from 'effect';
 import { EmptyState, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
@@ -181,12 +182,12 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
           >
             Naplánovat kontakt
           </Button>
-          <a
-            className="inline-flex items-center gap-50 px-100 font-medium underline text-sm underline-offset-2 hover:underline"
+          <Link
+            className="inline-flex items-center gap-50 px-100 font-medium text-sm hover:underline"
             href={`/${language ?? 'cs'}/crm/navstevy?klient=${encodeURIComponent(client.id)}`}
           >
             Časová osa v Návštěvách
-          </a>
+          </Link>
         </div>
       )}
 
@@ -214,12 +215,9 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
               </li>
             ))}
           </ul>
-          <a
-            className="font-medium underline text-xs underline-offset-2 hover:underline"
-            href={`/${language ?? 'cs'}/crm/k-osloveni`}
-          >
+          <Link className="font-medium text-xs hover:underline" href={`/${language ?? 'cs'}/crm/k-osloveni`}>
             Vyřídit v plánu K oslovení
-          </a>
+          </Link>
         </section>
       )}
 

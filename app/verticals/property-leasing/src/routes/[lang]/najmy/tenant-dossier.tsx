@@ -12,6 +12,7 @@ import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, Predicate, Schema } from 'effect';
@@ -20,9 +21,21 @@ import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useRef, useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
+import {
+  dossierActionsClass,
+  dossierEventClass,
+  dossierFieldsClass,
+  dossierHeadingClass,
+  dossierMutedClass,
+  dossierSectionClass,
+  dossierSelectClass,
+  dossierStackClass,
+  dossierTileClass,
+  dossierTitleClass,
+  plainLinkClass,
+} from './dossier-classes.ts';
 import { formatInstant, principalLabel } from './principal-labels.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
-import './tenant-dossier.css';
 import { timelineEntries } from './timeline-entries.ts';
 import { TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
@@ -193,8 +206,8 @@ const DossierContacts = ({
   const handleReloadLatest = record.reloadLatest;
   return (
     <>
-      <div className="sp-tenant-heading">
-        <h3>Kontaktní osoby</h3>
+      <div className={dossierHeadingClass}>
+        <h3 className={dossierTitleClass}>Kontaktní osoby</h3>
         {canWrite && (
           <Button appearance="outline" onClick={toggleEditing} severity="secondary" size="sm">
             {editing ? 'Zavřít úpravy' : editLabel}
@@ -202,24 +215,38 @@ const DossierContacts = ({
         )}
       </div>
       {!editing && contacts.length === 0 && (
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Kontaktní osoby zatím nejsou doplněny. Hlavní e-mail a telefon protistrany najdete v kartě výše.
         </p>
       )}
       {!editing &&
         contacts.map((contact) => (
-          <div className="sp-tenant-contact" key={contact.id}>
+          <div className={dossierTileClass} key={contact.id}>
             <strong>{contact.name}</strong>
             <DetailList
               items={[
                 { label: 'Role ve firmě', value: contact.role || 'Neuvedeno' },
                 {
                   label: 'E-mail',
-                  value: contact.email === '' ? 'Neuvedeno' : <a href={`mailto:${contact.email}`}>{contact.email}</a>,
+                  value:
+                    contact.email === '' ? (
+                      'Neuvedeno'
+                    ) : (
+                      <Link className={plainLinkClass} href={`mailto:${contact.email}`} size="current">
+                        {contact.email}
+                      </Link>
+                    ),
                 },
                 {
                   label: 'Telefon',
-                  value: contact.phone === '' ? 'Neuvedeno' : <a href={`tel:${contact.phone}`}>{contact.phone}</a>,
+                  value:
+                    contact.phone === '' ? (
+                      'Neuvedeno'
+                    ) : (
+                      <Link className={plainLinkClass} href={`tel:${contact.phone}`} size="current">
+                        {contact.phone}
+                      </Link>
+                    ),
                 },
               ]}
             />
@@ -227,7 +254,7 @@ const DossierContacts = ({
         ))}
       {editing && canWrite && (
         <form
-          className="sp-tenant-stack"
+          className={dossierStackClass}
           noValidate
           onSubmit={(event) => {
             // Enter never saves: only Uložit does.
@@ -237,9 +264,9 @@ const DossierContacts = ({
           {contacts.map((contact, index) => {
             const problems = contactProblems(contact);
             return (
-              <fieldset className="sp-tenant-contact" key={contact.id}>
+              <fieldset className={dossierTileClass} key={contact.id}>
                 <legend>Kontakt {index + 1}</legend>
-                <div className="sp-tenant-fields">
+                <div className={dossierFieldsClass}>
                   <FormInput
                     label={t('property-leasing.registration.fullName')}
                     onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
@@ -272,7 +299,7 @@ const DossierContacts = ({
               </fieldset>
             );
           })}
-          <div className="sp-tenant-actions">
+          <div className={dossierActionsClass}>
             <Button
               appearance="outline"
               disabled={contacts.length >= 50}
@@ -341,9 +368,9 @@ const DossierCase = ({
   const handleSave = record.save;
   const handleReloadLatest = record.reloadLatest;
   return (
-    <div className="sp-tenant-contact">
-      <h3>Obchodní případ</h3>
-      <p className="sp-tenant-muted">Stav jednání nemění platnost smlouvy ani obsazenost jednotky.</p>
+    <div className={dossierTileClass}>
+      <h3 className={dossierTitleClass}>Obchodní případ</h3>
+      <p className={dossierMutedClass}>Stav jednání nemění platnost smlouvy ani obsazenost jednotky.</p>
       {dossier?.caseDetails !== undefined && (
         <DetailList
           items={[
@@ -364,14 +391,14 @@ const DossierCase = ({
       <DetailList items={[{ label: 'Protistrana případu', value: counterpartyName }]} />
       {canWrite && (
         <form
-          className="sp-tenant-stack"
+          className={dossierStackClass}
           noValidate
           onSubmit={(event) => {
             // Enter never saves: only Uložit does.
             event.preventDefault();
           }}
         >
-          <div className="sp-tenant-fields">
+          <div className={dossierFieldsClass}>
             <FormInput
               label={t('property-leasing.dossier.caseSubject')}
               maxLength={500}
@@ -404,11 +431,12 @@ const DossierCase = ({
               {...invalidField(problems.value, t('property-leasing.rent.invalidAmount'))}
             />
           </div>
-          <div className="sp-tenant-actions">
-            <label className="sp-tenant-stack">
+          <div className={dossierActionsClass}>
+            <label className={dossierStackClass}>
               <span>Stav případu</span>
               <select
                 aria-label={t('property-leasing.dossier.caseState')}
+                className={dossierSelectClass}
                 onChange={(event) => {
                   const selected = Schema.decodeUnknownOption(TenantCaseStateSchema)(event.target.value);
                   if (Option.isSome(selected)) {
@@ -439,7 +467,7 @@ const DossierCase = ({
         </form>
       )}
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-      <div className="sp-tenant-actions">
+      <div className={dossierActionsClass}>
         {contractHref !== undefined && (
           <LinkButton appearance="ghost" href={contractHref} severity="secondary" size="sm">
             Otevřít smlouvu případu →
@@ -496,7 +524,7 @@ export const TenantDossierCard = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <div className="sp-tenant" id="tenant">
+    <div className={dossierSectionClass} id="tenant">
       <SectionCard
         actions={
           <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
@@ -505,7 +533,7 @@ export const TenantDossierCard = ({
         }
         title={t('property-leasing.dossier.title')}
       >
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Kontakty, komunikace a stav obchodního případu této protistrany, sdílené napříč všemi jejími nájmy. Zápisy se
           ukládají s autorem a časem.
         </p>
@@ -529,14 +557,14 @@ export const TenantDossierCard = ({
           taskHref={taskHref}
         />
         <DossierCommunication activityLabels={activityLabels} canWrite={canWrite} onSave={onLog} />
-        <h3>Časová osa</h3>
+        <h3 className={dossierTitleClass}>Časová osa</h3>
         {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
-          <article className="sp-tenant-event" key={key}>
-            <div className="sp-tenant-heading">
+          <article className={dossierEventClass} key={key}>
+            <div className={dossierHeadingClass}>
               <Badge appearance="outline" severity="neutral" size="sm">
                 {activityLabels[entry.kind]}
               </Badge>
-              <span className="sp-tenant-muted">
+              <span className={dossierMutedClass}>
                 {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
               </span>
             </div>
@@ -544,10 +572,12 @@ export const TenantDossierCard = ({
           </article>
         ))}
         {(dossier?.history.length ?? 0) === 0 && (
-          <p className="sp-tenant-muted">Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.</p>
+          <p className={dossierMutedClass}>
+            Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.
+          </p>
         )}
-        <div className="sp-tenant-heading">
-          <p className="sp-tenant-muted">
+        <div className={dossierHeadingClass}>
+          <p className={dossierMutedClass}>
             Archivace skryje protistranu pouze z běžného přehledu kontaktů. Platné smlouvy, nájmy i historie zůstávají
             zachovány.
           </p>
@@ -615,7 +645,7 @@ export const TenantDirectory = ({
     );
   });
   return (
-    <section className="sp-tenant" id="tenants">
+    <section className={dossierSectionClass} id="tenants">
       <SectionCard
         actions={
           <LinkButton appearance="outline" href={`/${language}/prodej/zakaznici`} severity="secondary" size="sm">
@@ -624,7 +654,7 @@ export const TenantDirectory = ({
         }
         title={t('property-leasing.dossier.directoryTitle')}
       >
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Seznam obsahuje
           nájemce i firmy z registru zákazníků; nového zájemce založíte ve firemním registru zákazníků tlačítkem Nový
           zákazník.
@@ -635,11 +665,11 @@ export const TenantDirectory = ({
           type="search"
           value={query}
         />
-        <label className="sp-tenant-muted">
+        <label className={dossierMutedClass}>
           <input checked={archived} onChange={(event) => setArchived(event.target.checked)} type="checkbox" /> Zahrnout
           archivovanou evidenci
         </label>
-        <div className="sp-tenant-directory">
+        <div className={dossierFieldsClass}>
           {visible.map((entry) => {
             const id = entry.counterpartyRef.resourceId;
             const dossier = dossierOf(id);
@@ -648,23 +678,23 @@ export const TenantDirectory = ({
               .filter((value) => value !== null && value !== undefined && value !== '')
               .join(' · ');
             return (
-              <a className="sp-tenant-contact" href={dossierHref(id)} key={id}>
-                <div className="sp-tenant-heading">
+              <Link className={`${dossierTileClass} ${plainLinkClass}`} href={dossierHref(id)} key={id} size="current">
+                <div className={dossierHeadingClass}>
                   <strong>{entry.displayName ?? 'Protistrana'}</strong>
                   <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
                     {dossier?.archived === true ? 'Archivováno' : caseLabels[dossier?.caseState ?? 'NEW']}
                   </Badge>
                 </div>
-                <span className="sp-tenant-muted">
+                <span className={dossierMutedClass}>
                   {relationshipLabel(leases, dossier, unitName)} · {contactCountLabel(dossier?.contacts.length ?? 0)}
                 </span>
-                {contactDetails.length > 0 && <span className="sp-tenant-muted">{contactDetails}</span>}
-                <span className="sp-tenant-muted">Kontakty, historie a obchodní případ →</span>
-              </a>
+                {contactDetails.length > 0 && <span className={dossierMutedClass}>{contactDetails}</span>}
+                <span className={dossierMutedClass}>Kontakty, historie a obchodní případ →</span>
+              </Link>
             );
           })}
         </div>
-        {visible.length === 0 && <p className="sp-tenant-muted">Žádné protistrany neodpovídají zadanému filtru.</p>}
+        {visible.length === 0 && <p className={dossierMutedClass}>Žádné protistrany neodpovídají zadanému filtru.</p>}
       </SectionCard>
     </section>
   );

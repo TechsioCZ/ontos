@@ -29,7 +29,6 @@ import { salesPipelineAiCommandSchemas } from '../../../../../shared/actions/app
 import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';
 import { allRecordsInput, pipelineRecords, usePipelineRecordsSnapshot } from '../prilezitosti/pipeline-records.ts';
 import type { RecordsLoadError } from '../prilezitosti/pipeline-records.ts';
-import './review.css';
 
 /** Workforce employees for this view, read under its own correlation. */
 const listEmployees = () =>
@@ -330,24 +329,24 @@ const ChangeCard = ({
   readonly targetLabel: string;
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => (
-  <article className="sp-ai-review-change" data-change-id={change.id}>
-    <div className="sp-ai-review-heading">
-      <div>
+  <article className="flex min-w-0 flex-col gap-3.5 rounded-sm bg-surface p-3 sm:p-4" data-change-id={change.id}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 grow basis-64">
         <h3 className="font-semibold text-sm">{change.summary}</h3>
         <p className="text-fg-secondary text-sm">{targetLabel}</p>
       </div>
-      <div className="sp-ai-review-actions">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge severity={changeStatusVariant[change.status]}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
-    <p className="sp-ai-review-reason">
+    <p className="max-w-[80ch] text-sm leading-normal wrap-anywhere">
       <span className="font-medium">Proč AI změnu navrhuje: </span>
       {change.reason}
     </p>
-    <Table aria-label={`Porovnání: ${change.summary}`} className="sp-ai-review-diff" size="sm">
+    <Table aria-label={`Porovnání: ${change.summary}`} className="overflow-hidden rounded-sm bg-base" size="sm">
       <Table.Header>
-        <Table.Row className="sp-ai-review-diff-head">
+        <Table.Row className="grid grid-cols-[minmax(4.5rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] bg-surface text-fg-secondary text-xs font-medium leading-normal">
           <Table.ColumnHeader>Údaj</Table.ColumnHeader>
           <Table.ColumnHeader>Před změnou</Table.ColumnHeader>
           <Table.ColumnHeader>Po schválení</Table.ColumnHeader>
@@ -355,12 +354,17 @@ const ChangeCard = ({
       </Table.Header>
       <Table.Body>
         {change.diff.map((line) => (
-          <Table.Row className="sp-ai-review-diff-row" key={line.field}>
+          <Table.Row
+            className="grid grid-cols-[minmax(4.5rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] border-t border-border-primary/60 text-xs leading-normal sm:text-sm"
+            key={line.field}
+          >
             <Table.Cell className="font-medium">{line.label}</Table.Cell>
-            <Table.Cell className="sp-ai-review-before">
+            <Table.Cell className="bg-danger-light text-danger-fg">
               {valueLabel(line.field, line.before) ?? 'Neuvedeno'}
             </Table.Cell>
-            <Table.Cell className="sp-ai-review-after">{valueLabel(line.field, line.after) ?? 'Vymazáno'}</Table.Cell>
+            <Table.Cell className="bg-success-light text-success-fg">
+              {valueLabel(line.field, line.after) ?? 'Vymazáno'}
+            </Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>
@@ -374,7 +378,7 @@ const ChangeCard = ({
       <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>
     )}
     {change.status === 'pending' && canWrite && (
-      <div className="sp-ai-review-actions sp-ai-review-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
         <Button
           appearance="outline"
           disabled={busy}
@@ -460,15 +464,17 @@ const RunCard = ({
     }
   }
   return (
-    <section className="sp-ai-review-batch" data-run-key={group.key}>
-      <header className="sp-ai-review-batch-header">
-        <div className="sp-ai-review-heading">
-          <div>
+    <section className="min-w-0 overflow-hidden rounded-md border border-border-primary/60" data-run-key={group.key}>
+      <header className="flex flex-col gap-4 p-3 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 grow basis-64">
             <p className="text-fg-secondary text-xs">
               {formatDateTime(DateTime.formatIso(group.createdAt))} · {group.agentLabel} ·{' '}
               {group.parts.map((part) => moduleLabel[part.module]).join(' + ')}
             </p>
-            <h2 className="sp-ai-review-instruction">{group.instruction}</h2>
+            <h2 className="mt-1.5 max-w-[75ch] text-base font-semibold leading-normal wrap-anywhere sm:text-[1.1rem]">
+              {group.instruction}
+            </h2>
           </div>
           <Badge severity={batchVariant}>{batchLabel}</Badge>
         </div>
@@ -490,7 +496,7 @@ const RunCard = ({
               placeholder={t('sales-pipeline.aiReview.decisionNotePlaceholder')}
               value={note}
             />
-            <div className="sp-ai-review-actions">
+            <div className="flex flex-wrap items-center gap-2">
               <Button disabled={busy} onClick={() => decideMany(decidable, 'approve')} size="sm">
                 Schválit dávku ({decidable.length})
               </Button>
@@ -507,7 +513,7 @@ const RunCard = ({
           </>
         )}
         {revertible.length > 0 && revertible.every((part) => canWrite(part.module)) && (
-          <div className="sp-ai-review-revert">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               appearance="outline"
               disabled={busy}
@@ -521,12 +527,12 @@ const RunCard = ({
               Obnoví původní údaje celé dávky. Když záznam mezitím změnil člověk, nic nepřepíše.
             </span>
             {confirmRevert && (
-              <div className="sp-ai-review-confirm" role="alert">
+              <div className="flex basis-full flex-col gap-3 border-l-2 border-warning p-4 text-sm" role="alert">
                 <p>
                   Vrátit všechny provedené změny této dávky? Nově založené příležitosti archivujeme, skladové pohyby
                   objednávek vyrovnáme protipohybem. Historie zůstane zachována.
                 </p>
-                <div className="sp-ai-review-actions">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     disabled={busy}
                     onClick={() => {
@@ -562,7 +568,7 @@ const RunCard = ({
         )}
       </header>
       {group.parts.map((part) => (
-        <div className="sp-ai-review-changes" key={part.batch.id}>
+        <div className="flex flex-col gap-4 px-3 pb-3 sm:px-5 sm:pb-5" key={part.batch.id}>
           <p className="text-fg-secondary text-xs font-medium">{moduleLabel[part.module]}</p>
           {part.changes.map((change) => (
             <ChangeCard
@@ -619,9 +625,12 @@ const AiApprovalLog = ({
       {log.length === 0 ? (
         <p className="text-fg-secondary text-sm">Deník se naplní prvním návrhem AI.</p>
       ) : (
-        <ol className="sp-ai-review-log">
+        <ol className="flex max-w-[90ch] flex-col gap-4">
           {log.slice(0, showFullLog ? log.length : 8).map(({ entry, module }) => (
-            <li key={`${module}:${entry.id}`}>
+            <li
+              className="flex flex-col gap-1 border-l-2 border-border-primary/60 pl-4 wrap-anywhere"
+              key={`${module}:${entry.id}`}
+            >
               <div className="text-fg-secondary text-xs">
                 {formatDateTime(DateTime.formatIso(entry.at))} · {moduleLabel[module]} ·{' '}
                 {nameOf(entry.actorPrincipalId)} · {entry.actorKind === 'agent' ? 'AI návrh' : 'Rozhodnutí člověka'}
@@ -742,10 +751,10 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
         />
       )}
       {!loading && !noAccess && (
-        <div className="sp-ai-review">
-          <div className="sp-ai-review-safety">
-            <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
-            <p>
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="flex items-start gap-3 rounded-sm border-l-2 border-info bg-surface p-4 text-sm leading-relaxed">
+            <span aria-hidden className="icon-[mdi--shield-check-outline] size-250 shrink-0" />
+            <p className="max-w-[80ch]">
               <strong>Pod kontrolou člověka.</strong> Agent úrovně C smí příležitosti a objednávky pouze navrhovat.
               Přímý zápis mu systém odmítne. Každé rozhodnutí má autora, čas a výsledek v auditu. Provedenou dávku lze
               vrátit.
@@ -761,7 +770,10 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               </Button>
             </div>
           )}
-          <fieldset aria-label={t('sales-pipeline.aiReview.batchDisplayLabel')} className="sp-ai-review-actions">
+          <fieldset
+            aria-label={t('sales-pipeline.aiReview.batchDisplayLabel')}
+            className="flex flex-wrap items-center gap-2"
+          >
             <Button
               appearance={filter === 'pending' ? 'solid' : 'outline'}
               aria-pressed={filter === 'pending'}
@@ -781,7 +793,7 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               Všechny dávky
             </Button>
           </fieldset>
-          {message !== '' && <output className="sp-ai-review-feedback">{message}</output>}
+          {message !== '' && <output className="rounded-sm bg-surface px-4 py-3.5 text-sm">{message}</output>}
           {visibleGroups.length === 0 ? (
             <EmptyState
               description={

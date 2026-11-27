@@ -594,7 +594,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
               )}
               {records.canWrite && (
                 <form
-                  className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
+                  className={`rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
                   // Enter never records the activity: only Uložit does.
                   onSubmit={(event) => event.preventDefault()}
                 >

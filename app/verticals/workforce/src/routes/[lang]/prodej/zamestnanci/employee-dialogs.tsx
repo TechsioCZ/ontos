@@ -39,6 +39,7 @@ import {
   updateCommand,
 } from './employee-model.ts';
 import type { CommitOutcome, DraftField, EditCommitResult, EmployeeDraft } from './employee-model.ts';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
 
@@ -409,9 +410,9 @@ const EmployeeFields = ({
       )}
       <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
       {disabled ? null : (
-        <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
+        <Link className="text-sm" href={`/${language}/sprava/lide-a-role`} size="current">
           {t(`${key}.form.managePeople`)}
-        </a>
+        </Link>
       )}
       <FormInput
         autoComplete="off"
@@ -535,8 +536,14 @@ const EmployeeEditPanel = ({
       <DocumentTitle title={employee.fullName} />
       <SidePanel
         actions={
-          <div className="workforce-employee-form-actions">
-            <Button appearance="outline" onClick={handleClose} severity="secondary" type="button">
+          <div className="flex w-full flex-wrap justify-end gap-100">
+            <Button
+              appearance="outline"
+              className="min-h-12 w-full whitespace-nowrap sm:w-auto"
+              onClick={handleClose}
+              severity="secondary"
+              type="button"
+            >
               {t(`${key}.form.close`)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -659,8 +666,14 @@ const EmployeeCreateDialog = ({
     <>
       <SidePanel
         actions={
-          <div className="workforce-employee-form-actions">
-            <Button appearance="outline" onClick={() => guard.request(onClose)} severity="secondary" type="button">
+          <div className="flex w-full flex-wrap justify-end gap-100">
+            <Button
+              appearance="outline"
+              className="min-h-12 w-full whitespace-nowrap sm:w-auto"
+              onClick={() => guard.request(onClose)}
+              severity="secondary"
+              type="button"
+            >
               {t(`${key}.form.cancel`)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={noopChange} onSave={handleSave} status={create.status} />

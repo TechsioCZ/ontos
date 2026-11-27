@@ -5,6 +5,7 @@ import type { Invoice } from '@app/finance-billing/contracts/records';
 import type { executeRecords as readProperty } from '@app/property-portfolio/clients/records';
 import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Option, Result } from 'effect';
 import type { Effect } from 'effect';
@@ -33,7 +34,7 @@ export interface LeaseRelated {
 
 const P = 'property-leasing';
 const mutedClass = 'text-sm text-fg-secondary';
-const rowClass = `${surfaceTileClassName} flex flex-wrap items-center justify-between gap-3 p-3 propertyleasing:text-sm`;
+const rowClass = `${surfaceTileClassName} flex flex-wrap items-center justify-between gap-3 p-3 text-sm`;
 
 export const loadedList = <A,>(value: Option.Option<Result.Result<readonly A[], Feedback>>): readonly A[] =>
   value.pipe(
@@ -95,7 +96,7 @@ export interface StoryStep {
 
 /** Clickable chain building → unit → tenant → contract → lease → service tasks → invoice. */
 export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep[]; readonly t: Translate }) => (
-  <nav aria-label={t(`${P}.story.title`)} className={`${surfaceTileClassName} overflow-x-auto propertyleasing:p-3`}>
+  <nav aria-label={t(`${P}.story.title`)} className={`${surfaceTileClassName} overflow-x-auto p-3`}>
     <ol className="flex min-w-max items-stretch gap-2">
       {steps.map((step, index) => {
         const body = (
@@ -112,17 +113,18 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
             {step.href === undefined || step.current === true ? (
               <div
                 aria-current={step.current === true ? 'step' : undefined}
-                className={`propertyleasing:rounded-md border px-3 py-2 ${tone}`}
+                className={`rounded-md border px-3 py-2 ${tone}`}
               >
                 {body}
               </div>
             ) : (
-              <a
-                className={`propertyleasing:rounded-md border px-3 py-2 no-underline hover:bg-surface ${tone}`}
+              <Link
+                className={`rounded-md border px-3 py-2 text-inherit no-underline hover:bg-surface ${tone}`}
                 href={step.href}
+                size="current"
               >
                 {body}
-              </a>
+              </Link>
             )}
             {index < steps.length - 1 && (
               <span aria-hidden className="text-fg-secondary">
@@ -408,9 +410,13 @@ export const TasksCard = ({
         <ul className="space-y-2">
           {tasks.map((task) => (
             <li className={rowClass} key={task.ref.resourceId}>
-              <a className="min-w-0 font-medium" href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}>
+              <Link
+                className="min-w-0 font-medium text-inherit no-underline"
+                href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
+                size="current"
+              >
                 {task.title} →
-              </a>
+              </Link>
               <span className="flex items-center gap-2">
                 {task.dueDate !== undefined && (
                   <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>

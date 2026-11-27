@@ -4,6 +4,7 @@ import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Tables of the sales report (crm-reports lane): grouped summary, order rows, status mapping, items by SKU.
 import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -121,23 +122,25 @@ const GroupLabel = ({
 }) => {
   if (grouping === 'client') {
     return (
-      <a className={linkClass} href={clientCardHref(lang, group.key)}>
+      <Link className={linkClass} href={clientCardHref(lang, group.key)} size="current">
         {group.label}
-      </a>
+      </Link>
     );
   }
   if (grouping === 'month' && group.count === 0) {
     return <span>{group.label}</span>;
   }
   return (
-    <button
+    <Button
       aria-label={`${group.label}: Zúžit přehled na tuto skupinu`}
       className={`${linkClass} cursor-pointer text-left ${group.key === UNASSIGNED ? 'text-fg-secondary' : ''}`}
+      composition
       onClick={() => onPick(grouping, group.key)}
-      type="button"
+      size="current"
+      unstyled
     >
       {group.label}
-    </button>
+    </Button>
   );
 };
 
@@ -351,9 +354,9 @@ const orderColumns = (
   {
     accessorKey: 'clientName',
     cell: (info) => (
-      <a className={linkClass} href={clientCardHref(lang, info.row.original.clientId)}>
+      <Link className={linkClass} href={clientCardHref(lang, info.row.original.clientId)} size="current">
         {info.getValue<string>()}
-      </a>
+      </Link>
     ),
     header: 'Klient',
     meta: { type: 'string', width: 230 },

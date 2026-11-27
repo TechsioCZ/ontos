@@ -48,6 +48,7 @@ import {
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 import { initialValues, sameFormValues, taskFormSubmission } from './task-form-values.ts';
 import type { Decoded, FormValues, TaskFormSubmission } from './task-form-values.ts';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 export type { TaskFormSubmission } from './task-form-values.ts';
 
@@ -540,9 +541,9 @@ const TaskFormFields = ({
         value={values.description}
       />
       {task?.partyId !== undefined && !readOnly && lookupAccess?.customers === 'allowed' && (
-        <a className="underline" href={`/cs/finance?partyId=${encodeURIComponent(task.partyId)}`}>
+        <Link href={`/cs/finance?partyId=${encodeURIComponent(task.partyId)}`} size="current">
           Faktury klienta
-        </a>
+        </Link>
       )}
       {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
               over Řešitel, Termín and Priorita. */}
@@ -625,9 +626,9 @@ const TaskFormFields = ({
         <div className="flex flex-col gap-100">
           <h3 className="font-semibold">{t(`${key}.sourceRecords`)}</h3>
           {task.contextRefs.map((ref) => (
-            <a className="underline" href={taskContextHref(ref)} key={ref.resourceId}>
+            <Link href={taskContextHref(ref)} key={ref.resourceId} size="current">
               {t(`${key}.${contextLinkKey(ref)}`)}
-            </a>
+            </Link>
           ))}
         </div>
       )}
@@ -684,12 +685,13 @@ const TaskFormFields = ({
         />
       </div>
       {task !== undefined && (
-        <a
-          className="text-sm underline"
+        <Link
+          className="text-sm"
           href={`/cs/provoz/dokumenty?taskId=${encodeURIComponent(task.ref.resourceId)}`}
+          size="current"
         >
           {t(`${key}.taskDocuments`)}
-        </a>
+        </Link>
       )}
     </>
   );

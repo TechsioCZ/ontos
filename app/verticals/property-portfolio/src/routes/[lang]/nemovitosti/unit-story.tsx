@@ -2,6 +2,7 @@ import type { executeRecords as readAgreements } from '@app/legal-agreements/cli
 import type { executeRecords as readOccupancy } from '@app/property-leasing/clients/records';
 import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { DateTime, Schema } from 'effect';
 import type { Effect } from 'effect';
@@ -232,9 +233,13 @@ const TaskSection = ({
       {unitTasks.map((task) => (
         <div className={rowClass} key={task.ref.resourceId}>
           <div className="min-w-0">
-            <a className="block font-medium" href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}>
+            <Link
+              className="block font-medium text-inherit no-underline"
+              href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
+              size="current"
+            >
               {task.title} →
-            </a>
+            </Link>
             {task.dueDate !== undefined && (
               <span className={mutedClass}>{t(`${K}.due`, { date: formatDay(task.dueDate) })}</span>
             )}

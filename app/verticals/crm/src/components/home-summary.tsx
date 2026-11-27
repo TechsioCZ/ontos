@@ -3,6 +3,7 @@
 import { SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { canSeeEverything } from '../../shared/domain/access.ts';
 import { buildCrmHomeSummary } from '../../shared/domain/reports.ts';
@@ -28,9 +29,9 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
             {all ? 'Klienti firmy' : 'Jen moji klienti'}
           </Badge>
         </div>
-        <a className="text-sm underline underline-offset-2" href={`/${lang}/crm/prehled-prodeju`}>
+        <Link className="text-sm" href={`/${lang}/crm/prehled-prodeju`}>
           Přehled prodejů →
-        </a>
+        </Link>
       </div>
       <StatRow>
         <StatCard
@@ -81,16 +82,16 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
         </StatRow>
       </SectionCard>
       <div className="flex flex-wrap gap-150">
-        <a className="text-sm underline underline-offset-2" href={`/${lang}/crm/klienti`}>
+        <Link className="text-sm" href={`/${lang}/crm/klienti`}>
           Otevřít klienty
-        </a>
-        <a className="text-sm underline underline-offset-2" href={`/${lang}/crm/k-osloveni`}>
+        </Link>
+        <Link className="text-sm" href={`/${lang}/crm/k-osloveni`}>
           Ruční plán kontaktů
-        </a>
+        </Link>
         {all && (
-          <a className="text-sm underline underline-offset-2" href={`/${lang}/crm/parovani`}>
+          <Link className="text-sm" href={`/${lang}/crm/parovani`}>
             Dořešit párování objednávek
-          </a>
+          </Link>
         )}
       </div>
     </div>

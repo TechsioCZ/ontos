@@ -49,6 +49,7 @@ import { requestId } from './browser-crypto.ts';
 import { ErpMediaSection } from './erp-media-section.tsx';
 import { productListData, variantFiguresData } from './page-data.ts';
 import { RELOAD_REQUIRED, ReloadRequiredNotice, stepFailure } from './reload-required-notice.tsx';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 type Lifecycle = ProductPageItem['lifecycle'];
 type CategoryName = ProductPageItem['categories'][number];
@@ -509,9 +510,9 @@ export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: 
               <span className="flex flex-wrap items-center gap-100">
                 <span className="font-semibold">{status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}</span>
                 {status.href !== undefined && (
-                  <a className="underline" href={status.href} rel="noreferrer" target="_blank">
+                  <Link href={status.href} rel="noreferrer" size="current" target="_blank">
                     Otevřít v e-shopu
-                  </a>
+                  </Link>
                 )}
               </span>
               {status.reasons.map((reason) => (

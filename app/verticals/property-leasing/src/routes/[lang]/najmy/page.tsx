@@ -1,3 +1,4 @@
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
   SaveBar,
@@ -61,7 +62,6 @@ import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
-import './occupancy-form.css';
 import {
   initialEditorState,
   occupancyDraftOf,
@@ -944,7 +944,9 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
           {state.collision !== undefined && (
             <>
               {' '}
-              <a href={state.collision.href}>Otevřít kolidující záznam →</a>
+              <Link className="text-inherit no-underline" href={state.collision.href} size="current">
+                Otevřít kolidující záznam →
+              </Link>
             </>
           )}
         </output>
@@ -1219,12 +1221,12 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
           {selected.state === 'CONFIRMED' && (
             <>
               {isLease && (
-                <a
-                  className="inline-flex items-center text-sm underline underline-offset-4"
+                <Link
+                  className="inline-flex items-center text-sm text-inherit underline-offset-4"
                   href={`/${language}/smlouvy`}
                 >
                   {t('property-leasing.demo.contract')}
-                </a>
+                </Link>
               )}
               <Button disabled={busy} onClick={() => activate(selected)} severity="warning" size="sm">
                 {t('property-leasing.demo.activate')}
@@ -1257,7 +1259,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
       {isLease && <ContractCard contract={contract} language={language} t={t} />}
       <UnitCard language={language} property={property} t={t} unit={unit} />
       {property !== undefined && (
-        <div className={`${surfaceCardClassName} min-w-0 propertyleasing:p-4`}>
+        <div className={`${surfaceCardClassName} min-w-0 p-4`}>
           <PropertyEquipment
             language={language}
             propertyId={property.propertyRef.resourceId}
@@ -1278,9 +1280,9 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   if (selected === undefined) {
     return (
       <>
-        <a className="inline-flex text-sm underline" href={`/${language}/najmy`}>
+        <Link className="inline-flex text-sm text-inherit underline-offset-auto" href={`/${language}/najmy`}>
           {t('property-leasing.detail.back')}
-        </a>
+        </Link>
         <PageHeader title={t(LABEL_DETAIL)} />
         {feedback !== 'loading' && (
           <output aria-live="polite">
@@ -1297,7 +1299,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
     <>
       <OccupancyDetailHeader model={model} state={state} />
       <OccupancyStory model={model} state={state} />
-      <div className="grid grid-cols-1 items-start gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-6">
           <OccupancyOverview model={model} state={state} />
           <OccupancyRelations model={model} state={state} />
@@ -1587,7 +1589,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className={`${surfaceTileClassName} p-5 text-sm propertyleasing:text-(--color-fg-secondary)`}>
+              <p className={`${surfaceTileClassName} p-5 text-sm text-fg-secondary`}>
                 {t('property-leasing.demo.empty')}
               </p>
             )}

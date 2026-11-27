@@ -84,42 +84,30 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
     );
   }
   return (
-    <>
-      <style>{`
-        @media (max-width: 639px) {
-          .merchandise-order-workflow { grid-template-columns: 1fr; }
-          .merchandise-order-workflow > li { flex-direction: row; gap: 8px; text-align: left; }
-          .merchandise-order-workflow > li > span:first-child { flex-shrink: 0; }
-          .merchandise-order-workflow > li > span:last-child { width: auto !important; overflow-wrap: normal !important; }
-        }
-      `}</style>
-      <ol aria-label={t('merchandise.ui.orderWorkflow')} className="grid grid-cols-5 gap-100">
-        {workflowSteps.map((step, index) => {
-          const done = index < current;
-          const active = index === current;
-          return (
-            <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
-              <span
-                aria-current={active ? 'step' : undefined}
-                className={[
-                  'flex items-center justify-center rounded-full border font-semibold text-xs',
-                  workflowColor(active, done),
-                ].join(' ')}
-                style={{ height: 28, width: 28 }}
-              >
-                {done ? '✓' : index + 1}
-              </span>
-              <span
-                className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}
-                style={{ overflowWrap: 'anywhere', width: '100%' }}
-              >
-                {t(step.labelKey)}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </>
+    <ol aria-label={t('merchandise.ui.orderWorkflow')} className="grid grid-cols-5 gap-100">
+      {workflowSteps.map((step, index) => {
+        const done = index < current;
+        const active = index === current;
+        return (
+          <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
+            <span
+              aria-current={active ? 'step' : undefined}
+              className={[
+                'flex size-7 items-center justify-center rounded-full border font-semibold text-xs',
+                workflowColor(active, done),
+              ].join(' ')}
+            >
+              {done ? '✓' : index + 1}
+            </span>
+            <span
+              className={`w-full text-xs leading-tight wrap-anywhere ${active ? 'font-semibold' : 'text-fg-secondary'}`}
+            >
+              {t(step.labelKey)}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 };
 
@@ -223,7 +211,7 @@ const DemoOrderCleanup = ({
       </div>
       <Dialog
         actions={
-          <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+          <div className="grid w-full gap-2">
             <Button appearance="outline" disabled={busy} onClick={() => setOpen(false)} severity="secondary" size="sm">
               {t('merchandise.pages.orders.detail.cleanup.keep')}
             </Button>

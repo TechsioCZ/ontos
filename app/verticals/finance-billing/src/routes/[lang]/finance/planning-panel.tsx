@@ -71,7 +71,7 @@ const PlanActualBars = ({
         <li className="grid grid-cols-1 items-center gap-100 text-sm md:grid-cols-[10rem_1fr]" key={row.label}>
           <span className="truncate">{row.label}</span>
           <span className="flex min-w-0 flex-col gap-50">
-            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
+            <span className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
               <span className="min-w-0">
                 <span className="sr-only">{`Plán: ${formatMoney(row.planned)}`}</span>
                 <span
@@ -87,7 +87,7 @@ const PlanActualBars = ({
                 plán {wholeKc(row.planned)}
               </span>
             </span>
-            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
+            <span className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
               <span className="min-w-0">
                 <span className="sr-only">{`Skutečnost: ${formatMoney(row.actual)}`}</span>
                 <span
@@ -306,13 +306,25 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
         <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
-              <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Příjmy uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Výdaje uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané příjmy</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané výdaje</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Plán (rozpočet + fin. plán)</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Odhad zůstatku</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Měsíc</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Příjmy uhrazené
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Výdaje uhrazené
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Očekávané příjmy
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Očekávané výdaje
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Plán (rozpočet + fin. plán)
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Odhad zůstatku
+              </Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -441,15 +453,23 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
-                  <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
-                  <Table.ColumnHeader>Objekt / středisko</Table.ColumnHeader>
-                  <Table.ColumnHeader>Typ</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Plán</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Skutečnost</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Rozdíl</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Odchylka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Vysvětlení</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end" />
+                  <Table.ColumnHeader className="whitespace-nowrap">Kategorie</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Objekt / středisko</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Typ</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Plán
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Skutečnost
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Rozdíl
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Odchylka
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Vysvětlení</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap" />
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -480,11 +500,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                           </span>
                         </span>
                       </Table.Cell>
-                      <Table.Cell
-                        align="end"
-                        className="tabular-nums"
-                        style={over ? { color: 'var(--color-danger)' } : undefined}
-                      >
+                      <Table.Cell align="end" className={over ? 'tabular-nums text-danger' : 'tabular-nums'}>
                         {formatMoney(variance.differenceMinor)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">

@@ -3,6 +3,8 @@ import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
+import { Label } from '@techsio/ui-kit/atoms/label';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { DateTime, Effect, Option, Result } from 'effect';
@@ -178,13 +180,13 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
           </ul>
         )}
         {vm.canWrite && (
-          <label
+          <Label
             className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden"
             htmlFor={`attach-${invoice.ref.resourceId}`}
           >
             <span aria-hidden className="icon-[mdi--paperclip] size-4" />
             {uploading ? 'Nahrávám…' : 'Nahrát soubor'}
-            <input
+            <Input
               accept={ACCEPTED_DOCUMENT_TYPES.join(',')}
               className="sr-only"
               disabled={uploading}
@@ -194,7 +196,7 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
               }}
               type="file"
             />
-          </label>
+          </Label>
         )}
       </div>
       <Dialog
@@ -517,7 +519,7 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
             {EXPORT_STATUS[latest.status].label}
           </Badge>
           {latest.status === 'FAILED' && latest.failureReason !== undefined && (
-            <span className="break-words text-xs" style={{ color: 'var(--color-danger)' }}>
+            <span className="break-words text-danger text-xs">
               Chyba: {latest.failureReason}. Doklad lze zařadit do nového balíčku.
             </span>
           )}
@@ -584,7 +586,7 @@ export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice
       <div className="flex flex-col gap-100 text-sm">
         <span>
           {confirmedDocumentsLabel(related.length)} · uhrazeno {paid} · po splatnosti{' '}
-          <strong style={overdue > 0 ? { color: 'var(--color-danger)' } : undefined}>{overdue}</strong>
+          <strong className={overdue > 0 ? 'text-danger' : undefined}>{overdue}</strong>
         </span>
         <span>
           Celkem neuhrazeno <strong className="tabular-nums">{formatMoney(outstanding)}</strong>
