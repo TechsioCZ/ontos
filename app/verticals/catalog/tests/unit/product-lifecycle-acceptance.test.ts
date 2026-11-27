@@ -12,7 +12,6 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   ProductLifecycleConflict,
-  ProductNotCatalogReady,
   ProductNotFound,
   ProductRevisionConflict,
 } from '../../shared/domain/product-errors.ts';
@@ -93,11 +92,6 @@ const currentValidEvidence = (selection: CatalogSelection) =>
 
 const currentValidEvidenceReader: CatalogSelectionEvidenceReader = {
   assess: ({ selection }) => Effect.succeed({ evidence: currentValidEvidence(selection) }),
-};
-
-const unavailableEvidenceReader: CatalogSelectionEvidenceReader = {
-  assess: () =>
-    Effect.succeed({ evidence: { kind: 'UNAVAILABLE', reason: 'Catalog Current basis is temporarily unavailable' } }),
 };
 
 const productAggregate = (
@@ -593,8 +587,8 @@ describe('Product lifecycle acceptance (#414)', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('reactivation fails closed when no exact-selection Current evidence reader is bound', () =>
-    Effect.gen(function* refuseUnverifiedReactivation() {
+  it.effect('reactivation needs what activation needs: a localized name and an ACTIVE Variant', () =>
+    Effect.gen(function* reactivateWithoutSelectionEvidence() {
       const { persistence, state } = yield* persistenceFor({
         localizedNames: [{ name: 'Kladivo', state: 'SET' }],
         product: retiredProduct(3),
@@ -605,19 +599,13 @@ describe('Product lifecycle acceptance (#414)', () => {
         expectedRevision: 3,
         principalId,
         productId,
-        reason: 'Product lacks Current evidence',
+        reason: 'Product retired by mistake',
         tenantId,
       });
-      const refused = Match.value(outcome).pipe(
-        Match.tag('not_catalog_ready', (value) => value),
-        Match.orElse(() => null),
-      );
-      expect(refused?.reasons).toEqual([
-        'Current Product Type, required facts, Variant axes, Unit and dependent content are not verified',
-      ]);
-      expect(state.product.lifecycleState).toBe('RETIRED');
-      expect(state.revisions).toHaveLength(0);
-      expect(state.lifecycleEvents).toHaveLength(0);
+      expect(outcome._tag).toBe('reactivated');
+      expect(state.product.lifecycleState).toBe('ACTIVE');
+      expect(state.revisions).toHaveLength(1);
+      expect(state.lifecycleEvents).toHaveLength(1);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -639,28 +627,6 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.lifecycleState).toBe('ACTIVE');
       expect(state.revisions).toHaveLength(1);
       expect(state.lifecycleEvents).toHaveLength(1);
-    }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
-
-  it.effect('the Reactivate Product Action reports unavailable Current evidence without lifecycle history', () =>
-    Effect.gen(function* unavailableActionReactivation() {
-      const { persistence, state } = yield* persistenceFor(
-        {
-          localizedNames: [{ name: 'Kladivo', state: 'SET' }],
-          product: retiredProduct(3),
-          variants: [variant('ACTIVE')],
-        },
-        unavailableEvidenceReader,
-      );
-      const error = yield* handleReactivateProduct(
-        { expectedRevision: 3, productRef, reason: 'Product cannot be verified' },
-        yield* executableContextFor(persistence),
-      ).pipe(Effect.flip);
-      expect(Schema.is(ProductNotCatalogReady)(error)).toBe(true);
-      expect(state.product.lifecycleState).toBe('RETIRED');
-      expect(state.product.currentRevision).toBe(3);
-      expect(state.revisions).toHaveLength(0);
-      expect(state.lifecycleEvents).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 

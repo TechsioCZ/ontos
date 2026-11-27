@@ -605,9 +605,6 @@ export const variantPersistenceForScope = (
     if (parent === undefined) {
       return { _tag: 'not_found' };
     }
-    if (parent.lifecycleState === 'RETIRED') {
-      return { _tag: 'lifecycle_conflict' };
-    }
     const [row] = yield* getVariant(input.variantRef.resourceId);
     if (row === undefined || row.productId !== parent.productId || row.tenantId !== tenantId) {
       return { _tag: 'not_found' };

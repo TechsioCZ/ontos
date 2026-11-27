@@ -192,7 +192,11 @@ const lifecycleStep = (item: ProductPageItem, draft: Draft) => {
   }
   const base = { expectedRevision: item.revision, productRef: item.productRef, reason: draft.reason };
   if (item.lifecycle === 'RETIRED') {
-    return [send('Obnovení produktu', ReactivateProductPayloadSchema, base, executeReactivateProduct)];
+    // Reactivation lands ACTIVE, so a work-in-progress Variant is confirmed first.
+    return [
+      ...activationSteps(item, draft),
+      send('Obnovení produktu', ReactivateProductPayloadSchema, base, executeReactivateProduct),
+    ];
   }
   if (draft.lifecycle === 'RETIRED') {
     return [send('Vyřazení produktu', RetireProductPayloadSchema, base, executeRetireProduct)];
