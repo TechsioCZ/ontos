@@ -9,8 +9,8 @@ name: Zerops Stage Deploy
 # Zerops builds the app from app/zerops.yaml; the storefronts arrive built on the runner that delivers them. The app
 # container runs the owner migrations and publishes the Application Composition itself when it starts, and Zerops
 # switches traffic only after /_host/ready answers.
-# One job, created at push time, plans, delivers and verifies (.github/actions/deliver-stage). Only when app units must
-# build does it stop after the plan: the build matrix runs, and `deliver_app` delivers and verifies instead.
+# `deliver` plans at push time, beside lint selection and the shared three-shard lint. Its optional build matrix
+# also runs beside lint. Only `deliver_app` syncs secrets or pushes, after lint succeeds for this commit.
 # Cloudflare stays in front of stage only as DNS, WAF and Access.
 on:
   push:
@@ -39,12 +39,9 @@ defaults:
   run:
     shell: bash
 
-# One delivery at a time; a newer push waits for the running one. A run that a newer push superseded ends once its own
-# Zerops processes have finished, before its proofs (scripts/zerops/stage-push.sh superseded): GitHub never cancels
-# it, and no two runs ever overlap on Zerops.
-# Hotfix: per job, not per run. Deliveries never overlap and never get cancelled; a newer pending delivery replaces
-# an older pending one. A newer push's unit builds cancel an older run's builds at once, so an older run that has not
-# started delivering ends cancelled and the newest head goes next.
+# Only deliveries take the zerops-stage queue, never planning, builds or lint. Running builds and lint finish;
+# a newer pending job replaces an older pending one. Every built and lint-proven run may deliver even after
+# a newer push, unless stage already runs a newer commit. No running delivery is cancelled.
 
 env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
@@ -52,20 +49,114 @@ env:
   STAGE_SHOP_URL: https://ontos-stage-shop.web-revolution.cz
   STAGE_N1_URL: https://ontos-stage-n1.web-revolution.cz
   # pnpm-workspace.yaml's clone-or-copy copies on the runners' ext4, which has no reflinks: the planner install spent
-  # 15 s copying 1331 packages out of the store. Each job restores its own store and no job here saves it, so links
-  # into it are safe; the Zerops app build links the same way (app/zerops.yaml).
+  # 15 s copying 1331 packages out of the store. Jobs that install from the store restore their own copy and none
+  # saves it, so links into it are safe; lint can also restore an installed workspace. Zerops links the same way.
   PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
   # The Shell build mounts the Symmy REST ingress (apps/shell-super-app/modern.config.ts), as app/zerops.yaml's build
   # does. Declared for the whole run, so the identity step, the build shards and deliver-stage's unit build agree.
   ONTOS_INTERNAL_SYMMY_INGRESS: '1'
 
 jobs:
-  # Created at push time and holding the only runner the delivery needs: plan, push, verify.
+  # Lint selection is independent of planning and builds. A red lint run cannot become the verified base,
+  # even when its delivery plan selects nothing. Candidate dispatches lint but never plan or deliver.
+  lint-plan:
+    name: Select lint from the last verified delivery
+    if: github.ref == 'refs/heads/demo/sales-crm' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      shards: ${{ steps.shards.outputs.shards }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Admission only: avoid installing for a head superseded while queued. Once admitted, lint finishes
+      # even if the branch advances; a mid-install or mid-lint head fence would starve built releases.
+      - name: Refuse a superseded lint head before preparation
+        run: |
+          current_head="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test -n "$current_head" && test "$current_head" = "$GITHUB_SHA"
+
+      - name: Read the verified comparison for lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zerops-delivery"
+          bash app/scripts/zerops/read-delivery-history.sh comparison >"$RUNNER_TEMP/zerops-delivery/history.json"
+
+      - name: Choose stage whole-tree lint, Markdown files or verified-commit proof
+        id: shards
+        env:
+          COMPARISON_SNAPSHOT: ${{ runner.temp }}/zerops-delivery/history.json
+          CHANGED_PATHS: ${{ runner.temp }}/zerops-delivery/changed-paths
+        run: bash app/scripts/ci/choose-stage-lint-shards.sh
+
+      - name: Retain the lint comparison and Markdown paths
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-lint-inputs
+          path: ${{ runner.temp }}/zerops-delivery/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 3
+
+  lint:
+    name: Stage lint (${{ matrix.shard == 'docs' && 'docs' || matrix.shard == 'proof' && 'verified commit' || format('{0}/3', matrix.shard) }})
+    needs: [lint-plan]
+    if: needs.lint-plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Finish admitted lint so a newer push cannot starve an already-built release. GitHub replaces only the
+    # pending row with the newest one; a superseded pending head never holds a runner for lint.
+    concurrency:
+      group: zerops-stage-lint-${{ github.ref }}-${{ matrix.shard }}
+      cancel-in-progress: false
+    strategy:
+      # Every shard prints its findings even if another shard is already red.
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.lint-plan.outputs.shards) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Admission only: avoid installing for a head superseded while queued. Once admitted, lint finishes
+      # even if the branch advances; a mid-install or mid-lint head fence would starve built releases.
+      - name: Refuse a superseded lint head before preparation
+        run: |
+          current_head="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test -n "$current_head" && test "$current_head" = "$GITHUB_SHA"
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Take changed paths for the Markdown-only row
+        if: matrix.shard == 'docs'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-lint-inputs
+          path: ${{ runner.temp }}/zerops-delivery
+
+      - name: Format and Lint through every pre-commit job
+        uses: ./.github/actions/lint-app
+        with:
+          shard: ${{ matrix.shard }}
+          changed-paths: ${{ runner.temp }}/zerops-delivery/changed-paths
+
+  # Created at push time: plan and prepare units, without entering the delivery queue or waiting for lint.
   deliver:
-    name: Plan, deliver and verify stage
+    name: Plan stage and select unit builds
     if: github.ref == 'refs/heads/demo/sales-crm'
     runs-on: ubuntu-24.04
-    # The app deploy's own limit plus the storefronts and the proofs.
     timeout-minutes: 95
     # Reading this branch's earlier runs, their plans and their unit builds needs `actions: read`.
     permissions:
@@ -75,6 +166,7 @@ jobs:
       name: stage-edge
       deployment: false
     outputs:
+      run_attempt: ${{ github.run_attempt }}
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
       shop: ${{ steps.plan.outputs.shop }}
@@ -109,7 +201,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/zerops-delivery"
           (
             status=0
-            bash scripts/zerops/read-delivery-history.sh >"$RUNNER_TEMP/zerops-delivery/history.json" || status=$?
+            bash scripts/zerops/read-delivery-history.sh comparison >"$RUNNER_TEMP/zerops-delivery/comparison.json" &&
+              bash scripts/zerops/read-delivery-history.sh complete "$RUNNER_TEMP/zerops-delivery/comparison.json" \
+                >"$RUNNER_TEMP/zerops-delivery/history.json" || status=$?
             echo "$status" >"$RUNNER_TEMP/zerops-delivery/history.status.next"
             mv "$RUNNER_TEMP/zerops-delivery/history.status.next" "$RUNNER_TEMP/zerops-delivery/history.status"
           ) </dev/null >"$RUNNER_TEMP/zerops-delivery/history.log" 2>&1 &
@@ -174,12 +268,12 @@ jobs:
           overwrite: true
           retention-days: 3
 
-      # FRONT PATH (artifacts, not caches), unit by unit. The newest earlier push or dispatch run of this workflow on
-      # this branch that holds unit builds (zerops-units-*) lends every unit whose build there carries this commit's
-      # identity. When the rest fits the Zerops build's budget, this job delivers and the Zerops build builds them
-      # (build-app.sh builds every unit it cannot keep, and keeps those it built before from its own cache); this runner
-      # builds them too, off the critical path, so this run's zerops-units-0 holds every unit. Otherwise the build matrix
-      # builds and deliver_app delivers. rebuild_units never reuses. The Zerops build proves every kept unit again.
+      # FRONT PATH (artifacts, not caches), unit by unit. The newest earlier run with unit builds lends
+      # every unit whose recorded identity matches this commit. If the missing units fit the Zerops build budget,
+      # transfer the selected units to deliver_app as taken-units; otherwise the build matrix runs first.
+      # The delivery uploads the selected units, and Zerops builds and proves anything missing. The delivery
+      # runner also builds those missing units after deployment, so the next push can reuse the complete set.
+      # rebuild_units never reuses earlier units.
       - name: Find the newest earlier unit builds of this branch
         id: earlier
         if: steps.plan.outputs.app == 'true' && inputs.rebuild_units != true
@@ -226,7 +320,7 @@ jobs:
             echo 'build=false' >>"$GITHUB_OUTPUT"
           elif [ "$TAKEN" = success ] && [ "$ZEROPS_SECONDS" -le "$ZEROPS_BUILD_BUDGET_SECONDS" ]; then
             echo 'build=false' >>"$GITHUB_OUTPUT"
-            echo "This job delivers; the Zerops build builds what is missing (about ${ZEROPS_SECONDS}s)."
+            echo "deliver_app delivers; the Zerops build builds what is missing (about ${ZEROPS_SECONDS}s)."
           else
             echo 'build=true' >>"$GITHUB_OUTPUT"
             echo 'Units must build on runners: the build matrix runs, then deliver_app delivers and verifies.'
@@ -251,7 +345,7 @@ jobs:
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
   # The Shell builds alone in shard 0 (measured 74-116 s, no longer the longest unit); the modules are dealt over the
   # two build lanes of shards 1-7 by scripts/zerops/build-shard-units.mts, by their measured build seconds.
-  # SHARDS must equal the matrix below and the one in the delivery job. Seven module shards, not six: over the five
+  # SHARDS must equal the matrix below and the one in the planning job `deliver`. Seven module shards, not six: over the five
   # runs that rebuilt every unit, 27 modules over six shards left the slowest lane 14% above the average lane because
   # 4-5 modules pack into two lanes unevenly, and the seventh shard takes the predicted slowest shard from 5.3 to
   # 4.5 min. It adds one runner slot and no cache: a shard's entry holds only its own units, so an extra shard splits
@@ -385,11 +479,12 @@ jobs:
           overwrite: true
           retention-days: 3
 
-  # The same delivery once this run's unit builds exist: one more runner, created only when units had to build.
+  # The only delivery, with earlier units or this run's builds. Lint success is required before this job can
+  # enter the delivery queue, including storefront-only plans. Red, cancelled or skipped lint blocks every mutation.
   deliver_app:
-    name: Deliver and verify stage after the unit builds
-    needs: [deliver, build]
-    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.deliver.outputs.any == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    name: Deliver and verify lint-proven stage
+    needs: [deliver, build, lint]
+    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.lint.result == 'success' && needs.deliver.outputs.any == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     concurrency:
       group: zerops-stage
       cancel-in-progress: false
@@ -415,8 +510,19 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Retrying only failed jobs may reuse a successful planner from an earlier attempt. It did not replan
+      # the services this retry must repair. Re-run all jobs so the retry's conservative full plan is retained.
+      - name: Refuse a delivery planned in another run attempt
+        env:
+          PLAN_RUN_ATTEMPT: ${{ needs.deliver.outputs.run_attempt }}
+        run: |
+          if [ "$PLAN_RUN_ATTEMPT" != "$GITHUB_RUN_ATTEMPT" ]; then
+            echo "::error::This delivery's plan belongs to another run attempt. Re-run all jobs: gh run rerun $GITHUB_RUN_ID (without --failed), or dispatch the workflow on the current head."
+            exit 1
+          fi
+
       # No install before the push: the delivery's steps up to the app upload run bash, curl, jq, tar, zstd and git
-      # only, and it sets up the toolchain and the whole workspace itself once the upload is done (toolchain: none).
+      # only, and it sets up the toolchain and the whole workspace itself once the upload is done.
       - name: Download the unit builds
         if: needs.deliver.outputs.build_units == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -486,7 +592,6 @@ jobs:
         if: steps.head.outputs.current == 'true'
         uses: ./.github/actions/deliver-stage
         with:
-          toolchain: none
           app: ${{ needs.deliver.outputs.app }}
           storefront: ${{ needs.deliver.outputs.storefront }}
           shop: ${{ needs.deliver.outputs.shop }}

@@ -26,7 +26,7 @@ const deliverStageActionPath = new URL('../../../.github/actions/deliver-stage/a
 const stagePushPath = new URL('../zerops/stage-push.sh', import.meta.url);
 const DELIVER_STAGE = './.github/actions/deliver-stage';
 const INSTALL_APP = './.github/actions/install-app';
-const INSTALL_WORKSPACE = 'Install the app workspace';
+const INSTALL_WORKSPACE = 'Set up the toolchain and install the app workspace';
 
 const ZeropsYamlSchema = Schema.Struct({
   zerops: Schema.Array(Schema.Struct({ run: Schema.Struct({ base: Schema.String }), setup: Schema.String })),
@@ -636,7 +636,10 @@ const stageJobs = () =>
   Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Struct({
-        deliver: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
+        deliver: Schema.Struct({
+          outputs: Schema.Struct({ missing: Schema.String }),
+          steps: Schema.Array(DeliveryStepSchema),
+        }),
         deliver_app: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
       }),
     }),
@@ -733,9 +736,7 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   expect(delivery?.with?.['build-units']).toBe(
     `\${{ needs.deliver.outputs.build_units != 'true' && needs.deliver.outputs.missing || '' }}`,
   );
-  expect(parse(readFileSync(stageWorkflowPath, 'utf-8')).jobs.deliver.outputs.missing).toBe(
-    `\${{ steps.taken.outputs.missing }}`,
-  );
+  expect(deliver.outputs.missing).toBe(`\${{ steps.taken.outputs.missing }}`);
 });
 
 /** Lines that run, without comments: a comment may name node or pnpm. */
@@ -769,21 +770,16 @@ const scriptsReachedBy = (command: string): readonly string[] => {
 /** Where a job runs the shared delivery. */
 const delivery = (job: { steps: readonly DeliveryStep[] }) => job.steps.findIndex(({ uses }) => uses === DELIVER_STAGE);
 
-it('pushes the app before any install: nothing up to the upload needs the toolchain, and each caller declares its own', () => {
+it('pushes the app before its unconditional toolchain and workspace install', () => {
   const steps = deliverySteps();
   const index = (name: string) => steps.findIndex((step) => step.name === name);
   const appPush = steps.findIndex(({ id }) => id === 'push-app');
-  const setup = index('Set up the toolchain and install the app workspace');
-  const install = index(INSTALL_WORKSPACE);
-  // A caller that installed nothing gets the toolchain, the pnpm store and the whole workspace here; one that ran the
-  // root importer install gets the whole workspace from its store. Exactly one of the two runs.
-  expect(steps[setup]?.uses).toBe(INSTALL_APP);
-  expect(steps[setup]?.with?.['install-args']).toBe('--trust-lockfile');
-  expect(steps[setup]?.if).toBe("inputs.toolchain == 'none'");
-  expect(steps[install]?.if).toBe("inputs.toolchain == 'installed'");
-  expect(steps[0]?.run).toContain('installed | none) ;;');
+  const firstInstall = index(INSTALL_WORKSPACE);
+  expect(steps[firstInstall]?.uses).toBe(INSTALL_APP);
+  expect(steps[firstInstall]?.with?.['install-args']).toBe('--trust-lockfile');
+  expect(steps[firstInstall]?.if).toBeUndefined();
+  expect(steps.some(({ name }) => name === 'Install the app workspace')).toBe(false);
   expect(appPush).toBeGreaterThanOrEqual(0);
-  const firstInstall = Math.min(setup, install);
   expect(firstInstall).toBeGreaterThan(appPush);
   // The boot reader starts right after the upload in both paths (a reader started after the new boot loses it) and
   // is the one step before the install that brings its own tool: the pinned zcli, from the npm on PATH there.
@@ -815,7 +811,7 @@ it('pushes the app before any install: nothing up to the upload needs the toolch
   // The one delivering job installs nothing before it pushes; the planning job installs the root importer and never
   // delivers (0fcf2ae30d).
   const { deliver, deliver_app: deliverApp } = stageJobs();
-  expect(deliverApp.steps[delivery(deliverApp)]?.with?.toolchain).toBe('none');
+  expect(deliverApp.steps[delivery(deliverApp)]?.with?.toolchain).toBeUndefined();
   for (const step of deliverApp.steps.slice(0, delivery(deliverApp))) {
     expect(step.uses ?? '', step.name).not.toBe(INSTALL_APP);
     expect(code(step.run ?? ''), step.name).not.toMatch(TOOLCHAIN);
@@ -840,8 +836,9 @@ it('plans from the run history with only the root importer and a depth-1 checkou
 });
 
 it('installs the whole workspace once the app upload is done, from the store of the root importer install', () => {
-  expect(deliverySteps().find(({ name }) => name === INSTALL_WORKSPACE)?.run).toBe(
-    'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
+  expect(deliverySteps().find(({ name }) => name === INSTALL_WORKSPACE)?.uses).toBe(INSTALL_APP);
+  expect(deliverySteps().find(({ name }) => name === INSTALL_WORKSPACE)?.with?.['install-args']).toBe(
+    '--trust-lockfile',
   );
 });
 

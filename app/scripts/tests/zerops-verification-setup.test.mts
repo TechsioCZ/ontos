@@ -19,6 +19,7 @@ const CHECKOUT_SIGNAL = 'checkout-started';
 const SERVICE_SIGNAL = 'service-started';
 const PACKAGED_BUILD_FLAG = '--expect-build-id=-packaged-build';
 const ORIGINS_CHECK = 'Check that the stage origins answer';
+const DELIVER_STAGE = './.github/actions/deliver-stage';
 const SKIP_NEWER = 'Skip when stage already runs a newer commit';
 const SUPERSEDED = 'End here when a newer push superseded this run';
 const Step = Schema.Struct({
@@ -62,9 +63,9 @@ it.effect('checks every origin after every wait, unconditionally, in the one del
     expect(jobs.deliver['timeout-minutes']).toBe(95);
     expect(jobs.deliver_app['timeout-minutes']).toBe(95);
     // Only deliver_app delivers; the planning job never mutates stage.
-    expect(jobs.deliver.steps.some((step) => step.uses === './.github/actions/deliver-stage')).toBe(false);
+    expect(jobs.deliver.steps.some((step) => step.uses === DELIVER_STAGE)).toBe(false);
     expect(jobs.deliver.steps.some((step) => step.name === MUTATION_MARKER)).toBe(false);
-    expect(jobs.deliver_app.steps.some((step) => step.uses === './.github/actions/deliver-stage')).toBe(true);
+    expect(jobs.deliver_app.steps.some((step) => step.uses === DELIVER_STAGE)).toBe(true);
     const steps = yield* readDelivery;
     const index = (name: string) => steps.findIndex((step) => step.name === name);
     const waitApp = index('Wait for the app deployment');
@@ -89,45 +90,48 @@ case "$url" in
 esac
 `;
 
-it.effect('requests every public origin under strict Bash and warns, without failing, on one that does not answer', () =>
-  Effect.gen(function* originsAnswer() {
-    const fs = yield* FileSystem.FileSystem;
-    const command = (yield* readDelivery).find((step) => step.name === ORIGINS_CHECK)?.run;
-    if (command === undefined) {
-      return yield* Effect.die('The delivery must check the stage origins');
-    }
-    for (const shop of ['200', '503']) {
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(path.join(directory, 'curl'), fakeCurl);
-      yield* fs.chmod(path.join(directory, 'curl'), 0o700);
-      const calls = path.join(directory, 'calls');
-      const result = yield* collectToolingProcess(
-        ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', command], {
-          env: {
-            CALLS: calls,
-            PATH: `${directory}:${yield* Config.String('PATH')}`,
-            SHOP_CODE: shop,
-            STAGE_N1_URL: 'https://ontos-stage-n1.example.test',
-            STAGE_SHELL_URL: 'https://ontos-stage.example.test',
-            STAGE_SHOP_URL: 'https://ontos-stage-shop.example.test',
-            STAGE_STOREFRONT_URL: 'https://ontos-stage-akros.example.test',
-          },
-        }),
-      );
-      expect(result.status, result.stderr).toBe(0);
-      expect((yield* fs.readFileString(calls)).trim().split('\n')).toEqual([
-        'https://ontos-stage.example.test',
-        'https://ontos-stage-akros.example.test',
-        'https://ontos-stage-shop.example.test',
-        'https://ontos-stage-n1.example.test',
-      ]);
-      if (shop === '503') {
-        expect(result.stdout).toContain('::warning::https://ontos-stage-shop.example.test answered 503');
-      } else {
-        expect(result.stdout).not.toContain('::warning::');
+it.effect(
+  'requests every public origin under strict Bash and warns, without failing, on one that does not answer',
+  () =>
+    Effect.gen(function* originsAnswer() {
+      const fs = yield* FileSystem.FileSystem;
+      const command = (yield* readDelivery).find((step) => step.name === ORIGINS_CHECK)?.run;
+      if (command === undefined) {
+        return yield* Effect.die('The delivery must check the stage origins');
       }
-    }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      for (const shop of ['200', '503']) {
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(path.join(directory, 'curl'), fakeCurl);
+        yield* fs.chmod(path.join(directory, 'curl'), 0o700);
+        const calls = path.join(directory, 'calls');
+        const result = yield* collectToolingProcess(
+          ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', command], {
+            env: {
+              CALLS: calls,
+              PATH: `${directory}:${yield* Config.String('PATH')}`,
+              SHOP_CODE: shop,
+              STAGE_N1_URL: 'https://ontos-stage-n1.example.test',
+              STAGE_SHELL_URL: 'https://ontos-stage.example.test',
+              STAGE_SHOP_URL: 'https://ontos-stage-shop.example.test',
+              STAGE_STOREFRONT_URL: 'https://ontos-stage-akros.example.test',
+            },
+          }),
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect((yield* fs.readFileString(calls)).trim().split('\n')).toEqual([
+          'https://ontos-stage.example.test',
+          'https://ontos-stage-akros.example.test',
+          'https://ontos-stage-shop.example.test',
+          'https://ontos-stage-n1.example.test',
+        ]);
+        if (shop === '503') {
+          expect(result.stdout).toContain('::warning::https://ontos-stage-shop.example.test answered 503');
+        } else {
+          expect(result.stdout).not.toContain('::warning::');
+        }
+      }
+      return yield* Effect.void;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const HEAD = 'a'.repeat(40);
@@ -162,7 +166,7 @@ for (const scenario of [
       const index = (name: string) => steps.findIndex((step) => step.name === name);
       const skip = steps[index(SKIP_NEWER)];
       const mark = steps[index(MUTATION_MARKER)];
-      const delivery = steps.findIndex((step) => step.uses === './.github/actions/deliver-stage');
+      const delivery = steps.findIndex((step) => step.uses === DELIVER_STAGE);
       if (skip?.run === undefined || mark === undefined) {
         return yield* Effect.die('deliver_app must decide whether to deliver and mark its attempt');
       }
@@ -200,6 +204,7 @@ for (const scenario of [
       expect((yield* fs.readFileString(path.join(directory, 'calls'))).trim().split('\n')).toEqual([
         `https://api.app-prg1.zerops.io/api/rest/public/service-stack/${scenario.planned}-id`,
       ]);
+      return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -325,9 +330,10 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
 it.effect('installs the whole workspace once and bypasses pre-run verification for every pnpm command it runs', () =>
   Effect.gen(function* completeVerificationSetup() {
     const steps = yield* readDelivery;
-    expect(steps.find((step) => step.name === 'Install the app workspace')?.run).toBe(
-      'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
-    );
+    const install = steps.find((step) => step.name === 'Set up the toolchain and install the app workspace');
+    expect(install?.uses).toBe('./.github/actions/install-app');
+    expect(install?.with?.['install-args']).toBe('--trust-lockfile');
+    expect(install?.if).toBeUndefined();
     for (const step of steps) {
       for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
         if (invocation.groups?.arguments?.startsWith('install ') === true) {

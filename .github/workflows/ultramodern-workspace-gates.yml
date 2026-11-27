@@ -1,6 +1,6 @@
 name: Ultramodern Workspace Gates and Main-to-Stage Deploy
 
-# Repository-root documentation feeds no app check (app/ tools read app/AGENTS.md, not the root one), so it deploys nothing.
+# Existing trigger policy skips repository-root docs-only pushes; selected lint jobs cover all three whole-tree slices.
 on:
   push:
     branches:
@@ -149,7 +149,6 @@ jobs:
       integrationBrowser: ${{ steps.selection.outputs.integrationBrowser || steps.changes.outputs.integrationBrowser }}
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
-      lint-shards: ${{ steps.lint-shards.outputs.shards || '[1,2,3]' }}
       seed-run: ${{ steps.seed.outputs.run }}
     steps:
       - name: Harden Runner
@@ -207,18 +206,6 @@ jobs:
         env:
           REASON: ${{ steps.changes.outputs.reason }}
         run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
-      # $RUNNER_TEMP is job-local and format-and-lint checks out at depth 1, so it can neither read this list nor
-      # recompute the diff. The list is empty whenever the comparison is unavailable (full, docs and proven modes),
-      # so an empty file is a valid result. The planning steps after it can fail, so a re-run of this job replaces its
-      # own earlier upload instead of failing on the existing name.
-      - name: Publish the exact changed-path list
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ci-changed-paths
-          path: ${{ runner.temp }}/ci-changed-paths
-          if-no-files-found: warn
-          overwrite: true
-          retention-days: 1
       # The planner reads authored JSON and imports nothing outside the repository, so it runs on the runner image's
       # own Node, which strips its types, before anything is installed (scripts/plan-ci-without-install.sh).
       - name: Select the preinstalled Node runtime for dependency-free planning
@@ -241,37 +228,6 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           bash scripts/plan-ci-without-install.sh "${args[@]}"
-      # A narrowed (affected or scoped) run lints only its changed files, on one runner (shard 0), through the same
-      # hook. The one real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
-      # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
-      # every complete run keep the three whole-tree shards.
-      - name: Choose the format and lint shards
-        id: lint-shards
-        if: steps.selection.outputs.mode != ''
-        env:
-          CHANGED_PATHS: ${{ runner.temp }}/ci-changed-paths
-          PLAN_MODE: ${{ steps.selection.outputs.mode }}
-        run: |
-          shards='[1,2,3]'
-          if [[ "$PLAN_MODE" =~ ^(affected|scoped)$ && -s "$CHANGED_PATHS" ]]; then
-            shards='[0]'
-            count=0
-            while IFS= read -r -d '' path; do
-              count=$((count + 1))
-              if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook|tsgolint)[^/]*$ ||
-                "$path" =~ (^|/)tsconfig[^/]*\.json$ || "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
-                "$path" == app/package.json || "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml ||
-                "$path" == app/.mise.toml ]]; then
-                echo "::notice title=Tool configuration changed::$path changes how unchanged files lint; every tracked file is linted."
-                shards='[1,2,3]'
-                break
-              fi
-            done <"$CHANGED_PATHS"
-            if ((count > 2000)); then
-              shards='[1,2,3]'
-            fi
-          fi
-          echo "shards=$shards" >>"$GITHUB_OUTPUT"
       # A later push of this exact commit to the base branch skips its gates only when this run compared with the
       # commit that push starts from (scripts/ci/commit-proof.sh). The runs API keeps no dispatch inputs and no job
       # outputs, so the record is an artifact of this run, which only this run's jobs can write.
@@ -862,14 +818,15 @@ jobs:
         run: mise exec -- pnpm authorization:catalog:artifact:check
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
-  # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
+  # over the selected files; the hook's own globs choose what each tool checks. Whole-tree rows collectively cover
+  # every tracked file (`git ls-files`), even when the plan narrows other gates.
   # The type-aware rules and the lint type check run on Effect's patched tsgolint, which reports type errors of the
   # files the hook lists, each under its own tsconfig. tsrs-lint (0.23 and later) reports every file of every program
   # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
   # script under the vertical's options, and a script importing vertical source checked that source under the script
   # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
   # so each shard takes one contiguous slice of the tracked files that starts at a package root: a slice loads only the
-  # programs of the packages in it, and lefthook still cuts a slice into command lines that each fit a runner (one run
+  # programs of the packages in it, and CI's lint-files.sh cuts each slice into bounded hook batches (one run
   # over all verticals did not). The slices are cut by measured lint seconds, not file counts: a scripts file costs about
   # 0.13 s, a Shell or Core Runtime file 0.07 s and a vertical file 0.04 to 0.08 s (the 24 lint command lines of runs
   # 44523282275, 44508998551 and 44498704633). Shard 1 holds the Shell, Core Runtime and the contracts packages and runs
@@ -880,13 +837,13 @@ jobs:
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
-  # candidate check, over every file.
-  # The first shard (0 on a narrowed run, 1 otherwise) also typechecks and tests the Effect lint rules and runs the
+  # candidate check. Every tracked file is covered only on the whole-tree rows.
+  # Whole-tree shard 1 also typechecks and tests the Effect lint rules and runs the
   # repository policy, as main's lint job does. The policy lints the whole app tree, the storefronts and every script
   # included, which the hook's lint globs leave out or check with milder rules, and the rule tests lint real storefront
   # files, so they belong to this row that every plan runs: a scoped plan skips the Typecheck row.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
     # Lint needs source only; it never holds a runner waiting for build jobs.
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
@@ -895,8 +852,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [0] on a narrowed run without tool configuration changes: the changed files only. [1, 2, 3] otherwise.
-        shard: ${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}
+        # Whole-tree slices even for narrowed plans; stage alone can select a proof row.
+        shard: [1, 2, 3]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -913,67 +870,10 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      - name: Format and Lint the shard's files through the pre-commit hook
-        if: matrix.shard != 0
-        env:
-          SHARD: ${{ matrix.shard }}
-          SHARDS: 3
-        run: |
-          # Shard k takes the tracked files from the (k-1)-th start up to the k-th, in `git ls-files` byte order.
-          starts=(app/scripts/ app/verticals/inventory/)
-          if ((${#starts[@]} + 1 != SHARDS)); then
-            echo "::error title=Lint shards::SHARDS is $SHARDS, but the slice starts make $((${#starts[@]} + 1)) shards."
-            exit 1
-          fi
-          (
-            export LC_ALL=C
-            shard=1
-            git ls-files -z | while IFS= read -r -d '' file; do
-              while ((shard < SHARDS)) && [[ ! "$file" < "${starts[shard - 1]}" ]]; do
-                shard=$((shard + 1))
-              done
-              if ((shard == SHARD)); then
-                printf '%s\0' "$file"
-              fi
-            done
-          ) >"$RUNNER_TEMP/shard-files"
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
-            <"$RUNNER_TEMP/shard-files"
-          git diff --exit-code HEAD
-
-      # A missing artifact fails this step, which is the point: without the list this row proves nothing.
-      - name: Download the exact changed-path list
-        if: matrix.shard == 0
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: Format and Lint through every pre-commit job
+        uses: ./.github/actions/lint-app
         with:
-          name: ci-changed-paths
-          path: ${{ runner.temp }}/ci-plan
-
-      # ci-plan chose this row only for a narrowed run whose non-empty list changes no tool configuration.
-      - name: Format and Lint the run's changed files through the pre-commit hook
-        if: matrix.shard == 0
-        run: |
-          changed="$RUNNER_TEMP/ci-plan/ci-changed-paths"
-          files="$RUNNER_TEMP/hook-files"
-          # A changed path is a literal file name, never a pathspec pattern.
-          export GIT_LITERAL_PATHSPECS=1
-          if [[ ! -s "$changed" ]]; then
-            echo "::error title=No changed-path list::The changed-files row has no changed paths, so it would prove nothing."
-            exit 1
-          fi
-          # A path the diff deleted, or that this commit does not track, has nothing to check.
-          xargs -0 git ls-files -z -- <"$changed" >"$files"
-          if [[ ! -s "$files" ]]; then
-            echo "::error title=No tracked changed files::The changed-files row would prove nothing."
-            exit 1
-          fi
-          # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
-          # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
-          # workspace typecheck, and lost its 16 GB runner.
-          # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
-            <"$files"
-          git diff --exit-code HEAD
+          shard: ${{ matrix.shard }}
 
       # Once per run, whatever the hook found.
       - name: Typecheck the Effect lint rules

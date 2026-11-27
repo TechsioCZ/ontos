@@ -28,7 +28,22 @@ Zerops pricing for the services in `app/zerops-import.yaml` before you create an
 1. Pass the authorization gate. Nothing below may serve production traffic before it.
 2. Write the production setup values and a production deploy workflow modelled on `zerops-stage.yml`,
    with its own GitHub environment holding `ZEROPS_TOKEN`, the owner secret bundle and the project and
-   service IDs.
+   service IDs. Keep planning and unit builds parallel with lint, but require lint success before
+   `deliver_app`, the only delivering job, can sync secrets or push. Red lint means stage was not changed by that run, even if
+   its builds succeeded. Fix the findings and push again; the verified base has not advanced.
+   Code pushes lint the whole tree before delivery, through three slices of `lint-app`,
+   `lint-shard-files.sh` and `lint-files.sh`. Markdown-only pushes lint just those files, plus the
+   global generator once. This requires a complete, non-empty, verified ancestor diff in which every
+   changed path ends in `.md`, case-sensitive. Deleted files are dropped. Unknown, divergent,
+   malformed or possibly truncated comparisons require whole-tree lint.
+   A manual dispatch of the already verified commit runs the global generator only, using an ancestor,
+   untruncated, empty comparison with that exact SHA as its base, and still delivers every service.
+   Only the Markdown-only lint row downloads the changed-path artifact. The gates keep their
+   whole-tree lint rows and separate repository-root documentation no-op classification.
+   Planning and lint selection read independent verified comparisons, so neither waits for the other.
+   Only deliveries enter the delivery queue. Running lint finishes despite newer pushes; superseded
+   pending lint rows are replaced without taking runners. Lint also checks its branch head before preparation, never after admission. The Shell generator writes ignored output,
+   and the final diff check proves tracked files stayed unchanged, not generated-output freshness.
 3. Import the services from `app/zerops-import.yaml` into a new Zerops project.
 4. As a human operator, create the identity secrets on `app` and the `spicedb` secrets on `spicedb`.
 5. Route the custom domain to the `app` service.

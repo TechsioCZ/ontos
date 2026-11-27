@@ -99,6 +99,10 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
   for (const directory of rootLevelPackageDirectories) {
     const storefront = plan(`app/${directory}/src/app/page.tsx`);
     expect(storefront.mode, directory).toBe('scoped');
+    expect(storefront.reason).toContain(
+      'the three whole-tree lint slices, the lint rule tests and the repository policy run',
+    );
+    expect(storefront.reason).not.toContain('lint of the changed files');
     expect(storefront.affectedPackages, directory).toEqual([directory]);
     // The typecheck, Rstest tooling and native tooling rows; no builds or integration jobs.
     expect(names(storefront.source), directory).toEqual([TYPECHECK, ...STAGE_ROWS]);
@@ -209,6 +213,27 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
       templates,
     }).mode,
   ).toBe('full');
+});
+
+it('selects the repository tooling suite for every lint regression script on both trunks', () => {
+  const main = Result.getOrThrow(
+    parseCiMatrices(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')),
+  );
+  for (const script of ['test-lint-files.sh', 'test-lint-regressions.sh', 'test-lint-configuration.sh']) {
+    for (const matrices of [main, templates]) {
+      const selected = planCiChecks({
+        applyAffected: true,
+        changedPaths: [`app/scripts/ci/${script}`],
+        packages,
+        templates: matrices,
+      });
+      for (const [index, row] of TOOLING_ROWS.entries()) {
+        expect(selected.source.find(({ name }) => name === row)?.commands, script).toContain(
+          `bash scripts/ci/rstest-weighted-shard.sh ${String(index + 1)}/3 scripts`,
+        );
+      }
+    }
+  }
 });
 
 it('refuses a scope that names a source row the matrices do not have', () => {

@@ -11,8 +11,7 @@
 #     2. That run's own ci-comparison artifact says it planned against this branch (base-ref) and either ran a full
 #        plan, or an affected or scoped plan that compared with exactly the commit the push starts from (BEFORE_SHA).
 #        A full plan runs every gate whatever it compared with, so a forced-full run, which records no base, counts:
-#        plan-ci-checks.mts gives it the whole matrices, and the one gate that reads the comparison, the changed-file
-#        lint row, runs only in a narrowed plan. A narrowed plan's base is git merge-base, an ancestor of the pushed
+#        plan-ci-checks.mts gives it the whole matrices. A narrowed plan's base is git merge-base, an ancestor of the pushed
 #        commit, so base == BEFORE_SHA also makes the push a fast-forward from it. Another base-ref, a narrowed plan
 #        against an older merge base or none, a docs or a proven plan never counts.
 #     3. The commit the push starts from is green: the newest push run of this workflow on this branch for it

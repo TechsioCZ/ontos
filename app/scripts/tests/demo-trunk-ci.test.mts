@@ -12,7 +12,7 @@ import { inScope } from '../plan-ci-checks.mts';
 
 /*
  * The demo trunk's own CI rules, which main does not have. A diff inside a scope of scripts/ci-matrices.json runs only
- * the scope's source rows, the static contracts, the lint of the changed files and the unit rows of the packages it
+ * the scope's source rows, the static contracts, whole-tree lint and the unit rows of the packages it
  * changes: no unit is built and no service starts. These tests prove that nothing those skipped rows run reads a
  * scoped file, so a new import or path into a scoped file takes it out of its scope here instead of letting a broken
  * runtime change through the gates.

@@ -31,6 +31,7 @@ const run = (id: number, number: number, conclusion: string | null, status = 'co
 const jobs = (markerConclusion: string | null) => ({
   jobs: [
     {
+      id: 1,
       steps: [
         { conclusion: 'success', name: 'Checkout', status: 'completed' },
         ...(markerConclusion === null
@@ -39,6 +40,7 @@ const jobs = (markerConclusion: string | null) => ({
       ],
     },
   ],
+  total_count: 1,
 });
 
 /**
@@ -60,8 +62,8 @@ jq -c "$filter" "$FIXTURES/$name.json"
 const fixtureName = (route: string) => route.replaceAll(/[^A-Za-z0-9]/gu, '_');
 
 // Hotfix delivery (0fcf2ae30d, 5b13f3af9b): the planning job holds no delivery group, so a newer push plans and
-// builds while an older one still delivers; deliveries take turns in deliver_app, which no newer run cancels. No job
-// refuses a superseded head any more: every built run delivers, and deliver_app skips only when stage runs newer.
+// builds while an older one still delivers; deliveries take turns in deliver_app, which no newer run cancels.
+// Planning, builds and delivery do not refuse a superseded branch tip. Admitted lint finishes as well.
 it.effect('plans and builds every push at once, and lets deliveries alone take turns, none cancelled', () =>
   Effect.gen(function* deliveriesTakeTurns() {
     const fs = yield* FileSystem.FileSystem;
@@ -92,7 +94,15 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
     expect(workflow.jobs.deliver?.concurrency).toBeUndefined();
     expect(workflow.jobs.deliver_app?.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
     expect(workflow.jobs.build?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(workflow.jobs.lint?.concurrency).toEqual({
+      'cancel-in-progress': false,
+      group: `zerops-stage-lint-\${{ github.ref }}-\${{ matrix.shard }}`,
+    });
+    expect(workflow.jobs['lint-plan']?.concurrency).toBeUndefined();
     for (const [name, job] of Object.entries(workflow.jobs)) {
+      if (name.startsWith('lint')) {
+        continue;
+      }
       for (const step of job.steps) {
         expect(step.run ?? '', `${name}: ${step.name}`).not.toContain('ls-remote');
       }
@@ -104,10 +114,139 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
       ['deliver_app', true],
     ] as const) {
       const steps = workflow.jobs[name]?.steps ?? [];
-      expect(steps.some((step) => step.name === MUTATION_MARKER), name).toBe(delivers);
-      expect(steps.some((step) => step.uses === './.github/actions/deliver-stage'), name).toBe(delivers);
+      expect(
+        steps.some((step) => step.name === MUTATION_MARKER),
+        name,
+      ).toBe(delivers);
+      expect(
+        steps.some((step) => step.uses === './.github/actions/deliver-stage'),
+        name,
+      ).toBe(delivers);
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('rejects stale lint only at admission, never after installation or in the delivery queue', () =>
+  Effect.gen(function* lintAdmission() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            steps: Schema.Array(
+              Schema.Struct({
+                name: Schema.String,
+                run: Schema.optionalKey(Schema.String),
+                uses: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        ),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const git = path.join(directory, 'git');
+    yield* fs.writeFileString(
+      git,
+      `#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = 'ls-remote origin refs/heads/demo/sales-crm' ] || exit 9
+[ "$REMOTE_HEAD" != unavailable ] || exit 1
+printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
+`,
+    );
+    yield* fs.chmod(git, 0o700);
+    for (const name of ['lint-plan', 'lint']) {
+      const steps = workflow.jobs[name]?.steps ?? [];
+      expect(steps[0]?.uses).toContain('actions/checkout@');
+      expect(steps[1]?.name).toBe('Refuse a superseded lint head before preparation');
+      expect(steps.filter(({ run: command }) => command?.includes('ls-remote') === true)).toHaveLength(1);
+      const command = steps[1]?.run;
+      if (command === undefined) {
+        expect.fail('Missing lint admission checkpoint');
+      }
+      for (const head of [HEAD, BASE, '', 'unavailable']) {
+        const result = yield* collectToolingProcess(
+          ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', command], {
+            env: {
+              GITHUB_REF: 'refs/heads/demo/sales-crm',
+              GITHUB_SHA: HEAD,
+              PATH: `${directory}:${yield* Config.String('PATH')}`,
+              REMOTE_HEAD: head,
+            },
+            extendEnv: true,
+          }),
+        );
+        expect(result.status === 0, `${name}: ${head}`).toBe(head === HEAD);
+      }
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('requires exact-commit lint success only for mutation, including no-service plans', () =>
+  Effect.gen(function* lintDeliveryBarrier() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            if: Schema.optionalKey(Schema.String),
+            needs: Schema.optionalKey(Schema.Array(Schema.String)),
+            steps: Schema.Array(
+              Schema.Struct({
+                name: Schema.String,
+                run: Schema.optionalKey(Schema.String),
+                uses: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        ),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    const delivery = workflow.jobs.deliver_app;
+    expect(delivery?.needs).toEqual(['deliver', 'build', 'lint']);
+    expect(delivery?.if).toContain("needs.lint.result == 'success'");
+    expect(delivery?.if).toContain("needs.deliver.result == 'success'");
+    expect(workflow.jobs.build?.needs).toEqual(['deliver']);
+    expect(workflow.jobs.deliver?.needs).toBeUndefined();
+    expect(workflow.jobs.deliver?.if).toBe("github.ref == 'refs/heads/demo/sales-crm'");
+    expect(workflow.jobs['lint-plan']?.needs).toBeUndefined();
+    expect(workflow.jobs.lint?.needs).toEqual(['lint-plan']);
+    expect(workflow.jobs.lint?.if).toBe("needs.lint-plan.result == 'success'");
+    expect(workflow.jobs['lint-plan']?.if).toContain("startsWith(github.ref, 'refs/heads/candidate/')");
+    expect(workflow.jobs.lint?.steps.some(({ uses }) => uses === './.github/actions/lint-app')).toBe(true);
+    // No plan output can skip lint: a no-service run still fails if lint fails.
+    expect(workflow.jobs.lint?.if).not.toContain('outputs.any');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('feeds the verified snapshot into stage lint selection and retains its Markdown paths', () =>
+  Effect.gen(function* verifiedComparisonInput() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Struct({
+          'lint-plan': Schema.Struct({
+            steps: Schema.Array(
+              Schema.Struct({
+                env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+                run: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        }),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    const selector = workflow.jobs['lint-plan'].steps.find(
+      ({ run: command }) => command === 'bash app/scripts/ci/choose-stage-lint-shards.sh',
+    );
+    expect(selector?.env).toEqual({
+      CHANGED_PATHS: `\${{ runner.temp }}/zerops-delivery/changed-paths`,
+      COMPARISON_SNAPSHOT: `\${{ runner.temp }}/zerops-delivery/history.json`,
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 /** The API answers, as JSON text by route, and the services of each plan artifact, by its zip route. */
@@ -137,17 +276,25 @@ const readHistory = (
       expect(zipped.status, zipped.stderr).toBe(0);
     }
     const result = yield* collectToolingProcess(
-      ChildProcess.make('bash', [HISTORY], {
-        cwd: app,
-        env: {
-          FIXTURES: data,
-          GITHUB_REPOSITORY: 'owner/repo',
-          GITHUB_RUN_NUMBER: '20',
-          GITHUB_SHA: HEAD,
-          PATH: `${bin}:${yield* Config.String('PATH')}`,
-          RUNNER_TEMP: directory,
+      ChildProcess.make(
+        'bash',
+        [
+          '-e',
+          '-c',
+          `bash ${HISTORY} comparison >"$RUNNER_TEMP/comparison.json"; bash ${HISTORY} complete "$RUNNER_TEMP/comparison.json"`,
+        ],
+        {
+          cwd: app,
+          env: {
+            FIXTURES: data,
+            GITHUB_REPOSITORY: 'owner/repo',
+            GITHUB_RUN_NUMBER: '20',
+            GITHUB_SHA: HEAD,
+            PATH: `${bin}:${yield* Config.String('PATH')}`,
+            RUNNER_TEMP: directory,
+          },
         },
-      }),
+      ),
     );
     expect(result.status, result.stderr).toBe(0);
     return Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(result.stdout);
@@ -164,7 +311,10 @@ it.effect('reads the newest green run as the base, every later run that changed 
       {
         [artifactsOf(13)]: JSON.stringify({ artifacts: [{ id: 77 }] }),
         [COMPARE]: JSON.stringify({
-          files: [{ filename: 'app/n1-storefront/src/a.ts' }, { filename: 'b.ts', previous_filename: 'a.ts' }],
+          files: [
+            { filename: 'app/n1-storefront/src/a.ts', status: 'modified' },
+            { filename: 'b.ts', previous_filename: 'a.ts', status: 'renamed' },
+          ],
           status: 'ahead',
         }),
         [jobsOf(12)]: JSON.stringify(jobs(null)),
@@ -202,12 +352,61 @@ it.effect('reads the newest green run as the base, every later run that changed 
   }),
 );
 
+it.effect('reads mutation markers beyond 100 jobs and treats incomplete attempts as unknown', () =>
+  Effect.gen(function* paginatedMutations() {
+    const first = {
+      jobs: Array.from({ length: 100 }, (_, id) => ({ id, steps: [] })),
+      total_count: 101,
+    };
+    const second = { jobs: [{ id: 100, steps: jobs('success').jobs[0]?.steps }], total_count: 101 };
+    const common = {
+      [artifactsOf(13)]: JSON.stringify({ artifacts: [{ id: 77 }] }),
+      [COMPARE]: JSON.stringify({ files: [], status: 'identical' }),
+      [jobsOf(13)]: JSON.stringify(first),
+      [RUNS]: JSON.stringify({ workflow_runs: [run(13, 13, 'failure'), run(10, 10, 'success')] }),
+    };
+    const history = yield* readHistory(
+      { ...common, [`${jobsOf(13)}&page=2`]: JSON.stringify(second) },
+      { 'repos/owner/repo/actions/artifacts/77/zip': ['app'] },
+    );
+    expect(history).toMatchObject({ mutations: [{ mutated: true, runId: 13, services: ['app'] }] });
+    const untouched = yield* readHistory({
+      ...common,
+      [`${jobsOf(13)}&page=2`]: JSON.stringify({ jobs: [{ id: 100, steps: [] }], total_count: 101 }),
+    });
+    expect(untouched).toMatchObject({ mutations: [{ mutated: false, runId: 13, services: null }] });
+    for (const page of [
+      null,
+      {},
+      { jobs: [], total_count: 101 },
+      { ...second, total_count: 102 },
+      { jobs: [{ id: 100 }], total_count: 101 },
+    ]) {
+      const partial = yield* readHistory(
+        page === null ? common : { ...common, [`${jobsOf(13)}&page=2`]: JSON.stringify(page) },
+      );
+      expect(partial).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
+    }
+    // Even a marker on the readable page cannot turn an unreadable remainder into a complete answer.
+    const incomplete = yield* readHistory({
+      ...common,
+      [jobsOf(13)]: JSON.stringify({ jobs: jobs('success').jobs, total_count: 101 }),
+    });
+    expect(incomplete).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
+    const duplicate = yield* readHistory({
+      ...common,
+      [`${jobsOf(13)}&page=2`]: JSON.stringify({ jobs: [{ id: 0, steps: [] }], total_count: 101 }),
+    });
+    expect(duplicate).toMatchObject({ mutations: [{ mutated: null, runId: 13, services: null }] });
+  }),
+);
+
 it.effect('leaves every part it cannot read empty, so the plan deploys every service', () =>
   Effect.gen(function* unreadableHistory() {
     expect(yield* readHistory({})).toEqual({ comparison: null, mutations: [], runs: null });
     const partial = yield* readHistory({
       [COMPARE]: JSON.stringify({
-        files: Array.from({ length: 300 }, (_, index) => ({ filename: `f${String(index)}` })),
+        files: Array.from({ length: 300 }, (_, index) => ({ filename: `f${String(index)}`, status: 'added' })),
         status: 'ahead',
       }),
       [jobsOf(13)]: JSON.stringify(jobs('success')),
@@ -231,7 +430,7 @@ interface HistoryFixture {
   readonly mutations: readonly RunMutation[];
   readonly runs: readonly ReturnType<typeof run>[];
 }
-const planWith = (history: HistoryFixture) =>
+const planWith = (history: HistoryFixture, runAttempt = '1') =>
   Effect.gen(function* realPlanner() {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
@@ -245,7 +444,7 @@ const planWith = (history: HistoryFixture) =>
         env: {
           GITHUB_EVENT_NAME: 'push',
           GITHUB_OUTPUT: path.join(directory, 'outputs'),
-          GITHUB_RUN_ATTEMPT: '1',
+          GITHUB_RUN_ATTEMPT: runAttempt,
           GITHUB_RUN_NUMBER: '20',
           GITHUB_SHA: head,
         },
@@ -263,6 +462,79 @@ const changing = (changedPaths: readonly string[]) => ({
   ...greenBase,
   comparison: { ancestor: true, base: BASE, changedPaths, truncated: false },
 });
+
+for (const jobName of ['deliver_app']) {
+  it.effect(`refuses ${jobName} from an earlier plan attempt before artifacts or stage mutations`, () =>
+    Effect.gen(function* freshDeliveryPlan() {
+      const fs = yield* FileSystem.FileSystem;
+      const Step = Schema.Struct({
+        env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        name: Schema.String,
+        run: Schema.optionalKey(Schema.String),
+        uses: Schema.optionalKey(Schema.String),
+      });
+      const { jobs: workflowJobs } = Schema.decodeUnknownSync(
+        Schema.Struct({
+          jobs: Schema.Record(
+            Schema.String,
+            Schema.Struct({
+              outputs: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+              steps: Schema.Array(Step),
+            }),
+          ),
+        }),
+      )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+      expect(workflowJobs.deliver?.outputs?.run_attempt).toBe(`\${{ github.run_attempt }}`);
+      const steps = workflowJobs[jobName]?.steps ?? [];
+      const guard = steps.findIndex(({ name }) => name === 'Refuse a delivery planned in another run attempt');
+      expect(guard).toBeGreaterThanOrEqual(0);
+      expect(guard).toBeLessThan(
+        steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true),
+      );
+      expect(guard).toBeLessThan(steps.findIndex(({ name }) => name === MUTATION_MARKER));
+      const step = steps[guard];
+      expect(step?.env?.PLAN_RUN_ATTEMPT).toBe(`\${{ needs.deliver.outputs.run_attempt }}`);
+      const script = step?.run;
+      if (script === undefined) {
+        expect.fail('Missing delivery attempt guard');
+      }
+      for (const [planned, current, allowed] of [
+        ['1', '1', true],
+        ['1', '2', false],
+        ['', '2', false],
+        ['2', '2', true],
+      ] as const) {
+        const result = yield* collectToolingProcess(
+          ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', script], {
+            env: { GITHUB_RUN_ATTEMPT: current, GITHUB_RUN_ID: '2468', PLAN_RUN_ATTEMPT: planned },
+            extendEnv: true,
+          }),
+        );
+        expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
+        if (!allowed) {
+          expect(result.stdout).toContain('gh run rerun 2468 (without --failed)');
+          expect(result.stdout).toContain('dispatch the workflow on the current head');
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.live('replans a full rerun as a retry: a storefront-only first attempt becomes every service', () =>
+  Effect.gen(function* fullRerun() {
+    const history = changing(['app/akros-storefront/src/app/page.tsx']);
+    const first = yield* planWith(history);
+    expect(first.plan.full).toBe(false);
+    expect(first.plan.services).toEqual(['storefront', 'shop']);
+    const retry = yield* planWith(history, '2');
+    expect(retry.plan.full).toBe(true);
+    expect(retry.plan.services).toEqual(['app', 'storefront', 'shop', 'n1']);
+    expect(retry.plan.reasons).toContain('a re-run attempt deploys every service');
+    for (const service of ['app', 'storefront', 'shop', 'n1', 'full']) {
+      expect(retry.outputs).toContain(`${service}=true\n`);
+    }
+  }),
+);
 
 it.live('executes the real planner: an unreadable comparison deploys every service', () =>
   Effect.gen(function* unreadableComparison() {
@@ -293,15 +565,121 @@ it.live("executes the real planner over this commit's reference graph: CI-only c
 
 it.live("executes the real planner over this commit's reference graph: what stage runs deploys every service", () =>
   Effect.gen(function* deliveredInputs() {
-    // stage-warmup.mts left this list with the proofs (6c6620eafb): stage no longer runs it.
     for (const changed of [
       WORKFLOW,
       'app/scripts/zerops/app-host.mts',
       'app/scripts/run-zerops-migrator.mjs',
+      'app/scripts/ops/stage-warmup.mts',
       'app/scripts/zerops/push-service.sh',
     ]) {
       const { plan } = yield* planWith(changing([changed]));
       expect(plan.full, changed).toBe(true);
     }
   }),
+);
+
+it.effect('leaves malformed comparison file records unknown rather than granting partial or empty proof', () =>
+  Effect.gen(function* malformedComparison() {
+    for (const files of [
+      null,
+      {},
+      [null],
+      [{}],
+      [{ filename: '' }],
+      [{ filename: 'valid.ts', status: 'modified' }, {}],
+      [{ filename: 'new.txt' }],
+      [{ filename: 'new.txt', status: null }],
+      [{ filename: 'new.txt', status: '' }],
+      [{ filename: 'new.txt', status: 'unknown' }],
+      [{ filename: 'new.txt', status: 1 }],
+      [{ filename: 'new.ts', previous_filename: null, status: 'copied' }],
+      [{ filename: 'new.ts', previous_filename: '', status: 'copied' }],
+      [{ filename: 'new.ts', status: 'renamed' }],
+      [{ filename: 'new.ts', previous_filename: '', status: 'renamed' }],
+      [{ filename: 'new.ts', previous_filename: null, status: 'renamed' }],
+    ]) {
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({ files, status: 'identical' }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({ comparison: null });
+    }
+  }),
+);
+
+it.effect('accepts every documented GitHub file status and preserves supplied copy origins', () =>
+  Effect.gen(function* documentedStatuses() {
+    for (const status of ['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged']) {
+      const origin = status === 'renamed' || status === 'copied';
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({
+          files: [
+            origin ? { filename: 'new.txt', previous_filename: 'old.txt', status } : { filename: 'new.txt', status },
+          ],
+          status: 'ahead',
+        }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({
+        comparison: { changedPaths: origin ? ['new.txt', 'old.txt'] : ['new.txt'], truncated: false },
+      });
+    }
+    // GitHub's diff-entry schema does not require previous_filename for copies.
+    expect(
+      yield* readHistory({
+        [COMPARE]: JSON.stringify({ files: [{ filename: 'copy.txt', status: 'copied' }], status: 'ahead' }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+      }),
+    ).toMatchObject({ comparison: { changedPaths: ['copy.txt'] } });
+  }),
+);
+
+it.effect('retains both names when a renamed configuration makes unchanged files lint differently', () =>
+  Effect.gen(function* renamedConfiguration() {
+    const history = yield* readHistory({
+      [COMPARE]: JSON.stringify({
+        files: [{ filename: 'notes/old-config.txt', previous_filename: '.editorconfig', status: 'renamed' }],
+        status: 'ahead',
+      }),
+      [RUNS]: JSON.stringify({ workflow_runs: [run(10, 10, 'success')] }),
+    });
+    expect(history).toMatchObject({
+      comparison: { changedPaths: ['.editorconfig', 'notes/old-config.txt'], truncated: false },
+    });
+  }),
+);
+
+it.effect('keeps an unavailable terminal marker outcome unknown unless another attempt proves mutation', () =>
+  Effect.gen(function* unknownMarker() {
+    const unknown = { id: 2, steps: [{ conclusion: null, name: MUTATION_MARKER, status: 'completed' }] };
+    for (const proved of [false, true]) {
+      const allJobs = proved ? [unknown, ...jobs('success').jobs] : [unknown];
+      const history = yield* readHistory({
+        [COMPARE]: JSON.stringify({ files: [], status: 'identical' }),
+        [jobsOf(13)]: JSON.stringify({ jobs: allJobs, total_count: allJobs.length }),
+        [RUNS]: JSON.stringify({ workflow_runs: [run(13, 13, 'failure'), run(10, 10, 'success')] }),
+      });
+      expect(history).toMatchObject({ mutations: [{ mutated: proved ? true : null, runId: 13, services: null }] });
+    }
+  }),
+);
+
+it.effect('starts Stage Deploy even for a documentation-only repair push', () =>
+  Effect.gen(function* documentationTrigger() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({
+        on: Schema.Struct({
+          push: Schema.Struct({
+            branches: Schema.Array(Schema.String),
+            paths: Schema.optionalKey(Schema.Array(Schema.String)),
+            'paths-ignore': Schema.optionalKey(Schema.Array(Schema.String)),
+          }),
+        }),
+      }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    expect(workflow.on.push.branches).toContain('demo/sales-crm');
+    expect(workflow.on.push['paths-ignore']).toBeUndefined();
+    expect(workflow.on.push.paths).toBeUndefined();
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
