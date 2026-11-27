@@ -8,7 +8,8 @@ import { ShellAuthenticationApi } from '../../shared/browser-api.ts';
 
 /*
  * The Shell endpoint that hosts Core Media Current V1 for a module (#1443 P2): one POST, the Core operation's own
- * schemas, only Bearer problems (no session), and a source that never reads a cookie or resolves a session.
+ * schemas, only Bearer problems (no session), and a source that never reads a cookie or resolves a session. Which
+ * operation the mounted route authenticates against and serves is proven by request in the HTTP integration suite.
  */
 
 const { coreHostedOperations: group } = ShellAuthenticationApi.groups;
@@ -60,7 +61,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       // The principal comes from the verified assertion; the audience is the Shell app id, never a request value.
       expect(hosted).toContain('bindGatewayPrincipalVerifier(SHELL_HOST_APP_ID');
       expect(hosted).toContain('principalVerifier.verifyAndRedeem(authorization');
-      expect(hosted).toContain('authenticateHostedOperationPrincipal(authorization).pipe(');
+      // The served operation comes from the route's own registration, never from the request.
+      expect(hosted).toContain(
+        'authenticateHostedOperationPrincipal(authorization, servedHostedOperationOf(registration)).pipe(',
+      );
       const index = codeOf(yield* readApp('api/index.ts'));
       const handlerStart = index.indexOf('export const hostedAssetCurrent =');
       const groupStart = index.indexOf("HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations'");
@@ -75,7 +79,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       const handler = index.slice(handlerStart, groupStart);
       expect(handler).toContain('const { headers } = input.request');
       expect(handler).toMatch(
-        /const \{ installed, principal \} = yield\* authenticateHostedOperation\(\s*Redacted\.make\(headers\['authorization'\]\)/u,
+        /const \{ installed, principal \} = yield\* authenticateHostedOperation\(assetCurrentRead\)\(\s*Redacted\.make\(headers\['authorization'\]\)/u,
       );
       expect(handler).toContain('const handler = makeGovernedReadHttpHandler(');
       expect(handler).toContain('authenticatePrincipal: () => Effect.succeed(principal)');

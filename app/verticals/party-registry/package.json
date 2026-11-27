@@ -74,7 +74,7 @@
     "./apis/organization-business-name-export/client": "./src/api/organization-business-name-export-client.ts"
   },
   "scripts": {
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "modern build --deploy-target node && node ../../scripts/check-remote-ui-kit.mts dist && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts && drizzle-kit generate --config drizzle.contacts.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts && drizzle-kit check --config drizzle.contacts.config.ts",
     "db:migrate": "node ../../scripts/migration-convergence-cli.mts party",

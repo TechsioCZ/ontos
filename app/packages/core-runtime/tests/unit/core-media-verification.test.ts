@@ -1,8 +1,9 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Effect, Schema, Stream } from 'effect';
+import { Duration, Effect, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
+import { DigestStepTimeout } from '../../src/media/content-digest.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
 import { ObjectStorage, ObjectStorageNetworkError, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
 import type { ObjectStorageService } from '../../src/media/object-storage.ts';
@@ -159,3 +160,36 @@ it('refuses a value that is not a complete finding as verification evidence', ()
   expect(isMediaStoredObjectVerification({ outcome: 'sealed', providerId: 'p', storageKey: key })).toBe(false);
   expect(isMediaStoredObjectVerification(null)).toBe(false);
 });
+
+/** A platform digest stream that never answers: what the step guard exists for. */
+class StuckDigestStream extends WritableStream<Uint8Array> {
+  readonly digest = Promise.withResolvers<ArrayBuffer>().promise;
+
+  constructor(_algorithm: 'SHA-256') {
+    const never = Promise.withResolvers<undefined>().promise;
+    super({
+      close: () => never,
+      write: () => never,
+    });
+  }
+}
+
+it.live('answers a digest step that never returns as unverifiable, never as a mismatch or a defect', () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      Object.defineProperty(globalThis.crypto, 'DigestStream', { configurable: true, value: StuckDigestStream });
+    }),
+    () =>
+      Effect.gen(function* unanswered() {
+        const storage = yield* withStored(content);
+        const outcome = yield* verify(storage.service).pipe(
+          Effect.provideService(DigestStepTimeout, Duration.millis(40)),
+        );
+        expect(outcome).toMatchObject({ outcome: 'unverifiable', reason: 'digest_unanswered' });
+      }),
+    () =>
+      Effect.sync(() => {
+        Reflect.deleteProperty(globalThis.crypto, 'DigestStream');
+      }),
+  ),
+);

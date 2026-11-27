@@ -2,6 +2,7 @@ import { Effect, FileSystem, Schema, SchemaTransformation } from 'effect';
 
 import { ModuleKeySchema } from '../access/ids.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
+import { coreSystemWorkloadKeys } from '../modules/core-system-workloads.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
@@ -202,6 +203,44 @@ const loginRetirementRefusal = (
 };
 
 /**
+ * A registered workload binds an account principal of its own Tenant, once per key, to a key the composition
+ * declares; a core system workload is run only by an enrolled `system` principal, so no entry names one.
+ */
+const registeredWorkloadRefusal = (
+  file: StageAccountsFile,
+  declaredWorkloads: ReadonlySet<string>,
+): StageAccountsFileError | undefined => {
+  const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
+  if (tenantWorkloads.some(({ workloadKey }) => coreSystemWorkloadKeys.has(workloadKey))) {
+    return invalid(
+      'A core system workload is never bound from this file: enroll it with core.identity.change-system-workload-enrollment',
+    );
+  }
+  if (tenantWorkloads.some(({ workloadKey }) => !declaredWorkloads.has(workloadKey))) {
+    return invalid('Every registered workload must name a workload declared by the composition');
+  }
+  if (
+    file.tenants.some(({ accounts: tenantAccounts, workloads }) => {
+      const tenantPrincipalIds = new Set(tenantAccounts.map(({ principalId }) => principalId));
+      return workloads?.some(({ principalId }) => !tenantPrincipalIds.has(principalId)) === true;
+    })
+  ) {
+    return invalid('Every registered workload needs a principal of its own tenant');
+  }
+  if (
+    file.tenants.some(({ workloads }) =>
+      workloads === undefined
+        ? false
+        : new Set(workloads.map(({ principalId, workloadKey }) => `${principalId}:${workloadKey}`)).size !==
+          workloads.length,
+    )
+  ) {
+    return invalid('A tenant may register each workload key for a principal only once');
+  }
+  return undefined;
+};
+
+/**
  * Validates the operator accounts file without echoing any of its values: owner-only permissions,
  * the documented schema, unique identifiers and emails, grants that name only schema relations,
  * and retired data that never overlaps an active Tenant or account. The caller supplies the
@@ -246,27 +285,9 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
   if (accounts.some(({ grants }) => hasDuplicates(grants.roles))) {
     return yield* invalid('Stage account roles must be unique');
   }
-  const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
-  if (tenantWorkloads.some(({ workloadKey }) => !declaredWorkloads.has(workloadKey))) {
-    return yield* invalid('Every registered workload must name a workload declared by the composition');
-  }
-  if (
-    file.tenants.some(({ accounts: tenantAccounts, workloads }) => {
-      const tenantPrincipalIds = new Set(tenantAccounts.map(({ principalId }) => principalId));
-      return workloads?.some(({ principalId }) => !tenantPrincipalIds.has(principalId)) === true;
-    })
-  ) {
-    return yield* invalid('Every registered workload needs a principal of its own tenant');
-  }
-  if (
-    file.tenants.some(({ workloads }) =>
-      workloads === undefined
-        ? false
-        : new Set(workloads.map(({ principalId, workloadKey }) => `${principalId}:${workloadKey}`)).size !==
-          workloads.length,
-    )
-  ) {
-    return yield* invalid('A tenant may register each workload key for a principal only once');
+  const workloadRefusal = registeredWorkloadRefusal(file, declaredWorkloads);
+  if (workloadRefusal !== undefined) {
+    return yield* workloadRefusal;
   }
   if (
     file.tenants.some(

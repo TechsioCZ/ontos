@@ -360,3 +360,122 @@ it('rejects cookie realms shared between modules, including secure versus plain 
   expect(resolved.contracts).toEqual([]);
   expect(resolved.deploymentStatuses.map(({ status }) => status)).toEqual(['unavailable', 'unavailable']);
 });
+
+/** A contract whose manifest publishes these system workloads. */
+const declaring = (appId: string, moduleId: string, systemWorkloads: readonly string[]) => {
+  const fixture = contract(appId, moduleId);
+  return { ...fixture, manifest: { ...fixture.manifest, systemWorkloads } };
+};
+
+it('gives each system workload key one owning module: its own id and a dot start the key, and no other module declares it', () => {
+  const catalog = buildInstalledModuleCatalog([
+    {
+      contract: declaring('property-registry', 'property.registry', ['property.registry.archive-job']),
+      expectedAppId: 'property-registry',
+    },
+  ]);
+  expect(catalog.getByModuleId('property.registry')?.manifest.systemWorkloads).toEqual([
+    'property.registry.archive-job',
+  ]);
+  // A published contract naming a key of another module's namespace, or only sharing the root segment, is refused.
+  for (const foreign of ['documents.center.archive-job', 'property.registry-job', 'property.other.archive-job']) {
+    expect(() =>
+      buildInstalledModuleCatalog([
+        {
+          contract: declaring('property-registry', 'property.registry', [foreign]),
+          expectedAppId: 'property-registry',
+        },
+      ]),
+    ).toThrow();
+  }
+  // Two modules whose ids nest can both pass the prefix rule for one key; the catalog still refuses the second claim.
+  const shared = 'property.registry.archive.run';
+  const claimants = [
+    { contract: declaring('property-registry', 'property.registry', [shared]), expectedAppId: 'property-registry' },
+    {
+      contract: declaring('property-archive', 'property.registry.archive', [shared]),
+      expectedAppId: 'property-archive',
+    },
+  ];
+  const secondClaim = () => {
+    try {
+      return buildInstalledModuleCatalog(claimants);
+    } catch (error) {
+      return error;
+    }
+  };
+  expect(secondClaim()).toMatchObject({
+    reason: 'a system workload key may be declared by only one module in the installed catalog',
+  });
+  const resolved = resolveInstalledModuleCatalog(
+    [
+      ...claimants,
+      { contract: contract('documents-center', 'documents.center'), expectedAppId: 'documents-center' },
+    ].map((input) => ({ ...input, outcome: 'fetched' as const })),
+  );
+  expect(resolved.moduleIds).toEqual(['documents.center']);
+});
+
+/** A contract whose manifest declares one registered call, from its own job under this workload. */
+const calling = (appId: string, moduleId: string, jobKey: string, workloadKey: string) => {
+  const fixture = contract(appId, moduleId);
+  const registeredWorkloadCalls = [
+    {
+      audience: 'documents-center',
+      declarationKey: 'documents.center.record.write',
+      entrypointKey: 'documents.center.write-record',
+      jobKey,
+      legalEntityScope: 'optional' as const,
+      schemaVersion: '1',
+      workerKey: jobKey,
+      workloadKey,
+    },
+  ];
+  return { ...fixture, manifest: { ...fixture.manifest, registeredWorkloadCalls } };
+};
+
+const callingInput = (jobKey: string, workloadKey: string) => ({
+  contract: calling('property-registry', 'property.registry', jobKey, workloadKey),
+  expectedAppId: 'property-registry',
+});
+
+it("builds the catalog when a job calls under another module's declared system workload key, as Symmy under Inventory's", () => {
+  // Demo keeps no borrow rule: Symmy's job makes its inventory calls under `commerce.inventory.source-provision`, the
+  // system workload Inventory declares, and the stage composition installs both.
+  const owner = {
+    contract: declaring('documents-center', 'documents.center', ['documents.center.source-provision']),
+    expectedAppId: 'documents-center',
+  };
+  const caller = callingInput('property.registry.execute-job', 'documents.center.source-provision');
+  expect(buildInstalledModuleCatalog([owner, caller]).moduleIds).toEqual(['documents.center', 'property.registry']);
+  const resolved = resolveInstalledModuleCatalog(
+    [owner, caller].map((input) => ({ ...input, outcome: 'fetched' as const })),
+  );
+  expect(resolved.moduleIds).toEqual(['documents.center', 'property.registry']);
+});
+
+it('keeps core system modules out of the installed catalog: neither their id nor a key they declare may be claimed', () => {
+  // `core.media` is a core system module, declared by Core itself and always active; no deployment may claim its id.
+  expect(() =>
+    buildInstalledModuleCatalog([{ contract: contract('claims-media', 'core.media'), expectedAppId: 'claims-media' }]),
+  ).toThrow();
+  expect(() =>
+    buildInstalledModuleCatalog([
+      {
+        contract: declaring('claims-media', 'core.media', ['core.media.integrity']),
+        expectedAppId: 'claims-media',
+      },
+    ]),
+  ).toThrow();
+  const resolved = resolveInstalledModuleCatalog(
+    [
+      { contract: contract('claims-media', 'core.media'), expectedAppId: 'claims-media' },
+      { contract: contract('documents-center', 'documents.center'), expectedAppId: 'documents-center' },
+    ].map((input) => ({ ...input, outcome: 'fetched' as const })),
+  );
+  expect(resolved.moduleIds).toEqual(['documents.center']);
+  expect(resolved.deploymentStatuses).toEqual([
+    { appId: 'claims-media', reason: 'incompatible', status: 'unavailable' },
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+  ]);
+});

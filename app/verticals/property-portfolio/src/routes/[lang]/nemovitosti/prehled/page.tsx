@@ -8,6 +8,7 @@ import { FormInput } from '@app/admin-ui/form-controls';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
+import { Breadcrumb } from '@techsio/ui-kit/molecules/breadcrumb';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
@@ -46,7 +47,6 @@ import type {
 const overviewClass = 'grid min-w-0 gap-6 max-[480px]:gap-4';
 const headingClass = 'flex flex-wrap items-start justify-between gap-4';
 const stackClass = 'grid min-w-0 gap-2';
-const eyebrowClass = 'text-[11px] font-[650] uppercase tracking-[0.1em] text-fg-secondary';
 const titleClass = 'text-[28px] font-[650] tracking-tight max-[480px]:text-[24px]';
 const sectionTitleClass = 'text-[18px] font-semibold';
 const mutedClass = 'text-[13px] leading-[1.6] text-fg-secondary';
@@ -681,7 +681,17 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
       <section aria-busy={loading} aria-labelledby="overview-heading" className={overviewClass}>
         <header className={headingClass}>
           <div className={stackClass}>
-            <span className={eyebrowClass}>SPRÁVA NEMOVITOSTÍ</span>
+            <Breadcrumb aria-label={t('property-portfolio.overview.breadcrumb')} size="sm">
+              <Breadcrumb.List>
+                <Breadcrumb.Item>
+                  <Breadcrumb.Link href={href('nemovitosti')}>{t('property-portfolio.title')}</Breadcrumb.Link>
+                </Breadcrumb.Item>
+                <Breadcrumb.Separator />
+                <Breadcrumb.Item>
+                  <Breadcrumb.CurrentLink>{t('property-portfolio.pages.overview.title')}</Breadcrumb.CurrentLink>
+                </Breadcrumb.Item>
+              </Breadcrumb.List>
+            </Breadcrumb>
             <h1 className={titleClass} id="overview-heading">
               Vaše nemovitosti v souvislostech
             </h1>

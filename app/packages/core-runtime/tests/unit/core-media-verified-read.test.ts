@@ -527,7 +527,9 @@ it.live('the digest step guard the stream was opened under still applies when th
           Effect.provideService(DigestStepTimeout, Duration.millis(40)),
         );
         const [elapsed, exit] = yield* Effect.timed(Effect.exit(Stream.runDrain(opened.body)));
-        expect(Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isDieReason)).toBe(true);
+        expect(Exit.isFailure(exit) && Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          read: { outcome: 'unavailable', reason: 'digest_unanswered' },
+        });
         expect(Duration.toMillis(elapsed)).toBeLessThan(2000);
       }),
     () =>

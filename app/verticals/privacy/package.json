@@ -69,7 +69,7 @@
     "./domain/source-processing-context": "./shared/domain/source-processing-context.ts"
   },
   "scripts": {
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "modern build --deploy-target node && node ../../scripts/check-remote-ui-kit.mts dist && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",

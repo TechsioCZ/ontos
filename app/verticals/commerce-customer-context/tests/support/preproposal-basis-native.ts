@@ -1590,16 +1590,23 @@ export const selectNativeFederationSingletons = Effect.fn('PreproposalNative.gov
   }) {
     const policy = yield* Schema.decodeUnknownEffect(NativeGovernedSingletonPolicySchema)(input.governedPackages);
     const selected = yield* Effect.forEach((packageName: string) => {
-      const entries = input.shared.filter(({ name }) => name === packageName);
+      // A package without a root export, such as the kit, is shared as its subpaths, all at one version.
+      const exact = input.shared.filter(({ name }) => name === packageName);
+      const entries = exact.length > 0 ? exact : input.shared.filter(({ name }) => name.startsWith(`${packageName}/`));
       const [entry] = entries;
       if (entries.length === 0 && input.role === 'remote') {
         return Effect.succeed(Option.none());
       }
-      return entries.length === 1 &&
+      return (exact.length === 0 || entries.length === 1) &&
         entry !== undefined &&
-        entry.singleton === true &&
-        entry.requiredVersion !== undefined &&
-        entry.requiredVersion !== ''
+        entries.every(
+          ({ requiredVersion, singleton }) =>
+            singleton === true &&
+            requiredVersion !== undefined &&
+            requiredVersion !== '' &&
+            requiredVersion === entry.requiredVersion,
+        ) &&
+        entry.requiredVersion !== undefined
         ? Effect.succeed(Option.some({ packageName, version: entry.requiredVersion }))
         : Effect.fail(safeFailure('actual-mf-governed-singleton'));
     })(policy);

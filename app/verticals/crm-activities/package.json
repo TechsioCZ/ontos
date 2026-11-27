@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts crm-activities && modern dev",
-    "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app crm-activities --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical crm-activities --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app crm-activities --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app crm-activities --manifest-only && modern build --deploy-target node && node ../../scripts/check-remote-ui-kit.mts dist && node ../../scripts/generate-ontos-module-contract.mts --vertical crm-activities --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app crm-activities --target dist && modern deploy --skip-build --deploy-target node",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",

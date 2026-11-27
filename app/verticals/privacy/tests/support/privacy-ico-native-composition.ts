@@ -17,6 +17,7 @@ import { Effect, Redacted, Schema } from 'effect';
 import { derivePrivacyDsrOwnerContract } from './dsr-obligation-native.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 const digest = (document: string) => createHash('sha256').update(document, 'utf-8').digest('hex');
 const unavailable = (cause: unknown) =>
@@ -67,7 +68,7 @@ export const privacyIcoComposition = Effect.gen(function* genuinePrivacyIcoCompo
     ),
   )(federationDocument).pipe(Effect.mapError(unavailable));
   const sharedSingletons = yield* Effect.forEach(
-    observedFederation.shared.filter((entry) => entry.singleton === true),
+    sharedPackagesOf(observedFederation.shared).filter((entry) => entry.singleton === true),
     (entry) =>
       entry.requiredVersion === undefined
         ? Effect.fail(unavailable('A real shared singleton requires an exact version'))

@@ -26,6 +26,8 @@ const UnverifiableReasonSchema = Schema.Literals([
   'provider_mismatch',
   /** The object's stat changed while it was being read, so what was hashed may not be what is stored. */
   'object_changed',
+  /** A step of the platform digest did not answer within its guard, so nothing was proven. */
+  'digest_unanswered',
 ]);
 type UnverifiableReason = typeof UnverifiableReasonSchema.Type;
 
@@ -101,8 +103,8 @@ export const verifyStoredMediaObject = Effect.fn('MediaVerification.verify')(fun
     const opened = yield* storage.get(input.storageKey).pipe(Effect.mapError(unverifiableOf));
     const digest = new ContentDigest();
     yield* opened.body.pipe(
+      Stream.mapError(unverifiableOf),
       Stream.runForEach((chunk) => digest.add(chunk)),
-      Effect.mapError(unverifiableOf),
     );
     const observed = yield* digest.finish();
     // A clean end that disagrees with the provider's own length is a transfer problem, not a bad object.
@@ -122,9 +124,11 @@ export const verifyStoredMediaObject = Effect.fn('MediaVerification.verify')(fun
     return { ...base, ...observed, outcome: 'verified', versionRef: opened.stat.versionRef } as const;
   });
   const outcome = yield* read.pipe(
-    Effect.catchTag('MediaObjectUnverifiable', ({ reason }) =>
-      Effect.succeed({ ...base, outcome: 'unverifiable', reason } as const),
-    ),
+    Effect.catchTags({
+      MediaObjectUnverifiable: ({ reason }) => Effect.succeed({ ...base, outcome: 'unverifiable', reason } as const),
+      MediaUnavailable: () =>
+        Effect.succeed({ ...base, outcome: 'unverifiable', reason: 'digest_unanswered' } as const),
+    }),
   );
   // The brand is earned here: the verifier validates its own finding against the evidence schema.
   return yield* Schema.decodeUnknownEffect(MediaStoredObjectVerificationSchema)(outcome).pipe(Effect.orDie);

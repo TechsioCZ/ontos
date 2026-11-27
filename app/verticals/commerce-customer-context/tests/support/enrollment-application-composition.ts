@@ -33,6 +33,7 @@ import { deriveOntosMcpContribution } from '../../../../scripts/ontos-mcp-contri
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 type CompositionModule = ActiveApplicationCompositionSnapshot['composition']['modules'][number];
 
@@ -242,7 +243,7 @@ const compiledShell = Effect.fn('EnrollmentTests.compiledShell')(function* compi
     Effect.mapError((cause) => invalidCompiledInput(shellFederationFile, cause)),
   );
   const sharedSingletons = yield* Effect.forEach(
-    federation.shared.filter(({ singleton }) => singleton === true),
+    sharedPackagesOf(federation.shared).filter(({ singleton }) => singleton === true),
     sharedSingleton,
     { concurrency: 1 },
   );

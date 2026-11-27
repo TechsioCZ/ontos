@@ -4,7 +4,7 @@ import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/confi
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import * as Schema from 'effect/Schema';
 
-import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -19,6 +19,8 @@ const reactDomVersion = packageVersion('react-dom/package.json');
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({
   from: import.meta.url,
 });
+const uiKit = resolveUiKitShare(import.meta.url);
+
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
@@ -51,13 +53,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     }),
   },
   name: 'verticalPartyRegistry',
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': i18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': i18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'remote', uiKit },
+  ),
 });
 
 export default moduleFederationConfig;

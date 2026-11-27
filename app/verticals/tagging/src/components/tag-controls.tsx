@@ -49,6 +49,8 @@ import { isTagReadForbidden, tagsReadable } from '../tags/tag-access.ts';
 import type { TagCallFailure } from '../tags/tag-access.ts';
 import { useTagCatalog, useTagCatalogSnapshot } from '../tags/tag-catalog.ts';
 import type { TagCatalog } from '../tags/tag-catalog.ts';
+
+export { useTagCatalog };
 import { tagColorValue } from '../tags/tag-colors.ts';
 import { TagI18n } from '../tags/tag-i18n.tsx';
 

@@ -92,7 +92,7 @@ it('names the published calls an ended enrollment stops: its job calls and the c
   expect(enrolledWorkloadCalls({ manifest: {} }, jobKey)).toEqual([]);
 });
 
-it('takes no Principal, kind or second workload from the caller and requires a reason', () => {
+it('takes no Principal, kind or second workload from the caller, requires a reason and the module own key', () => {
   const decode = Schema.decodeUnknownSync(changeSystemWorkloadEnrollmentAction.descriptor.payloadSchema, {
     onExcessProperty: 'error',
   });
@@ -108,4 +108,23 @@ it('takes no Principal, kind or second workload from the caller and requires a r
   ).toThrow();
   expect(() => decode({ _tag: 'ENROLL', moduleKey: change.moduleKey, workloadKey: jobKey })).toThrow();
   expect(() => decode({ _tag: 'REACTIVATE', ...change })).toThrow();
+  // The key starts with the module key, for an end as for an enrollment.
+  for (const _tag of ['ENROLL', 'END'] as const) {
+    expect(() => decode({ _tag, ...change, workloadKey: 'commerce.pricing.source-write' })).toThrow(
+      /must start with integration\.symmy\./u,
+    );
+    expect(() => decode({ _tag, ...change, moduleKey: 'integration.symmy.execute' })).toThrow();
+  }
+  // A core module's declared key decodes; whether Core declares it is the handler's check.
+  expect(
+    Predicate.isTagged(
+      decode({
+        _tag: 'ENROLL',
+        moduleKey: 'core.media',
+        reason: 'Integrity checks',
+        workloadKey: 'core.media.integrity',
+      }),
+      'ENROLL',
+    ),
+  ).toBe(true);
 });

@@ -5,7 +5,7 @@ import {
   readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { SHELL_HOST_APP_ID, coreOperations } from '@app/core-runtime/sdk/core';
+import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
 import {
   ActionPrincipalScopeErrorSchema,
   ActionPrincipalUnavailableErrorSchema,
@@ -32,7 +32,8 @@ import { ShellInstalledModuleCatalog } from './modules/installed-module-catalog.
 /*
  * The receiving side of the Core operations the Shell host serves to modules (#1443 P2). Everything a vertical's
  * receiver proves, this proves for the Shell deployment, and one thing more: the assertion must have been issued to a
- * MODULE on behalf of a requester, and that module's own installed release must declare exactly this operation.
+ * MODULE on behalf of a requester, and that module's own installed release must declare exactly the operation the
+ * route serves (its provider identity: module, entrypoint key and schema version), not any Shell-hosted operation.
  *
  * - signature, issuer, exact audience (the Shell app id), approved release, expiry and the calling module's approved
  *   release are verified by the shared verifier bound to this deployment;
@@ -50,18 +51,44 @@ const unauthorized = () =>
     ActionPrincipalScopeErrorSchema.make({ reason: 'The Bearer assertion was not issued for this operation' }),
   );
 
-const declaresCurrent = ({ manifest }: ShellInstalledCatalog['contracts'][number]): boolean =>
-  manifest.requirements?.operations.some(
-    ({ callers, provider }) =>
-      callers?.length === 1 &&
-      callers[0]?.kind === 'person' &&
-      provider.moduleId === coreOperations.assetCurrent.provider.moduleId &&
-      provider.entrypointKey === coreOperations.assetCurrent.provider.entrypointKey &&
-      provider.schemaVersion === coreOperations.assetCurrent.provider.schemaVersion,
-  ) === true;
+/** The provider identity of the registration a Shell route actually serves, as a requirement names its provider. */
+interface ServedHostedOperation {
+  readonly entrypointKey: string;
+  readonly moduleId: string;
+  readonly schemaVersion: string;
+}
+
+interface ServedReadRegistration {
+  readonly descriptor: { readonly owningModuleKey: string; readonly readKey: string; readonly schemaVersion: string };
+}
+
+/** The operation a read registration serves, taken from the registration itself and never from the request. */
+const servedHostedOperationOf = (registration: ServedReadRegistration): ServedHostedOperation => ({
+  entrypointKey: registration.descriptor.readKey,
+  moduleId: registration.descriptor.owningModuleKey,
+  schemaVersion: registration.descriptor.schemaVersion,
+});
+
+/**
+ * Whether a module's installed release declares a requirement that relays exactly one person requester for exactly the
+ * operation a route serves. A module that declares another hosted operation (or this one at another schema version)
+ * is not a caller of this one: a confused deputy once a second operation is hosted.
+ */
+const declaresServedOperation =
+  (served: ServedHostedOperation) =>
+  ({ manifest }: ShellInstalledCatalog['contracts'][number]): boolean =>
+    manifest.requirements?.operations.some(
+      ({ callers, provider }) =>
+        callers?.length === 1 &&
+        callers[0]?.kind === 'person' &&
+        provider.moduleId === served.moduleId &&
+        provider.entrypointKey === served.entrypointKey &&
+        provider.schemaVersion === served.schemaVersion,
+    ) === true;
 
 /** Only the reviewed composition may nominate callers of the original Core Current registration. */
 export const coreHostedReadReceiverBindings = (installed: ShellInstalledCatalog): CoreReadReceiverBindingRegistry => {
+  const declaresCurrent = declaresServedOperation(servedHostedOperationOf(assetCurrentRead));
   const [first, ...rest] = installed.contracts.flatMap((contract) =>
     declaresCurrent(contract) ? [contract.deployment.appId] : [],
   );
@@ -69,10 +96,16 @@ export const coreHostedReadReceiverBindings = (installed: ShellInstalledCatalog)
     first === undefined ? [] : [{ callers: [first, ...rest], registration: assetCurrentRead }],
   );
 };
+
+/**
+ * The installed catalog of the verified assertion's composition, when the calling module's own installed release in
+ * it declares the served operation. Anything else is not authorized to call this endpoint.
+ */
 const loadAuthorizedHostedCatalog = Effect.fn('CoreHostedOperation.authorizeCaller')(
   function* loadAuthorizedHostedCatalog(
     actor: { readonly appId: string; readonly buildMarker: string },
     compositionRevision: string | undefined,
+    served: ServedHostedOperation,
   ) {
     const catalog = yield* ShellInstalledModuleCatalog;
     const installed = yield* catalog.load.pipe(
@@ -85,7 +118,7 @@ const loadAuthorizedHostedCatalog = Effect.fn('CoreHostedOperation.authorizeCall
     );
     return yield* compositionRevision === installed.composition.revision &&
     contract !== undefined &&
-    declaresCurrent(contract)
+    declaresServedOperation(served)(contract)
       ? Effect.succeed(installed)
       : unauthorized();
   },
@@ -93,14 +126,21 @@ const loadAuthorizedHostedCatalog = Effect.fn('CoreHostedOperation.authorizeCall
 
 /** The audience-bound verifier of this endpoint: verified, redeemed once, and issued to a module for its requester. */
 export const authenticateHostedOperationPrincipal = Effect.fn('CoreHostedOperation.authenticate')(
-  function* authenticateHostedOperationPrincipal(authorization: Redacted.Redacted<string | undefined>) {
+  function* authenticateHostedOperationPrincipal(
+    authorization: Redacted.Redacted<string | undefined>,
+    served: ServedHostedOperation,
+  ) {
     const redemption = yield* GatewayAssertionRedemptionService;
     const principal = yield* principalVerifier.verifyAndRedeem(authorization, { redemption });
     const actor = readVerifiedGatewayActor(principal);
     if (actor === undefined) {
       return yield* unauthorized();
     }
-    const installed = yield* loadAuthorizedHostedCatalog(actor, readVerifiedGatewayCompositionRevision(principal));
+    const installed = yield* loadAuthorizedHostedCatalog(
+      actor,
+      readVerifiedGatewayCompositionRevision(principal),
+      served,
+    );
     return { installed, principal };
   },
 );
@@ -117,21 +157,26 @@ export const hostedOperationProblems = makeGovernedReadProblems({
   unavailable: CoreHostedOperationUnavailableProblemSchema,
 });
 
-/** Maps the verifier's refusals onto the endpoint's two authentication problems (401 and a retryable 503). */
-export const authenticateHostedOperation = (
-  authorization: Redacted.Redacted<string | undefined>,
-  authenticationProblems: {
-    readonly authentication: () => ReturnType<typeof hostedOperationProblems.authentication>;
-    readonly unavailable: () => ReturnType<typeof hostedOperationProblems.unavailable>;
-  },
-) =>
-  authenticateHostedOperationPrincipal(authorization).pipe(
-    Effect.catchTags({
-      ActionPrincipalConfigurationError: () => Effect.fail(authenticationProblems.unavailable()),
-      ActionPrincipalExpiredError: () => Effect.fail(authenticationProblems.authentication()),
-      ActionPrincipalInvalidError: () => Effect.fail(authenticationProblems.authentication()),
-      ActionPrincipalMissingError: () => Effect.fail(authenticationProblems.authentication()),
-      ActionPrincipalScopeError: () => Effect.fail(authenticationProblems.authentication()),
-      ActionPrincipalUnavailableError: () => Effect.fail(authenticationProblems.unavailable()),
-    }),
-  );
+/**
+ * The authenticator of the route that serves `registration`: it maps the verifier's refusals onto the endpoint's two
+ * authentication problems (401 and a retryable 503) and admits only a module that declares that operation.
+ */
+export const authenticateHostedOperation =
+  (registration: ServedReadRegistration) =>
+  (
+    authorization: Redacted.Redacted<string | undefined>,
+    authenticationProblems: {
+      readonly authentication: () => ReturnType<typeof hostedOperationProblems.authentication>;
+      readonly unavailable: () => ReturnType<typeof hostedOperationProblems.unavailable>;
+    },
+  ) =>
+    authenticateHostedOperationPrincipal(authorization, servedHostedOperationOf(registration)).pipe(
+      Effect.catchTags({
+        ActionPrincipalConfigurationError: () => Effect.fail(authenticationProblems.unavailable()),
+        ActionPrincipalExpiredError: () => Effect.fail(authenticationProblems.authentication()),
+        ActionPrincipalInvalidError: () => Effect.fail(authenticationProblems.authentication()),
+        ActionPrincipalMissingError: () => Effect.fail(authenticationProblems.authentication()),
+        ActionPrincipalScopeError: () => Effect.fail(authenticationProblems.authentication()),
+        ActionPrincipalUnavailableError: () => Effect.fail(authenticationProblems.unavailable()),
+      }),
+    );

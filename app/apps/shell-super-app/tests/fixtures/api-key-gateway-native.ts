@@ -75,6 +75,7 @@ const unavailable = (cause?: unknown) =>
   });
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const sessionGatewayTag = 'session-gateway';
+const humanSessionTag = 'human-session';
 const gatewayDiagnosticsTag = 'gateway-diagnostics';
 const issuerDiagnosticsTag = 'issuer-diagnostics';
 const requestDiagnosticsTag = 'request-diagnostics';
@@ -231,6 +232,12 @@ export const ShellNativeSystemWorkloadEnrollmentCommandSchema = Schema.TaggedStr
 });
 export const ShellNativeSystemWorkloadEnrollmentResponseSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
   enrollment: SystemWorkloadEnrollmentResponseSchema,
+});
+/** The signed-in fixture human's own session, for the Shell routes that accept only a browser session. */
+export const ShellNativeHumanSessionCommandSchema = Schema.TaggedStruct(humanSessionTag, {});
+export const ShellNativeHumanSessionResponseSchema = Schema.TaggedStruct(humanSessionTag, {
+  cookie: Schema.String,
+  origin: Schema.String,
 });
 /** The relay source module's credential, provisioned by the platform exactly as every environment provisions it. */
 export const ShellNativeRelaySourceProvisionCommandSchema = Schema.TaggedStruct('relay-source-provision', {});
@@ -418,6 +425,7 @@ export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
   ShellNativeSystemWorkloadEnrollmentCommandSchema,
+  ShellNativeHumanSessionCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
@@ -481,6 +489,7 @@ export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeSetupGatewayResponseSchema,
   ShellNativeSystemWorkloadEnrollmentResponseSchema,
+  ShellNativeHumanSessionResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
 ]);
@@ -1043,6 +1052,16 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         },
       ),
       compositionSourceUrl: sourceUrl,
+      fixtureHumanSession: Effect.fn('ApiKeyGatewayNativeFixture.fixtureHumanSession')(function* fixtureHumanSession() {
+        yield* ensureOpen;
+        if (options.productionGate !== true || Option.isNone(yield* Ref.get(fixtureBoundActor))) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: humanSessionTag });
+        return Schema.is(ShellNativeHumanSessionResponseSchema)(response)
+          ? Object.freeze({ cookie: Redacted.make(response.cookie), origin: response.origin })
+          : yield* unavailable();
+      }),
       gatewayDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.gatewayDiagnostics')(function* gatewayDiagnostics() {
         yield* ensureOpen;
         if (options.productionGate !== true) {
