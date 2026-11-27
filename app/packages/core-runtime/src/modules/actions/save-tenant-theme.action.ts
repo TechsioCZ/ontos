@@ -10,7 +10,8 @@ import {
   TenantThemeKeySchema,
 } from '../../themes/contract.ts';
 import type { TenantThemeDefinition } from '../../themes/contract.ts';
-import { validateTenantTheme } from '../../themes/definition.ts';
+import { TenantThemeKit } from '../../themes/definition.ts';
+import type { TenantThemeKitService } from '../../themes/definition.ts';
 import { TenantThemeInvalid, TenantThemeUnavailable } from '../../themes/errors.ts';
 import { tenantThemeRepositoryFromTransaction } from '../../themes/repository.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
@@ -23,6 +24,7 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  */
 
 interface SaveTenantThemeServices {
+  readonly kit: TenantThemeKitService;
   readonly themes: ReturnType<typeof tenantThemeRepositoryFromTransaction>;
 }
 
@@ -34,7 +36,7 @@ const handleSaveTenantTheme = Effect.fn('SaveTenantThemeAction.handle')(function
   payload: TenantThemeDefinition,
   context: SaveTenantThemeContext,
 ) {
-  const theme = yield* validateTenantTheme(payload);
+  const theme = yield* context.services.kit.validate(payload);
   yield* context.services.themes.save(theme);
   return { themeKey: TenantThemeKeySchema.make(theme.key) };
 });
@@ -75,5 +77,8 @@ export const saveTenantThemeAction = defineAction(
     schemaVersion: '1',
   },
   handleSaveTenantTheme,
-  (transaction, scope) => Effect.succeed({ themes: tenantThemeRepositoryFromTransaction(transaction, scope.tenantId) }),
+  (transaction, scope) =>
+    TenantThemeKit.pipe(
+      Effect.map((kit) => ({ kit, themes: tenantThemeRepositoryFromTransaction(transaction, scope.tenantId) })),
+    ),
 );

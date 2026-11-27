@@ -6,6 +6,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { TenantThemeKitLive } from '@app/core-runtime/themes/kit';
 import { Deferred, Effect, Exit, Layer, Result, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it, rs } from 'effect-rstest';
@@ -147,6 +148,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
         Layer.mock(LegalEntityContext, {}),
         // The tenant has no theme attached: Core answers Business.
         Layer.mock(ReadRuntime, { runRead: () => Effect.succeed(businessThemeRead) }),
+        TenantThemeKitLive,
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
         Layer.mock(ShellGovernedReads, {
           composition: readComposition,

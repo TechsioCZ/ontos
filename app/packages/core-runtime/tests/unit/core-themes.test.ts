@@ -1,7 +1,7 @@
 import { businessBrand } from '@techsio/ui-kit/theme/built-in-brands';
 import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Schema, Struct } from 'effect';
+import { DateTime, Effect, Layer, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector, getActionHandler } from '../../src/testing/actions.ts';
@@ -12,15 +12,17 @@ import { isGenuineCoreOperation } from '../../src/modules/module-operation-execu
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { AttachTenantThemePayloadSchema } from '../../src/themes/contract.ts';
 import type { TenantThemeDefinition } from '../../src/themes/contract.ts';
-import { DEFAULT_TENANT_THEME, effectiveTenantTheme, tenantThemeRevision } from '../../src/themes/definition.ts';
+import { TenantThemeKit, tenantThemeRevision } from '../../src/themes/definition.ts';
+import type { TenantThemeKitService } from '../../src/themes/definition.ts';
 import { TenantThemeInvalid, TenantThemeNotFound } from '../../src/themes/errors.ts';
+import { TenantThemeKitLive } from '../../src/themes/kit.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import type { tenantThemeRepositoryFromTransaction } from '../../src/themes/repository.ts';
 
 /*
- * Tenant themes as Core owns them: a theme is stored only when the kit's brand validator accepts it, a tenant
- * without an attachment sees the kit's Business brand, and attaching names one of the tenant's saved themes or
- * nothing at all.
+ * Tenant themes as Core owns them, with the kit bound the way the Shell binds it: a theme is stored only when the
+ * kit's brand validator accepts it, a tenant without an attachment sees the kit's Business brand, and attaching names
+ * one of the tenant's saved themes or nothing at all.
  */
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -67,9 +69,9 @@ const memoryThemes = (saved: readonly TenantThemeDefinition[] = []) => {
   return { attachedKey: () => attachedKey, repository, themes };
 };
 
-const contextFor = (
+const contextFor = <Services>(
   action: typeof saveTenantThemeAction | typeof attachTenantThemeAction,
-  repository: TenantThemeRepository,
+  services: Services,
 ) => {
   const collector = createActionCollector(
     action.descriptor.domainEvents,
@@ -84,16 +86,20 @@ const contextFor = (
     recordAuditEvidence: collector.recordAuditEvidence,
     recordDataAccess: collector.recordDataAccess,
     scope,
-    services: { themes: repository },
+    services,
   };
 };
 
 const save = (payload: TenantThemeDefinition, repository: TenantThemeRepository) =>
-  getActionHandler(saveTenantThemeAction)(payload, contextFor(saveTenantThemeAction, repository));
+  TenantThemeKit.pipe(
+    Effect.flatMap((kit: TenantThemeKitService) =>
+      getActionHandler(saveTenantThemeAction)(payload, contextFor(saveTenantThemeAction, { kit, themes: repository })),
+    ),
+  );
 const attach = (themeKey: string | null, repository: TenantThemeRepository) =>
   getActionHandler(attachTenantThemeAction)(
     Schema.decodeSync(AttachTenantThemePayloadSchema)({ themeKey }),
-    contextFor(attachTenantThemeAction, repository),
+    contextFor(attachTenantThemeAction, { themes: repository }),
   );
 
 it('registers both Actions as tenant administration of core.themes and the read for every signed-in member', () => {
@@ -108,12 +114,6 @@ it('registers both Actions as tenant administration of core.themes and the read 
   expect(tenantThemeRead.descriptor.entrypoint.authorization).toEqual({ kind: 'authenticated_principal' });
 });
 
-it('gives a tenant without an attachment the kit Business brand', () => {
-  expect(DEFAULT_TENANT_THEME).toBe(businessBrand);
-  expect(effectiveTenantTheme()).toBe(businessBrand);
-  expect(effectiveTenantTheme(acme)).toBe(acme);
-});
-
 it.effect('names one exact definition by its revision', () =>
   Effect.gen(function* revisions() {
     const revision = yield* tenantThemeRevision(acme);
@@ -124,61 +124,69 @@ it.effect('names one exact definition by its revision', () =>
   }),
 );
 
-it.effect('saves a theme the brand validator accepts and replaces the one with the same key', () =>
-  Effect.gen(function* saveValid() {
-    const store = memoryThemes();
-    expect(yield* save(acme, store.repository)).toEqual({ themeKey: 'acme' });
-    const relabelled = { ...acme, label: 'Acme Industries' };
-    yield* save(relabelled, store.repository);
-    expect(store.themes.get('acme')).toEqual(relabelled);
-    // Saving never attaches.
-    expect(store.attachedKey()).toBeNull();
-  }),
-);
+it.layer(TenantThemeKitLive)('with the kit bound as the Shell binds it', (suite) => {
+  suite.effect('gives a tenant without an attachment the kit Business brand', () =>
+    Effect.gen(function* kitDefault() {
+      expect((yield* TenantThemeKit).defaultTheme).toEqual(businessBrand);
+    }),
+  );
 
-it.effect('rejects a theme the brand validator refuses, with every issue, and stores nothing', () =>
-  Effect.gen(function* saveInvalid() {
-    const store = memoryThemes();
-    const failure = yield* save(
-      {
-        ...acme,
-        tokens: {
-          '--color-bg-primary-base': '#ffffff',
-          '--color-button-fg-primary': '#ffffff',
-          '--color-not-in-the-foundation': '#000000',
+  suite.effect('saves a theme the brand validator accepts and replaces the one with the same key', () =>
+    Effect.gen(function* saveValid() {
+      const store = memoryThemes();
+      expect(yield* save(acme, store.repository)).toEqual({ themeKey: 'acme' });
+      const relabelled = { ...acme, label: 'Acme Industries' };
+      yield* save(relabelled, store.repository);
+      expect(store.themes.get('acme')).toEqual(relabelled);
+      // Saving never attaches.
+      expect(store.attachedKey()).toBeNull();
+    }),
+  );
+
+  suite.effect('rejects a theme the brand validator refuses, with every issue, and stores nothing', () =>
+    Effect.gen(function* saveInvalid() {
+      const store = memoryThemes();
+      const failure = yield* save(
+        {
+          ...acme,
+          tokens: {
+            '--color-bg-primary-base': '#ffffff',
+            '--color-button-fg-primary': '#ffffff',
+            '--color-not-in-the-foundation': '#000000',
+          },
         },
-      },
-      store.repository,
-    ).pipe(Effect.flip);
-    expect(Schema.is(TenantThemeInvalid)(failure) ? failure.issues : []).toEqual(
-      expect.arrayContaining([
-        '--color-not-in-the-foundation: not a token of the foundation',
-        expect.stringMatching(/^button primary \(light\): contrast 1\.00:1/u),
-      ]),
-    );
-    const unsafe = yield* save(
-      { ...acme, tokens: { '--color-primary': 'red; } body { color: red' } },
-      store.repository,
-    ).pipe(Effect.flip);
-    expect(Schema.is(TenantThemeInvalid)(unsafe) ? unsafe.issues : []).toEqual([
-      '--color-primary: not a safe token value',
-    ]);
-    expect(store.themes.size).toBe(0);
-  }),
-);
+        store.repository,
+      ).pipe(Effect.flip);
+      expect(Schema.is(TenantThemeInvalid)(failure) ? failure.issues : []).toEqual(
+        expect.arrayContaining([
+          '--color-not-in-the-foundation: not a token of the foundation',
+          expect.stringMatching(/^button primary \(light\): contrast 1\.00:1/u),
+        ]),
+      );
+      const unsafe = yield* save(
+        { ...acme, tokens: { '--color-primary': 'red; } body { color: red' } },
+        store.repository,
+      ).pipe(Effect.flip);
+      expect(Schema.is(TenantThemeInvalid)(unsafe) ? unsafe.issues : []).toEqual([
+        '--color-primary: not a safe token value',
+      ]);
+      expect(store.themes.size).toBe(0);
+    }),
+  );
+});
 
 it.effect('attaches a saved theme, refuses an unknown key and detaches back to the default', () =>
   Effect.gen(function* attachDetach() {
     const store = memoryThemes([acme]);
     expect(yield* attach('acme', store.repository)).toEqual({ themeKey: 'acme' });
-    expect(effectiveTenantTheme(yield* store.repository.attached())).toBe(acme);
+    expect(yield* store.repository.attached()).toBe(acme);
 
     const unknown = yield* attach('nobody-saved-this', store.repository).pipe(Effect.flip);
     expect(Schema.is(TenantThemeNotFound)(unknown)).toBe(true);
     expect(store.attachedKey()).toBe('acme');
 
     expect(yield* attach(null, store.repository)).toEqual({ themeKey: null });
-    expect(effectiveTenantTheme(yield* store.repository.attached())).toBe(businessBrand);
+    expect(yield* store.repository.attached()).toBeUndefined();
   }),
 );
 
@@ -187,7 +195,7 @@ it.effect('attaches a saved theme, refuses an unknown key and detaches back to t
  * drops a selected one, the theme is the tenant's), gets the tenant's theme. Only the SQL transport is scripted. While
  * the read declared `optional` company scope, it answered every member with ReadPermissionUnavailable (a Shell 503).
  */
-it.layer(NodeCrypto.layer)('the tenant theme read in the Read runtime', (suite) => {
+it.layer(Layer.merge(NodeCrypto.layer, TenantThemeKitLive))('the tenant theme read in the Read runtime', (suite) => {
   suite.effect('answers a signed-in member of the tenant without any company', () =>
     Effect.gen(function* memberReadsTheme() {
       const harness = yield* makeReadTestHarness({
