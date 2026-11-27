@@ -133,6 +133,27 @@ it.effect('names one exact definition by its revision', () =>
   }),
 );
 
+it.effect('names a theme by its content, not by the order of its keys', () =>
+  Effect.gen(function* keyOrder() {
+    // As jsonb gives a stored theme back: the same tokens, in another order.
+    const reordered = { ...acme, tokens: Object.fromEntries(Object.entries(acme.tokens).toReversed()) };
+    expect(Object.keys(reordered.tokens)).not.toEqual(Object.keys(acme.tokens));
+    expect(yield* tenantThemeRevision(reordered)).toBe(yield* tenantThemeRevision(acme));
+    const components = {
+      button: { size: 'sm' },
+      input: { appearance: 'outline', size: 'lg' },
+    };
+    const reversedComponents = Object.fromEntries(Object.entries(components).toReversed());
+    expect(yield* tenantThemeRevision({ ...acme, defaults: { components: reversedComponents } })).toBe(
+      yield* tenantThemeRevision({ ...acme, defaults: { components } }),
+    );
+    // The order of the modes is the theme's own.
+    expect(yield* tenantThemeRevision({ ...acme, modes: ['dark', 'light'] })).not.toBe(
+      yield* tenantThemeRevision(acme),
+    );
+  }),
+);
+
 it.layer(TenantThemeKitLive)('with the kit bound as the Shell binds it', (suite) => {
   suite.effect('gives a tenant without an attachment the kit Business brand', () =>
     Effect.gen(function* kitDefault() {
