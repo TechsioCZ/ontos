@@ -201,6 +201,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         PARTY_READ_WORKLOAD,
         sourceWrite,
         SOURCE_READ_WORKLOAD,
+        'commerce.customer-context.source-profile-proof',
         businessRead,
         PROFILE_ICO_WORKLOAD,
         'integration.symmy.source-organization-facts.read',

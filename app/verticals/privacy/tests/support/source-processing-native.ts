@@ -6,7 +6,7 @@ import {
   CustomerProfileSourceResponseSchema,
 } from '@app/commerce-customer-context/api/customer-profile-source';
 import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, Crypto, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
@@ -84,6 +84,7 @@ const SeedSchema = Schema.Struct({
   controllerRef: Ref,
   dataCategoryRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   governancePrincipalId: PrincipalId,
+  grants: Schema.optionalKey(Schema.Array(SourceProcessingGrantSchema)),
   legalEntityId: LegalEntityId,
   meaning: Ref,
   tenantId: TenantId,
@@ -228,7 +229,7 @@ const subjectForSource = Effect.fn('PrivacyNativeFixture.subjectForSource')(func
   return subjectId;
 });
 /**
- * Carries the route's earlier admissions verbatim. An explicit fixture admits each plan source as its own subject; a
+ * An explicit fixture admits each plan source as its own subject; a
  * DATA policy for a committed profile admits its plan sources as records of that one person.
  */
 const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions')(function* seedRouteAdmissions(input: {
@@ -238,12 +239,6 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
   readonly person:
     | { readonly dataSubjectId: string; readonly personKey: string; readonly personSubjectId: string }
     | undefined;
-  readonly priorAdmissions: readonly {
-    readonly key: string;
-    readonly record: unknown;
-    readonly role: string;
-    readonly subjectId: string;
-  }[];
   readonly scope: FixtureScope;
   readonly seed: typeof SeedSchema.Type;
   readonly subjects: Map<string, string>;
@@ -254,10 +249,7 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
     readonly request: typeof SourceProcessingEligibilityRequestSchema.Type;
     readonly subjectId: string;
   }[] = [];
-  // Admissions the route already made (by the integration's own admission) carry over verbatim.
-  const admitted = new Map(
-    input.priorAdmissions.map((row) => [row.key, { record: row.record, role: row.role, subjectId: row.subjectId }]),
-  );
+  const admitted = new Map<string, { record: unknown; role: string; subjectId: string }>();
   // A real intake admits customers and their child records through the Privacy Action instead.
   const ownSources =
     seed.admitSources === true || person !== undefined
@@ -286,17 +278,20 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
     admitted,
     ([key, entry]) =>
       Effect.gen(function* insertAdmission() {
-        yield* transaction.insert(sourceProcessingAdmissions).values({
-          ...scope,
-          authorizationId,
-          firstAdmittedAt: new Date(from),
-          lastActionInvocationId: yield* nextId(),
-          lastAdmittedAt: new Date(from),
-          privacySubjectId: entry.subjectId,
-          role: entry.role,
-          sourceIdentityKey: key,
-          sourceRecord: entry.record,
-        });
+        yield* transaction
+          .insert(sourceProcessingAdmissions)
+          .values({
+            ...scope,
+            authorizationId,
+            firstAdmittedAt: new Date(from),
+            lastActionInvocationId: yield* nextId(),
+            lastAdmittedAt: new Date(from),
+            privacySubjectId: entry.subjectId,
+            role: entry.role,
+            sourceIdentityKey: key,
+            sourceRecord: entry.record,
+          })
+          .onConflictDoNothing();
       }),
     { concurrency: 1, discard: true },
   );
@@ -629,27 +624,6 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
             ({ record }) => Schema.decodeUnknownEffect(SourceProcessingAuthorizationSchema)(record),
             { concurrency: 1 },
           );
-          const priorAdmissions =
-            prior.length === 0
-              ? []
-              : yield* transaction
-                  .select({
-                    key: sourceProcessingAdmissions.sourceIdentityKey,
-                    record: sourceProcessingAdmissions.sourceRecord,
-                    role: sourceProcessingAdmissions.role,
-                    subjectId: sourceProcessingAdmissions.privacySubjectId,
-                  })
-                  .from(sourceProcessingAdmissions)
-                  .where(
-                    and(
-                      eq(sourceProcessingAdmissions.tenantId, scope.tenantId),
-                      eq(sourceProcessingAdmissions.legalEntityId, scope.legalEntityId),
-                      inArray(
-                        sourceProcessingAdmissions.authorizationId,
-                        prior.map(({ id }) => id),
-                      ),
-                    ),
-                  );
           const endedAt = DateTime.formatIso(now);
           for (const authorization of priorAuthorizations) {
             const ended = {
@@ -729,6 +703,7 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
             },
           });
           const grants = mergeGrants([
+            ...(seed.grants ?? []),
             ...priorAuthorizations.flatMap(({ grants: priorGrants }) => priorGrants),
             ...(yield* Effect.all(seed.contexts.map(fixtureGrant))),
           ]);
@@ -892,7 +867,6 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
               from,
               nextId,
               person: committedPerson,
-              priorAdmissions,
               scope,
               seed,
               subjects,

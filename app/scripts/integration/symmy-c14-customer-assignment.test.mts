@@ -538,6 +538,7 @@ it.live(
         fixture.ownerDiagnostics.set('party-registry', recoveryParty.diagnostic);
         for (const workload of [
           'commerce.customer-context.source-read',
+          'commerce.customer-context.source-profile-proof',
           'privacy.core.source-processing-check',
           'party.registry.source-read',
         ]) {
@@ -546,7 +547,7 @@ it.live(
         }
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now()
           where tenant_id=${tenantId} and ((principal_id=${systemId} and workload_key in
-            ('commerce.customer-context.source-write','commerce.customer-context.source-read','privacy.core.source-processing-check','party.registry.source-read'))
+            ('commerce.customer-context.source-write','commerce.customer-context.source-read','commerce.customer-context.source-profile-proof','privacy.core.source-processing-check','party.registry.source-read'))
             or principal_id=${fixture.integration.principalId})`;
         yield* admin`update core.principals set status='disabled',disabled_at=now()
           where tenant_id=${tenantId} and principal_id=${fixture.integration.principalId}`;

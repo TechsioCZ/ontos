@@ -53,6 +53,7 @@ import type {
   SourceProcessingAuthorization,
   SourceProcessingGrant,
 } from '../../shared/domain/privacy-source-processing-authorization.ts';
+import { currentScopeControllers } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import { antiResurrectionProtections, privacySubjects } from '../database/schema.ts';
@@ -85,6 +86,8 @@ const applicabilityReceiptLifetime = { minutes: 1 } as const;
 type TargetAdmission = SourceProcessingGrant['targetAdmission'];
 
 const symmyIntegrationAppId = 'symmy-integration';
+const partyConsumer = 'party.registry' as const;
+const commerceConsumer = 'commerce.customer-context' as const;
 const privacyModuleId = 'privacy.core' as const;
 
 const unavailable = (cause?: unknown) => {
@@ -119,10 +122,9 @@ export interface SourceProcessingEligibilityServices {
   readonly purposes: Pick<ProcessingPurposeRepositoryService, 'get'>;
   readonly repository: Pick<
     PrivacyOperationRepositoryService,
-    'listApplicabilityDecisions' | 'listApplicabilityPolicies' | 'resolveEligibilityInputs'
+    'listApplicabilityDecisions' | 'listApplicabilityPolicies' | 'resolveEligibilityInputs' | 'listResponsibilities'
   >;
   readonly resolveSubject: (
-    authorization: SourceProcessingAuthorization,
     request: SourceProcessingEligibilityRequest,
     targetAdmission: TargetAdmission,
   ) => Effect.Effect<Option.Option<ResolvedSourceSubject>, ReadHandlerUnavailable>;
@@ -141,7 +143,7 @@ const correlatedSourcePersonTarget = (
   context.targetAdmission === 'CURRENT_SOURCE_PERSON' &&
   context.request.target === null &&
   request.target?.kind === 'PARTY' &&
-  request.consumerModuleId === 'commerce.customer-context' &&
+  request.consumerModuleId === commerceConsumer &&
   request.operation === 'PROFILE_CREATE' &&
   request.source !== null &&
   request.partySourceReference !== undefined &&
@@ -177,6 +179,112 @@ const currentContextMatches = (
 };
 
 const missing = (notEvaluated: SourceProcessingNotEvaluatedCause) => ({ notEvaluated }) as const;
+const consumerApps: ReadonlyMap<string, string> = new Map([
+  [partyConsumer, 'party-registry'],
+  [commerceConsumer, 'commerce-customer-context'],
+  [SymmyCustomerSourceIntakeConsumerModule, symmyIntegrationAppId],
+]);
+const currentGrantController = Effect.fn('Privacy.currentGrantController')(function* currentController(
+  authorization: SourceProcessingAuthorization,
+  scope: OperationalScope,
+  services: SourceProcessingEligibilityServices,
+  evaluatedAt: string,
+) {
+  const controllers = currentScopeControllers(
+    yield* services.repository
+      .listResponsibilities(scope.tenantId, authorization.legalEntityId)
+      .pipe(Effect.mapError(unavailable)),
+    authorization.scopeTemplate.processingScopeRef,
+    evaluatedAt,
+  );
+  const [controller] = controllers;
+  const expected = authorization.applicability.authority.controllerRef;
+  return (
+    controllers.length === 1 &&
+    controller !== undefined &&
+    authorization.responsibilityAssignmentRefs.some(
+      (ref) => ref.resourceId === controller.assignmentRef.resourceId && ref.tenantId === scope.tenantId,
+    ) &&
+    controller.holder.holder.tenantId === scope.tenantId &&
+    controller.holder.holder.resourceId === expected.resourceId &&
+    controller.holder.holder.moduleId === expected.moduleId &&
+    controller.holder.holder.resourceType === expected.resourceType
+  );
+});
+const resolveStandingUse = Effect.fn('Privacy.resolveStandingUse')(function* standing(
+  request: SourceProcessingEligibilityRequest,
+  scope: OperationalScope,
+  services: SourceProcessingEligibilityServices,
+  evaluatedAt: string,
+  active: readonly SourceProcessingAuthorization[],
+) {
+  const caller =
+    scope.authMethod === 'system'
+      ? readVerifiedGatewayWorkload(scope)?.sourceAppId
+      : readVerifiedGatewayActor(scope)?.appId;
+  if (
+    caller === undefined ||
+    consumerApps.get(request.consumerModuleId) !== caller ||
+    scope.legalEntityId === undefined
+  ) {
+    return missing('NO_CONTEXT');
+  }
+  const granted = active.flatMap((authorization) => {
+    const grant = sourceProcessingGrantFor(authorization, request, scope);
+    return grant === undefined ||
+      authorization.authorizationRef.tenantId !== scope.tenantId ||
+      authorization.legalEntityId !== scope.legalEntityId
+      ? []
+      : [{ authorization, grant }];
+  });
+  const [match] = granted;
+  if (granted.length !== 1 || match === undefined) {
+    return missing('NO_CONTEXT');
+  }
+  const { authorization, grant } = match;
+
+  if (!(yield* currentGrantController(authorization, scope, services, evaluatedAt))) {
+    return missing('APPLICABILITY_NOT_CURRENT');
+  }
+  const targetAdmission = request.target?.kind === 'PARTY' ? grant.targetAdmission : undefined;
+  const resolvedSubject = yield* services.resolveSubject(request, targetAdmission);
+  if (Option.isNone(resolvedSubject)) {
+    return missing('NO_CONTEXT');
+  }
+  const { admittedAs, subjectId } = resolvedSubject.value;
+  const template = authorization.scopeTemplate;
+  const intendedScope = sourceProcessingIntendedScope(template, {
+    moduleId: privacyModuleId,
+    resourceId: subjectId,
+    resourceType: 'privacy.core.privacy-subject',
+    tenantId: scope.tenantId,
+  });
+  const authority = {
+    asOf: evaluatedAt,
+    authority: authorization.applicability.authority,
+    decisionEvaluatedAt: authorization.applicability.evaluatedAt,
+    decisionOutcome: 'APPLICABLE' as const,
+    decisionRef: authorization.applicability.decisionRef,
+    evidenceRefs: authorization.applicability.evidenceRefs,
+    receiptRef: authorization.applicability.receiptRef,
+    scope: sourceProcessingApplicabilityScope(template),
+    status: 'CURRENT' as const,
+    validUntil: DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(evaluatedAt), applicabilityReceiptLifetime)),
+  };
+  return {
+    admittedAs,
+    authority,
+    authorityIncarnation: authorization.authorizationRef.resourceId,
+    authorityRevision: String(authorization.revision),
+    contentScopeRefs: template.dataCategoryRefs,
+    intendedScope,
+    priorInterventionScopes: active.flatMap((prior) =>
+      prior.lifecycle === 'ENDED' ? [sourceProcessingIntendedScope(prior.scopeTemplate, intendedScope.subjectRef)] : [],
+    ),
+    resourceRefs: [subjectId],
+    targetAdmission,
+  };
+});
 const resolveSourceUse = Effect.fn('Privacy.resolveSourceUse')(function* resolveUse(
   request: SourceProcessingEligibilityRequest,
   scope: OperationalScope,
@@ -192,54 +300,7 @@ const resolveSourceUse = Effect.fn('Privacy.resolveSourceUse')(function* resolve
       readVerifiedGatewayWorkload(scope)?.jobKey === 'integration.symmy.execute-symmy-job' ||
       readVerifiedGatewayActor(scope)?.appId === symmyIntegrationAppId
     ) {
-      const granted = active.flatMap((authorization) => {
-        const grant = sourceProcessingGrantFor(authorization, request, scope);
-        return grant === undefined ||
-          authorization.authorizationRef.tenantId !== scope.tenantId ||
-          authorization.legalEntityId !== scope.legalEntityId
-          ? []
-          : [{ authorization, grant }];
-      });
-      const [match] = granted;
-      if (granted.length !== 1 || match === undefined) {
-        return missing('NO_CONTEXT');
-      }
-      const { authorization, grant } = match;
-      const targetAdmission = request.target?.kind === 'PARTY' ? grant.targetAdmission : undefined;
-      const resolvedSubject = yield* services.resolveSubject(authorization, request, targetAdmission);
-      if (Option.isNone(resolvedSubject)) {
-        return missing('NO_CONTEXT');
-      }
-      const { admittedAs, subjectId } = resolvedSubject.value;
-      const template = authorization.scopeTemplate;
-      const intendedScope = sourceProcessingIntendedScope(template, {
-        moduleId: privacyModuleId,
-        resourceId: subjectId,
-        resourceType: 'privacy.core.privacy-subject',
-        tenantId: scope.tenantId,
-      });
-      const authority = {
-        asOf: evaluatedAt,
-        authority: authorization.applicability.authority,
-        decisionEvaluatedAt: authorization.applicability.evaluatedAt,
-        decisionOutcome: 'APPLICABLE' as const,
-        decisionRef: authorization.applicability.decisionRef,
-        evidenceRefs: authorization.applicability.evidenceRefs,
-        receiptRef: authorization.applicability.receiptRef,
-        scope: sourceProcessingApplicabilityScope(template),
-        status: 'CURRENT' as const,
-        validUntil: DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(evaluatedAt), applicabilityReceiptLifetime)),
-      };
-      return {
-        admittedAs,
-        authority,
-        authorityIncarnation: authorization.authorizationRef.resourceId,
-        authorityRevision: String(authorization.revision),
-        contentScopeRefs: template.dataCategoryRefs,
-        intendedScope,
-        resourceRefs: [subjectId],
-        targetAdmission,
-      };
+      return yield* resolveStandingUse(request, scope, services, evaluatedAt, active);
     }
   }
   const exactContexts = services.contexts.filter(
@@ -266,6 +327,7 @@ const resolveSourceUse = Effect.fn('Privacy.resolveSourceUse')(function* resolve
     admittedAs: null,
     authority: { ...applicabilityAuthority, asOf: evaluatedAt },
     intendedScope,
+    priorInterventionScopes: [],
   };
 });
 
@@ -393,7 +455,14 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       return denied('AUTHORITY_NOT_CURRENT', 'SUBJECT_NOT_FOUND');
     }
     const resolved = yield* services.repository
-      .resolveEligibilityInputs(scope.tenantId, scope.legalEntityId, intendedScope, evaluatedAt, authority)
+      .resolveEligibilityInputs(
+        scope.tenantId,
+        scope.legalEntityId,
+        intendedScope,
+        evaluatedAt,
+        authority,
+        context.priorInterventionScopes,
+      )
       .pipe(Effect.mapError(unavailable));
     const outcome = evaluatePrivacyEligibility(resolved.input);
     if (outcome.outcome !== 'ALLOWED') {
@@ -625,7 +694,7 @@ const sourcePersonMatches = (
   request: SourceProcessingEligibilityRequest,
   admittedAs: ResolvedSourceSubject['admittedAs'],
 ) =>
-  request.consumerModuleId === 'commerce.customer-context' &&
+  request.consumerModuleId === commerceConsumer &&
   request.operation === 'PROFILE_CREATE' &&
   request.target?.kind === 'PARTY' &&
   request.partySourceReference !== undefined &&
@@ -637,20 +706,33 @@ const sourcePersonMatches = (
     }) &&
   exactAssertedSource(subject, request.source, admittedAs);
 
+const isStandingOwnerTarget = (
+  request: SourceProcessingEligibilityRequest,
+  subject: PrivacySubjectRecord['subject'],
+  role: ResolvedSourceSubject['admittedAs'] | undefined,
+) =>
+  role !== undefined &&
+  subject.kind === 'SOURCE_ASSERTED' &&
+  (request.target?.kind === 'PARTY' || isProfileTarget(request.target));
+
 /** Party targets must be the actual local subject Party. Source subjects match a complete
  * source locator and remain distinct from anonymous session contexts and Party identity. */
 export const sourceSubjectMatchesRequest = (
   record: PrivacySubjectRecord,
   request: SourceProcessingEligibilityRequest,
   targetAdmission?: TargetAdmission,
-  admittedAs: ResolvedSourceSubject['admittedAs'] = 'SUBJECT',
+  admittedAs?: ResolvedSourceSubject['admittedAs'],
 ): boolean => {
   const { subject } = record;
+  const role = admittedAs ?? 'SUBJECT';
   if (targetAdmission === 'CURRENT_SOURCE_PERSON') {
-    return sourcePersonMatches(subject, request, admittedAs);
+    return sourcePersonMatches(subject, request, role);
   }
   if (request.organizationBusinessUse !== undefined || (request.source !== null && request.target === null)) {
-    return exactAssertedSource(subject, request.source, admittedAs);
+    return exactAssertedSource(subject, request.source, role);
+  }
+  if (isStandingOwnerTarget(request, subject, admittedAs)) {
+    return exactAssertedSource(subject, request.source, role);
   }
   if (request.target?.kind === 'PARTY') {
     return (
@@ -663,7 +745,7 @@ export const sourceSubjectMatchesRequest = (
     // A separately enrolled source can stage new input, but cannot establish who owns an existing target.
     return (
       request.consumerModuleId !== SymmyCustomerSourceIntakeConsumerModule &&
-      exactAssertedSource(subject, request.source, admittedAs)
+      exactAssertedSource(subject, request.source, role)
     );
   }
   if (
@@ -678,7 +760,46 @@ export const sourceSubjectMatchesRequest = (
   return subject.kind === 'DATA_SUBJECT' || request.target === null;
 };
 
+/** Never substitute a newly asserted source for another local Privacy subject of a known Party. */
+const partyIdentityAgrees = Effect.fn('Privacy.partyIdentityAgrees')(function* check(
+  transaction: SourceTransaction,
+  scope: OperationalScope,
+  partyId: string,
+  record: PrivacySubjectRecord,
+) {
+  const rows = yield* transaction
+    .select({ record: privacySubjects.subjectRecord })
+    .from(privacySubjects)
+    .where(
+      and(
+        eq(privacySubjects.tenantId, scope.tenantId),
+        eq(privacySubjects.legalEntityId, scope.legalEntityId ?? ''),
+        eq(privacySubjects.subjectKind, 'DATA_SUBJECT'),
+        eq(sql<string>`${privacySubjects.subjectRecord}->'subject'->'partyRef'->>'resourceId'`, partyId),
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  const [row] = rows;
+  if (row === undefined) {
+    return record.subject.kind === 'SOURCE_ASSERTED';
+  }
+  if (rows.length !== 1) {
+    return false;
+  }
+  const linked = yield* Schema.decodeUnknownEffect(PrivacySubjectRecordSchema)(row.record).pipe(
+    Effect.mapError(unavailable),
+  );
+  return (
+    linked.subject.kind === 'DATA_SUBJECT' &&
+    (record.subject.kind === 'DATA_SUBJECT'
+      ? linked.subjectRef.resourceId === record.subjectRef.resourceId
+      : linked.subject.sourceAdmission?.sourceSubjectRef.resourceId === record.subjectRef.resourceId)
+  );
+});
+
 const verifiedProfileSubject = Effect.fn('Privacy.verifiedProfileSubject')(function* verifiedProfile(
+  transaction: SourceTransaction,
   target: ProfileTarget,
   subject: PrivacySubjectRecord,
   scope: OperationalScope,
@@ -695,6 +816,9 @@ const verifiedProfileSubject = Effect.fn('Privacy.verifiedProfileSubject')(funct
     return false;
   }
   const { partyRef, sourceReference } = proof.value;
+  if (!(yield* partyIdentityAgrees(transaction, scope, partyRef.resourceId, subject))) {
+    return false;
+  }
   let personalSource;
   if (subject.subject.kind === 'SOURCE_ASSERTED') {
     personalSource = subject.subject.source;
@@ -747,7 +871,7 @@ const verifySourcePersonTarget = Effect.fn('Privacy.verifySourcePersonTarget')(f
   ) {
     yield* requireModuleOperation(sourcePersonRequirement).pipe(Effect.mapError(unavailable));
     const partyRef = {
-      moduleId: 'party.registry',
+      moduleId: partyConsumer,
       resourceId: request.target.resourceId,
       resourceType: 'party.registry.party',
       tenantId: scope.tenantId,
@@ -798,6 +922,62 @@ const verifySourcePersonTarget = Effect.fn('Privacy.verifySourcePersonTarget')(f
   return true;
 });
 
+const proveAssertedParty = Effect.fn('Privacy.proveAssertedParty')(function* prove(
+  partyId: string,
+  asserted: Extract<PrivacySubjectRecord['subject'], { kind: 'SOURCE_ASSERTED' }>,
+  scope: OperationalScope,
+) {
+  // An asserted source cannot name a Party. Ask Party to prove its committed correlation, including on the first job after CREATE.
+  const partyRef = Schema.decodeUnknownOption(PrivacyPartyRefSchema)({
+    moduleId: partyConsumer,
+    resourceId: partyId,
+    resourceType: 'party.registry.party',
+    tenantId: scope.tenantId,
+  });
+  if (Option.isNone(partyRef)) {
+    return false;
+  }
+  const owner = Option.getOrElse(
+    yield* Effect.serviceOption(PrivacySubjectPartyOwner),
+    () => privacySubjectPartyOwnerUnavailable,
+  );
+  const { recordId, ...source } = asserted.source;
+  yield* requireModuleOperation(sourcePersonRequirement).pipe(Effect.mapError(unavailable));
+  return yield* owner.resolve(partyRef.value, scope, false, { recordId, source }, sourcePersonRequirement).pipe(
+    Effect.as(true),
+    Effect.catchTag('PrivacyOperationPersistenceError', (cause) =>
+      cause.code === 'privacy_operation_conflict' ? Effect.succeed(false) : Effect.fail(unavailable(cause)),
+    ),
+  );
+});
+const verifyStandingSubject = Effect.fn('Privacy.verifyStandingSubject')(function* verifyStanding(
+  transaction: SourceTransaction,
+  scope: OperationalScope,
+  subject: PrivacySubjectRecord,
+  request: SourceProcessingEligibilityRequest,
+  repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
+  crypto: Crypto.Crypto,
+  targetAdmission: TargetAdmission,
+) {
+  if (isProfileTarget(request.target)) {
+    return yield* verifiedProfileSubject(transaction, request.target, subject, scope, repository, crypto);
+  }
+  // A route grant cannot identify the subject of a counterparty or duplicate case without evidence from its owner.
+  if (request.target?.kind === 'COUNTERPARTY' || request.target?.kind === 'DUPLICATE_CANDIDATE') {
+    return false;
+  }
+  if (
+    request.target?.kind === 'PARTY' &&
+    !(yield* partyIdentityAgrees(transaction, scope, request.target.resourceId, subject))
+  ) {
+    return false;
+  }
+  if (request.target?.kind === 'PARTY' && subject.subject.kind === 'SOURCE_ASSERTED' && targetAdmission === undefined) {
+    return yield* proveAssertedParty(request.target.resourceId, subject.subject, scope);
+  }
+  return yield* verifySourcePersonTarget(subject, request, scope, repository, targetAdmission);
+});
+
 const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* subjectExists(
   transaction: SourceTransaction,
   scope: OperationalScope,
@@ -837,17 +1017,9 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
   if (request.organizationBusinessUse !== undefined) {
     return yield* hasCurrentCustomerIntakeOrganizationProof(request, scope, crypto);
   }
-  if (admittedAs !== undefined && isProfileTarget(request.target)) {
-    return yield* verifiedProfileSubject(request.target, subject, scope, repository, crypto);
-  }
-  // A route grant cannot identify the subject of a counterparty or duplicate case without evidence from its owner.
-  if (
-    admittedAs !== undefined &&
-    (request.target?.kind === 'COUNTERPARTY' || request.target?.kind === 'DUPLICATE_CANDIDATE')
-  ) {
-    return false;
-  }
-  return yield* verifySourcePersonTarget(subject, request, scope, repository, targetAdmission);
+  return admittedAs === undefined
+    ? yield* verifySourcePersonTarget(subject, request, scope, repository, targetAdmission)
+    : yield* verifyStandingSubject(transaction, scope, subject, request, repository, crypto, targetAdmission);
 });
 
 /**
@@ -858,7 +1030,6 @@ const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function*
   transaction: SourceTransaction,
   scope: OperationalScope,
   authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission'>,
-  authorization: SourceProcessingAuthorization,
   request: SourceProcessingEligibilityRequest,
   targetAdmission: TargetAdmission,
 ) {
@@ -866,9 +1037,7 @@ const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function*
     return Option.none<ResolvedSourceSubject>();
   }
   const { occurrenceId: _occurrenceId, ...source } = request.source;
-  const admission = yield* authorizations
-    .admission(authorization.authorizationRef.resourceId, source)
-    .pipe(Effect.mapError(unavailable));
+  const admission = yield* authorizations.admission(source).pipe(Effect.mapError(unavailable));
   if (Option.isNone(admission)) {
     return Option.none<ResolvedSourceSubject>();
   }
@@ -913,6 +1082,14 @@ const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function*
     );
   const reconciled = matching('DATA_SUBJECT');
   const asserted = matching('SOURCE_ASSERTED');
+  if (
+    request.target?.kind === 'PARTY' &&
+    targetAdmission === undefined &&
+    reconciled.length === 0 &&
+    records.some((record) => record.subject.kind === 'DATA_SUBJECT')
+  ) {
+    return Option.none<ResolvedSourceSubject>();
+  }
   const [selected] = reconciled.length > 0 ? reconciled : asserted;
   return reconciled.length > 1 || asserted.length > 1 || selected === undefined
     ? Option.none<ResolvedSourceSubject>()
@@ -1049,17 +1226,14 @@ export const sourceProcessingEligibilityRead = defineRead(
     yield* traceSourceStage('services-ready');
     return {
       authorizations: (source: NonNullable<SourceProcessingEligibilityRequest['source']>) =>
-        authorizations.latestForRoute(source).pipe(Effect.mapError(unavailable)),
+        authorizations.historyForRoute(source).pipe(Effect.mapError(unavailable)),
       contexts,
       protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
         readSourceProtections(transaction, scope, subjectRef, request),
       purposes,
       repository,
-      resolveSubject: (
-        authorization: SourceProcessingAuthorization,
-        request: SourceProcessingEligibilityRequest,
-        targetAdmission: TargetAdmission,
-      ) => resolveSourceSubject(transaction, scope, authorizations, authorization, request, targetAdmission),
+      resolveSubject: (request: SourceProcessingEligibilityRequest, targetAdmission: TargetAdmission) =>
+        resolveSourceSubject(transaction, scope, authorizations, request, targetAdmission),
       subjectExists: (
         subjectRef: string,
         request: SourceProcessingEligibilityRequest,

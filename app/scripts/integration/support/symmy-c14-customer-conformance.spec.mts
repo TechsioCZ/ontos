@@ -8,10 +8,9 @@ import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-cu
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { CreatePartyResultSchema } from '@app/party-registry/api';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import {
-  seedCommittedProfileSourceProcessingNativeFixture,
-  seedSourceProcessingNativeFixture,
-} from '@app/privacy/testing/source-processing-native';
+import { CustomerProfileSourceResponseSchema } from '@app/commerce-customer-context/api/customer-profile-source';
+import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
+import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
@@ -37,7 +36,6 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
-import { customerContexts, readbackContexts } from './symmy-c14-customer-contexts.mts';
 import { customerItemSource, customerOccurrenceId, customersBody } from './symmy-c14-customer-public.mts';
 import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
 import {
@@ -487,7 +485,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
 
     const sourceRouteId = yield* uuid;
     const routeId = yield* uuid;
-    // The owner derives the occurrence of a request from its Idempotency-Key, so Privacy is seeded for that one.
+    // The one route grant covers subsequent customers and occurrences; do not create any subjects here.
     const occurrenceId = customerOccurrenceId('INTERNAL_C14_CUSTOMER_JOB', customerItemKey);
     const recordId = 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
@@ -545,6 +543,28 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       controllerRef: customerController,
       dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
       governancePrincipalId,
+      grants: [
+        ...['CREATE', 'EVIDENCE_READ', 'ADD_CONTACT_POINT', 'PROFILE_EXPORT'].map(
+          (operation) =>
+            ({
+              allowTargetless: false,
+              consumerModuleId: partyModuleId,
+              operation,
+              organizationBusinessUses: [],
+              targetKinds: ['PARTY'],
+            }) as const,
+        ),
+        ...['customer-profile-source.write', 'customer-profile-source.read'].map(
+          (operation) =>
+            ({
+              allowTargetless: false,
+              consumerModuleId: commerceModuleId,
+              operation,
+              organizationBusinessUses: [],
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+            }) as const,
+        ),
+      ],
       legalEntityId,
       meaning:
         'Explicit internal fixture authorizes named source Party creation, evidence read, and Retail profile creation separately',
@@ -616,6 +636,14 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         ...item,
         effects: [
           ...item.effects,
+          {
+            effectKey: 'permitted-contact',
+            operation: {
+              entrypointKey: 'party.registry.add-contact-point',
+              moduleId: partyModuleId,
+              schemaVersion: '1',
+            },
+          },
           {
             effectKey: 'permitted-customer-revision',
             operation: {
@@ -953,66 +981,25 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
         tenantId,
       });
-    const proofTransport = yield* acquireReceiptTransport();
     const roundTripKey = 'INTERNAL_C14_CUSTOMER_GET_POST';
     const beforeDisableKey = 'INTERNAL_C14_CUSTOMER_BEFORE_DISABLE';
     const roundTripSource = customerItemSource(sourceIdentity, roundTripKey, customerItemKey, recordId);
-    const scope = {
-      integrationPrincipalId: integration.principalId,
-      partyId: partyReceipt.partyRef.resourceId,
-      profileId: profileReceipt.profileRef.resourceId,
-      source: sourceIdentity,
-      systemId,
-    };
-    // The same customer sent again (its GET source id is its customerId), and a request admitted before the
-    // integration principal is disabled: both name their own occurrences.
-    const roundTripContexts = [
-      ...customerContexts(scope, roundTripKey, [{ kind: 'existing', recordId }]),
-      ...customerContexts(scope, beforeDisableKey, [{ kind: 'existing', recordId }]),
-    ];
-    const readContexts = readbackContexts(scope, flatSource);
-    // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
-    yield* seedSourceProcessingNativeFixture({
-      connections: isolated.connections,
-      contexts: roundTripContexts.filter(({ request }) => request.target === null),
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_CUSTOMER_INTAKE',
-      controllerRef: customerController,
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning: 'Independent current internal policy permits the same public customer to be named and matched again',
-      tenantId,
-    });
-    const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
-      connections: isolated.connections,
-      contexts: [...roundTripContexts.filter(({ request }) => request.target !== null), ...readContexts],
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CUSTOMER_MATCH_AND_READ_CONTRACT',
-      controllerRef: customerController,
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning:
-        'Independent current internal policy permits matching and reading only the original Party and Retail profile for this qualified source record',
-      profileReceipt: proofTransport,
-      tenantId,
-    }).pipe(
-      Effect.tapError(() =>
-        Effect.all([
-          shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-          shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-          ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-            diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-          ),
-        ]),
-      ),
-    );
-    expect(dataPrivacy.personAdmission.partyRef).toEqual(partyReceipt.partyRef);
-    expect(dataPrivacy.profileReceipt.result.profileRef).toEqual(profileReceipt.profileRef);
+    // Recovery reads the real committed profile; it does not insert a Privacy subject or grant.
     if (scenario === 'readback') {
+      const proofTransport = yield* acquireReceiptTransport();
+      const proof = yield* executeCustomerProfileSourceWithAuthorization(
+        proofTransport.request,
+        Redacted.value(proofTransport.authorization),
+        proofTransport.requestCorrelation,
+        { baseUrl: proofTransport.baseUrl, compositionRevision: proofTransport.compositionRevision },
+      );
+      assert.isOk(Schema.is(CustomerProfileSourceResponseSchema.members[4])(proof));
+      expect(proof.currentAdmission.partyRef).toEqual(partyReceipt.partyRef);
+      expect(proof.receipt.result.profileRef).toEqual(profileReceipt.profileRef);
       const readOnlyTransport = yield* acquireReceiptTransport();
       const readOnlyWriteKey = 'INTERNAL_C14_READ_RECOVERY_CANNOT_WRITE';
       const deniedRecoveryWrite = yield* executeEnsureRetailCustomerProfileWithAuthorization(
-        dataPrivacy.profileReceipt.intent,
+        proof.receipt.intent,
         Redacted.value(readOnlyTransport.authorization),
         yield* uuid,
         {
@@ -1036,7 +1023,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       expect(readOnlyWrites).toEqual({ count: 0 });
     }
     yield* Effect.logInfo(
-      'INTERNAL_C14 historical native receipt admitted separate DATA policies between independent jobs',
+      'INTERNAL_C14 reads use the original standing grant without customer-specific fixture writes',
     );
     const exportedCustomer = yield* readCustomers(
       {
@@ -1136,41 +1123,15 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     // A second customer, so that paging and search are exercised over more than one customer.
     const secondRecordId = 'INTERNAL_C14_SECOND_PERSON';
     const secondKey = 'INTERNAL_C14_CUSTOMER_SECOND';
-    const secondFlatSource = {
-      ...sourceIdentity,
-      occurrenceId: customerOccurrenceId(secondKey, customerItemKey),
-      recordId: secondRecordId,
-    };
-    yield* seedSourceProcessingNativeFixture({
-      connections: isolated.connections,
-      contexts: customerContexts(scope, secondKey, [{ kind: 'created', recordId: secondRecordId }]),
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_CONTRACT',
-      controllerRef: customerController,
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning: 'Independent current internal policy permits creating the second named person and its Retail profile',
-      tenantId,
+    const secondContact = { preferred: true, type: 'EMAIL' as const, value: 'Grace.Hopper@Example.test' };
+    const secondBody = customersBody({
+      contacts: [secondContact],
+      customerId: secondRecordId,
+      firstName: 'Grace',
+      kind: 'PERSON',
+      lastName: 'Hopper',
     });
-    // The first customer's binding moved to its newest observation, which the profile read now names.
-    yield* seedCommittedProfileSourceProcessingNativeFixture({
-      connections: isolated.connections,
-      contexts: readbackContexts(scope, roundTripSource).filter(
-        ({ request }) => request.operation === 'customer-profile-source.read',
-      ),
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_ROUND_TRIP_READ_CONTRACT',
-      controllerRef: customerController,
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning: 'Independent current internal policy permits reading the first Retail profile at its newest observation',
-      profileReceipt: yield* acquireReceiptTransport(),
-      tenantId,
-    });
-    const secondAccepted = yield* submitFor(
-      secondKey,
-      customersBody({ customerId: secondRecordId, firstName: 'Grace', kind: 'PERSON', lastName: 'Hopper' }),
-    );
+    const secondAccepted = yield* submitFor(secondKey, secondBody);
     const secondWorker = yield* startProductWorker(workerArtifact, {
       ...environment,
       ONTOS_C14_WORKER_CLAIM_OWNER: secondKey,
@@ -1180,7 +1141,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${secondAccepted.jobId}`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
       ),
-      (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
+      (rows) => rows.length === 3 && rows.every(({ state }) => state === 'settled'),
     ).pipe(
       Effect.tapError(() =>
         Effect.all([
@@ -1197,7 +1158,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     assert.isOk(secondPartyEffect);
     assert.isOk(secondProfileEffect);
     const secondParty = yield* Schema.decodeUnknownEffect(partyReceiptSchema)(secondPartyEffect.owner_receipt);
-    const secondProfile = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(secondProfileEffect.owner_receipt);
+    expect(secondEffects.every((effect) => Option.isSome(effect.owner_invocation_id))).toBe(true);
     expect(secondParty.partyRef.resourceId).not.toBe(partyReceipt.partyRef.resourceId);
     const secondProfileRows =
       yield* admin`select a.action_invocation_id as "actionInvocationId",a.action_key as "actionKey",
@@ -1218,47 +1179,18 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       }>`select status from core.outbox_deliveries where outbox_delivery_id=${secondDeliveryId}`,
       (rows) => rows.some(({ status }) => status === 'done'),
     );
+    yield* searchTwoCustomers({ client, headers, recordId, secondRecordId, shell });
+    const resend = yield* submitFor('INTERNAL_C14_SECOND_CONTACT_RESEND', secondBody);
+    const resent = yield* observeUntil(
+      admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${resend.jobId}`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
+      ),
+      (rows) => rows.length === 3 && rows.every((row) => row.state === 'settled'),
+    );
+    expect(resent.every((effect) => Option.isSome(effect.owner_invocation_id))).toBe(true);
+    expect((yield* tenantRows)[0]).toEqual({ parties: 2, profiles: 2 });
     yield* secondWorker.child.kill();
     yield* secondWorker.child.exitCode;
-    const secondTransport = yield* issueCustomerProfileFixtureRecovery({
-      compositionRevision: snapshot.composition.revision,
-      deliveryId: secondDeliveryId,
-      expectedReadPrincipalId: systemId,
-      legalEntityId,
-      moduleApiKey: Redacted.make(moduleKey),
-      nativeAction: secondNative,
-      operationRequirementKey: profileRecoveryRequirement.key,
-      request: {
-        effectId: secondProfileEffect.effect_id,
-        issuer: sourceIdentity.issuer,
-        mappingRevision: internalCustomerSource.mappingVersion,
-        mode: 'MINIMAL_RECEIPT',
-        namespace: sourceIdentity.namespace,
-        recordType: sourceIdentity.recordType,
-        route: { id: sourceRouteId, revision: internalCustomerSource.routeRevision },
-      },
-      shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-      tenantId,
-    });
-    yield* seedCommittedProfileSourceProcessingNativeFixture({
-      connections: isolated.connections,
-      contexts: readbackContexts(
-        { ...scope, partyId: secondParty.partyRef.resourceId, profileId: secondProfile.profileRef.resourceId },
-        secondFlatSource,
-      ),
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_READ_CONTRACT',
-      controllerRef: customerController,
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning: 'Independent current internal policy permits reading only the second Party and Retail profile',
-      profileReceipt: secondTransport,
-      tenantId,
-    });
-    // The Party owner holds the contact of the second customer; the search reaches it through the same Privacy export.
-    yield* admin`insert into party.party_contact_points(tenant_id,party_id,contact_point_type,display_value,normalized_value,normalization_version,privacy_classification,valid_from,provenance_source,provenance_method,accepted_by_action_invocation_id,accepted_by_principal_id,policy_version)
-          values(${tenantId},${secondParty.partyRef.resourceId},'EMAIL','Grace.Hopper@Example.test','grace.hopper@example.test','email.v1','PERSONAL','2020-01-01T00:00:00Z','internal-fixture','DECLARATION',${Option.getOrThrow(secondPartyEffect.owner_invocation_id)},${systemId},'fixture')`;
-    yield* searchTwoCustomers({ client, headers, recordId, secondRecordId, shell });
     yield* Effect.logInfo({ phase: 'customer-roundtrip-and-search-accepted' });
     const admittedBeforeDisable = yield* submitFor(beforeDisableKey);
     expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);

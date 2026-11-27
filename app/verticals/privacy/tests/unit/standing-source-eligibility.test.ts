@@ -1,4 +1,5 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { trustVerifiedGatewayPrincipalContext, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -80,10 +81,11 @@ const services = (
   repository: {
     listApplicabilityDecisions: () => Effect.succeed([fixture.decision]),
     listApplicabilityPolicies: () => Effect.succeed([fixture.policy]),
+    listResponsibilities: () => Effect.succeed([fixture.controller]),
     resolveEligibilityInputs: (_tenant, _legalEntity, intendedScope) =>
       Effect.succeed({ authoritativeReferences: [], input: inputs(intendedScope), policyRevisions: [] }),
   },
-  resolveSubject: (_authorization, request) =>
+  resolveSubject: (request) =>
     Effect.succeed(
       Option.map(Option.fromNullishOr(admitted.get(request.source?.recordId ?? '')), (subjectId) => ({
         admittedAs: 'SUBJECT' as const,
@@ -100,8 +102,52 @@ const subjectRefOne = {
 };
 const intendedScope = sourceProcessingIntendedScope(fixture.authorization.scopeTemplate, subjectRefOne);
 const oneSource = { ...fixture.route, occurrenceId: 'occurrence:one', recordId: 'client:one' };
+const delegated = (appId: string) =>
+  trustVerifiedGatewayPrincipalContext({ ...scope }, 'e'.repeat(64), undefined, {
+    appId,
+    buildMarker: 'fixture',
+    principalId: ids.principalId,
+  });
+const worker = (sourceAppId: string) =>
+  trustVerifiedGatewayPrincipalContext(
+    {
+      ...ids,
+      authContextRef: `job:integration.symmy.execute-symmy-job:run:${ids.principalId}`,
+      authMethod: 'system' as const,
+      correlationId: scope.correlationId,
+    },
+    'e'.repeat(64),
+    undefined,
+    undefined,
+    Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: ids.principalId,
+      bindingIncarnation: ids.principalId,
+      declarationKey: 'privacy.core.source-processing-eligibility.read',
+      entrypointKey: 'privacy.core.api.source-processing-eligibility',
+      jobKey: 'integration.symmy.execute-symmy-job',
+      legalEntityId: ids.legalEntityId,
+      legalEntityScope: 'required',
+      originalOwnerBindingIncarnation: ids.principalId,
+      originalPrincipalId: ids.principalId,
+      originalWorkloadBindingIncarnation: ids.principalId,
+      originalWorkloadKey: 'integration.symmy-admit',
+      runReference: ids.principalId,
+      schemaVersion: '1',
+      sourceAppId,
+      sourceBuildMarker: 'fixture',
+      sourceMode: 'worker',
+      workloadKey: 'privacy.core.source-processing-check',
+    }),
+  );
 const run = (value = services(), request: SourceProcessingEligibilityRequest = fixture.request) =>
-  evaluateSourceProcessingEligibility(request, scope, value, fixture.evaluatedAt);
+  evaluateSourceProcessingEligibility(
+    request,
+    delegated(
+      request.consumerModuleId === 'commerce.customer-context' ? 'commerce-customer-context' : 'party-registry',
+    ),
+    value,
+    fixture.evaluatedAt,
+  );
 const subjectOf = (result: Effect.Success<ReturnType<typeof run>>) =>
   result.outcome === 'ALLOWED' ? result.evidence.evaluatedScope.subjectRef.resourceId : undefined;
 const protectionFor = (subjectRef: string, resourceRefs: readonly string[]) =>
@@ -134,6 +180,66 @@ const protectionFor = (subjectRef: string, resourceRefs: readonly string[]) =>
   });
 
 describe('standing source processing authorization', () => {
+  it.effect('checks both verified owner transports, rejecting ambiguous, missing or wrong provenance', () =>
+    Effect.gen(function* callerCases() {
+      for (const [consumer, app, other] of [
+        ['party.registry', 'party-registry', 'commerce-customer-context'],
+        ['commerce.customer-context', 'commerce-customer-context', 'party-registry'],
+      ] as const) {
+        const request = { ...fixture.request, consumerModuleId: consumer };
+        const authorization = {
+          ...fixture.authorization,
+          grants: fixture.authorization.grants.map((grant) => ({ ...grant, consumerModuleId: consumer })),
+          principals: [
+            ...fixture.authorization.principals,
+            { authMethod: 'system' as const, principalId: ids.principalId },
+          ],
+        };
+        for (const [caller, allowed] of [
+          [delegated(app), true],
+          [worker(app), true],
+          [delegated(other), false],
+          [worker(other), false],
+          [scope, false],
+          [{ ...scope, authMethod: 'system' as const }, false],
+        ] as const) {
+          expect(
+            (yield* evaluateSourceProcessingEligibility(
+              request,
+              caller,
+              services([authorization]),
+              fixture.evaluatedAt,
+            )).outcome,
+            `${consumer} ${caller.authMethod} ${allowed}`,
+          ).toBe(allowed ? 'ALLOWED' : 'DENIED');
+        }
+      }
+    }),
+  );
+  it.effect('expires with its sole controller while the purpose, policy, basis and grant remain active', () =>
+    Effect.gen(function* expired() {
+      const s = services();
+      const at = fixture.evaluatedAt;
+      const c = { ...fixture.controller, effectiveTo: Option.some(at) };
+      for (const assignments of [
+        [c],
+        [
+          fixture.controller,
+          {
+            ...fixture.controller,
+            assignmentRef: { ...fixture.controller.assignmentRef, resourceId: ids.principalId },
+          },
+        ],
+      ]) {
+        expect(
+          (yield* run({
+            ...s,
+            repository: { ...s.repository, listResponsibilities: () => Effect.succeed(assignments) },
+          })).outcome,
+        ).toBe('DENIED');
+      }
+    }),
+  );
   it.effect('admits two customers sent under two idempotency keys with one authorization and no setting', () =>
     Effect.gen(function* twoCustomers() {
       const first = yield* run(services(), fixture.requestFor('client:one', 'occurrence:key-one:customer-0'));

@@ -1,6 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
@@ -63,10 +63,9 @@ const makeRepository = (
     eq(sourceProcessingAuthorizations.tenantId, scope.tenantId),
     eq(sourceProcessingAuthorizations.legalEntityId, scope.legalEntityId),
   ];
-  const admissionScope = (authorizationId: string) => [
+  const admissionScope = [
     eq(sourceProcessingAdmissions.tenantId, scope.tenantId),
     eq(sourceProcessingAdmissions.legalEntityId, scope.legalEntityId),
-    eq(sourceProcessingAdmissions.authorizationId, authorizationId),
   ];
   const belongsToScope = (authorization: SourceProcessingAuthorization) =>
     authorization.authorizationRef.tenantId === scope.tenantId && authorization.legalEntityId === scope.legalEntityId;
@@ -99,9 +98,7 @@ const makeRepository = (
             eq(sourceProcessingAuthorizations.sourceNamespace, route.namespace),
             eq(sourceProcessingAuthorizations.sourceRouteRef, route.routeRef),
           ),
-        )
-        .orderBy(asc(sourceProcessingAuthorizations.lifecycle), desc(sourceProcessingAuthorizations.createdAt))
-        .limit(1);
+        );
       const rows = yield* (lock === 'admission' ? query.for('update') : query).pipe(
         Effect.mapError(persistenceFailure('Source Processing Authorizations could not be loaded')),
       );
@@ -115,27 +112,22 @@ const makeRepository = (
 
   return SourceProcessingAuthorizationRepository.of({
     activeForRoute: forRoute(true),
-    admission: Effect.fn('SourceProcessingAuthorizationRepository.admission')(
-      function* admission(authorizationId, source) {
-        const [row] = yield* transaction
-          .select({
-            firstAdmittedAt: sourceProcessingAdmissions.firstAdmittedAt,
-            lastAdmittedAt: sourceProcessingAdmissions.lastAdmittedAt,
-            privacySubjectId: sourceProcessingAdmissions.privacySubjectId,
-            role: sourceProcessingAdmissions.role,
-          })
-          .from(sourceProcessingAdmissions)
-          .where(
-            and(
-              ...admissionScope(authorizationId),
-              eq(sourceProcessingAdmissions.sourceIdentityKey, sourceProcessingIdentityKey(source)),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError(persistenceFailure('Source admission could not be resolved')));
-        return row === undefined ? Option.none() : Option.some(yield* decodeAdmissionRow(row));
-      },
-    ),
+    admission: Effect.fn('SourceProcessingAuthorizationRepository.admission')(function* admission(source) {
+      const [row] = yield* transaction
+        .select({
+          firstAdmittedAt: sourceProcessingAdmissions.firstAdmittedAt,
+          lastAdmittedAt: sourceProcessingAdmissions.lastAdmittedAt,
+          privacySubjectId: sourceProcessingAdmissions.privacySubjectId,
+          role: sourceProcessingAdmissions.role,
+        })
+        .from(sourceProcessingAdmissions)
+        .where(
+          and(...admissionScope, eq(sourceProcessingAdmissions.sourceIdentityKey, sourceProcessingIdentityKey(source))),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(persistenceFailure('Source admission could not be resolved')));
+      return row === undefined ? Option.none() : Option.some(yield* decodeAdmissionRow(row));
+    }),
     admit: Effect.fn('SourceProcessingAuthorizationRepository.admit')(function* admit(input) {
       const keyed = input.sources.map((entry) => ({ ...entry, key: sourceProcessingIdentityKey(entry.source) }));
       const roots = keyed.filter(({ role }) => role === 'SUBJECT');
@@ -179,7 +171,6 @@ const makeRepository = (
         [
           transaction
             .select({
-              authorizationId: sourceProcessingAdmissions.authorizationId,
               firstAdmittedAt: sourceProcessingAdmissions.firstAdmittedAt,
               key: sourceProcessingAdmissions.sourceIdentityKey,
               lastAdmittedAt: sourceProcessingAdmissions.lastAdmittedAt,
@@ -213,9 +204,7 @@ const makeRepository = (
       if (aliases.length > 0) {
         return yield* conflict('A child source record is already a Privacy subject of its own');
       }
-      const known = new Map(
-        existing.flatMap((row) => (row.authorizationId === input.authorizationId ? [[row.key, row] as const] : [])),
-      );
+      const known = new Map(existing.map((row) => [row.key, row]));
       if (
         existing.some(
           (row) =>
@@ -237,7 +226,7 @@ const makeRepository = (
                   .set({ lastActionInvocationId: input.actionInvocationId, lastAdmittedAt: date(input.admittedAt) })
                   .where(
                     and(
-                      ...admissionScope(input.authorizationId),
+                      ...admissionScope,
                       lt(sourceProcessingAdmissions.lastAdmittedAt, date(input.admittedAt)),
                       eq(sourceProcessingAdmissions.sourceIdentityKey, entry.key),
                     ),
@@ -321,7 +310,7 @@ const makeRepository = (
       },
     ),
     get,
-    latestForRoute: forRoute(false),
+    historyForRoute: forRoute(false),
     sourceSubjectId: Effect.fn('SourceProcessingAuthorizationRepository.sourceSubjectId')(
       function* sourceSubjectId(source) {
         const [row] = yield* transaction

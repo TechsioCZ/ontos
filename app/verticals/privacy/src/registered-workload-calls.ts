@@ -60,7 +60,7 @@ export const privacyRegisteredWorkloadCalls = [
     legalEntityScope: 'required',
     schemaVersion: '1',
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
-    workloadKey: 'commerce.customer-context.source-read',
+    workloadKey: 'commerce.customer-context.source-profile-proof',
   },
   {
     allowRecoverySource: true,
@@ -71,7 +71,7 @@ export const privacyRegisteredWorkloadCalls = [
     legalEntityScope: 'required',
     schemaVersion: '1',
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
-    workloadKey: 'commerce.customer-context.source-read',
+    workloadKey: 'commerce.customer-context.source-profile-proof',
   },
   // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-party
   {

@@ -6986,6 +6986,55 @@
           "opclass": null
         }
       ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_source_authorizations_route_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "source_processing_authorizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_issuer",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_namespace",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_route_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
       "isUnique": true,
       "where": "\"lifecycle\" = 'ACTIVE'",
       "with": "",
@@ -8800,7 +8849,6 @@
       "columns": [
         "tenant_id",
         "legal_entity_id",
-        "authorization_id",
         "source_identity_key"
       ],
       "nullsNotDistinct": false,

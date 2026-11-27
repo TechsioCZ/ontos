@@ -4,7 +4,7 @@ import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-princ
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { executeSourcePersonAdmissionWithAuthorization } from '@app/party-registry/apis/source-person-admission/client';
 import {
-  SourcePersonAdmissionRequestSchema,
+  SourcePersonProofRequestSchema,
   SourcePersonAdmissionResponseSchema,
 } from '@app/party-registry/apis/source-person-admission';
 import { Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -17,6 +17,7 @@ import { PrivacySubjectPartyCredentials } from './privacy-subject-party-credenti
 import type { PrivacyPartyOwnerRequirement } from './privacy-subject-party-credentials.ts';
 import { PrivacyOperationPersistenceError } from './privacy-operation-persistence-error.ts';
 
+type PersonReference = PrivacySourcePersonReference | Omit<PrivacySourcePersonReference, 'occurrenceId'>;
 type PartyRef = typeof PrivacyPartyRefSchema.Type;
 
 const unavailable = (cause?: unknown) => {
@@ -39,7 +40,7 @@ export class PrivacySubjectPartyOwner extends Context.Service<
       partyRef: PartyRef,
       scope: OperationalScope,
       canonicalWrite: boolean,
-      sourceReference?: PrivacySourcePersonReference,
+      sourceReference?: PersonReference,
       operationRequirementKey?: PrivacyPartyOwnerRequirement,
       contactPointId?: string,
     ) => Effect.Effect<PrivacySubjectOwnerEvidence, PrivacyOperationPersistenceError>;
@@ -67,7 +68,7 @@ const currentPersonTypeAssertions = (
       Option.exists(assertion.validTo, (end) => DateTime.toEpochMillis(end) <= millis),
   );
 
-const partyOwnerDeclaration = (sourceReference: PrivacySourcePersonReference | undefined) =>
+const partyOwnerDeclaration = (sourceReference: PersonReference | undefined) =>
   sourceReference === undefined
     ? ('party.registry.party.read' as const)
     : ('party.registry.source-person-admission.read' as const);
@@ -107,13 +108,17 @@ export const admitCurrentSourcePersonProof = Effect.fn('PrivacySubjectPartyOwner
     return { evidence, proof: result };
   },
 );
-const personRequest = (partyRef: PartyRef, sourceReference: PrivacySourcePersonReference, contactPointId?: string) =>
-  contactPointId === undefined ? { partyRef, sourceReference } : { contactPointId, partyRef, sourceReference };
+const personRequest = (partyRef: PartyRef, sourceReference: PersonReference, contactPointId?: string) => {
+  if ('occurrenceId' in sourceReference) {
+    return contactPointId === undefined ? { partyRef, sourceReference } : { contactPointId, partyRef, sourceReference };
+  }
+  return { admittedRecord: sourceReference, partyRef };
+};
 export const resolveSourcePersonOwnerProof = Effect.fn('PrivacySubjectPartyOwner.sourcePersonEvidence')(
   function* sourcePerson(
     partyRef: PartyRef,
     scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
-    sourceReference: PrivacySourcePersonReference,
+    sourceReference: PersonReference,
     transport: PartyOwnerTransport,
     contactPointId?: string,
   ) {
@@ -134,7 +139,7 @@ export const resolveSourcePersonOwnerProof = Effect.fn('PrivacySubjectPartyOwner
 export const resolveSourcePersonOwnerEvidence = (
   partyRef: PartyRef,
   scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
-  sourceReference: PrivacySourcePersonReference,
+  sourceReference: PersonReference,
   transport: PartyOwnerTransport,
   contactPointId?: string,
 ) =>
@@ -150,11 +155,11 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
     const sourceEvidence = Effect.fn('PrivacySubjectPartyOwner.currentSourceEvidence')(function* evidence(
       partyRef: PartyRef,
       scope: OperationalScope,
-      sourceReference: PrivacySourcePersonReference,
+      sourceReference: PersonReference,
       operationRequirementKey: PrivacyPartyOwnerRequirement | undefined,
       contactPointId?: string,
     ) {
-      const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema, {
+      const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonProofRequestSchema, {
         onExcessProperty: 'error',
       })(personRequest(partyRef, sourceReference, contactPointId)).pipe(Effect.mapError(unavailable));
       const requestHash =
@@ -165,13 +170,7 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
         operationRequirementKey,
         requestHash,
       );
-      return yield* resolveSourcePersonOwnerEvidence(
-        partyRef,
-        scope,
-        sourceRequest.sourceReference,
-        transport,
-        sourceRequest.contactPointId,
-      );
+      return yield* resolveSourcePersonOwnerEvidence(partyRef, scope, sourceReference, transport, contactPointId);
     });
     return PrivacySubjectPartyOwner.of({
       resolve: Effect.fn('PrivacySubjectPartyOwner.resolve')(

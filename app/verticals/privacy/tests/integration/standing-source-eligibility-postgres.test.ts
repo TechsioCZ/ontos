@@ -1,3 +1,4 @@
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
@@ -47,7 +48,7 @@ it.live('checks standing source-route authorization through governed Read and na
     const subjectRefOfTenant = subjectRefOf(tenantId);
     const subjectOne = yield* nextId();
     const subjectTwo = yield* nextId();
-    const fixture = yield* native
+    let fixture = yield* native
       .prepareOwner((transaction, scope) =>
         Effect.gen(function* setupPrivacyFacts() {
           const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
@@ -102,6 +103,7 @@ it.live('checks standing source-route authorization through governed Read and na
             ),
           );
           expect(collided.code).toBe('privacy_operation_conflict');
+          yield* repository.assignResponsibility(tenantId, legalEntityId, yield* nextId(), facts.controller);
           yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), facts.policy);
           yield* repository.recordApplicability(
             tenantId,
@@ -157,7 +159,11 @@ it.live('checks standing source-route authorization through governed Read and na
       subjectRefOfTenant(subjectOne),
     );
     // The integration acts with its own machine credential; no setting names a context, subject or occurrence.
-    const { principal } = native;
+    const principal = trustVerifiedGatewayPrincipalContext(native.principal, 'e'.repeat(64), undefined, {
+      appId: 'party-registry',
+      buildMarker: 'fixture',
+      principalId,
+    });
     const read = (input: SourceProcessingEligibilityRequest = fixture.request) =>
       native.runtime
         .runRead({
@@ -185,68 +191,93 @@ it.live('checks standing source-route authorization through governed Read and na
       (yield* read({ ...fixture.request, target: { kind: 'PARTY', resourceId: 'fixture:party-target' } })).outcome,
     ).toBe('DENIED');
     expect((yield* read({ ...fixture.request, operation: 'READ' })).outcome).toBe('DENIED');
-    yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* restrictCurrentProcessing() {
-          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-          const actionInvocationId = yield* nextId();
-          yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
-            actionInvocationId,
-            asOf: fixture.from,
-            authorityRef: 'fixture:current-restriction-authority',
-            evidenceRefs: ['fixture:restriction-decision'],
-            intervention: {
-              currentness: {
-                authoritative: true,
-                observedAt: fixture.from,
-                revision: 'restriction:1',
-                sourceRef: 'fixture:current-restriction-authority',
+    const intervention = (kind: 'RESTRICTION' | 'OBJECTION', status: 'ACTIVE' | 'RESOLVED') =>
+      native
+        .prepareOwner((transaction, scope) =>
+          Effect.gen(function* recordIntervention() {
+            const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+            const actionInvocationId = yield* nextId();
+            const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
+            const ref = `fixture:${kind}:${status}:${tenantId}`;
+            yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
+              actionInvocationId,
+              asOf: observedAt,
+              authorityRef: ref,
+              evidenceRefs: [ref],
+              intervention: {
+                currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
+                interventionRef: ref,
+                kind,
+                scope: intendedScope,
+                status,
               },
-              interventionRef: `fixture:restriction:${tenantId}`,
-              kind: 'RESTRICTION',
-              scope: intendedScope,
-              status: 'ACTIVE',
-            },
-            legalEntityId,
-            receiptRef: 'fixture:restriction-receipt',
-            tenantId,
-          });
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+              legalEntityId,
+              receiptRef: ref,
+              tenantId,
+            });
+          }),
+        )
+        .pipe(Effect.provide(native.layer));
+    yield* intervention('OBJECTION', 'ACTIVE');
+    yield* intervention('RESTRICTION', 'ACTIVE');
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
-    // A restriction of one subject leaves the other customer of the same route untouched.
-    expect((yield* read(fixture.requestFor('client:two', 'occurrence:during-restriction'))).outcome).toBe('ALLOWED');
+    const other = fixture.requestFor('contact:client:two', 'occurrence:carry-forward');
+    expect((yield* read(other)).outcome).toBe('ALLOWED');
     yield* native
       .prepareOwner((transaction, scope) =>
-        Effect.gen(function* resolveRestriction() {
-          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-          const actionInvocationId = yield* nextId();
-          const observedAt = '2026-11-02T00:00:00.000Z';
-          yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
-            actionInvocationId,
-            asOf: observedAt,
-            authorityRef: 'fixture:restriction-resolved',
-            evidenceRefs: ['fixture:restriction-resolution'],
-            intervention: {
-              currentness: {
-                authoritative: true,
-                observedAt,
-                revision: 'restriction:2',
-                sourceRef: 'fixture:restriction-resolved',
-              },
-              interventionRef: `fixture:restriction-resolved:${tenantId}`,
-              kind: 'RESTRICTION',
-              scope: intendedScope,
-              status: 'RESOLVED',
-            },
-            legalEntityId,
-            receiptRef: 'fixture:restriction-resolution-receipt',
-            tenantId,
-          });
+        Effect.gen(function* revoke() {
+          const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+          yield* a.end(fixture.ended, 1, yield* nextId());
         }),
       )
       .pipe(Effect.provide(native.layer));
+    expect((yield* read(other)).outcome).toBe('DENIED');
+    fixture = yield* native
+      .prepareOwner((transaction, scope) =>
+        Effect.gen(function* replaceGrant() {
+          const next = makeStandingSourceFixture({
+            authorizationId: yield* nextId(),
+            basisId: yield* nextId(),
+            evaluatedAt: fixture.evaluatedAt,
+            legalEntityId,
+            principalId,
+            purposeId: fixture.purpose.purposeRef.resourceId,
+            responsibilityId: yield* nextId(),
+            tenantId,
+            versionId: fixture.authorization.scopeTemplate.purposeVersionId,
+          });
+          const r = yield* privacyOperationRepositoryForScope(transaction, scope);
+          const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+          yield* r.assignResponsibility(tenantId, legalEntityId, yield* nextId(), next.controller);
+          yield* r.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), next.policy);
+          const assignment = {
+            ...fixture.assignment,
+            applicabilityDecision: next.decision,
+            assignmentRef: next.authorization.legalBasisAssignmentRef,
+            scope: {
+              ...fixture.assignment.scope,
+              processingScopeRef: next.authorization.scopeTemplate.processingScopeRef,
+            },
+          };
+          yield* r.recordApplicability(
+            tenantId,
+            legalEntityId,
+            yield* nextId(),
+            next.authorization.applicability.decisionRef,
+            next.decision,
+          );
+          yield* r.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
+          yield* a.create(next.authorization, yield* nextId());
+          return { ...next, assignment };
+        }),
+      )
+      .pipe(Effect.provide(native.layer));
+    // No record was re-admitted. Only the original subject with active interventions stays blocked.
+    expect((yield* read(other)).outcome).toBe('ALLOWED');
+    expect((yield* read()).outcome).toBe('DENIED');
+    yield* intervention('OBJECTION', 'RESOLVED');
+    expect((yield* read()).outcome).toBe('DENIED');
+    yield* intervention('RESTRICTION', 'RESOLVED');
     const allowed = yield* read();
     expect(allowed.outcome).toBe('ALLOWED');
     expect(yield* read()).toMatchObject({

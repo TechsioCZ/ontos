@@ -1,7 +1,8 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { AdmitSourceProcessingSubjectPayloadSchema } from '@app/privacy/api/admit-source-processing-subject-action';
 import { OrganizationBusinessSourceStatement } from '@app/party-registry/apis/organization-record-facts';
 import { Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { SymmyPinnedJobPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import {
@@ -193,5 +194,50 @@ it.effect('admits one subject per customer and keeps each contact on the custome
         payload: { childSources: [], source: sourceRecord('customer:two') },
       },
     ]);
+  }),
+);
+
+it.effect('encodes only a membership record as a child, not a CUSTOMER containing a membership effect', () =>
+  Effect.gen(function* membership() {
+    const sourceId = 'customer:one';
+    const root = admissionItem(1, 'customer', sourceId);
+    const [effect] = root.effects;
+    assert.isOk(effect !== undefined);
+    const profileRef = {
+      moduleId: 'commerce.customer-context',
+      resourceId: partyRef.resourceId,
+      resourceType: 'commerce.customer-context.retail-customer-profile',
+      tenantId,
+    };
+    const intent = {
+      _tag: 'CustomerGroupMembership',
+      payload: {
+        completenessProofRef: 'fixture:complete',
+        effectiveAt: observedAt,
+        groupRefs: [],
+        manager: {
+          factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+          issuer: source.issuer,
+          sourceNamespace: source.namespace,
+          tenantId,
+        },
+        operation: 'COMPLETE',
+        profile: { profileKind: 'RETAIL', profileRef },
+        reason: 'Fixture membership',
+        route: { id: routeRef, revision: 'fixture-revision' },
+        source: { assertionId: occurrenceId, effectId: 'fixture:effect', order: 1, sourceRecordId: sourceId },
+      },
+    };
+    for (const entityKind of ['CUSTOMER', 'CUSTOMER_GROUP_MEMBERSHIP']) {
+      const occurrence = { ...effect.ref.occurrence, record: { ...effect.ref.occurrence.record, entityKind } };
+      const job = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
+        items: [{ ...root, effects: [{ ...effect, intent, ref: { ...effect.ref, occurrence } }] }],
+      });
+      const [projected] = projectSymmyCustomerIntakeAdmissions(job, new Set(['customer']));
+      const payload = yield* Schema.decodeUnknownEffect(AdmitSourceProcessingSubjectPayloadSchema)(projected?.payload);
+      expect(payload.membershipProfile).toEqual(
+        entityKind === 'CUSTOMER' ? undefined : { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileRef.resourceId },
+      );
+    }
   }),
 );
