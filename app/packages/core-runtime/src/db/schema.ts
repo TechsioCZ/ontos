@@ -758,7 +758,7 @@ export const tenantThemes = enableCoreGovernedRls(
       check('core_tenant_themes_label_ck', sql`length(${table.label}) between 1 and 120`),
       check(
         'core_tenant_themes_modes_ck',
-        sql`cardinality(${table.modes}) between 1 and 2 and ${table.modes} <@ array['light', 'dark']::text[]`,
+        sql`array_ndims(${table.modes}) = 1 and cardinality(${table.modes}) between 1 and 2 and ${table.modes} <@ array['light', 'dark']::text[]`,
       ),
       sharedRuntimeAllPolicy('tenant_themes'),
     ],

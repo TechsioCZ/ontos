@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "ef5a62a9-f82c-4281-a58d-394864067331",
+  "id": "7b3af13a-aa1e-42f3-9dce-dc7b6c52af2c",
   "prevIds": [
     "c258c22d-d679-41d1-85aa-a37691995516"
   ],
@@ -16871,7 +16871,7 @@
       "table": "tenant_themes"
     },
     {
-      "value": "cardinality(\"modes\") between 1 and 2 and \"modes\" <@ array['light', 'dark']::text[]",
+      "value": "array_ndims(\"modes\") = 1 and cardinality(\"modes\") between 1 and 2 and \"modes\" <@ array['light', 'dark']::text[]",
       "name": "core_tenant_themes_modes_ck",
       "entityType": "checks",
       "schema": "core",
