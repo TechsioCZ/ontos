@@ -146,6 +146,7 @@ import { SavedAddressListApi } from './apis/saved-address-list.ts';
 import { SavedAddressSourceReceiptApi } from './apis/saved-address-source-receipt.ts';
 import { SetDefaultBillingAddressActionApi } from './apis/set-default-billing-address-action.ts';
 import { SetDefaultDeliveryDestinationActionApi } from './apis/set-default-delivery-destination-action.ts';
+import { SourceProfileSubjectApi } from './apis/source-profile-subject.ts';
 import { StartPortalEnrollmentActionApi } from './apis/start-portal-enrollment-action.ts';
 import { SubmitPurchaseApprovalRequestActionApi } from './apis/submit-purchase-approval-request-action.ts';
 import { SuspendCustomerProfileActionApi } from './apis/suspend-customer-profile-action.ts';
@@ -253,6 +254,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CustomerProfileIcoMigrationApi
   | typeof CustomerProfileReadApi
   | typeof CustomerProfileSourceApi
+  | typeof SourceProfileSubjectApi
   | typeof CustomerProfileSourcePageApi
   | typeof CustomerProfileSourcePartiesApi
   | typeof CustomerProfileTradingGateApi
@@ -481,6 +483,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(SavedAddressSourceReceiptApi)
   .addHttpApi(SetDefaultBillingAddressActionApi)
   .addHttpApi(SetDefaultDeliveryDestinationActionApi)
+  .addHttpApi(SourceProfileSubjectApi)
   .addHttpApi(StartPortalEnrollmentActionApi)
   .addHttpApi(SubmitPurchaseApprovalRequestActionApi)
   .addHttpApi(SuspendCustomerProfileActionApi)

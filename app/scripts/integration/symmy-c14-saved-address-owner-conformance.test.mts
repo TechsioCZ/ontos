@@ -3,7 +3,6 @@ import { SavedAddressSourceReceiptResponseSchema } from '@app/commerce-customer-
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PgClient } from '@effect/sql-pg';
-import { SourceProcessingContextSchema } from '@app/privacy/api';
 import {
   seedCommittedProfileSourceProcessingNativeFixture,
   seedSourceProcessingNativeFixture,
@@ -27,14 +26,9 @@ import {
   issueCustomerProfileFixtureRecovery,
 } from './support/symmy-c14-customer-recovery.mts';
 import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
-import {
-  SymmyC14ProductFixtureUnavailable,
-  startProductOwner,
-  startProductWorker,
-} from './support/symmy-c14-product-runtime.mts';
+import { SymmyC14ProductFixtureUnavailable, startProductWorker } from './support/symmy-c14-product-runtime.mts';
 
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
-type Contexts = readonly (typeof SourceProcessingContextSchema.Type)[];
 interface Worker {
   readonly diagnostic: Effect.Effect<string>;
 }
@@ -99,43 +93,8 @@ const person = (
   contacts: readonly (typeof billingContact)[] = [],
 ) => ({ addresses, contacts, customerId, firstName, kind: 'PERSON' as const, lastName: 'Customer' });
 const streetOf = (street: string) => ({ lifecycle: 'ACTIVE', revision: 1, street });
-const MAX_ENVIRONMENT_VALUE_LENGTH = 120_000;
-
-const belongsTo = (occurrences: ReadonlySet<string | undefined>) => (context: Contexts[number]) =>
-  occurrences.has(context.request.source?.occurrenceId);
 const billingStreet = '17 Internal Street';
 const deliveryStreet = '18 Internal Street';
-
-const restartPrivacy = Effect.fn('SymmyC14PublicAddress.restartPrivacy')(function* restartPrivacy(
-  fixture: CustomerFixture,
-  contexts: Contexts,
-) {
-  const runtime = fixture.ownerRuntimes.get('privacy');
-  if (runtime === undefined) {
-    return yield* unavailable('The actual Privacy receiver is required for SavedAddress DATA processing');
-  }
-  // The contexts travel in one environment value, which Linux limits to 128 KiB: CI fails with E2BIG above it.
-  const encodedContexts = yield* Schema.encodeEffect(
-    Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-  )(contexts);
-  expect(encodedContexts.length).toBeLessThan(MAX_ENVIRONMENT_VALUE_LENGTH);
-  yield* runtime.receiver.child.kill();
-  yield* runtime.receiver.child.exitCode;
-  const restarted = yield* startProductOwner({
-    artifacts: runtime.artifacts,
-    contract: runtime.contract,
-    environment: {
-      ...fixture.environment,
-      ONTOS_GATEWAY_MODULE_API_KEY: runtime.moduleKey,
-      ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: encodedContexts,
-    },
-    port: runtime.port,
-    prefix: '/privacy-api',
-  });
-  fixture.ownerDiagnostics.set('privacy', restarted.diagnostic);
-  fixture.ownerRuntimes.set('privacy', { ...runtime, receiver: restarted });
-  return yield* Effect.void;
-});
 
 const effectRows = (fixture: CustomerFixture, jobId: string) =>
   fixture.admin`select e.effect_id,e.effect_key,e.effect->'ref'->'occurrence'->'record'->>'sourceRecordId' as record_id,
@@ -201,14 +160,14 @@ const governExistingProfile = Effect.fn('SymmyC14PublicAddress.governExisting')(
     tenantId: fixture.tenantId,
   };
   // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
-  const source = yield* seedSourceProcessingNativeFixture({
+  yield* seedSourceProcessingNativeFixture({
     ...common,
     contexts: all.filter(({ request }) => request.target === null),
     contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SOURCE_INTAKE',
     meaning:
       'Independent current fixture policy allows the public customers to name their source records and create or match their Party and profile',
   });
-  const data = yield* seedCommittedProfileSourceProcessingNativeFixture({
+  yield* seedCommittedProfileSourceProcessingNativeFixture({
     ...common,
     contexts: all.filter(({ request }) => request.target !== null),
     contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SAVED_ADDRESS',
@@ -216,7 +175,6 @@ const governExistingProfile = Effect.fn('SymmyC14PublicAddress.governExisting')(
       'Independent current fixture policy allows the public customers to match the original source person and save Commerce-only addresses',
     profileReceipt: fixture.proofTransport,
   });
-  return [...fixture.privacy.contexts, ...source.contexts, ...data.contexts];
 });
 
 /** The governance step for a profile the job itself created: it exists only once the profile effect settled. */
@@ -264,7 +222,7 @@ const governCreatedProfile = Effect.fn('SymmyC14PublicAddress.governCreated')(fu
     tenantId: fixture.tenantId,
   });
   const target = { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId };
-  const data = yield* seedCommittedProfileSourceProcessingNativeFixture({
+  yield* seedCommittedProfileSourceProcessingNativeFixture({
     connections: fixture.isolated.connections,
     contexts: ['saved-address-source.add', 'saved-address-source.receipt'].map((operation) => ({
       authMethod: 'system' as const,
@@ -280,7 +238,7 @@ const governCreatedProfile = Effect.fn('SymmyC14PublicAddress.governCreated')(fu
     profileReceipt: transport,
     tenantId: fixture.tenantId,
   });
-  return { contexts: data.contexts, profileId: profile.profileRef.resourceId };
+  return { profileId: profile.profileRef.resourceId };
 });
 
 it.live(
@@ -309,43 +267,19 @@ it.live(
           ${sourceIdentity.issuer},${sourceIdentity.namespace},${sourceIdentity.recordType},${internalCustomerSource.mappingVersion},true)`;
         const customer = (addresses: readonly PublicAddress[], contacts: readonly (typeof billingContact)[] = []) =>
           customersBody(person(recordId, 'Internal', addresses, contacts));
-        // Each request is one observation: its source occurrences derive from its Idempotency-Key, so Privacy is
-        // seeded for exactly the sources the owner will name. Each contact and address is a source record of its own.
-        // Privacy is restarted for each stage, because all the contexts together would not fit one environment value
-        // on Linux: the ambiguous customer's and the created customer's contexts wait for their own launches.
+        // Privacy holds one standing authorization of the route; the intake admits each customer with its contacts and
+        // addresses, whatever occurrence the Idempotency-Key of each request derives.
         const createdExpectation = [{ addresses: [billingAddress], kind: 'created', recordId: createdRecord }] as const;
         const ambiguousExpectation = [
           { addresses: [billingAddress], kind: 'ambiguous', recordId: ambiguousRecord },
           { addresses: [], kind: 'created', recordId: siblingRecord },
         ] as const;
-        const allPrivacyContexts = yield* governExistingProfile(fixture, [
+        yield* governExistingProfile(fixture, [
           [existingKey, [{ addresses: [billingAddress], contacts: [billingContact], kind: 'existing', recordId }]],
           [resendKey, [{ addresses: [billingAddress, deliveryAddress], kind: 'existing', recordId }]],
           [createdKey, createdExpectation],
           [ambiguousKey, ambiguousExpectation],
         ]);
-        // A context names its source by the occurrence the owner derives from the request key, so a job's contexts
-        // are the ones whose occurrences its own expectations produce.
-        const occurrencesOf = (key: string, expectations: readonly CustomerExpectation[]) =>
-          new Set(
-            customerContexts(contextScope(fixture), key, expectations).map(
-              ({ request }) => request.source?.occurrenceId,
-            ),
-          );
-        const createdOccurrences = occurrencesOf(createdKey, createdExpectation);
-        const ambiguousOccurrences = occurrencesOf(ambiguousKey, ambiguousExpectation);
-        const privacyContexts = allPrivacyContexts.filter(
-          (context) => !belongsTo(createdOccurrences)(context) && !belongsTo(ambiguousOccurrences)(context),
-        );
-        const ambiguousPrivacyContexts = [
-          ...fixture.privacy.contexts,
-          ...allPrivacyContexts.filter(belongsTo(ambiguousOccurrences)),
-        ];
-        const createdPrivacyContexts = [
-          ...fixture.privacy.contexts,
-          ...allPrivacyContexts.filter(belongsTo(createdOccurrences)),
-        ];
-        yield* restartPrivacy(fixture, privacyContexts);
         const worker = yield* startProductWorker(fixture.workerArtifact, {
           ...fixture.environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PUBLIC_ADDRESS_WORKER',
@@ -404,7 +338,6 @@ it.live(
 
         // No address without its customer: a customer the Party owner cannot match or create (its name belongs to
         // another Party) saves no address and gets no profile; the other customer of the same request is created.
-        yield* restartPrivacy(fixture, ambiguousPrivacyContexts);
         const ambiguous = yield* submitFor(
           ambiguousKey,
           customersBody(person(ambiguousRecord, 'Internal', [billingAddress]), person(siblingRecord, 'Sibling', [])),
@@ -426,9 +359,7 @@ it.live(
         expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet), streetOf(deliveryStreet)]);
 
         // Scenario 2: the customer does not exist. It is created, its profile is created, then its address is saved.
-        // The profile does not exist when Privacy is seeded, so the address waits (its effect is retried) until the
-        // profile the job created is governed, exactly as a real data source governance step would do between.
-        yield* restartPrivacy(fixture, createdPrivacyContexts);
+        // The address follows its customer's admitted subject; the profile the job created is then governed for reads.
         const created = yield* submitFor(createdKey, customersBody(person(createdRecord, 'Fresh', [billingAddress])));
         const createdProfile = yield* observeUntil(
           admin`select effect_id,owner_receipt,state from symmy_integration.job_effects
@@ -446,8 +377,7 @@ it.live(
           profileEffect,
           customerItemSource(sourceIdentity, createdKey, 'address-0-0', addressRecordId(createdRecord, billingAddress)),
         );
-        yield* restartPrivacy(fixture, [...createdPrivacyContexts, ...governed.contexts]);
-        // The address effect was refused while Privacy did not know the profile and is retried by the worker.
+        // The worker settles the address once the profile it builds on exists.
         for (let attempt = 0; attempt < 240; attempt += 1) {
           const rows = yield* effectRows(fixture, created.jobId);
           if (rows.length === 3 && rows.every(({ state }) => state === 'settled')) {

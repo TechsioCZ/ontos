@@ -99,6 +99,8 @@ const EXPECTED_FOREIGN_KEYS = [
   'privacy_owner_outcomes_measure_fk',
   'privacy_purpose_versions_purpose_fk',
   'privacy_retention_work_rule_fk',
+  'privacy_source_admissions_authorization_fk',
+  'privacy_source_admissions_subject_fk',
 ] as const;
 
 const EXPECTED_POLICIES = EffectArray.sort(

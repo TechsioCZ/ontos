@@ -328,6 +328,11 @@ describe('Symmy route bindings', () => {
     const privacy = contract('privacy', 'privacy.core', {
       operationContracts: [
         carrier(privacyCheck.entrypointKey, [privacyCheck.workloadKey], privacyCheck.declarationKey),
+        carrier(
+          'privacy.core.admit-source-processing-subject',
+          [privacyCheck.workloadKey],
+          'privacy.core.source-processing-subject.admit',
+        ),
       ],
     });
     const compatibilityReceiver = contract('price-group-catalog', 'pricing.price-group-catalog', {
@@ -462,6 +467,11 @@ describe('Symmy route bindings', () => {
       {
         operationContracts: [
           carrier(privacyCheck.entrypointKey, [privacyCheck.workloadKey], privacyCheck.declarationKey),
+          carrier(
+            'privacy.core.admit-source-processing-subject',
+            [privacyCheck.workloadKey],
+            'privacy.core.source-processing-subject.admit',
+          ),
         ],
       },
       [],

@@ -4,7 +4,10 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SymmyPinnedJobPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
-import { projectSymmyCustomerIntakeRequests } from '../../src/services/symmy-customer-intake-privacy.ts';
+import {
+  projectSymmyCustomerIntakeAdmissions,
+  projectSymmyCustomerIntakeRequests,
+} from '../../src/services/symmy-customer-intake-privacy.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '10000000-0000-4000-8000-000000000002';
@@ -129,5 +132,66 @@ it.effect('rejects private input tied to a different subject source than the pin
       Effect.flip,
     );
     expect(rejected).toMatchObject({ code: 'route_denied' });
+  }),
+);
+
+const admissionItem = (
+  index: number,
+  itemKey: string,
+  sourceRecordId: string,
+  dependsOn: readonly { readonly effectKey: string; readonly itemKey: string }[] = [],
+) => ({
+  effects: [
+    {
+      dependsOn,
+      effectKey: 'party-update',
+      itemId: `10000000-0000-4000-8000-00000000010${index}`,
+      ref: {
+        effectId: `10000000-0000-4000-8000-00000000020${index}`,
+        mappingVersion: 'fixture-mapping',
+        occurrence: {
+          occurrenceId: `10000000-0000-4000-8000-00000000030${index}`,
+          record: {
+            entityKind: source.recordType,
+            issuerId: source.issuer,
+            route: { integrationRouteId: routeRef, tenantId },
+            sourceNamespace: source.namespace,
+            sourceRecordId,
+          },
+        },
+        operation: { entrypointKey: 'party.registry.update-party', moduleId: 'party.registry', schemaVersion: '1' },
+        originalTarget: partyRef,
+        routeRevision: 'fixture-revision',
+      },
+    },
+  ],
+  itemId: `10000000-0000-4000-8000-00000000010${index}`,
+  itemKey,
+});
+
+const sourceRecord = (sourceRecordId: string) => ({ ...source, recordId: sourceRecordId });
+
+it.effect('admits one subject per customer and keeps each contact on the customer it builds on', () =>
+  Effect.gen(function* projectAdmissions() {
+    const admissionPlan = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
+      items: [
+        admissionItem(1, 'customer-0', 'customer:one'),
+        admissionItem(2, 'contact-0-0', 'contact:one', [{ effectKey: 'party-update', itemKey: 'customer-0' }]),
+        admissionItem(3, 'customer-1', 'customer:two'),
+        admissionItem(4, 'group-0', 'group:not-personal'),
+      ],
+    });
+    expect(
+      projectSymmyCustomerIntakeAdmissions(admissionPlan, new Set(['customer-0', 'contact-0-0', 'customer-1'])),
+    ).toEqual([
+      {
+        occurrenceId: '10000000-0000-4000-8000-000000000301',
+        payload: { childSources: [sourceRecord('contact:one')], source: sourceRecord('customer:one') },
+      },
+      {
+        occurrenceId: '10000000-0000-4000-8000-000000000303',
+        payload: { childSources: [], source: sourceRecord('customer:two') },
+      },
+    ]);
   }),
 );

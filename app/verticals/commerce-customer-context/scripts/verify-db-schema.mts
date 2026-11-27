@@ -137,6 +137,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_purchase_limit_policies',
   'read_retail_portal_binding',
   'read_retail_profile_by_party',
+  'read_source_profile_subject',
   'read_saved_address',
   'read_saved_address_source_receipt',
   'reconcile_portal_enrollment_outcome',

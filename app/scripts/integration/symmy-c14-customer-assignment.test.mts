@@ -3,7 +3,6 @@ import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PgClient } from '@effect/sql-pg';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
-import { SourceProcessingContextSchema } from '@app/privacy/api';
 import {
   seedCommittedProfileSourceProcessingNativeFixture,
   seedSourceProcessingNativeFixture,
@@ -366,7 +365,7 @@ it.live(
           'INTERNAL_C14 actual committed Retail receipt admitted independent per-profile assignment and recovery Privacy policies',
         );
         expect(policy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
-        const evidencePolicy = yield* seedSourceProcessingNativeFixture({
+        yield* seedSourceProcessingNativeFixture({
           connections: fixture.isolated.connections,
           contexts: [
             {
@@ -400,9 +399,6 @@ it.live(
           environment: {
             ...carrier.environment,
             ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
-            ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-              Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-            )([...fixture.privacy.contexts, ...policy.contexts, ...evidencePolicy.contexts]),
           },
           prefix: '/privacy-api',
         });

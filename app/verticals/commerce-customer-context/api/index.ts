@@ -324,6 +324,7 @@ import { savedAddressListReadApiLive } from './saved-address-list-read-server.ts
 import { savedAddressSourceReceiptReadApiLive } from './saved-address-source-receipt-read-server.ts';
 import { setDefaultBillingAddressActionApiLive } from './set-default-billing-address-action-server.ts';
 import { setDefaultDeliveryDestinationActionApiLive } from './set-default-delivery-destination-action-server.ts';
+import { sourceProfileSubjectReadApiLive } from './source-profile-subject-read-server.ts';
 import { startPortalEnrollmentActionApiLive } from './start-portal-enrollment-action-server.ts';
 import { submitPurchaseApprovalRequestActionApiLive } from './submit-purchase-approval-request-action-server.ts';
 import { suspendCustomerProfileActionApiLive } from './suspend-customer-profile-action-server.ts';
@@ -1353,6 +1354,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     savedAddressSourceReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    sourceProfileSubjectReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     startPortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     submitPurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     suspendCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

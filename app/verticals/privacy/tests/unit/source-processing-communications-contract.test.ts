@@ -191,7 +191,9 @@ describe('#1396 the caller is bound to the consumer it claims, in both direction
     request,
   });
   const services: SourceProcessingEligibilityServices = {
+    authorizations: () => Effect.succeed([]),
     contexts: [context],
+    resolveSubject: () => Effect.succeed(Option.none()),
     // An empty purpose ledger: an admitted caller reaches it and learns the purpose is not current; a refused one never does.
     protections: () => Effect.succeed({ items: [], sourceSubjectRefs: [] }),
     purposes: { get: () => Effect.succeed(Option.none()) },

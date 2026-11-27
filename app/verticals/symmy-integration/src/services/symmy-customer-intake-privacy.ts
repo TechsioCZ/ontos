@@ -10,8 +10,16 @@ import {
 } from '@app/privacy-contracts/source-processing-eligibility';
 import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
+import { executeAdmitSourceProcessingSubjectWithAuthorization } from '@app/privacy/api/client';
+import type { AdmitSourceProcessingSubjectPayloadSchema } from '@app/privacy/api/admit-source-processing-subject-action';
+import {
+  AdmitSourceProcessingSubjectActionAlreadyCommittedProblemSchema,
+  AdmitSourceProcessingSubjectActionConflictProblemSchema,
+  AdmitSourceProcessingSubjectActionIneligibleProblemSchema,
+} from '@app/privacy/api/admit-source-processing-subject-action';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Array as EffectArray, Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 
 import type { SymmyPinnedEffect, SymmyPinnedJobPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPartyCommerceIntentSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
@@ -22,7 +30,10 @@ import { symmyPartyCommerceIntentMatchesEffect } from './symmy-party-commerce-ad
 
 type Target = NonNullable<SourceProcessingEligibilityRequest['target']>;
 
-const profileTarget = (ref: { readonly resourceId: string; readonly resourceType: string }): Target => ({
+const profileTarget = (ref: {
+  readonly resourceId: string;
+  readonly resourceType: string;
+}): NonNullable<AdmitSourceProcessingSubjectPayload['membershipProfile']> => ({
   kind:
     ref.resourceType === 'commerce.customer-context.retail-customer-profile'
       ? 'RETAIL_CUSTOMER_PROFILE'
@@ -217,24 +228,161 @@ const customerIntakeRequest = Effect.fn('SymmyCustomerIntakePrivacy.request')(fu
 
 const requestEquivalent = Schema.toEquivalence(SourceProcessingEligibilityRequestSchema);
 const customerIntakePrivacyRequirement = 'integration.symmy.requirement.customer-intake-privacy';
+const customerIntakeAdmissionRequirement = 'integration.symmy.requirement.customer-intake-subject-admission';
+
+type Item = SymmyPinnedJobPlan['items'][number];
+type AdmitSourceProcessingSubjectPayload = typeof AdmitSourceProcessingSubjectPayloadSchema.Type;
+type AdmittedSource = AdmitSourceProcessingSubjectPayload['source'];
+const admissionAlreadyCommitted = Schema.is(AdmitSourceProcessingSubjectActionAlreadyCommittedProblemSchema);
+
+const itemSource = (item: Item): AdmittedSource => {
+  const { record } = item.effects[0].ref.occurrence;
+  return {
+    issuer: record.issuerId,
+    namespace: record.sourceNamespace,
+    recordId: record.sourceRecordId,
+    recordType: record.entityKind,
+    routeRef: record.route.integrationRouteId,
+  };
+};
+
+const parentItemKey = (item: Item): string | undefined =>
+  item.effects
+    .flatMap((effect) =>
+      (effect.dependsOn ?? []).flatMap((dependency) =>
+        Predicate.isString(dependency) || dependency.itemKey === item.itemKey ? [] : [dependency.itemKey],
+      ),
+    )
+    .at(0);
+
+/**
+ * One admission per customer record: its own source and the child records (contacts, addresses) built on it. Two
+ * customers never share a subject; a child always belongs to the root record it depends on.
+ */
+export const projectSymmyCustomerIntakeAdmissions = (
+  plan: SymmyPinnedJobPlan,
+  personalItemKeys: ReadonlySet<string>,
+): readonly { readonly occurrenceId: string; readonly payload: AdmitSourceProcessingSubjectPayload }[] => {
+  const byKey = new Map<string, Item>(plan.items.map((item) => [item.itemKey, item]));
+  const rootOf = (item: Item, seen: ReadonlySet<string> = new Set()): Item => {
+    const parent = parentItemKey(item);
+    const next = parent === undefined || seen.has(parent) ? undefined : byKey.get(parent);
+    return next === undefined ? item : rootOf(next, new Set([...seen, item.itemKey]));
+  };
+  const groups = new Map<string, { readonly children: Map<string, AdmittedSource>; readonly root: Item }>();
+  for (const item of plan.items.filter(({ itemKey }) => personalItemKeys.has(itemKey))) {
+    const root = rootOf(item);
+    const group = groups.get(root.itemKey) ?? { children: new Map<string, AdmittedSource>(), root };
+    groups.set(root.itemKey, group);
+    const source = itemSource(item);
+    const rootSource = itemSource(root);
+    if (computeCanonicalValueHash(source) !== computeCanonicalValueHash(rootSource)) {
+      group.children.set(computeCanonicalValueHash(source), source);
+    }
+  }
+  return [...groups.values()].map(({ children, root }) => {
+    const source = itemSource(root);
+    const profiles = root.effects.flatMap(({ intent }) =>
+      Schema.is(SymmyPartyCommerceIntentSchema)(intent)
+        ? Match.value(intent).pipe(
+            Match.tag('CustomerGroupMembership', (membership) => [
+              profileTarget(membership.payload.profile.profileRef),
+            ]),
+            Match.orElse(() => []),
+          )
+        : [],
+    );
+    const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
+    if (profiles[0] !== undefined) {
+      Object.assign(payload, { membershipProfile: profiles[0] });
+    }
+    return { occurrenceId: root.effects[0].ref.occurrence.occurrenceId, payload };
+  });
+};
+
+/** Creates or finds the Privacy subject of each customer under the route's standing authorization on first contact. */
+const admitSymmyCustomerIntakeSubjects = Effect.fn('SymmyCustomerIntakePrivacy.admit')(function* admit(
+  scope: OperationalScope,
+  plan: SymmyPinnedJobPlan,
+  personalItemKeys: ReadonlySet<string>,
+  crypto: Crypto.Crypto,
+) {
+  yield* requireModuleOperation(customerIntakeAdmissionRequirement).pipe(Effect.mapError(unavailable));
+  return yield* Effect.forEach(
+    projectSymmyCustomerIntakeAdmissions(plan, personalItemKeys),
+    Effect.fn('SymmyCustomerIntakePrivacy.admitSubject')(function* admitSubject({ occurrenceId, payload }) {
+      const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+      const gateway = yield* acquireDelegatedGatewayContext(
+        {
+          audience: 'privacy',
+          legalEntityScope: 'subject',
+          requestCorrelation,
+          subject: { _tag: 'Assertion', scope },
+        },
+        crypto,
+      ).pipe(Effect.mapError(unavailable));
+      // The root occurrence names this admission: a replay of the job is the same admission, a new job is a new use.
+      return yield* executeAdmitSourceProcessingSubjectWithAuthorization(
+        payload,
+        gateway.authorization,
+        requestCorrelation,
+        {
+          baseUrl: gateway.apiBaseUrl,
+          compositionRevision: gateway.compositionRevision,
+          idempotencyKey: `privacy-source-admission:${occurrenceId}`,
+        },
+      ).pipe(
+        Effect.asVoid,
+        Effect.catchIf(admissionAlreadyCommitted, () => Effect.void),
+        Effect.mapError((cause) =>
+          Schema.is(AdmitSourceProcessingSubjectActionConflictProblemSchema)(cause) ||
+          Schema.is(AdmitSourceProcessingSubjectActionIneligibleProblemSchema)(cause)
+            ? denied()
+            : unavailable(cause),
+        ),
+      );
+    }),
+    { concurrency: 1, discard: true },
+  );
+});
+
+const itemRequests = Effect.fn('SymmyCustomerIntakePrivacy.itemRequests')(function* itemRequests(
+  scope: OperationalScope,
+  plan: SymmyPinnedJobPlan,
+) {
+  return yield* Effect.forEach(
+    plan.items,
+    (item) =>
+      Effect.forEach(item.effects, (effect) => customerIntakeRequest(plan, effect, scope), { concurrency: 1 }).pipe(
+        Effect.map((candidates) => ({ itemKey: item.itemKey, requests: EffectArray.getSomes(candidates) })),
+      ),
+    { concurrency: 1 },
+  );
+});
 
 /** The eligible source and owner target are the only input facts handed to Privacy. */
 export const projectSymmyCustomerIntakeRequests = Effect.fn('SymmyCustomerIntakePrivacy.requests')(function* requests(
   scope: OperationalScope,
   plan: SymmyPinnedJobPlan,
 ) {
-  const candidates = yield* Effect.forEach(
-    plan.items.flatMap((item) => item.effects),
-    (effect) => customerIntakeRequest(plan, effect, scope),
-    { concurrency: 1 },
+  const items = yield* itemRequests(scope, plan);
+  return EffectArray.dedupeWith(
+    items.flatMap((item) => item.requests),
+    requestEquivalent,
   );
-  return EffectArray.dedupeWith(EffectArray.getSomes(candidates), requestEquivalent);
 });
 
-/** Checks the exact current use before C14 writes any new personal input. Native owners still recheck at dispatch. */
+/**
+ * Admits each customer's Privacy subject under the route's standing authorization, then checks every exact use before
+ * C14 writes any new personal input. Native owners still recheck at dispatch.
+ */
 export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakePrivacy.require')(
   function* requirePrivacy(scope: OperationalScope, plan: SymmyPinnedJobPlan) {
-    const requests = yield* projectSymmyCustomerIntakeRequests(scope, plan);
+    const items = yield* itemRequests(scope, plan);
+    const requests = EffectArray.dedupeWith(
+      items.flatMap((item) => item.requests),
+      requestEquivalent,
+    );
     if (requests.length === 0) {
       return yield* Effect.void;
     }
@@ -243,6 +391,12 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
     }
     yield* requireModuleOperation(customerIntakePrivacyRequirement).pipe(Effect.mapError(unavailable));
     const crypto = yield* Crypto.Crypto;
+    yield* admitSymmyCustomerIntakeSubjects(
+      scope,
+      plan,
+      new Set(items.flatMap((item) => (item.requests.length > 0 ? [item.itemKey] : []))),
+      crypto,
+    );
     return yield* Effect.forEach(
       requests,
       Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {

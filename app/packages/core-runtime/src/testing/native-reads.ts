@@ -120,6 +120,7 @@ export interface NativeReadTestContextOptions {
    * replaces `access`; the default behaviour is unchanged (an unstated authority is a denial).
    */
   readonly accessDecision?: BoundAccessGate;
+  readonly authMethod?: 'session' | 'api_key';
   /** Only the disposable localhost database created by the isolated-native-database fixture. */
   readonly connections?: {
     readonly admin: { readonly connectionString: Redacted.Redacted };
@@ -201,6 +202,11 @@ const initializeNativeOwnerAccessScopes = (
   ).pipe(Effect.mapError((cause) => unavailable(cause, 'Native Read access fence initialization failed')));
 };
 
+const fixtureBinding = (authMethod: NativeReadTestContextOptions['authMethod']) =>
+  authMethod === 'api_key'
+    ? ({ authMethod: 'api_key', kind: 'integration', prefix: 'api-key', subjectType: 'api_key' } as const)
+    : ({ authMethod: 'session', kind: 'human', prefix: 'session', subjectType: 'user' } as const);
+
 /**
  * Isolated Core fixture for native owner Read tests. Core owns all administrative identity writes;
  * owner producers receive only the usual verified runtime-role transaction capability. No
@@ -278,11 +284,12 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     },
     { concurrency: 1 },
   );
+  const binding = fixtureBinding(options.authMethod);
   const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
     authBindingId,
-    authContextRef: `better-auth-session:native-read-test-${principalId}`,
+    authContextRef: `better-auth-${binding.prefix}:native-read-test-${principalId}`,
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-    authMethod: 'session',
+    authMethod: binding.authMethod,
     legalEntityId,
     principalId,
     tenantId,
@@ -380,7 +387,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
         });
         yield* transaction.insert(principals).values({
           displayName: 'Native Read test principal',
-          kind: 'human',
+          kind: binding.kind,
           principalId,
           status: 'active',
           tenantId,
@@ -392,13 +399,13 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
           provider: 'better_auth',
           providerSubjectId: principalId,
           status: 'active',
-          subjectType: 'user',
+          subjectType: binding.subjectType,
           tenantId,
         });
         if (secondaryPrincipal !== undefined) {
           yield* transaction.insert(principals).values({
             displayName: 'Unprivileged native owner test principal',
-            kind: 'human',
+            kind: binding.kind,
             principalId: secondaryPrincipal.principalId,
             status: 'active',
             tenantId,
@@ -410,7 +417,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
             provider: 'better_auth',
             providerSubjectId: secondaryPrincipal.principalId,
             status: 'active',
-            subjectType: 'user',
+            subjectType: binding.subjectType,
             tenantId,
           });
         }

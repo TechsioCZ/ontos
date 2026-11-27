@@ -35,7 +35,7 @@ it.live(
         connections: ownedDatabase.connections,
         contexts: [
           {
-            authMethod: 'session',
+            authMethod: 'api_key',
             principalId: governancePrincipalId,
             request: {
               consumerModuleId: 'party.registry',

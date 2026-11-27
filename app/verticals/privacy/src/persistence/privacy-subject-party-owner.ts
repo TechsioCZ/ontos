@@ -41,6 +41,7 @@ export class PrivacySubjectPartyOwner extends Context.Service<
       canonicalWrite: boolean,
       sourceReference?: PrivacySourcePersonReference,
       operationRequirementKey?: PrivacyPartyOwnerRequirement,
+      contactPointId?: string,
     ) => Effect.Effect<PrivacySubjectOwnerEvidence, PrivacyOperationPersistenceError>;
   }
 >()('@app/privacy/persistence/privacy-subject-party-owner/PrivacySubjectPartyOwner') {}
@@ -106,15 +107,18 @@ export const admitCurrentSourcePersonProof = Effect.fn('PrivacySubjectPartyOwner
     return { evidence, proof: result };
   },
 );
+const personRequest = (partyRef: PartyRef, sourceReference: PrivacySourcePersonReference, contactPointId?: string) =>
+  contactPointId === undefined ? { partyRef, sourceReference } : { contactPointId, partyRef, sourceReference };
 export const resolveSourcePersonOwnerProof = Effect.fn('PrivacySubjectPartyOwner.sourcePersonEvidence')(
   function* sourcePerson(
     partyRef: PartyRef,
     scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
     sourceReference: PrivacySourcePersonReference,
     transport: PartyOwnerTransport,
+    contactPointId?: string,
   ) {
     const result = yield* executeSourcePersonAdmissionWithAuthorization(
-      { partyRef, sourceReference },
+      personRequest(partyRef, sourceReference, contactPointId),
       Redacted.value(transport.authorization),
       scope.correlationId,
       { baseUrl: transport.baseUrl, compositionRevision: transport.compositionRevision },
@@ -132,8 +136,9 @@ export const resolveSourcePersonOwnerEvidence = (
   scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
   sourceReference: PrivacySourcePersonReference,
   transport: PartyOwnerTransport,
+  contactPointId?: string,
 ) =>
-  resolveSourcePersonOwnerProof(partyRef, scope, sourceReference, transport).pipe(
+  resolveSourcePersonOwnerProof(partyRef, scope, sourceReference, transport, contactPointId).pipe(
     Effect.map(({ evidence }) => evidence),
   );
 
@@ -147,10 +152,11 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
       scope: OperationalScope,
       sourceReference: PrivacySourcePersonReference,
       operationRequirementKey: PrivacyPartyOwnerRequirement | undefined,
+      contactPointId?: string,
     ) {
       const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema, {
         onExcessProperty: 'error',
-      })({ partyRef, sourceReference }).pipe(Effect.mapError(unavailable));
+      })(personRequest(partyRef, sourceReference, contactPointId)).pipe(Effect.mapError(unavailable));
       const requestHash =
         readVerifiedGatewayRecovery(scope) === undefined ? undefined : computeCanonicalValueHash(sourceRequest);
       const transport = yield* credentials.acquire(
@@ -159,16 +165,29 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
         operationRequirementKey,
         requestHash,
       );
-      return yield* resolveSourcePersonOwnerEvidence(partyRef, scope, sourceRequest.sourceReference, transport);
+      return yield* resolveSourcePersonOwnerEvidence(
+        partyRef,
+        scope,
+        sourceRequest.sourceReference,
+        transport,
+        sourceRequest.contactPointId,
+      );
     });
     return PrivacySubjectPartyOwner.of({
       resolve: Effect.fn('PrivacySubjectPartyOwner.resolve')(
-        function* resolvePartyOwner(partyRef, scope, canonicalWrite, sourceReference, operationRequirementKey) {
+        function* resolvePartyOwner(
+          partyRef,
+          scope,
+          canonicalWrite,
+          sourceReference,
+          operationRequirementKey,
+          contactPointId,
+        ) {
           if (partyRef.tenantId !== scope.tenantId) {
             return yield* unavailable();
           }
           if (sourceReference !== undefined) {
-            return yield* sourceEvidence(partyRef, scope, sourceReference, operationRequirementKey);
+            return yield* sourceEvidence(partyRef, scope, sourceReference, operationRequirementKey, contactPointId);
           }
           const transport = yield* credentials.acquire(
             scope,

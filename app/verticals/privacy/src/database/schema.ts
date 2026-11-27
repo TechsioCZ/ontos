@@ -58,6 +58,8 @@ export const PRIVACY_TABLE_INVENTORY = [
   'retention_evaluation_work',
   'retention_exceptions',
   'retention_rules',
+  'source_processing_admissions',
+  'source_processing_authorizations',
   'temporary_dsr_exports',
 ] as const;
 
@@ -105,6 +107,13 @@ export const privacySubjects = privacySchema.table.withRLS(
   (table) => [
     unique('privacy_subjects_scope_id_uk').on(table.tenantId, table.legalEntityId, table.privacySubjectId),
     index('privacy_subjects_scope_kind_idx').on(table.tenantId, table.legalEntityId, table.subjectKind),
+    index('privacy_subjects_reconciled_source_idx')
+      .on(
+        table.tenantId,
+        table.legalEntityId,
+        sql`(${table.subjectRecord}->'subject'->'sourceAdmission'->'sourceSubjectRef'->>'resourceId')`,
+      )
+      .where(sql`${table.subjectKind} = 'DATA_SUBJECT'`),
     unique('privacy_subjects_source_identity_uk').on(table.tenantId, table.legalEntityId, table.sourceIdentityKey),
     check('privacy_subjects_kind_ck', sql`${table.subjectKind} in ('DATA_SUBJECT', 'ANONYMOUS', 'SOURCE_ASSERTED')`),
     check(
@@ -1436,6 +1445,104 @@ export const dsrResponses = privacySchema.table.withRLS(
   ],
 );
 
+/** Standing, revocable authorization of one source route. The record is the source of truth; columns index it. */
+export const sourceProcessingAuthorizations = privacySchema.table.withRLS(
+  'source_processing_authorizations',
+  {
+    authorizationId: uuid('authorization_id').primaryKey(),
+    ...scopeColumns(),
+    authorizationRecord: jsonb('authorization_record').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    createdByActionInvocationId: uuid('created_by_action_invocation_id').notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endedByActionInvocationId: uuid('ended_by_action_invocation_id'),
+    lifecycle: text('lifecycle').notNull(),
+    recordedAt: recordedAt(),
+    revision: integer('revision').notNull(),
+    sourceIssuer: text('source_issuer').notNull(),
+    sourceNamespace: text('source_namespace').notNull(),
+    sourceRouteRef: text('source_route_ref').notNull(),
+  },
+  (table) => [
+    unique('privacy_source_authorizations_scope_id_uk').on(table.tenantId, table.legalEntityId, table.authorizationId),
+    unique('privacy_source_authorizations_invocation_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.createdByActionInvocationId,
+    ),
+    uniqueIndex('privacy_source_authorizations_active_route_uk')
+      .on(table.tenantId, table.legalEntityId, table.sourceIssuer, table.sourceNamespace, table.sourceRouteRef)
+      .where(sql`${table.lifecycle} = 'ACTIVE'`),
+    check('privacy_source_authorizations_lifecycle_ck', sql`${table.lifecycle} in ('ACTIVE', 'ENDED')`),
+    check(
+      'privacy_source_authorizations_end_ck',
+      sql`(${table.lifecycle} = 'ENDED') = (${table.endedAt} is not null) and (${table.endedAt} is null) = (${table.endedByActionInvocationId} is null) and (${table.endedAt} is null or ${table.endedAt} >= ${table.createdAt})`,
+    ),
+    check('privacy_source_authorizations_revision_ck', sql`${table.revision} >= 1`),
+    check(
+      'privacy_source_authorizations_record_binding_ck',
+      sql`
+      (${table.authorizationRecord} -> 'authorizationRef' ->> 'resourceId') is not distinct from ${table.authorizationId}::text and
+      (${table.authorizationRecord} -> 'authorizationRef' ->> 'tenantId') is not distinct from ${table.tenantId}::text and
+      (${table.authorizationRecord} ->> 'legalEntityId') is not distinct from ${table.legalEntityId}::text and
+      (${table.authorizationRecord} ->> 'lifecycle') is not distinct from ${table.lifecycle} and
+      (${table.authorizationRecord} ->> 'revision')::integer is not distinct from ${table.revision} and
+      (${table.authorizationRecord} -> 'source' ->> 'issuer') is not distinct from ${table.sourceIssuer} and
+      (${table.authorizationRecord} -> 'source' ->> 'namespace') is not distinct from ${table.sourceNamespace} and
+      (${table.authorizationRecord} -> 'source' ->> 'routeRef') is not distinct from ${table.sourceRouteRef}
+    `,
+    ),
+    ...tenantLegalEntityRlsPolicies('privacy_source_authorizations_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Which Privacy subject a source record resolves to under one authorization, and when the route last used it. */
+export const sourceProcessingAdmissions = privacySchema.table.withRLS(
+  'source_processing_admissions',
+  {
+    ...scopeColumns(),
+    authorizationId: uuid('authorization_id').notNull(),
+    firstAdmittedAt: timestamp('first_admitted_at', { withTimezone: true }).notNull(),
+    lastActionInvocationId: uuid('last_action_invocation_id').notNull(),
+    lastAdmittedAt: timestamp('last_admitted_at', { withTimezone: true }).notNull(),
+    privacySubjectId: uuid('privacy_subject_id').notNull(),
+    role: text('role').notNull(),
+    sourceIdentityKey: text('source_identity_key').notNull(),
+    sourceRecord: jsonb('source_record').notNull(),
+  },
+  (table) => [
+    unique('privacy_source_admissions_source_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.authorizationId,
+      table.sourceIdentityKey,
+    ),
+    index('privacy_source_admissions_subject_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.authorizationId,
+      table.privacySubjectId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.authorizationId],
+      foreignColumns: [
+        sourceProcessingAuthorizations.tenantId,
+        sourceProcessingAuthorizations.legalEntityId,
+        sourceProcessingAuthorizations.authorizationId,
+      ],
+      name: 'privacy_source_admissions_authorization_fk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.privacySubjectId],
+      foreignColumns: [privacySubjects.tenantId, privacySubjects.legalEntityId, privacySubjects.privacySubjectId],
+      name: 'privacy_source_admissions_subject_fk',
+    }),
+    check('privacy_source_admissions_role_ck', sql`${table.role} in ('SUBJECT', 'CHILD')`),
+    check('privacy_source_admissions_period_ck', sql`${table.lastAdmittedAt} >= ${table.firstAdmittedAt}`),
+    ...tenantLegalEntityRlsPolicies('privacy_source_admissions_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
 export const PRIVACY_TABLES = [
   antiResurrectionProtections,
   applicabilityDecisions,
@@ -1475,6 +1582,8 @@ export const PRIVACY_TABLES = [
   retentionEvaluationWork,
   retentionExceptions,
   retentionRules,
+  sourceProcessingAdmissions,
+  sourceProcessingAuthorizations,
   temporaryDsrExports,
 ] as const;
 
@@ -1518,6 +1627,8 @@ const privacyDatabaseSchema = {
   retentionEvaluationWork,
   retentionExceptions,
   retentionRules,
+  sourceProcessingAdmissions,
+  sourceProcessingAuthorizations,
   temporaryDsrExports,
 } as const;
 

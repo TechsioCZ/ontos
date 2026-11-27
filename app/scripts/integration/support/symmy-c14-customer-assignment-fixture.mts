@@ -1,8 +1,7 @@
 import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/resources/retail-customer-profile';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { SourceProcessingContextSchema } from '@app/privacy/api';
-import type { SourceProcessingContext } from '@app/privacy/domain/source-processing-context';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { AntiResurrectionProtectionSchema } from '@app/privacy/domain/anti-resurrection';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
@@ -117,16 +116,24 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   readonly workloads?: readonly string[];
 }
 
+/** The Privacy subject the route admitted for a source record, and the content its standing scope covers. */
+export interface ProtectedIntakeSubject {
+  readonly contentScopeRefs: readonly string[];
+  readonly legalEntityId: string;
+  readonly subjectId: string;
+  readonly tenantId: string;
+}
+
 export const seedCustomerIntakeProtection = Effect.fn('SymmyC14CustomerFixture.seedIntakeProtection')(
-  function* seedIntakeProtection(admin: PgClient.PgClient, context: SourceProcessingContext) {
+  function* seedIntakeProtection(admin: PgClient.PgClient, protectedSubject: ProtectedIntakeSubject) {
     const protectedAt = DateTime.formatIso(yield* DateTime.now);
-    const { legalEntityId, tenantId } = context;
+    const { legalEntityId, subjectId, tenantId } = protectedSubject;
     const protectionScope = {
-      contentScopeRefs: context.contentScopeRefs,
+      contentScopeRefs: protectedSubject.contentScopeRefs,
       evidenceRefs: ['INTERNAL_C14_ERASURE_CONTROL'],
       measure: 'DELETE' as const,
-      resourceRefs: context.resourceRefs,
-      subjectRef: context.intendedScope.subjectRef.resourceId,
+      resourceRefs: [subjectId],
+      subjectRef: subjectId,
       tenantId,
     };
     const protection = yield* Schema.decodeUnknownEffect(AntiResurrectionProtectionSchema)({
@@ -170,31 +177,34 @@ const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPaus
   Requirements,
 >(input: {
   readonly admin: PgClient.PgClient;
-  readonly contexts: readonly SourceProcessingContext[];
-  readonly deniedSource: SourceProcessingContext['request']['source'];
+  readonly deniedSource: SourceProcessingEligibilityRequest['source'];
+  readonly legalEntityId: string;
+  readonly plans: readonly { readonly request: SourceProcessingEligibilityRequest; readonly subjectId: string }[];
   readonly submit: (
     key: string,
     body: ReturnType<typeof customersBody>,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, Failure, Requirements>;
   readonly tenantId: string;
 }) {
-  const { admin, contexts, deniedSource, submit, tenantId } = input;
+  const { admin, deniedSource, legalEntityId, plans, submit, tenantId } = input;
   if (deniedSource === null) {
     return yield* Effect.void;
   }
-  const protectedContext = contexts.find(({ request }) => request.source?.occurrenceId === deniedSource.occurrenceId);
-  if (protectedContext === undefined) {
-    return yield* unavailable('The exact blocked source fixture context is missing');
+  const protectedPlan = plans.find(({ request }) => request.source?.recordId === deniedSource.recordId);
+  if (protectedPlan === undefined) {
+    return yield* unavailable('The admitted blocked source subject is missing');
   }
-  yield* seedCustomerIntakeProtection(admin, protectedContext);
+  yield* seedCustomerIntakeProtection(admin, {
+    contentScopeRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+    legalEntityId,
+    subjectId: protectedPlan.subjectId,
+    tenantId,
+  });
   const before = yield* customerIntakeCounts(admin, tenantId);
   yield* Effect.forEach(
-    [
-      { caseKey: 'PROTECTED', key: pausedIntakeProtectedKey, status: 403 },
-      { caseKey: 'UNKNOWN', key: 'INTERNAL_C14_PAUSED_INTAKE_UNKNOWN', status: 503 },
-    ],
+    // A customer the route never saw before is admitted under the standing authorization; only protected material stops.
+    [{ caseKey: 'PROTECTED', key: pausedIntakeProtectedKey, status: 403 }],
     Effect.fn('SymmyC14CustomerFixture.assertPausedIntakeDenial')(function* assertPausedIntakeDenial(testCase) {
-      // The unknown case names a source no Privacy context was seeded for: its occurrence derives from its own key.
       const result = yield* submit(
         testCase.key,
         customersBody({
@@ -398,6 +408,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       intakeContexts.push(customerIntakeContext(integration.principalId, deniedSource, null));
     }
     const privacy = yield* seedSourceProcessingNativeFixture({
+      admitSources: true,
       connections: isolated.connections,
       contexts: [
         ...intakeContexts,
@@ -476,9 +487,6 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         { ...sourceIdentity, authMethod: 'system', principalId: systemId, tenantId },
         { ...sourceIdentity, authMethod: 'api_key', principalId: integration.principalId, tenantId },
       ]),
-      ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-        Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-      )(privacy.contexts),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
       ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
         {
@@ -570,8 +578,9 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     expect(yield* submit).toEqual(accepted);
     yield* verifyPausedCustomerIntake({
       admin,
-      contexts: privacy.contexts,
       deniedSource,
+      legalEntityId,
+      plans: privacy.plans,
       submit: submitResponse,
       tenantId,
     });

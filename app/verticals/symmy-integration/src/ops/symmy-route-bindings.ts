@@ -367,7 +367,7 @@ export const deriveSymmyRouteBindings = (input: {
   }
   const reads = [
     ...enrolled.filter(({ caller }) => caller === 'integration'),
-    ...(inventory.admissionReads ?? []),
+    ...(inventory.admissionOperations ?? []),
     ...enrolled.flatMap(({ integrationReads }) => integrationReads ?? []),
   ];
   for (const operation of reads) {

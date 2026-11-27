@@ -205,6 +205,8 @@
     "./api/organization-customer-profile-ico/client": "./src/api/organization-customer-profile-ico-client.ts",
     "./api/organization-customer-profile-ico-migration": "./shared/apis/organization-customer-profile-ico-migration.ts",
     "./api/organization-customer-profile-ico-migration/client": "./src/api/organization-customer-profile-ico-migration-client.ts",
+    "./api/source-profile-subject": "./shared/apis/source-profile-subject.ts",
+    "./api/source-profile-subject/client": "./src/api/source-profile-subject-client.ts",
     "./api/change-organization-customer-profile-ico-action/client": "./src/api/change-organization-customer-profile-ico-action-client.ts",
     "./api/migrate-organization-customer-profile-ico-action/client": "./src/api/migrate-organization-customer-profile-ico-action-client.ts",
     "./testing/customer-profile-source-reader": "./src/testing/customer-profile-source-reader.ts",

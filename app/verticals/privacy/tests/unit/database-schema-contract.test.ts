@@ -442,6 +442,18 @@ it('preserves only meaningful owner-local foreign keys', () => {
       foreignTable: 'retention_rules',
       name: 'privacy_retention_work_rule_fk',
     },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'authorization_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'authorization_id'],
+      foreignTable: 'source_processing_authorizations',
+      name: 'privacy_source_admissions_authorization_fk',
+    },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignTable: 'privacy_subjects',
+      name: 'privacy_source_admissions_subject_fk',
+    },
   ]);
 });
 

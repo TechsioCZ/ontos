@@ -15,6 +15,7 @@ import {
   partyFactAssertions,
   partyMatchDecisions,
   partyCreateSourceReceipts,
+  partyContactPoints,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { authorizePartyClientSourceReference } from './party-client-source-evidence.service.ts';
@@ -144,6 +145,23 @@ export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')
   const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
   if (correlated === undefined || correlated.party.currentType !== 'PERSON') {
     return notAdmissible;
+  }
+  if (input.contactPointId !== undefined) {
+    const [owned] = yield* transaction
+      .select({ id: partyContactPoints.contactPointId })
+      .from(partyContactPoints)
+      .where(
+        and(
+          eq(partyContactPoints.tenantId, scope.tenantId),
+          eq(partyContactPoints.partyId, correlated.party.partyId),
+          eq(partyContactPoints.contactPointId, input.contactPointId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (owned === undefined) {
+      return notAdmissible;
+    }
   }
   const now = yield* DateTime.nowAsDate;
   const types = yield* transaction

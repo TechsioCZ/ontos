@@ -124,6 +124,8 @@ export const privacyApplicabilityAuthorityMatchesExactUse = (
   authority.purposeVersionRef.tenantId === expected.tenantId &&
   authority.purposeVersionRef.resourceId === expected.purposeVersionId;
 
+export const SourceRouteProcessingOperation = 'SOURCE_ROUTE_PROCESSING';
+
 /** The scope is deliberately a caller-declared, stable business scope, not an inferred request context. */
 export const PrivacyApplicabilityScopeSchema = Schema.Struct({
   facts: Schema.Array(PrivacyApplicabilityFactSchema).check(Schema.isMaxLength(32)),
@@ -646,7 +648,21 @@ export const resolvePrivacyApplicability = (input: ResolvePrivacyApplicabilityIn
   for (const [dimension, value] of authoritativeFactValues(input.authority)) {
     dimensions.set(dimension, [...(dimensions.get(dimension) ?? []), value]);
   }
-  const conflictingDimensions = [...dimensions.entries()].filter(([, values]) => new Set(values).size > 1);
+  // Only route-template categories and recipients are sets. A selected policy must explicitly cover every member.
+  const conflictingDimensions = [...dimensions.entries()].filter(
+    ([dimension, values]) =>
+      new Set(values).size > 1 &&
+      !(
+        input.scope.operation === SourceRouteProcessingOperation &&
+        (dimension === 'CATEGORY' || dimension === 'RECIPIENT') &&
+        policy.factPredicates.some(
+          (predicate) =>
+            predicate.dimension === dimension &&
+            predicate.operator === 'ONE_OF' &&
+            values.every((value) => predicateMatches(predicate, value)),
+        )
+      ),
+  );
   if (conflictingDimensions.length > 0) {
     return decision(input, 'CONFLICT', ['declared_fact_conflict'], policies);
   }

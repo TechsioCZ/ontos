@@ -47,6 +47,7 @@ import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLiv
 // <generated-governed-http-handler-imports>
 import { acknowledgePrivacyNoticeActionApiLive } from './acknowledge-privacy-notice-action-server.ts';
 import { addProcessingPurposeVersionActionApiLive } from './add-processing-purpose-version-action-server.ts';
+import { admitSourceProcessingSubjectActionApiLive } from './admit-source-processing-subject-action-server.ts';
 import { applicabilityDecisionsReadApiLive } from './applicability-decisions-read-server.ts';
 import { assignDsrResolverActionApiLive } from './assign-dsr-resolver-action-server.ts';
 import { assignLegalBasisActionApiLive } from './assign-legal-basis-action-server.ts';
@@ -58,9 +59,11 @@ import { createNoticeVersionActionApiLive } from './create-notice-version-action
 import { createPrivacySubjectActionApiLive } from './create-privacy-subject-action-server.ts';
 import { createProcessingActivityActionApiLive } from './create-processing-activity-action-server.ts';
 import { createProcessingPurposeActionApiLive } from './create-processing-purpose-action-server.ts';
+import { createSourceProcessingAuthorizationActionApiLive } from './create-source-processing-authorization-action-server.ts';
 import { currentConsentReadApiLive } from './current-consent-read-server.ts';
 import { dispatchPrivacyMeasureActionApiLive } from './dispatch-privacy-measure-action-server.ts';
 import { dsrCasesReadApiLive } from './dsr-cases-read-server.ts';
+import { endSourceProcessingAuthorizationActionApiLive } from './end-source-processing-authorization-action-server.ts';
 import { enqueueRetentionEvaluationActionApiLive } from './enqueue-retention-evaluation-action-server.ts';
 import { evaluateProcessingEligibilityActionApiLive } from './evaluate-processing-eligibility-action-server.ts';
 import { issueDsrDeliveryAccessActionApiLive } from './issue-dsr-delivery-access-action-server.ts';
@@ -303,6 +306,7 @@ export const makePrivacyApiRuntime = (
     // <generated-governed-http-handler-layers>
     acknowledgePrivacyNoticeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     addProcessingPurposeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    admitSourceProcessingSubjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     applicabilityDecisionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assignDsrResolverActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignLegalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -314,9 +318,11 @@ export const makePrivacyApiRuntime = (
     createPrivacySubjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createProcessingActivityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createProcessingPurposeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createSourceProcessingAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentConsentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     dispatchPrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     dsrCasesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    endSourceProcessingAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     enqueueRetentionEvaluationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     evaluateProcessingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     issueDsrDeliveryAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -10495,6 +10495,41 @@
             "role": "action",
             "scope": "tenant"
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.source-profile-subject.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-profile-subject",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.source-profile-subject",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.customer-context.source-read"
+            ]
+          }
         }
       ],
       "moduleId": "commerce.customer-context"
@@ -20785,6 +20820,62 @@
         },
         {
           "accessDeclaration": {
+            "key": "privacy.core.source-processing-authorization.create",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.create-source-processing-authorization",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.source-processing-authorization.end",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.end-source-processing-authorization",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "privacy.core.source-processing-eligibility.read",
             "kind": "read",
             "modes": [
@@ -20813,6 +20904,43 @@
               "commerce-customer-context",
               "communications",
               "party-registry",
+              "symmy-integration"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.source-processing-check"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.source-processing-subject.admit",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.admit-source-processing-subject",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
               "symmy-integration"
             ],
             "subject": "identity",

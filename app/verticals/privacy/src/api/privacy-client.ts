@@ -196,6 +196,21 @@ export {
 } from './acknowledge-privacy-notice-action-client.ts';
 export type { AcknowledgePrivacyNoticeActionClientOptions } from './acknowledge-privacy-notice-action-client.ts';
 export {
+  executeCreateSourceProcessingAuthorizationWithAuthorization,
+  executeCreateSourceProcessingAuthorization,
+} from './create-source-processing-authorization-action-client.ts';
+export type { CreateSourceProcessingAuthorizationActionClientOptions } from './create-source-processing-authorization-action-client.ts';
+export {
+  executeEndSourceProcessingAuthorizationWithAuthorization,
+  executeEndSourceProcessingAuthorization,
+} from './end-source-processing-authorization-action-client.ts';
+export type { EndSourceProcessingAuthorizationActionClientOptions } from './end-source-processing-authorization-action-client.ts';
+export {
+  executeAdmitSourceProcessingSubjectWithAuthorization,
+  executeAdmitSourceProcessingSubject,
+} from './admit-source-processing-subject-action-client.ts';
+export type { AdmitSourceProcessingSubjectActionClientOptions } from './admit-source-processing-subject-action-client.ts';
+export {
   executeBindPreVerificationSubject,
   executeBindPreVerificationSubjectWithAuthorization,
 } from './bind-pre-verification-subject-action-client.ts';
