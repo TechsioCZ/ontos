@@ -129,6 +129,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     purchasePriceTiers[0];
   const packageQuantity = purchaseItem.packageQuantity;
   const customerPrice = purchaseItem.customerPrice;
+  // The base is struck through only when the customer's own price is below it: a group price above it is no discount.
+  const BaseCustomerPrice =
+    customerPrice?.basePriceExcludingVatMinor !== undefined &&
+    customerPrice.basePriceExcludingVatMinor > customerPrice.netMinor
+      ? "s"
+      : "span";
   // A single-variant product shows the variant's struck price, else the product's own (Historie cen › Původní cena).
   const originalPriceMinor = purchaseItem.originalPriceMinor ?? product.originalPriceMinor;
   const variantStock = detail.variants.map(getProductStockStatus);
@@ -445,10 +451,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                             {customerPrice.basePriceExcludingVatMinor !== undefined && (
                               <p className="sf-product-detail__price-row" data-sf-base-price="">
                                 <span>{cs.product.basePrice}</span>
-                                <s>
+                                <BaseCustomerPrice>
                                   {formatPrice(customerPrice.basePriceExcludingVatMinor, money)}{" "}
                                   {cs.product.excludingVat}
-                                </s>
+                                </BaseCustomerPrice>
                               </p>
                             )}
                           </>
