@@ -1,0 +1,6 @@
+absolute
+fixed
+static
+table
+transition
+visible

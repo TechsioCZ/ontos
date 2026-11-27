@@ -647,6 +647,9 @@
     "seo": {
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
-    "title": "UltraModern Workspace"
+    "title": "UltraModern Workspace",
+    "uiKit": {
+      "requiredLabel": "(required)"
+    }
   }
 }
