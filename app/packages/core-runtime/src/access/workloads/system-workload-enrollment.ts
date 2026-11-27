@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { DateTime, Effect, Option, Result } from 'effect';
 
 import {
@@ -13,6 +13,7 @@ import type {
   OntosRegisteredWorkloadCallInput,
   RegisteredWorkloadCallReceiver,
 } from '../../modules/registered-workload-calls.ts';
+import { principalEnrolledFor } from './system-enrollment.ts';
 
 /*
  * A Tenant's system Principal for one system workload a module declares (`systemWorkloads` in its manifest): the
@@ -23,7 +24,7 @@ import type {
  * `core.identity.create-non-human-principal` never creates one.
  */
 
-/** A system Principal holding an active binding of the workload: active or disabled, never archived. */
+/** A system Principal enrolled for the workload: active or disabled, never archived. */
 export interface SystemWorkloadEnrollmentHolder {
   readonly bindingId: string;
   readonly bindingIncarnation: string;
@@ -238,8 +239,9 @@ const readActiveTenantModuleKeys = (
     );
 
 /**
- * The Tenant's system Principals that are not archived and hold an active binding of the workload; two are enough to
- * refuse. A disabled one still holds the enrollment, so an enrollment never creates a second beside it.
+ * The Tenant's system Principals that are not archived, hold an active binding of the workload and may stand for it
+ * (`principalEnrolledFor`); two are enough to refuse. A disabled one still holds the enrollment, so an enrollment never
+ * creates a second beside it.
  */
 const readSystemWorkloadEnrollmentHolders = (
   transaction: ScopedTransactionExecutor,
@@ -265,6 +267,7 @@ const readSystemWorkloadEnrollmentHolders = (
         eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
         eq(accessWorkloadBindings.workloadKey, workloadKey),
         eq(accessWorkloadBindings.status, 'active'),
+        principalEnrolledFor(workloadKey),
         eq(principals.kind, 'system'),
         inArray(principals.status, ['active', 'disabled']),
       ),
@@ -309,6 +312,7 @@ const insertSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.insert
         displayName: `System workload ${workloadKey}`,
         kind: 'system',
         status: 'active',
+        systemWorkloadKey: workloadKey,
         tenantId: transaction.scope.tenantId,
       })
       .returning({ principalId: principals.principalId })
@@ -382,6 +386,40 @@ const revokeSystemWorkloadPrincipalBindings = Effect.fn(
 });
 
 /**
+ * Revokes the bindings of a system workload's key that system Principals enrolled for another workload hold, and names
+ * those Principals. The installed catalog refuses a call that borrows a declared key, so only one enrolled before the
+ * key's module declared it in the composition can hold it; the key's own enrollment takes it back.
+ */
+const reclaimSystemWorkloadKey = Effect.fn('SystemWorkloadEnrollment.reclaimSystemWorkloadKey')(
+  function* reclaimSystemWorkloadKey(transaction: ScopedTransactionExecutor, workloadKey: string) {
+    const enrolledForAnother = transaction
+      .select({ principalId: principals.principalId })
+      .from(principals)
+      .where(
+        and(
+          eq(principals.tenantId, transaction.scope.tenantId),
+          eq(principals.kind, 'system'),
+          ne(principals.systemWorkloadKey, workloadKey),
+        ),
+      );
+    const reclaimed = yield* transaction
+      .update(accessWorkloadBindings)
+      .set({ revokedAt: DateTime.toDateUtc(yield* DateTime.now), status: 'revoked' })
+      .where(
+        and(
+          eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
+          eq(accessWorkloadBindings.workloadKey, workloadKey),
+          eq(accessWorkloadBindings.status, 'active'),
+          inArray(accessWorkloadBindings.principalId, enrolledForAnother),
+        ),
+      )
+      .returning({ principalId: accessWorkloadBindings.principalId })
+      .pipe(Effect.mapError(enrollmentUnavailable));
+    return reclaimed.map(({ principalId }) => principalId).toSorted(byKey);
+  },
+);
+
+/**
  * Archives the ended enrollment's system Principal, active or disabled. Archived is final in Core's Principal
  * lifecycle, so a later enrollment creates a new Principal and this one never holds a workload again.
  */
@@ -424,5 +462,6 @@ export const systemWorkloadEnrollmentRepositoryFromTransaction = (transaction: S
     readActiveModuleKeys: () => readActiveTenantModuleKeys(transaction),
     readHolders: (workloadKey: string) => readSystemWorkloadEnrollmentHolders(transaction, workloadKey),
     readPrincipalBindings: (principalId: string) => readSystemWorkloadPrincipalBindings(transaction, principalId),
+    reclaimWorkloadKey: (workloadKey: string) => reclaimSystemWorkloadKey(transaction, workloadKey),
     revokePrincipalBindings: (principalId: string) => revokeSystemWorkloadPrincipalBindings(transaction, principalId),
   });

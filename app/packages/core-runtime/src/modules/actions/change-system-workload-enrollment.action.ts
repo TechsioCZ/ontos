@@ -107,6 +107,8 @@ const ChangeSystemWorkloadEnrollmentAuditEvidenceSchema = Schema.Struct({
   change: Schema.Literals(['ENROLLED', 'ALREADY_ENROLLED', 'ENDED', 'NOT_ENROLLED']),
   moduleKey,
   reason,
+  /** The system Principals of other workloads whose binding of this workload's key this change revoked. */
+  reclaimedFrom: Schema.optionalKey(Schema.Array(PrincipalIdSchema)),
   systemPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   workloadKey,
   workloads: Schema.optionalKey(Schema.Array(workloadKey)),
@@ -204,8 +206,10 @@ const enroll = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enroll')(function
   if (own === undefined) {
     return yield* enrollmentUnavailable();
   }
+  // The holder has its own key now; no Principal of another workload keeps a binding of it.
+  const reclaimedFrom = yield* repository.reclaimWorkloadKey(own.workloadKey);
   const tag = Option.isSome(holder) ? 'ALREADY_ENROLLED' : 'ENROLLED';
-  yield* context.recordAuditEvidence({
+  const evidence = {
     bindingIncarnation: own.incarnation,
     change: tag,
     moduleKey: payload.moduleKey,
@@ -213,7 +217,12 @@ const enroll = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enroll')(function
     systemPrincipalId: PrincipalIdSchema.make(principalId),
     workloadKey: payload.workloadKey,
     workloads: keysOf(added),
-  });
+  } as const;
+  yield* context.recordAuditEvidence(
+    reclaimedFrom.length === 0
+      ? evidence
+      : { ...evidence, reclaimedFrom: reclaimedFrom.map((id) => PrincipalIdSchema.make(id)) },
+  );
   const answer = {
     added: bindingsOf(added),
     bindingIncarnation: own.incarnation,

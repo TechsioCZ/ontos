@@ -248,6 +248,8 @@ export const principals = enableCoreGovernedRls(
       tenantId: tenantId(),
       kind: text('kind').$type<PrincipalKind>().notNull(),
       displayName: text('display_name').notNull(),
+      /** For a `system` principal: the system workload it was enrolled for, written once by its enrollment. */
+      systemWorkloadKey: text('system_workload_key'),
       status: text('status').$type<PrincipalStatus>().notNull(),
       createdAt: createdAt(),
       disabledAt: timestamp('disabled_at', { withTimezone: true }),
@@ -255,8 +257,13 @@ export const principals = enableCoreGovernedRls(
     (table) => [
       uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
       index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
+      // One live Principal per Tenant and system workload; an archived one never blocks a new enrollment.
+      uniqueIndex('core_principals_system_workload_uk')
+        .on(table.tenantId, table.systemWorkloadKey)
+        .where(sql`${table.status} <> 'archived'`),
       check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
+      check('core_principals_system_workload_ck', sql`${table.systemWorkloadKey} is null or ${table.kind} = 'system'`),
       sharedRuntimeAllPolicy('principals'),
       pgPolicy('core_principals_party_registry_request_select', {
         for: 'select',

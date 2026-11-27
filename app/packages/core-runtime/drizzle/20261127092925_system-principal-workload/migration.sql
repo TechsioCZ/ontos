@@ -1,0 +1,3 @@
+ALTER TABLE "core"."principals" ADD COLUMN "system_workload_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "core_principals_system_workload_uk" ON "core"."principals" ("tenant_id","system_workload_key") WHERE "status" <> 'archived';--> statement-breakpoint
+ALTER TABLE "core"."principals" ADD CONSTRAINT "core_principals_system_workload_ck" CHECK ("system_workload_key" is null or "kind" = 'system');
