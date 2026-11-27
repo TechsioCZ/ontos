@@ -3,7 +3,7 @@ import { Url, UrlParams } from 'effect/http';
 
 import { ExplainAccessPayloadSchema } from '../../../../../shared/access-admin-api.ts';
 import type { ExplainAccessPayload, ExplainAccessResponse } from '../../../../../shared/access-admin-api.ts';
-import { explainAccess, listAccessPeople } from '../../../../api/auth-client.ts';
+import { explainAccess, listAccessAdministrationPages, listAccessPeople } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   emptyWhySearch,
@@ -176,6 +176,18 @@ export const whySearchFromRequest = (request: Request): Option.Option<WhySearchD
     ...UrlParams.toRecord(Url.urlParams(new URL(request.url))),
   });
 
+/**
+ * The empty page says up front when the person may not ask "Proč?" at all, as the Shell's gate answers the page's own
+ * declaration; an unreadable answer leaves the form, whose check then answers itself.
+ */
+const openingWhyResult = (options: ClientOptions): Effect.Effect<WhyResultView> =>
+  listAccessAdministrationPages(options).pipe(
+    Effect.match({
+      onFailure: (): WhyResultView => ({ state: 'idle' }),
+      onSuccess: ({ pages }): WhyResultView => (pages.includes('why') ? { state: 'idle' } : { state: 'forbidden' }),
+    }),
+  );
+
 export const loadWhyPageModel = Effect.fn('WhyPageModel.load')(function* loadWhy(request: Request) {
   const shell = yield* loadHomePageModel(request);
   if (shell.state !== 'authenticated') {
@@ -196,7 +208,9 @@ export const loadWhyPageModel = Effect.fn('WhyPageModel.load')(function* loadWhy
         }
         const draft = decoded.value;
         const result: WhyResultView =
-          draft.capabilityKey === '' ? { state: 'idle' } : yield* checkWhySearch(draft, options, subjects);
+          draft.capabilityKey === ''
+            ? yield* openingWhyResult(options)
+            : yield* checkWhySearch(draft, options, subjects);
         return { draft, result, shell, subjects } satisfies WhyPageModel;
       }),
     ),
