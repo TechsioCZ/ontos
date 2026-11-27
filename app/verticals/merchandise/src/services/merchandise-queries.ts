@@ -1285,6 +1285,24 @@ interface CategoryTreeContent {
   published?: boolean;
 }
 
+/**
+ * The products a storefront lists on its category pages (active, published, not archived, sellable, in the market's
+ * offer). The storefront navigation offers only categories that hold one of them.
+ */
+export const storefrontListedProducts = (
+  scope: StoreScope,
+  catalog: StorefrontCatalogQuery,
+  market: CatalogMarketScope,
+): SQL | undefined =>
+  and(
+    eq(products.archived, false),
+    eq(products.active, true),
+    eq(products.published, true),
+    mainSourceListingFilter(scope, catalog),
+    sellableClassificationFilter(scope),
+    Option.getOrUndefined(market.offer),
+  );
+
 export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(function* categoryTree(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -1292,6 +1310,8 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     readonly activeId?: string | undefined;
     readonly activeSlug?: string | undefined;
     readonly contentOnly?: boolean;
+    /** Storefront navigation: only categories holding one of these products (with their ancestors). */
+    readonly listed?: SQL | undefined;
     readonly storefront: boolean;
   },
 ) {
@@ -1372,9 +1392,35 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     }
     return true;
   };
+  const listed = input.storefront && input.contentOnly !== true ? input.listed : undefined;
+  const stocked = new Set<string>();
+  if (listed !== undefined) {
+    const held = yield* query(
+      db
+        .select({ categoryId: products.categoryId, path: products.categoryPathIds })
+        .from(products)
+        .where(and(whereScope(products, scope), listed))
+        .groupBy(products.categoryId, products.categoryPathIds),
+      'Categories could not be read',
+    );
+    // The active category and every ancestor of a kept category stay, so the tree remains a forest.
+    const keep = (id: string | null | undefined) => {
+      let current = id === null || id === undefined ? undefined : byId.get(id);
+      while (current !== undefined && !stocked.has(current.id)) {
+        stocked.add(current.id);
+        current = current.parentId === null ? undefined : byId.get(current.parentId);
+      }
+    };
+    for (const row of held) {
+      keep(row.categoryId);
+      for (const id of row.path ?? []) keep(id);
+    }
+    keep(contentId);
+  }
   const selectedRows = rows.filter(
     (row) =>
       (!input.storefront || visible(row.id)) &&
+      (listed === undefined || stocked.has(row.id)) &&
       (input.contentOnly !== true || row.id === contentId || row.parentId === contentId),
   );
   return yield* Effect.forEach(
