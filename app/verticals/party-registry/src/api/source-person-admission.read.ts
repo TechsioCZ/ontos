@@ -9,6 +9,7 @@ import { readUnavailable } from './read-outcome.ts';
 import {
   SourcePersonProofRequestSchema,
   SourcePersonAdmissionResponseSchema,
+  sourcePersonProofRecordKey,
 } from '../../shared/apis/source-person-admission.ts';
 
 const sourcePersonAdmissionEntrypoint = defineTenantModuleEntrypoint({
@@ -41,7 +42,7 @@ export const sourcePersonAdmissionRead = defineRead(
       risk: 'sensitive',
       selectors: ['all'],
     },
-    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.partyRef.resourceId }),
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: sourcePersonProofRecordKey(input) }),
     accessKind: 'detail',
     entrypoint: sourcePersonAdmissionEntrypoint,
     evidencePolicy: {

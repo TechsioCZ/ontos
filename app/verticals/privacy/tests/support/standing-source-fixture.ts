@@ -138,9 +138,7 @@ export const makeStandingSourceFixture = (ids: {
     endedAt: null,
     endedBy: null,
     endReason: null,
-    grants: [
-      { allowTargetless: true, consumerModuleId, operation: 'CREATE', organizationBusinessUses: [], targetKinds: [] },
-    ],
+    grants: [{ allowTargetless: true, consumerModuleId, operation: 'CREATE', targetKinds: [] }],
     legalBasisAssignmentRef: {
       moduleId: privacyModuleId,
       resourceId: ids.basisId ?? '10000000-0000-4000-8000-000000000022',

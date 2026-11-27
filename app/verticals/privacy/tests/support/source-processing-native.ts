@@ -12,6 +12,8 @@ import { Config, Crypto, DateTime, Effect, Match, Option, Redacted, Schema } fro
 import { Reactivity } from 'effect/reactivity';
 
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
+import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
+import type { SourceProcessingContext } from '../../shared/domain/source-processing-context.ts';
 import { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import {
   SourceProcessingAuthorizationSchema,
@@ -26,6 +28,7 @@ import {
   PrivacyApplicabilityAuthoritySchema,
   PrivacyApplicabilityDecisionSchema,
   PrivacyApplicabilityPolicySchema,
+  PrivacyApplicabilityScopeSchema,
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
@@ -101,7 +104,6 @@ const unavailable = (cause?: unknown, reason = 'The isolated Privacy native fixt
   return new SourceProcessingNativeFixtureError({ cause: Redacted.make(cause), reason });
 };
 
-/** One grant per consumer operation, with the union of the targets and organization uses its plans name. */
 /** A grant carries the current source person admission only when one of its plans asks for it. */
 const grantOf = (
   base: Omit<SourceProcessingGrant, 'targetAdmission'>,
@@ -125,8 +127,6 @@ const fixtureGrant = ({ request, targetAdmission }: typeof PlanSchema.Type) => {
           allowTargetless: request.target === null && targetAdmission === undefined,
           consumerModuleId,
           operation: request.operation,
-          organizationBusinessUses:
-            request.organizationBusinessUse === undefined ? [] : [request.organizationBusinessUse],
           targetKinds,
         },
         targetAdmission,
@@ -134,6 +134,7 @@ const fixtureGrant = ({ request, targetAdmission }: typeof PlanSchema.Type) => {
     ),
   );
 };
+/** One grant per consumer operation, with the union of the targets its plans name. */
 const mergeGrants = (grants: readonly SourceProcessingGrant[]): SourceProcessingGrant[] => {
   const merged = new Map<string, SourceProcessingGrant>();
   for (const grant of grants) {
@@ -147,9 +148,6 @@ const mergeGrants = (grants: readonly SourceProcessingGrant[]): SourceProcessing
           allowTargetless: (current?.allowTargetless ?? false) || grant.allowTargetless,
           consumerModuleId: grant.consumerModuleId,
           operation: grant.operation,
-          organizationBusinessUses: [
-            ...new Set([...(current?.organizationBusinessUses ?? []), ...grant.organizationBusinessUses]),
-          ],
           targetKinds: [...new Set([...(current?.targetKinds ?? []), ...grant.targetKinds])],
         },
         targetAdmission,
@@ -447,6 +445,195 @@ const assertIsolatedConnections = Effect.fn('PrivacyNativeFixture.assertIsolated
   },
 );
 
+/**
+ * A canonical organization business intent keeps its exact context: one current applicability decision and contract
+ * basis for the exact request, served to the Privacy owner through its configured contexts. No route grant covers it.
+ */
+const seedOrganizationContext = Effect.fn('PrivacyNativeFixture.seedOrganizationContext')(
+  function* seedOrganizationContext(input: {
+    readonly from: string;
+    readonly nextId: () => Effect.Effect<string, SourceProcessingNativeFixtureError>;
+    readonly plan: typeof PlanSchema.Type;
+    readonly purposeId: string;
+    readonly scope: FixtureScope;
+    readonly seed: typeof SeedSchema.Type;
+    readonly subjects: Map<string, string>;
+    readonly transaction: PrivacyTransaction;
+    readonly until: string;
+    readonly versionId: string;
+  }) {
+    const { from, nextId, plan, purposeId, scope, seed, subjects, transaction, until, versionId } = input;
+    const { source } = plan.request;
+    if (source === null || new Set(seed.dataCategoryRefs).size !== 1) {
+      return yield* unavailable(
+        undefined,
+        'An exact organization context needs a qualified source and one explicit internal processing category',
+      );
+    }
+    const subjectId = yield* subjectForSource(transaction, scope, source, from, nextId, subjects);
+    const fixtureId = yield* nextId();
+    const processingScopeRef = { scopeId: `internal-source:${fixtureId}`, scopeType: 'privacy.processing-scope' };
+    const purposeRef = {
+      moduleId: PRIVACY_MODULE_ID,
+      resourceId: purposeId,
+      resourceType: 'privacy.core.processing-purpose' as const,
+      tenantId: seed.tenantId,
+    };
+    const authority = yield* Schema.decodeUnknownEffect(PrivacyApplicabilityAuthoritySchema)({
+      ...scope,
+      controllerRef: {
+        moduleId: PRIVACY_MODULE_ID,
+        resourceId: seed.controllerRef,
+        resourceType: 'privacy.core.controller',
+        tenantId: seed.tenantId,
+      },
+      purposeRef,
+      purposeVersionRef: {
+        moduleId: PRIVACY_MODULE_ID,
+        resourceId: versionId,
+        resourceType: 'privacy.core.processing-purpose-version',
+        tenantId: seed.tenantId,
+      },
+    });
+    const policy = yield* Schema.decodeUnknownEffect(PrivacyApplicabilityPolicySchema)({
+      composition: { precedence: 1, strategy: 'EXPLICIT_PRECEDENCE' },
+      effectiveFrom: from,
+      effectiveTo: until,
+      factPredicates: [{ dimension: 'CATEGORY', operator: 'ONE_OF', values: seed.dataCategoryRefs }],
+      jurisdictionProfile: { profileKey: 'internal-fixture:explicit', profileVersion: '1' },
+      mandatoryDimensions: ['CATEGORY'],
+      policyKey: `internal-source-policy:${fixtureId}`,
+      policyVersion: '1',
+      scopeKey: `${processingScopeRef.scopeType}:${processingScopeRef.scopeId}:${plan.request.operation}`,
+      sourceEvidenceRefs: [seed.contractEvidenceRef],
+    });
+    const applicabilityScope = yield* Schema.decodeUnknownEffect(PrivacyApplicabilityScopeSchema)({
+      facts: [
+        ...seed.dataCategoryRefs.map((value) => ({ dimension: 'CATEGORY', value })),
+        { dimension: 'CONTROLLER_SCOPE', value: seed.controllerRef },
+        { dimension: 'PRIVACY_SUBJECT', value: subjectId },
+        { dimension: 'PROCESSING_PURPOSE', value: purposeId },
+        { dimension: 'PROCESSING_PURPOSE_VERSION', value: versionId },
+        { dimension: 'RECIPIENT', value: plan.request.consumerModuleId },
+      ],
+      operation: plan.request.operation,
+      processingScopeRef,
+    });
+    const receiptRef = `internal-source-authority:${fixtureId}`;
+    const evidenceRefs = [seed.contractEvidenceRef];
+    const decision = resolvePrivacyApplicability({
+      authority,
+      authorityEvidenceRefs: evidenceRefs,
+      authorityReceiptRef: receiptRef,
+      evaluatedAt: from,
+      policies: [policy],
+      proposedActivity: true,
+      scope: applicabilityScope,
+    });
+    if (decision.outcome !== 'APPLICABLE') {
+      return yield* unavailable(undefined, `Internal explicit fixture applicability is ${decision.outcome}`);
+    }
+    const decisionRef = `internal-source-decision:${fixtureId}`;
+    yield* transaction.insert(applicabilityPolicies).values({
+      ...scope,
+      actionInvocationId: yield* nextId(),
+      effectiveFrom: new Date(from),
+      effectiveTo: new Date(until),
+      policyKey: policy.policyKey,
+      policyRecord: yield* Schema.encodeEffect(PrivacyApplicabilityPolicySchema)(policy),
+      policyVersion: policy.policyVersion,
+      scopeKey: policy.scopeKey,
+    });
+    yield* transaction.insert(applicabilityDecisions).values({
+      ...scope,
+      actionInvocationId: yield* nextId(),
+      decisionId: decisionRef,
+      decisionRecord: yield* Schema.encodeEffect(PrivacyApplicabilityDecisionSchema)(decision),
+      evaluatedAt: new Date(from),
+      operation: plan.request.operation,
+      outcome: decision.outcome,
+      processingScopeRef: processingScopeRef.scopeId,
+    });
+    const assignmentId = yield* nextId();
+    const assignment = yield* Schema.decodeUnknownEffect(PrivacyLegalBasisAssignmentSchema)({
+      actor: { principalId: seed.governancePrincipalId, tenantId: seed.tenantId },
+      applicabilityDecision: decision,
+      assignmentRef: {
+        moduleId: PRIVACY_MODULE_ID,
+        resourceId: assignmentId,
+        resourceType: 'privacy.core.legal-basis-assignment',
+        tenantId: seed.tenantId,
+      },
+      basis: 'CONTRACT',
+      basisVersion: 'INTERNAL_EXPLICIT_CONTRACT_FIXTURE_V1',
+      decision: 'APPROVED',
+      effectiveFrom: from,
+      effectiveTo: until,
+      provenance: {
+        decisionEvidenceRefs: evidenceRefs,
+        policyRef: policy.policyKey,
+        policyVersion: policy.policyVersion,
+        reason: 'INTERNAL ONLY explicit contract fixture; no production customer or consent assertion',
+        recordedAt: from,
+      },
+      scope: {
+        controllerRef: seed.controllerRef,
+        operation: plan.request.operation,
+        processingScopeRef,
+        purposeRef,
+        purposeVersionId: versionId,
+      },
+    });
+    yield* transaction.insert(legalBasisAssignments).values({
+      ...scope,
+      actionInvocationId: yield* nextId(),
+      assignmentRecord: yield* Schema.encodeEffect(PrivacyLegalBasisAssignmentSchema)(assignment),
+      assignmentRef: assignmentId,
+      decision: 'APPROVED',
+      effectiveFrom: new Date(from),
+      effectiveTo: new Date(until),
+      processingScopeRef: processingScopeRef.scopeId,
+    });
+    return yield* Schema.decodeUnknownEffect(SourceProcessingContextSchema)({
+      ...scope,
+      ...plan,
+      applicabilityAuthority: {
+        asOf: from,
+        authority,
+        decisionEvaluatedAt: from,
+        decisionOutcome: decision.outcome,
+        decisionRef,
+        evidenceRefs,
+        receiptRef,
+        scope: applicabilityScope,
+        status: 'CURRENT',
+        validUntil: until,
+      },
+      authorityIncarnation: `internal-source:${fixtureId}`,
+      authorityRevision: 'internal:1',
+      contentScopeRefs: seed.dataCategoryRefs,
+      effectiveFrom: from,
+      intendedScope: {
+        controllerRef: seed.controllerRef,
+        dataCategoryRefs: seed.dataCategoryRefs,
+        operation: plan.request.operation,
+        processingScopeRef,
+        purposeRef: purposeId,
+        purposeVersionId: versionId,
+        recipientRefs: [plan.request.consumerModuleId],
+        subjectRef: {
+          moduleId: PRIVACY_MODULE_ID,
+          resourceId: subjectId,
+          resourceType: PRIVACY_SUBJECT_TYPE,
+          tenantId: seed.tenantId,
+        },
+      },
+      resourceRefs: plan.request.target === null ? [subjectId] : [subjectId, plan.request.target.resourceId],
+      validUntil: until,
+    });
+  },
+);
+
 /** INTERNAL ONLY. Opens both connections itself; no executor or production grant escapes.
  * This creates explicit fixture governance, not a claim of a real customer's contract or consent.
  * Production receiving still uses the normal public Read, current ledgers and owner proof.
@@ -522,6 +709,7 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
       readonly subjectId: string;
     }[] = [];
     const authorizationRefs: (typeof SourceProcessingAuthorizationSchema.Type)['authorizationRef'][] = [];
+    const contexts: SourceProcessingContext[] = [];
     let stage = 'native connection challenge';
     yield* database
       .transaction(
@@ -574,7 +762,33 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
               ? undefined
               : yield* dataSubjectForProfile(transaction, scope, admission, from, nextId);
           const dataSubjectId = committedPerson?.dataSubjectId;
-          const [first] = seed.contexts;
+          stage = 'organization business contexts';
+          for (const plan of seed.contexts.filter(({ request }) => request.organizationBusinessUse !== undefined)) {
+            contexts.push(
+              yield* seedOrganizationContext({
+                from,
+                nextId,
+                plan,
+                purposeId,
+                scope,
+                seed,
+                subjects,
+                transaction,
+                until,
+                versionId,
+              }),
+            );
+          }
+          // Only personal plans belong to the standing authorization of the route.
+          const routeSeed = {
+            ...seed,
+            contexts: seed.contexts.filter(({ request }) => request.organizationBusinessUse === undefined),
+          };
+          if (routeSeed.contexts.length === 0) {
+            return yield* Effect.void;
+          }
+          stage = 'route plans';
+          const [first] = routeSeed.contexts;
           const firstSource = first?.request.source;
           if (first === undefined || firstSource === null || firstSource === undefined) {
             return yield* unavailable();
@@ -584,7 +798,7 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
             namespace: firstSource.namespace,
             routeRef: firstSource.routeRef,
           };
-          const planSources = seed.contexts.flatMap(({ request }) => {
+          const planSources = routeSeed.contexts.flatMap(({ request }) => {
             const own = request.source === null ? [] : [request.source];
             const person =
               request.partySourceReference === undefined
@@ -705,13 +919,13 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
           const grants = mergeGrants([
             ...(seed.grants ?? []),
             ...priorAuthorizations.flatMap(({ grants: priorGrants }) => priorGrants),
-            ...(yield* Effect.all(seed.contexts.map(fixtureGrant))),
+            ...(yield* Effect.all(routeSeed.contexts.map(fixtureGrant))),
           ]);
           const principals = [
             ...new Map(
               [
                 ...priorAuthorizations.flatMap(({ principals: priorPrincipals }) => priorPrincipals),
-                ...seed.contexts.map(({ authMethod, principalId }) => ({ authMethod, principalId })),
+                ...routeSeed.contexts.map(({ authMethod, principalId }) => ({ authMethod, principalId })),
               ].map((principal) => [`${principal.authMethod}:${principal.principalId}`, principal]),
             ).values(),
           ];
@@ -868,7 +1082,7 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
               nextId,
               person: committedPerson,
               scope,
-              seed,
+              seed: routeSeed,
               subjects,
               transaction,
             })),
@@ -889,6 +1103,8 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
       );
     return {
       authorizationRef: authorizationRefs[0],
+      /** The exact contexts of the organization business plans, for the Privacy owner's configured contexts. */
+      contexts,
       plans: planSubjects,
       purposeRef,
       subjectRefs: [...new Set(subjects.values())],

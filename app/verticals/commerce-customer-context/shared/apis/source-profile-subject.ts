@@ -8,7 +8,16 @@ import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CustomerProfilePartySourceReferenceSchema } from '../domain/customer-profile-source.ts';
 
-export const SourceProfileSubjectRequestSchema = Schema.Struct({ profileRef: CommerceCustomerProfileRefSchema });
+const { occurrenceId: _occurrenceId, ...personRecordFields } = CustomerProfilePartySourceReferenceSchema.fields;
+export const SourceProfileSubjectRequestSchema = Schema.Struct({
+  /**
+   * The exact person source record the caller already holds. Given, Commerce proves the binding of that record, whatever
+   * other records of the same person the profile also carries. Absent (a membership whose customer the caller does not
+   * know yet), Commerce answers with the canonical owner binding of the profile.
+   */
+  personRecord: Schema.optionalKey(Schema.Struct(personRecordFields)),
+  profileRef: CommerceCustomerProfileRefSchema,
+});
 export type SourceProfileSubjectRequest = typeof SourceProfileSubjectRequestSchema.Type;
 export const SourceProfileSubjectResponseSchema = Schema.Union([
   Schema.TaggedStruct('NOT_ADMISSIBLE', {}),

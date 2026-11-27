@@ -19,15 +19,28 @@ export const SourcePersonAdmissionRequestSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   sourceReference: SourcePersonAdmissionReferenceSchema,
 });
-/** A standing grant retains record identity, not a caller-picked Party occurrence. Party supplies its own committed proof. */
+const AdmittedRecordSchema = Schema.Struct({
+  source: PartyClientSourceIdentitySchema,
+  recordId: SourceRecordIdentitySchema,
+});
+/**
+ * A standing grant retains record identity, not a caller-picked Party occurrence. Party supplies its own committed
+ * proof: for a named Party, or for an exact contact point whose Party the caller does not know. Party then attests the
+ * contact point belongs to the person the admitted record identifies and returns that Party.
+ */
+const ContactPointProofRequestSchema = Schema.Struct({
+  admittedRecord: AdmittedRecordSchema,
+  contactPointId: PartyRefSchema.fields.resourceId,
+});
 export const SourcePersonProofRequestSchema = Schema.Union([
   SourcePersonAdmissionRequestSchema,
-  Schema.Struct({
-    partyRef: PartyRefSchema,
-    admittedRecord: Schema.Struct({ source: PartyClientSourceIdentitySchema, recordId: SourceRecordIdentitySchema }),
-  }),
+  Schema.Struct({ admittedRecord: AdmittedRecordSchema, partyRef: PartyRefSchema }),
+  ContactPointProofRequestSchema,
 ]);
 export type SourcePersonProofRequest = typeof SourcePersonProofRequestSchema.Type;
+/** The record a proof request is about: the Party it names, or the contact point whose Party the caller does not know. */
+export const sourcePersonProofRecordKey = (request: SourcePersonProofRequest): string =>
+  Schema.is(ContactPointProofRequestSchema)(request) ? request.contactPointId : request.partyRef.resourceId;
 export type SourcePersonAdmissionRequest = typeof SourcePersonAdmissionRequestSchema.Type;
 export const SourcePersonAdmissionResponseSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('NOT_ADMISSIBLE') }),

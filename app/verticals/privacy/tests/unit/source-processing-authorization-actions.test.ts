@@ -32,7 +32,6 @@ const fixture = {
         allowTargetless: true,
         consumerModuleId: 'integration.symmy' as const,
         operation: 'CUSTOMER_SOURCE_INTAKE',
-        organizationBusinessUses: [],
         targetKinds: [],
       },
     ],

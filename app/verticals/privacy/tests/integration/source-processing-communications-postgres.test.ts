@@ -90,6 +90,7 @@ const servicesIn = (
  */
 const partyOwnerDouble = (observedAt: string) =>
   PrivacySubjectPartyOwner.of({
+    contactPointParty: () => Effect.succeed(Option.none()),
     resolve: (partyRef) =>
       Effect.succeed(
         Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema)({

@@ -46,12 +46,6 @@ export const SourceProcessingTargetKindSchema = Schema.Literals([
   'COUNTERPARTY',
 ]);
 type SourceProcessingTargetKind = typeof SourceProcessingTargetKindSchema.Type;
-export const SourceProcessingOrganizationBusinessUseSchema = Schema.Literals([
-  'COMPANY_ICO',
-  'COMPANY_NAME',
-  'GROUP_MEMBERSHIP',
-  'PRICE_GROUP_ASSIGNMENT',
-]);
 const integrationOnlyTargets = new Set<SourceProcessingTargetKind>(['PARTY_CONTACT_POINT', 'COUNTERPARTY']);
 
 /** Each authorization is its own processing scope, so a later authorization of the route starts its own ledger. */
@@ -65,16 +59,15 @@ export const SourceProcessingAuthorizationRefSchema = Schema.Struct({
   tenantId: Schema.toEncoded(Uuid.pipe(Schema.brand('PrivacyTenantId'))),
 });
 
-/** One consumer operation the route may run, with the targets and organization uses it may name. */
+/**
+ * One consumer operation the route may run for personal processing, with the targets it may name. A canonical
+ * organization business intent is never granted here: it keeps its exact governed context and current owner proof.
+ */
 export const SourceProcessingGrantSchema = Schema.Struct({
+  allowTargetless: Schema.Boolean,
   consumerModuleId: SourceProcessingConsumerModuleSchema,
   operation: Ref,
-  organizationBusinessUses: Schema.Array(SourceProcessingOrganizationBusinessUseSchema).check(
-    Schema.isMaxLength(4),
-    distinct('Organization business uses'),
-  ),
   /** The Retail profile creation may name the Party the Party owner admitted for the same source person. */
-  allowTargetless: Schema.Boolean,
   targetAdmission: Schema.optionalKey(Schema.Literal('CURRENT_SOURCE_PERSON')),
   targetKinds: Schema.Array(SourceProcessingTargetKindSchema).check(Schema.isMaxLength(6), distinct('Target kinds')),
 }).check(
@@ -86,7 +79,6 @@ export const SourceProcessingGrantSchema = Schema.Struct({
     }
     if (
       grant.operation === SymmyCustomerSourceIntakeOperation ||
-      grant.organizationBusinessUses.length > 0 ||
       grant.targetKinds.some((kind) => integrationOnlyTargets.has(kind))
     ) {
       return 'Symmy intake operations and locators are reserved for the integration boundary';
@@ -242,7 +234,6 @@ export const sourceIsOnRoute = (route: SourceProcessingRoute, source: Omit<Priva
 interface GrantRequest {
   readonly consumerModuleId: string;
   readonly operation: string;
-  readonly organizationBusinessUse?: SourceProcessingGrant['organizationBusinessUses'][number];
   readonly partySourceReference?: { readonly source: Omit<PrivacySourceRecordIdentity, 'recordId'> };
   readonly source: Omit<PrivacySourceRecordIdentity, 'recordId'> | null;
   readonly target: { readonly kind: SourceProcessingTargetKind } | null;
@@ -266,13 +257,12 @@ export const sourceProcessingGrantFor = (
   ) {
     return undefined;
   }
-  const { organizationBusinessUse, target } = request;
+  const { target } = request;
   return authorization.grants.find(
     (grant) =>
       grant.consumerModuleId === request.consumerModuleId &&
       grant.operation === request.operation &&
-      (target === null ? grant.allowTargetless : grant.targetKinds.includes(target.kind)) &&
-      (organizationBusinessUse === undefined || grant.organizationBusinessUses.includes(organizationBusinessUse)),
+      (target === null ? grant.allowTargetless : grant.targetKinds.includes(target.kind)),
   );
 };
 
