@@ -5,6 +5,7 @@ import {
   UnsavedChangesDialog,
   comboboxTranslations,
   datePickerTranslations,
+  requiredLabelFor,
   saveLabelsFor,
   surfaceTileClassName,
   useDraftSave,
@@ -12,21 +13,35 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
+import {
+  ChoiceLensField,
+  ComboboxField,
+  DatePickerField,
+  FormReact,
+  FormRoot,
+  SubmitButton,
+  TextAreaField,
+  TextField,
+  SelectTemplateField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
 import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
 import { CalendarDate } from '@internationalized/date';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox, DatePicker, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema, Struct } from 'effect';
 import { constVoid } from 'effect/Function';
-import { useRef, useState } from 'react';
-import type { Dispatch, FocusEvent, ReactNode, SetStateAction } from 'react';
-import { OpportunityIdSchema, PartyIdSchema, TaskPrioritySchema } from '../../../../shared/apis/records.ts';
+import { AsyncResult, Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
+import type { FocusEvent, ReactNode } from 'react';
+import { ContextRefSchema, OpportunityIdSchema, PartyIdSchema } from '../../../../shared/apis/records.ts';
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import { ChangeHistory } from './change-history.tsx';
 import type {
@@ -37,7 +52,11 @@ import type {
   WorkProject,
 } from '../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../shared/actions/task-transitions.ts';
-import { isPlausibleDueDate } from '../../../../shared/actions/apply-command.ts';
+import {
+  CreateTaskCommandSchema,
+  PlanningCommandSchema,
+  isPlausibleDueDate,
+} from '../../../../shared/actions/apply-command.ts';
 import {
   customerOptionItems,
   formatDueDate,
@@ -51,6 +70,42 @@ import type { Decoded, FormValues, TaskFormSubmission } from './task-form-values
 
 export type { TaskFormSubmission } from './task-form-values.ts';
 
+/**
+ * The task panel's draft. The title is the CreateTask payload's own; the other fields hold what their controls show
+ * (ids as chosen, '' for none), which the panel decodes when it sends the draft. Uložit sends it through the panel's
+ * one save, so the form itself only holds it.
+ */
+const taskForm = FormReact.make(
+  fromPayload(CreateTaskCommandSchema.mapFields(Struct.pick(['title'])))
+    .addField('assigneeId', Schema.String)
+    .addField('contextRefs', Schema.Array(ContextRefSchema))
+    .addField('description', Schema.String)
+    .addField('dueDate', Schema.String)
+    .addField('opportunityId', Schema.String)
+    .addField('partyId', Schema.String)
+    .addField('plannedHours', Schema.String)
+    .addField('priority', Schema.String)
+    .addField('projectId', Schema.String),
+  {
+    fields: {
+      // Řešitel and Projekt offer "none" as an item of their own; the form keeps '' for it.
+      assigneeId: ChoiceLensField<string>,
+      // Each context picker reads and writes its own kind of reference.
+      contextRefs: ChoiceLensField<readonly ContextRef[]>,
+      description: TextAreaField,
+      dueDate: DatePickerField,
+      opportunityId: ComboboxField,
+      partyId: ComboboxField,
+      plannedHours: TextField,
+      priority: SelectTemplateField,
+      projectId: ChoiceLensField<string>,
+      title: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
 const emptyContextLabels: ReadonlyMap<string, string> = new Map();
 const emptyProjects: readonly WorkProject[] = [];
 const NONE = 'none';
@@ -59,15 +114,15 @@ const titleMaxLength = 200;
 const dialogLabelProps = { className: 'font-label text-label-md' };
 const key = 'work-tasks.pages.records';
 
-const FieldErrorSchema = Schema.Literals(['clear', 'dueDate', 'id', 'mismatch', 'title']);
+const FieldErrorSchema = Schema.Literals(['clear', 'dueDate', 'id', 'mismatch']);
 type FieldError = typeof FieldErrorSchema.Type;
 
+/** The checks that depend on the task and the lists on screen; the title is checked by the payload's own schema. */
 interface FieldErrors {
   readonly assigneeId: FieldError | undefined;
   readonly dueDate: FieldError | undefined;
   readonly opportunityId: FieldError | undefined;
   readonly partyId: FieldError | undefined;
-  readonly title: FieldError | undefined;
 }
 
 type FieldName = keyof FieldErrors;
@@ -113,21 +168,18 @@ const validate = (
   assigneeId: idError(values.assigneeId, false, decoded.ownerPrincipalRef !== undefined),
   // A typed year such as 0026 is a valid calendar date but not a real deadline. Only a changed date is checked.
   dueDate:
-    values.dueDate !== undefined && values.dueDate !== task?.dueDate && !isPlausibleDueDate(values.dueDate)
+    values.dueDate !== '' && values.dueDate !== (task?.dueDate ?? '') && !isPlausibleDueDate(values.dueDate)
       ? 'dueDate'
       : undefined,
   opportunityId:
     idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined) ??
     mismatchError(values, task, opportunityOwner),
   partyId: idError(values.partyId, task?.partyId !== undefined, decoded.partyId !== undefined),
-  title: values.title.trim() === '' ? 'title' : undefined,
 });
 
 /** Calendar value for the date picker. `YYYY-MM-DD` strings are the form's storage format. */
-const toCalendarDate = (isoDate: string | undefined) =>
-  isoDate === undefined
-    ? null
-    : new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
+const toCalendarDate = (isoDate: string) =>
+  new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
 
 /**
  * The calendar is portalled to <body>, outside the drawer. Its content has no z-index of its own, so it would sit
@@ -155,13 +207,13 @@ const returnFocusTo = (field: HTMLElement | null) => {
  */
 const dateSegmentsClass = '[&>[data-type]]:min-w-0 [&>[data-type]]:px-px';
 
-/** Combobox values are arrays; the form keeps one id, or '' for none. */
-const singleValue = (value: string) => (value === '' ? [] : [value]);
-const firstValue = (next: string | string[]) => (Array.isArray(next) ? next[0] : next) ?? '';
-
-/** Field error props, spread so `validateStatus` is absent (not undefined) when the field is valid. */
+/** A field error of the module's own checks, spread so `helpText` is absent (not undefined) when the field is valid. */
 const invalidProps = (message: string | undefined) =>
-  message === undefined ? {} : { helpText: message, validateStatus: 'error' as const };
+  message === undefined ? {} : { helpText: message, invalid: true };
+
+/** Řešitel and Projekt offer "none" as an item of their own; the form keeps '' for it. */
+const readNone = (value: string) => (value === '' ? NONE : value);
+const writeNone = (_value: string, choice: string) => (choice === NONE ? '' : choice);
 
 /** Zákazník and Příležitost pickers. Each keeps its typed query and its open state. */
 const ReferencePickers = ({
@@ -170,7 +222,6 @@ const ReferencePickers = ({
   disabled,
   isEdit,
   lookupAccess,
-  onChange,
   opportunities,
   opportunitiesLoading,
   opportunityId,
@@ -183,7 +234,6 @@ const ReferencePickers = ({
   readonly disabled: boolean;
   readonly isEdit: boolean;
   readonly lookupAccess: LookupAccess | undefined;
-  readonly onChange: (patch: Partial<FormValues>) => void;
   readonly opportunities: readonly OpportunityOption[];
   readonly opportunitiesLoading: boolean;
   readonly opportunityId: string;
@@ -222,7 +272,7 @@ const ReferencePickers = ({
       {/* Focus or click opens the list: the kit only opens it on typing, so an empty field looked dead. */}
       {lookupAccess?.customers === 'allowed' && (
         <div onFocus={() => setCustomerOpen(true)}>
-          <Combobox
+          <taskForm.partyId
             clearable={!isEdit}
             disabled={disabled}
             filterBehavior="external"
@@ -236,7 +286,6 @@ const ReferencePickers = ({
             loadingMessage={t(`${key}.loadingNames`)}
             name="party"
             noResultsMessage={t(`${key}.comboboxEmpty`)}
-            onChange={(next) => onChange({ partyId: firstValue(next) })}
             // No reset on open: typing into a closed list reports the text first and opens second, so a reset
             // there would drop the first query and list every customer.
             onInputValueChange={setCustomerQuery}
@@ -256,14 +305,13 @@ const ReferencePickers = ({
             }}
             size="md"
             translations={comboboxTranslations}
-            value={singleValue(partyId)}
             {...invalidProps(partyMessage)}
           />
         </div>
       )}
       {lookupAccess?.opportunities === 'allowed' && (
         <div onFocus={() => setOpportunityOpen(true)}>
-          <Combobox
+          <taskForm.opportunityId
             clearable={!isEdit}
             disabled={disabled}
             filterBehavior="external"
@@ -275,14 +323,12 @@ const ReferencePickers = ({
             loadingMessage={t(`${key}.loadingNames`)}
             name="opportunity"
             noResultsMessage={t(`${key}.comboboxEmpty`)}
-            onChange={(next) => onChange({ opportunityId: firstValue(next) })}
             onInputValueChange={setOpportunityQuery}
             onOpenChange={setOpportunityOpen}
             open={opportunityOpen}
             placeholder={t(`${key}.pickOpportunity`)}
             size="md"
             translations={comboboxTranslations}
-            value={singleValue(opportunityId)}
             {...invalidProps(opportunityMessage)}
           />
         </div>
@@ -357,7 +403,7 @@ const assess = (
   { opportunities, principals, task }: Pick<ResolvedTaskFormProps, 'opportunities' | 'principals' | 'task'>,
 ) => {
   const decoded: Decoded = {
-    dueDate: values.dueDate,
+    dueDate: values.dueDate === '' ? undefined : values.dueDate,
     opportunityId: decodeOptional(OpportunityIdSchema, values.opportunityId),
     ownerPrincipalRef:
       selectedPrincipal(principals, values.assigneeId) ??
@@ -377,10 +423,42 @@ const submissionOf = (values: FormValues, props: ResolvedTaskFormProps) => {
   return hasErrors ? Option.none() : taskFormSubmission(values, decoded);
 };
 
+/** The form's values for this panel once FormRoot initialized them; until then the values it opens with. */
+const useTaskValues = (opened: FormValues) => {
+  const [ready, setReady] = useState(false);
+  const values = Option.getOrElse(
+    Option.filter(useAtomValue(taskForm.values), () => ready),
+    () => opened,
+  );
+  return { ready, setReady, values };
+};
+
+/**
+ * Rendered inside FormRoot, which renders its children only once this panel initialized the form: until then the
+ * form's atoms can still hold what an earlier panel left, so the values are read only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
+/** Field messages show once the draft is held back by them, as the save bar says. Only Uložit sends the draft. */
+const useFieldMessages = (invalid: boolean) => {
+  const checkFields = useAtomSet(taskForm.validate);
+  useEffect(() => {
+    if (invalid) {
+      checkFields();
+    }
+  }, [checkFields, invalid]);
+};
+
 interface TaskDraftState {
+  /** Called once FormRoot initialized the form for this panel. */
+  readonly onReady: (ready: boolean) => void;
+  /** The values the form starts with. */
+  readonly opened: FormValues;
   /** Asks to close the panel: unsaved input asks Uložit / Zahodit změny / Zůstat first. */
   readonly requestClose: () => void;
-  readonly setValues: Dispatch<SetStateAction<FormValues>>;
   /** Field errors show once a create draft is held back by them, and always while editing. */
   readonly showErrors: boolean;
   readonly values: FormValues;
@@ -389,8 +467,7 @@ interface TaskDraftState {
 const useTaskForm = (props: ResolvedTaskFormProps, draft: TaskDraftState) => {
   const { busy, readOnly, task } = props;
   const { t } = useModernI18n();
-  const { setValues, showErrors, values } = draft;
-  const [comment, setComment] = useState('');
+  const { showErrors, values } = draft;
   // A done or cancelled task cannot change, so its panel shows the values read-only.
   const locked = readOnly || (task !== undefined && isClosedTaskState(task.state));
   const fieldsDisabled = busy || locked;
@@ -404,7 +481,6 @@ const useTaskForm = (props: ResolvedTaskFormProps, draft: TaskDraftState) => {
       returnFocusTo(listField.current);
     }
   };
-  const set = (patch: Partial<FormValues>) => setValues((current) => ({ ...current, ...patch }));
 
   const { errors } = assess(values, props);
   const message = (field: FieldName) => {
@@ -413,7 +489,6 @@ const useTaskForm = (props: ResolvedTaskFormProps, draft: TaskDraftState) => {
   };
 
   return {
-    comment,
     fieldsDisabled,
     isEdit: task !== undefined,
     locked,
@@ -421,8 +496,6 @@ const useTaskForm = (props: ResolvedTaskFormProps, draft: TaskDraftState) => {
     onListOpenChange,
     rememberListField,
     requestClose: draft.requestClose,
-    set,
-    setComment,
     values,
   };
 };
@@ -491,6 +564,37 @@ const hasAssignmentHistory = (task: Task) =>
   task.assignmentNeedsReassignment === true ||
   task.assignmentWithoutLogin === true;
 
+const assigneeField = taskForm.getFieldAtoms(taskForm.fields.assigneeId);
+const projectField = taskForm.getFieldAtoms(taskForm.fields.projectId);
+
+/**
+ * Řešitel and Projekt clear a choice their list no longer offers (an account that left the assignable people, a
+ * project no longer listed), as the kit select reports it.
+ */
+const useClearUnoffered = (
+  values: FormValues,
+  assigneeItems: readonly { readonly value: string }[] | undefined,
+  projectItems: readonly { readonly value: string }[],
+) => {
+  const setAssignee = useAtomSet(assigneeField.setValue);
+  const setProject = useAtomSet(projectField.setValue);
+  const assigneeGone =
+    assigneeItems !== undefined &&
+    values.assigneeId !== '' &&
+    !assigneeItems.some((item) => item.value === values.assigneeId);
+  const projectGone = values.projectId !== '' && !projectItems.some((item) => item.value === values.projectId);
+  useEffect(() => {
+    if (assigneeGone) {
+      setAssignee('');
+    }
+  }, [assigneeGone, setAssignee]);
+  useEffect(() => {
+    if (projectGone) {
+      setProject('');
+    }
+  }, [projectGone, setProject]);
+};
+
 const TaskFormFields = ({
   assignmentAvailable,
   customers,
@@ -505,39 +609,39 @@ const TaskFormFields = ({
   readOnly,
   task,
 }: ResolvedTaskFormProps & { readonly form: TaskFormController }) => {
-  const { t } = useModernI18n();
-  const { fieldsDisabled, isEdit, message, onListOpenChange, rememberListField, set, values } = form;
+  const { language, t } = useModernI18n();
+  const { fieldsDisabled, isEdit, message, onListOpenChange, rememberListField, values } = form;
   const priorityItems = (['LOW', 'NORMAL', 'HIGH'] as const).map((value) =>
     selectOption(t(`${key}.priorities.${value}`), value),
   );
   const assigneeItems = [selectOption(t(`${key}.unassigned`), NONE), ...assignmentOptions(principals)];
+  const projectItems = [
+    selectOption(t(`${key}.noProject`), NONE),
+    ...projects.map((project) => selectOption(project.title, project.id)),
+  ];
+  useClearUnoffered(values, assignmentAvailable ? assigneeItems : undefined, projectItems);
   const assigneeMessage = message('assigneeId');
   const dueDateMessage = message('dueDate');
-  const titleMessage = message('title');
 
   return (
     <>
-      <FormInput
+      <taskForm.title
         autoComplete="off"
         disabled={fieldsDisabled}
-        // The length hint sits where the error would go; a field error replaces it, as invalidProps does.
-        helpText={titleMessage ?? t(`${key}.titleLength`, { length: values.title.length, max: titleMaxLength })}
+        // The length hint sits where the error would go; the title's error replaces it.
+        helpText={t(`${key}.titleLength`, { length: values.title.length, max: titleMaxLength })}
         id="task-title"
         label={t(`${key}.taskTitle`)}
         maxLength={titleMaxLength}
-        onChange={(event) => set({ title: event.target.value })}
         required
-        validateStatus={titleMessage === undefined ? 'default' : 'error'}
-        value={values.title}
+        requiredLabel={requiredLabelFor(language)}
       />
-      <FormTextarea
+      <taskForm.description
         autoComplete="off"
         disabled={fieldsDisabled}
         id="task-description"
         label={t(`${key}.description`)}
         maxLength={2000}
-        onChange={(event) => set({ description: event.target.value })}
-        value={values.description}
       />
       {task?.partyId !== undefined && !readOnly && lookupAccess?.customers === 'allowed' && (
         <a className="underline" href={`/cs/finance?partyId=${encodeURIComponent(task.partyId)}`}>
@@ -552,7 +656,6 @@ const TaskFormFields = ({
         disabled={fieldsDisabled}
         isEdit={isEdit}
         lookupAccess={lookupAccess}
-        onChange={set}
         opportunities={opportunities}
         opportunitiesLoading={opportunitiesLoading}
         opportunityId={values.opportunityId}
@@ -572,53 +675,55 @@ const TaskFormFields = ({
       )}
       {assignmentAvailable && (
         <div className="flex flex-col gap-50" onFocus={rememberListField}>
-          <Select
+          <taskForm.assigneeId
             disabled={fieldsDisabled}
             items={assigneeItems}
             label={t(`${key}.assignee`)}
             labelProps={dialogLabelProps}
             name="assignee"
             onOpenChange={onListOpenChange}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              set({ assigneeId: next === undefined || next === NONE ? '' : next });
-            }}
             placeholder={t(`${key}.unassigned`)}
+            read={readNone}
             size="md"
-            value={[values.assigneeId === '' ? NONE : values.assigneeId]}
+            write={writeNone}
           />
           {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
         </div>
       )}
-      <FormInput
+      <taskForm.plannedHours
         disabled={fieldsDisabled}
         helpText={t(`${key}.plannedHoursHint`)}
         id="task-planned-hours"
         label={t(`${key}.plannedHours`)}
         max={10_000}
         min={0}
-        onChange={(event) => set({ plannedHours: event.target.value })}
         step={0.5}
         type="number"
-        value={values.plannedHours}
       />
-      <Select
+      <taskForm.projectId
         disabled={fieldsDisabled}
-        items={[
-          selectOption(t(`${key}.noProject`), NONE),
-          ...projects.map((project) => selectOption(project.title, project.id)),
-        ]}
+        items={projectItems}
         label={t(`${key}.project`)}
         labelProps={dialogLabelProps}
-        onValueChange={({ value }) => set({ projectId: value[0] === NONE ? '' : (value[0] ?? '') })}
-        value={[values.projectId === '' ? NONE : values.projectId]}
+        read={readNone}
+        write={writeNone}
       />
       {!readOnly && (
         <TaskContextPickers
           disabled={fieldsDisabled}
           lookupAccess={lookupAccess}
-          onChange={(contextRefs) => set({ contextRefs })}
           refs={values.contextRefs}
+          renderPicker={(picker) => (
+            <taskForm.contextRefs
+              disabled={picker.disabled}
+              id={picker.id}
+              items={[...picker.items]}
+              label={picker.label}
+              labelProps={dialogLabelProps}
+              read={picker.read}
+              write={picker.write}
+            />
+          )}
         />
       )}
       {task !== undefined && task.contextRefs.length > 0 && (
@@ -633,54 +738,33 @@ const TaskFormFields = ({
       )}
       {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
       <div onFocus={rememberListField}>
-        <DatePicker.Root
-          // An edit follows its draft, which live rereads and "Načíst aktuální verzi" replace; a new task starts empty.
-          {...(isEdit ? { value: toCalendarDate(values.dueDate) } : { defaultValue: toCalendarDate(values.dueDate) })}
+        <taskForm.dueDate
+          contentClassName={datePickerContentClass}
           disabled={fieldsDisabled}
           invalid={dueDateMessage !== undefined}
+          label={t(`${key}.dueDate`)}
           locale="cs-CZ"
           // No min/max here: the picker would show a clamped year (2000) while keeping the typed 0026, so the
           // field shows what was typed and the form explains the allowed years instead.
           onOpenChange={onListOpenChange}
-          onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
+          parse={toCalendarDate}
+          segmentsClassName={dateSegmentsClass}
           shouldForceLeadingZeros
           size="md"
           translations={datePickerTranslations}
-        >
-          <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
-          <DatePicker.Control>
-            <DatePicker.Segments className={dateSegmentsClass} />
-            <DatePicker.IndicatorGroup>
-              {/* An edit can remove the due date too, so the clear control shows in both modes. */}
-              <DatePicker.ClearTrigger />
-              <DatePicker.Trigger />
-            </DatePicker.IndicatorGroup>
-          </DatePicker.Control>
-          <DatePicker.Positioner>
-            <DatePicker.Content className={datePickerContentClass}>
-              <DatePicker.Calendar />
-            </DatePicker.Content>
-          </DatePicker.Positioner>
-        </DatePicker.Root>
+        />
         {dueDateMessage !== undefined && <StatusText status="error">{dueDateMessage}</StatusText>}
       </div>
       <div onFocus={rememberListField}>
-        <Select
+        <taskForm.priority
           disabled={fieldsDisabled}
           items={priorityItems}
           label={t(`${key}.priority`)}
           labelProps={dialogLabelProps}
           name="priority"
           onOpenChange={onListOpenChange}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (Schema.is(TaskPrioritySchema)(next)) {
-              set({ priority: next });
-            }
-          }}
           placeholder={t('work-tasks.selectPlaceholder')}
           size="md"
-          value={[values.priority]}
         />
       </div>
       {task !== undefined && (
@@ -695,16 +779,51 @@ const TaskFormFields = ({
   );
 };
 
+const AddTaskCommentSchema = PlanningCommandSchema.pipe(Schema.toTaggedUnion('_tag')).cases.AddTaskComment;
+
+/** A new comment, checked by the AddTaskComment payload's own text: Přidat komentář sends it trimmed. */
+const commentForm = FormReact.make(fromPayload(AddTaskCommentSchema.mapFields(Struct.pick(['text']))), {
+  fields: { text: TextAreaField },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.text),
+  runtime: browserAtomRuntime,
+});
+const emptyComment = { text: '' };
+const commentText = commentForm.getFieldAtoms(commentForm.fields.text).value.pipe(Atom.map(Option.getOrElse(() => '')));
+const sendableComment = (text: string) => Option.isSome(Schema.decodeUnknownOption(commentForm.schema)({ text }));
+
+/** Přidat komentář sends the comment once and empties the field for the next one. */
+const CommentEntry = ({ busy, onComment }: { readonly busy: boolean; readonly onComment: (text: string) => void }) => {
+  const { t } = useModernI18n();
+  const text = useAtomValue(commentText);
+  const setValues = useAtomSet(commentForm.setValues);
+  useAtomSubscribe(
+    commentForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        onComment(result.value);
+        setValues(emptyComment);
+      }
+    },
+    { immediate: false },
+  );
+  return (
+    <FormRoot className="flex flex-col gap-100" defaultValues={emptyComment} form={commentForm} translateMessage={t}>
+      <commentForm.text disabled={busy} id="task-comment" label={t(`${key}.newComment`)} maxLength={2000} />
+      <SubmitButton disabled={busy || !sendableComment(text)} severity="secondary" size="sm">
+        {t(`${key}.addComment`)}
+      </SubmitButton>
+    </FormRoot>
+  );
+};
+
 const TaskComments = ({
   busy,
-  form,
   onComment,
   principalNames,
   readOnly,
   task,
-}: ResolvedTaskFormProps & { readonly form: TaskFormController; readonly task: Task }) => {
+}: ResolvedTaskFormProps & { readonly task: Task }) => {
   const { t } = useModernI18n();
-  const { comment, setComment } = form;
   return (
     <section className="flex flex-col gap-100 border-t border-border-primary pt-200">
       <h3 className="font-semibold">{t(`${key}.comments`)}</h3>
@@ -720,29 +839,7 @@ const TaskComments = ({
           <p className="whitespace-pre-wrap">{entry.text}</p>
         </div>
       ))}
-      {!readOnly && onComment !== undefined && (
-        <>
-          <FormTextarea
-            disabled={busy}
-            id="task-comment"
-            label={t(`${key}.newComment`)}
-            maxLength={2000}
-            onChange={(event) => setComment(event.target.value)}
-            value={comment}
-          />
-          <Button
-            disabled={busy || comment.trim() === ''}
-            onClick={() => {
-              onComment(comment.trim());
-              setComment('');
-            }}
-            severity="secondary"
-            size="sm"
-          >
-            {t(`${key}.addComment`)}
-          </Button>
-        </>
-      )}
+      {!readOnly && onComment !== undefined && <CommentEntry busy={busy} onComment={onComment} />}
     </section>
   );
 };
@@ -768,16 +865,19 @@ const TaskArchiveControl = ({ busy, onArchive, task }: ResolvedTaskFormProps) =>
   );
 };
 
+/** What the panel opens with for a new task. */
+const emptyValues = initialValues();
+
 /**
  * A new task's draft. Typing changes only the draft on screen; the Save button sends it once, and leaving with typed
  * input asks Uložit / Zahodit změny / Zůstat. An untouched panel closes without asking.
  */
 const useCreateDraft = (props: ResolvedTaskFormProps) => {
   const { onClose, onCreate } = props;
-  const [values, setValues] = useState(() => initialValues());
+  const { setReady, values } = useTaskValues(emptyValues);
   const record = useDraftSave<FormValues, never>({
     equals: sameFormValues,
-    initial: initialValues(),
+    initial: emptyValues,
     isValid: (value) => Option.isSome(submissionOf(value, props)),
     runtime: browserRuntime,
     save: (value) =>
@@ -798,11 +898,13 @@ const useCreateDraft = (props: ResolvedTaskFormProps) => {
       }
     });
   };
+  useFieldMessages(record.status === 'invalid');
   const draft: TaskDraftState = {
+    onReady: setReady,
+    opened: emptyValues,
     requestClose: () => {
       guard.request(onClose);
     },
-    setValues,
     showErrors: record.status === 'invalid',
     values,
   };
@@ -828,16 +930,42 @@ const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) =>
       }),
     server: initialValues(task),
   });
+  const { ready, setReady, values } = useTaskValues(record.draft);
+  const setValues = useAtomSet(taskForm.setValues);
+  const { setDraft } = record;
+  // What the form shows is the draft.
+  useAtomSubscribe(
+    taskForm.values,
+    (next) => {
+      if (ready && Option.isSome(next)) {
+        setDraft(next.value);
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without typing (a live reread, Zahodit změny, the current version): the form follows it.
+  const shown = useRef(record.draft);
+  useEffect(() => {
+    if (!ready || shown.current === record.draft) {
+      return;
+    }
+    shown.current = record.draft;
+    if (!sameFormValues(values, record.draft)) {
+      setValues(record.draft);
+    }
+  }, [ready, record.draft, setValues, values]);
   // Browser Back and links ask the same question as Zavřít and the panel's own close button.
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  useFieldMessages(record.status === 'invalid');
   const draft: TaskDraftState = {
+    onReady: setReady,
+    opened: record.draft,
     requestClose: () => {
       guard.request(onClose);
     },
-    setValues: record.setDraft,
     showErrors: true,
-    values: record.draft,
+    values,
   };
   return { draft, guard, record };
 };
@@ -860,6 +988,9 @@ const TaskPanel = ({
   const form = useTaskForm(props, draft);
   const history = useTaskHistory(props);
   const { isEdit, locked, requestClose } = form;
+  const handleReady = draft.onReady;
+  // The title is the form's one payload check, so a message of the payload schema reads as the title's.
+  const translateMessage = (message: string) => t(message, { defaultValue: t(`${key}.errors.title`) });
   return (
     <SidePanel
       actions={
@@ -894,8 +1025,16 @@ const TaskPanel = ({
         {locked && <StatusText status="warning">{t(readOnly ? `${key}.readOnly` : `${key}.closedTask`)}</StatusText>}
         {task?.archivedAt !== undefined && <StatusText status="default">{t(`${key}.archivedNotice`)}</StatusText>}
         <TaskArchiveControl {...props} />
-        <TaskFormFields {...props} form={form} />
-        {task !== undefined && <TaskComments {...props} form={form} task={task} />}
+        <FormRoot
+          className="flex flex-col gap-200"
+          defaultValues={draft.opened}
+          form={taskForm}
+          translateMessage={translateMessage}
+        >
+          <FormReady onReady={handleReady} />
+          <TaskFormFields {...props} form={form} />
+        </FormRoot>
+        {task !== undefined && <TaskComments {...props} task={task} />}
         {task !== undefined && (
           <ChangeHistory
             actorName={props.actorName}

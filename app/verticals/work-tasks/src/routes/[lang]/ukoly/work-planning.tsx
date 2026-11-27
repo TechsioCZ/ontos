@@ -6,26 +6,36 @@ import {
   SectionCard,
   SidePanel,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   surfaceTileClassName,
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome, SaveState } from '@app/admin-ui';
+import {
+  CheckboxField,
+  Field,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
 import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 import { constVoid } from 'effect/Function';
-import { useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
-import { ProjectStateSchema } from '../../../../shared/apis/records.ts';
 import type { AssignmentPrincipal, RecordsResponse, WorkProject } from '../../../../shared/apis/records.ts';
 import { formatDueDate, isOpenTask, selectOption, todayIsoDate } from './tasks-model.ts';
 import { ChangeHistory } from './change-history.tsx';
@@ -34,11 +44,40 @@ import type { PlanOutcome } from './planning-proposal.ts';
 
 const states = { ACTIVE: 'Aktivní', DONE: 'Dokončený', PAUSED: 'Pozastavený', PLANNED: 'Plánovaný' } as const;
 const hoursFormatter = new Intl.NumberFormat('cs-CZ');
-type MilestoneDraft = WorkProject['milestones'][number] & { readonly editorKey: number };
-type Draft = Pick<WorkProject, 'plannedEnd' | 'plannedStart' | 'state' | 'title'> & {
-  readonly milestones: readonly MilestoneDraft[];
-  readonly responsiblePrincipalRef: string;
-};
+/** A milestone's `editorKey`: it keys the row for React, and no control shows it. */
+const RowIdentity = (_props: FormReact.FieldComponentProps<number>) => null;
+const CreateProjectSchema = PlanningCommandSchema.pipe(Schema.toTaggedUnion('_tag')).cases.CreateProject;
+
+/**
+ * The plan of one project as the panel edits it. The title, the period and the milestones are the CreateProject
+ * payload's own; the responsible person and the state hold what their lists show. Uložit sends the plan through the
+ * panel's one save, so the form itself only holds it.
+ */
+const projectForm = FormReact.make(
+  fromPayload(CreateProjectSchema.mapFields(Struct.pick(['plannedEnd', 'plannedStart', 'title'])))
+    .addField(
+      Field.makeArrayField(
+        'milestones',
+        // The row's identity on screen, so removing a milestone never hands its inputs to the next one.
+        Schema.Struct({ ...CreateProjectSchema.fields.milestones.value.fields, editorKey: Schema.Number }),
+      ),
+    )
+    .addField('responsiblePrincipalRef', Schema.String)
+    .addField('state', Schema.String),
+  {
+    fields: {
+      milestones: { completed: CheckboxField, dueDate: TextField, editorKey: RowIdentity, title: TextField },
+      plannedEnd: TextField,
+      plannedStart: TextField,
+      responsiblePrincipalRef: SelectTemplateField,
+      state: SelectTemplateField,
+      title: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type Draft = typeof projectForm.schema.Encoded;
 type Apply = (command: WorkCommand, onDone: (outcome: PlanOutcome) => void) => void;
 /** A plan of one project (or of the new one) that waits for approval, with the message that says so. */
 interface ProposedPlan {
@@ -109,6 +148,15 @@ const periodOk = (value: Draft) =>
 // A project plan carries no revision, so a revision conflict cannot happen here.
 const handleNoReloadLatest = constVoid;
 
+/**
+ * Rendered inside FormRoot, which renders its children only once this panel initialized the form: until then the
+ * form's atoms can still hold what an earlier panel left, so the values are read only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
 export const ProjectEditor = ({
   actorName,
   close,
@@ -147,10 +195,14 @@ export const ProjectEditor = ({
     }
     return value;
   };
-  const [draft, setDraft] = useState(() => initial(project));
-  const nextMilestoneKey = useRef(draft.milestones.length);
+  const opened = initial(project);
+  const [ready, setReady] = useState(false);
+  const draft = Option.getOrElse(
+    Option.filter(useAtomValue(projectForm.values), () => ready),
+    () => opened,
+  );
+  const setValues = useAtomSet(projectForm.setValues);
   const [failure, setFailure] = useState<string>();
-  const patch = (value: Partial<Draft>) => setDraft((current) => ({ ...current, ...value }));
   const planOf = (value: Draft) => {
     const input = {
       _tag: project === undefined ? 'CreateProject' : 'UpdateProject',
@@ -208,10 +260,13 @@ export const ProjectEditor = ({
   const guard = useUnsavedChangesGuard({
     draft: record,
     navigation: blocker,
-    onDiscard: () => setDraft(record.confirmed),
+    onDiscard: () => setValues(record.confirmed),
   });
   const labels = saveLabelsFor(language);
   const handleSave = record.save;
+  const requiredLabel = requiredLabelFor(language);
+  // The title, the period and the milestones are checked by the payload's own schemas; their messages read as one.
+  const translateMessage = (message: string) => t(message, { defaultValue: t('work-tasks.planning.invalidPlan') });
   return (
     <>
       <SidePanel
@@ -245,146 +300,101 @@ export const ProjectEditor = ({
             <StatusText status="error">{t('work-tasks.planning.invalidPlan')}</StatusText>
           )}
           {Option.isSome(pendingPlan) && <output aria-live="polite">{pendingPlan.value.message}</output>}
-          <FormInput
-            disabled={busy}
-            id="project-title"
-            label={t('work-tasks.planning.projectTitle')}
-            maxLength={200}
-            onChange={(event) => patch({ title: event.target.value })}
-            required
-            value={draft.title}
-          />
-          <FormInput
-            disabled={busy}
-            id="project-start"
-            label={t('work-tasks.planning.plannedStart')}
-            onChange={(event) => patch({ plannedStart: event.target.value })}
-            required
-            type="date"
-            value={draft.plannedStart}
-          />
-          <FormInput
-            disabled={busy}
-            id="project-end"
-            label={t('work-tasks.planning.plannedEnd')}
-            onChange={(event) => patch({ plannedEnd: event.target.value })}
-            required
-            type="date"
-            value={draft.plannedEnd}
-          />
-          {project !== undefined && (
-            <p className="text-sm text-fg-secondary">
-              {assignmentLabel(
-                project.responsiblePrincipalRef,
-                principalNames,
-                project.assignmentNeedsReassignment,
-                project.assignmentWithoutLogin,
+          <FormRoot
+            blocked={busy}
+            className="flex flex-col gap-200"
+            defaultValues={opened}
+            form={projectForm}
+            translateMessage={translateMessage}
+          >
+            <FormReady onReady={setReady} />
+            <projectForm.title
+              id="project-title"
+              label={t('work-tasks.planning.projectTitle')}
+              maxLength={200}
+              required
+              requiredLabel={requiredLabel}
+            />
+            <projectForm.plannedStart
+              id="project-start"
+              label={t('work-tasks.planning.plannedStart')}
+              required
+              requiredLabel={requiredLabel}
+              type="date"
+            />
+            <projectForm.plannedEnd
+              id="project-end"
+              label={t('work-tasks.planning.plannedEnd')}
+              required
+              requiredLabel={requiredLabel}
+              type="date"
+            />
+            {project !== undefined && (
+              <p className="text-sm text-fg-secondary">
+                {assignmentLabel(
+                  project.responsiblePrincipalRef,
+                  principalNames,
+                  project.assignmentNeedsReassignment,
+                  project.assignmentWithoutLogin,
+                )}
+              </p>
+            )}
+            {/* A plan needs a responsible person, so the list offers no "none". */}
+            <projectForm.responsiblePrincipalRef
+              items={assignmentOptions(principals)}
+              label={t('work-tasks.planning.responsiblePerson')}
+            />
+            <projectForm.state
+              items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
+              label={t('work-tasks.pages.records.columns.state')}
+            />
+            <projectForm.milestones>
+              {({ append, items }) => (
+                <>
+                  <div className="flex items-center justify-between gap-100">
+                    <h3 className="font-semibold">Milníky</h3>
+                    <Button
+                      disabled={busy || items.length >= 50}
+                      onClick={() =>
+                        append({
+                          completed: false,
+                          dueDate: draft.plannedEnd,
+                          editorKey: Math.max(-1, ...items.map((item) => item.editorKey)) + 1,
+                          title: '',
+                        })
+                      }
+                      severity="secondary"
+                      size="sm"
+                      type="button"
+                    >
+                      Přidat milník
+                    </Button>
+                  </div>
+                  {items.length === 0 && <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>}
+                  {items.map((milestone, index) => (
+                    <projectForm.milestones.Item index={index} key={milestone.editorKey}>
+                      {({ remove }) => (
+                        <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
+                          <projectForm.milestones.title
+                            label={t('work-tasks.planning.milestoneTitle')}
+                            maxLength={200}
+                          />
+                          <projectForm.milestones.dueDate
+                            label={t('work-tasks.planning.milestoneDueDate')}
+                            type="date"
+                          />
+                          <projectForm.milestones.completed label="Dokončeno" />
+                          <Button disabled={busy} onClick={remove} severity="secondary" size="sm" type="button">
+                            Odebrat milník
+                          </Button>
+                        </div>
+                      )}
+                    </projectForm.milestones.Item>
+                  ))}
+                </>
               )}
-            </p>
-          )}
-          <Select
-            disabled={busy}
-            items={assignmentOptions(principals)}
-            label={t('work-tasks.planning.responsiblePerson')}
-            // An empty value is not a user choice: the list emits it when the saved person is not among its options.
-            // A plan needs a responsible person, so an empty selection could never be saved anyway.
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next !== undefined) {
-                patch({ responsiblePrincipalRef: next });
-              }
-            }}
-            value={draft.responsiblePrincipalRef === '' ? [] : [draft.responsiblePrincipalRef]}
-          />
-          <Select
-            disabled={busy}
-            items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
-            label={t('work-tasks.pages.records.columns.state')}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              const decoded = Schema.decodeUnknownOption(ProjectStateSchema)(next);
-              if (Option.isSome(decoded)) {
-                patch({ state: decoded.value });
-              }
-            }}
-            value={[draft.state]}
-          />
-          <div className="flex items-center justify-between gap-100">
-            <h3 className="font-semibold">Milníky</h3>
-            <Button
-              disabled={busy || draft.milestones.length >= 50}
-              onClick={() => {
-                const editorKey = nextMilestoneKey.current;
-                nextMilestoneKey.current += 1;
-                patch({
-                  milestones: [
-                    ...draft.milestones,
-                    { completed: false, dueDate: draft.plannedEnd, editorKey, title: '' },
-                  ],
-                });
-              }}
-              severity="secondary"
-              size="sm"
-            >
-              Přidat milník
-            </Button>
-          </div>
-          {draft.milestones.length === 0 && (
-            <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
-          )}
-          {draft.milestones.map((milestone, index) => (
-            <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={milestone.editorKey}>
-              <FormInput
-                disabled={busy}
-                label={t('work-tasks.planning.milestoneTitle')}
-                maxLength={200}
-                onChange={(event) =>
-                  patch({
-                    milestones: draft.milestones.map((item, i) =>
-                      i === index ? { ...item, title: event.target.value } : item,
-                    ),
-                  })
-                }
-                value={milestone.title}
-              />
-              <FormInput
-                disabled={busy}
-                label={t('work-tasks.planning.milestoneDueDate')}
-                onChange={(event) =>
-                  patch({
-                    milestones: draft.milestones.map((item, i) =>
-                      i === index ? { ...item, dueDate: event.target.value } : item,
-                    ),
-                  })
-                }
-                type="date"
-                value={milestone.dueDate}
-              />
-              <label className="flex items-center gap-100">
-                <input
-                  checked={milestone.completed}
-                  disabled={busy}
-                  onChange={(event) =>
-                    patch({
-                      milestones: draft.milestones.map((item, i) =>
-                        i === index ? { ...item, completed: event.target.checked } : item,
-                      ),
-                    })
-                  }
-                  type="checkbox"
-                />
-                Dokončeno
-              </label>
-              <Button
-                disabled={busy}
-                onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
-                severity="secondary"
-                size="sm"
-              >
-                Odebrat milník
-              </Button>
-            </div>
-          ))}
+            </projectForm.milestones>
+          </FormRoot>
           <p className="text-sm text-fg-secondary">
             Úkoly přiřadíte v jejich detailu. Změny projektu zůstávají uložené po obnovení stránky.
           </p>
@@ -405,6 +415,13 @@ export const ProjectEditor = ({
   );
 };
 
+/** The period of the capacity table: it narrows what the table counts and is never submitted. */
+const capacityForm = FormReact.make(FormBuilder.empty.addField('from', Schema.String).addField('to', Schema.String), {
+  fields: { from: TextField, to: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
 export const WorkPlanning = ({
   actorName,
   onApply,
@@ -424,8 +441,9 @@ export const WorkPlanning = ({
   const [editor, setEditor] = useState<{ readonly project?: WorkProject }>();
   // Plans parked for approval, by project version; reopening the panel does not offer the same plan again.
   const [proposals, setProposals] = useState<ReadonlyMap<string, ProposedPlan>>(new Map());
-  const [from, setFrom] = useState(`${todayIsoDate().slice(0, 7)}-01`);
-  const [to, setTo] = useState(`${todayIsoDate().slice(0, 7)}-31`);
+  const month = todayIsoDate().slice(0, 7);
+  const period = { from: `${month}-01`, to: `${month}-31` };
+  const { from, to } = Option.getOrElse(useAtomValue(capacityForm.values), () => period);
   const projects = records.projects ?? [];
   const name = (id: string) => principalNames.get(id) ?? 'Účet mimo seznam';
   const inPeriod = records.items.filter(
@@ -536,22 +554,10 @@ export const WorkPlanning = ({
           Součet odhadů otevřených úkolů podle řešitele a termínu. Nejde o docházku ani mzdový výpočet. Úkoly bez
           termínu či řešitele nejsou v součtu.
         </p>
-        <div className="flex flex-wrap gap-150">
-          <FormInput
-            id="capacity-from"
-            label={t('work-tasks.planning.from')}
-            onChange={(event) => setFrom(event.target.value)}
-            type="date"
-            value={from}
-          />
-          <FormInput
-            id="capacity-to"
-            label={t('work-tasks.planning.to')}
-            onChange={(event) => setTo(event.target.value)}
-            type="date"
-            value={to}
-          />
-        </div>
+        <FormRoot className="flex flex-wrap gap-150" defaultValues={period} form={capacityForm} translateMessage={t}>
+          <capacityForm.from id="capacity-from" label={t('work-tasks.planning.from')} type="date" />
+          <capacityForm.to id="capacity-to" label={t('work-tasks.planning.to')} type="date" />
+        </FormRoot>
         {from > to ? (
           <StatusText status="error">Konec období musí být po jeho začátku.</StatusText>
         ) : (
