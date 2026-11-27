@@ -1352,11 +1352,17 @@ const gatewayUnavailable = Match.value(gatewayFailure).pipe(
         Match.orElse(() => false),
       );
 let endpointRequestsAfterRevisionMismatch = 0;
+let releaseReadsAfterRevisionMismatch = 0;
 const mismatch = yield* executeResourceDetail({}, 'revision-mismatch').pipe(
   Effect.provideService(FetchHttpClient.Fetch, (url) => {
     if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
       gatewayAttempts += 1;
       return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: 2_000_000_000, token: 'proof' }));
+    }
+    if (!String(url).includes('/inventory-stock-api/')) {
+      // Each recovery round re-reads the page for the release the Shell serves now (15b9d091e0).
+      releaseReadsAfterRevisionMismatch += 1;
+      return Promise.resolve(new Response('', { status: 200 }));
     }
     endpointRequestsAfterRevisionMismatch += 1;
     return Promise.resolve(Response.json({ ok: true }));
@@ -1367,7 +1373,7 @@ const revisionMismatch = Match.value(mismatch).pipe(
   Match.tag('DocumentCompositionRevisionError', ({ reason }) => reason === 'revision-mismatch'),
   Match.orElse(() => false),
 );
-console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGatewayFailure, endpointRequestsAfterRevisionMismatch, gatewayAttempts, gatewayUnavailable, requestsWithoutDocument, revisionMismatch }));
+console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGatewayFailure, endpointRequestsAfterRevisionMismatch, gatewayAttempts, gatewayUnavailable, releaseReadsAfterRevisionMismatch, requestsWithoutDocument, revisionMismatch }));
 }).pipe(Effect.scoped, NodeRuntime.runMain);
 `,
           ],
@@ -1384,6 +1390,7 @@ console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGa
               endpointRequestsAfterRevisionMismatch: Schema.Number,
               gatewayAttempts: Schema.Number,
               gatewayUnavailable: Schema.Boolean,
+              releaseReadsAfterRevisionMismatch: Schema.Number,
               requestsWithoutDocument: Schema.Number,
               revisionMismatch: Schema.Boolean,
             }),
@@ -1410,11 +1417,13 @@ console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGa
         );
         expect(proof.documentUnavailable).toBe(true);
         expect(proof.requestsWithoutDocument).toBe(0);
-        expect(proof.gatewayAttempts).toBe(5);
+        // 3 issued calls, then the unavailable issuer and the other release each run 1 + 6 recovery rounds (15b9d091e0).
+        expect(proof.gatewayAttempts).toBe(17);
         expect(proof.gatewayUnavailable).toBe(true);
         expect(proof.endpointRequestsAfterGatewayFailure).toBe(0);
         expect(proof.revisionMismatch).toBe(true);
         expect(proof.endpointRequestsAfterRevisionMismatch).toBe(0);
+        expect(proof.releaseReadsAfterRevisionMismatch).toBe(6);
       }),
     );
   }),
