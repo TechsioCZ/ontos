@@ -154,6 +154,23 @@ const validateOwnedOutboxSubscriptions = (contract: OntosModuleDeploymentContrac
   }
 };
 
+const borrowedSystemWorkloadReason =
+  'a registered call may run under a system workload key only for that workload’s own job';
+
+/**
+ * Whether a contract's registered calls run under a system workload's key for another job. An enrollment binds the
+ * workload of each call its job makes, so such a call would bind one system workload to another's Principal: the two
+ * would share it, and ending one would end both. Core's own keys count beside the ones the deployments declare.
+ */
+const borrowsSystemWorkload = (
+  contract: OntosModuleDeploymentContract,
+  declaredKeys: { readonly has: (key: string) => boolean },
+): boolean =>
+  (contract.manifest.registeredWorkloadCalls ?? []).some(
+    ({ jobKey, workloadKey }) =>
+      jobKey !== workloadKey && (declaredKeys.has(workloadKey) || coreSystemWorkloadKeys.has(workloadKey)),
+  );
+
 const assembleInstalledModuleCatalog = (
   contractsInput: readonly OntosModuleDeploymentContract[],
   deploymentStatuses: readonly InstalledDeploymentStatus[],
@@ -260,6 +277,9 @@ export const buildInstalledModuleCatalog = (
       systemWorkloadKeys.add(workloadKey);
     }
   }
+  if ([...byModuleId.values()].some((contract) => borrowsSystemWorkload(contract, systemWorkloadKeys))) {
+    throw invalid(borrowedSystemWorkloadReason);
+  }
   return assembleInstalledModuleCatalog(
     [...byModuleId.values()],
     [...byAppId.values()].map((contract) => ({
@@ -304,6 +324,13 @@ const findConflictingDeploymentAppIds = (
       for (const contract of conflicts) {
         conflictingAppIds.add(contract.deployment.appId);
       }
+    }
+  }
+
+  // Only the deployment whose call borrows a key is excluded, never the one that declares it.
+  for (const contract of candidates) {
+    if (borrowsSystemWorkload(contract, bySystemWorkloadKey)) {
+      conflictingAppIds.add(contract.deployment.appId);
     }
   }
 
