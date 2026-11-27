@@ -3082,32 +3082,6 @@
         },
         {
           "accessDeclaration": {
-            "key": "commerce.catalog.navigation-products.read",
-            "kind": "read",
-            "modes": [
-              "run"
-            ],
-            "placement": {
-              "group": "product",
-              "level": "basic"
-            },
-            "risk": "routine",
-            "selectors": []
-          },
-          "accessFieldGroups": [],
-          "entrypoint": {
-            "access": "read",
-            "authorization": {
-              "kind": "protected"
-            },
-            "entrypointKey": "commerce.catalog.page.products",
-            "moduleKey": "commerce.catalog",
-            "role": "page",
-            "scope": "tenant"
-          }
-        },
-        {
-          "accessDeclaration": {
             "key": "commerce.catalog.package-definition-history.read",
             "kind": "read",
             "modes": [

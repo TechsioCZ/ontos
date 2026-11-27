@@ -268,7 +268,7 @@ type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
 type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
-const navigationContribution = (value: NavigationContributionInput) =>
+const _navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
@@ -704,30 +704,6 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       mediaAttachments: [],
       navigation: [
         // <generated-module-shell-navigation>
-        navigationContribution({
-          accessDeclaration: {
-            key: 'commerce.catalog.navigation-products.read',
-            kind: 'read',
-            modes: ['run'],
-            placement: { group: 'product', level: 'basic' },
-            risk: 'routine',
-            selectors: [],
-          },
-          contributionKey: 'commerce.catalog.navigation.products',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'protected' },
-            entrypointKey: productsPageKey,
-            moduleKey: catalogModuleKey,
-            role: 'page',
-            scope: 'tenant',
-          },
-          groupKey: 'shell.navigation.commerce',
-          icon: 'icon-[mdi--package-variant]',
-          label: { cs: 'Produkty z ERP', en: 'ERP products' },
-          order: 515,
-          pageKey: productsPageKey,
-        }),
         // </generated-module-shell-navigation>
       ],
       pages: [

@@ -175,9 +175,9 @@ export const ERP_EDITOR_ROLE_NAME = 'Úpravy produktů z ERP';
  * cells are no authority there.
  */
 export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
-  // The page and its navigation entry (routes/[lang]/katalog/produkty), and page-data.ts.
+  // The page (routes/[lang]/katalog/produkty, the "Z ERP" side of the one Produkty screen; no navigation entry of its
+  // own), and page-data.ts.
   'commerce.catalog.products.view',
-  'commerce.catalog.navigation-products.read',
   'commerce.catalog.product-page.read',
   // page-data.ts pages RETIRED products too, which product-page.read admits only with the product detail read.
   'commerce.catalog.product-detail.read',
@@ -216,9 +216,8 @@ export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
  * selected company, as every shop operator's session does, so the page and its navigation entry are decided there too.
  */
 export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
-  // The page and its navigation entry, as the Shell's company module target asks them.
+  // The page, as the Shell's company module target asks it.
   'commerce.catalog.products.view',
-  'commerce.catalog.navigation-products.read',
   // erp-offer.ts: the company's ERP offer, from its standing price source policy and its Symmy stock source.
   'commerce.pricing.external-price-source-scopes.read',
   'integration.symmy.symmy-company-stock-source.read',
