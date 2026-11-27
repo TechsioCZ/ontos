@@ -182,15 +182,19 @@ const describeOwnerSource = Effect.fn('MediaOrderingNative.describeOwnerSource')
       const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contract);
       const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(shellRuntime);
       const artifact = (url, document) => ({url, bytes: new TextEncoder().encode(document)});
+      // The served manifests are read back over HTTP: the Shell manifest outgrows one command-line argument.
+      const served = (url) => Effect.promise(() => fetch(url).then((response) => response.text()));
+      const catalogManifestUrl = ${JSON.stringify(`${metadataOrigin}/catalog/mf-manifest.json`)};
+      const shellManifestUrl = ${JSON.stringify(`${metadataOrigin}/shell-super-app/mf-manifest.json`)};
       const composition = yield* deriveActiveApplicationCompositionSnapshot({
         environment: 'development',
         modules: [{appId: 'catalog', backend: module.backend,
           contract: artifact(module.contract.url, contractDocument),
-          federationManifest: artifact(${JSON.stringify(`${metadataOrigin}/catalog/mf-manifest.json`)}, ${JSON.stringify(catalogFederationDocument)})}],
+          federationManifest: artifact(catalogManifestUrl, yield* served(catalogManifestUrl))}],
         observedAt: initial.observedAt,
         shell: {
           runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
-          federationManifest: artifact(${JSON.stringify(`${metadataOrigin}/shell-super-app/mf-manifest.json`)}, ${JSON.stringify(shellFederationDocument)})},
+          federationManifest: artifact(shellManifestUrl, yield* served(shellManifestUrl))},
         validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))
       });
       return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Struct({

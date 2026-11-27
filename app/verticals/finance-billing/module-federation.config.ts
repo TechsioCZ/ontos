@@ -7,6 +7,7 @@ import reactDomMetadata from 'react-dom/package.json';
 import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 
+import { resolveUiKitShare, uiKitSharedConfig } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const pluginI18nVersion = pluginI18nMetadata.version;
@@ -16,6 +17,8 @@ const reactVersion = reactMetadata.version;
 const reactDomVersion = reactDomMetadata.version;
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+
+const uiKitShared = uiKitSharedConfig({ role: 'remote', uiKit: resolveUiKitShare(import.meta.url) });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
@@ -36,6 +39,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   filename: 'remoteEntry.js',
   name: 'verticalFinanceBilling',
   shared: {
+    ...uiKitShared,
     '@modern-js/plugin-i18n/runtime/no-react-i18next': {
       requiredVersion: pluginI18nVersion,
       singleton: true,

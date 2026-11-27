@@ -28,7 +28,7 @@ import { NetAddress } from 'effect/net';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
 
-import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../module-federation.shared.ts';
 import {
   DatabaseConfig,
   parseDatabaseConfig,
@@ -228,13 +228,19 @@ const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')
   );
   const [i18n, runtime, router, react, reactDom] = versions;
   const shared = Object.entries(
-    createSharedRuntimeConfig({
-      '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
-      '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
-      '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
-      react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
-      'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
-    }),
+    createSharedRuntimeConfig(
+      {
+        '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
+        '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
+        '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
+        react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
+        'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
+      },
+      {
+        role: 'host',
+        uiKit: resolveUiKitShare(pathToFileURL(nodePath.join(workspaceRoot, 'apps/shell-super-app/package.json')).href),
+      },
+    ),
   ).map(([name, value]) => ({ name, requiredVersion: value.requiredVersion, singleton: value.singleton }));
   const moduleContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
     deployment: { appId: gatewayAudience, buildMarker: `lean-core-api-only-${identity.buildMarker}` },
