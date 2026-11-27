@@ -200,6 +200,7 @@ describe('#1396 the caller is bound to the consumer it claims, in both direction
     repository: {
       listApplicabilityDecisions: () => Effect.succeed([]),
       listApplicabilityPolicies: () => Effect.succeed([]),
+      listResponsibilities: () => Effect.succeed([]),
       resolveEligibilityInputs: () => Effect.die('the Privacy inputs are never resolved in this test'),
     },
     subjectExists: () => Effect.succeed(true),

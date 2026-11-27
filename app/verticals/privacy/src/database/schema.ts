@@ -1470,6 +1470,13 @@ export const sourceProcessingAuthorizations = privacySchema.table.withRLS(
       table.legalEntityId,
       table.createdByActionInvocationId,
     ),
+    index('privacy_source_authorizations_route_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.sourceIssuer,
+      table.sourceNamespace,
+      table.sourceRouteRef,
+    ),
     uniqueIndex('privacy_source_authorizations_active_route_uk')
       .on(table.tenantId, table.legalEntityId, table.sourceIssuer, table.sourceNamespace, table.sourceRouteRef)
       .where(sql`${table.lifecycle} = 'ACTIVE'`),
@@ -1511,12 +1518,7 @@ export const sourceProcessingAdmissions = privacySchema.table.withRLS(
     sourceRecord: jsonb('source_record').notNull(),
   },
   (table) => [
-    unique('privacy_source_admissions_source_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.authorizationId,
-      table.sourceIdentityKey,
-    ),
+    unique('privacy_source_admissions_source_uk').on(table.tenantId, table.legalEntityId, table.sourceIdentityKey),
     index('privacy_source_admissions_subject_idx').on(
       table.tenantId,
       table.legalEntityId,

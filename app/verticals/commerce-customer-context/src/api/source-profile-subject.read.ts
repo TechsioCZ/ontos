@@ -31,7 +31,14 @@ const subjectRoutine = defineScopedRoutine({
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'text' },
   ],
-  resultSchema: Schema.Struct({ proof: Schema.Unknown }),
+  resultSchema: Schema.Struct({
+    proof: Schema.Struct({
+      legalEntityId: SourceProfileSubjectResponseSchema.members[1].fields.legalEntityId,
+      partyRef: SourceProfileSubjectResponseSchema.members[1].fields.partyRef,
+      profileRef: SourceProfileSubjectRequestSchema.fields.profileRef,
+      sourceReference: SourceProfileSubjectResponseSchema.members[1].fields.sourceReference,
+    }),
+  }),
   routineKey: 'source-profile-subject.read',
   schema: 'commerce_customer_context',
 });
@@ -49,7 +56,7 @@ export const sourceProfileSubjectRead = defineRead(
       callers: ['privacy'],
       reason: 'Privacy verifies the actual subject of an exact target profile',
       subject: 'identity',
-      subjectWorkloads: ['commerce.customer-context.source-read'],
+      subjectWorkloads: ['commerce.customer-context.source-profile-proof'],
     },
     accessDeclaration: {
       key: 'commerce.customer-context.source-profile-subject.read',
@@ -62,7 +69,7 @@ export const sourceProfileSubjectRead = defineRead(
     accessKind: 'detail',
     accessWorkload: {
       reason: 'Registered Privacy callers check a profile subject',
-      workloads: ['commerce.customer-context.source-read'],
+      workloads: ['commerce.customer-context.source-profile-proof'],
     },
     entrypoint: sourceProfileSubjectEntrypoint,
     evidencePolicy: {
@@ -109,14 +116,7 @@ export const sourceProfileSubjectRead = defineRead(
         if (row === undefined) {
           return absent;
         }
-        const bound = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({
-            legalEntityId: SourceProfileSubjectResponseSchema.members[1].fields.legalEntityId,
-            partyRef: SourceProfileSubjectResponseSchema.members[1].fields.partyRef,
-            profileRef: SourceProfileSubjectRequestSchema.fields.profileRef,
-            sourceReference: SourceProfileSubjectResponseSchema.members[1].fields.sourceReference,
-          }),
-        )(row.proof).pipe(Effect.mapError(unavailable));
+        const bound = row.proof;
         return bound.legalEntityId === scope.legalEntityId &&
           bound.partyRef.tenantId === scope.tenantId &&
           Schema.toEquivalence(SourceProfileSubjectRequestSchema.fields.profileRef)(bound.profileRef, input.profileRef)

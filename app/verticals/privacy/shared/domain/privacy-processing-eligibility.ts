@@ -128,7 +128,15 @@ export const currentProcessingIntervention = (
   kind: PrivacyProcessingIntervention['kind'],
   intendedScope: IntendedProcessingScope,
   asOf: string,
+  predecessors: readonly IntendedProcessingScope[] = [],
 ): PrivacyProcessingIntervention => {
+  // An intervention remains governed by its original ledger until explicitly resolved there.
+  for (const previous of predecessors) {
+    const inherited = currentProcessingIntervention(interventions, kind, previous, asOf);
+    if (inherited.status === 'ACTIVE' || !inherited.currentness.authoritative) {
+      return { ...inherited, scope: intendedScope };
+    }
+  }
   const matching = interventions
     .filter(
       (intervention) =>

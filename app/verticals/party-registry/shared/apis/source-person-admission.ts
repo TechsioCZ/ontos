@@ -19,6 +19,15 @@ export const SourcePersonAdmissionRequestSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   sourceReference: SourcePersonAdmissionReferenceSchema,
 });
+/** A standing grant retains record identity, not a caller-picked Party occurrence. Party supplies its own committed proof. */
+export const SourcePersonProofRequestSchema = Schema.Union([
+  SourcePersonAdmissionRequestSchema,
+  Schema.Struct({
+    partyRef: PartyRefSchema,
+    admittedRecord: Schema.Struct({ source: PartyClientSourceIdentitySchema, recordId: SourceRecordIdentitySchema }),
+  }),
+]);
+export type SourcePersonProofRequest = typeof SourcePersonProofRequestSchema.Type;
 export type SourcePersonAdmissionRequest = typeof SourcePersonAdmissionRequestSchema.Type;
 export const SourcePersonAdmissionResponseSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('NOT_ADMISSIBLE') }),
@@ -78,7 +87,7 @@ export const SourcePersonAdmissionApi = HttpApi.make('SourcePersonAdmissionApi')
         SourcePersonAdmissionUnavailableProblemSchema,
         SourcePersonAdmissionInternalProblemSchema,
       ],
-      payload: SourcePersonAdmissionRequestSchema,
+      payload: SourcePersonProofRequestSchema,
       success: SourcePersonAdmissionResponseSchema,
     }),
   ),

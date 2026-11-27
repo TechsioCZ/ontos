@@ -31,6 +31,7 @@ export const customerFixtureWorkloads = [
   'party.registry.source-read',
   'commerce.customer-context.source-write',
   'commerce.customer-context.source-read',
+  'commerce.customer-context.source-profile-proof',
   'privacy.core.source-processing-check',
 ] as const;
 export const customerWorkerKey = jobKey;

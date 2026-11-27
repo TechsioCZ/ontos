@@ -370,6 +370,7 @@ export interface PrivacyOperationRepositoryService {
     intendedScope: ResolvePrivacyEligibilityInputsInput['intendedScope'],
     asOf: string,
     authority: PrivacyApplicabilityEligibilityAuthorityResult,
+    priorInterventionScopes?: readonly ResolvePrivacyEligibilityInputsInput['intendedScope'][],
   ) => Effect.Effect<ResolvedPrivacyEligibilityInputs, PrivacyOperationPersistenceError>;
   /** Resolves a legal hold from a trusted governance authority; caller fields are never persisted as governance. */
   readonly resolveLegalHoldGovernance: (

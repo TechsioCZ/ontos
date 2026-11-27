@@ -2,12 +2,12 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import type { SourcePersonAdmissionRequest } from '../../shared/apis/source-person-admission.ts';
+import type { SourcePersonProofRequest } from '../../shared/apis/source-person-admission.ts';
 import { readSourcePersonAdmission } from '../services/source-person-admission.service.ts';
 import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import { readUnavailable } from './read-outcome.ts';
 import {
-  SourcePersonAdmissionRequestSchema,
+  SourcePersonProofRequestSchema,
   SourcePersonAdmissionResponseSchema,
 } from '../../shared/apis/source-person-admission.ts';
 
@@ -48,7 +48,7 @@ export const sourcePersonAdmissionRead = defineRead(
       captureMode: 'metadata_only',
       policyKey: 'party.registry.api.source-person-admission.evidence.v1',
     },
-    inputSchema: SourcePersonAdmissionRequestSchema,
+    inputSchema: SourcePersonProofRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
     policies: [],
@@ -59,7 +59,7 @@ export const sourcePersonAdmissionRead = defineRead(
   (
     input,
     context: ReadHandlerContext<{
-      readonly load: (input: SourcePersonAdmissionRequest) => ReturnType<typeof readSourcePersonAdmission>;
+      readonly load: (input: SourcePersonProofRequest) => ReturnType<typeof readSourcePersonAdmission>;
     }>,
   ) =>
     context.services.load(input).pipe(
@@ -72,6 +72,6 @@ export const sourcePersonAdmissionRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({
-      load: (input: SourcePersonAdmissionRequest) => readSourcePersonAdmission(transaction, scope, input),
+      load: (input: SourcePersonProofRequest) => readSourcePersonAdmission(transaction, scope, input),
     }),
 );

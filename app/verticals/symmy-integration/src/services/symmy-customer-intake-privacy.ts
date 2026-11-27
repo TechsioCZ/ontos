@@ -293,7 +293,7 @@ export const projectSymmyCustomerIntakeAdmissions = (
         : [],
     );
     const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
-    if (profiles[0] !== undefined) {
+    if (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' && profiles[0] !== undefined) {
       Object.assign(payload, { membershipProfile: profiles[0] });
     }
     return { occurrenceId: root.effects[0].ref.occurrence.occurrenceId, payload };

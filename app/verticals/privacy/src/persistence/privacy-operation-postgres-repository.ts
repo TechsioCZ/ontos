@@ -4,7 +4,7 @@ import { PrivacyOperationRepository, PrivacyOperationPersistenceError } from './
 import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
 
 import {
@@ -3308,7 +3308,14 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
     ),
     resolveEligibilityInputs: Effect.fn('PrivacyOperationPostgresRepository.resolveEligibilityInputs')(
       // fallow-ignore-next-line complexity -- Eligibility resolution atomically reconciles all independently versioned evidence streams before returning a decision input.
-      function* resolveEligibilityInputsEffect(tenantId, legalEntityId, intendedScope, asOf, authority) {
+      function* resolveEligibilityInputsEffect(
+        tenantId,
+        legalEntityId,
+        intendedScope,
+        asOf,
+        authority,
+        priorInterventionScopes,
+      ) {
         yield* assertScope(tenantId, legalEntityId);
         const authorityResult = yield* decode(
           PrivacyApplicabilityEligibilityAuthorityResultSchema,
@@ -3340,7 +3347,12 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
                 and(
                   eq(processingInterventions.tenantId, tenantId),
                   eq(processingInterventions.legalEntityId, legalEntityId),
-                  eq(processingInterventions.processingScopeRef, intendedScope.processingScopeRef.scopeId),
+                  inArray(
+                    processingInterventions.processingScopeRef,
+                    [intendedScope, ...(priorInterventionScopes ?? [])].map(
+                      (scope) => scope.processingScopeRef.scopeId,
+                    ),
+                  ),
                 ),
               )
               .orderBy(desc(processingInterventions.observedAt))
@@ -3403,7 +3415,9 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
             assignment.scope.purposeVersionId === intendedScope.purposeVersionId,
         );
         const basisAssignment =
-          matchingBasis.length === 1 && matchingBasis.at(0)?.decision === 'APPROVED' ? matchingBasis.at(0) : undefined;
+          matchingBasis.length === 1
+            ? matchingBasis.find((assignment) => assignment.decision === 'APPROVED')
+            : undefined;
         const legalBasis =
           basisAssignment === undefined
             ? null
@@ -3432,7 +3446,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         }
 
         const currentIntervention = (kind: PrivacyProcessingIntervention['kind']) =>
-          currentProcessingIntervention(interventions, kind, intendedScope, asOf);
+          currentProcessingIntervention(interventions, kind, intendedScope, asOf, priorInterventionScopes);
         const objectionRecord = currentIntervention('OBJECTION');
         const restrictionRecord = currentIntervention('RESTRICTION');
         const objection = {

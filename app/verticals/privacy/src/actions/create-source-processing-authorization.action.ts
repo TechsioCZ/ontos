@@ -16,7 +16,7 @@ import {
 } from '../../shared/domain/privacy-applicability.ts';
 import { validatePrivacyLegalBasisAssignment } from '../../shared/domain/privacy-legal-basis.ts';
 import type { PrivacyLegalBasisAssignment } from '../../shared/domain/privacy-legal-basis.ts';
-import type { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
+import { currentScopeControllers } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import {
   SourceProcessingAuthorizationSchema,
   SourceRouteProcessingOperation,
@@ -43,7 +43,6 @@ import {
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-type ResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
 type Services = Pick<
   PrivacyOperationRepositoryService,
   'assignLegalBasis' | 'listApplicabilityPolicies' | 'listResponsibilities' | 'recordApplicability'
@@ -60,12 +59,6 @@ const samePurposeRef = Schema.toEquivalence(ProcessingPurposeRefSchema);
 const sameResponsibilityRef = Schema.toEquivalence(PrivacyResponsibilityAssignmentRefSchema);
 const privacyModuleId = 'privacy.core' as const;
 const rejected = (reason: string) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason });
-
-const currentController = (assignment: ResponsibilityAssignment, scopeId: string, at: string): boolean =>
-  assignment.role === 'CONTROLLER' &&
-  assignment.scopeRef.scopeId === scopeId &&
-  isPrivacyInstantAtOrBefore(assignment.effectiveFrom, at) &&
-  (Option.isNone(assignment.effectiveTo) || isPrivacyInstantAfter(assignment.effectiveTo.value, at));
 
 /**
  * Staff authorize one source route as a standing processing scope. The same governed decision records the
@@ -119,14 +112,13 @@ export const handleCreateSourceProcessingAuthorization = Effect.fn('CreateSource
         sameResponsibilityRef(reference, assignment.assignmentRef),
       ),
     );
-    const controllers = referenced.filter((assignment) =>
-      currentController(assignment, processingScopeRef.scopeId, now),
-    );
+    const controllers = currentScopeControllers(responsibilities, processingScopeRef, now);
     const [controller] = controllers;
     if (
       referenced.length !== payload.responsibilityAssignmentRefs.length ||
       controllers.length !== 1 ||
-      controller === undefined
+      controller === undefined ||
+      !referenced.includes(controller)
     ) {
       return yield* rejected(
         'The authorization requires exact current Responsibility Assignments with one Controller of its processing scope',

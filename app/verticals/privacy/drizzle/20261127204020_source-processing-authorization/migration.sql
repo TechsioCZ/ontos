@@ -9,7 +9,7 @@ CREATE TABLE "privacy"."source_processing_admissions" (
 	"role" text NOT NULL,
 	"source_identity_key" text NOT NULL,
 	"source_record" jsonb NOT NULL,
-	CONSTRAINT "privacy_source_admissions_source_uk" UNIQUE("tenant_id","legal_entity_id","authorization_id","source_identity_key"),
+	CONSTRAINT "privacy_source_admissions_source_uk" UNIQUE("tenant_id","legal_entity_id","source_identity_key"),
 	CONSTRAINT "privacy_source_admissions_role_ck" CHECK ("role" in ('SUBJECT', 'CHILD')),
 	CONSTRAINT "privacy_source_admissions_period_ck" CHECK ("last_admitted_at" >= "first_admitted_at")
 );
@@ -50,6 +50,7 @@ CREATE TABLE "privacy"."source_processing_authorizations" (
 ALTER TABLE "privacy"."source_processing_authorizations" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE INDEX "privacy_subjects_reconciled_source_idx" ON "privacy"."privacy_subjects" ("tenant_id","legal_entity_id",("subject_record"->'subject'->'sourceAdmission'->'sourceSubjectRef'->>'resourceId')) WHERE "subject_kind" = 'DATA_SUBJECT';--> statement-breakpoint
 CREATE INDEX "privacy_source_admissions_subject_idx" ON "privacy"."source_processing_admissions" ("tenant_id","legal_entity_id","authorization_id","privacy_subject_id");--> statement-breakpoint
+CREATE INDEX "privacy_source_authorizations_route_idx" ON "privacy"."source_processing_authorizations" ("tenant_id","legal_entity_id","source_issuer","source_namespace","source_route_ref");--> statement-breakpoint
 CREATE UNIQUE INDEX "privacy_source_authorizations_active_route_uk" ON "privacy"."source_processing_authorizations" ("tenant_id","legal_entity_id","source_issuer","source_namespace","source_route_ref") WHERE "lifecycle" = 'ACTIVE';--> statement-breakpoint
 ALTER TABLE "privacy"."source_processing_admissions" ADD CONSTRAINT "privacy_source_admissions_authorization_fk" FOREIGN KEY ("tenant_id","legal_entity_id","authorization_id") REFERENCES "privacy"."source_processing_authorizations"("tenant_id","legal_entity_id","authorization_id");--> statement-breakpoint
 ALTER TABLE "privacy"."source_processing_admissions" ADD CONSTRAINT "privacy_source_admissions_subject_fk" FOREIGN KEY ("tenant_id","legal_entity_id","privacy_subject_id") REFERENCES "privacy"."privacy_subjects"("tenant_id","legal_entity_id","privacy_subject_id");--> statement-breakpoint

@@ -75,6 +75,7 @@ const services = (input = trustedInputs): SourceProcessingEligibilityServices =>
   repository: {
     listApplicabilityDecisions: () => Effect.succeed([fixture.decision]),
     listApplicabilityPolicies: () => Effect.succeed([fixture.policy]),
+    listResponsibilities: () => Effect.succeed([]),
     resolveEligibilityInputs: () => Effect.succeed({ authoritativeReferences: [], input, policyRevisions: [] }),
   },
   resolveSubject: () => Effect.succeed(Option.none()),

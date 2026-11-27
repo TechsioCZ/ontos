@@ -12,16 +12,21 @@ import {
   sourceProcessingScopeId,
 } from '../../shared/domain/privacy-source-processing-authorization.ts';
 import type { SourceProcessingScopeTemplate } from '../../shared/domain/privacy-source-processing-authorization.ts';
-import { ProcessingScopeRefSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
+import {
+  ProcessingScopeRefSchema,
+  PrivacyResponsibilityAssignmentSchema,
+} from '../../shared/domain/privacy-responsibility-assignment.ts';
 import { ProcessingPurposeSchema } from '../../shared/domain/processing-purpose.ts';
 
 /** Explicit internal standing source-route authorization fixture; no statement about Symmy or production lawfulness. */
 export const makeStandingSourceFixture = (ids: {
   authorizationId?: string;
+  basisId?: string;
   evaluatedAt?: string;
   legalEntityId: string;
   principalId: string;
   purposeId?: string;
+  responsibilityId?: string;
   tenantId: string;
   versionId?: string;
 }) => {
@@ -92,14 +97,14 @@ export const makeStandingSourceFixture = (ids: {
     factPredicates: [{ dimension: 'CATEGORY', operator: 'EQUALS', values: [dataCategory] }],
     jurisdictionProfile: { profileKey: 'internal-fixture:explicit', profileVersion: '1' },
     mandatoryDimensions: ['CATEGORY'],
-    policyKey: 'source:internal-test',
+    policyKey: `source:internal-test:${authorizationId}`,
     policyVersion: '1',
     scopeKey: `${processingScopeRef.scopeType}:${processingScopeRef.scopeId}:${SourceRouteProcessingOperation}`,
     sourceEvidenceRefs: ['fixture:policy:explicit'],
   });
   const responsibilityRef = {
     moduleId: privacyModuleId,
-    resourceId: '10000000-0000-4000-8000-000000000021',
+    resourceId: ids.responsibilityId ?? '10000000-0000-4000-8000-000000000021',
     resourceType: 'privacy.core.privacy-responsibility-assignment' as const,
     tenantId: ids.tenantId,
   };
@@ -138,7 +143,7 @@ export const makeStandingSourceFixture = (ids: {
     ],
     legalBasisAssignmentRef: {
       moduleId: privacyModuleId,
-      resourceId: '10000000-0000-4000-8000-000000000022',
+      resourceId: ids.basisId ?? '10000000-0000-4000-8000-000000000022',
       resourceType: 'privacy.core.legal-basis-assignment',
       tenantId: ids.tenantId,
     },
@@ -183,5 +188,28 @@ export const makeStandingSourceFixture = (ids: {
       },
     ],
   });
-  return { authorization, decision, ended, evaluatedAt, from, policy, purpose, request, requestFor, route, until };
+  const controller = Schema.decodeUnknownSync(PrivacyResponsibilityAssignmentSchema)({
+    actor: authorization.createdBy,
+    assignmentRef: responsibilityRef,
+    effectiveFrom: from,
+    effectiveTo: until,
+    holder: { holder: authority.controllerRef, holderKind: 'LEGAL_ENTITY' },
+    provenance: { decisionEvidenceRefs: ['fixture:controller'], reason: 'Fixture controller', recordedAt: from },
+    role: 'CONTROLLER',
+    scopeRef: processingScopeRef,
+  });
+  return {
+    authorization,
+    controller,
+    decision,
+    ended,
+    evaluatedAt,
+    from,
+    policy,
+    purpose,
+    request,
+    requestFor,
+    route,
+    until,
+  };
 };

@@ -114,6 +114,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 outcome: 'NOT_ADMISSIBLE',
               });
               yield* recordSourceCreateReceipt(transaction, scope, invocationId, created.decisionRef.resourceId);
+              const standing = { admittedRecord: { source, recordId: 'person-record' }, partyRef: created.partyRef };
+              expect((yield* readSourcePersonAdmission(transaction, scope, standing)).outcome).toBe(
+                'SOURCE_PERSON_CURRENT',
+              );
+              expect(
+                (yield* readSourcePersonAdmission(transaction, scope, {
+                  ...standing,
+                  partyRef: { ...standing.partyRef, resourceId: invocationId },
+                })).outcome,
+              ).toBe('NOT_ADMISSIBLE');
               const sourceMatchInvocation = 'df640000-0000-4000-8000-000000000002';
               const matched = yield* matchParty(transaction, {
                 actionInvocationId: sourceMatchInvocation,

@@ -36,9 +36,8 @@ export interface SourceProcessingAuthorizationRepositoryService {
     route: Pick<SourceProcessingRoute, 'issuer' | 'namespace' | 'routeRef'>,
     lock?: 'admission',
   ) => Effect.Effect<readonly SourceProcessingAuthorization[], PrivacyOperationPersistenceError>;
-  /** The subject a source record resolves to under one authorization. */
+  /** The subject a source record resolves to across grant incarnations. */
   readonly admission: (
-    authorizationId: string,
     source: PrivacySourceRecordIdentity,
   ) => Effect.Effect<Option.Option<SourceProcessingAdmissionRow>, PrivacyOperationPersistenceError>;
   /** Records the sources of one subject, or refreshes when the route last used them. */
@@ -65,7 +64,7 @@ export interface SourceProcessingAuthorizationRepositoryService {
     authorizationId: string,
   ) => Effect.Effect<Option.Option<SourceProcessingAuthorization>, PrivacyOperationPersistenceError>;
   /** Includes an ended route so its old contexts can never authorize new uses. */
-  readonly latestForRoute: SourceProcessingAuthorizationRepositoryService['activeForRoute'];
+  readonly historyForRoute: SourceProcessingAuthorizationRepositoryService['activeForRoute'];
   readonly sourceSubjectId: (
     source: PrivacySourceRecordIdentity,
   ) => Effect.Effect<Option.Option<string>, PrivacyOperationPersistenceError>;

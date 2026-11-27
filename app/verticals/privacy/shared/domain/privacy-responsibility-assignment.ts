@@ -3,11 +3,11 @@ import {
   PrivacyBoundedIdSchema as BoundedIdSchema,
   ProcessingScopeRefSchema,
 } from '@app/privacy-contracts/domain/processing-scope-ref';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 
 import { PrivacyResponsibilityAssignmentRefSchema } from '../resources/privacy-responsibility-assignment.ts';
 import { PrivacyPartyRefSchema } from './party-reference.ts';
-import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import { isPrivacyInstantAfter, isPrivacyInstantAtOrBefore, PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
 const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
@@ -56,3 +56,18 @@ export const PrivacyResponsibilityAssignmentSchema = Schema.Struct({
       : 'Privacy Responsibility Assignment actor and assignment must share a tenant';
   }),
 );
+
+/** Resolve across all assignments in the trusted tenant and legal entity, not just the nominated references. */
+export const currentScopeControllers = (
+  assignments: readonly (typeof PrivacyResponsibilityAssignmentSchema.Type)[],
+  scope: typeof ProcessingScopeRefSchema.Type,
+  at: string,
+) =>
+  assignments.filter(
+    (assignment) =>
+      assignment.role === 'CONTROLLER' &&
+      assignment.scopeRef.scopeId === scope.scopeId &&
+      assignment.scopeRef.scopeType === scope.scopeType &&
+      isPrivacyInstantAtOrBefore(assignment.effectiveFrom, at) &&
+      (Option.isNone(assignment.effectiveTo) || isPrivacyInstantAfter(assignment.effectiveTo.value, at)),
+  );

@@ -4,6 +4,7 @@ import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import type {
   SourcePersonAdmissionRequest,
+  SourcePersonProofRequest,
   SourcePersonAdmissionResponse,
 } from '../../shared/apis/source-person-admission.ts';
 import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
@@ -136,12 +137,84 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
   },
 );
 
+/** Only a receipted owner decision in this legal entity can link a standing source record to a Party.
+ * Refuse an ambiguous history instead of choosing a convenient Party. The exact occurrence then passes
+ * through the same current Privacy, lifecycle and evidence checks as an exact proof request. */
+const committedPersonReference = Effect.fn('SourcePersonAdmission.committedReference')(function* committedReference(
+  transaction: Pick<PartyTransaction, 'select'>,
+  scope: OperationalScope,
+  request: Extract<SourcePersonProofRequest, { admittedRecord: unknown }>,
+) {
+  if (request.partyRef.tenantId !== scope.tenantId || scope.legalEntityId === undefined) {
+    return;
+  }
+  const { source, recordId } = request.admittedRecord;
+  const evidence = sql`${partyMatchDecisions.evidenceEvaluation}->'evidence' @> jsonb_build_array(jsonb_build_object('kind','CLIENT_SOURCE_ASSERTION','recordId',${recordId}::text,'source',jsonb_build_object('issuer',${source.issuer}::text,'namespace',${source.namespace}::text,'recordType',${source.recordType}::text,'routeRef',${source.routeRef}::text)))`;
+  const rows = yield* transaction
+    .select({
+      partyId: partyMatchDecisions.partyId,
+      decisionId: sql<string>`min(${partyMatchDecisions.matchDecisionId}::text)`,
+    })
+    .from(partyMatchDecisions)
+    .innerJoin(
+      partyCreateSourceReceipts,
+      and(
+        eq(partyCreateSourceReceipts.tenantId, partyMatchDecisions.tenantId),
+        eq(partyCreateSourceReceipts.actionInvocationId, partyMatchDecisions.actionInvocationId),
+        eq(partyCreateSourceReceipts.matchDecisionId, partyMatchDecisions.matchDecisionId),
+      ),
+    )
+    .where(
+      and(
+        eq(partyMatchDecisions.tenantId, scope.tenantId),
+        eq(partyCreateSourceReceipts.legalEntityId, scope.legalEntityId),
+        or(eq(partyMatchDecisions.outcome, 'CREATED'), eq(partyMatchDecisions.outcome, 'MATCHED')),
+        evidence,
+      ),
+    )
+    .groupBy(partyMatchDecisions.partyId)
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  const [row] = rows;
+  if (rows.length !== 1 || row?.partyId !== request.partyRef.resourceId) {
+    return;
+  }
+  const [decision] = yield* transaction
+    .select({ evidence: partyMatchDecisions.evidenceEvaluation })
+    .from(partyMatchDecisions)
+    .where(
+      and(eq(partyMatchDecisions.tenantId, scope.tenantId), eq(partyMatchDecisions.matchDecisionId, row.decisionId)),
+    )
+    .limit(1)
+    .pipe(Effect.mapError(unavailable));
+  const occurrence = decision?.evidence?.evidence
+    .flatMap((item) =>
+      item.kind === 'CLIENT_SOURCE_ASSERTION' &&
+      item.recordId === recordId &&
+      item.source.issuer === source.issuer &&
+      item.source.namespace === source.namespace &&
+      item.source.routeRef === source.routeRef &&
+      item.source.recordType === source.recordType
+        ? [item.occurrenceId]
+        : [],
+    )
+    .at(0);
+  return occurrence === undefined
+    ? undefined
+    : { partyRef: request.partyRef, sourceReference: { source, recordId, occurrenceId: occurrence } };
+});
+
 /** Source pre-target Privacy runs before proof; no PARTY target Privacy call can create a circular admission. */
 export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')(function* readAdmission(
   transaction: Pick<PartyTransaction, 'select'>,
   scope: OperationalScope,
-  input: SourcePersonAdmissionRequest,
+  request: SourcePersonProofRequest,
 ): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
+  const input: SourcePersonAdmissionRequest | undefined =
+    'sourceReference' in request ? request : yield* committedPersonReference(transaction, scope, request);
+  if (input === undefined) {
+    return notAdmissible;
+  }
   const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
   if (correlated === undefined || correlated.party.currentType !== 'PERSON') {
     return notAdmissible;
