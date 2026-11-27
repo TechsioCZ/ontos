@@ -36,7 +36,7 @@ import { Reactivity } from 'effect/reactivity';
 
 import { symmyIntegrationApi, symmyIntegrationOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { symmyIntegrationRegistration } from '../vertical.registration.ts';
+import { symmyIntegrationBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { SymmyJobPrivacyLive } from '../src/services/symmy-job-privacy.service.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -98,7 +98,7 @@ const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
     GovernedReadLayer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
   ),
 );
-const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
   GovernedReadLayer.provide(
@@ -107,7 +107,7 @@ const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, sym
     ),
   ),
 );
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,

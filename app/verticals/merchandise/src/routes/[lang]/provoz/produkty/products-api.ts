@@ -18,7 +18,6 @@ import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } fro
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { executeManageMarkets } from '../../../../api/manage-markets-action-client.ts';
-import { executeCleanupDemo } from '../../../../api/cleanup-demo-action-client.ts';
 import { executeChangeProductImages } from '../../../../api/change-product-images-action-client.ts';
 import { executeRecordStockMovement } from '../../../../api/record-stock-movement-action-client.ts';
 import { committedResult } from '../../../../api/action-result.ts';
@@ -114,7 +113,6 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ApplyCommandActionConflictProblem',
       'ManageCatalogActionConflictProblem',
       'ManageMarketsActionConflictProblem',
-      'CleanupDemoActionConflictProblem',
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
       (problem): FailureReason => {
@@ -140,7 +138,6 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ApplyCommandActionIneligibleProblem',
       'ManageCatalogActionIneligibleProblem',
       'ManageMarketsActionIneligibleProblem',
-      'CleanupDemoActionIneligibleProblem',
       'ChangeProductImagesActionIneligibleProblem',
       'RecordStockMovementActionIneligibleProblem',
       (): FailureReason => 'rejected',
@@ -149,13 +146,11 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ApplyCommandActionAuthenticationProblem',
       'ManageCatalogActionAuthenticationProblem',
       'ManageMarketsActionAuthenticationProblem',
-      'CleanupDemoActionAuthenticationProblem',
       'ChangeProductImagesActionAuthenticationProblem',
       'RecordStockMovementActionAuthenticationProblem',
       'ApplyCommandActionForbiddenProblem',
       'ManageCatalogActionForbiddenProblem',
       'ManageMarketsActionForbiddenProblem',
-      'CleanupDemoActionForbiddenProblem',
       'ChangeProductImagesActionForbiddenProblem',
       'RecordStockMovementActionForbiddenProblem',
       (): FailureReason => 'forbidden',
@@ -164,11 +159,12 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ApplyCommandActionInvalidProblem',
       'ManageCatalogActionInvalidProblem',
       'ManageMarketsActionInvalidProblem',
-      'CleanupDemoActionInvalidProblem',
       'ChangeProductImagesActionInvalidProblem',
       'RecordStockMovementActionInvalidProblem',
       (): FailureReason => 'invalid',
     ),
+    // The gateway's automatic recovery (operation-gateway.ts) could not move this tab to the new release.
+    Match.tag('GatewayReloadRequiredProblem', 'DocumentCompositionRevisionError', (): FailureReason => RELOAD_REQUIRED),
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
@@ -176,6 +172,8 @@ export type ProductSort = NonNullable<RecordsView['productSort']>;
 
 /** What the products list asks the server for: filters, sort and one page. */
 export interface ProductListQuery {
+  /** Only archived products (restorable); the list leaves them out otherwise. */
+  readonly archived: boolean;
   /** A product category label (companies without a storefront tree). */
   readonly category: string | null;
   /** A storefront tree category (with its subcategories). */
@@ -209,6 +207,9 @@ export const productListView = (query: ProductListQuery): ViewPayload => {
   }
   if (query.lowStockOnly) {
     view.lowStockOnly = true;
+  }
+  if (query.archived) {
+    view.archived = true;
   }
   if (query.sort !== null) {
     view.productSort = query.sort;
@@ -253,6 +254,7 @@ const productListKey = ({ legalEntityId, query, scope }: ProductListInput): stri
     query.categoryId ?? '',
     query.category ?? '',
     String(query.lowStockOnly),
+    String(query.archived),
     query.sort ?? '',
     query.taggedIds === null ? '*' : query.taggedIds.join(','),
   ]);
@@ -286,6 +288,7 @@ export const forgetRememberedProducts = (): void => {
 
 /** The page the products list opens with: no filters, default sort. */
 export const firstProductPage = (limit: number): ProductListQuery => ({
+  archived: false,
   category: null,
   categoryId: null,
   limit,
@@ -383,7 +386,9 @@ export type ProductCommand = Extract<
       | 'ConfigureMarket'
       | 'SetMarketProductOffers'
       | 'RemoveMarket'
-      | 'ArchiveDemoProduct'
+      | 'ArchiveProduct'
+      | 'RestoreProduct'
+      | 'DeleteCategory'
       | 'ChangeProductImages'
       | 'RecordStockMovement';
   }
@@ -395,14 +400,19 @@ const submitProductCommand = (command: ProductCommand, expectedRevision: number,
     Match.tag('CreateProduct', (value) =>
       executeApplyCommand({ command: value, expectedRevision }, idempotencyKey, options),
     ),
-    Match.tag('UpdateProduct', 'ChangePrice', 'BulkUpdateProducts', 'CreateCategory', 'UpdateCategory', (value) =>
-      executeManageCatalog({ command: value, expectedRevision }, idempotencyKey, options),
+    Match.tag(
+      'UpdateProduct',
+      'ChangePrice',
+      'BulkUpdateProducts',
+      'CreateCategory',
+      'UpdateCategory',
+      'DeleteCategory',
+      'ArchiveProduct',
+      'RestoreProduct',
+      (value) => executeManageCatalog({ command: value, expectedRevision }, idempotencyKey, options),
     ),
     Match.tag('SetProductMarketOffer', 'ConfigureMarket', 'SetMarketProductOffers', 'RemoveMarket', (value) =>
       executeManageMarkets({ command: value, expectedRevision }, idempotencyKey, options),
-    ),
-    Match.tag('ArchiveDemoProduct', (value) =>
-      executeCleanupDemo({ command: value, expectedRevision }, idempotencyKey, options),
     ),
     Match.tag('ChangeProductImages', (value) =>
       executeChangeProductImages({ command: value, expectedRevision }, idempotencyKey, options),

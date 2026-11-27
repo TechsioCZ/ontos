@@ -74,6 +74,7 @@ import { establishCommitmentProtectionActionApiLive } from './establish-commitme
 import { establishExternalStockCorrelationActionApiLive } from './establish-external-stock-correlation-action-server.ts';
 import { establishStockPositionActionApiLive } from './establish-stock-position-action-server.ts';
 import { establishStockSharingEligibilityActionApiLive } from './establish-stock-sharing-eligibility-action-server.ts';
+import { grantStaffStockSourceAuthorityActionApiLive } from './grant-staff-stock-source-authority-action-server.ts';
 import { importSourceAssertionActionApiLive } from './import-source-assertion-action-server.ts';
 import { inventoryBackendConfigurationCurrentReadApiLive } from './inventory-backend-configuration-current-read-server.ts';
 import { inventoryEffectOutcomeReadApiLive } from './inventory-effect-outcome-read-server.ts';
@@ -271,6 +272,7 @@ export const makeInventoryApiRuntime = (
     establishExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     establishStockPositionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     establishStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    grantStaffStockSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     importSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     inventoryBackendConfigurationCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventoryEffectOutcomeReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

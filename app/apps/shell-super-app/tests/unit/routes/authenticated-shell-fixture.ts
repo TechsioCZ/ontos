@@ -13,6 +13,7 @@ export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
     principalId: 'principal-1',
     tenantId: 'tenant-1',
   }),
+  integrationComponents: [],
   legalEntities: { items: [], state: 'available' },
   navigation: {
     deniedAppIds: [],

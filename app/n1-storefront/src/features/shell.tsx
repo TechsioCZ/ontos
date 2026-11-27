@@ -117,7 +117,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
               />
             </Link>
           </div>
-          <Header.Actions className="ml-auto md:order-last">
+          <Header.Actions className="n1-header-actions ml-auto md:order-last">
             <div className="md:hidden">
               <Header.ActionItem className="flex items-center">
                 <Button
@@ -158,22 +158,26 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                 />
               </Link>
             </Header.ActionItem>
-            <MiniLogin
-              dictionary={d}
-              locale={locale}
-              onOpenChange={(open) =>
-                setHeaderPanel((previous) => changeHeaderPanel(previous, "login", open))
-              }
-              open={headerPanel === "login"}
-            />
-            <MiniCart
-              dictionary={d}
-              locale={locale}
-              onOpenChange={(open) =>
-                setHeaderPanel((previous) => changeHeaderPanel(previous, "cart", open))
-              }
-              open={headerPanel === "cart"}
-            />
+            <Header.ActionItem className="flex items-center">
+              <MiniLogin
+                dictionary={d}
+                locale={locale}
+                onOpenChange={(open) =>
+                  setHeaderPanel((previous) => changeHeaderPanel(previous, "login", open))
+                }
+                open={headerPanel === "login"}
+              />
+            </Header.ActionItem>
+            <Header.ActionItem className="flex items-center">
+              <MiniCart
+                dictionary={d}
+                locale={locale}
+                onOpenChange={(open) =>
+                  setHeaderPanel((previous) => changeHeaderPanel(previous, "cart", open))
+                }
+                open={headerPanel === "cart"}
+              />
+            </Header.ActionItem>
           </Header.Actions>
           <div className="hidden w-full min-w-0 max-w-n1-search md:block">
             <StorefrontSearch dictionary={d} locale={locale} />

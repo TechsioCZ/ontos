@@ -101,6 +101,7 @@ export const MarketsPanel = ({
   const save = useProductTabSave<readonly MarketOfferDraft[]>({
     commandOf: (value, confirmed) => marketOfferCommands(product.id, value, confirmed),
     isValid: () => true,
+    keepAs: `markets:${product.id}`,
     onReload,
     onSaved: () => onCommitted(t(key('saved'))),
     reset: setDrafts,

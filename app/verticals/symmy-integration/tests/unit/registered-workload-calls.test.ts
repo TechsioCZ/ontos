@@ -18,7 +18,7 @@ it('publishes an unambiguous source call set and retains exact Catalog localized
       declarationKey: 'commerce.catalog.product-localized-facts.set',
       entrypointKey: 'commerce.catalog.set-product-localized-facts',
       jobKey: 'integration.symmy.execute-symmy-job',
-      legalEntityScope: 'forbidden',
+      legalEntityScope: 'optional',
       schemaVersion: '1',
       workerKey: 'integration.symmy.execute-symmy-job',
       workloadKey: 'commerce.catalog.symmy-product-import',

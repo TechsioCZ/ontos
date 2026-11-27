@@ -198,11 +198,8 @@ const merchandiseActions = (role: DemoRole, legalEntityId: string | undefined): 
   }
   actions.push(...merchandiseOperationalActions);
   const restrictedCompany = merchandiseRestrictedCompanyIds.some((company) => company === legalEntityId);
-  if (!restrictedCompany || role.tenantOwner === true) {
-    actions.push(...merchandiseOrdinaryActions);
-  }
   if (!restrictedCompany || role.tenantOwner === true || role.companyAdmin === true) {
-    actions.push('demo.merchandise.markets.manage');
+    actions.push(...merchandiseOrdinaryActions, 'demo.merchandise.markets.manage');
   }
   // The owner still checks ResetDemoData's exact company024 constraint inside the closed cleanup Action.
   if (role.tenantOwner === true) {

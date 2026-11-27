@@ -643,57 +643,61 @@ describe('Define Price Action', () => {
     }),
   );
 
-  it.effect('keeps refusing another authority, a retired Price and an unproven no-change', () =>
-    Effect.gen(function* refuseOtherBoundKeys() {
-      const otherAuthority = sameKeyAssertion({
-        amount: '130',
-        effectiveFrom: '2026-09-28T10:00:00.000Z',
-        sourceAssertionId: 'efefefef-efef-4fef-8fef-efefefefefef',
-        sourceAuthorityRef: 'other-price-owner',
-      });
-      const boundByAnotherAuthority = yield* applyPriceDefinition(
-        otherAuthority,
-        laterTrusted,
-        servicesFor(() => Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'EXACT_KEY_ALREADY_BOUND' as const })),
-      );
-      const retired = yield* applyPriceDefinition(
-        otherAuthority,
-        laterTrusted,
-        servicesFor(() =>
-          Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'UNVERIFIABLE_CURRENTNESS' as const }),
-        ),
-      );
-      // A Current fact of another authority, or of another amount, never proves that nothing changed.
-      const otherAuthorityNoChange = yield* Effect.exit(
-        applyPriceDefinition(
-          sameKeyAssertion({
-            amount: payload.monetaryAmount.amount,
-            effectiveFrom: '2026-09-28T10:00:00.000Z',
-            sourceAssertionId: 'fafafafa-fafa-4afa-8afa-fafafafafafa',
-            sourceAuthorityRef: 'other-price-owner',
-          }),
-          laterTrusted,
-          servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
-        ),
-      );
-      const otherAmountNoChange = yield* Effect.exit(
-        applyPriceDefinition(
+  it.effect(
+    'holds a conflict the owner keeps, a retired Price and an unproven no-change; the same amount of another authority is no change',
+    () =>
+      Effect.gen(function* refuseOtherBoundKeys() {
+        const otherAuthority = sameKeyAssertion({
+          amount: '130',
+          effectiveFrom: '2026-09-28T10:00:00.000Z',
+          sourceAssertionId: 'efefefef-efef-4fef-8fef-efefefefefef',
+          sourceAuthorityRef: 'other-price-owner',
+        });
+        const boundByAnotherAuthority = yield* applyPriceDefinition(
           otherAuthority,
           laterTrusted,
-          servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
-        ),
-      );
+          servicesFor(() =>
+            Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'EXACT_KEY_ALREADY_BOUND' as const }),
+          ),
+        );
+        const retired = yield* applyPriceDefinition(
+          otherAuthority,
+          laterTrusted,
+          servicesFor(() =>
+            Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'UNVERIFIABLE_CURRENTNESS' as const }),
+          ),
+        );
+        // The same amount as another authority's Current fact (the staff ERP editor's) is no change; another amount never is.
+        const otherAuthorityNoChange = yield* Effect.exit(
+          applyPriceDefinition(
+            sameKeyAssertion({
+              amount: payload.monetaryAmount.amount,
+              effectiveFrom: '2026-09-28T10:00:00.000Z',
+              sourceAssertionId: 'fafafafa-fafa-4afa-8afa-fafafafafafa',
+              sourceAuthorityRef: 'other-price-owner',
+            }),
+            laterTrusted,
+            servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
+          ),
+        );
+        const otherAmountNoChange = yield* Effect.exit(
+          applyPriceDefinition(
+            otherAuthority,
+            laterTrusted,
+            servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
+          ),
+        );
 
-      for (const refused of [boundByAnotherAuthority, retired]) {
-        expect(refused).toEqual({
-          outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
-          reason: 'CANONICAL_CONFLICT_HELD',
-          sourceAssertionId: otherAuthority.sourceAssertion.sourceAssertionId,
-        });
-      }
-      expect(otherAuthorityNoChange.toString()).toContain(PricePersistenceUnavailable.name);
-      expect(otherAmountNoChange.toString()).toContain(PricePersistenceUnavailable.name);
-    }),
+        for (const refused of [boundByAnotherAuthority, retired]) {
+          expect(refused).toEqual({
+            outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+            reason: 'CANONICAL_CONFLICT_HELD',
+            sourceAssertionId: otherAuthority.sourceAssertion.sourceAssertionId,
+          });
+        }
+        expect(otherAuthorityNoChange.toString()).toContain('PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED');
+        expect(otherAmountNoChange.toString()).toContain(PricePersistenceUnavailable.name);
+      }),
   );
 
   it('rejects Storefront and purchase Quantity from the mutation payload', () => {

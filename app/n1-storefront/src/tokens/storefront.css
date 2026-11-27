@@ -363,6 +363,11 @@
   --font-weight-totals-summary-total: var(--font-weight-bold);
 }
 
+/* Action slots share the gap from Header.Actions; item padding must not add a second gap. */
+@utility n1-header-actions {
+  --padding-header-item-sm: var(--dimension-0);
+}
+
 /* Header panels311:2331/2164 and333:7435 explicitly bind Theme/N1
  * white/base, rather than the generic Popover fill-overlay default. */
 @utility n1-header-popover {

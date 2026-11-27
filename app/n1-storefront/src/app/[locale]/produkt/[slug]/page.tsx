@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Schema } from "effect";
 import { getDictionary } from "@/i18n";
 import { getCatalog } from "@/ontos/catalog";
+import { categoryTrail } from "@/ontos/catalog-navigation";
 import { ProductView } from "@/features/product-view";
 import { CatalogState } from "@/features/catalog-state";
 import { CatalogView } from "@/features/catalog-view";
@@ -24,15 +25,16 @@ export const generateMetadata = async ({
   const title = product.seoTitle || product.name;
   const description = product.seoDescription || product.paragraphs[0] || product.description;
   const [image] = product.images;
-  return {
-    ...(description.length > 0 ? { description } : {}),
-    openGraph: {
-      title,
-      ...(description.length > 0 ? { description } : {}),
-      ...(image === undefined ? {} : { images: [image] }),
-    },
-    title,
-  };
+  const openGraph: NonNullable<Metadata["openGraph"]> = { title };
+  const metadata: Metadata = { openGraph, title };
+  if (description.length > 0) {
+    metadata.description = description;
+    openGraph.description = description;
+  }
+  if (image !== undefined) {
+    openGraph.images = [image];
+  }
+  return metadata;
 };
 
 const ProductPage = async ({
@@ -44,7 +46,11 @@ const ProductPage = async ({
 }) => {
   const { locale, slug } = await params;
   const d = getDictionary(locale);
-  const result = await getCatalog(locale, JSON.stringify({ slug }));
+  // The product read carries no category tree: the layout's featured read (same render, same cache) has it.
+  const [result, navigation] = await Promise.all([
+    getCatalog(locale, JSON.stringify({ slug })),
+    getCatalog(locale, JSON.stringify({ featured: true })),
+  ]);
   if (result.state === "unavailable") {
     return <CatalogState kind="product" />;
   }
@@ -62,16 +68,19 @@ const ProductPage = async ({
   const variantId = Schema.is(Schema.String)(search.variantId) ? search.variantId : undefined;
   // Historical N1 recommends by category. The current public owner read supports
   // one category, so use the actual primary category, never an unfiltered fallback.
-  const category = result.catalog.categories.find((item) => item.id === product.categoryId);
-  const related =
-    product.relatedProductIds.length > 0
-      ? await getCatalog(
-          locale,
-          JSON.stringify({ productIds: product.relatedProductIds.slice(0, 24) }),
-        )
-      : category === undefined
-        ? undefined
-        : await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+  const categories = navigation.state === "ready" ? navigation.catalog.categories : [];
+  const category = categories.find((item) => item.id === product.categoryId);
+  // The browser gets only the breadcrumb trail, not the whole category tree.
+  const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
+  let related: Awaited<ReturnType<typeof getCatalog>> | undefined;
+  if (product.relatedProductIds.length > 0) {
+    related = await getCatalog(
+      locale,
+      JSON.stringify({ productIds: product.relatedProductIds.slice(0, 24) }),
+    );
+  } else if (category !== undefined) {
+    related = await getCatalog(locale, JSON.stringify({ categorySlug: category.slug }));
+  }
   const relatedLimit = product.relatedProductIds.length > 0 ? 24 : 4;
   const relatedCatalog =
     related?.state === "ready"
@@ -79,6 +88,7 @@ const ProductPage = async ({
           ...related,
           catalog: {
             ...related.catalog,
+            categories: [],
             details: [],
             products: related.catalog.products
               .filter((item) => item.id !== product.id)
@@ -89,7 +99,7 @@ const ProductPage = async ({
   return (
     <>
       <ProductView
-        categories={result.catalog.categories}
+        categories={trail}
         dictionary={d}
         key={`${product.id}:${variantId ?? ""}`}
         locale={locale}

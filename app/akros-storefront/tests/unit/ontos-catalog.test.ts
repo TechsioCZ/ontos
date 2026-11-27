@@ -563,7 +563,8 @@ describe("compact owner search evidence", () => {
   it.each([
     { availability: "UNKNOWN", stockOnHand: 500, stockCount: 0, status: "unknown" },
     { availability: "OUT_OF_STOCK", stockOnHand: 500, stockCount: 0, status: "out-of-stock" },
-    { availability: "LOW_STOCK", stockOnHand: 1, stockCount: 1, status: "limited-stock" },
+    // 6 pieces held, packages of 10: the owner does not sell them and the card says so.
+    { availability: "OUT_OF_STOCK", stockOnHand: 6, stockCount: 0, status: "below-package" },
     { availability: "IN_STOCK", stockOnHand: -1, stockCount: 0, status: "out-of-stock" },
     { availability: "IN_STOCK", stockOnHand: 11.5, stockCount: 11.5, status: "in-stock" },
   ])(

@@ -160,8 +160,9 @@ export const DesktopCategoryNavigation = ({
                     {categoryLinks.map((category) => {
                       const ownerArtwork = category.imageSrc?.trim();
                       const artwork =
-                        navigationArtwork.get(category.id) ??
-                        (ownerArtwork === "" ? undefined : ownerArtwork);
+                        ownerArtwork === undefined || ownerArtwork === ""
+                          ? navigationArtwork.get(category.id)
+                          : ownerArtwork;
                       return (
                         <div
                           className="flex min-w-0 flex-col items-center gap-2 text-center"

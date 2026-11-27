@@ -185,9 +185,11 @@ const priceGroupCatalogOwnerOperations = [
 
 /**
  * This owner has one implicit catalog per Tenant (the catalog-root Resource id is the Tenant id), so
- * every one of its capabilities lives in the Tenant context and in no company. It holds no separate
- * owner-held entitlement: the one access gate decides the capability (O67-Q2), and the scoped native
- * handler routines still establish identity, currentness, lifecycle and CAS. In particular,
+ * every one of its capabilities lives in the Tenant context. A Read may still run with the caller's
+ * company selected (company staff list the Tenant's Price Groups); that company must be the one the
+ * transaction is scoped to, and an Action never carries one. It holds no separate owner-held
+ * entitlement: the one access gate decides the capability (O67-Q2), and the scoped native handler
+ * routines still establish identity, currentness, lifecycle and CAS. In particular,
  * historical/retired reads and genuine missing-owner responses must not be reclassified as
  * permission denials here.
  */
@@ -201,8 +203,8 @@ export const priceGroupCatalogOwnerAuthorizationDecision = (
     input.targets.length !== 0 ||
     input.target !== undefined ||
     input.scope.tenantId !== transactionScope.tenantId ||
-    input.scope.legalEntityId !== undefined ||
-    transactionScope.legalEntityId !== undefined ||
+    input.scope.legalEntityId !== transactionScope.legalEntityId ||
+    (input.operation !== 'read' && input.scope.legalEntityId !== undefined) ||
     input.scope.trustedStorefrontId !== undefined
   ) {
     return 'unavailable';

@@ -88,21 +88,28 @@ it.effect('the control port answers probes from the start and never serves appli
   }),
 );
 
+const authorityRow = (revision: string, phase = 'active') => Effect.succeed(Option.some({ phase, revision }));
+
 it.live('a host notices the release that replaced it, ignoring failed reads and its own revision', () =>
   Effect.gen(function* supersedingRevision() {
-    const answers: readonly Effect.Effect<Option.Option<string>, string>[] = [
-      Effect.succeed(Option.some('own')),
+    const answers: readonly Effect.Effect<Option.Option<{ phase: string; revision: string }>, string>[] = [
+      authorityRow('own'),
       Effect.fail('database unavailable'),
       Effect.succeed(Option.none()),
-      Effect.succeed(Option.some('own')),
-      Effect.succeed(Option.some('newer')),
+      authorityRow('own', 'draining'),
+      authorityRow('own'),
+      authorityRow('newer'),
     ];
     const reads = yield* Ref.make(0);
-    const activeRevision = Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+    const authority = Ref.getAndUpdate(reads, (count) => count + 1).pipe(
       Effect.flatMap((count) => answers[Math.min(count, answers.length - 1)] ?? Effect.die('no answer')),
     );
-    expect(yield* awaitSupersedingRevision('own', activeRevision, Duration.millis(1))).toBe('newer');
+    const observed = yield* Ref.make<readonly boolean[]>([]);
+    const observe = (refused: boolean) => Ref.update(observed, (all) => [...all, refused]);
+    expect(yield* awaitSupersedingRevision('own', authority, observe, Duration.millis(1))).toBe('newer');
     expect(yield* Ref.get(reads)).toBe(answers.length);
+    // Core refuses the release while its own row drains and once another revision holds it; a failed read says nothing.
+    expect(yield* Ref.get(observed)).toStrictEqual([false, true, false, true]);
   }),
 );
 

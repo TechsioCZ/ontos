@@ -66,7 +66,9 @@ grid-cols-5
 grid-cols-[minmax(0,1fr)_auto]
 grow
 h-1
+h-[80px]
 h-auto
+h-full
 hidden
 icon-[mdi--arrow-down]
 icon-[mdi--arrow-left]
@@ -101,7 +103,9 @@ left-100
 lg:col-span-2
 lg:grid-cols-2
 line-through
+list-disc
 lowercase
+m-0
 max-w-80
 max-w-full
 min-h-24
@@ -114,6 +118,7 @@ ms-auto
 mt-100
 mt-150
 mt-200
+object-contain
 object-cover
 opacity-40
 opacity-50
@@ -126,6 +131,7 @@ p-100
 p-150
 p-200
 pl-200
+pl-300
 pt-200
 px-200
 px-50
@@ -136,10 +142,12 @@ resize
 rounded
 rounded-full
 rounded-lg
+rounded-md
 rounded-sm
 running
 self-center
 shrink-0
+size-16
 size-8
 size-full
 sm:col-span-1
@@ -178,6 +186,7 @@ w-32
 w-48
 w-64
 w-[100cqi]
+w-[80px]
 w-full
 whitespace-normal
 whitespace-nowrap

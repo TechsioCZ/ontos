@@ -72,6 +72,7 @@ export function FavoritesList() {
         kind: "quantity",
         status: getProductStockStatus(variant),
         stockCount: variant.stockCount,
+        ...(variant.belowPackage ? { belowPackage: variant.belowPackage } : {}),
         minimumQuantity: variant.minimumQuantity,
         packageQuantity: variant.packageQuantity,
         quantityStep: variant.quantityStep,

@@ -202,7 +202,7 @@ describe('Inventory source import service', () => {
         scope: 'tenant',
       },
       idempotency: 'required',
-      legalEntityScope: 'forbidden',
+      legalEntityScope: 'optional',
     });
     const candidate = proposal(1);
     const payload = Schema.decodeUnknownSync(importSourceAssertionAction.descriptor.payloadSchema)({

@@ -242,11 +242,12 @@ describe("product purchase feedback", () => {
         }
       }),
   );
-  for (const [minimumQuantity, packageQuantity, allowed] of [
-    [3, 2, false],
-    [4, 2, true],
-    [12.42, 6.21, true],
-    [12.4, 6.21, false],
+  // The owner sells whole packages: a minimum between packages rounds up to the next package.
+  for (const [minimumQuantity, packageQuantity, allowed, orderedQuantity] of [
+    [3, 2, true, 4],
+    [4, 2, true, 4],
+    [12.42, 6.21, true, 12.42],
+    [12.4, 6.21, true, 12.42],
   ] as const) {
     it.live(`keeps the native package ${packageQuantity} at minimum ${minimumQuantity}`, () =>
       Effect.gen(function* packagePurchase() {
@@ -260,7 +261,7 @@ describe("product purchase feedback", () => {
         if (allowed) {
           yield* expectToast(true);
           expect(yield* savedEntries).toEqual([
-            expect.objectContaining({ packageQuantity, quantity: minimumQuantity }),
+            expect.objectContaining({ packageQuantity, quantity: orderedQuantity }),
           ]);
         } else {
           expect(window.localStorage.getItem(key)).toBe(before);

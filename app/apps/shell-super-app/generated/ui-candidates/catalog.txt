@@ -16,6 +16,7 @@ gap-250
 gap-50
 grid
 grid-cols-[1fr_1fr_auto]
+h-[96px]
 hidden
 icon-[mdi--package-variant]
 items-center
@@ -23,8 +24,10 @@ items-end
 justify-between
 justify-end
 max-w-prose
+object-contain
 ordinal
 outline
+p-150
 p-250
 p-450
 px-150
@@ -38,7 +41,9 @@ text-sm
 text-xl
 text-xs
 transition
+underline
 visible
 w-64
+w-[96px]
 w-full
 z

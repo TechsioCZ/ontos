@@ -122,7 +122,7 @@ export const removeCatalogMediaAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: RemoveCatalogMediaPayloadSchema,
     policies: [],

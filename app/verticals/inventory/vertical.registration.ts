@@ -31,6 +31,7 @@ import { executeInventoryReservationReleaseWorker } from './src/workers/execute-
 import { executeReservationConfirmationIssuanceWorker } from './src/workers/execute-reservation-confirmation-issuance.worker.ts';
 import { executeStockIssueWorker } from './src/workers/execute-stock-issue.worker.ts';
 import { executeStockReceiptWorker } from './src/workers/execute-stock-receipt.worker.ts';
+import { grantStaffStockSourceAuthorityAction } from './src/actions/grant-staff-stock-source-authority.action.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
 import { inventoryEffectOutcomeRead } from './src/api/inventory-effect-outcome.read.ts';
 import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconciliation-evidence.read.ts';
@@ -69,6 +70,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     establishExternalStockCorrelationAction,
     establishStockPositionAction,
     establishStockSharingEligibilityAction,
+    grantStaffStockSourceAuthorityAction,
     importSourceAssertionAction,
     provisionSourceStockItemAction,
     recoverInventoryEffectAction,

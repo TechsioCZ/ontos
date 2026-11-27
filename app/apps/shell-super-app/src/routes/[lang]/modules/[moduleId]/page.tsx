@@ -9,6 +9,7 @@ import { reportModuleEntrypointFailure } from '../../../../module-diagnostics.ts
 import { moduleEntrypointLoadIdentity } from '../../../module-entrypoint-loader.ts';
 import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
 import { ModuleRenderFailure } from '../../../module-render-failure.tsx';
+import { isChunkLoadFailure, reloadOnceForStaleBuild } from '../../../stale-build-recovery.tsx';
 import { modulePageProps, peekRemotePage, prepareModulePage, remotePageIdentity } from '../../../remote-page-loader.ts';
 import type { RemoteState } from '../../../remote-page-loader.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../shell-status-panel.tsx';
@@ -89,14 +90,21 @@ interface ModuleTargetViewProps {
 }
 
 // Framework integration adapter: the boundary reports the error through onCatch.
-const ModuleRenderError = () => {
+const ModuleRenderError = ({ error }: { readonly error: unknown }) => {
   const navigate = useNavigate();
+  const chunkFailure = isChunkLoadFailure(error);
+  const [reloading, setReloading] = useState(chunkFailure);
+  useEffect(() => {
+    if (chunkFailure) {
+      setReloading(reloadOnceForStaleBuild());
+    }
+  }, [chunkFailure]);
   const handleReload = () => {
     void browserRuntime.runPromiseExit(
       Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(Effect.timeout('10 seconds')),
     );
   };
-  return <ModuleRenderFailure onReload={handleReload} />;
+  return reloading ? null : <ModuleRenderFailure onReload={handleReload} />;
 };
 
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {

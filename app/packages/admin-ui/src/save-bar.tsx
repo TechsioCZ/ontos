@@ -16,6 +16,11 @@ export interface SaveBarProps {
   readonly labels?: SaveLabels;
   /** Conflict only: discard the local draft and load the version someone else saved. */
   readonly onReloadLatest: () => void;
+  /**
+   * `reload-required` only: reload the page into the new release and restore the unsaved drafts of the page
+   * (`reloadKeepingDrafts` of `@app/shared-contracts`). Without it the state is only described.
+   */
+  readonly onReloadKeepingDrafts?: (() => void) | undefined;
   /** The one click that sends the whole draft (`DraftSave.save`). */
   readonly onSave: () => void;
   /** Matches the buttons next to it; `md` by default. */
@@ -23,11 +28,11 @@ export interface SaveBarProps {
   readonly status: SaveState;
 }
 
-type SaveStatusProps = Pick<SaveBarProps, 'error' | 'onReloadLatest' | 'size' | 'status'> & {
+type SaveStatusProps = Pick<SaveBarProps, 'error' | 'onReloadKeepingDrafts' | 'onReloadLatest' | 'size' | 'status'> & {
   readonly labels: SaveLabels;
 };
 
-const SaveStatus = ({ error, labels, onReloadLatest, size = 'md', status }: SaveStatusProps) =>
+const SaveStatus = ({ error, labels, onReloadKeepingDrafts, onReloadLatest, size = 'md', status }: SaveStatusProps) =>
   Match.value(status).pipe(
     // The button itself shows a running save. Values a form opened with are not unsaved input: nothing to say.
     Match.whenOr('idle', 'ready', 'saving', () => null),
@@ -59,6 +64,19 @@ const SaveStatus = ({ error, labels, onReloadLatest, size = 'md', status }: Save
         </Button>
       </>
     )),
+    // A deploy replaced the release this tab was built from: one button reloads and puts the drafts back.
+    Match.when('reload-required', () => (
+      <>
+        <StatusText showIcon size="sm" status="warning">
+          {labels.reloadRequired}
+        </StatusText>
+        {onReloadKeepingDrafts !== undefined && (
+          <Button onClick={onReloadKeepingDrafts} size={size} theme="outlined" type="button" variant="secondary">
+            {labels.reloadKeepingDrafts}
+          </Button>
+        )}
+      </>
+    )),
     Match.exhaustive,
   );
 
@@ -69,10 +87,25 @@ const SaveStatus = ({ error, labels, onReloadLatest, size = 'md', status }: Save
  * The button is enabled only for a changed, valid draft (`ready` included) and after a failed save, shows the loading state while the
  * save runs, and one click sends one save. Nothing else in a form may save.
  */
-export const SaveBar = ({ error, labels = saveLabels, onReloadLatest, onSave, size = 'md', status }: SaveBarProps) => (
+export const SaveBar = ({
+  error,
+  labels = saveLabels,
+  onReloadKeepingDrafts,
+  onReloadLatest,
+  onSave,
+  size = 'md',
+  status,
+}: SaveBarProps) => (
   <div className="flex flex-wrap items-center justify-end gap-150" data-save-state={status}>
     <div aria-live="polite" className="flex flex-wrap items-center gap-100">
-      <SaveStatus error={error} labels={labels} onReloadLatest={onReloadLatest} size={size} status={status} />
+      <SaveStatus
+        error={error}
+        labels={labels}
+        onReloadKeepingDrafts={onReloadKeepingDrafts}
+        onReloadLatest={onReloadLatest}
+        size={size}
+        status={status}
+      />
     </div>
     <Button
       className="shrink-0 whitespace-nowrap"

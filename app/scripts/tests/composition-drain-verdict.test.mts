@@ -189,7 +189,7 @@ describe('Outbox drain wait', () => {
       const wait = yield* waitUntilOutboxDrained(scriptedPoll(polls, [IN_FLIGHT, IN_FLIGHT, IN_FLIGHT, DRAINED])).pipe(
         Effect.forkChild,
       );
-      yield* TestClock.adjust('5 seconds');
+      yield* TestClock.adjust('300 millis');
       expect(yield* Ref.get(polls)).toBe(2);
       yield* TestClock.adjust('1 minute');
       yield* Fiber.join(wait);
@@ -330,7 +330,8 @@ describe('re-drain before a retried promote or seal', () => {
       );
       yield* TestClock.adjust('11 seconds');
       yield* Fiber.join(wait);
-      expect(yield* Ref.get(polls)).toBe(4);
+      // One poll every 200 ms until the 10 s deadline.
+      expect(yield* Ref.get(polls)).toBe(50);
     }),
   );
 });

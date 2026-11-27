@@ -832,6 +832,162 @@ body {
   margin: 0;
 }
 
+.sf-route-loading__header {
+  height: var(--sf-header-height);
+  background: var(--color-base);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
+}
+
+.sf-variant-purchase__status {
+  display: block;
+  margin: 0;
+  color: var(--color-fg-secondary);
+  font-size: var(--text-sm);
+}
+
+/* Like the kit's numeric input (unlayered, as its focus foundation): one focus halo around the whole control. */
+.sf-variant-table__quantity-control:has(:focus-visible) {
+  box-shadow: var(--shadow-numeric-input-focus), var(--tw-shadow, 0 0 #0000);
+}
+
+.sf-variant-table__quantity-control > :focus-visible {
+  box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+
+/*
+ * The variant table rows and their order controls are server-rendered for every row. They are native elements with
+ * these short classes; each applies once the kit utilities its Table cell, NumericInput and Button would repeat in
+ * every element. Same layer as those utilities, so the unlayered table rules above keep precedence as before.
+ */
+@layer utilities {
+  .sf-variant-data-table__row > td {
+    @apply text-start data-[align=center]:text-center p-table-cell-sm text-table-sm border-e-(length:--border-table-width) border-table-border;
+  }
+
+  .sf-variant-table__label {
+    @apply min-w-0 whitespace-normal wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!;
+  }
+
+  .sf-variant-table__list-only {
+    @apply hidden @min-sf-variant-list/sf-variants:@max-sf-variant-table/sf-variants:block;
+  }
+
+  .sf-variant-table__list-sku {
+    @apply mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary;
+  }
+
+  .sf-variant-table__list-stock {
+    @apply mb-(--dimension-8);
+  }
+
+  .sf-variant-table__list-stock .sf-variant-table__availability {
+    @apply text-xs font-normal;
+  }
+
+  .sf-variant-table__sku {
+    @apply block whitespace-nowrap @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal @max-sf-variant-table/sf-variants:text-fg-secondary;
+  }
+
+  .sf-variant-table__sku > .sf-variant-table__mobile-label {
+    @apply @max-sf-variant-table/sf-variants:inline!;
+  }
+
+  .sf-variant-table__stock {
+    @apply @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal;
+  }
+
+  .sf-variant-table__amount {
+    @apply min-w-0 whitespace-normal! wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!;
+  }
+
+  .sf-variant-table__unit {
+    @apply @max-sf-variant-table/sf-variants:inline! @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal;
+  }
+
+  .sf-variant-table__net {
+    @apply @max-sf-variant-table/sf-variants:text-xs! @max-sf-variant-table/sf-variants:font-normal;
+  }
+
+  .sf-variant-table__purchase-cell--row {
+    @apply items-start! @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8);
+  }
+
+  .sf-variant-detail-link {
+    @apply button-disabled relative inline-flex cursor-pointer items-center justify-center transition duration-200 motion-reduce:transition-none focus-visible:outline-(style:--default-ring-style) focus-visible:outline-(length:--default-ring-width) focus-visible:outline-button-ring focus-visible:outline-offset-(length:--default-ring-offset) no-underline font-button motion-safe:active:scale-97 button-disabled-borderless bg-button-bg-borderless-base hover:bg-button-bg-borderless-hover hover:text-button-fg-interacting active:bg-button-bg-borderless-active active:text-button-fg-interacting button-current-size gap-button-md text-button-fg-secondary-borderless hover:underline focus-visible:underline;
+  }
+
+  .sf-variant-table__order {
+    @apply relative flex min-w-0 flex-col gap-numeric-input-sm text-numeric-input-sm items-start! @max-sf-variant-table/sf-variants:grid-cols-[var(--sf-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-sf-variant-table/sf-variants:gap-(--dimension-8)! @max-sf-variant-table/sf-variants:border-0! @max-sf-variant-table/sf-variants:px-(--dimension-0)!;
+  }
+
+  .sf-variant-table__quantity-control {
+    @apply form-control-base numeric-input-validation numeric-input-readonly relative flex min-w-0 items-center overflow-clip hover:border-numeric-input-border-hover focus-within:border-numeric-input-border-focus data-disabled:bg-numeric-input-bg-disabled data-disabled:border-numeric-input-border-disabled data-disabled:text-numeric-input-fg-disabled text-numeric-input-fg has-[input:not(:disabled):hover]:bg-numeric-input-input-bg-hover has-[input:focus]:bg-numeric-input-input-bg-focus focus-within:outline-(style:--default-ring-style) focus-within:outline-(length:--default-ring-width) focus-within:outline-numeric-input-ring focus-within:outline-offset-(length:--default-ring-offset) transition-colors duration-200 motion-reduce:transition-none border-numeric-input-border rounded-numeric-input-sm h-form-control-sm @max-sf-variant-table/sf-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!;
+  }
+
+  .sf-variant-table__quantity-control > button {
+    @apply button-disabled relative items-center justify-center focus-visible:outline-(style:--default-ring-style) focus-visible:outline-(length:--default-ring-width) focus-visible:outline-button-ring focus-visible:outline-offset-(length:--default-ring-offset) font-button motion-safe:not-disabled:active:scale-97 button-disabled-borderless hover:text-button-fg-interacting active:text-button-fg-interacting button-current-size gap-button-md flex min-h-numeric-input-trigger-min min-w-numeric-input-trigger-min flex-1 place-items-center pointer-coarse:min-w-numeric-input-trigger-touch-min py-numeric-input-trigger-y bg-transparent hover:bg-numeric-input-trigger-bg-hover active:bg-numeric-input-trigger-bg-active text-numeric-input-trigger-fg cursor-pointer transition-colors duration-200 motion-reduce:transition-none disabled:cursor-not-allowed disabled:text-numeric-input-trigger-fg-disabled px-numeric-input-trigger-x text-numeric-input-sm numeric-input-trigger-icon-sm;
+  }
+
+  .sf-variant-table__quantity-control > button > span,
+  .sf-variant-order__error-icon > span,
+  .sf-variant-pager button > span {
+    @apply inline-block flex-shrink-0 self-center align-middle leading-none text-current;
+  }
+
+  .sf-variant-table__quantity-control > input {
+    @apply form-control-readonly input-readonly form-control-disabled block w-full font-input text-input-fg placeholder:font-input-placeholder placeholder:text-input-fg-placeholder border-(length:--border-width-input) border-input-border-base rounded-input transition motion-reduce:transition-none hover:border-input-border-hover focus:border-input-border-focus focus-visible:outline-(length:--default-ring-width) focus-visible:outline-input-ring focus-visible:outline-offset-(length:--default-ring-offset) user-invalid:border-(length:--border-width-validation) user-invalid:border-input-border-danger-base user-invalid:hover:border-input-border-danger-hover user-invalid:focus:border-input-border-danger-focus h-form-control-sm rounded-input-sm p-input-sm px-input-inline-sm h-full min-w-0 flex-1 rounded-none border-none bg-numeric-input-input-bg focus:bg-numeric-input-input-bg hover:bg-numeric-input-input-bg disabled:hover:bg-numeric-input-input-bg disabled:cursor-not-allowed focus-visible:outline-hidden duration-0 data-invalid:focus:border-input-border-danger-focus text-numeric-input-sm ps-numeric-input-input-sm;
+  }
+
+  .sf-variant-table__buy-button {
+    @apply button-disabled relative inline-flex cursor-pointer items-center justify-center transition duration-200 motion-reduce:transition-none focus-visible:outline-(style:--default-ring-style) focus-visible:outline-(length:--default-ring-width) focus-visible:outline-button-ring focus-visible:outline-offset-(length:--default-ring-offset) disabled:cursor-not-allowed disabled:text-button-fg-disabled font-button motion-safe:not-disabled:active:scale-97 disabled:bg-button-bg-disabled uppercase min-w-0 gap-button-sm rounded-button-sm text-button-sm button-size-sm p-button-sm;
+  }
+
+  .sf-variant-table__buy-button:not(.sf-variant-table__buy-button--package) {
+    @apply w-full bg-button-bg-primary-base hover:bg-button-bg-primary-hover active:bg-button-bg-primary-active text-button-fg-primary @max-sf-variant-table/sf-variants:min-h-(--dimension-44) @max-sf-variant-table/sf-variants:whitespace-normal! @max-sf-variant-table/sf-variants:[&>span]:flex-col! @max-sf-variant-table/sf-variants:[&>span]:items-center! @max-sf-variant-table/sf-variants:[&>span]:leading-(--sf-variant-table-compact-button-line-height)! @max-sf-variant-table/sf-variants:[&_small]:text-xs!;
+  }
+
+  .sf-variant-table__buy-button--package {
+    @apply bg-button-bg-secondary-base hover:bg-button-bg-secondary-hover active:bg-button-bg-secondary-active text-button-fg-secondary w-(--sf-variant-table-package-button-width) max-w-full justify-self-end;
+  }
+
+  .sf-variant-pager > ul {
+    @apply inline-flex max-w-full flex-wrap items-center gap-pagination-list;
+  }
+
+  .sf-variant-pager li {
+    @apply grid bg-pagination-bg-base;
+  }
+
+  .sf-variant-pager li[data-gap] {
+    @apply bg-pagination-bg-neutral;
+  }
+
+  .sf-variant-pager li > * {
+    @apply inline-flex items-center justify-center transition-colors duration-200 motion-reduce:transition-none text-pagination-fg h-form-control-sm text-pagination-nav-sm aspect-square;
+  }
+
+  .sf-variant-pager button {
+    @apply cursor-pointer pagination-press font-pagination data-selected:font-pagination-current focus-visible:outline-(style:--default-ring-style) focus-visible:outline-(length:--default-ring-width) focus-visible:outline-pagination-ring focus-visible:outline-offset-(length:--default-ring-offset) border-(length:--border-pagination-width) rounded-pagination border-pagination-border-base disabled:text-pagination-fg-disabled disabled:bg-pagination-bg-disabled disabled:cursor-not-allowed disabled:border-pagination-border-disabled data-selected:border-pagination-border-active data-selected:bg-pagination-bg-active data-selected:text-pagination-fg-filled-active not-disabled:hover:border-pagination-border-hover not-disabled:hover:bg-pagination-bg-hover not-disabled:hover:text-pagination-fg-filled-active;
+  }
+
+  .sf-variant-order__hint {
+    @apply flex items-center status-text-leading-sm gap-status-text-sm text-status-text-sm text-status-text-fg col-start-1 justify-center text-center;
+  }
+
+  .sf-variant-order__hint > span,
+  .sf-variant-order__error > span:last-child {
+    @apply min-w-0 break-words;
+  }
+
+  .sf-variant-order__error {
+    @apply flex items-start status-text-leading-sm gap-status-text-sm text-status-text-sm text-status-text-fg-error col-span-full text-start;
+  }
+
+  .sf-variant-order__error-icon {
+    @apply inline-flex h-status-text-icon-line shrink-0 items-center;
+  }
+}
+
 .sf-product-card__name-link {
   color: inherit;
   text-decoration: none;

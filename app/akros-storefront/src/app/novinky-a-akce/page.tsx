@@ -9,6 +9,7 @@ import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 import { contentLocale } from "@/content/locale";
 import { newsCopy } from "@/content/pages";
+import { getProductStockStatus } from "@/lib/product-stock";
 import { getCatalog, getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
 
 const isError = (value: unknown): value is Error =>
@@ -40,7 +41,7 @@ export default async function NewsPage() {
   const promotedItems = getPromotionItems()
     .filter(({ product }) => !isGenericPromotionGroup(product.name))
     .filter(
-      ({ product }) => product.priceMinor > 0 && product.stockCount >= product.minimumQuantity,
+      ({ product }) => product.priceMinor > 0 && getProductStockStatus(product) === "in-stock",
     )
     .sort((left, right) => Number(right.kind === "sale") - Number(left.kind === "sale"))
     .slice(0, 4);

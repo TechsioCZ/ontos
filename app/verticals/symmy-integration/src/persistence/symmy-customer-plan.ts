@@ -137,9 +137,9 @@ const profileSubject = (facts: ItemFacts, kind: 'COUNTERPARTY' | 'RETAIL') => ({
 });
 
 const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
-  // Party refuses the non-ICO identifiers (a DIČ) as unavailable, so the job retried for hours and blocked every
-  // release drain. The ICO reaches the profile below; the Party candidate carries none.
-  const identifiers: typeof row.officialIdentifiers = [];
+  // The DIČ goes to Party, which takes a company or VAT group DIČ and refuses any other for good; the ICO
+  // reaches the profile below.
+  const identifiers = row.officialIdentifiers.filter(({ identifierType }) => identifierType !== 'ICO');
   const evidence = {
     kind: 'CLIENT_SOURCE_ASSERTION',
     observedSubject: row.kind,
@@ -299,7 +299,7 @@ const contactItem = (
   sourceOccurrenceId: facts.occurrenceId,
 });
 
-const icoUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
+const identifiersUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
   row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
   !(facts.context.icoEnrolled && Option.isSome(organizationIco(row)));
 
@@ -319,7 +319,7 @@ const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) 
   // organization, or an organization of a route that does not enroll the company ICO change.
   ...present(
     'unsupportedBranches',
-    icoUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,
+    identifiersUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,
   ),
 });
 

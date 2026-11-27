@@ -723,13 +723,21 @@ type CreateOrMatchPartyOperation = (
 const organizationReviewRequired = (reason = 'organization_business_review_required') =>
   new PartyEvidenceInsufficient({ code: 'party_evidence_insufficient', reason });
 
+const organizationSourceContractViolation = 'organization_business_source_input_required';
+/**
+ * A source organization command outside Party's bounded contract. It is refused before any read of Party state and
+ * before any write, and the same command can never pass, so the Action commits it as its final rejection.
+ */
+export const isOrganizationSourceContractViolation = (refusal: PartyEvidenceInsufficientError) =>
+  refusal.reason === organizationSourceContractViolation;
+
 const validateOrganizationSourceCandidate = (candidate: PartyCandidate, operation: 'CREATE' | 'MATCH') =>
   Schema.decodeUnknownEffect(Schema.toType(OrganizationBusinessSourceInputSchema), { onExcessProperty: 'error' })({
     operation,
     payload: { candidate },
   }).pipe(
     Effect.mapError((cause) =>
-      Object.defineProperty(organizationReviewRequired('organization_business_source_input_required'), 'cause', {
+      Object.defineProperty(organizationReviewRequired(organizationSourceContractViolation), 'cause', {
         value: cause,
       }),
     ),
@@ -1408,6 +1416,15 @@ const createOrganizationSourceParty = Effect.fn('PartyMatchingPersistenceService
       }
       yield* requireOrganizationSourceTarget(transaction, scope, assertion, partyId, 'CREATE');
     }
+    // The company DIČ the source states becomes a current Party identifier, on a new Party or on the one it matched.
+    const acceptedIds = new Set<string>();
+    yield* acceptMatchingIdentifiers(
+      transaction,
+      input,
+      partyId,
+      candidate.officialIdentifiers.map(normalizeOfficialIdentifier),
+      acceptedIds,
+    );
     const outcome = correlation?.partyId === undefined || correlation.partyId === null ? 'CREATED' : 'MATCHED';
     const decision = yield* persistOrganizationSourceDecision(
       transaction,
@@ -1417,11 +1434,15 @@ const createOrganizationSourceParty = Effect.fn('PartyMatchingPersistenceService
       createCandidateFingerprint(candidate),
       partyId,
     );
-    return yield* Schema.decodeUnknownEffect(PartyCreateOutcomeSchema)({
+    const created = yield* Schema.decodeUnknownEffect(PartyCreateOutcomeSchema)({
       decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
       outcome: outcome === 'CREATED' ? 'CREATED' : 'MATCHED_EXISTING',
       partyRef: makePartyRef(input.tenantId, partyId),
     }).pipe(Effect.mapError(unavailable));
+    return {
+      ...created,
+      addedOfficialIdentifierRefs: [...acceptedIds].map((id) => makePartyOfficialIdentifierRef(input.tenantId, id)),
+    };
   },
 );
 

@@ -1,3 +1,4 @@
+import { hasKeptDraft, keepDraftOnReload, keptDraft } from '@app/shared-contracts';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -22,7 +23,9 @@ import {
 } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
-import { ProductEditDialog } from '../../../../products-admin/product-edit-dialog.tsx';
+import { erpStorefrontStatus } from '../../../../products-admin/erp-storefront-status.ts';
+import { ErpVariantEditor, erpVariantKeepKey } from '../../../../products-admin/erp-variant-editor.tsx';
+import { ProductEditDialog, erpProductKeepKey } from '../../../../products-admin/product-edit-dialog.tsx';
 import type { ProductListInput, VariantFiguresInput } from '../../../../products-admin/page-data.ts';
 import {
   formatPrice,
@@ -117,6 +120,12 @@ const PriceText = ({ cell }: { readonly cell: PriceCell }) => {
 const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
   const { t } = useModernI18n();
   const figures = useData(variantFiguresData, input);
+  // After "Načíst novou verzi a obnovit úpravy" the Variant dialog that was open opens again with its figures.
+  const [editing, setEditing] = useState<string | null>(
+    () =>
+      input.item.variants.find(({ variantRef }) => hasKeptDraft(erpVariantKeepKey(variantRef.resourceId)))?.variantRef
+        .resourceId ?? null,
+  );
   if (figures.state === 'pending') {
     return <StatusText status="default">{t(`${key}.variants.loading`)}</StatusText>;
   }
@@ -134,6 +143,7 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
           <Table.ColumnHeader>{t(`${key}.variants.lifecycle`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.variants.price`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.variants.stock`)}</Table.ColumnHeader>
+          <Table.ColumnHeader />
         </Table.Row>
       </Table.Header>
       <Table.Body>
@@ -151,6 +161,27 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
             </Table.Cell>
             <Table.Cell>
               <StockText cell={row.stock} />
+            </Table.Cell>
+            <Table.Cell>
+              {Option.isSome(input.offer) && (
+                <Button
+                  onClick={() => setEditing(row.variantId)}
+                  size="sm"
+                  theme="outlined"
+                  type="button"
+                  variant="secondary"
+                >
+                  Cena a sklad
+                </Button>
+              )}
+              {editing === row.variantId && Option.isSome(input.offer) && (
+                <ErpVariantEditor
+                  item={input.item}
+                  offer={input.offer.value}
+                  onClose={() => setEditing(null)}
+                  variantId={row.variantId}
+                />
+              )}
             </Table.Cell>
           </Table.Row>
         ))}
@@ -173,8 +204,11 @@ const ProductRows = ({
   readonly offer: Option.Option<ErpOffer>;
 }) => {
   const { t } = useModernI18n();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // A dialog open before "Načíst novou verzi a obnovit úpravy" opens again with what was typed in it.
+  const [open, setOpen] = useState(() =>
+    item.variants.some(({ variantRef }) => hasKeptDraft(erpVariantKeepKey(variantRef.resourceId))),
+  );
+  const [editing, setEditing] = useState(() => hasKeptDraft(erpProductKeepKey(item)));
   const name = productName(item.localized);
   const toggle = () => setOpen((current) => !current);
   return (
@@ -188,6 +222,34 @@ const ProductRows = ({
         </Table.Cell>
         <Table.Cell>{item.variants.length}</Table.Cell>
         <Table.Cell>
+          {Option.match(erpStorefrontStatus(item, legalEntityId), {
+            onNone: () => '—',
+            onSome: (status) => (
+              <span
+                className="flex flex-col gap-50"
+                data-storefront-status={status.visible ? 'visible' : 'hidden'}
+                title={[...status.reasons.map((reason) => `${reason.why} ${reason.fix}`), ...status.notes].join('\n')}
+              >
+                <span className="flex items-center gap-100">
+                  <Badge size="sm" variant={status.visible ? 'success' : 'warning'}>
+                    {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
+                  </Badge>
+                  {status.href !== undefined && (
+                    <Link external href={status.href} target="_blank">
+                      Otevřít
+                    </Link>
+                  )}
+                </span>
+                {status.reasons.map((reason) => (
+                  <span className="text-fg-secondary text-xs" key={reason.why}>
+                    {reason.why} {reason.fix}
+                  </span>
+                ))}
+              </span>
+            ),
+          })}
+        </Table.Cell>
+        <Table.Cell>
           <Button aria-expanded={open} onClick={toggle} size="sm" theme="borderless" type="button" variant="secondary">
             {t(open ? `${key}.hideVariants` : `${key}.showVariants`)}
           </Button>
@@ -195,13 +257,19 @@ const ProductRows = ({
             Upravit
           </Button>
           {editing && (
-            <ProductEditDialog categories={categories} item={item} locale={locale} onClose={() => setEditing(false)} />
+            <ProductEditDialog
+              categories={categories}
+              item={item}
+              legalEntityId={legalEntityId}
+              locale={locale}
+              onClose={() => setEditing(false)}
+            />
           )}
         </Table.Cell>
       </Table.Row>
       {open && (
         <Table.Row>
-          <Table.Cell colSpan={4}>
+          <Table.Cell colSpan={5}>
             <VariantTable input={{ item, legalEntityId, offer }} />
           </Table.Cell>
         </Table.Row>
@@ -242,6 +310,7 @@ const ProductsList = ({
           <Table.ColumnHeader>{t(`${key}.columns.name`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.lifecycle`)}</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.variants`)}</Table.ColumnHeader>
+          <Table.ColumnHeader>Na e-shopu</Table.ColumnHeader>
           <Table.ColumnHeader>{t(`${key}.columns.detail`)}</Table.ColumnHeader>
         </Table.Row>
       </Table.Header>
@@ -307,12 +376,25 @@ const Pager = ({
   );
 };
 
+/** The list page a reload that keeps drafts comes back to, so the row of a kept dialog is on screen again. */
+const QUERY_KEEP_KEY = 'catalog:erp-products:query';
+
+interface ListQuery {
+  readonly offset: number;
+  readonly search: string;
+}
+
 const ProductsPageContent = (props: ProductsPageProps) => {
   const { language, t } = useModernI18n();
   const search = props.search ?? '';
   const offer = useErpOffer(search, props.context?.legalEntityId ?? '');
-  const [draft, setDraft] = useState('');
-  const [query, setQuery] = useState({ offset: 0, search: '' });
+  const [keptQuery] = useState(() => keptDraft<ListQuery>(QUERY_KEEP_KEY));
+  const [draft, setDraft] = useState(() => keptQuery?.search ?? '');
+  const [query, setQuery] = useState<ListQuery>(() => keptQuery ?? { offset: 0, search: '' });
+  useEffect(
+    () => keepDraftOnReload(QUERY_KEEP_KEY, () => (query.offset === 0 && query.search === '' ? undefined : query)),
+    [query],
+  );
   if (props.context === undefined) {
     return <EmptyState description={t(`${key}.noCompanyDescription`)} title={t(`${key}.noCompany`)} />;
   }

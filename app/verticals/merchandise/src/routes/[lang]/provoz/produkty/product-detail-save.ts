@@ -1,8 +1,9 @@
 // Draft and save of the product detail form: what one save sends, and which revision it expects.
 import { useRecordDraft } from '@app/admin-ui';
-import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
+import type { DraftSaveEnd, DraftSaveOutcome, KeptDraft } from '@app/admin-ui';
+import { keepDraftOnReload, keptDraft, releaseGone } from '@app/shared-contracts';
 import { DateTime, Effect, Predicate, Random } from 'effect';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
@@ -31,11 +32,14 @@ const runProductCommand = (
 
 /**
  * Why a command wrote nothing: parked for approval (the draft is then held and never sent again), refused because
- * someone else changed the catalog, or failed.
+ * someone else changed the catalog, refused because a deploy left this tab behind, or failed.
  */
-const failureOutcome = (error: CommandFailure): Exclude<SaveOutcome, 'saved'> => {
+const failureOutcome = (error: CommandFailure): Exclude<DraftSaveOutcome, 'saved'> => {
   if (pendingProposalMessage(error) !== undefined) {
     return 'proposed';
+  }
+  if (releaseGone(error)) {
+    return 'reload-required';
   }
   return Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') &&
     error.code !== 'merchandise_lifecycle_conflict'
@@ -66,7 +70,7 @@ const saveDetailEffect = ({
   expectedRevision,
   productId,
   value,
-}: DetailSaveInput): Effect.Effect<DraftSaveResult<DetailDraft>> => {
+}: DetailSaveInput): Effect.Effect<DraftSaveEnd<DetailDraft>> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, confirmed);
   const fieldsChanged = Object.keys(patch).length !== 0;
   if (!fieldsChanged && !priceChanged) {
@@ -77,12 +81,12 @@ const saveDetailEffect = ({
     : Effect.succeed(expectedRevision);
   return update.pipe(
     Effect.matchEffect({
-      onFailure: (error) => Effect.succeed<DraftSaveResult<DetailDraft>>(failureOutcome(error)),
+      onFailure: (error) => Effect.succeed<DraftSaveEnd<DetailDraft>>(failureOutcome(error)),
       onSuccess: (revision) =>
         priceChanged
           ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, revision).pipe(
               Effect.match({
-                onFailure: (error): DraftSaveResult<DetailDraft> => {
+                onFailure: (error): DraftSaveEnd<DetailDraft> => {
                   const outcome = failureOutcome(error);
                   return fieldsChanged
                     ? {
@@ -92,10 +96,10 @@ const saveDetailEffect = ({
                       }
                     : outcome;
                 },
-                onSuccess: (next): DraftSaveResult<DetailDraft> => next,
+                onSuccess: (next): DraftSaveEnd<DetailDraft> => next,
               }),
             )
-          : Effect.succeed<DraftSaveResult<DetailDraft>>(revision),
+          : Effect.succeed<DraftSaveEnd<DetailDraft>>(revision),
     }),
   );
 };
@@ -126,9 +130,23 @@ export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftO
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const realVariants = (product.variants ?? []).filter(isRealVariant);
   const stockCommits = useRef(new Map<number, number>());
+  const server = draftOf(product);
+  // A reload that kept this form's draft: it comes back unsaved over this release's draft shape.
+  const keepKey = `merchandise:product-detail:${product.id}`;
+  const [kept] = useState(() => {
+    const draft = keptDraft<KeptDraft<DetailDraft>>(keepKey);
+    return draft === undefined
+      ? undefined
+      : {
+          confirmed: { ...server, ...draft.confirmed, realVariants },
+          revision: draft.revision,
+          value: { ...server, ...draft.value, realVariants },
+        };
+  });
   const record = useRecordDraft<DetailDraft, never>({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
+    kept,
     revision,
     runtime: browserRuntime,
     save: (value, expectedRevision, confirmed) =>
@@ -138,8 +156,10 @@ export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftO
         productId: product.id,
         value: { ...value, realVariants },
       }),
-    server: draftOf(product),
+    server,
   });
+  const { kept: keptNow } = record;
+  useEffect(() => keepDraftOnReload(keepKey, keptNow), [keepKey, keptNow]);
   /**
    * A stock movement of this page went through: it replaced `expectedRevision` with `next` and changed no field of
    * this form. A draft based on exactly the replaced revision is therefore based on `next` too, and its save does

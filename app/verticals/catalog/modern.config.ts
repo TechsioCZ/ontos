@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
@@ -8,14 +9,15 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'catalog';
+const workspaceConfig = createWorkspaceModernConfig({
+  appId,
+  moduleUrl: import.meta.url,
+});
 
 export default defineConfig(
   presetUltramodernWorkspace(
     {
-      ...createWorkspaceModernConfig({
-        appId,
-        moduleUrl: import.meta.url,
-      }),
+      ...workspaceConfig,
       bff: {
         effect: {
           entry: './api/index',
@@ -61,6 +63,14 @@ export default defineConfig(
           configPath: fileURLToPath(new URL('module-federation.config.ts', import.meta.url)),
         }),
       ],
+      source: {
+        ...workspaceConfig.source,
+        globalVars: {
+          ...workspaceConfig.source?.globalVars,
+          ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT:
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
+        },
+      },
     },
     { appId, from: import.meta.url },
   ),

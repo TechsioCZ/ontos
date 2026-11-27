@@ -16,5 +16,8 @@ const browserCrypto = Crypto.make({
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
 
+/** A fresh UUID v4 (an effect, source assertion or record id). */
+export const freshUuid = browserCrypto.randomUUIDv4();
+
 /** A fresh correlation for one governed read. */
 export const requestId = browserCrypto.randomUUIDv4().pipe(Effect.map((id) => `catalog:${id}`));

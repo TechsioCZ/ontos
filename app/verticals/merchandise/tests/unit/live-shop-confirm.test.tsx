@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // One-click commands that change what the public e-shop shows ask first, naming what changes: bulk Aktivovat /
-// Deaktivovat names how many products, archiving a DEMO product names the product. Zrušit runs nothing. The
-// real i18n, router and cleanup Action client run against the owner’s in-process HTTP contract.
+// Deaktivovat names how many products, archiving a product names the product. Zrušit runs nothing. The
+// real i18n, router and catalog Action client run against the owner’s in-process HTTP contract.
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -14,13 +14,13 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
-import { cleanupDemoActionSchemaErrorLive } from '../../api/cleanup-demo-action-problems.ts';
-import { CleanupDemoResultSchema } from '../../shared/actions/cleanup-demo.ts';
-import type { CleanupDemoPayloadSchema } from '../../shared/actions/cleanup-demo.ts';
-import { CleanupDemoActionApi } from '../../shared/apis/cleanup-demo-action.ts';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
+import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { ProductBulkBar } from '../../src/routes/[lang]/provoz/produkty/product-bulk-bar.tsx';
-import { DemoArchiveSection } from '../../src/routes/[lang]/provoz/produkty/product-eshop-sections.tsx';
+import { ArchiveSection } from '../../src/routes/[lang]/provoz/produkty/product-eshop-sections.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const czech = moduleText('cs');
@@ -33,21 +33,21 @@ const copy = {
   deactivateDescription: czech('merchandise.pages.products.bulk.deactivateDescription', { total: 3 }),
 };
 
-const commands: (typeof CleanupDemoPayloadSchema.Encoded)[] = [];
-const cleaned = Schema.decodeUnknownSync(CleanupDemoResultSchema)({ entityIds: [], revision: 2 });
-const OwnerActionApi = CleanupDemoActionApi.prefix('/merchandise-api');
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const cleaned = Schema.decodeUnknownSync(ManageCatalogResultSchema)({ entityIds: [], revision: 2 });
+const OwnerActionApi = ManageCatalogActionApi.prefix('/merchandise-api');
 const network = browserNetwork(
   shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
   serveApi(
     OwnerActionApi,
-    HttpApiBuilder.group(OwnerActionApi, 'cleanupDemoAction', (group) =>
+    HttpApiBuilder.group(OwnerActionApi, 'manageCatalogAction', (group) =>
       group.handle('execute', ({ payload }) =>
         Effect.sync(() => {
           commands.push(payload);
           return cleaned;
         }),
       ),
-    ).pipe(Layer.provide(cleanupDemoActionSchemaErrorLive)),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
   ),
 );
 
@@ -139,12 +139,12 @@ it.live('bulk Deaktivovat names the products leaving the e-shop; Zrušit changes
   }).pipe(Effect.provide(network)),
 );
 
-it.live('archiving a DEMO product asks first, naming the product, and runs once after the confirmation', () =>
+it.live('archiving a product asks first, naming the product, and runs once after the confirmation', () =>
   Effect.gen(function* archive() {
     yield* pinTestDocument;
     const archived: string[] = [];
     yield* mountInRoute(
-      <DemoArchiveSection
+      <ArchiveSection
         onArchived={() => {
           archived.push('archived');
         }}
@@ -154,8 +154,8 @@ it.live('archiving a DEMO product asks first, naming the product, and runs once 
         revision={4}
       />,
     );
-    yield* type('demo-archive-reason', 'Testovací produkt');
-    yield* click(byTestId('demo-archive'));
+    yield* type('product-archive-reason', 'Testovací produkt');
+    yield* click(byTestId('product-archive'));
     yield* networkIdle;
     expect(commands).toEqual([]);
     expect(text()).toContain(copy.archiveTitle);
@@ -164,7 +164,7 @@ it.live('archiving a DEMO product asks first, naming the product, and runs once 
     yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({
-      command: { _tag: 'ArchiveDemoProduct', reason: 'Testovací produkt' },
+      command: { _tag: 'ArchiveProduct', reason: 'Testovací produkt' },
       expectedRevision: 4,
     });
     expect(archived).toEqual(['archived']);

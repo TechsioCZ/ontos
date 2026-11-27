@@ -182,6 +182,11 @@ export const RecordsViewSchema = Schema.Struct({
   ),
   /** Staff reads: path labels of the listed products' categories and of `categoryId` as `categoryTrails`. */
   active: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Staff reads: true lists only archived products. Lists leave archived products out otherwise; a staff read of one
+   * `productId` finds the product archived or not. Storefront reads never show an archived product.
+   */
+  archived: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   categoryId: Schema.optionalKey(CatalogCategoryIdSchema),
   categoryTrails: Schema.optionalKey(Schema.Boolean),

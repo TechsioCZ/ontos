@@ -51,6 +51,7 @@ export async function GET(
       originalPriceMinor: product.originalPriceMinor,
       stockCount: product.stockCount,
       availabilityUnknown: product.availabilityUnknown,
+      belowPackage: product.belowPackage,
       priceUnavailableReason: product.priceUnavailableReason,
       unit: product.unit,
       priceTiers: product.detail.priceTiers,

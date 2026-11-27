@@ -6,7 +6,10 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  readVerifiedGatewayActor,
+  readVerifiedGatewayWorkload,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PriceGroupAssignmentResolutionRequestSchema } from '@app/pricing-contracts/domain/price-group-interpretation';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { DateTime, Effect, Match, Schema } from 'effect';
@@ -15,7 +18,12 @@ import {
   CatalogPagePricesRequestSchema,
   CatalogPagePricesResponseSchema,
 } from '@app/pricing-contracts/catalog-page-prices';
-import type { CatalogPageCustomer, CatalogPagePricesRequest } from '@app/pricing-contracts/catalog-page-prices';
+import type {
+  CatalogPageCustomer,
+  CatalogPagePrice,
+  CatalogPagePricesRequest,
+} from '@app/pricing-contracts/catalog-page-prices';
+import type { PriceGroupRef } from '@app/price-group-catalog-contracts/resources/price-group';
 import { commercePriceGroupResolutionPortFromEnvironment } from '../integrations/commerce-price-group-resolution.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from '../integrations/price-group-compatibility.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
@@ -29,6 +37,8 @@ import { exactPriceResolutionServiceForScope } from '../services/exact-price-res
 import type { ExactPriceResolutionTrustedContext } from '../services/exact-price-resolution.service.ts';
 import { makePriceGroupInterpretationService } from '../services/price-group-interpretation.service.ts';
 import { quantityTierPersistenceForScope } from '../services/quantity-tier-persistence.service.ts';
+import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
+import type { ExactPriceResolutionDependencies } from '../services/exact-price-resolution.service.ts';
 
 const MODULE_KEY = 'commerce.pricing' as const;
 /** The one module whose portal admits a signed-in customer and may name that customer here. */
@@ -44,11 +54,14 @@ const catalogPagePricesEntrypoint = defineTenantModuleEntrypoint({
 
 interface CatalogPagePricesReadServices extends CatalogPagePricesOwnerReads {
   readonly legalEntityId: string;
+  readonly lookupExact: ExactPriceResolutionDependencies['lookupExact'];
   readonly tenantId: string;
 }
 
 /** Before the transaction: the trusted instant and the resolution input of every variant of the page. */
 interface CatalogPagePricesPrepared {
+  /** Staff ERP editor: the one Price Group whose own Price key every variant is looked up by. */
+  readonly priceGroupRef?: PriceGroupRef;
   readonly trustedOperationAt: DateTime.Utc;
   readonly variants: readonly CatalogPageVariant[];
 }
@@ -73,13 +86,15 @@ const catalogPagePricesServiceForScope: ReadServiceFactory<CatalogPagePricesRead
     {
       currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
       exactPrice: exactPriceResolutionServiceForScope(transaction, scope, compositionRevision),
+      price: pricePersistenceForScope(transaction, scope),
       quantityTiers: quantityTierPersistenceForScope(transaction, scope),
     },
-    { concurrency: 3 },
+    { concurrency: 4 },
   ).pipe(
-    Effect.map(({ currencySupport, exactPrice, quantityTiers }): CatalogPagePricesReadServices => ({
+    Effect.map(({ currencySupport, exactPrice, price, quantityTiers }): CatalogPagePricesReadServices => ({
       legalEntityId,
       loadCurrencySupport: currencySupport.loadCurrent,
+      lookupExact: price.exactLookup,
       readCurrentQuantityTierSet: quantityTiers.readCurrentSet,
       resolveExactPrice: exactPrice.resolve,
       tenantId: scope.tenantId,
@@ -167,6 +182,24 @@ const prepareCatalogPagePrices = Effect.fn('CatalogPagePricesRead.prepare')(func
     return yield* legalEntityRequired();
   }
   const trusted = { legalEntityId, tenantId, trustedOperationAt: yield* DateTime.now };
+  if (input.priceGroupRef !== undefined) {
+    if (
+      input.customer !== undefined ||
+      readVerifiedGatewayWorkload(context.scope) !== undefined ||
+      readVerifiedGatewayActor(context.scope)?.appId === CUSTOMER_PORTAL_APP_ID ||
+      input.priceGroupRef.tenantId !== tenantId
+    ) {
+      return yield* new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'Price Group catalogue page Prices are read only by staff, for their own Tenant, without a customer',
+      });
+    }
+    return {
+      priceGroupRef: input.priceGroupRef,
+      trustedOperationAt: trusted.trustedOperationAt,
+      variants: guestCatalogPageVariants(input, trusted),
+    } satisfies CatalogPagePricesPrepared;
+  }
   const variants =
     input.customer === undefined
       ? guestCatalogPageVariants(input, trusted)
@@ -174,12 +207,83 @@ const prepareCatalogPagePrices = Effect.fn('CatalogPagePricesRead.prepare')(func
   return { trustedOperationAt: trusted.trustedOperationAt, variants } satisfies CatalogPagePricesPrepared;
 });
 
+/**
+ * Staff ERP editor: each variant's Current Price under exactly the Price Group's own key, whichever source last wrote
+ * it (Symmy or staff), with no fallback to the no-group Price. A variant without such a Price is NO_APPLICABLE_PRICE.
+ */
+const staffGroupPrices = (
+  input: CatalogPagePricesRequest,
+  priceGroupRef: PriceGroupRef,
+  legalEntityId: string,
+  trustedOperationAt: DateTime.Utc,
+  lookupExact: ExactPriceResolutionDependencies['lookupExact'],
+) => {
+  const effectiveAt = DateTime.formatIso(trustedOperationAt);
+  const priceGroupSelector = { kind: 'PRICE_GROUP' as const, priceGroupRef };
+  return Effect.forEach(
+    input.items,
+    (item) =>
+      lookupExact({
+        effectiveAt,
+        exactKey: {
+          catalogSelection: item.catalogSelection,
+          commercialScope: { channelId: input.channelId, marketId: input.marketId, sellingLegalEntityId: legalEntityId },
+          currencyCode: input.currencyCode,
+          priceGroupSelector,
+          unitBasis: item.unitBasis,
+        },
+      } as Parameters<ExactPriceResolutionDependencies['lookupExact']>[0]).pipe(
+        Effect.map((found): CatalogPagePrice =>
+          found._tag === 'FOUND'
+            ? {
+                _tag: 'PRICE_FOUND',
+                catalogSelection: item.catalogSelection,
+                channelId: input.channelId,
+                priceGroupSelector,
+                priceRef: found.priceRef,
+                priceRevision: found.priceRevision,
+                quantityTiers: { _tag: 'QUANTITY_TIERS_UNAVAILABLE', retryable: true },
+                unitBasis: item.unitBasis,
+              }
+            : { _tag: 'NO_APPLICABLE_PRICE', ...item, retryable: false },
+        ),
+        Effect.catch(() =>
+          Effect.succeed<CatalogPagePrice>({
+            _tag: 'PRICING_INDETERMINATE',
+            ...item,
+            reason: 'OWNER_STATE_UNAVAILABLE',
+            retryable: true,
+          }),
+        ),
+      ),
+    { concurrency: 1 },
+  );
+};
+
 /** In the Read's transaction: every prepared variant through the one scoped exact Price resolution. */
 const loadCatalogPagePrices = Effect.fn('CatalogPagePricesRead.load')(function* load(
   _input: CatalogPagePricesRequest,
   context: ReadLoadContext<CatalogPagePricesReadServices, CatalogPagePricesPrepared>,
 ) {
   const { legalEntityId, tenantId } = context.services;
+  const { priceGroupRef } = context.prepared;
+  if (priceGroupRef !== undefined) {
+    const prices = yield* staffGroupPrices(
+      _input,
+      priceGroupRef,
+      legalEntityId,
+      context.prepared.trustedOperationAt,
+      context.services.lookupExact,
+    );
+    return {
+      evidence: { resultCount: prices.length },
+      result: {
+        _tag: 'CATALOG_PAGE_PRICED' as const,
+        effectiveAt: DateTime.formatIso(context.prepared.trustedOperationAt),
+        prices,
+      },
+    };
+  }
   const result = yield* readCatalogPagePrices(
     { legalEntityId, tenantId, trustedOperationAt: context.prepared.trustedOperationAt },
     context.services,

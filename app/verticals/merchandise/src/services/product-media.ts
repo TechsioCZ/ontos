@@ -1,11 +1,6 @@
-// Product gallery images in Core Media: the side effects of a gallery change inside the merchandise Action
-// transaction, and the governed delivery of one gallery image. The gallery order itself stays product state.
-import {
-  readLinkedMediaRendition,
-  relinkMediaToResource,
-  storeLinkedMediaImage,
-  unlinkMediaFromResource,
-} from '@app/core-runtime';
+// Product photos in Core Media: the side effects of a gallery change inside the merchandise Action transaction, and
+// the governed delivery of one product photo. The gallery order and the photo library themselves stay product state.
+import { readLinkedMediaRendition, relinkMediaToResource, storeLinkedMediaImage } from '@app/core-runtime';
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 import type {
   MediaRendition,
@@ -25,6 +20,7 @@ import {
   reorderGallery,
   restoreImage,
   setGallery,
+  shownPhotosOf,
 } from '../../shared/domain/product-images.ts';
 import type { Product } from '../../shared/domain/merchandise-model.ts';
 import { MerchandiseLifecycleConflict } from '../../shared/errors/merchandise-lifecycle-conflict.ts';
@@ -72,8 +68,9 @@ const storeUploadedImage = (
   }).pipe(Effect.mapError(mediaFailure));
 
 /**
- * The gallery after one change. Uploads are stored and linked in Core Media before the product state changes,
- * removals end the Core link, an undo links the same sealed asset again; all in the caller's transaction.
+ * The gallery after one change. Uploads are stored and linked in Core Media before the product state changes; a removed
+ * picture stays linked to the product as a photo of its library, so a variant can show it again; an undo links the same
+ * sealed asset again. All in the caller's transaction.
  */
 export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(function* galleryAfterChange(
   transaction: ScopedTransactionExecutor,
@@ -88,16 +85,7 @@ export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(fu
   const link = target(input.product.id);
   const outcome: Option.Option<readonly string[]> = yield* Match.value(input.change).pipe(
     Match.tagsExhaustive({
-      Remove: Effect.fn('Merchandise.removeGalleryImage')(function* remove({ image }) {
-        const next = removeImage(gallery, image);
-        if (Option.isSome(next)) {
-          yield* unlinkMediaFromResource(transaction, {
-            mediaAssetIds: Option.toArray(mediaAssetIdOf(image)),
-            target: link,
-          }).pipe(Effect.mapError(mediaFailure));
-        }
-        return next;
-      }),
+      Remove: ({ image }) => Effect.succeed(removeImage(gallery, image)),
       Reorder: ({ images }) => Effect.succeed(reorderGallery(gallery, images)),
       Restore: Effect.fn('Merchandise.restoreGalleryImage')(function* restore({ image, position }) {
         const assetId = mediaAssetIdOf(image);
@@ -134,15 +122,7 @@ export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(fu
                 }).pipe(Effect.mapError(mediaFailure));
           },
         );
-        if (!linked) {
-          return Option.none<readonly string[]>();
-        }
-        const dropped = gallery.filter((reference) => !next.value.includes(reference));
-        yield* unlinkMediaFromResource(transaction, {
-          mediaAssetIds: dropped.flatMap((reference) => Option.toArray(mediaAssetIdOf(reference))),
-          target: link,
-        }).pipe(Effect.mapError(mediaFailure));
-        return next;
+        return linked ? next : Option.none<readonly string[]>();
       }),
       // Stored for the product's draft only: the public gallery stays as it is until a `Set` saves the draft.
       Stage: Effect.fn('Merchandise.stageGalleryImage')(function* stage({ image }) {
@@ -170,26 +150,31 @@ export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(fu
 });
 
 /**
- * One rendition of an image the product's gallery lists, when the image is a Core Media Asset linked to it.
- * The storefront service key receives images of published, active products only.
- */
-/**
- * Whether a media read may serve `image` of `product`. The image must be one of the product's own gallery references.
- * A storefront key reads only a published, active, unarchived product; staff reads are decided by their grants.
+ * Whether a media read may serve `image` of `product`. A storefront key reads a photo the product shows now (gallery,
+ * main image or a variant's image) of a published, active, unarchived product. Staff, decided by their grants, also
+ * read the earlier photos of its library.
  */
 export const mediaReadAllowed = (
   product: {
     readonly active: boolean;
     readonly demoArchive?: unknown;
     readonly images?: readonly string[];
+    readonly imageSrc?: string;
+    readonly photoLibrary?: readonly string[];
     readonly published?: boolean;
+    readonly variants?: readonly { readonly imageSrc?: string }[];
   },
   image: string,
   storefront: boolean,
 ): boolean =>
-  (product.images ?? []).includes(image) &&
-  (!storefront || (product.active && product.published !== false && product.demoArchive === undefined));
+  storefront
+    ? shownPhotosOf(product).includes(image) &&
+      product.active &&
+      product.published !== false &&
+      product.demoArchive === undefined
+    : shownPhotosOf(product).includes(image) || (product.photoLibrary ?? []).includes(image);
 
+/** One rendition of a product photo `mediaReadAllowed` admits, when it is a Core Media Asset linked to the product. */
 export const readProductImage = Effect.fn('Merchandise.readProductImage')(function* readProductImage(
   transaction: ScopedTransactionExecutor,
   store: StoreScope,
@@ -204,9 +189,9 @@ export const readProductImage = Effect.fn('Merchandise.readProductImage')(functi
   if (Option.isNone(assetId)) {
     return Option.none();
   }
-  const [hydrated] = yield* loadProducts(transaction, store, eq(products.id, input.productId), {
-    variants: false,
-  }).pipe(Effect.mapError(unavailable));
+  const [hydrated] = yield* loadProducts(transaction, store, eq(products.id, input.productId)).pipe(
+    Effect.mapError(unavailable),
+  );
   const product = hydrated?.product;
   if (product === undefined || !mediaReadAllowed(product, input.image, input.storefront)) {
     return Option.none();

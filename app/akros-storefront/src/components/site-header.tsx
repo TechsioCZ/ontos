@@ -2,6 +2,7 @@
 
 import StoreLink from "@/components/store-link";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Drawer } from "@techsio/ui-kit/molecules/drawer";
@@ -168,6 +169,9 @@ function MobileNavigation({ pathname }: { pathname: string }) {
 export function SiteHeader() {
   // Without the market prefix, so current-page state matches Kai's unprefixed routes.
   const pathname = useStorePathname();
+  // The results page keeps its q in the box, in its loading shell too (a new q gives a fresh box).
+  const q = useSearchParams()?.get("q");
+  const searchQuery = pathname === "/vyhledavani" ? (q ?? "").trim() : "";
   const cs = useDictionary();
   const brand = useBrand();
 
@@ -256,7 +260,7 @@ export function SiteHeader() {
           </div>
         </div>
         <div className="sf-header__search">
-          <HeaderSearch />
+          <HeaderSearch initialQuery={searchQuery} key={searchQuery} />
         </div>
       </div>
     </header>

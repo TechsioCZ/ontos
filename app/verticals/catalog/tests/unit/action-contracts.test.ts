@@ -181,7 +181,7 @@ describe('Catalog Product Action contracts', () => {
     ]) {
       expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
-      expect(action.descriptor.legalEntityScope).toBe('forbidden');
+      expect(action.descriptor.legalEntityScope).not.toBe('required');
       expect(action.descriptor.idempotency).toBe('required');
     }
   });

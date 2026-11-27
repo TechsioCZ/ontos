@@ -181,12 +181,7 @@ it.effect(
       const cases = [
         ...adminAccounts.map((account) => ({
           company: account.legalEntityId,
-          expected: [
-            ...operations,
-            proposal,
-            markets,
-            ...(account.legalEntityId === eshopDemoLegalEntityId ? ordinary : []),
-          ],
+          expected: [...operations, proposal, markets, ...ordinary],
           principal: account.principalId,
         })),
         {

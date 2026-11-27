@@ -348,7 +348,7 @@ describe('Symmy customer plan from the public rows', () => {
     }),
   );
 
-  it.effect('writes the ICO of an organization to its profile and keeps the other identifiers on the Party', () =>
+  it.effect('writes the ICO of an organization to its profile and keeps its DIČ on the Party', () =>
     Effect.gen(function* plansIdentifiers() {
       const plan = Option.getOrThrow(
         yield* build(

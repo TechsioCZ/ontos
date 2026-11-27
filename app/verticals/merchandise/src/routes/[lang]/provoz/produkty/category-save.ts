@@ -15,27 +15,38 @@ export interface CategoryDraft {
   readonly imageSrc: string;
   readonly longDescription: string;
   readonly name: string;
+  /** Parent in the storefront tree; null = root. */
+  readonly parent: { readonly id: string; readonly trail: string } | null;
   readonly positionText: string;
   readonly published: boolean;
+  readonly slug: string;
 }
 
 export interface CategoryDraftErrors {
   name?: 'required' | 'tooLong';
   position?: 'negative' | 'notWhole' | 'required';
+  slug?: 'invalid';
 }
 
 export const NAME_LIMIT = 200;
 
+export const categorySlugValid = (slug: string): boolean => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug);
+
 /** The draft of an existing category, read from the register. */
-export const draftOf = (category: CategoryNode): CategoryDraft => ({
+export const draftOf = (category: CategoryNode, parentTrail?: string): CategoryDraft => ({
   description: category.description ?? '',
   heading: category.heading ?? '',
   imageAlt: category.imageAlt ?? '',
   imageSrc: category.imageSrc ?? '',
   longDescription: category.longDescription ?? '',
   name: category.name,
+  parent: Option.match(category.parentId, {
+    onNone: () => null,
+    onSome: (id) => ({ id, trail: parentTrail ?? id }),
+  }),
   positionText: String(category.position),
   published: category.published !== false,
+  slug: category.slug,
 });
 
 /** The storefront order the draft asks for; None while the entered position is not a whole number ≥ 0. */
@@ -55,6 +66,9 @@ export const categoryDraftErrors = (draft: CategoryDraft): CategoryDraftErrors =
     errors.name = 'required';
   } else if (name.length > NAME_LIMIT) {
     errors.name = 'tooLong';
+  }
+  if (!categorySlugValid(draft.slug.trim())) {
+    errors.slug = 'invalid';
   }
   const text = draft.positionText.trim();
   const position = Number(text);
@@ -81,7 +95,9 @@ export const sameCategoryDraft = (left: CategoryDraft, right: CategoryDraft): bo
   left.longDescription.trim() === right.longDescription.trim() &&
   left.name.trim() === right.name.trim() &&
   samePosition(left, right) &&
-  left.published === right.published;
+  left.published === right.published &&
+  left.slug.trim() === right.slug.trim() &&
+  (left.parent?.id ?? null) === (right.parent?.id ?? null);
 
 /** Only the fields that differ; the server trims every text, so an emptied field clears it. */
 export const categoryPatchOf = (draft: CategoryDraft, category: CategoryNode): CategoryPatch => {
@@ -107,6 +123,14 @@ export const categoryPatchOf = (draft: CategoryDraft, category: CategoryNode): C
   }
   if (draft.published !== (category.published !== false)) {
     patch.published = draft.published;
+  }
+  const slug = draft.slug.trim();
+  if (slug !== category.slug && categorySlugValid(slug)) {
+    patch.slug = slug;
+  }
+  const parentId = draft.parent?.id ?? null;
+  if (parentId !== Option.getOrNull(category.parentId)) {
+    patch.parentId = parentId === null ? Option.none() : Option.some(CatalogCategoryIdSchema.make(parentId));
   }
   return patch;
 };
@@ -165,8 +189,6 @@ export const categorySlugOf = (name: string): string =>
     .replaceAll(/^-+|-+$/gu, '')
     .slice(0, 200)
     .replaceAll(/-+$/gu, '');
-
-export const categorySlugValid = (slug: string): boolean => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug);
 
 /** The fields of a new category as typed. */
 export interface NewCategoryDraft {

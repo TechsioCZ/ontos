@@ -89,12 +89,10 @@ import {
   executeCreatePriceGroupDefinitionRevisionWithAuthorization,
   executePriceGroupResultLookupWithAuthorization,
 } from '@app/price-group-catalog/api/client';
-import {
-  executeDefinePriceWithAuthorization,
-  executeRevisePriceWithAuthorization,
-  executePriceSourceResultLookupWithAuthorization,
-} from '@app/pricing/api/client';
+import { executePriceSourceResultLookupWithAuthorization } from '@app/pricing/api/client';
+import { executeDefinePriceWithAuthorization } from '@app/pricing-contracts/define-price/client';
 import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/price-definition/client';
+import { executeRevisePriceWithAuthorization } from '@app/pricing-contracts/revise-price/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';

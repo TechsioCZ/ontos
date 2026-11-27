@@ -3,7 +3,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { DraftSave, PartlySaved, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
+import type { DraftSave, DraftSaveOutcome, KeptDraft, PartlySaved, UnsavedChangesGuard } from '@app/admin-ui';
+import { keepDraftOnReload, keptDraft, reloadKeepingDrafts } from '@app/shared-contracts';
 import { Array as Arr, Effect, Equal, Option } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -12,14 +13,32 @@ import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { useProductLabel } from './product-form-labels.ts';
 
 /** How a product command ended, as the save bar shows it. */
-const tabSaveOutcome = (outcome: CommandOutcome): SaveOutcome => {
+const tabSaveOutcome = (outcome: CommandOutcome): DraftSaveOutcome => {
   if (outcome.ok) {
     return 'saved';
   }
   if (outcome.proposal !== undefined || outcome.reason === 'approval-required') {
     return 'proposed';
   }
+  if (outcome.reason === 'reload-required') {
+    return 'reload-required';
+  }
   return outcome.reason === 'conflict' ? 'conflict' : 'failed';
+};
+
+/**
+ * A kept draft over this release's draft shape: fields a new release added take the server's values, so the form
+ * never reads a field the draft from before the reload did not have.
+ */
+const overServer = <V,>(server: V, kept: V): V =>
+  typeof server === 'object' && server !== null && !Array.isArray(server) && typeof kept === 'object' && kept !== null
+    ? { ...server, ...kept }
+    : kept;
+
+/** Two drafts as JSON keeps them: a kept draft lost its undefined fields on the way through the reload. */
+const sameKept = (left: unknown, right: unknown): boolean => {
+  const asKept = (value: unknown): unknown => JSON.parse(JSON.stringify(value) ?? 'null');
+  return Equal.equals(asKept(left), asKept(right));
 };
 
 /** How far one save got: the commands that went through, the revision they left and how the last one ended. */
@@ -71,6 +90,11 @@ export interface ProductTabSaveOptions<V> {
   ) => string | undefined;
   /** The form's own validation; an invalid draft is never sent and keeps the Save button disabled. */
   readonly isValid: (value: V) => boolean;
+  /**
+   * Names this form's draft among the drafts "Načíst novou verzi a obnovit úpravy" keeps across the page reload, such
+   * as `variants:${product.id}`. After that reload the form opens with the kept draft, unsaved, through `reset`.
+   */
+  readonly keepAs: string;
   /** Re-reads the product, after "Načíst aktuální verzi". */
   readonly onReload: () => void;
   /** The saved draft was committed (the page re-reads the product). */
@@ -110,22 +134,40 @@ export interface ProductTabSave<V> {
 export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): ProductTabSave<V> => {
   const label = useProductLabel();
   const [error, setError] = useState<string | null>(null);
+  // The draft a reload kept for this form: it comes back unsaved, based on the revision it had.
+  const keepKey = `merchandise:product-tab:${options.keepAs}`;
+  const [kept] = useState(() => {
+    const draft = keptDraft<KeptDraft<V>>(keepKey);
+    return draft === undefined
+      ? undefined
+      : {
+          confirmed: overServer(options.server, draft.confirmed),
+          revision: draft.revision,
+          value: overServer(options.server, draft.value),
+        };
+  });
+  const restoring = useRef(kept);
   // The revision the next save is based on. A clean draft follows the page's revision; a pending draft keeps the one
   // it started from, so the server refuses a save over someone else's change. A saved draft moves it to the revision
   // the server returned.
-  const base = useRef(options.revision);
+  const base = useRef(kept?.revision ?? options.revision);
+  // The revision the last save of this form committed. A product read older than it (one that started before the save
+  // and landed after it) still shows the version before the save: it must not replace the saved draft.
+  const [committedRevision, setCommittedRevision] = useState(0);
   // The confirmed version as of the last render, which a save compares its draft with.
-  const confirmedNow = useRef(options.value);
+  const confirmedNow = useRef(kept?.confirmed ?? options.value);
   const draft = useDraftSave<V, never>({
+    initial: kept?.confirmed,
     isValid: (value) => options.isValid(value),
     runtime: browserRuntime,
     save: (value) =>
       runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current).pipe(
-        Effect.map(({ committed, outcome, refused, sent }): SaveOutcome | PartlySaved<V> => {
+        Effect.map(({ committed, outcome, refused, sent }): DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>> => {
           // Commands that went through before a refused one moved the revision; a retry starts after them.
           base.current = Math.max(base.current, committed);
           if (outcome.ok) {
             base.current = outcome.revision;
+            setCommittedRevision(outcome.revision);
             setError(null);
             options.onSaved();
             return 'saved';
@@ -151,10 +193,33 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   }, [confirmedValue]);
   const { pending } = draft;
   useEffect(() => {
-    if (!pending) {
+    // A kept draft about to be put back is no clean draft: it stays on the revision it was based on.
+    if (!pending && restoring.current === undefined) {
       base.current = Math.max(base.current, options.revision);
     }
   }, [options.revision, pending]);
+  const { reset: putBack, server: serverNow } = options;
+  useEffect(() => {
+    const restored = restoring.current;
+    if (restored === undefined) {
+      return;
+    }
+    restoring.current = undefined;
+    // The server still has the version the draft builds on: newer revisions changed something else.
+    if (sameKept(serverNow, restored.confirmed)) {
+      base.current = Math.max(base.current, options.revision);
+    }
+    putBack(restored.value);
+  }, [options.revision, putBack, serverNow]);
+  const { confirmed: keptBase, dirty: unsaved } = draft;
+  const { value: shown } = options;
+  useEffect(
+    () =>
+      keepDraftOnReload(keepKey, () =>
+        unsaved ? ({ confirmed: keptBase, revision: base.current, value: shown } satisfies KeptDraft<V>) : undefined,
+      ),
+    [keepKey, keptBase, shown, unsaved],
+  );
   // A reloaded product (after a save of another tab, a photo change or live revalidation) replaces a clean draft
   // only. A draft with unsaved changes stays; once it is clean again it takes the version that was passed over,
   // unless a save of this form confirmed a newer one in the meantime.
@@ -167,7 +232,18 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
     reset(server);
     adopt(server);
   };
-  if (!Equal.equals(seen, server)) {
+  const staleRead = options.revision < committedRevision;
+  const { onReload, revision: shownRevision } = options;
+  const reloadedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (staleRead && reloadedFor.current !== shownRevision) {
+      reloadedFor.current = shownRevision;
+      onReload();
+    }
+  }, [onReload, shownRevision, staleRead]);
+  if (staleRead) {
+    // Wait for the read that includes this form's last save.
+  } else if (!Equal.equals(seen, server)) {
     setSeen(server);
     if (clean) {
       setPassedOver(Option.none());
@@ -226,6 +302,7 @@ export const ProductTabSaveBar = <V,>({
         <SaveBar
           error={save.error}
           labels={labels}
+          onReloadKeepingDrafts={reloadKeepingDrafts}
           onReloadLatest={handleReloadLatest}
           onSave={handleSave}
           status={save.draft.status}

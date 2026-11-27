@@ -104,7 +104,7 @@ export const sk: Dictionary = {
     perUnit: "za jednotku",
     stockStatus: {
       "in-stock": "Skladom",
-      "limited-stock": "Obmedzene skladom",
+      "below-package": "Skladom menej ako balenie",
       "out-of-stock": "Nie je skladom",
       unknown: "Dostupnosť nemožno overiť",
     },
@@ -120,8 +120,8 @@ export const sk: Dictionary = {
     minimumOrderByVariant: "Podľa zvoleného variantu",
     variantCount: "Počet variantov",
     inStockCount: (quantity: number, unit: string) => `Skladom ${count(quantity)} ${unit}`,
-    limitedStockCount: (quantity: number, unit: string) =>
-      `Obmedzené množstvo: ${count(quantity)} ${unit}`,
+    belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
+      `Skladom ${count(quantity)} ${unit}, predaj po ${count(firstOrder)} ${unit}`,
     availabilityNowUnknown: "Dostupnosť teraz nemožno overiť",
     outOfStock: "Nie je skladom",
     variantsInStock: (available: number, total: number) =>
@@ -200,6 +200,7 @@ export const sk: Dictionary = {
   },
   productPage: {
     weight: "Hmotnosť",
+    dimensions: "Rozmery",
     manufacturer: "Výrobca",
     documents: "Dokumenty na stiahnutie",
     related: "Súvisiace produkty",
@@ -261,6 +262,7 @@ export const sk: Dictionary = {
     closeSelection: "Zavrieť výber variantov",
     retry: "Skúsiť znova",
     loading: "Načítavam varianty…",
+    pagination: "Stránkovanie variantov",
     search: "Hľadať variant",
     searchPlaceholder: "Kód, názov alebo parameter",
     clearSearch: "Vymazať hľadanie",
@@ -1069,6 +1071,8 @@ export const sk: Dictionary = {
       availabilityUnknown: (label: string) =>
         `${label}: dostupnosť teraz nemožno overiť, objednávku preto nemožno dokončiť. Položku odoberte alebo to skúste neskôr.`,
       outOfStock: (label: string) => `${label}: momentálne nie je na sklade.`,
+      belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
+        `${label}: na sklade je len ${count(stock)} ${unit}, predáva sa po ${count(firstOrder)} ${unit}.`,
       insufficientStock: (label: string, stock: number, unit: string) =>
         `${label}: k dispozícii je len ${count(stock)} ${unit}.`,
       minimumQuantity: (label: string, minimum: number, unit: string) =>

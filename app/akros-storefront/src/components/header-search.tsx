@@ -30,7 +30,7 @@ import {
   type RemoteCategorySuggestion,
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
-import { startNavigationProgress } from "@/components/navigation-progress";
+import { startNavigationProgress } from "@/components/navigation-start";
 
 /** Runs while the HTML parses: text typed before hydration (even before this script is parsed) reaches the hidden q field, a pre-hydration native submit carries it, and it survives the streamed loading-shell swap and hydration. */
 const EARLY_QUERY_SCRIPT = `(function(){var w=window,d=document;function hq(g){return g&&g.querySelector('input[type="hidden"][name="q"]')}function vis(g){return g.querySelector('input:not([type="hidden"])')}function fill(g,v){if(g.hasAttribute("data-sf-hydrated"))return;var q=hq(g);if(!q)return;q.value=v;g.setAttribute("data-sf-early-query",v);var t=vis(g);if(t&&t.value!==v)t.value=v;}function all(v){w.__sfEarlyQuery=v;var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++)fill(a[i],v);}if(!w.__sfEarlyQueryInit){w.__sfEarlyQueryInit=1;d.addEventListener("input",function(e){var t=e.target,g=t&&t.form;if(!g||t.type==="hidden"||typeof t.value!=="string"||g.hasAttribute("data-sf-hydrated")||!hq(g))return;all(t.value);},true);d.addEventListener("submit",function(e){var g=e.target;if(!g||!g.hasAttribute||g.hasAttribute("data-sf-hydrated")||!hq(g))return;var t=vis(g);if(t&&t.value.trim())hq(g).value=t.value;},true);}var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++){var g=a[i];if(g.hasAttribute("data-sf-hydrated")||!hq(g))continue;var t=vis(g);if(t&&t.value){all(t.value);break;}}if(w.__sfEarlyQuery)all(w.__sfEarlyQuery);})();`;
@@ -48,15 +48,17 @@ type SuggestionData =
       priceMinor: number;
       priceIsFrom: boolean;
       priceUnavailableReason?: string;
+      priceExcludesVat?: boolean;
       currency: StoreCurrency;
     };
 
-export function HeaderSearch() {
+/** `initialQuery` is the results page's own q: the server renders it into the box before any script runs. */
+export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
   const cs = useDictionary();
   const href = useStoreHref();
   const id = useId();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -68,10 +70,14 @@ export function HeaderSearch() {
     // Consumed once: later client-rendered headers must not get this text back.
     early_.__sfEarlyQuery = undefined;
     form.setAttribute("data-sf-hydrated", "");
-    if (early) setQuery((current) => (current.trim() ? current : early));
-  }, []);
+    // Text typed before hydration wins over the server's query, but never over text typed since.
+    if (early)
+      setQuery((current) => (current.trim() && current !== initialQuery ? current : early));
+  }, [initialQuery]);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
+  // The results page's own query is already answered by the page: suggestions load once the shopper edits it.
+  const idle = !open && trimmedQuery === initialQuery.trim();
   // The browser only holds featured products and navigation, so all suggestions come from the BFF.
   const [remote, setRemote] = useState<
     RemoteSearchResponse & {
@@ -90,13 +96,14 @@ export function HeaderSearch() {
   // Answers already seen in this page: repeated or backspaced queries show at once.
   const seen = useRef(new Map<string, typeof remote>());
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || idle) return;
     const held = seen.current.get(trimmedQuery);
     if (held !== undefined) {
       setRemote(held);
       return;
     }
     const controller = new AbortController();
+    // Ask once the shopper pauses: every new term is an owner search, so not one per keystroke while typing.
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
         method: "POST",
@@ -141,12 +148,12 @@ export function HeaderSearch() {
                 : cs.search.unavailable,
           });
         });
-    }, 120);
+    }, 300);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ready, trimmedQuery, searchAttempt, cs]);
+  }, [ready, idle, trimmedQuery, searchAttempt, cs]);
   const remoteCurrent = remote.query === trimmedQuery;
   const searchError = remoteCurrent ? remote.error : undefined;
   const searchLoading = ready && !remoteCurrent;
@@ -184,6 +191,7 @@ export function HeaderSearch() {
               priceMinor: item.priceMinor,
               priceIsFrom: item.priceIsFrom,
               priceUnavailableReason: item.priceUnavailableReason,
+              priceExcludesVat: item.priceExcludesVat,
               currency: item.currency,
             },
           };
@@ -341,9 +349,14 @@ export function HeaderSearch() {
 }
 
 function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
-  const price = describeCatalogPrice(data, useDictionary(), useMoney());
+  const dictionary = useDictionary();
+  const price = describeCatalogPrice(data, dictionary, useMoney());
   return price.kind !== "unavailable" ? (
-    <strong className="shrink-0 whitespace-nowrap text-sm">{price.label}</strong>
+    <strong className="shrink-0 whitespace-nowrap text-sm">
+      {data.priceExcludesVat && price.kind === "exact"
+        ? `${price.label} ${dictionary.product.excludingVat}`
+        : price.label}
+    </strong>
   ) : (
     <span
       className="shrink-0 whitespace-nowrap text-xs text-(--color-fg-secondary)"

@@ -63,7 +63,7 @@ import type { SellableVariantRecord } from './market-pricing.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
-import { NO_CATALOG_MARKET } from './market-store.ts';
+import { marketOfferPredicate, NO_CATALOG_MARKET } from './market-store.ts';
 import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
 import type { CatalogMarketScope, StoredMarket } from './market-store.ts';
 import { productInMarketCurrency, searchVariantOffer } from './market-pricing.ts';
@@ -137,22 +137,23 @@ type VariantSummaryEncoded = typeof VariantSummarySchema.Encoded;
 
 /**
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
- * is bound as parameters: an unqualified outer column would resolve to the variant row itself.
+ * is bound as parameters: an unqualified outer column would resolve to the variant row itself. `stockOnHand` is the
+ * stock they hold; whether any of it can be bought is the product's `availability` (every variant against its own first
+ * order, `availabilityOf`, so partial packages of two variants never add up to one). `firstOrderableQuantity` is the
+ * smallest first order among them, which the storefront names below one package („Skladem 6 ks, prodej po 10 ks“).
  */
-// A positive ledger balance is not available stock when it cannot cover one mandatory package.
-// Match order-quantity and the detail purchase constraints, per variant (never pool partial packages).
-const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric,
-  (${sql.raw('"products"."document"')}->>'minimumQuantity')::numeric, 1)`;
-const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric,
-  (${sql.raw('"products"."document"')}->>'packageQuantity')::numeric)`;
-const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
+// firstOrderableQuantity in SQL: the variant's own minimum (1 when not stated) rounded up to its own package, as
+// checkout reads them (never the product's).
+const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric, 1)`;
+const variantPackageSql = sql`(v.document->>'packageQuantity')::numeric`;
+const variantFirstOrderSql = sql`case when ${variantPackageSql} > 0
   then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
   else ${variantMinimumSql} end`;
 const variantSummarySql = (scope: StoreScope) => sql<VariantSummaryEncoded>`(select json_build_object(
     'count', count(*)::int,
+    'firstOrderableQuantity', min(${variantFirstOrderSql}),
     'minGrossPriceMinor', min(v.gross_price_minor),
-    'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
-      then v.stock_on_hand else 0 end), 0),
+    'stockOnHand', coalesce(sum(v.stock_on_hand), 0),
     'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
   from ${productVariants} v
   where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
@@ -439,8 +440,19 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   return { head, held, products: records, rates: pricedRates, total } satisfies ProductPage;
 });
 
+/** Archived products: only in a staff list that asks for them, and in the staff detail of one product. */
+const archivedFilter = (view: RecordsView, storefront: boolean): SQL | undefined => {
+  if (storefront) {
+    return eq(products.archived, false);
+  }
+  if (view.archived === true) {
+    return eq(products.archived, true);
+  }
+  return view.productId === undefined ? eq(products.archived, false) : undefined;
+};
+
 const staffProductFilters = (view: RecordsView, storefront: boolean, scope: StoreScope): (SQL | undefined)[] => [
-  eq(products.archived, false),
+  archivedFilter(view, storefront),
   ...(storefront ? [eq(products.active, true), eq(products.published, true), sellableClassificationFilter(scope)] : []),
   view.productId === undefined ? undefined : eq(products.id, view.productId),
   view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
@@ -467,7 +479,7 @@ const staffProductOrder = (sort: RecordsView['productSort']): SQL[] =>
     Match.orElse(() => [asc(products.ordinal)]),
   );
 
-/** Staff (and plain storefront) product page; customers never see price or content history. */
+/** Staff (and plain storefront) product page; customers never see price, content or photo history. */
 export const staffProducts = (
   db: MerchandiseDb,
   scope: StoreScope,
@@ -491,17 +503,19 @@ export const staffProducts = (
       ...page,
       products: page.products.map((record): ProductRecord => {
         if (view.summary === true) {
-          const { contentHistory: _history, ...summary } = record;
+          const { contentHistory: _history, photoLibrary: _library, ...summary } = record;
           void _history;
+          void _library;
           const row = { ...summary, priceHistory: [] };
           return storefront ? withStorefrontVat(row, page.rates, page.held) : withStaffVat(row, page.rates, page.held);
         }
         if (!storefront) {
           return withStaffVat(record, page.rates, page.held);
         }
-        const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
+        const { contentHistory: _content, photoLibrary: _library, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
+        void _library;
         const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, page.rates, page.held);
         return record.variantRecords === undefined
           ? projected
@@ -1289,10 +1303,14 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
   const activeId =
     input.activeId ?? (input.activeSlug === undefined ? undefined : categoryIdBySlug(db, scope, input.activeSlug));
   const active = activeId === undefined ? sql`false` : eq(categories.id, activeId);
-  // Storefront tiles and the sidebar show images of roots and of the active category's children.
+  // Storefront tiles and the sidebar show images of roots and of the active category's children; the desktop mega
+  // menu shows the roots' children with their images on every page.
   const shown = input.storefront
     ? or(
         sql`${categories.parentId} is null`,
+        sql`${categories.parentId} in (select root.id from ${categories} root
+          where root.parent_id is null and root.tenant_id = ${scope.tenantId}::uuid
+            and root.legal_entity_id = ${scope.legalEntityId}::uuid)`,
         active,
         activeId === undefined ? sql`false` : eq(categories.parentId, activeId),
       )
@@ -1609,3 +1627,65 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
     stockValueMinor: catalog?.stockValueMinor ?? 0,
   };
 });
+
+/**
+ * The storefront's own filters (storefrontFilters, sellableClassificationFilter, marketOfferPredicate per market,
+ * mainSourceListingFilter) evaluated per product for staff rows: the same SQL the storefront read applies.
+ */
+export const storefrontVisibilityFacts = Effect.fn('MerchandiseQueries.storefrontVisibilityFacts')(
+  function* storefrontVisibilityFacts(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    input: {
+      readonly markets: readonly Pick<StoredMarket, 'marketCode' | 'marketId' | 'offerMode'>[];
+      readonly productIds: readonly string[];
+      readonly storefrontAppId: string;
+    },
+  ) {
+    if (input.productIds.length === 0) {
+      return [];
+    }
+    const holds = (condition: SQL | undefined) =>
+      condition === undefined ? sql<boolean>`true` : sql<boolean>`coalesce((${condition}), false)`;
+    const markets =
+      input.markets.length === 0
+        ? sql<{ marketCode: string; offered: boolean }[]>`'[]'::json`
+        : sql<{ marketCode: string; offered: boolean }[]>`json_build_array(${sql.join(
+            input.markets.map(
+              (market) =>
+                sql`json_build_object('marketCode', ${market.marketCode}::text, 'offered', ${holds(
+                  marketOfferPredicate(scope, Option.some(market as StoredMarket)),
+                )})`,
+            ),
+            sql`, `,
+          )})`;
+    const variantCount = (extra: SQL) =>
+      sql<number>`(select count(*)::int from ${productVariants} v
+        where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+          and v.product_id = ${outerProductId} and v.variant_id is not null ${extra})`;
+    return yield* query(
+      db
+        .select({
+          active: products.active,
+          activeVariants: variantCount(sql`and v.active`),
+          archived: products.archived,
+          id: products.id,
+          mainSource: holds(
+            mainSourceListingFilter(scope, { storefrontAppId: input.storefrontAppId } as StorefrontCatalogQuery),
+          ),
+          markets,
+          priced: sql<boolean>`(${products.grossPriceMinor} is not null or exists (select 1 from ${productVariants} v
+            where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+              and v.product_id = ${outerProductId} and v.variant_id is not null and v.active
+              and v.gross_price_minor is not null))`,
+          published: products.published,
+          sellable: holds(sellableClassificationFilter(scope)),
+          slug: products.slug,
+          variants: variantCount(sql``),
+        })
+        .from(products)
+        .where(and(whereScope(products, scope), inArray(products.id, [...new Set(input.productIds)]))),
+      'Storefront visibility could not be read',
+    );
+  },
+);

@@ -9,7 +9,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { createCatalog } from "./catalog-model";
 import { getConfig } from "./config";
 import { readRecords } from "./gateway";
-import { sharedRead } from "./shared-read";
+import { MAX_STALE_MS, sharedRead } from "./shared-read";
 import {
   projectCategories,
   projectProducts,
@@ -112,6 +112,43 @@ const readCatalog = async (
 const marketIdOf = async (operation: Operation) =>
   (await getActiveMarket(marketReadsFor(operation))).marketId;
 
+// Merchandise advances the company's catalogue revision with every write (product, category, listing policy, stock).
+// Shared answers belong to the revision they were read at, so the first visit after an admin save waits for a read of
+// the new state instead of being served the previous one. The check is one head read, shared per process for a second.
+const REVISION_TTL_MS = 1_000;
+let lastRevision: { revision: number; at: number } | undefined;
+
+const loadRevision = async (operation: Operation): Promise<number> => {
+  // Without a market id merchandise reads only the company's head: no market, product or category rows.
+  const body = await readCatalog(
+    undefined,
+    { mode: "categories", includeCategories: false },
+    operation,
+  );
+  lastRevision = {
+    revision: typeof body.revision === "number" ? body.revision : 0,
+    at: Date.now(),
+  };
+  return lastRevision.revision;
+};
+// One revision per operation, so every shared answer of one render belongs to the same revision.
+const revisions = new WeakMap<Operation, Promise<number>>();
+const catalogRevision = (operation: Operation): Promise<number> => {
+  const held = revisions.get(operation);
+  if (held !== undefined) return held;
+  const revision = sharedRead("catalog:revision", REVISION_TTL_MS, loadRevision, {
+    caller: operation,
+  }).catch((error: unknown) => {
+    operation.check();
+    // While merchandise is unavailable shoppers keep the catalogue they had, as long as any shared answer is served.
+    if (lastRevision !== undefined && Date.now() - lastRevision.at < MAX_STALE_MS)
+      return lastRevision.revision;
+    throw error;
+  });
+  revisions.set(operation, revision);
+  return revision;
+};
+
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
   Object.fromEntries(
@@ -141,13 +178,18 @@ export async function readProducts(
   options: OperationOptions = {},
 ): Promise<ProductPage> {
   return catalogWork(options, async (operation) => {
-    const key = productKey(await marketIdOf(operation), query, fields);
+    // A fresh read needs no revision: it is the owner's current state.
+    const [marketId, revision] = await Promise.all([
+      marketIdOf(operation),
+      fresh ? undefined : catalogRevision(operation),
+    ]);
+    const key = productKey(marketId, query, fields);
     if (fresh) return await loadProducts(key, operation)();
     return await sharedRead(
       `products:${key}`,
       CATALOG_TTL_MS,
       (detached) => loadProducts(key, detached)(),
-      { stale: true, caller: operation },
+      { stale: true, caller: operation, generation: revision },
     );
   });
 }
@@ -203,24 +245,31 @@ const withCategoryContent = (tree: CatalogCategory[], content: CatalogCategory[]
 };
 const cachedCategoryPage = cache(
   async (operation: Operation, categorySlug: string): Promise<CategoryPage> => {
-    const marketId = await marketIdOf(operation);
+    const [marketId, revision] = await Promise.all([
+      marketIdOf(operation),
+      catalogRevision(operation),
+    ]);
     return await sharedRead(
       `catpage:${marketId ?? ""}:${categorySlug}`,
       CATALOG_TTL_MS,
       (detached) => loadCategoryPage(marketId, categorySlug, detached)(),
-      { stale: true, caller: operation },
+      { stale: true, caller: operation, generation: revision },
     );
   },
 );
-// The 2,000+ node tree is shared process-wide: fresh for a minute, then served while one background refresh runs.
+// The 2,000+ node tree is shared process-wide: within one revision fresh for a minute, then served while one
+// background refresh runs.
 const TREE_TTL_MS = 60_000;
 const rootTree = cache(async (operation: Operation) => {
-  const marketId = await marketIdOf(operation);
+  const [marketId, revision] = await Promise.all([
+    marketIdOf(operation),
+    catalogRevision(operation),
+  ]);
   return await sharedRead(
     `tree:${marketId ?? ""}`,
     TREE_TTL_MS,
     (detached) => loadRootTree(marketId, detached)(),
-    { stale: true, caller: operation },
+    { stale: true, caller: operation, generation: revision },
   );
 });
 

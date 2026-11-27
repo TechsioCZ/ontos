@@ -61,6 +61,7 @@ let server: Server;
 let network: Awaited<ReturnType<typeof serveHttp>>;
 let requestContext: typeof nextRequest;
 let ownerUnavailable = false;
+let revisionReads = 0;
 let answer: (catalog: Record<string, unknown>) => unknown;
 const legalEntityId = "71000000-0000-4000-8000-000000000024";
 const effectivePeriod = { startsAt: "2020-01-01T00:00:00.000Z" };
@@ -211,6 +212,7 @@ beforeEach(async () => {
   requestMarket.id = czMarketId;
   calls.length = 0;
   ownerUnavailable = false;
+  revisionReads = 0;
   answer = (catalog) => ({
     revision: 5,
     ...(catalog.mode === "categories"
@@ -255,6 +257,20 @@ beforeEach(async () => {
     if (body.audience === "commerce-market-catalog")
       return Response.json(marketCatalog(), { headers });
     const catalog = body.query.view.storefrontCatalog;
+    // The catalogue revision check (the company head only) is not a product/navigation read either.
+    if (
+      Object.keys(catalog).sort().join(",") === "includeCategories,mode,storefrontAppId" &&
+      catalog.mode === "categories" &&
+      catalog.includeCategories === false
+    ) {
+      revisionReads += 1;
+      return ownerUnavailable
+        ? Response.json({ code: "owner_unavailable" }, { status: 500, headers })
+        : Response.json(
+            { products: [], revision: (answer(catalog) as { revision?: number }).revision },
+            { headers },
+          );
+    }
     // Market resolution's real offer reads are not product/navigation reads.
     if (
       Object.keys(catalog).sort().join(",") === "includeCategories,marketId,mode" &&
@@ -323,7 +339,7 @@ describe("OntOS catalog server reads", () => {
     },
   ];
   it.each(pricedViews)(
-    "shows an admin price and stock edit on a view after the 15 s catalogue cache refreshed ($name)",
+    "shows an admin price and stock edit on the first $name read 2 s after the save",
     async ({ read }) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
@@ -336,25 +352,39 @@ describe("OntOS catalog server reads", () => {
         products: [{ ...product("p1"), grossPriceMinor: 242, stockOnHand: 2 }],
         categories: tree,
       });
-      expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
-      vi.advanceTimersByTime(16_000);
-      await vi.waitFor(async () =>
-        expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 }),
-      );
+      vi.advanceTimersByTime(2_000);
+      expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 });
       await network.idle();
     },
   );
   it.each(pricedViews)(
-    "rejects $name prices once the cached value is over 10 minutes old and the owner is unavailable",
+    "keeps $name prices while the owner is unavailable, and rejects them once over 10 minutes old",
     async ({ read }) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       await read();
       ownerUnavailable = true;
       await expect(read()).resolves.toMatchObject({ priceMinor: 121 });
+      vi.advanceTimersByTime(20_000);
+      await expect(read()).resolves.toMatchObject({ priceMinor: 121 });
       vi.advanceTimersByTime(11 * 60_000);
       await expect(read()).rejects.toMatchObject({ code: "owner_unavailable" });
     },
   );
+  it("checks the revision once a second and reads no catalogue again while it is unchanged", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const view = () =>
+      inRequest(() => server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 }));
+    await view();
+    await network.idle();
+    const reads = calls.length;
+    expect(revisionReads).toBe(1);
+    await Promise.all(Array.from({ length: 5 }, view));
+    vi.advanceTimersByTime(2_000);
+    await Promise.all(Array.from({ length: 5 }, view));
+    await network.idle();
+    expect(calls).toHaveLength(reads);
+    expect(revisionReads).toBe(2);
+  });
   it("reads products as bounded cards without the category tree and without unset keys", async () => {
     await inRequest(() =>
       server.readProducts(
@@ -471,24 +501,23 @@ describe("OntOS catalog server reads", () => {
       { page: undefined, sort: "price-asc", includeCategories: false },
     ]);
   });
-  it("reads category content again once the 15 s catalogue cache refreshed", async () => {
+  it("shows a category edit on the first read 2 s after the save", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const first = await inRequest(() => server.getCatalog("srouby"));
     expect(first.getCategoryBySlug("srouby")?.longDescription).toBe("Velmi dlouhý popis kategorie");
     answer = () => ({
+      revision: 6,
       products: [product("p2")],
       categories: [category("srouby", "root", "srouby", true)].map((node) => ({
         ...node,
         longDescription: "Fresh source content",
       })),
     });
-    vi.advanceTimersByTime(16_000);
-    await vi.waitFor(async () =>
-      expect(
-        (await inRequest(() => server.getCatalog("srouby"))).getCategoryBySlug("srouby")
-          ?.longDescription,
-      ).toBe("Fresh source content"),
-    );
+    vi.advanceTimersByTime(2_000);
+    expect(
+      (await inRequest(() => server.getCatalog("srouby"))).getCategoryBySlug("srouby")
+        ?.longDescription,
+    ).toBe("Fresh source content");
     const listing = await inRequest(() =>
       server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 }),
     );

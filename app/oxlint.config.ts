@@ -1032,10 +1032,12 @@ export default defineConfig({
         'verticals/pricing/shared/actions/manage-quotation.ts',
         'verticals/pricing/shared/actions/define-price.ts',
         'verticals/pricing/shared/actions/revise-price.ts',
+        'verticals/pricing/shared/actions/grant-external-price-source-authority.ts',
         'verticals/pricing/shared/apis/manage-commitment-confirmation-action.ts',
         'verticals/pricing/shared/apis/manage-quotation-action.ts',
         'verticals/pricing/shared/apis/define-price-action.ts',
         'verticals/pricing/shared/apis/revise-price-action.ts',
+        'verticals/pricing/shared/apis/grant-external-price-source-authority-action.ts',
       ],
       rules: {
         'oxc/no-barrel-file': 'off',

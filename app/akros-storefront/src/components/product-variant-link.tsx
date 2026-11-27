@@ -2,7 +2,6 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Tooltip } from "@techsio/ui-kit/atoms/tooltip";
 import StoreLink from "@/components/store-link";
 import { buildVariantDetailHref } from "@/lib/product-variant-links";
@@ -48,14 +47,11 @@ export function ProductVariantLink({
         />
       }
     >
-      <LinkButton
-        as={StoreLink}
+      {/* A plain link with the kit's borderless button look applied once in globals.css: one per table row. */}
+      <StoreLink
         href={buildVariantDetailHref(slug, variant.id, search?.toString() ?? "")}
         scroll={false}
-        theme="borderless"
-        variant="secondary"
-        size="current"
-        className="sf-variant-detail-link hover:underline focus-visible:underline"
+        className="sf-variant-detail-link"
         data-variant-detail-link={variant.id}
         aria-haspopup="dialog"
         onFocus={() => setFocused(true)}
@@ -72,7 +68,7 @@ export function ProductVariantLink({
         }}
       >
         {label}
-      </LinkButton>
+      </StoreLink>
     </Tooltip>
   );
 }

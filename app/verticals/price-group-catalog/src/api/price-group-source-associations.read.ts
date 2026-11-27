@@ -36,7 +36,8 @@ export const priceGroupSourceAssociationsRead = defineRead(
       policyKey: 'pricing.price-group-catalog.api.price-group-source-associations.evidence.v1',
     },
     inputSchema: PriceGroupSourceAssociationsRequestSchema,
-    legalEntityScope: 'forbidden',
+    // Company staff (the ERP editor's per-group Prices) read the Tenant's associations with their company selected.
+    legalEntityScope: 'optional',
     owningModuleKey: 'pricing.price-group-catalog',
     policies: [],
     readKey: 'pricing.price-group-catalog.api.price-group-source-associations',

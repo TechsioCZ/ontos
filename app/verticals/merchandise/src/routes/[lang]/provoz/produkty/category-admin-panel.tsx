@@ -15,7 +15,7 @@ import {
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
-import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryNode, ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
@@ -34,6 +34,87 @@ import {
 import type { CategoryDraft, NewCategoryDraft } from './category-save.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { fieldError } from './product-form-validation.ts';
+import { LiveShopConfirm } from './live-shop-confirm.tsx';
+import { useCommandFailure } from './product-form-labels.ts';
+import { loadProductRecord } from './product-reads.ts';
+import type { ProductRecordState } from './product-reads.ts';
+import { useImageSource } from './product-image-source.ts';
+import { ProductSearchCombobox } from './product-search.tsx';
+import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+
+/** An uploaded photo's admin preview: the governed media read, since the shell has no /obrazky route. */
+const PickerThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
+  const source = useImageSource(productId, image, 'thumbnail');
+  return source.status === 'ready' ? <img alt="" className="h-full w-full object-cover" src={source.src} /> : null;
+};
+
+/** Picks an uploaded product photo (a 'media:' gallery ref) and returns its same-origin /obrazky path. */
+const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => void }) => {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<ProductRecord | null>(null);
+  const [state, setState] = useState<ProductRecordState>({ status: 'idle' });
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)} size="sm" type="button" variant="secondary">
+        Vybrat z fotek produktu
+      </Button>
+    );
+  }
+  const select = (product: ProductRecord | null) => {
+    setPicked(product);
+    if (product === null) {
+      setState({ status: 'idle' });
+      return;
+    }
+    setState({ status: 'loading' });
+    loadProductRecord(product.id, setState);
+  };
+  const refs = state.status === 'ready' ? (state.product.images ?? []).filter((ref) => ref.startsWith('media:')) : [];
+  return (
+    <div className="flex flex-col gap-100 rounded border border-border-secondary p-150">
+      <ProductSearchCombobox
+        errorMessage="Hledání selhalo."
+        id="category-image-product"
+        label="Produkt s nahranými fotkami"
+        loadingMessage="Hledám…"
+        noResultsMessage="Nic nenalezeno."
+        onSelect={select}
+        placeholder="Název nebo kód produktu"
+        retryLabel="Zkusit znovu"
+        selected={picked}
+      />
+      {state.status === 'loading' ? <p className="text-fg-secondary text-sm">Načítám fotky…</p> : null}
+      {state.status === 'error' ? <p className="text-fg-secondary text-sm">Načtení produktu selhalo.</p> : null}
+      {state.status === 'ready' && refs.length === 0 ? (
+        <p className="text-fg-secondary text-sm">Produkt nemá nahrané fotky.</p>
+      ) : null}
+      {state.status === 'ready' ? (
+        <div className="flex flex-wrap gap-100">
+          {refs.map((ref) => {
+            const src = `/obrazky/${encodeURIComponent(state.product.id)}/${ref.slice('media:'.length)}`;
+            return (
+              <button
+                aria-label="Použít tuto fotku"
+                className="h-[80px] w-[80px] overflow-hidden rounded border border-border-secondary"
+                key={ref}
+                onClick={() => {
+                  onPick(src);
+                  setOpen(false);
+                }}
+                type="button"
+              >
+                <PickerThumbnail image={ref} productId={state.product.id} />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <Button onClick={() => setOpen(false)} size="sm" type="button" variant="secondary">
+        Zavřít
+      </Button>
+    </div>
+  );
+};
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
@@ -105,6 +186,7 @@ interface CategoryEditorProps {
   readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
   readonly selected: CategoryNode;
   readonly siblings: readonly CategoryNode[];
+  readonly slugError: 'invalid' | undefined;
 }
 
 /** The category's own fields. Editing them changes the draft only; the panel's Save button sends it. */
@@ -116,6 +198,7 @@ const CategoryEditor = ({
   positionError,
   selected,
   siblings,
+  slugError,
 }: CategoryEditorProps) => {
   const { t } = useModernI18n();
   const siblingNames = siblings
@@ -151,6 +234,36 @@ const CategoryEditor = ({
         {...(nameError === undefined ? {} : { helpText: nameMessage, validateStatus: 'error' as const })}
       />
       <FormInput
+        helpText="Adresa stránky kategorie v e-shopu (/kategorie/…). Po změně přestane platit stará adresa."
+        id="category-slug"
+        label="Adresa (slug)"
+        maxLength={200}
+        name="slug"
+        onChange={(event) => patchDraft({ slug: event.target.value })}
+        value={draft.slug}
+        {...(slugError === undefined
+          ? {}
+          : { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const })}
+      />
+      <CategorySearchCombobox
+        allLabel="Kořen (hlavní kategorie)"
+        errorMessage="Kategorie se nepodařilo načíst."
+        helpText={draft.parent === null ? 'Kořen (hlavní kategorie).' : `Pod: ${draft.parent.trail}`}
+        id="category-parent"
+        label="Nadřazená kategorie"
+        loadingMessage="Načítám kategorie…"
+        moreMessage={(shown, total) => `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání.`}
+        noResultsMessage="Žádná kategorie neodpovídá hledání."
+        onSelect={(parent) => patchDraft({ parent })}
+        placeholder="Hledat nadřazenou kategorii"
+        retryLabel="Zkusit znovu"
+        selected={
+          draft.parent === null
+            ? null
+            : { id: CatalogCategoryIdSchema.make(draft.parent.id), trail: draft.parent.trail }
+        }
+      />
+      <FormInput
         id="category-heading"
         label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
@@ -175,7 +288,7 @@ const CategoryEditor = ({
         value={draft.longDescription}
       />
       <FormInput
-        helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá."
+        helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá. Tlačítko Vybrat z fotek produktu vloží cestu /obrazky/… k nahrané fotce; funguje, dokud je ten produkt zveřejněný."
         id="category-image-src"
         label="Obrázek kategorie (adresa)"
         maxLength={500}
@@ -183,6 +296,7 @@ const CategoryEditor = ({
         onChange={(event) => patchDraft({ imageSrc: event.target.value })}
         value={draft.imageSrc}
       />
+      <CategoryImagePicker onPick={(src) => patchDraft({ imageSrc: src })} />
       <FormInput
         id="category-image-alt"
         label="Popis obrázku"
@@ -361,9 +475,84 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
   );
 };
 
+/**
+ * Deletes the category after a confirmation that names it. The server refuses a category that still has a subcategory
+ * or a product that is not archived; a category with subcategories cannot even be asked for.
+ */
+const CategoryDeleteSection = ({
+  category,
+  disabled,
+  onDeleted,
+  onReload,
+  revision,
+}: {
+  readonly category: CategoryNode;
+  readonly disabled: boolean;
+  readonly onDeleted: () => void;
+  readonly onReload: () => void;
+  readonly revision: number;
+}) => {
+  const failure = useCommandFailure();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const handleConfirm = () => {
+    setAsking(false);
+    setBusy(true);
+    setError(null);
+    runCommand({ _tag: 'DeleteCategory', id: category.id }, revision, (outcome) => {
+      setBusy(false);
+      if (outcome.ok) {
+        onDeleted();
+        return;
+      }
+      setError(
+        outcome.reason === 'rejected' && outcome.proposal === undefined
+          ? 'Kategorii nelze smazat: má podkategorie nebo v ní jsou produkty. Přesuňte je do jiné kategorie, nebo produkty archivujte.'
+          : failure(outcome.reason, onReload, outcome.proposal),
+      );
+    });
+  };
+  return (
+    <div className="flex flex-col gap-100 border-border-secondary border-t pt-200">
+      <p className="text-fg-secondary text-sm">
+        {category.hasChildren
+          ? 'Kategorii s podkategoriemi nelze smazat. Nejdřív smažte nebo přesuňte její podkategorie.'
+          : 'Smazat lze jen prázdnou kategorii: bez podkategorií a bez produktů (archivované produkty se nepočítají).'}
+      </p>
+      <Button
+        data-testid="category-delete"
+        disabled={disabled || busy || category.hasChildren}
+        isLoading={busy}
+        onClick={() => setAsking(true)}
+        theme="outlined"
+        type="button"
+        variant="danger"
+      >
+        Smazat kategorii
+      </Button>
+      {error !== null && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      <LiveShopConfirm
+        confirmLabel="Smazat"
+        description={`Kategorie „${category.name}“ zmizí ze stromu kategorií i z e-shopu. Smazání nelze vrátit.`}
+        destructive
+        onCancel={() => setAsking(false)}
+        onConfirm={handleConfirm}
+        open={asking}
+        title={`Smazat kategorii ${category.name}?`}
+      />
+    </div>
+  );
+};
+
 interface CategoryEditPanelProps {
   readonly category: CategoryNode;
   readonly onBack: () => void;
+  readonly onDeleted: () => void;
   readonly onSaved: (next: CategoryNode, revision: number) => void;
   readonly parentName: string | undefined;
   readonly revision: number;
@@ -375,7 +564,15 @@ interface CategoryEditPanelProps {
  * revision the draft builds on. When someone else changed the category, the panel offers the version they saved
  * instead. Leaving with unsaved changes asks first.
  */
-const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
+const CategoryEditPanel = ({
+  category,
+  onBack,
+  onDeleted,
+  onSaved,
+  parentName,
+  revision,
+  siblings,
+}: CategoryEditPanelProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const record = useRecordDraft<CategoryDraft, never>({
@@ -393,7 +590,7 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
           }),
         ),
       ),
-    server: draftOf(category),
+    server: draftOf(category, parentName),
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
@@ -444,8 +641,16 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
             positionError={errors.position}
             selected={category}
             siblings={siblings}
+            slugError={errors.slug}
           />
         </form>
+        <CategoryDeleteSection
+          category={category}
+          disabled={record.dirty}
+          onDeleted={onDeleted}
+          onReload={handleReloadLatest}
+          revision={revision}
+        />
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -531,12 +736,21 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
     setSavedOnce(true);
   };
 
+  /** A deleted category leaves the editor for the reread list. */
+  const deleted = () => {
+    setSelection(null);
+    setSavedOnce(false);
+    reload();
+    onCommitted('Kategorie smazána.');
+  };
+
   return {
     backToList,
     categories,
     commitSaved,
     created,
     creating,
+    deleted,
     list,
     loaded,
     open,
@@ -569,6 +783,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
     commitSaved,
     created,
     creating,
+    deleted,
     list,
     loaded,
     open,
@@ -597,6 +812,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
           category={selected}
           key={selection.id}
           onBack={backToList}
+          onDeleted={deleted}
           onSaved={commitSaved}
           parentName={parentName}
           revision={selection.revision}

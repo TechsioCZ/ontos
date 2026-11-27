@@ -50,11 +50,7 @@ export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationO
       return yield* failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
     }
     const positional = positionFactsOf(input.ownerFacts);
-    if (
-      positional === undefined ||
-      input.scope.legalEntityId !== undefined ||
-      input.scope.trustedStorefrontId !== undefined
-    ) {
+    if (positional === undefined || input.scope.trustedStorefrontId !== undefined) {
       return 'unavailable';
     }
     if (positional.tenantId !== input.scope.tenantId) {

@@ -28,6 +28,8 @@ export interface RemoteSearchSuggestion {
   priceIsFrom: boolean;
   /** Set when the price is missing, zero or in another currency; the suggestion then shows no amount. */
   priceUnavailableReason?: string;
+  /** The amount is net (an ERP PRE_TAX price) and is shown „bez DPH“; catalogue amounts include VAT. */
+  priceExcludesVat?: true;
   /** A variant group: the detail page pre-filters its variant table with the query. */
   hasVariants: boolean;
   /** The one concrete variant this suggestion stands for (single exact hit or a one-variant group). */
@@ -231,6 +233,7 @@ export function toSearchGridItem(
       quantityStep: variant.quantityStep,
       status: getProductStockStatus(variant),
       stockCount: variant.stockCount,
+      ...(variant.belowPackage ? { belowPackage: variant.belowPackage } : {}),
       unit: variant.unit,
     },
     detailHref,

@@ -12,6 +12,7 @@ import type { CatalogModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
 import { CardVariants } from "./card-variants";
 import { CardPurchase } from "./card-purchase";
+import { ProductLabels } from "./product-labels";
 
 const stockStatus = {
   available: "in-stock",
@@ -88,6 +89,7 @@ export const CatalogView = ({
       >
         {catalog.products.map((product, index) => (
           <ProductCard key={product.id} layout="column" presentation="featured" shadow={false}>
+            <ProductLabels className="justify-center" dictionary={d} labels={product.labels} />
             <div className="text-center md:h-n1-card-name">
               <ProductCard.Name>
                 <Link as={NextLink} href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}>
@@ -95,6 +97,11 @@ export const CatalogView = ({
                 </Link>
               </ProductCard.Name>
             </div>
+            {product.description !== "" && (
+              <p className="line-clamp-2 text-center text-sm text-fg-secondary">
+                {product.description}
+              </p>
+            )}
             <div className="mx-auto aspect-square w-full max-w-n1-product-image">
               <Link
                 aria-hidden="true"

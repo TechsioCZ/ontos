@@ -110,7 +110,7 @@ export const createProductCategoryAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: CreateProductCategoryPayloadSchema,
     policies: [],

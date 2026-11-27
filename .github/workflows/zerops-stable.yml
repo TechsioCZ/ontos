@@ -1,4 +1,4 @@
-# The stable sales release. Pushes to demo/sales-crm test the release tooling and the shared runtime contracts.
+# The stable sales release. It runs only on dispatch: pushes to demo/sales-crm never touch stable.
 # A dispatch is the operator's approval: it pins a ref of demo/sales-crm as a sales-stable tag (or takes an existing
 # tag) and, by mode:
 #   build   builds the install artifacts of the tag (no live writes)
@@ -27,37 +27,6 @@ on:
           - build
           - deploy
           - verify
-  push:
-    branches:
-      - demo/sales-crm
-    paths:
-      - ops/zerops-stable/**
-      - app/zerops.yaml
-      - app/zerops-import.yaml
-      - app/scripts/zerops/push-service.sh
-      - app/scripts/zerops/route-stage-domains.sh
-      - .github/workflows/zerops-stable.yml
-      - app/scripts/zerops/app-host.mts
-      - app/scripts/zerops/deployment-profile.mts
-      - app/scripts/demo/mcp-oauth-e2e/env.mts
-      - app/scripts/demo/mcp-oauth-e2e/prove.mts
-      - app/scripts/demo/mcp-oauth-e2e/verification-identity.mts
-      - app/scripts/demo/mcp-oauth-e2e/verification-identity.test.mts
-      - app/scripts/materialize-zerops-environment.mts
-      - app/scripts/tests/zerops-app-host.test.mts
-      - app/scripts/tests/zerops-symmy-demo-bootstrap.test.mts
-      - app/scripts/tests/materialize-zerops-environment.test.mts
-      - app/scripts/tests/zerops-deployment-contract.test.mts
-      - app/verticals/merchandise/shared/actions/command-guard.ts
-      - app/verticals/merchandise/src/api/media.read.ts
-      - app/verticals/merchandise/src/api/records.read.ts
-      - app/verticals/merchandise/src/api/agent-review.read.ts
-      - app/verticals/merchandise/src/services/persistence.service.ts
-      - app/verticals/merchandise/shared/access-declarations.ts
-      - app/verticals/merchandise/vertical.runtime-declaration.ts
-      - app/verticals/merchandise/tests/unit/registered-command-access.test.ts
-      - app/verticals/merchandise/tests/unit/command-guard.test.ts
-      - app/verticals/merchandise/tests/unit/storefront-media-access.test.ts
 permissions:
   contents: read
 # Dispatches run one at a time and are never cancelled: an install is never interrupted by the next one.
@@ -65,48 +34,6 @@ concurrency:
   group: zerops-stable-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
-  test:
-    name: Test the sales-stable tooling
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: 26.13.1
-      - name: Install the app workspace dependencies
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile --filter app
-      - name: Run the sales-stable tests
-        run: node --test --test-concurrency=1 'ops/zerops-stable/*.test.mjs'
-  shared-runtime:
-    name: Check demo boot and fresh-environment deployment contracts
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-      - name: Check the shared host and environment materializers
-        working-directory: app
-        run: mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-app-host.test.mts scripts/tests/zerops-symmy-demo-bootstrap.test.mts scripts/tests/materialize-zerops-environment.test.mts scripts/tests/zerops-deployment-contract.test.mts scripts/demo/mcp-oauth-e2e/verification-identity.test.mts --pool.maxWorkers 1
-      - name: Check fresh-company storefront authorization
-        working-directory: app/verticals/merchandise
-        run: mise exec -- pnpm exec rstest run --project unit tests/unit/registered-command-access.test.ts tests/unit/command-guard.test.ts tests/unit/storefront-media-access.test.ts --pool.maxWorkers 1
   pin:
     name: Pin the release tag
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/demo/sales-crm'

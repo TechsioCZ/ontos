@@ -404,6 +404,7 @@
           "categoryRetry": "Try again",
           "categoryMore": "Showing {{shown}} of {{total}} categories. Narrow the search, e.g. by a parent category name.",
           "lowStockOnly": "Below minimum only",
+          "archived": "Archived",
           "search": "Search by name or SKU…"
         },
         "messages": {
@@ -411,6 +412,7 @@
           "conflict": "Someone else changed this record. Reload it and try again.",
           "created": "Product created",
           "failed": "The action could not be completed. Try again.",
+          "newVersion": "A new version of the application was deployed meanwhile and the change could not be saved yet. Your edits stay in the form; try saving again in a moment.",
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
@@ -550,8 +552,8 @@
           "withdrawnSaved": "The product was withdrawn from market {{code}}."
         },
         "eshop": {
-          "archiveTitle": "Archive DEMO product {{name}}?",
-          "archiveDescription": "Product {{name}} disappears from the list and the e-shop right away. Stock movements, orders and the audit trail are kept.",
+          "archiveTitle": "Archive product {{name}}?",
+          "archiveDescription": "Product {{name}} disappears from the list and the e-shop right away. Stock movements, orders and the audit trail are kept. It stays under the Archived filter and can be restored.",
           "archiveConfirm": "Archive"
         }
       },
@@ -611,7 +613,7 @@
       "variantsIntro": "Each variant has its own SKU, price, stock and status. You enter the price excluding VAT; the price including VAT that customers see in the shop is stored when you save the price, at the rate {{vat}}.",
       "variantsScrollLabel": "Variants — scroll horizontally for price, stock and active status",
       "customerProductView": "How customers see the product",
-      "archiveDemoProduct": "Archive DEMO product",
+      "archiveProduct": "Archive product",
       "archiveReason": "Reason for archiving",
       "publicationAvailability": "Publication and availability",
       "productSlug": "Product storefront address (slug)",

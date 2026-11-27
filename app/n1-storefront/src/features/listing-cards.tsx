@@ -11,6 +11,7 @@ import type { Dictionary } from "@/i18n";
 import type { CatalogModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
 import { CardPurchase } from "./card-purchase";
+import { ProductLabels } from "./product-labels";
 
 /** Mobile category cards keep the authored image, name, price, availability and action order. */
 export const ListingCards = ({
@@ -47,6 +48,7 @@ export const ListingCards = ({
               </div>
             )}
           </Link>
+          <ProductLabels dictionary={d} labels={product.labels} />
           <div className="min-h-12">
             <ProductCard.Name>
               <Link as={NextLink} href={href}>

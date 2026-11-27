@@ -176,7 +176,8 @@ describe("OntOS category and search pages", () => {
       includeCategories: false,
       storefrontAppId: "akros-storefront",
     });
-    expect(document.querySelector("h1")?.textContent).toBe("Šrouby");
+    // The staff-edited heading is the page heading; the name stays the navigation label (d893cf61f4).
+    expect(document.querySelector("h1")?.textContent).toBe("Nerezové šrouby");
     expect(document.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThanOrEqual(3);
     expect(document.querySelector('form[aria-label="Filtrování produktů"]')?.textContent).toContain(
       "100",

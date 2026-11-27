@@ -141,6 +141,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const [treeCategory, setTreeCategory] = useState<CategoryTrail | null>(null);
   const [labelCategory, setLabelCategory] = useState<string | null>(null);
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [archived, setArchived] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const [table, setTable] = useState<TanstackTable<ProductRecord>>();
@@ -155,6 +156,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const category = byTree ? null : labelCategory;
   const taggedIds = tagFilter.ids;
   const query: ProductListQuery = {
+    archived,
     category,
     categoryId: treeCategoryId,
     limit: pagination.pageSize,
@@ -178,8 +180,14 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const labelItems = labelOptions(choices);
 
   const selectedIds = Object.keys(selection).filter(isProductId);
-  const filtersActive =
-    search.trim() !== '' || treeCategory !== null || labelCategory !== null || lowStockOnly || tagFilter.tagId !== null;
+  const filtersActive = [
+    search.trim() !== '',
+    treeCategory !== null,
+    labelCategory !== null,
+    lowStockOnly,
+    archived,
+    tagFilter.tagId !== null,
+  ].includes(true);
   const stale = state.status === 'ready' && state.query !== query;
   const tableStatus = stale ? 'loading' : tableStatusFor(state.status, tagFilter.status);
   useProductDetailsPrefetch(context, revision, viewKey, table, products, tableStatus === 'ready');
@@ -202,7 +210,14 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     setTreeCategory(null);
     setLabelCategory(null);
     setLowStockOnly(false);
+    setArchived(false);
     tagFilter.setTagId(null);
+    firstPage();
+  };
+  /** The archived list is a list of its own: the selection and the page start again. */
+  const toggleArchived = (checked: boolean) => {
+    setArchived(checked);
+    setSelection({});
     firstPage();
   };
 
@@ -269,6 +284,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   };
 
   return {
+    archived,
     bulkBusy,
     byTree,
     canWrite,
@@ -310,12 +326,14 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     t,
     tableStatus,
     tagFilter,
+    toggleArchived,
     treeCategory,
   };
 };
 
 const RecordsPageContent = (props: RecordsPageContentProps) => {
   const {
+    archived,
     bulkBusy,
     byTree,
     canWrite,
@@ -357,6 +375,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     t,
     tableStatus,
     tagFilter,
+    toggleArchived,
     treeCategory,
   } = useProductListPage(props);
 
@@ -482,6 +501,16 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
             }}
             size="sm"
           />
+          {canWrite && (
+            <FormCheckbox
+              checked={archived}
+              className="self-center"
+              label={k('filters.archived')}
+              name="archived"
+              onCheckedChange={toggleArchived}
+              size="sm"
+            />
+          )}
         </div>
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
@@ -491,7 +520,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
 
         <ProductBulkBar
           busy={bulkBusy}
-          canWrite={canWrite}
+          canWrite={canWrite && !archived}
           count={selectedIds.length}
           onChangeCategory={() => openDialog('category')}
           onChangePrice={() => openDialog('price')}

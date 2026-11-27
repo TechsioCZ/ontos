@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import {
@@ -98,6 +99,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
@@ -121,8 +123,10 @@ import {
   FileSystem,
   flow,
   Layer,
+  Match,
   Option,
   Order,
+  Predicate,
   Redacted,
   Queue,
   Ref,
@@ -754,7 +758,7 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
       workspaceRoot,
       childSettings,
       false,
-      'ignore',
+      'inherit',
       (result) =>
         Console.error(
           `[app-host] stage Symmy ${kind} bootstrap failed category=${result.category}${
@@ -767,6 +771,44 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
 }).pipe(
   Effect.mapError(() => failure(STAGE_BOOTSTRAP_FAILED)),
   Effect.tapError(({ reason }) => Console.error(`[app-host] ${reason}`)),
+);
+
+/** The settings the ERP editor grants step reads (`scripts/demo/erp-editor-grants.mts`). */
+const ERP_EDITOR_GRANTS_SETTINGS = [
+  'DATABASE_URL',
+  'SPICEDB_CA_CERT',
+  'SPICEDB_ENDPOINT',
+  'SPICEDB_PRESHARED_KEY',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+] as const;
+
+/**
+ * On every boot of every deployment (stage and stable, demo fixtures or not), each shop operator of a tenant with ERP
+ * products holds that tenant's "Úpravy produktů z ERP" role with exactly the cells the ERP editor calls
+ * (`scripts/demo/erp-editor-grants.mts`). It never holds the boot: it answers whether it succeeded, so its boot timing
+ * line says `failed` when it did not.
+ */
+export const reconcileErpEditorGrants = Effect.gen(function* reconcileErpEditorGrants() {
+  const settings: ChildEnvironment = {};
+  for (const key of ERP_EDITOR_GRANTS_SETTINGS) {
+    const value = yield* Config.option(Config.String(key));
+    if (Option.isSome(value)) {
+      settings[key] = value.value;
+    }
+  }
+  yield* runChild(
+    'erp-editor-grants',
+    process.execPath,
+    ['scripts/demo/erp-editor-grants.mts'],
+    workspaceRoot,
+    settings,
+    false,
+  );
+  return true;
+}).pipe(
+  Effect.catchCause(() =>
+    Console.error('[app-host] ERP EDITOR GRANTS FAILED; publishing anyway').pipe(Effect.as(false)),
+  ),
 );
 
 /**
@@ -1639,11 +1681,6 @@ const routedUnit = (url: string) => {
 };
 
 /**
- * The one way the public port closes (drain end, stop signal, any end of the host): first `stopping`, so relayed
- * event streams end, other relayed responses are cut and relays awaiting an answer answer 503, then the server's
- * graceful close, which then has nothing left to wait for. Runs once, whoever asks first.
- */
-/**
  * Stops accepting connections on the public port, nothing more: Node closes the idle kept-alive ones, and every
  * request already on its way finishes (the drain's end; its relays keep their answers).
  */
@@ -1656,20 +1693,49 @@ export const stopAccepting = (server: Server) =>
 
 /**
  * Bounds of the public port's stop. The platform's stop timeout is not documented in this repository; it is assumed
- * to be 30 s, so the port closes well inside it and leaves the units their time. After `stopping`, connections that are
- * kept alive or hold a half-sent request get a 2 s grace, then are closed; the server's graceful close is capped at
- * 10 s whatever happens.
+ * to be 30 s, so the port closes well inside it and leaves the units their time. Finite requests already dispatched
+ * get `PUBLIC_PORT_FINISH_BUDGET` to answer; then what still runs is cut, connections that hold a half-sent request
+ * get `PUBLIC_PORT_FORCE_CLOSE_AFTER` more, then are closed; the server's graceful close is capped at 10 s whatever
+ * happens.
  */
-export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(2);
+export const PUBLIC_PORT_FINISH_BUDGET = Duration.millis(2500);
+export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(1);
 export const PUBLIC_PORT_GRACEFUL_CLOSE_CAP = Duration.seconds(10);
 
+/** Connections the public server still holds: idle kept-alive ones are closed first, so only busy ones count. */
+const busyConnections = (server: Server) => {
+  const connections = promisify((reply: (error: Error | null, count: number) => void) => {
+    server.getConnections(reply);
+  });
+  return Effect.sync(() => {
+    server.closeIdleConnections();
+  }).pipe(
+    Effect.andThen(Effect.tryPromise(async () => await connections())),
+    Effect.orElseSucceed(() => 0),
+  );
+};
+
+/**
+ * The one way the public port closes (stop signal, any end of the host); runs once, whoever asks first.
+ * - `closing`: the listener closes, idle kept-alive connections close and event streams end, so their clients
+ *   reconnect to a container that serves.
+ * - Finite requests already dispatched keep running until they answered, for at most `PUBLIC_PORT_FINISH_BUDGET`: a
+ *   superseded host is relaying them to the new release, and cutting them at the stop signal answered 502 to reads the
+ *   new release was serving (2026-11-26 21:43:16, `/api/symmy` after 1069 ms).
+ * - `stopping`: whatever still runs is cut and relays still waiting for an answer (an upload in flight) answer, then
+ *   the server's graceful close, which has nothing left to wait for.
+ */
 export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain, server: Server) =>
   Effect.cached(
     Effect.gen(function* closePublicPort() {
+      yield* Deferred.succeed(drain.closing, true);
+      yield* stopAccepting(server);
+      yield* busyConnections(server).pipe(
+        Effect.repeat({ schedule: Schedule.spaced('50 millis'), until: (busy) => busy === 0 }),
+        Effect.timeout(PUBLIC_PORT_FINISH_BUDGET),
+        Effect.ignore,
+      );
       yield* Deferred.succeed(drain.stopping, true);
-      yield* Effect.sync(() => {
-        server.closeIdleConnections();
-      });
       const force = yield* Effect.forkChild(
         Effect.sleep(PUBLIC_PORT_FORCE_CLOSE_AFTER).pipe(
           Effect.andThen(
@@ -1811,7 +1877,7 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
         // and only the host's stop cuts it.
         (eventStream) =>
           eventStream
-            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping)) }
+            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.closing)) }
             : { cut: Deferred.await(drain.stopping) },
         Deferred.await(drain.stopping),
       ).pipe(Effect.result);
@@ -1839,6 +1905,16 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
   yield* drain.count('failed');
   return yield* refuse(last.code, lastPeer);
 });
+
+/** Methods a host may send again: they ask for a representation and change nothing. */
+const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD']);
+
+/** Reads and drops an answer that will not be sent (a refusal's short body), bounded so it can never hold a request. */
+const discardBody = (response: HttpServerResponse.HttpServerResponse) =>
+  Match.value(response.body).pipe(
+    Match.tag('Stream', ({ stream }) => Stream.runDrain(stream).pipe(Effect.timeout('2 seconds'), Effect.ignore)),
+    Match.orElse(() => Effect.void),
+  );
 
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
@@ -1889,6 +1965,13 @@ export const hostApplication = <Failure, Requirements>(
       return HttpServerResponse.empty({ status: 404 });
     }
     const { path: upstreamPath, port } = route.value;
+    // While Core refuses this release (its authority drains, or a newer one just took the row), a request waits for the
+    // authority to settle instead of reaching a unit that would answer 503: then it is relayed to the new release, or
+    // served here when this one serves again.
+    yield* drain.hold;
+    if (yield* drain.active) {
+      return yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher);
+    }
     const started = yield* Clock.currentTimeMillis;
     const report = (problem: RelayFailure, status: number | 'cut') =>
       Clock.currentTimeMillis.pipe(
@@ -1909,16 +1992,15 @@ export const hostApplication = <Failure, Requirements>(
           }),
         ),
       );
-    return yield* relay(
+    const serveHere = relay(
       request,
       { headersTimeout: RELAY_HEADERS_TIMEOUT, origin: loopbackOrigin(port), path: upstreamPath },
       (problem) => report(problem, 'cut'),
-      // An event stream of this release ends once a newer one took over, so its browser reconnects to the new one.
       // An event stream of this release ends once a newer one took over or the host stops, so its browser reconnects;
       // every other response is cut when the host stops.
       (eventStream) =>
         eventStream
-          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.stopping)) }
+          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.closing)) }
           : { cut: Deferred.await(drain.stopping) },
       Deferred.await(drain.stopping),
     ).pipe(
@@ -1930,11 +2012,24 @@ export const hostApplication = <Failure, Requirements>(
           : report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
+    const answer = yield* serveHere;
+    // A unit can refuse before the authority watch saw the fence (its last reading is up to 100 ms old). A safe
+    // request answered 5xx while Core refuses this release is sent once more after the authority settled: it asked
+    // nothing that could have changed anything.
+    if (answer.status < 500 || !SAFE_METHODS.has(request.method) || !(yield* drain.refusedNow)) {
+      return answer;
+    }
+    yield* discardBody(answer);
+    yield* drain.count('retried');
+    yield* drain.hold;
+    return (yield* drain.active)
+      ? yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher)
+      : yield* serveHere;
   }).pipe(
-    // Once the listener stopped (the drain's end) or the host stops, every answer closes its connection, so the client's
-    // next request opens a new one, on a container that still serves.
+    // Once the listener stopped (the drain's end or a stop) or the host stops, every answer closes its connection, so
+    // the client's next request opens a new one, on a container that still serves.
     Effect.map((response) =>
-      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.stopping)
+      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.closing)
         ? HttpServerResponse.setHeader(response, 'connection', 'close')
         : response,
     ),
@@ -2035,19 +2130,37 @@ export const writeAndHold = <JournalFailure, Failure, Requirements>(
 ) => write(pointer.publish(snapshot)).pipe(Effect.tap(pointer.hold));
 
 /**
+ * How often a serving host reads the authority row. From a newer release's enter-draining commit Core refuses this
+ * release's reads and writes, and from its promote this host must relay; each reading tells the host's public port.
+ */
+export const AUTHORITY_WATCH_INTERVAL = Duration.millis(100);
+
+/** The part of the authority row the watch reads. */
+export interface WatchedAuthority {
+  readonly phase: string;
+  readonly revision: string;
+}
+
+/**
  * Resolves with the revision that replaced `ownRevision` once the authority names another one. Only a newer release
- * can take the authority row, and a superseded revision is never admitted again. A failed read is not evidence.
+ * can take the authority row, and a superseded revision is never admitted again. Every reading is observed: Core
+ * refuses this release while its own row drains and once another revision holds it. A failed read is not evidence.
  */
 export const awaitSupersedingRevision = <Failure, Requirements>(
   ownRevision: string,
-  activeRevision: Effect.Effect<Option.Option<string>, Failure, Requirements>,
-  interval: Duration.Input = Duration.seconds(1),
+  authority: Effect.Effect<Option.Option<WatchedAuthority>, Failure, Requirements>,
+  observe: (refused: boolean) => Effect.Effect<void>,
+  interval: Duration.Input = AUTHORITY_WATCH_INTERVAL,
 ) =>
   Effect.gen(function* awaitSuperseding() {
     for (;;) {
-      const active = yield* activeRevision.pipe(Effect.option, Effect.map(Option.flatten));
-      if (Option.isSome(active) && active.value !== ownRevision) {
-        return active.value;
+      const row = yield* authority.pipe(Effect.option, Effect.map(Option.flatten));
+      if (Option.isSome(row)) {
+        if (row.value.revision !== ownRevision) {
+          yield* observe(true);
+          return row.value.revision;
+        }
+        yield* observe(row.value.phase === 'draining');
       }
       yield* Effect.sleep(interval);
     }
@@ -2202,7 +2315,10 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   const drainWhenSuperseded = (ownRevision: string) =>
     awaitSupersedingRevision(
       ownRevision,
-      readAuthority.pipe(Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision))),
+      readAuthority.pipe(
+        Effect.map((rows) => Option.map(EffectArray.head(rows), ({ phase, revision }) => ({ phase, revision }))),
+      ),
+      drain.observe,
     ).pipe(
       Effect.flatMap((revision) =>
         drainSupersededHost({
@@ -2361,6 +2477,13 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
           })}`,
         ),
       ),
+      // A defect has no typed reason, and the stop line then only says "unclassified" (run 45840223941 failed its
+      // publication in 195 ms with no typed reason logged and looped until the deploy failed): name its kind and SQLSTATE, never its text.
+      Effect.tapDefect((defect) =>
+        Console.error(
+          `[app-host] composition publication died: ${Predicate.hasProperty(defect, '_tag') ? String(defect._tag) : 'untagged'} sqlstate=${Option.match(findPostgresFailure(defect), { onNone: () => 'none', onSome: ({ code }) => code })}`,
+        ),
+      ),
       observeRuntimeJob('composition-publish'),
     );
   // The renewal only ever renews: under the publication lock it refuses when the row names another release.
@@ -2505,7 +2628,12 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       { concurrency: 2 },
     );
     yield* releaseAccessProof;
-    yield* bootstrapStageSymmyDemo.pipe(timedBootStage('host.symmy-demo-bootstrap'));
+    // Hotfix: a failed demo refresh keeps the records an earlier boot applied and never blocks the release.
+    yield* bootstrapStageSymmyDemo.pipe(
+      timedBootStage('host.symmy-demo-bootstrap'),
+      Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
+    );
+    yield* reconcileErpEditorGrants.pipe(timedBootStageJudged('host.erp-editor-grants', (granted: boolean) => granted));
     const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.

@@ -210,17 +210,21 @@ describe("real order boundary", () => {
       const before = (await ownerReads()).length;
       expect((await submit()).status).toBe(200);
       const reads = (await ownerReads()).slice(before);
+      // One directory read; the process shares it for 60 s, so the next submit reads none (400f19cd47).
       expect(reads.filter(({ audience }) => audience === "commerce-market-catalog")).toHaveLength(
-        1,
+        attempt === 0 ? 1 : 0,
       );
       const merchandise = reads.filter(({ audience }) => audience === "merchandise");
-      // Selected offer, shipping methods and fresh aggregate revision are distinct owner queries.
-      expect(merchandise).toHaveLength(3);
-      expect(merchandise.map(({ query }) => query.view.storefrontCatalog?.marketId)).toEqual([
-        testMarket.marketId,
-        testMarket.marketId,
-        testMarket.marketId,
-      ]);
+      // Selected offer, shipping methods and fresh aggregate revision are distinct owner queries. The offer is shared
+      // with the directory, so the next submit reads only the shipping methods and a fresh revision.
+      const checkoutReads = merchandise.filter(({ query }) => query.view.storefrontCheckout === true);
+      const revisionReads = merchandise.filter(({ query }) => query.view.storefrontCatalog?.pageSize === 1);
+      expect(checkoutReads).toHaveLength(1);
+      expect(revisionReads).toHaveLength(1);
+      expect(merchandise).toHaveLength(attempt === 0 ? 3 : 2);
+      expect(merchandise.map(({ query }) => query.view.storefrontCatalog?.marketId)).toEqual(
+        merchandise.map(() => testMarket.marketId),
+      );
     }
   });
 

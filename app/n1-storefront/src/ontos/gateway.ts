@@ -49,7 +49,8 @@ type OwnerReadQuery =
             }
           | {
               readonly includeCategories: false;
-              readonly marketId: string;
+              /** Absent only for the company-wide catalogue revision head read. */
+              readonly marketId?: string;
               readonly mode: "categories";
             };
         readonly storefrontCheckout?: true;

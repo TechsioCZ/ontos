@@ -1,10 +1,11 @@
-// Sections of the "E-shop a obrázky" tab: publication settings (part of the tab's draft) and archiving a DEMO product
-// (a one-click command that takes the product off the e-shop, so it asks first).
+// Sections of the "E-shop a obrázky" tab: publication settings (part of the tab's draft), archiving a product (a
+// one-click command that takes the product off the e-shop, so it asks first) and restoring an archived one.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput, Switch } from '@app/admin-ui/form-controls';
-import { SectionCard } from '@app/admin-ui';
+import { SectionCard, formatDateTime } from '@app/admin-ui';
+import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { LiveShopConfirm } from './live-shop-confirm.tsx';
@@ -81,7 +82,7 @@ export const PublicationSection = ({ canWrite, form, onFormChange, takenSlug }: 
   );
 };
 
-interface DemoArchiveSectionProps {
+interface ArchiveSectionProps {
   readonly onArchived?: (() => void) | undefined;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
@@ -89,14 +90,8 @@ interface DemoArchiveSectionProps {
   readonly revision: number;
 }
 
-/** Archives a hidden DEMO product with a reason, after a confirmation that names the product. */
-export const DemoArchiveSection = ({
-  onArchived,
-  onCommitted,
-  onReload,
-  product,
-  revision,
-}: DemoArchiveSectionProps) => {
+/** Archives the product with a reason, after a confirmation that names it; it takes the product off the e-shop. */
+export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, revision }: ArchiveSectionProps) => {
   const { t } = useModernI18n();
   const k = useProductLabel();
   const failure = useCommandFailure();
@@ -107,23 +102,24 @@ export const DemoArchiveSection = ({
   const handleConfirm = () => {
     setAsking(false);
     setBusy(true);
-    runCommand({ _tag: 'ArchiveDemoProduct', id: product.id, reason: reason.trim() }, revision, (outcome) => {
+    runCommand({ _tag: 'ArchiveProduct', id: product.id, reason: reason.trim() }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
         setError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
-      onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');
+      onCommitted('Produkt archivován. Najdete ho pod filtrem Archivované.');
       onArchived?.();
     });
   };
   return (
-    <SectionCard title={t('merchandise.ui.archiveDemoProduct')}>
+    <SectionCard title={t('merchandise.ui.archiveProduct')}>
       <p className="text-fg-secondary text-sm">
-        Produkt zmizí ze seznamu i e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.
+        Produkt zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány a produkt lze
+        obnovit.
       </p>
       <FormInput
-        id="demo-archive-reason"
+        id="product-archive-reason"
         label={t('merchandise.ui.archiveReason')}
         maxLength={500}
         name="archiveReason"
@@ -131,14 +127,14 @@ export const DemoArchiveSection = ({
         value={reason}
       />
       <Button
-        data-testid="demo-archive"
+        data-testid="product-archive"
         disabled={busy || reason.trim().length < 5}
         isLoading={busy}
         onClick={() => setAsking(true)}
         theme="outlined"
         variant="danger"
       >
-        Archivovat DEMO produkt
+        Archivovat produkt
       </Button>
       {error !== null && (
         <StatusText showIcon status="error">
@@ -154,6 +150,56 @@ export const DemoArchiveSection = ({
         open={asking}
         title={k('eshop.archiveTitle', { name: product.name })}
       />
+    </SectionCard>
+  );
+};
+
+/** An archived product: who archived it and why, and the way back to the lists (inactive and hidden). */
+export const RestoreSection = ({
+  onCommitted,
+  onReload,
+  product,
+  revision,
+}: Omit<ArchiveSectionProps, 'onArchived'>) => {
+  const failure = useCommandFailure();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const archive = product.demoArchive;
+  const handleRestore = () => {
+    setBusy(true);
+    runCommand({ _tag: 'RestoreProduct', id: product.id }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        setError(failure(outcome.reason, onReload, outcome.proposal));
+        return;
+      }
+      onCommitted('Produkt obnoven. Je v seznamu produktů, neaktivní a skrytý v e-shopu.');
+    });
+  };
+  return (
+    <SectionCard title="Archivovaný produkt">
+      <p className="text-fg-secondary text-sm">
+        {archive === undefined
+          ? 'Produkt je archivovaný.'
+          : `Archivováno ${formatDateTime(DateTime.formatIso(archive.at))}. Důvod: ${archive.reason}`}
+      </p>
+      <p className="text-fg-secondary text-sm">
+        Obnovený produkt se vrátí do seznamu produktů jako neaktivní a skrytý v e-shopu.
+      </p>
+      <Button
+        data-testid="product-restore"
+        disabled={busy}
+        isLoading={busy}
+        onClick={handleRestore}
+        variant="secondary"
+      >
+        Obnovit produkt
+      </Button>
+      {error !== null && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
     </SectionCard>
   );
 };

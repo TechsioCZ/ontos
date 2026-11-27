@@ -110,6 +110,22 @@ describe('Price Group Catalog exact owner policy', () => {
       'unavailable',
     );
   });
+  it('admits a Read with the company the transaction is scoped to, and no other company', () => {
+    const read = { ...create, ...contracts[3], scope: { ...scope, legalEntityId: recordId } };
+    expect(priceGroupCatalogOwnerAuthorizationDecision({ legalEntityId: recordId, tenantId }, read)).toBe('allowed');
+    expect(priceGroupCatalogOwnerAuthorizationDecision({ tenantId }, read)).toBe('unavailable');
+    expect(priceGroupCatalogOwnerAuthorizationDecision({ legalEntityId: foreignTenantId, tenantId }, read)).toBe(
+      'unavailable',
+    );
+  });
+  it('rejects an Action with a company even when the transaction is scoped to it', () => {
+    expect(
+      priceGroupCatalogOwnerAuthorizationDecision(
+        { legalEntityId: recordId, tenantId },
+        { ...create, scope: { ...scope, legalEntityId: recordId } },
+      ),
+    ).toBe('unavailable');
+  });
   it('rejects a transaction Tenant mismatch before trusting the request', () => {
     expect(priceGroupCatalogOwnerAuthorizationDecision({ tenantId: foreignTenantId }, create)).toBe('unavailable');
   });

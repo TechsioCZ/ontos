@@ -9,7 +9,8 @@ import type { Dispatch, SetStateAction } from 'react';
  * What the save bar shows. `dirty` is a changed draft that can be saved, `invalid` a changed draft the form's own
  * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet. `ready` is a form
  * that opened with valid values Uložit can send at once (a suggested value) and nothing typed yet: savable, but not
- * unsaved input.
+ * unsaved input. `reload-required` is a draft a deploy left behind: the new release refuses this tab until the page
+ * reloads, and the draft is still unsaved.
  */
 export const SaveStateSchema = Schema.Literals([
   'idle',
@@ -21,6 +22,7 @@ export const SaveStateSchema = Schema.Literals([
   'proposed',
   'error',
   'conflict',
+  'reload-required',
 ]);
 export type SaveState = typeof SaveStateSchema.Type;
 
@@ -31,6 +33,15 @@ export type SaveState = typeof SaveStateSchema.Type;
  */
 export const SaveOutcomeSchema = Schema.Literals(['saved', 'proposed', 'conflict', 'failed']);
 export type SaveOutcome = typeof SaveOutcomeSchema.Type;
+
+/**
+ * A save the new release refused after a deploy, also once the gateway tried to move the tab to it (`releaseGone`
+ * of `@app/shared-contracts`): only a page reload loads the new release, and the draft stays unsaved.
+ */
+export type ReloadRequired = 'reload-required';
+
+/** How one save ended, as the draft controller takes it: a `SaveOutcome`, or `reload-required`. */
+export type DraftSaveOutcome = SaveOutcome | ReloadRequired;
 
 export interface DraftSaveOptions<V, R> {
   /** Whether two drafts are the same. Defaults to structural equality. */
@@ -45,7 +56,7 @@ export interface DraftSaveOptions<V, R> {
    * Sends one draft. Map every typed failure to an outcome; a defect or interruption counts as `failed`.
    * Keep the draft's base revision in a ref that `save` reads and updates with the revision the server returns.
    */
-  readonly save: (value: V) => Effect.Effect<SaveOutcome, never, R>;
+  readonly save: (value: V) => Effect.Effect<DraftSaveOutcome, never, R>;
 }
 
 /** Statuses in which the draft differs from what the server has confirmed. Live data must not replace it then. */
@@ -63,7 +74,7 @@ export const draftUnsaved = (status: SaveState): boolean =>
  * with), or one whose last save failed.
  */
 export const draftSavable = (status: SaveState): boolean =>
-  status === 'dirty' || status === 'ready' || status === 'error';
+  status === 'dirty' || status === 'ready' || status === 'error' || status === 'reload-required';
 
 type Fork<R> = <A>(effect: Effect.Effect<A, never, R>) => Fiber.Fiber<A>;
 
@@ -117,8 +128,9 @@ export class DraftSaveController<V, R = never> {
     if (this.disposed || this.saving()) {
       return;
     }
-    // A conflict holds until the server version is adopted or the draft is back at the confirmed version.
-    if (this.state === 'conflict' && !this.same(value, this.saved)) {
+    // A conflict holds until the server version is adopted or the draft is back at the confirmed version; so does a
+    // release the tab can no longer reach, which only a reload changes.
+    if ((this.state === 'conflict' || this.state === 'reload-required') && !this.same(value, this.saved)) {
       return;
     }
     this.setState(this.restingState());
@@ -231,7 +243,7 @@ export class DraftSaveController<V, R = never> {
     };
   };
 
-  private finish(sent: V, outcome: SaveOutcome): void {
+  private finish(sent: V, outcome: DraftSaveOutcome): void {
     const revisedSince = Option.match(this.running, {
       onNone: () => identity<V>,
       onSome: (running) => running.revisedSince,
@@ -255,6 +267,9 @@ export class DraftSaveController<V, R = never> {
       this.setState(this.same(this.latest, sent) ? 'proposed' : this.restingState());
     } else if (outcome === 'conflict') {
       this.setState('conflict');
+    } else if (outcome === 'reload-required') {
+      // The whole tab is behind the release, whatever was typed while the save ran.
+      this.setState(this.restingState() === 'idle' ? 'idle' : 'reload-required');
     } else {
       // A failure belongs to the draft that was sent. When the draft changed while it ran (typed, or a part taken out),
       // the current draft rests as any change after a failure does, so no retry is offered for what is not on screen.
@@ -316,7 +331,7 @@ export class DraftSaveController<V, R = never> {
     this.setState('saving');
     this.fork(
       Effect.exit(Effect.suspend(() => this.options.save(value))).pipe(
-        Effect.map((exit) => (Exit.isSuccess(exit) ? exit.value : 'failed')),
+        Effect.map((exit): DraftSaveOutcome => (Exit.isSuccess(exit) ? exit.value : 'failed')),
         Effect.flatMap((outcome) => Effect.sync(() => this.finish(value, outcome))),
       ),
     );
@@ -391,7 +406,7 @@ export interface UseDraftSaveOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 
    * Sends one draft (see `DraftSaveOptions.save`). A save of several commands that stopped after some of them went
    * through returns `PartlySaved`: its `confirmed` becomes the version later saves and "Zahodit změny" go back to.
    */
-  readonly save: (value: V) => Effect.Effect<SaveOutcome | PartlySaved<V>, never, R>;
+  readonly save: (value: V) => Effect.Effect<DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>, never, R>;
   /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }
@@ -430,21 +445,30 @@ export type RevisionedSaveResult = SaveOutcome | number;
  * later saves are compared with and `revision` their base, so the next save sends only what is still missing, and a
  * field taken back to its value before the save is sent as the change it now is.
  */
-export interface PartlySaved<V> {
+export interface PartlySaved<V, Outcome extends Exclude<DraftSaveOutcome, 'saved'> = Exclude<SaveOutcome, 'saved'>> {
   readonly confirmed: V;
-  readonly outcome: Exclude<SaveOutcome, 'saved'>;
+  readonly outcome: Outcome;
   readonly revision: number;
 }
 
 /** What a draft save answers: a `RevisionedSaveResult`, or how far a save of several commands got. */
 export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
 
+/**
+ * A `DraftSaveResult`, or a save a deploy left behind (`ReloadRequired`), also after part of it went through: what a
+ * record draft's save may answer.
+ */
+export type DraftSaveEnd<V> =
+  | DraftSaveResult<V>
+  | ReloadRequired
+  | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>;
+
 interface GenerationOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   /** The confirmed version of the first generation; `value` when absent. */
   readonly initial?: V | undefined;
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
-  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveEnd<V>, never, R>;
   readonly value: V;
 }
 
@@ -464,8 +488,8 @@ const boundTo = <V, R>(
   ...options,
   save: (value) =>
     options.save(value, base.current(), version.confirmed()).pipe(
-      Effect.map((result): SaveOutcome => {
-        if (isOutcome(result)) {
+      Effect.map((result): DraftSaveOutcome => {
+        if (result === 'reload-required' || isOutcome(result)) {
           return result;
         }
         if (Predicate.isNumber(result)) {
@@ -545,7 +569,23 @@ export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSav
   return { ...record, dirty: record.dirty && options.open !== false && !untouched, status: shown };
 };
 
+/**
+ * What a page reload keeps of an unsaved record draft ("Načíst novou verzi a obnovit úpravy"): the draft, the
+ * version it is compared with and the revision its save expects, so a change someone else saved in the meantime
+ * still ends in a conflict after the reload.
+ */
+export interface KeptDraft<V> {
+  readonly confirmed: V;
+  readonly revision: number;
+  readonly value: V;
+}
+
 export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
+  /**
+   * The draft a reload kept for this form (`RecordDraft.kept` before the reload): the form opens with it unsaved,
+   * based on its own revision. Read on the first render only.
+   */
+  readonly kept?: KeptDraft<V> | undefined;
   /** Re-reads the record (e.g. a page-data refresh); `reloadLatest` runs it after dropping the draft. */
   readonly refresh?: Effect.Effect<void, never, R>;
   /**
@@ -566,7 +606,7 @@ export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>
    * changed compares the draft with it, never with page data, which still shows the version before that save until
    * its reload lands.
    */
-  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveEnd<V>, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
   readonly server: V;
   /**
@@ -584,6 +624,8 @@ export interface RecordDraft<V> extends DraftSave<V> {
    */
   readonly discard: () => void;
   readonly draft: V;
+  /** What a reload has to keep of this form: the unsaved draft with its base, or undefined when nothing is unsaved. */
+  readonly kept: () => KeptDraft<V> | undefined;
   /** "Načíst aktuální verzi": drop the draft, continue from the server version and re-read it. */
   readonly reloadLatest: () => void;
   readonly setDraft: Dispatch<SetStateAction<V>>;
@@ -595,16 +637,17 @@ export interface RecordDraft<V> extends DraftSave<V> {
  * based on an outdated revision ends in `conflict`.
  */
 export const useRecordDraft = <V, R>(options: UseRecordDraftOptions<V, R>): RecordDraft<V> => {
-  const { refresh, runtime, server } = options;
+  const { kept, refresh, runtime, server } = options;
   const revision = options.revision ?? 0;
   const same = options.equals ?? Equal.equals;
-  const [draft, setDraft] = useState(server);
+  const [draft, setDraft] = useState(() => (kept === undefined ? server : kept.value));
   const [seen, setSeen] = useState(server);
   // The confirmed version at the moment a newer server version was not taken, because the draft was pending.
   const [passedOver, setPassedOver] = useState<Option.Option<V>>(() => Option.none());
   const { base, begin, controller, restart, setGeneration, status } = useGeneration({
     ...options,
-    revision,
+    initial: kept?.confirmed,
+    revision: kept?.revision ?? revision,
     value: draft,
   });
   const settled = !draftPending(status) && same(draft, controller.confirmed());
@@ -652,6 +695,8 @@ export const useRecordDraft = <V, R>(options: UseRecordDraftOptions<V, R>): Reco
       controller.discard();
     },
     draft,
+    kept: () =>
+      draftUnsaved(status) ? { confirmed: controller.confirmed(), revision: base.current(), value: draft } : undefined,
     reloadLatest: () => {
       adopt(seen);
       if (refresh !== undefined) {

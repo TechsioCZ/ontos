@@ -6640,7 +6640,9 @@ it.live(
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, SYMMY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, SYMMY_HANDLER_PATH), 'utf-8'));
     expect(handler).toContain(LOCAL_GOVERNED_SUPPORT_DECLARATION);
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    // Symmy's root binds its backend-only registration (2cd79df987), proved with its owner context.
+    const symmyContext = { ownerPath: 'verticals/symmy-integration', sources: new Map<string, string>() };
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler, symmyContext)).toBe(true);
     const start = handler.indexOf(LOCAL_GOVERNED_SUPPORT_DECLARATION);
     const end = handler.indexOf('\nconst symmyIntegrationReadinessLayer', start);
     expect(start).toBeGreaterThanOrEqual(0);
@@ -6658,7 +6660,7 @@ it.live(
     ];
     for (const variant of variants) {
       expect(variant).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, variant)).toBe(false);
+      expect(hasValidGovernedHttpCompositionRoot(shared, variant, symmyContext)).toBe(false);
     }
   }),
 );

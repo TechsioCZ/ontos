@@ -3,6 +3,7 @@ import { createOperation, INGRESS_BYTES } from "@ontos/storefront-runtime";
 import { jsonBody, jsonValue } from "@/ontos/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/ontos/search/route";
+import { clearSharedReads } from "@/ontos/shared-read";
 import { browserAt, serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
 
@@ -40,6 +41,8 @@ async function productQueries() {
 }
 
 beforeEach(async () => {
+  // Search answers are shared process-wide for 15 s (c974b2fe8f): each test starts as a fresh process.
+  clearSharedReads();
   network = await serveHttp(async (request) => {
     const path = new URL(request.url).pathname;
     if (path === searchPath) {

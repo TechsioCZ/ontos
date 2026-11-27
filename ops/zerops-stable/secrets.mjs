@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomBytes, randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -47,6 +47,26 @@ export async function generateTlsMaterial({ directory, name, names, runCommand =
   return { certificate: await readFile(certificate, 'utf8'), key: await readFile(key, 'utf8') };
 }
 
+/** The owners that verify Shell gateway assertions; each holds the Shell's public gateway JWKS. */
+export const GATEWAY_VERIFYING_OWNERS = Object.freeze([
+  'assortment', 'catalog', 'commerce-customer-context', 'commerce-market-catalog', 'crm', 'crm-activities',
+  'facility-operations', 'finance-billing', 'inventory', 'legal-agreements', 'merchandise', 'party-registry',
+  'payment-term-catalog', 'price-group-catalog', 'pricing', 'privacy', 'property-leasing', 'property-portfolio',
+  'sales-insights', 'sales-pipeline', 'storefront-registry', 'tagging', 'tax', 'work-tasks', 'workforce',
+]);
+
+/** The Shell's Ed25519 gateway signing key and the public JWKS its verifying owners read. */
+export function gatewayKeySecrets() {
+  const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
+  const kid = randomUUID();
+  const privateJwk = { alg: 'EdDSA', crv: 'Ed25519', d: jwk.d, kid, kty: 'OKP', use: 'sig', x: jwk.x };
+  const jwks = JSON.stringify({ keys: [{ alg: 'EdDSA', crv: 'Ed25519', key_ops: ['verify'], kid, kty: 'OKP', use: 'sig', x: jwk.x }] });
+  return {
+    shell: { ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(privateJwk) },
+    owners: Object.fromEntries(GATEWAY_VERIFYING_OWNERS.map((owner) => [owner, { ONTOS_GATEWAY_PUBLIC_JWKS: jwks }])),
+  };
+}
+
 /** Generate once. Rerunning init never rotates existing credentials. */
 export async function initializeSecrets({ config, generateTls = generateTlsMaterial, output }) {
   const directory = await mkdtemp(path.join(tmpdir(), 'ontos-stable-tls-'));
@@ -54,14 +74,23 @@ export async function initializeSecrets({ config, generateTls = generateTlsMater
   try {
     const grpc = await generateTls({ directory, name: 'grpc', names: 'DNS:spicedb,DNS:localhost,IP:127.0.0.1' });
     const http = await generateTls({ directory, name: 'http', names: 'DNS:spicedb,DNS:localhost,IP:127.0.0.1' });
+    const gateway = gatewayKeySecrets();
     const ownerSecrets = {
+      ...gateway.owners,
+      // The storefront customer realm (sign-in, account read, checkout); without it every shop's account read and order
+      // placement fails with a malformed-configuration 500.
+      'commerce-customer-context': {
+        ...gateway.owners['commerce-customer-context'],
+        COMMERCE_PORTAL_AUTH_SECRET: secret(),
+      },
       pricing: {
+        ...gateway.owners.pricing,
         ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: secret(),
         ONTOS_PRICING_CONFIRMATION_KEY_REF: `stable-${randomUUID()}`,
         ONTOS_PRICING_CONFIRMATION_KEY_VERSION: '1',
         ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF: `stable-${randomUUID()}`,
       },
-      'shell-super-app': { BETTER_AUTH_SECRET: secret(), ONTOS_EMAIL_DISPATCH_SECRET: secret() },
+      'shell-super-app': { BETTER_AUTH_SECRET: secret(), ONTOS_EMAIL_DISPATCH_SECRET: secret(), ...gateway.shell },
     };
     const bundle = {
       projectId: config.projectId,

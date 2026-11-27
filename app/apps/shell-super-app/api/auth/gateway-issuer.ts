@@ -207,6 +207,9 @@ const deniesSymmyAudience = <Principal>(
   input[organizationGovernanceReadIssuance] !== true &&
   input[organizationProcessingReadIssuance] !== true &&
   input[delegatedNativeReadIssuance] !== true &&
+  // A staff browser session may hold the audience too: the Integrace card's Symmy routes panel reads and changes
+  // routes through the module's own staff Read and Action, each decided by the module's gate for that person.
+  principal.authMethod !== 'session' &&
   (input[symmyIngressIssuance] !== true ||
     input.actor !== undefined ||
     input.sourceValidity !== undefined ||

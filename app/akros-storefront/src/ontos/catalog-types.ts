@@ -1,5 +1,5 @@
 import type { StoreCurrency } from "@/lib/format";
-import type { ProductStockStatus } from "@/lib/product-stock";
+import type { ProductStockStatus, StockBelowPackage } from "@/lib/product-stock";
 
 export interface CatalogCategory {
   id: string;
@@ -32,6 +32,8 @@ export interface CatalogProductVariant {
   stockCount: number;
   /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */
   availabilityUnknown?: boolean;
+  /** OntOS holds stock it does not sell (less than one first order); `stockCount` is then 0. */
+  belowPackage?: StockBelowPackage;
   /** Set when the OntOS price is missing, zero or in an unsupported currency: „cena není dostupná“ + reason. */
   priceUnavailableReason?: string;
   unit: string;
@@ -55,6 +57,7 @@ export type CatalogSearchVariantOffer = Pick<
   | "priceUnavailableReason"
   | "stockCount"
   | "availabilityUnknown"
+  | "belowPackage"
   | "minimumQuantity"
   | "packageQuantity"
   | "quantityStep"
@@ -99,6 +102,8 @@ interface CatalogProductDetail {
 /** The owner's aggregate of a product's active, sellable variants (listing cards carry no variant records). */
 export interface CatalogVariantSummary {
   count: number;
+  /** The smallest first orderable quantity of the variants (minimum rounded up to whole packages). */
+  firstOrderableQuantity?: number;
   minGrossPriceMinor: number | null;
   stockOnHand: number;
   units: string[];
@@ -130,9 +135,13 @@ export interface CatalogProduct {
   quantityStep?: number;
   /** kg per sales unit of a product without variants (source feed index); absent = unknown. */
   netWeight?: number;
+  /** Staff-entered length × width × height in mm (only the filled ones), e.g. "120 × 80 mm". */
+  dimensionsText?: string;
   stockCount: number;
   /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */
   availabilityUnknown?: boolean;
+  /** OntOS holds stock it does not sell (less than one first order); `stockCount` is then 0. */
+  belowPackage?: StockBelowPackage;
   /** Set when the OntOS price is missing, zero or in an unsupported currency: „cena není dostupná“ + reason. */
   priceUnavailableReason?: string;
 
@@ -170,6 +179,7 @@ export type CatalogPurchaseProduct = Pick<
   | "stockCount"
   | "priceMinor"
   | "availabilityUnknown"
+  | "belowPackage"
   | "priceUnavailableReason"
   | "netWeight"
 > & { detail: Pick<CatalogProductDetail, "priceTiers"> };
@@ -191,6 +201,7 @@ type CatalogProductSummaryStock =
       quantityStep?: number;
       status: ProductStockStatus;
       stockCount: number;
+      belowPackage?: StockBelowPackage;
       unit: string;
     }
   | {
@@ -201,6 +212,7 @@ type CatalogProductSummaryStock =
 export type CatalogProductSummary = Omit<
   CatalogProduct,
   | "additionalImageSrcs"
+  | "belowPackage"
   | "detail"
   | "minimumQuantity"
   | "packageQuantity"

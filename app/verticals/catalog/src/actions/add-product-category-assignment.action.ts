@@ -109,7 +109,7 @@ export const addProductCategoryAssignmentAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: AddProductCategoryAssignmentPayloadSchema,
     policies: [],

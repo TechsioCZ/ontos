@@ -16,16 +16,6 @@ on:
   push:
     branches:
       - demo/sales-crm
-    paths-ignore:
-      - 'docs/**'
-      - 'app/docs/**'
-      - '**/README.md'
-      - '**/AGENTS.md'
-      - '**/CLAUDE.md'
-      - '**/CONTRIBUTING.md'
-      - '**/SECURITY.md'
-      - '**/CHANGELOG.md'
-      - '**/LICENSE.md'
   workflow_dispatch:
     # The upload warm-up shares one curl invocation, and so one connection, with the upload itself
     # (scripts/zerops/push-service.sh). Its rule was: a second upload attempt means this goes back off. Job
@@ -52,9 +42,9 @@ defaults:
 # One delivery at a time; a newer push waits for the running one. A run that a newer push superseded ends once its own
 # Zerops processes have finished, before its proofs (scripts/zerops/stage-push.sh superseded): GitHub never cancels
 # it, and no two runs ever overlap on Zerops.
-concurrency:
-  group: zerops-stage
-  cancel-in-progress: false
+# Hotfix: per job, not per run. Deliveries never overlap and never get cancelled; a newer pending delivery replaces
+# an older pending one. A newer push's unit builds cancel an older run's builds at once, so an older run that has not
+# started delivering ends cancelled and the newest head goes next.
 
 env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
@@ -90,6 +80,8 @@ jobs:
       shop: ${{ steps.plan.outputs.shop }}
       n1: ${{ steps.plan.outputs.n1 }}
       build_units: ${{ steps.units.outputs.build }}
+      any: ${{ steps.plan.outputs.any }}
+      missing: ${{ steps.taken.outputs.missing }}
     env:
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
@@ -105,16 +97,6 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-
-      # A queued commit can already be obsolete when its runner starts. Fail before install/planning, not only at
-      # the mutation marker after every shard built. Never cancel a delivery whose Zerops processes are running.
-      - name: Refuse a superseded stage head before preparation
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          if [ -z "$current_head" ] || [ "$current_head" != "$GITHUB_SHA" ]; then
-            echo '::notice::Stage head changed or could not be read; this run performs no further preparation or deployment.'
-            exit 1
-          fi
 
       # Run history, not caches: the newest green run is the verified base, and every later run that changed stage
       # without being verified hands its services on. Only gh, jq and unzip: overlap the API reads with installation
@@ -250,37 +232,19 @@ jobs:
             echo 'Units must build on runners: the build matrix runs, then deliver_app delivers and verifies.'
           fi
 
-      # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
-      # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
-      - name: Mark the actual deployment attempt
-        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
-        run: |
-          # Hotfix: a run that started delivers even when a newer push arrived, so frequent pushes never starve stage.
-          echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
-
-      - name: Deliver and verify stage
-        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
-        uses: ./.github/actions/deliver-stage
+      # Hotfix: this job only plans, so a newer push plans and builds while an older one still delivers. Every
+      # delivery happens in deliver_app, one at a time; the units taken from earlier builds travel there.
+      - name: Keep the units taken from earlier builds for the delivery
+        if: steps.plan.outputs.app == 'true' && steps.units.outputs.build != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          toolchain: installed
-          app: ${{ steps.plan.outputs.app }}
-          storefront: ${{ steps.plan.outputs.storefront }}
-          shop: ${{ steps.plan.outputs.shop }}
-          n1: ${{ steps.plan.outputs.n1 }}
-          dists: ${{ runner.temp }}/dists
-          keep-units: ${{ steps.plan.outputs.app }}
-          build-units: ${{ steps.taken.outputs.missing }}
-          zerops-token: ${{ secrets.ZEROPS_TOKEN }}
-          owner-secrets: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
-          smtp-password: ${{ secrets.STAGE_SMTP_PASSWORD }}
-          shop-storefront-api-key: ${{ secrets.SHOP_STOREFRONT_API_KEY }}
-          n1-storefront-api-key: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}
-          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          cloudflare-zone-id: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
-          zerops-shared-ipv4: ${{ vars.ZEROPS_SHARED_IPV4 }}
-          # A push carries no inputs and does not warm; a dispatch's own value decides.
-          upload-warmup: ${{ github.event.inputs.upload_warmup || 'false' }}
+          name: taken-units
+          path: ${{ runner.temp }}/dists/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          compression-level: 0
+          overwrite: true
+          retention-days: 1
 
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
@@ -297,6 +261,9 @@ jobs:
     needs: [deliver]
     # Only when the units the earlier builds cannot lend exceed the Zerops build's budget (the delivery's front path).
     if: needs.deliver.outputs.build_units == 'true'
+    concurrency:
+      group: zerops-stage-build-${{ matrix.shard }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -422,7 +389,10 @@ jobs:
   deliver_app:
     name: Deliver and verify stage after the unit builds
     needs: [deliver, build]
-    if: needs.deliver.outputs.build_units == 'true' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.deliver.outputs.any == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 95
     # Downloading this run's unit builds needs `actions: read`.
@@ -448,12 +418,32 @@ jobs:
       # No install before the push: the delivery's steps up to the app upload run bash, curl, jq, tar, zstd and git
       # only, and it sets up the toolchain and the whole workspace itself once the upload is done (toolchain: none).
       - name: Download the unit builds
+        if: needs.deliver.outputs.build_units == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: zerops-units-*
           path: ${{ runner.temp }}/units
 
+      - name: Download the units taken from earlier builds
+        if: needs.deliver.outputs.build_units != 'true' && needs.deliver.outputs.app == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: taken-units
+          path: ${{ runner.temp }}/dists
+
+      - name: Take this commit's unit identities
+        if: needs.deliver.outputs.app == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-unit-identities
+          path: ${{ runner.temp }}/zerops-unit-identities
+
+      - name: Make sure the unit directory exists
+        run: mkdir -p "$RUNNER_TEMP/dists"
+
       - name: Lay out the unit builds
+        if: needs.deliver.outputs.build_units == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/dists"
           mapfile -t archives < <(find "$RUNNER_TEMP/units" -type f -name units.tar.zst | LC_ALL=C sort)
@@ -462,20 +452,48 @@ jobs:
 
       # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
       # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
-      - name: Mark the actual deployment attempt
+      # Every built run delivers, superseded or not, so constant pushes never starve stage. Only a run whose first
+      # planned service already runs a newer commit (a later run delivered first) skips, so stage never goes back.
+      - name: Skip when stage already runs a newer commit
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          PLANNED: ${{ format('app:{0}:{1} storefront:{2}:{3} shop:{4}:{5} n1:{6}:{7}', vars.ZEROPS_APP_SERVICE_ID, needs.deliver.outputs.app, vars.ZEROPS_STOREFRONT_SERVICE_ID, needs.deliver.outputs.storefront, vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID, needs.deliver.outputs.shop, vars.ZEROPS_N1_STOREFRONT_SERVICE_ID, needs.deliver.outputs.n1) }}
         run: |
-          # Hotfix: a run that started delivers even when a newer push arrived, so frequent pushes never starve stage.
+          for entry in $PLANNED; do
+            IFS=: read -r name id planned <<<"$entry"
+            [ "$planned" = true ] || continue
+            deployed="$(curl -fsS -H "Authorization: Bearer $ZEROPS_TOKEN" \
+              "https://api.app-prg1.zerops.io/api/rest/public/service-stack/$id" \
+              | jq -r '.userData[]? | select(.key == "appVersionName") | .content' || true)"
+            if [ -n "$deployed" ] && [ "$deployed" != "$GITHUB_SHA" ] &&
+              [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$deployed" --jq .status 2>/dev/null)" = ahead ]; then
+              echo "::notice::$name already runs $deployed, newer than this run; nothing to deliver"
+              exit 0
+            fi
+            break
+          done
+          echo 'current=true' >>"$GITHUB_OUTPUT"
+
+      - name: Mark the actual deployment attempt
+        id: mark
+        if: steps.head.outputs.current == 'true'
+        run: |
           echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
 
       - name: Deliver and verify stage
+        if: steps.head.outputs.current == 'true'
         uses: ./.github/actions/deliver-stage
         with:
           toolchain: none
-          app: 'true'
+          app: ${{ needs.deliver.outputs.app }}
           storefront: ${{ needs.deliver.outputs.storefront }}
           shop: ${{ needs.deliver.outputs.shop }}
           n1: ${{ needs.deliver.outputs.n1 }}
           dists: ${{ runner.temp }}/dists
+          keep-units: ${{ needs.deliver.outputs.build_units != 'true' && needs.deliver.outputs.app || 'false' }}
+          build-units: ${{ needs.deliver.outputs.build_units != 'true' && needs.deliver.outputs.missing || '' }}
           zerops-token: ${{ secrets.ZEROPS_TOKEN }}
           owner-secrets: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
           smtp-password: ${{ secrets.STAGE_SMTP_PASSWORD }}

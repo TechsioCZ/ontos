@@ -1,7 +1,12 @@
 import { Effect, Redacted, Schema } from 'effect';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { ReferenceGatewayCredentialsSchema } from './reference-gateway.ts';
 
-import { DocumentCompositionRevisionError, getDocumentCompositionRevision } from './document-composition-revision.ts';
+import {
+  DocumentCompositionRevisionError,
+  adoptCompositionRevision,
+  getDocumentCompositionRevision,
+} from './document-composition-revision.ts';
 import { isDocumentAppDenied } from './document-denied-apps.ts';
 import { GatewayContextResponseSchema, GatewayForbiddenProblemSchema, issueGatewayContext } from './gateway-context.ts';
 import type {
@@ -52,6 +57,110 @@ const skippingDeniedAudiences =
 
 const browserGatewayContextIssuer = skippingDeniedAudiences(issueGatewayContext);
 
+const fieldOf = (value: unknown, key: string): unknown =>
+  typeof value === 'object' && value !== null && key in value ? Reflect.get(value, key) : undefined;
+
+const httpStatusOf = (error: unknown): unknown => fieldOf(fieldOf(error, 'response'), 'status');
+
+/**
+ * A deploy switched the release this document was opened with: the Shell refuses an assertion for the old revision,
+ * or the module API refuses the old revision or module build with a plain 409.
+ */
+const releaseChanged = (error: unknown): boolean => {
+  const tag = fieldOf(error, '_tag');
+  if (tag === 'GatewayReloadRequiredProblem') {
+    return true;
+  }
+  if (tag === 'DocumentCompositionRevisionError') {
+    return fieldOf(error, 'reason') === 'revision-mismatch';
+  }
+  if (tag === 'HttpClientError') {
+    const url = fieldOf(fieldOf(error, 'request'), 'url');
+    return httpStatusOf(error) === 409 && typeof url === 'string' && url.includes('/module-api/');
+  }
+  return false;
+};
+
+/**
+ * The tab can no longer reach the release its document was built from: only a page reload loads the new one
+ * (`reloadKeepingDrafts` keeps the unsaved drafts across it).
+ */
+export const releaseGone = (error: unknown): boolean => {
+  const tag = fieldOf(error, '_tag');
+  return tag === 'DocumentCompositionRevisionError' || tag === 'GatewayReloadRequiredProblem';
+};
+
+/** Short outages while a deploy switches instances (the owner's permission check, the Shell issuer). */
+const transientlyUnavailable = (error: unknown): boolean =>
+  fieldOf(error, 'code') === 'action_permission_check_failed' ||
+  fieldOf(error, '_tag') === 'GatewayUnavailableProblem' ||
+  fieldOf(error, 'status') === 503 ||
+  httpStatusOf(error) === 503 ||
+  httpStatusOf(error) === 502;
+
+const revisionMetaPattern = /<meta\b[^>]*\bname="ontos-composition-revision"[^>]*>/u;
+const revisionContentPattern = /\bcontent="([\da-f]{64})"/u;
+
+/** The release the Shell serves now, read from a fresh render of this page (the document's own pin stays sealed). */
+const currentReleaseRevision = HttpClient.HttpClient.pipe(
+  Effect.flatMap((client) =>
+    client.execute(
+      HttpClientRequest.get(globalThis.location.href, {
+        headers: { accept: 'text/html', 'cache-control': 'no-cache' },
+      }),
+    ),
+  ),
+  Effect.flatMap((response) => (response.status === 200 ? response.text : Effect.succeed(''))),
+  Effect.map((html) => {
+    const tag = revisionMetaPattern.exec(html)?.[0];
+    return tag === undefined ? undefined : revisionContentPattern.exec(tag)?.[1];
+  }),
+  // @effect-diagnostics-next-line strictEffectProvide:off -- This browser read is its own entry point: the operation gateway's callers provide no HttpClient, as the generated gateway clients carry their own transport.
+  Effect.provide(FetchHttpClient.layer),
+  Effect.timeout('15 seconds'),
+  Effect.orElseSucceed((): string | undefined => undefined),
+);
+
+/** Attempts of one call across a deploy: the release switch takes about a minute on stage. */
+const RECOVERY_ROUNDS = 6;
+const recoveryDelayMillis = (round: number) => (round === 0 ? 0 : 1500 * round);
+
+/**
+ * Runs `once` and, when a deploy got in the way, adopts the new release and runs it again with the same inputs (the
+ * caller's idempotency key included), so an open editor saves without a reload. When the new release still refuses
+ * the tab after every round, the call fails as one `DocumentCompositionRevisionError` (`releaseGone`), whichever
+ * refusal came last, so every editor offers the reload. Other failures pass through.
+ */
+const recoveringAcrossDeploys = <Success, Failure>(once: Effect.Effect<Success, Failure>) => {
+  const recover = (error: Failure, round: number): Effect.Effect<Success, Failure | DocumentCompositionRevisionError> => {
+    if (!('document' in globalThis)) {
+      return Effect.fail(error);
+    }
+    if (round >= RECOVERY_ROUNDS) {
+      return Effect.fail(
+        releaseChanged(error) ? new DocumentCompositionRevisionError({ cause: error, reason: 'revision-mismatch' }) : error,
+      );
+    }
+    const retry = once.pipe(Effect.catch((error_: Failure) => recover(error_, round + 1)));
+    if (releaseChanged(error)) {
+      return Effect.sleep(recoveryDelayMillis(round)).pipe(
+        Effect.andThen(currentReleaseRevision),
+        Effect.flatMap((revision) => {
+          if (revision !== undefined) {
+            adoptCompositionRevision(revision);
+          }
+          return retry;
+        }),
+      );
+    }
+    if (transientlyUnavailable(error)) {
+      return Effect.sleep(500 + recoveryDelayMillis(round)).pipe(Effect.andThen(retry));
+    }
+    return Effect.fail(error);
+  };
+  return once.pipe(Effect.catch((error: Failure) => recover(error, 0)));
+};
+
 const makeOperationGatewayWithIssuer = <Audience extends string, IssuerFailure>(
   audience: Audience,
   issuer: OperationGatewayIssuer<Audience, IssuerFailure>,
@@ -66,21 +175,23 @@ const makeOperationGatewayWithIssuer = <Audience extends string, IssuerFailure>(
       attempt: OperationGatewayAttempt<Success, AttemptFailure>,
       options: GatewayContextClientOptions = {},
     ) =>
-      getDocumentCompositionRevision().pipe(
-        Effect.flatMap((documentRevision) =>
-          acquireFor(documentRevision, options).pipe(
-            Effect.flatMap(
-              ({
-                apiBaseUrl,
-                compositionRevision,
-                token,
-              }): Effect.Effect<Success, AttemptFailure | DocumentCompositionRevisionError> => {
-                if (compositionRevision !== documentRevision) {
-                  return Effect.fail(new DocumentCompositionRevisionError({ reason: 'revision-mismatch' }));
-                }
-                const authorization = Redacted.make(`Bearer ${token}`);
-                return attempt(Redacted.value(authorization), { apiBaseUrl, compositionRevision });
-              },
+      recoveringAcrossDeploys(
+        getDocumentCompositionRevision().pipe(
+          Effect.flatMap((documentRevision) =>
+            acquireFor(documentRevision, options).pipe(
+              Effect.flatMap(
+                ({
+                  apiBaseUrl,
+                  compositionRevision,
+                  token,
+                }): Effect.Effect<Success, AttemptFailure | DocumentCompositionRevisionError> => {
+                  if (compositionRevision !== documentRevision) {
+                    return Effect.fail(new DocumentCompositionRevisionError({ reason: 'revision-mismatch' }));
+                  }
+                  const authorization = Redacted.make(`Bearer ${token}`);
+                  return attempt(Redacted.value(authorization), { apiBaseUrl, compositionRevision });
+                },
+              ),
             ),
           ),
         ),

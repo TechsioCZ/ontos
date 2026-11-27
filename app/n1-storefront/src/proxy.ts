@@ -6,6 +6,11 @@ export const proxy = (request: NextRequest) => {
   const headers = new Headers(request.headers);
   headers.set("x-n1-locale", request.nextUrl.pathname.split("/")[1] === "en" ? "en" : "cs");
   headers.set("x-n1-request-origin", request.nextUrl.origin);
+  // Product/category layouts decide 404 only for documents; Next hides the RSC headers from headers().
+  headers.set(
+    "x-n1-document",
+    request.headers.has("rsc") || request.headers.has("next-router-prefetch") ? "0" : "1",
+  );
   return NextResponse.next({ request: { headers } });
 };
 

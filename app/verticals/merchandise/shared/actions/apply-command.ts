@@ -97,7 +97,7 @@ export const BulkProductPatchSchema = Schema.Struct({
 });
 export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
-/** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
+/** Editable storefront category content, its public URL slug and its place in the tree (parent; null = root). */
 export const CategoryPatchSchema = Schema.Struct({
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
   heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
@@ -105,8 +105,12 @@ export const CategoryPatchSchema = Schema.Struct({
   imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
   longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
   name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  parentId: Schema.optionalKey(Schema.OptionFromNullOr(CatalogCategoryIdSchema)),
   position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   published: Schema.optionalKey(Schema.Boolean),
+  slug: Schema.optionalKey(
+    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200), Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)),
+  ),
 });
 export type CategoryPatch = typeof CategoryPatchSchema.Type;
 
@@ -333,9 +337,22 @@ const ApplyCreateOrderCommandSchema = Schema.TaggedStruct('CreateOrder', {
   partyId: PartyIdSchema,
 });
 
-const ApplyArchiveDemoProductCommandSchema = Schema.TaggedStruct('ArchiveDemoProduct', {
+/**
+ * Takes a product off the admin lists and the e-shop (inactive, hidden), keeping its stock ledger, orders and audit.
+ * RestoreProduct brings it back to the lists, still inactive and hidden until someone publishes it again.
+ */
+const ApplyArchiveProductCommandSchema = Schema.TaggedStruct('ArchiveProduct', {
   id: ProductIdSchema,
   reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+});
+
+const ApplyRestoreProductCommandSchema = Schema.TaggedStruct('RestoreProduct', {
+  id: ProductIdSchema,
+});
+
+/** Deletes a storefront category that has no subcategory and no live (not archived) product. */
+const ApplyDeleteCategoryCommandSchema = Schema.TaggedStruct('DeleteCategory', {
+  id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
 });
 
 /** Reads the company's VAT rates from Tax now and reprices stored gross prices when they changed. */
@@ -418,13 +435,15 @@ export const MerchandiseCommandSchema = Schema.Union([
    * including after it has products. Products join a category through UpdateProduct `categoryId`.
    */
   ApplyCreateCategoryCommandSchema,
+  ApplyDeleteCategoryCommandSchema,
   ApplyUpdateProductCommandSchema,
   ApplyChangeProductImagesCommandSchema,
   ApplyChangePriceCommandSchema,
   ApplyBulkUpdateProductsCommandSchema,
   ApplyRecordStockMovementCommandSchema,
   ApplyCreateOrderCommandSchema,
-  ApplyArchiveDemoProductCommandSchema,
+  ApplyArchiveProductCommandSchema,
+  ApplyRestoreProductCommandSchema,
   /**
    * AKROS administrators only: replaces this company's catalog, stock and orders with the predictable demo baseline
    * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
@@ -561,6 +580,9 @@ export const ManageCatalogPayloadSchema = Schema.Struct({
     ApplyBulkUpdateProductsCommandSchema,
     ApplyCreateCategoryCommandSchema,
     ApplyUpdateCategoryCommandSchema,
+    ApplyDeleteCategoryCommandSchema,
+    ApplyArchiveProductCommandSchema,
+    ApplyRestoreProductCommandSchema,
     ApplyCreateOrderCommandSchema,
     ApplyEditOrderCommandSchema,
     ApplyLinkOrderCustomerCommandSchema,
@@ -580,11 +602,7 @@ export const ManageMarketsPayloadSchema = Schema.Struct({
 });
 
 export const CleanupDemoPayloadSchema = Schema.Struct({
-  command: Schema.Union([
-    ApplyArchiveDemoProductCommandSchema,
-    ApplyRemoveDemoOrderCommandSchema,
-    ApplyResetDemoDataCommandSchema,
-  ]),
+  command: Schema.Union([ApplyRemoveDemoOrderCommandSchema, ApplyResetDemoDataCommandSchema]),
   expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
 });
 

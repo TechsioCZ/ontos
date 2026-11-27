@@ -4,11 +4,14 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Option, Schema } from 'effect';
-import { useState } from 'react';
+import { keepDraftOnReload, keptDraft } from '@app/shared-contracts';
+import { Effect, Equal, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
 
 import { AddProductCategoryAssignmentPayloadSchema } from '../../shared/actions/add-product-category-assignment.ts';
 import { AssignSkuPayloadSchema } from '../../shared/actions/assign-sku.ts';
+import { ConfirmVariantCombinationPayloadSchema } from '../../shared/actions/confirm-variant-combination.ts';
+import { GovernVariantAxesPayloadSchema } from '../../shared/actions/govern-variant-axes.ts';
 import {
   CreateProductCategoryPayloadSchema,
   CreateProductCategoryResultSchema,
@@ -25,8 +28,11 @@ import { RetireProductPayloadSchema } from '../../shared/actions/retire-product.
 import { RetireVariantPayloadSchema } from '../../shared/actions/retire-variant.ts';
 import { UpdateProductPayloadSchema } from '../../shared/actions/update-product.ts';
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
+import { erpStorefrontStatus } from './erp-storefront-status.ts';
 import { executeAddProductCategoryAssignment } from '../api/add-product-category-assignment-action-client.ts';
 import { executeAssignSku } from '../api/assign-sku-action-client.ts';
+import { executeConfirmVariantCombination } from '../api/confirm-variant-combination-action-client.ts';
+import { executeGovernVariantAxes } from '../api/govern-variant-axes-action-client.ts';
 import { executeCreateProductCategory } from '../api/create-product-category-action-client.ts';
 import { executeReactivateProduct } from '../api/reactivate-product-action-client.ts';
 import { executeReactivateVariant } from '../api/reactivate-variant-action-client.ts';
@@ -39,7 +45,9 @@ import { executeSetVariantLocalizedFacts } from '../api/set-variant-localized-fa
 import { executeUpdateProduct } from '../api/update-product-action-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { requestId } from './browser-crypto.ts';
+import { ErpMediaSection } from './erp-media-section.tsx';
 import { productListData, variantFiguresData } from './page-data.ts';
+import { RELOAD_REQUIRED, ReloadRequiredNotice, stepFailure } from './reload-required-notice.tsx';
 
 type Lifecycle = ProductPageItem['lifecycle'];
 type CategoryName = ProductPageItem['categories'][number];
@@ -84,7 +92,40 @@ interface Problem {
   readonly _tag: string;
 }
 
-const describe = (step: string, problem: Problem): string => `${step}: ${problem._tag}`;
+const describe = (step: string, problem: Problem): string => stepFailure(step, problem);
+
+/** The name a reload that keeps drafts gives this product's dialog; the list reopens the dialog when one was kept. */
+export const erpProductKeepKey = (item: ProductPageItem) => `catalog:erp-product:${item.productRef.resourceId}`;
+
+/** What a reload keeps of the dialog: the draft, the product it was typed over and the categories created meanwhile. */
+interface KeptProductDraft {
+  readonly base: Draft;
+  readonly created: readonly CategoryName[];
+  readonly draft: Draft;
+}
+
+/**
+ * The user's changes of a kept draft over the product as it is now: a field the user left alone takes the current
+ * value, so a step that already went through before the reload is not sent again, and nothing typed is lost.
+ */
+const changesOver = (current: Draft, kept: KeptProductDraft): Draft => {
+  const pick = <K extends keyof Draft>(key: K): Draft[K] =>
+    Equal.equals(kept.draft[key], kept.base[key]) ? current[key] : kept.draft[key];
+  return {
+    categoryIds: pick('categoryIds'),
+    description: pick('description'),
+    lifecycle: pick('lifecycle'),
+    name: pick('name'),
+    reason: pick('reason'),
+    variants: Object.fromEntries(
+      Object.entries(current.variants).map(([id, variant]) => {
+        const typed = kept.draft.variants[id];
+        const was = kept.base.variants[id];
+        return [id, typed === undefined || was === undefined || Equal.equals(typed, was) ? variant : typed];
+      }),
+    ),
+  };
+};
 
 type Execute<P> = (
   payload: P,
@@ -99,6 +140,51 @@ const send = <P, I>(step: string, schema: Schema.Codec<P, I>, encoded: I, execut
     Effect.mapError((problem) => describe(step, problem)),
   );
 
+/**
+ * Catalog activates a Product only with an ACTIVE Variant, and a Variant becomes ACTIVE only by confirming its
+ * combination against the Product's axis basis. An ERP draft has no basis yet: initialize it axis-free (a basis that
+ * already exists answers a revision conflict, which is fine), then confirm every work-in-progress Variant at revision 1.
+ */
+const activationSteps = (item: ProductPageItem, draft: Draft) => {
+  const pending = item.variants.filter(
+    (variant) =>
+      variant.lifecycle === 'WORK_IN_PROGRESS' && draft.variants[variant.variantRef.resourceId]?.retired !== true,
+  );
+  if (pending.length === 0) {
+    return [];
+  }
+  const basis = send(
+    'Osy variant',
+    GovernVariantAxesPayloadSchema,
+    {
+      axes: [],
+      classification: { evidenceRefs: [evidence], kind: 'AXIS_INITIALIZATION', reason: draft.reason },
+      expectedAxisRevision: 0,
+      productRef: item.productRef,
+      reason: draft.reason,
+    },
+    executeGovernVariantAxes,
+  ).pipe(Effect.ignore);
+  return [
+    basis,
+    ...pending.map((variant) =>
+      send(
+        `Aktivace varianty ${variant.sku ?? variant.variantRef.resourceId.slice(0, 8)}`,
+        ConfirmVariantCombinationPayloadSchema,
+        {
+          evidenceRefs: [evidence],
+          expectedAxisRevision: 1,
+          expectedVariantRevision: variant.revision ?? 1,
+          productRef: item.productRef,
+          reason: draft.reason,
+          variantRef: variant.variantRef,
+        },
+        executeConfirmVariantCombination,
+      ),
+    ),
+  ];
+};
+
 const lifecycleStep = (item: ProductPageItem, draft: Draft) => {
   if (draft.lifecycle === item.lifecycle) {
     return [];
@@ -111,6 +197,7 @@ const lifecycleStep = (item: ProductPageItem, draft: Draft) => {
     return [send('Vyřazení produktu', RetireProductPayloadSchema, base, executeRetireProduct)];
   }
   return [
+    ...(draft.lifecycle === 'ACTIVE' ? activationSteps(item, draft) : []),
     send(
       'Stav produktu',
       UpdateProductPayloadSchema,
@@ -262,15 +349,35 @@ interface ProductEditDialogProps {
   /** Categories the page knows by name (this product's and the other listed products'). */
   readonly categories: readonly CategoryName[];
   readonly item: ProductPageItem;
+  /** The signed-in company, whose e-shop the storefront status is for. */
+  readonly legalEntityId?: string;
   /** The locale the list reads, so the text revision the dialog sends matches. */
   readonly locale: string;
   readonly onClose: () => void;
 }
 
-export const ProductEditDialog = ({ categories, item, locale, onClose }: ProductEditDialogProps) => {
-  const [draft, setDraft] = useState<Draft>(() => draftOf(item));
+export const ProductEditDialog = ({
+  categories,
+  item,
+  legalEntityId = '',
+  locale,
+  onClose,
+}: ProductEditDialogProps) => {
+  const keepKey = erpProductKeepKey(item);
+  const [kept] = useState(() => keptDraft<KeptProductDraft>(keepKey));
+  const [draft, setDraft] = useState<Draft>(() => (kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept)));
   const [newCategory, setNewCategory] = useState('');
-  const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>([]);
+  const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>(() => kept?.created ?? []);
+  useEffect(
+    () =>
+      keepDraftOnReload(keepKey, () => {
+        const base = draftOf(item);
+        return Equal.equals(draft, base)
+          ? undefined
+          : ({ base, created: createdCategories, draft } satisfies KeptProductDraft);
+      }),
+    [createdCategories, draft, item, keepKey],
+  );
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -292,7 +399,11 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
       onClose();
       return;
     }
-    setFailure(`Uložení se nezdařilo – ${message}. Ostatní změny před touto chybou byly uloženy.`);
+    setFailure(
+      message === RELOAD_REQUIRED
+        ? RELOAD_REQUIRED
+        : `Uložení se nezdařilo – ${message}. Ostatní změny před touto chybou byly uloženy.`,
+    );
   };
   const save = () => {
     if (draft.reason.trim() === '') {
@@ -335,7 +446,7 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
         Effect.match({
           onFailure: (text: string) => {
             setCreating(false);
-            setFailure(`Kategorii se nepodařilo vytvořit – ${text}.`);
+            setFailure(text === RELOAD_REQUIRED ? text : `Kategorii se nepodařilo vytvořit – ${text}.`);
           },
           onSuccess: (result) => {
             setCreating(false);
@@ -387,6 +498,37 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
       title={title}
     >
       <div className="flex flex-col gap-200">
+        {Option.match(erpStorefrontStatus(item, legalEntityId), {
+          onNone: () => null,
+          onSome: (status) => (
+            <div
+              className="flex flex-col gap-50 rounded-md border border-border-primary p-150 text-sm"
+              data-storefront-status={status.visible ? 'visible' : 'hidden'}
+            >
+              <span className="flex flex-wrap items-center gap-100">
+                <span className="font-semibold">{status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}</span>
+                {status.href !== undefined && (
+                  <a className="underline" href={status.href} rel="noreferrer" target="_blank">
+                    Otevřít v e-shopu
+                  </a>
+                )}
+              </span>
+              {status.reasons.map((reason) => (
+                <span key={reason.why}>
+                  <span className="font-medium">{reason.why}</span> Co změnit: {reason.fix}
+                </span>
+              ))}
+              {status.notes.map((note) => (
+                <span className="text-fg-secondary" key={note}>
+                  {note}
+                </span>
+              ))}
+              <span className="text-fg-secondary">
+                Stav na e-shopu odpovídá uloženému produktu; po uložení se obnoví.
+              </span>
+            </div>
+          ),
+        })}
         <label className="flex flex-col gap-50 text-sm">
           <span className="font-medium">Název ({locale})</span>
           <Input
@@ -492,6 +634,7 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
             );
           })}
         </fieldset>
+        <ErpMediaSection item={item} reason={draft.reason} />
         <label className="flex flex-col gap-50 text-sm" htmlFor="catalog-product-edit-reason">
           <span className="font-medium">Důvod změny</span>
           <Input
@@ -503,9 +646,10 @@ export const ProductEditDialog = ({ categories, item, locale, onClose }: Product
           />
         </label>
         <p className="text-fg-secondary text-xs">
-          Obrázky, cenu a sklad zde upravit nelze: cena a sklad patří modulům Ceny a Sklad.
+          Obrázek se ukládá hned po výběru souboru. Cenu a sklad upravíte u varianty (Cena a sklad).
         </p>
-        {failure !== null && (
+        {failure === RELOAD_REQUIRED && <ReloadRequiredNotice />}
+        {failure !== null && failure !== RELOAD_REQUIRED && (
           <StatusText showIcon status="error">
             {failure}
           </StatusText>

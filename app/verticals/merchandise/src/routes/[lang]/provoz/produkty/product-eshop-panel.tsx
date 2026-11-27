@@ -9,7 +9,7 @@ import { Match, Option } from 'effect';
 import { useState } from 'react';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import type { PanelProps } from './product-eshop.tsx';
-import { DemoArchiveSection, PublicationSection } from './product-eshop-sections.tsx';
+import { ArchiveSection, PublicationSection, RestoreSection } from './product-eshop-sections.tsx';
 import { eshopCommandsOf, eshopDraftOf, eshopPartlyConfirmed, slugInvalidOf } from './product-eshop-draft.ts';
 import type { EshopDraft } from './product-eshop-draft.ts';
 import { useProductLabel } from './product-form-labels.ts';
@@ -54,6 +54,7 @@ const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelP
         Option.getOrUndefined,
       ),
     isValid: (value) => !slugInvalidOf(value.slug) && !(takenSlug !== null && takenSlug === value.slug.trim()),
+    keepAs: `eshop:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
     partlyConfirmed: eshopPartlyConfirmed,
@@ -110,14 +111,17 @@ export const EshopPanel = (props: EshopPanelProps) => {
           )}
         </div>
       </SectionCard>
-      {canWrite && !product.active && product.published === false && (
-        <DemoArchiveSection
+      {canWrite && product.demoArchive === undefined && (
+        <ArchiveSection
           onArchived={onArchived}
           onCommitted={onCommitted}
           onReload={onReload}
           product={product}
           revision={revision}
         />
+      )}
+      {canWrite && product.demoArchive !== undefined && (
+        <RestoreSection onCommitted={onCommitted} onReload={onReload} product={product} revision={revision} />
       )}
       <PublicationSection
         canWrite={canWrite}

@@ -22,6 +22,8 @@ export interface CatalogContentPanelProps {
   readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category: CategoryTrail | null;
+  /** Path labels of the product's categories (additional ones included). */
+  readonly categoryTrails?: readonly CategoryTrail[];
   /** The company has a storefront category tree. */
   readonly hasCategoryTree: boolean;
   readonly onCommitted: (message: string) => void;
@@ -53,9 +55,9 @@ interface ContentDraft {
   readonly parameters: readonly ParameterDraft[];
 }
 
-const contentDraftOf = (product: ProductRecord): ContentDraft => ({
+const contentDraftOf = (product: ProductRecord, trails: readonly CategoryTrail[] = []): ContentDraft => ({
   category: 'keep',
-  extras: contentExtrasOf(product),
+  extras: contentExtrasOf(product, trails),
   flags: {
     isAction: product.isAction === true,
     isNew: product.isNew === true,
@@ -75,9 +77,9 @@ const parametersInvalidOf = (parameters: readonly ParameterDraft[]) =>
   parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '');
 
 /** The UpdateProduct patch of a content draft. */
-const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, product: ProductRecord): ProductPatch => {
-  const picked = draft.category === 'keep' ? category : draft.category;
-  const categoryId = picked?.id ?? product.categoryId;
+const contentPatchOf = (draft: ContentDraft, product: ProductRecord): ProductPatch => {
+  // 'keep' never touches the category: re-linking a free-text category to its tree match would rename it.
+  const categoryId = draft.category === 'keep' ? product.categoryId : (draft.category?.id ?? product.categoryId);
   const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
   if (categoryId !== undefined && categoryId !== product.categoryId) {
     patch.categoryId = categoryId;
@@ -102,6 +104,7 @@ export const CatalogContentPanel = ({
   active = true,
   canWrite,
   category,
+  categoryTrails = [],
   hasCategoryTree,
   onCommitted,
   onReload,
@@ -109,7 +112,7 @@ export const CatalogContentPanel = ({
   revision,
 }: CatalogContentPanelProps) => {
   const { t } = useModernI18n();
-  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product));
+  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product, categoryTrails));
   const picked = form.category === 'keep' ? category : form.category;
   const { flags, imageAlt, parameters } = form;
   const nextKey = useRef((product.parameters ?? []).length);
@@ -120,8 +123,9 @@ export const CatalogContentPanel = ({
   const setParameters = (update: (current: readonly ParameterDraft[]) => readonly ParameterDraft[]) =>
     setForm((current) => ({ ...current, parameters: update(current.parameters) }));
   const save = useProductTabSave<ContentDraft>({
-    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, category, product) }),
+    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, product) }),
     isValid: (value) => !parametersInvalidOf(value.parameters) && !contentExtrasInvalid(value.extras),
+    keepAs: `content:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
     reset: (next) => {
@@ -129,7 +133,7 @@ export const CatalogContentPanel = ({
       nextKey.current = Math.max(nextKey.current, next.parameters.length);
     },
     revision,
-    server: contentDraftOf(product),
+    server: contentDraftOf(product, categoryTrails),
     value: form,
   });
 

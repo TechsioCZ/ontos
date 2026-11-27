@@ -17,6 +17,10 @@ export interface SaveLabels {
   readonly leaveTitle: string;
   /** Status of a draft handed over for approval. */
   readonly proposed: string;
+  /** Reload-required only: the button that reloads the page and puts the unsaved drafts back. */
+  readonly reloadKeepingDrafts: string;
+  /** Status of a draft a deploy left behind: the new release refuses this tab until the page reloads. */
+  readonly reloadRequired: string;
   /** Conflict only: the action that loads the version someone else saved. */
   readonly reloadLatest: string;
   /** The Save button, here and in the confirmation. */
@@ -38,7 +42,9 @@ const cs: SaveLabels = {
   leaveDescription: 'Máte neuložené změny. Chcete je před odchodem uložit?',
   leaveTitle: 'Neuložené změny',
   proposed: 'Odesláno ke schválení – změna zatím nebyla provedena',
+  reloadKeepingDrafts: 'Načíst novou verzi a obnovit úpravy',
   reloadLatest: 'Načíst aktuální verzi',
+  reloadRequired: 'Mezitím byla nasazena nová verze aplikace. Načtěte stránku, vaše úpravy se obnoví.',
   save: 'Uložit',
   saved: 'Uloženo',
   saving: 'Ukládám…',
@@ -54,7 +60,9 @@ const sk: SaveLabels = {
   leaveDescription: 'Máte neuložené zmeny. Chcete ich pred odchodom uložiť?',
   leaveTitle: 'Neuložené zmeny',
   proposed: 'Odoslané na schválenie – zmena zatiaľ nebola vykonaná',
+  reloadKeepingDrafts: 'Načítať novú verziu a obnoviť úpravy',
   reloadLatest: 'Načítať aktuálnu verziu',
+  reloadRequired: 'Medzitým bola nasadená nová verzia aplikácie. Načítajte stránku, vaše úpravy sa obnovia.',
   save: 'Uložiť',
   saved: 'Uložené',
   saving: 'Ukladám…',
@@ -70,7 +78,9 @@ const en: SaveLabels = {
   leaveDescription: 'You have unsaved changes. Do you want to save them before you leave?',
   leaveTitle: 'Unsaved changes',
   proposed: 'Sent for approval – the change has not been applied yet',
+  reloadKeepingDrafts: 'Load the new version and restore changes',
   reloadLatest: 'Load the latest version',
+  reloadRequired: 'A new version of the app was deployed in the meantime. Reload the page; your changes will be restored.',
   save: 'Save',
   saved: 'Saved',
   saving: 'Saving…',

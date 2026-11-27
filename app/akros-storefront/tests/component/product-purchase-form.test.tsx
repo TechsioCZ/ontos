@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
+import { ProductVariantsProvider } from "@/features/cart/product-variants-context";
+import { getVariantRangeFilters } from "@/lib/product-variant-filters";
+import { compareVariants, toFilterBounds, VARIANT_PAGE_SIZE } from "@/lib/product-variant-table";
 import type { CatalogProduct, CatalogProductVariant } from "@/ontos/catalog-types";
 
 import { browserAt, serveHttp } from "../support/http";
@@ -453,6 +456,54 @@ describe("ProductPurchaseForm", () => {
     );
   });
 
+  it("pages a long table and reads every variant once for filters and later pages", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 45 }, (_, index) => ({
+      ...variants[0],
+      id: `item-${index + 1}`,
+      sku: `SKU-${index + 1}`,
+      label: `M ${index + 2} × 5`,
+    }));
+    const sorted = [...many].sort(compareVariants);
+    variantReads = 0;
+    render(
+      <CartProvider storage={null}>
+        <ProductVariantsProvider slug={product.slug}>
+          <ProductPurchaseForm
+            product={product}
+            variants={sorted.slice(0, VARIANT_PAGE_SIZE)}
+            variantPage={{
+              total: many.length,
+              matching: many.length,
+              filters: getVariantRangeFilters(product, many).map(toFilterBounds),
+            }}
+          />
+        </ProductVariantsProvider>
+        <CartLines />
+      </CartProvider>,
+    );
+    variantsAnswer = () => Response.json({ product: {}, variants: many });
+    const table = screen.getByRole("table", { name: "Varianty produktu" });
+    expect(within(table).getAllByRole("row")).toHaveLength(VARIANT_PAGE_SIZE + 1);
+    expect(screen.getByText("Zobrazeno 45 z 45 variant")).toBeTruthy();
+    expect(variantReads).toBe(0);
+    await user.click(screen.getByRole("button", { name: "Strana 3 z 3" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(5 + 1));
+    expect(within(table).getByRole("link", { name: sorted[44].label })).toBeTruthy();
+    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
+    await user.clear(minimum);
+    await user.type(minimum, "40");
+    await waitFor(() => expect(screen.getByText("Zobrazeno 7 z 45 variant")).toBeTruthy());
+    expect(within(table).getAllByRole("row")).toHaveLength(7 + 1);
+    await user.click(screen.getByRole("button", { name: "Koupit M 46 × 5" }));
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({ variantId: "item-45", quantity: 10 }),
+      ]),
+    );
+    expect(variantReads).toBe(1);
+  });
+
   it("adds the selected source variant with its minimum order quantity", async () => {
     const user = userEvent.setup();
 
@@ -748,6 +799,9 @@ describe("ProductPurchaseForm", () => {
 // Every purchase awaits a verdict served over real loopback HTTP.
 let network: Awaited<ReturnType<typeof serveHttp>>;
 let answer: Parameters<typeof serveHttp>[0];
+let variantsAnswer: Parameters<typeof serveHttp>[0] = () =>
+  new Response("Unknown", { status: 404 });
+let variantReads = 0;
 beforeEach(async () => {
   answer = async (request) => {
     const { cart } = await request.json();
@@ -762,6 +816,10 @@ beforeEach(async () => {
     });
   };
   network = await serveHttp((request) => {
+    if (new URL(request.url).pathname.startsWith("/api/ontos/product-variants/")) {
+      variantReads += 1;
+      return variantsAnswer(request);
+    }
     if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
       return new Response("Unknown endpoint", { status: 404 });
     return answer(request);

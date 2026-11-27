@@ -73,6 +73,10 @@ const unitApplication = (release: string, seen: Ref.Ref<number>) =>
     if (pathname === '/slow') {
       yield* Effect.sleep('1500 millis');
     }
+    if (pathname === '/refused' && release === 'old') {
+      // What a unit of a release Core refuses answers: the request never reached the owner's work.
+      return HttpServerResponse.text('refused', { status: 503 });
+    }
     if (pathname === '/events') {
       return HttpServerResponse.stream(
         Stream.tick('50 millis').pipe(Stream.map((): Uint8Array => new TextEncoder().encode(`data: ${release}\n\n`))),
@@ -306,9 +310,54 @@ it.live(
       const lines = (yield* console.logLines).map(String);
       expect(lines[0]).toMatch(/drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 600s/u);
       expect(lines[1]).toMatch(
-        /^\[app-host\] drain ended \(stop signal\): forwarded=\d+ failed=0 looped=0 dropped=0; closing public port/u,
+        /^\[app-host\] drain ended \(stop signal\): forwarded=\d+ failed=0 looped=0 dropped=0 held=0 retried=0; closing public port/u,
       );
     }),
+);
+
+/** Long enough for a held request to have reached its unit, had it not been held. */
+const HELD_FOR = Duration.millis(300);
+
+it.live(
+  'while Core refuses its release a host holds a request: relayed once superseded, served once it serves again',
+  () =>
+    Effect.gen(function* holdWhileRefused() {
+      const hosts = yield* twoHosts();
+      yield* hosts.drain.observe(true);
+      const relayed = yield* Effect.forkChild(send(hosts.oldPort, ECHO));
+      yield* Effect.sleep(HELD_FOR);
+      // Its own unit would answer 503 now: the request waits instead.
+      expect(yield* Ref.get(hosts.oldUnitSeen)).toBe(0);
+      yield* startDrain(hosts.supersede(undefined, Duration.minutes(10)), hosts.drain);
+      expect(releaseOf(yield* Fiber.join(relayed))).toBe('new');
+      expect(yield* Ref.get(hosts.oldUnitSeen)).toBe(0);
+
+      const standing = yield* standingHost('old');
+      yield* standing.drain.observe(true);
+      const served = yield* Effect.forkChild(send(standing.port, ECHO));
+      yield* Effect.sleep(HELD_FOR);
+      expect(yield* Ref.get(standing.seen)).toBe(0);
+      // The publication failed and returned the authority to active: the held request is served here.
+      yield* standing.drain.observe(false);
+      expect(releaseOf(yield* Fiber.join(served))).toBe('old');
+    }),
+);
+
+it.live('a read its unit refused just before the authority watch saw the fence is answered by the new release', () =>
+  Effect.gen(function* retryRefusedRead() {
+    const hosts = yield* twoHosts();
+    yield* hosts.drain.observe(false);
+    // A write is never sent twice: its unit's refusal reaches the caller as it was.
+    expect((yield* send(hosts.oldPort, '/_m/crm/refused', { method: 'POST' })).status).toBe(503);
+    const read = yield* Effect.forkChild(send(hosts.oldPort, '/_m/crm/refused'));
+    yield* Effect.repeat(Ref.get(hosts.oldUnitSeen), { until: (seen) => seen > 1 });
+    // The watch reads the row again and again, as the host's does: from now on it says Core refuses this release.
+    yield* Effect.forkChild(hosts.drain.observe(true).pipe(Effect.repeat(Schedule.spaced('20 millis'))));
+    yield* startDrain(hosts.supersede(undefined, Duration.minutes(10)), hosts.drain);
+    const answer = yield* Fiber.join(read);
+    expect(answer.status).toBe(200);
+    expect(releaseOf(answer)).toBe('new');
+  }),
 );
 
 it.live('the drain marker: refused when a draining host receives it, stripped and ignored by a serving host', () =>
@@ -467,7 +516,7 @@ it.live('back-to-back deploys: a host drops a peer that is draining itself and r
     expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
     expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
     const counts = yield* a.drain.finish;
-    expect(counts).toEqual({ dropped: 1, failed: 0, forwarded: 2, looped: 0 });
+    expect(counts).toEqual({ dropped: 1, failed: 0, forwarded: 2, held: 0, looped: 0, retried: 0 });
   }),
 );
 
@@ -642,6 +691,8 @@ it.live(
       const port = Number(portLine?.slice('PORT '.length));
       const events = yield* Effect.forkChild(send(port, '/_m/crm/events'));
       const upload = yield* Effect.forkChild(unfinishedUpload(port));
+      // A finite read in flight at the stop signal: it gets its answer, not a 502.
+      const slowRead = yield* Effect.forkChild(send(port, '/_m/crm/slow'));
       // A kept-alive connection idle after its answer, and one whose request head never ends (the server's own
       // header timeout is 66 s).
       const keptAlive = yield* Effect.forkChild(
@@ -655,9 +706,12 @@ it.live(
       yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
       const stoppedAfter = (yield* Clock.currentTimeMillis) - started;
       expect(yield* child.exitCode).toBe(0);
-      // The public port's own cap is the server's 20 s graceful timeout; ending streams and uploads first leaves it
+      // Requests in flight get 2.5 s to answer, then what still runs is cut: the server's graceful close is left
       // nothing to wait for.
       expect(stoppedAfter).toBeLessThan(5000);
+      const slow = yield* Fiber.join(slowRead);
+      expect(slow.status).toBe(200);
+      expect(slow.body).toBe('slow');
       expect(yield* Fiber.join(keptAlive)).toMatch(/^HTTP\/1\.1 200 /u);
       expect(yield* Fiber.join(halfSent)).toBe('');
       const stream = yield* Fiber.join(events);

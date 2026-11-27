@@ -200,7 +200,7 @@ describe('Variant Action payload contracts', () => {
     for (const action of [createVariantAction, changeVariantAction, retireVariantAction, reactivateVariantAction]) {
       expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.idempotency).toBe('required');
-      expect(action.descriptor.legalEntityScope).toBe('forbidden');
+      expect(action.descriptor.legalEntityScope).not.toBe('required');
       expect(action.descriptor.owningModuleKey).toBe('commerce.catalog');
     }
     expect(changeVariantAction.descriptor.schemaVersion).toBe('2');

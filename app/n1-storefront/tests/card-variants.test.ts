@@ -257,7 +257,8 @@ describe("card variant intent read", () => {
         expect(reads.map((read) => read.readName)).toEqual(["current-market-catalog", "records"]);
         expect(reads[1]?.query.view?.storefrontCatalog).toEqual({
           fields: "full",
-          includeCategories: true,
+          // A product read carries no category tree (the page takes its trail from the layout's read).
+          includeCategories: false,
           marketId,
           pageSize: 1,
           slug: query.slug,

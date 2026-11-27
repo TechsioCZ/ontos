@@ -1030,6 +1030,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.api-catalog-media-content.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "catalog-media",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.catalog-media-content",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.assert-size-equivalence-recovery.read",
             "kind": "read",
             "modes": [
@@ -11413,6 +11439,34 @@
             "entrypointKey": "commerce.inventory.api.source-stock-position-resolution",
             "moduleKey": "commerce.inventory",
             "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.staff-stock-source-authority.grant",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.grant-staff-stock-source-authority",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
             "scope": "tenant"
           }
         },

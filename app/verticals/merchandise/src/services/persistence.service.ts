@@ -22,7 +22,7 @@ import type {
 } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
+import { Config, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -43,7 +43,13 @@ import type {
   StorefrontOrderResult,
 } from '../../shared/actions/apply-command.ts';
 import { AKROS_STOREFRONT_ORIGIN, SHOP_STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
-import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
+import type {
+  MerchandiseState,
+  ProductRecord,
+  RecordsRequest,
+  RecordsResponse,
+  RecordsView,
+} from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
   OrderIdSchema,
@@ -71,7 +77,12 @@ import type {
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
-import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontAdmission } from '../../shared/actions/command-guard.ts';
+import {
+  AKROS_LEGAL_ENTITY_ID,
+  ESHOP_LEGAL_ENTITY_ID,
+  isAkrosCompany,
+  isStorefrontAdmission,
+} from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import {
@@ -84,9 +95,9 @@ import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import {
   assignCategory,
   assignCategoryMemberships,
-  createCategoryCommand,
-  updateCategoryCommand,
+  categoryCommand,
   withContentHistory,
+  withExistingCategories,
 } from './catalog-content.ts';
 import {
   categoryTrailsOf,
@@ -102,6 +113,7 @@ import {
   storefrontOrderStatus,
   storefrontCustomerOrders,
   storefrontProducts,
+  storefrontVisibilityFacts,
 } from './merchandise-queries.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
 import {
@@ -148,7 +160,7 @@ import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-class
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
-import { isMediaImageReference, mediaImageReference } from '../../shared/domain/product-images.ts';
+import { isMediaImageReference, mediaImageReference, photoLibraryAfter } from '../../shared/domain/product-images.ts';
 import { galleryAfterChange, readProductImage } from './product-media.ts';
 import {
   convertGrossMinor,
@@ -183,11 +195,43 @@ import {
 import type { OrderMarketContext } from './market-pricing.ts';
 
 /** The demo company sells through the pseudonymous e-shop; the AKROS playground company through the AKROS host. */
-const storefrontOriginOf = (legalEntityId: string | undefined): string | undefined => {
+/**
+ * N1's storefront: this deployment's ONTOS_N1_STOREFRONT_ORIGIN (the app service's runtime setting on stage and on
+ * stable), with the Czech locale prefix its product pages live under.
+ */
+const n1StorefrontBase = Config.schema(Schema.URLFromString, 'ONTOS_N1_STOREFRONT_ORIGIN').pipe(
+  Config.option,
+  Config.map(Option.map((url) => `${url.origin}/cs`)),
+);
+
+/** Every company other than AKROS, ŠroubShop and the playground e-shop sells on this deployment's N1 storefront. */
+const sellsOnN1 = (legalEntityId: string | undefined) =>
+  legalEntityId !== undefined &&
+  legalEntityId !== AKROS_LEGAL_ENTITY_ID &&
+  legalEntityId !== ESHOP_LEGAL_ENTITY_ID &&
+  !isAkrosCompany(legalEntityId);
+
+/** The storefront base the company's staff links open; none for a company without a storefront here. */
+const storefrontOriginOf = Effect.fn('Merchandise.storefrontOriginOf')(function* storefrontOriginOf(
+  legalEntityId: string | undefined,
+) {
   if (legalEntityId === AKROS_LEGAL_ENTITY_ID) {
     return SHOP_STOREFRONT_ORIGIN;
   }
-  return isAkrosCompany(legalEntityId) ? AKROS_STOREFRONT_ORIGIN : undefined;
+  if (isAkrosCompany(legalEntityId)) {
+    return AKROS_STOREFRONT_ORIGIN;
+  }
+  const base = sellsOnN1(legalEntityId)
+    ? yield* n1StorefrontBase.pipe(Effect.orElseSucceed(() => Option.none<string>()))
+    : Option.none<string>();
+  return Option.getOrUndefined(base);
+});
+
+const storefrontAppIdOf = (legalEntityId: string | undefined): string => {
+  if (legalEntityId === AKROS_LEGAL_ENTITY_ID) {
+    return 'sroubshop-storefront';
+  }
+  return sellsOnN1(legalEntityId) ? 'n1-storefront' : 'akros-storefront';
 };
 
 const unavailable = (cause?: unknown) =>
@@ -418,9 +462,15 @@ const findProduct = Effect.fn('Merchandise.findProduct')(function* findProduct(
   return product;
 });
 
+/** The product with its server-kept photo library: every photo it showed before this write or shows after it. */
+const withPhotoLibrary = (before: Product | undefined, after: Product): Product => {
+  const photoLibrary = photoLibraryAfter(before, after);
+  return photoLibrary.length === 0 ? after : { ...after, photoLibrary };
+};
+
 const withProduct = (state: MerchandiseState, updated: Product): MerchandiseState => ({
   ...state,
-  products: state.products.map((entry) => (entry.id === updated.id ? updated : entry)),
+  products: state.products.map((entry) => (entry.id === updated.id ? withPhotoLibrary(entry, updated) : entry)),
 });
 
 /** Whole-CZK percent change: the minor amount scaled, then rounded half-up to the nearest 100 minor units. */
@@ -503,6 +553,36 @@ const enteredRateOf = (
   tax: CommandTax,
   product: { readonly id: string; readonly taxClassificationCode: CzVatClassificationCode },
 ): number | undefined => heldRateOf(tax.held, product) ?? tax.rates[product.taxClassificationCode];
+
+type StoredTiers = NonNullable<Product['priceTiers']>;
+const tiersAtRate = (tiers: StoredTiers, rate: number): StoredTiers =>
+  tiers.map((tier) => ({ ...tier, priceMinor: grossUnitPriceMinor(tier.priceExcludingVatMinor, rate) }));
+
+/**
+ * A changed VAT classification re-enters every gross the product stores (its own, its quantity tiers', each priced
+ * variant's and theirs) at the new classification's rate: the net prices stay, the shown and charged gross follow.
+ */
+const reclassifiedGross = (next: Product, previous: Product, tax: CommandTax): Product => {
+  const rate = enteredRateOf(tax, next);
+  if (next.taxClassificationCode === previous.taxClassificationCode || rate === undefined) {
+    return next;
+  }
+  const variants = next.variants?.map((variant) => {
+    const withGross =
+      variant.priceMinor === undefined || variant.grossPriceMinor === undefined
+        ? variant
+        : { ...variant, grossPriceMinor: grossUnitPriceMinor(variant.priceMinor, rate) };
+    return withGross.priceTiers === undefined
+      ? withGross
+      : { ...withGross, priceTiers: tiersAtRate(withGross.priceTiers, rate) };
+  });
+  const own =
+    next.grossPriceMinor === undefined
+      ? next
+      : { ...next, grossPriceMinor: grossUnitPriceMinor(next.currentPriceMinor, rate) };
+  const tiered = own.priceTiers === undefined ? own : { ...own, priceTiers: tiersAtRate(own.priceTiers, rate) };
+  return variants === undefined ? tiered : { ...tiered, variants };
+};
 
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
 const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
@@ -728,7 +808,10 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
       ? categorized
       : { ...categorized, variants: yield* normalizeVariants(categorized, variants, input) };
   const entity = yield* entityIdOf(id);
-  return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
+  return {
+    entityIds: [entity],
+    state: { ...state, products: [...state.products, withPhotoLibrary(undefined, product)] },
+  };
 });
 
 const requireReconciledVariantStock = Effect.fn('Merchandise.requireReconciledVariantStock')(
@@ -829,7 +912,7 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
     categorized = yield* assignCategory(merged, patchCategoryId, state.categories);
   }
   const withVariants: Product = variants === undefined ? categorized : { ...categorized, variants };
-  const updated = withContentHistory(product, withVariants, input);
+  const updated = withContentHistory(product, reclassifiedGross(withVariants, product, input.tax), input);
   const entity = yield* entityIdOf(product.id);
   return { entityIds: [entity], state: withProduct(state, updated) };
 });
@@ -2050,19 +2133,15 @@ export const evolveMerchandiseState = (
         };
       }),
     ),
-    Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
-    Match.tag('CreateCategory', (value) => createCategoryCommand(state, value)),
+    Match.tag('UpdateCategory', 'CreateCategory', 'DeleteCategory', (value) => categoryCommand(state, value, input)),
     // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ChangeProductImages', () => Effect.fail(conflict('Gallery changes run only through persistence'))),
     Match.tag(
-      'ArchiveDemoProduct',
-      Effect.fn('Merchandise.archiveDemoProduct')(function* archiveDemoProduct(value: CommandOf<'ArchiveDemoProduct'>) {
+      'ArchiveProduct',
+      Effect.fn('Merchandise.archiveProduct')(function* archiveProduct(value: CommandOf<'ArchiveProduct'>) {
         const product = yield* findProduct(state.products, value.id);
         const entity = yield* entityIdOf(product.id);
-        if (product.active || product.published !== false) {
-          return yield* conflict('Před archivací produkt deaktivujte a skryjte v e-shopu');
-        }
         if (product.demoArchive !== undefined) {
           return { entityIds: [entity], state };
         }
@@ -2078,6 +2157,23 @@ export const evolveMerchandiseState = (
           input,
         );
         return { entityIds: [entity], state: withProduct(state, archived) };
+      }),
+    ),
+    Match.tag(
+      'RestoreProduct',
+      Effect.fn('Merchandise.restoreProduct')(function* restoreProduct(value: CommandOf<'RestoreProduct'>) {
+        const product = yield* findProduct(state.products, value.id);
+        const entity = yield* entityIdOf(product.id);
+        if (product.demoArchive === undefined) {
+          return { entityIds: [entity], state };
+        }
+        const { demoArchive: _archive, ...live } = product;
+        void _archive;
+        const restored = yield* withExistingCategories(live, state.categories ?? []);
+        return {
+          entityIds: [entity],
+          state: withProduct(state, withContentHistory(product, { ...restored, updatedAt: input.now }, input)),
+        };
       }),
     ),
     Match.tag(
@@ -2247,7 +2343,7 @@ export const workingSetRequestOf = (
 ): WorkingSetRequest =>
   Match.value(command).pipe(
     Match.tagsExhaustive({
-      ArchiveDemoProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
+      ArchiveProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       BulkUpdateProducts: (value): WorkingSetRequest =>
         value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
           ? { productIds: value.ids }
@@ -2296,6 +2392,8 @@ export const workingSetRequestOf = (
               ],
             };
       },
+      // The category, its ancestors, and any subcategory or live product that still holds it.
+      DeleteCategory: (value): WorkingSetRequest => ({ categoryDependents: value.id, categoryIds: [value.id] }),
       EditOrder: (value): WorkingSetRequest => ({
         movements: true,
         orderIds: [value.id],
@@ -2313,9 +2411,17 @@ export const workingSetRequestOf = (
       }),
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
+      // The product's categories as stored: a restore drops memberships of categories deleted meanwhile.
+      RestoreProduct: (value): WorkingSetRequest => ({ productCategoryMemberships: true, productIds: [value.id] }),
       // A sync touches only the head row and the stored prices, which persistence reprices in place.
       SyncTaxRates: (): WorkingSetRequest => ({}),
-      UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
+      UpdateCategory: (value): WorkingSetRequest => {
+        const parentId = value.patch.parentId === undefined ? null : Option.getOrNull(value.patch.parentId);
+        const request = {
+          categoryIds: parentId === null ? [value.id] : [value.id, parentId],
+        } satisfies WorkingSetRequest;
+        return value.patch.slug === undefined ? request : { ...request, categorySlug: value.patch.slug };
+      },
       UpdateProduct: (value): WorkingSetRequest => {
         const request = {
           movements: value.patch.variants !== undefined,
@@ -3112,7 +3218,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         metadata.categoryMatchTotal = categorySearch.total;
       }
       if (staff && view.categoryTrails === true) {
-        const ids = pageProducts.flatMap((product) => (product.categoryId === undefined ? [] : [product.categoryId]));
+        // Additional categories too, so the editor names them by their path instead of their id.
+        const ids = pageProducts.flatMap((product) => [
+          ...(product.categoryId === undefined ? [] : [product.categoryId]),
+          ...(product.additionalCategoryIds ?? []),
+        ]);
         if (view.categoryId !== undefined) {
           ids.push(view.categoryId);
         }
@@ -3230,6 +3340,41 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const synced = tax === undefined ? undefined : yield* staffTaxSync(loaded, tax);
       return { head: synced?.head ?? loaded ?? EMPTY_CATALOG_HEAD, synced };
     });
+    /** Staff rows with the storefront's own filter facts and the link to the product on the company's e-shop. */
+    const withStorefrontVisibility = Effect.fn('Merchandise.withStorefrontVisibility')(
+      function* withStorefrontVisibility<P extends { readonly products: readonly ProductRecord[] }>(staffPage: P) {
+        const shopOrigin = yield* storefrontOriginOf(legalEntityId);
+        if (shopOrigin === undefined || staffPage.products.length === 0) {
+          return staffPage;
+        }
+        const facts = yield* Effect.gen(function* facts() {
+          return yield* storefrontVisibilityFacts(transaction, store, {
+            markets: yield* listMarkets(transaction, store),
+            productIds: staffPage.products.map((product) => product.id),
+            storefrontAppId: storefrontAppIdOf(legalEntityId),
+          });
+        }).pipe(Effect.mapError(unavailable));
+        const byId = new Map(facts.map((row) => [row.id, row] as const));
+        return {
+          ...staffPage,
+          products: staffPage.products.map((product) => {
+            const row = byId.get(product.id);
+            if (row === undefined) {
+              return product;
+            }
+            const { id: _id, slug, ...rest } = row;
+            void _id;
+            return {
+              ...product,
+              storefrontVisibility: {
+                ...rest,
+                href: `${shopOrigin}/produkt/${encodeURIComponent(slug ?? product.id)}`,
+              },
+            };
+          }),
+        };
+      },
+    );
     /**
      * The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}
      * and, for staff, the company's rates from Tax ({@link prepareStaffTaxRates}), both prepared before it.
@@ -3269,9 +3414,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           canRead && head.aiChanges !== undefined ? { ...history, aiChanges: head.aiChanges } : history;
         return response;
       }
-      const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
+      const staffPage = yield* staffProducts(transaction, store, view, storefront, options).pipe(
         Effect.mapError(unavailable),
       );
+      const page = staff ? yield* withStorefrontVisibility(staffPage) : staffPage;
       const movements =
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
@@ -3294,7 +3440,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const storefrontOrigin = storefrontOriginOf(legalEntityId);
+      const storefrontOrigin = yield* storefrontOriginOf(legalEntityId);
       const staffResponse = {
         ...catalogMetadata,
         ...marketMetadata,

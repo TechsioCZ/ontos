@@ -1,15 +1,17 @@
 // The behaviour of the gallery editor over the tab's draft: uploads (stored at once, one after another, then added
-// to the draft), reorder, removal with undo. Nothing here changes the public gallery; the tab's Uložit does.
+// to the draft), reorder, removal with undo; and the upload of one variant's own photo. Nothing here changes the
+// public gallery or a variant; the tab's Uložit does.
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect, Fiber } from 'effect';
-import { useEffect, useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   galleryReducer,
   initialGallery,
+  rejectionMessage,
   withMoved,
   withRestored,
   withStaged,
@@ -193,4 +195,52 @@ export const useGalleryDraft = ({
   };
 
   return { dispatch, enqueue, move, remove, retry, state, undo };
+};
+
+export type VariantPhotoUpload =
+  | { readonly status: 'idle' }
+  | { readonly status: 'uploading' }
+  | { readonly message: string; readonly status: 'failed' };
+
+/**
+ * Stores one picture for a variant of the product (the gallery stays as it is) and hands the stored picture to
+ * `onStored`; the tab's Uložit gives it to the variant, and the server keeps it in the product's photo library.
+ */
+export const useVariantPhotoUpload = (productId: ProductId, onStored: (image: string) => void) => {
+  const { t } = useModernI18n();
+  const [upload, setUpload] = useState<VariantPhotoUpload>({ status: 'idle' });
+  const start = (file: File) => {
+    const preview = URL.createObjectURL(file);
+    const fail = (message: string) => {
+      URL.revokeObjectURL(preview);
+      setUpload({ message, status: 'failed' });
+    };
+    setUpload({ status: 'uploading' });
+    browserRuntime.runFork(
+      prepareImageUpload(file).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            fail(t('merchandise.pages.products.gallery.preparationFailed', { name: file.name }));
+            return error;
+          },
+          onSuccess: (image) => {
+            stageThroughAction(productId)(image, (outcome) => {
+              if (!outcome.ok || outcome.image === undefined) {
+                fail(uploadFailureMessage(t, outcome));
+                return;
+              }
+              rememberLocalPreview(productId, outcome.image, 'thumbnail', preview);
+              rememberLocalPreview(productId, outcome.image, 'full', preview);
+              setUpload({ status: 'idle' });
+              onStored(outcome.image);
+            });
+            return image;
+          },
+        }),
+      ),
+    );
+  };
+  const reject = (name: string, errors: readonly string[]) =>
+    setUpload({ message: rejectionMessage(t, name, errors, 1), status: 'failed' });
+  return { reject, start, upload };
 };

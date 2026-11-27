@@ -300,27 +300,21 @@ it.effect('staff image changes synchronize imageSrc, including empty galleries',
   }),
 );
 
-it.effect('archives only inactive unpublished products and retains the ledger and actor audit', () =>
+it.effect('archives a live product hidden, retains the ledger and actor audit, and restores it hidden', () =>
   Effect.gen(function* merchandiseScenario9() {
-    const refused = yield* run(
-      state,
-      { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Úklid DEMO katalogu' },
-      'archive',
-    ).pipe(Effect.flip);
-    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
-    const hidden = yield* run(
-      state,
-      { _tag: 'UpdateProduct', id: 'product-1', patch: { active: false, published: false } },
-      'hide',
-    );
     const archived = yield* run(
-      hidden.state,
-      { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Úklid DEMO katalogu' },
+      state,
+      { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Úklid testovacích dat' },
       'archive',
     );
-    expect(archived.state.products[0]?.demoArchive?.actor).toEqual(actor);
-    expect(archived.state.products[0]?.demoArchive?.reason).toBe('Úklid DEMO katalogu');
+    const [product] = archived.state.products;
+    expect([product?.active, product?.published]).toEqual([false, false]);
+    expect(product?.demoArchive?.actor).toEqual(actor);
+    expect(product?.demoArchive?.reason).toBe('Úklid testovacích dat');
     expect(archived.state.movements).toBe(state.movements);
+    const restored = yield* run(archived.state, { _tag: 'RestoreProduct', id: 'product-1' }, 'restore');
+    const [back] = restored.state.products;
+    expect([back?.demoArchive, back?.active, back?.published]).toEqual([undefined, false, false]);
   }),
 );
 

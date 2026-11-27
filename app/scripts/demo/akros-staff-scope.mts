@@ -404,6 +404,9 @@ export const REVIEWED_ROLE_CONTENTS = {
     modules: [
       'demo.merchandise',
       'demo.tagging',
+      'commerce.catalog',
+      'commerce.pricing',
+      'commerce.inventory',
       'commerce.market-catalog',
       'commerce.storefront-registry',
       'commerce.customer-context',

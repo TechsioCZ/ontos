@@ -408,6 +408,7 @@
           "categoryRetry": "Zkusit znovu",
           "categoryMore": "Zobrazeno {{shown}} z {{total}} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.",
           "lowStockOnly": "Jen pod minimem",
+          "archived": "Archivované",
           "search": "Hledat podle názvu nebo SKU…"
         },
         "messages": {
@@ -415,6 +416,7 @@
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "created": "Produkt vytvořen",
           "failed": "Akci se nepodařilo provést. Zkuste to znovu.",
+          "newVersion": "Mezitím byla nasazena nová verze aplikace a změnu se zatím nepodařilo uložit. Vaše úpravy zůstaly ve formuláři, zkuste je za chvíli uložit znovu.",
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
@@ -554,8 +556,8 @@
           "withdrawnSaved": "Produkt byl z nabídky trhu {{code}} vyřazen."
         },
         "eshop": {
-          "archiveTitle": "Archivovat DEMO produkt {{name}}?",
-          "archiveDescription": "Produkt {{name}} hned zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.",
+          "archiveTitle": "Archivovat produkt {{name}}?",
+          "archiveDescription": "Produkt {{name}} hned zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány. Najdete ho pod filtrem Archivované a můžete ho obnovit.",
           "archiveConfirm": "Archivovat"
         }
       },
@@ -615,7 +617,7 @@
       "variantsIntro": "Varianta má vlastní SKU, cenu, sklad a stav. Cenu zadáváte bez DPH; cena s DPH, kterou zákazník vidí v e-shopu, se uloží při uložení ceny podle sazby {{vat}}.",
       "variantsScrollLabel": "Varianty — posuňte vodorovně pro cenu, sklad a aktivitu",
       "customerProductView": "Jak produkt vidí zákazník",
-      "archiveDemoProduct": "Archivace DEMO produktu",
+      "archiveProduct": "Archivace produktu",
       "archiveReason": "Důvod archivace",
       "publicationAvailability": "Zveřejnění a dostupnost",
       "productSlug": "Adresa produktu v e-shopu (slug)",

@@ -18,6 +18,33 @@ const passThrough = (pathname: string, locale: string | undefined) =>
   ) ||
   (locale === undefined && /^\/[^/]*\.[A-Za-z0-9]+$/u.test(pathname));
 
+const ITEM_PATH = /^\/(?:produkt|kategorie|novinky-z-erp)\/[^/]+\/?$/u;
+
+/** A document request for a product, category or ERP product the market does not sell (soft navigations skip). */
+const missingItem = async (rest: string, headers: Headers, signal: AbortSignal) => {
+  if (!ITEM_PATH.test(rest) || rest.startsWith("/kategorie/akroscz-vyroba")) return false;
+  if (headers.has("rsc") || headers.has("next-router-prefetch")) return false;
+  const probe = new URL("/api/ontos/exists", `http://127.0.0.1:${process.env.PORT ?? "3000"}`);
+  probe.searchParams.set("path", rest);
+  const forwarded = new Headers({
+    [MARKET_LOCALE_HEADER]: headers.get(MARKET_LOCALE_HEADER) ?? "",
+  });
+  for (const name of ["x-forwarded-host", "x-forwarded-proto"]) {
+    const value = headers.get(name);
+    if (value) forwarded.set(name, value);
+  }
+  try {
+    const response = await fetch(probe, {
+      headers: forwarded,
+      cache: "no-store",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+    });
+    return response.status === 404;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Path-based markets. `/{locale}/rest` is rewritten to Kai's existing route `/rest` with the locale in a
  * request header (a browser-sent header of the same name is overwritten). Legacy URLs without a locale
@@ -61,5 +88,8 @@ export async function proxy(request: NextRequest) {
   const headers = new Headers(request.headers);
   headers.set(MARKET_LOCALE_HEADER, locale);
   headers.set(STORE_PATH_HEADER, rest);
+  // The loading shell streams a 200 before the page can call notFound(): decide existence first for documents.
+  if (kind === "live" && (await missingItem(rest, headers, request.signal)))
+    target.pathname = UNKNOWN_MARKET_PATH;
   return NextResponse.rewrite(target, { request: { headers } });
 }

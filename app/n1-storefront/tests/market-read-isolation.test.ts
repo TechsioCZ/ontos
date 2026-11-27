@@ -48,7 +48,10 @@ const Read = Schema.Struct({
   query: Schema.Struct({
     view: Schema.optionalKey(
       Schema.Struct({
-        storefrontCatalog: Schema.Struct({ includeCategories: Schema.Boolean }),
+        storefrontCatalog: Schema.Struct({
+          includeCategories: Schema.Boolean,
+          mode: Schema.optionalKey(Schema.String),
+        }),
       }),
     ),
   }),
@@ -292,6 +295,12 @@ const readyCatalog = expect.objectContaining({
 });
 const readyCart = { scope: { currency: "CZK", legalEntityId, marketId, tenantId }, state: "ready" };
 const readNames = (requests: (typeof Read.Type)[]) => requests.map((read) => read.readName);
+/** The company's catalogue revision head (no market, no products): checked at most once a second per process. */
+const isRevisionRead = (read: typeof Read.Type) =>
+  read.readName === "records" && read.query.view?.storefrontCatalog.mode === "categories";
+/** Market and catalogue reads, without the revision head read (its count depends on the one-second window). */
+const ownerReadNames = (requests: (typeof Read.Type)[]) =>
+  readNames(requests.filter((read) => !isRevisionRead(read))).toSorted();
 
 describe("market read lifetime at the real server renderer", () => {
   it.live("reuses the HTTP operation inside native App Route stores at full admission", () => {
@@ -303,17 +312,24 @@ describe("market read lifetime at the real server renderer", () => {
     }).pipe(Effect.provide(owner.layer));
   });
   it.live(
-    "shares one market across concurrent locale chains but retains both merchandise reads",
+    "runs the shared catalogue read in its own operation beside the render's cart scope read",
     () => {
       const owner = fixture();
       return Effect.gen(function* sharedLocaleRead() {
         const result = yield* Effect.promise(() => renderReads(1));
         expect(result).toEqual([{ cart: readyCart, catalog: readyCatalog }]);
-        // Awaiting the child close drains both HTTP chains before the exact-count assertions.
-        expect(readNames(owner.requests)).toEqual(["current-market-catalog", "records", "records"]);
+        // Awaiting the child close drains every HTTP chain before the exact-count assertions. The catalogue answer is
+        // shared across requests, so it reads its market under its own operation, after the catalogue revision head.
+        expect(owner.requests.filter(isRevisionRead)).toHaveLength(1);
+        expect(ownerReadNames(owner.requests)).toEqual([
+          "current-market-catalog",
+          "current-market-catalog",
+          "records",
+          "records",
+        ]);
         expect(
           owner.requests
-            .filter((read) => read.readName === "records")
+            .filter((read) => read.readName === "records" && !isRevisionRead(read))
             .map((read) => read.query.view?.storefrontCatalog.includeCategories)
             .toSorted((left, right) => Number(left) - Number(right)),
         ).toEqual([false, true]);
@@ -321,32 +337,35 @@ describe("market read lifetime at the real server renderer", () => {
     },
   );
 
-  it.live("starts fresh market and merchandise reads for independent render requests", () => {
+  it.live("starts fresh cart scope reads per render and shares the catalogue answer of one revision", () => {
     const owner = fixture();
     return Effect.gen(function* independentRenders() {
       const result = yield* Effect.promise(() => renderReads(2));
       expect(result).toEqual(
         Array.from({ length: 2 }, () => ({ cart: readyCart, catalog: readyCatalog })),
       );
-      expect(readNames(owner.requests)).toEqual([
+      // First render: the catalogue's market and records, the cart's market and records (beside the revision head).
+      // Second render: the revision and the catalogue answer are still shared; only the cart scope reads again.
+      expect(ownerReadNames(owner.requests)).toEqual([
+        "current-market-catalog",
+        "current-market-catalog",
         "current-market-catalog",
         "records",
-        "records",
-        "current-market-catalog",
         "records",
         "records",
       ]);
     }).pipe(Effect.provide(owner.layer));
   });
 
-  it.live("shares a single failed retry sequence, then recovers on the next render", () => {
+  it.live("retries a failed market read once per chain, then recovers on the next render", () => {
     const owner = fixture();
     owner.fail();
     return Effect.gen(function* failedThenFreshRender() {
       const result = yield* Effect.promise(() =>
         renderReads(2, () => {
-          expect(readNames(owner.requests)).toEqual(
-            Array.from({ length: 3 }, () => "current-market-catalog"),
+          // The catalogue's own operation and the render's cart scope (shared by its later read) each retry once.
+          expect(ownerReadNames(owner.requests)).toEqual(
+            Array.from({ length: 6 }, () => "current-market-catalog"),
           );
           owner.recover();
         }),
@@ -360,11 +379,9 @@ describe("market read lifetime at the real server renderer", () => {
         },
         { cart: readyCart, catalog: readyCatalog },
       ]);
-      expect(readNames(owner.requests)).toEqual([
-        "current-market-catalog",
-        "current-market-catalog",
-        "current-market-catalog",
-        "current-market-catalog",
+      // An unavailable catalogue answer is never kept: the next render reads the catalogue and the cart scope again.
+      expect(ownerReadNames(owner.requests)).toEqual([
+        ...Array.from({ length: 8 }, () => "current-market-catalog"),
         "records",
         "records",
       ]);

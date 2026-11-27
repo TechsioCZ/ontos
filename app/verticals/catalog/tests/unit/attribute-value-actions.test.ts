@@ -368,7 +368,7 @@ describe('Catalog attribute value Actions', () => {
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
       expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.idempotency).toBe('required');
-      expect(action.descriptor.legalEntityScope).toBe('forbidden');
+      expect(action.descriptor.legalEntityScope).not.toBe('required');
       expect(Schema.is(action.descriptor.domainErrorSchema)(conflict)).toBe(true);
     }
   });

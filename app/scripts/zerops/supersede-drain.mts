@@ -12,6 +12,12 @@
  * Internal callers (`http://app:3000`) reach either container during the drain, and both answer with the new
  * release: the new one directly, the old one by relaying to it.
  *
+ * Before that, from the new release's enter-draining commit to its promote, Core refuses this release's reads and
+ * writes while the new one does not serve yet. The host's authority watch (every 100 ms) sees it, and public requests
+ * wait (`hold`) instead of reaching units that would answer 503: once the newer revision holds the row they are
+ * relayed to it, and if the publication failed and the row is active again they are served here. A safe request a
+ * unit refused before the watch saw the fence is sent once more after the authority settled.
+ *
  * The readiness answer stays 200: `deploy.readinessCheck` decides when a NEW container takes traffic during a deploy
  * (`failureTimeout` bounds that wait and fails the deploy), not when an old one leaves, so a 503 from the old host
  * could not move the balancer sooner and could only be read as a failing container.
@@ -74,8 +80,22 @@ interface DrainCounts {
   readonly dropped: number;
   readonly failed: number;
   readonly forwarded: number;
+  /** Requests that waited while Core refused this release, before they were relayed or served. */
+  readonly held: number;
   readonly looped: number;
+  /** Safe requests a unit of this release answered 5xx while Core refused it, sent again once the authority settled. */
+  readonly retried: number;
 }
+
+/**
+ * The longest a request waits while Core refuses this release and no relay has begun: a drain between native releases
+ * takes well under a second, so this bounds only a publication that hangs. Past it the request goes on as before.
+ */
+export const REFUSED_RELEASE_HOLD = Duration.seconds(10);
+/** How often a held request looks at the authority watch's latest reading again. */
+const HOLD_POLL = Duration.millis(20);
+/** How long a request waits for the authority watch's next reading before it decides without one. */
+const NEXT_READING_WAIT = Duration.seconds(1);
 
 const peerKey = ({ address, port }: DrainPeer) => `${address}:${String(port)}`;
 
@@ -88,6 +108,11 @@ const peerKey = ({ address, port }: DrainPeer) => `${address}:${String(port)}`;
 export interface SupersedeDrain {
   readonly active: Effect.Effect<boolean>;
   readonly begin: (peers: readonly DrainPeer[], resolve: Effect.Effect<readonly DrainPeer[]>) => Effect.Effect<void>;
+  /**
+   * Completes first when the public port closes (a stop): the listener closes and event streams end, while finite
+   * requests already dispatched keep their answers until `stopping`.
+   */
+  readonly closing: Deferred.Deferred<true>;
   readonly count: (outcome: keyof DrainCounts) => Effect.Effect<void>;
   /**
    * `draining`: the peer refused as a draining host itself, and stays dropped for the rest of the drain. `refused`: it
@@ -97,11 +122,25 @@ export interface SupersedeDrain {
   readonly drop: (peer: DrainPeer, reason: 'draining' | 'refused') => Effect.Effect<void>;
   readonly ended: Deferred.Deferred<true>;
   readonly finish: Effect.Effect<DrainCounts>;
+  /**
+   * Waits while Core refuses this release (its own authority is draining, or a newer one took the row and the relay has
+   * not begun yet), until it serves again, the relay began, the host stops or `REFUSED_RELEASE_HOLD` passed. Without
+   * an authority watch it never waits.
+   */
+  readonly hold: Effect.Effect<void>;
   readonly livePeers: Effect.Effect<readonly DrainPeer[]>;
+  /** The authority watch's reading: whether Core refuses this release now. Logs each change. */
+  readonly observe: (refused: boolean) => Effect.Effect<void>;
   readonly refresh: Effect.Effect<readonly DrainPeer[]>;
   /**
-   * Completes before the public port closes (drain end or stop signal): every relayed event stream ends, every other
-   * relayed response is cut and every relay still waiting for its answer (an upload in flight) answers 503, so the
+   * Whether Core refuses this release, as the authority watch reads it next (a refusal a unit just answered may be
+   * newer than the last reading); false without a watch, or when no reading comes within `NEXT_READING_WAIT`. Once
+   * superseded: whether a relay runs, which can answer instead.
+   */
+  readonly refusedNow: Effect.Effect<boolean>;
+  /**
+   * Completes once a stopping public port gave its requests in flight their time (after `closing`): every relayed
+   * response still running is cut and every relay still waiting for its answer (an upload in flight) answers, so the
    * port's graceful close never waits on them.
    */
   readonly stopping: Deferred.Deferred<true>;
@@ -126,10 +165,19 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
     resolve: Effect.succeed([]),
     resolvedAt: 0,
   });
-  const counts = Ref.makeUnsafe<DrainCounts>({ dropped: 0, failed: 0, forwarded: 0, looped: 0 });
+  const counts = Ref.makeUnsafe<DrainCounts>({ dropped: 0, failed: 0, forwarded: 0, held: 0, looped: 0, retried: 0 });
   const superseded = Deferred.makeUnsafe<true>();
   const ended = Deferred.makeUnsafe<true>();
+  const closing = Deferred.makeUnsafe<true>();
   const stopping = Deferred.makeUnsafe<true>();
+  /** The authority watch's latest reading; `readings` counts them, so a caller can wait for the next one. */
+  const refusedReading = Ref.makeUnsafe(false);
+  const readings = Ref.makeUnsafe(0);
+  const settled = Effect.gen(function* settledRelease() {
+    return (
+      !(yield* Ref.get(refusedReading)) || (yield* Deferred.isDone(superseded)) || (yield* Deferred.isDone(closing))
+    );
+  });
   const live = ({ dropped, peers, refused }: DrainState) =>
     peers.filter((peer) => !dropped.has(peerKey(peer)) && !refused.has(peerKey(peer)));
   const count = (outcome: keyof DrainCounts) =>
@@ -144,6 +192,7 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
         Effect.andThen(Deferred.succeed(superseded, true)),
         Effect.asVoid,
       ),
+    closing,
     count,
     drop: (peer, reason) =>
       Ref.modify(state, (current) => {
@@ -159,7 +208,31 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
     // The drain stays active after its end: a request still arriving on a connection that was open when the listener
     // closed is relayed too, never served by this superseded release.
     finish: Deferred.succeed(ended, true).pipe(Effect.andThen(Ref.get(counts))),
+    hold: Effect.gen(function* holdWhileRefused() {
+      if (yield* settled) {
+        return;
+      }
+      yield* count('held');
+      yield* Effect.gen(function* waitUntilSettled() {
+        while (!(yield* settled)) {
+          yield* Effect.sleep(HOLD_POLL);
+        }
+      }).pipe(Effect.timeout(REFUSED_RELEASE_HOLD), Effect.ignore);
+    }),
     livePeers: Ref.get(state).pipe(Effect.map(live)),
+    observe: (next) =>
+      Ref.getAndSet(refusedReading, next).pipe(
+        Effect.tap(() => Ref.update(readings, (seen) => seen + 1)),
+        Effect.flatMap((previous) =>
+          previous === next
+            ? Effect.void
+            : Console.log(
+                next
+                  ? '[app-host] Core refuses this release now (its authority drains or was replaced): public requests wait for the authority to settle'
+                  : '[app-host] this release serves again: held public requests are served here',
+              ),
+        ),
+      ),
     refresh: Effect.gen(function* refreshPeers() {
       const now = yield* Clock.currentTimeMillis;
       const current = yield* Ref.get(state);
@@ -175,6 +248,22 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
         resolvedAt: now,
       }));
       return live(next);
+    }),
+    refusedNow: Effect.gen(function* refusedAfterNextReading() {
+      // Superseded, the watch has ended: Core refuses this release for good, and only a relay can answer instead.
+      if (yield* Deferred.isDone(superseded)) {
+        return (yield* Ref.get(state)).active;
+      }
+      const seen = yield* Ref.get(readings);
+      if (seen === 0) {
+        return false;
+      }
+      const next = yield* Ref.get(readings).pipe(
+        Effect.repeat({ schedule: Schedule.spaced(HOLD_POLL), until: (current) => current > seen }),
+        Effect.timeout(NEXT_READING_WAIT),
+        Effect.option,
+      );
+      return Option.isSome(next) && (yield* Ref.get(refusedReading));
     }),
     stopping,
     superseded,
@@ -271,9 +360,9 @@ export const drainSupersededHost = (input: {
     );
     const end = (reason: string) =>
       input.drain.finish.pipe(
-        Effect.flatMap(({ dropped, failed, forwarded, looped }) =>
+        Effect.flatMap(({ dropped, failed, forwarded, held, looped, retried }) =>
           Console.log(
-            `[app-host] drain ended (${reason}): forwarded=${String(forwarded)} failed=${String(failed)} looped=${String(looped)} dropped=${String(dropped)}; closing public port ${port}`,
+            `[app-host] drain ended (${reason}): forwarded=${String(forwarded)} failed=${String(failed)} looped=${String(looped)} dropped=${String(dropped)} held=${String(held)} retried=${String(retried)}; closing public port ${port}`,
           ),
         ),
       );

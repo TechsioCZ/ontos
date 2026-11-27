@@ -164,7 +164,7 @@ export const reactivateVariantAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: ReactivateVariantPayloadSchema,
     policies: [],

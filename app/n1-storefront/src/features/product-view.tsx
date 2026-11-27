@@ -22,8 +22,13 @@ import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
 import { FavoriteToggle } from "./favorite-toggle";
+import { formatMarketAmount } from "./price-props";
+import { ProductLabels } from "./product-labels";
 
 const emptyCategories: CatalogModel["categories"] = [];
+const sizeGuideLabelPattern = /velikost|size/i;
+const sizeGuideImagePattern =
+  /(\.(png|jpe?g|webp|gif|svg|avif)(\?|#|$))|^\/(media|uploads|api\/media)\//i;
 const galleryItems = (images: readonly string[], imageAlt: string) =>
   images.map((src, index) => ({
     alt: imageAlt,
@@ -58,6 +63,44 @@ const productStockLabel = (
     .trim();
 };
 
+const formatQuantity = (quantity: number, locale: string) =>
+  new Intl.NumberFormat(locale === "en" ? "en-GB" : "cs-CZ", { maximumFractionDigits: 3 }).format(
+    quantity,
+  );
+
+/** Weight and dimensions staff enter in OntOS, listed with the product parameters. */
+const physicalParameters = (
+  product: ProductDetailModel,
+  variant: ProductDetailModel["variants"][number] | undefined,
+  d: Dictionary,
+  locale: string,
+) => {
+  const weight = variant?.weightGrams ?? product.weightGrams;
+  return [
+    ...(weight === null
+      ? []
+      : [{ label: d.productWeight, unit: "g", value: formatQuantity(weight, locale) }]),
+    ...(product.dimensionsText === null
+      ? []
+      : [{ label: d.productDimensions, unit: "", value: product.dimensionsText }]),
+  ];
+};
+
+const parametersWithProductCode = (
+  selected: ReturnType<typeof selectProductDetail>["parameters"],
+  sku: string,
+  label: string,
+) => {
+  const hasProductCode = selected.some((parameter) =>
+    [getDictionary("cs").productCode, getDictionary("en").productCode].some(
+      (code) => parameter.label.trim().toLowerCase() === code.toLowerCase(),
+    ),
+  );
+  return sku.trim().length > 0 && !hasProductCode
+    ? [{ label, unit: "", value: sku }, ...selected]
+    : selected;
+};
+
 /** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
   categories = emptyCategories,
@@ -87,15 +130,15 @@ export const ProductView = ({
     selectionRequired,
     variant,
   } = selection;
-  const hasProductCode = selectedParameters.some((parameter) =>
-    [getDictionary("cs").productCode, getDictionary("en").productCode].some(
-      (label) => parameter.label.trim().toLowerCase() === label.toLowerCase(),
-    ),
+  const parameters = [
+    ...parametersWithProductCode(selectedParameters, current.sku, d.productCode),
+    ...physicalParameters(product, variant, d, locale),
+  ];
+  const labels = [...new Set([...(product.labels ?? []), ...(variant?.labels ?? [])])];
+  const quantityPrices = variant === undefined ? product.priceTiers : variant.priceTiers;
+  const sizeGuides = product.documents.filter((document) =>
+    sizeGuideLabelPattern.test(document.label),
   );
-  const parameters =
-    current.sku.trim().length > 0 && !hasProductCode
-      ? [{ label: d.productCode, unit: "", value: current.sku }, ...selectedParameters]
-      : selectedParameters;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -147,6 +190,7 @@ export const ProductView = ({
         </h1>
         <div aria-hidden="true" className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block" />
       </div>
+      <ProductLabels className="-mt-4 mb-6" dictionary={d} labels={labels} />
       <div className="grid gap-8 md:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]">
         <div className="min-w-0">
           <Gallery
@@ -221,6 +265,11 @@ export const ProductView = ({
                 {variant.name}
               </p>
             )}
+            {variant !== undefined && variant.description.length > 0 && (
+              <p className="order-2 whitespace-pre-line text-fg-secondary md:order-none md:basis-full">
+                {variant.description}
+              </p>
+            )}
             <div className="hidden md:ml-auto md:block">
               <Link as={NextLink} href={`/${locale}/doprava`}>
                 {d.shippingOptions}
@@ -229,6 +278,31 @@ export const ProductView = ({
           </div>
           <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
             <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
+            {current.packageQuantity !== undefined && current.packageQuantity > 1 && (
+              <p className="mt-1 text-sm text-fg-secondary">
+                {d.packageQuantity
+                  .replace("{quantity}", () => formatQuantity(current.packageQuantity ?? 0, locale))
+                  .replace("{unit}", () => current.unit ?? "")
+                  .trim()}
+              </p>
+            )}
+            {quantityPrices.length > 0 && (
+              <div className="mt-2">
+                <p className="text-sm font-semibold">{d.quantityPrices}</p>
+                <ul className="text-sm">
+                  {quantityPrices.map((tier) => (
+                    <li key={tier.minimumQuantity}>
+                      {d.quantityPriceFrom
+                        .replace("{quantity}", () => formatQuantity(tier.minimumQuantity, locale))
+                        .replace("{unit}", () => current.unit ?? "")
+                        .replace("{price}", () =>
+                          formatMarketAmount(tier.priceMinor, locale, current.currency),
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <div className="order-5 md:hidden">
             <Link as={NextLink} href={`/${locale}/doprava`}>
@@ -347,7 +421,21 @@ export const ProductView = ({
           <Tabs.Content value="sizes">
             <div className="flex flex-col gap-6 p-4">
               <h2 className="text-xl font-semibold leading-9">{d.sizeGuideTitle}</h2>
-              <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+              {sizeGuides.length === 0 ? (
+                <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+              ) : (
+                sizeGuides.map((document) => (
+                  <div className="flex flex-col gap-2" key={`${document.url}:${document.label}`}>
+                    {sizeGuideImagePattern.test(document.url) && (
+                      // biome-ignore lint/performance/noImgElement: staff-attached size charts come from any host
+                      <img alt={document.label} className="h-auto max-w-full" src={document.url} />
+                    )}
+                    <Link href={document.url} rel="noopener noreferrer" target="_blank">
+                      {document.label}
+                    </Link>
+                  </div>
+                ))
+              )}
             </div>
           </Tabs.Content>
         </Tabs>

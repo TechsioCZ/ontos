@@ -91,6 +91,7 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Establish stock sharing eligibility',
       },
     },
+    'grant-staff-stock-source-authority': 'hidden',
     'import-source-assertion': {
       title: {
         cs: 'Importovat údaje ze zdroje skladových zásob',

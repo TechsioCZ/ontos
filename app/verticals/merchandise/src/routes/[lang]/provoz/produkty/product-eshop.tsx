@@ -466,8 +466,26 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
     const { priceTiers: inheritedTiers, ...originalFields } = original ?? {};
     const kept = original?.priceMinor === priceMinor ? original : originalFields;
     void inheritedTiers;
+    // Edited tiers are sent as typed, so the row that repeats the old price follows the new one (the server rescales
+    // only tiers it is not sent).
+    const oldPrice = original?.priceMinor;
+    const details =
+      draft.tiersEdited && oldPrice !== undefined && oldPrice > 0 && oldPrice !== priceMinor
+        ? {
+            ...draft,
+            tiers: draft.tiers.map((tier) =>
+              parseCzkText(tier.netText) === oldPrice
+                ? {
+                    ...tier,
+                    grossText: czkText(Math.round(((parseCzkText(tier.grossText) ?? 0) * priceMinor) / oldPrice)),
+                    netText: czkText(priceMinor),
+                  }
+                : tier,
+            ),
+          }
+        : draft;
     const variant = {
-      ...withVariantDetails(kept, draft),
+      ...withVariantDetails(kept, details),
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
@@ -502,6 +520,7 @@ const useVariantsPanel = ({
   const save = useProductTabSave<readonly VariantDraft[]>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
     isValid: (value) => !variantsInvalid(value),
+    keepAs: `variants:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
     reset: setDrafts,
@@ -626,6 +645,17 @@ const renderVariantPriceTiers = (
   );
 };
 
+/** The gallery, then every photo the product has shown as the server keeps it, then photos unsaved drafts picked. */
+const variantImageChoicesOf = (product: ProductRecord, drafts: readonly { readonly imageSrc?: string }[]) => [
+  ...new Set([
+    ...(product.images ?? []),
+    ...(product.photoLibrary ?? []),
+    ...[...(product.variantRecords ?? []), ...drafts].flatMap((variant) =>
+      variant.imageSrc === undefined || variant.imageSrc === '' ? [] : [variant.imageSrc],
+    ),
+  ]),
+];
+
 export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
   const { t } = useModernI18n();
   const {
@@ -651,6 +681,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
     visibleDrafts,
   } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
+  const variantImageChoices = variantImageChoicesOf(product, drafts);
   const taxLabels = useTaxLabels();
   // The product's classification with the rate Tax gives it today; it names the gross preview of an edited price.
   // Staff records always name the classification; only storefront records omit it.
@@ -872,8 +903,9 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             disabled={!canWrite}
                             draft={draft}
                             idPrefix={`variant-${draft.key}`}
-                            images={product.images ?? []}
+                            images={variantImageChoices}
                             onChange={(next) => patchDraft(draft.key, next)}
+                            productId={product.id}
                             vatRate={vatRate}
                           />
                         </Table.Cell>

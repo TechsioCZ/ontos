@@ -18,7 +18,8 @@ import {
 } from '@app/admin-ui';
 import { DateTime, Schema } from 'effect';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { useState } from 'react';
+import { keepDraftOnReload, keptDraft, reloadKeepingDrafts } from '@app/shared-contracts';
+import { useEffect, useState } from 'react';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
@@ -41,6 +42,7 @@ import { TaxClassificationSelect } from './product-tax-classification-select.tsx
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { StorefrontStatusPanel } from './storefront-status.tsx';
 import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
@@ -67,6 +69,8 @@ export interface ProductDetailViewProps {
   readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
+  /** Path labels of the product's categories (additional ones included). */
+  readonly categoryTrails?: readonly CategoryTrail[];
   readonly hasCategoryTree?: boolean;
   /**
    * The product's offer and price in every configured market of the company, and whether the viewer may switch it
@@ -452,6 +456,7 @@ export const ProductDetailView = ({
   canWrite,
   canMoveStock = canWrite,
   category = null,
+  categoryTrails = [],
   hasCategoryTree = false,
   markets = NO_MARKETS,
   movements,
@@ -469,7 +474,17 @@ export const ProductDetailView = ({
   const k = useProductLabel();
   const { language } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
+  // A half-filled stock movement comes back after "Načíst novou verzi a obnovit úpravy" like the forms' drafts.
+  const movementKeepKey = `merchandise:product-movement:${product.id}`;
+  const [movementDraft, setMovementDraft] = useState<MovementDraft>(() => ({
+    ...EMPTY_MOVEMENT_DRAFT,
+    ...keptDraft<MovementDraft>(movementKeepKey),
+  }));
+  useEffect(
+    () =>
+      keepDraftOnReload(movementKeepKey, () => (isMovementDraftDirty(movementDraft) ? movementDraft : undefined)),
+    [movementDraft, movementKeepKey],
+  );
   const variantDestination = resolveProductVariantDestination(product, variantId);
   // The page re-reads the product after each save; the editor stays mounted across that reload
   // (`useProductDetailDraft`).
@@ -528,6 +543,7 @@ export const ProductDetailView = ({
           }
           title={product.name}
         />
+        <StorefrontStatusPanel product={product} />
         <Tabs
           onValueChange={(value) => {
             if (isProductDetailTab(value)) {
@@ -574,7 +590,13 @@ export const ProductDetailView = ({
             />
             {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
             {canWrite && (
-              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+              <SaveBar
+                labels={labels}
+                onReloadKeepingDrafts={reloadKeepingDrafts}
+                onReloadLatest={handleReloadLatest}
+                onSave={handleSave}
+                status={record.status}
+              />
             )}
           </Tabs.Content>
           <Tabs.Content className="py-200" value="variants">
@@ -611,6 +633,7 @@ export const ProductDetailView = ({
               active={tab === 'content'}
               canWrite={canWrite}
               category={category}
+              categoryTrails={categoryTrails}
               hasCategoryTree={hasCategoryTree}
               onCommitted={onCommitted}
               onReload={onReload}

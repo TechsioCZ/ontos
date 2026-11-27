@@ -167,6 +167,12 @@ it.live('stores, resolves, and isolates exact external Price Source Authority gr
       expect(yield* withAuthority(runtime, scope, (authority) => authority.store(grant))).toEqual({
         outcome: 'REUSED',
       });
+      // Pricing stamps each call's own verification time; a later grant of the same terms is still the same grant.
+      expect(
+        yield* withAuthority(runtime, scope, (authority) =>
+          authority.store({ ...grant, verifiedAt: '2026-09-01T10:00:00.000Z' }),
+        ),
+      ).toEqual({ outcome: 'REUSED' });
       expect(
         yield* withAuthority(runtime, scope, (authority) =>
           authority.store({ ...grant, verificationRef: 'pricing-source-authority-conflict-803' }),

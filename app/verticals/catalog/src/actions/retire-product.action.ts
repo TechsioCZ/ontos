@@ -126,7 +126,7 @@ export const retireProductAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: MODULE_KEY,
     payloadSchema: RetireProductPayloadSchema,
     policies: [],

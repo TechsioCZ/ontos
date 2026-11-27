@@ -146,7 +146,7 @@ export const updateProductAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: MODULE_KEY,
     payloadSchema: UpdateProductPayloadSchema,
     policies: [],

@@ -4,6 +4,25 @@ const documentCompositionRevisionKey = Symbol.for('ontos.document-composition-re
 const revisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const documentUnavailable = 'document-unavailable';
 const invalidRevision = 'invalid-revision';
+/**
+ * The release an open document moved on to after a deploy (see operation-gateway.ts). The pinned revision stays
+ * sealed on the document; this global lets every separately bundled client of the same tab follow the new release
+ * without a page reload, so an open editor keeps its unsaved values.
+ */
+const adoptedCompositionRevisionKey = Symbol.for('ontos.adopted-composition-revision');
+
+/** The release this tab adopted after a deploy, if any. */
+export const adoptedCompositionRevision = (): string | undefined => {
+  const adopted: unknown = Reflect.get(globalThis, adoptedCompositionRevisionKey);
+  return Schema.is(revisionSchema)(adopted) ? adopted : undefined;
+};
+
+/** Makes every gateway call of this tab use `revision` from now on. */
+export const adoptCompositionRevision = (revision: string): void => {
+  if (Schema.is(revisionSchema)(revision)) {
+    Reflect.set(globalThis, adoptedCompositionRevisionKey, revision);
+  }
+};
 
 export class DocumentCompositionRevisionError extends Schema.TaggedError<DocumentCompositionRevisionError>()(
   'DocumentCompositionRevisionError',
@@ -74,7 +93,7 @@ export const getDocumentCompositionRevision = Effect.fn('DocumentComposition.get
     if (revision === null) {
       return yield* new DocumentCompositionRevisionError({ reason: 'uninitialized' });
     }
-    return revision;
+    return adoptedCompositionRevision() ?? revision;
   },
 );
 
@@ -92,7 +111,7 @@ export const pinDocumentCompositionRevision = Effect.fn('DocumentComposition.pin
     }
     const previous = yield* readDocumentCompositionRevision(browserDocument);
     if (previous !== null) {
-      if (previous !== revision) {
+      if (previous !== revision && revision !== adoptedCompositionRevision()) {
         return yield* new DocumentCompositionRevisionError({ reason: 'revision-mismatch' });
       }
       return yield* Effect.void;

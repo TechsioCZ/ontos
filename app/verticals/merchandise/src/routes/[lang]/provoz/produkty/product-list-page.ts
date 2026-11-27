@@ -76,13 +76,14 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
     () => productListData.snapshot(input),
     () => pageDataPending,
   );
-  const { category, categoryId, limit, lowStockOnly, offset, search, sort } = query;
+  const { archived, category, categoryId, limit, lowStockOnly, offset, search, sort } = query;
   const taggedIdsJson = query.taggedIds === null ? null : Result.getOrThrow(encodeQueryIds(query.taggedIds));
   // The effect owns its request object; only changed filter values ensure another entry.
   useEffect(() => {
     productListData.ensure({
       legalEntityId,
       query: {
+        archived,
         category,
         categoryId,
         limit,
@@ -94,7 +95,7 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
       },
       scope,
     });
-  }, [category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, taggedIdsJson]);
+  }, [archived, category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, taggedIdsJson]);
   // The strict store reads as pending while it reloads this request (freshness window, live change, settled write).
   // The table keeps the last ready read of the same request until the reload settles; another request never reuses
   // it, and a failed or refused reload replaces it at once.

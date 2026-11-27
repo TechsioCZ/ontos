@@ -90,8 +90,16 @@ it("a storefront read serves a published product's own photo", () => {
   expect(mediaReadAllowed(published, ownImage, true)).toBe(true);
 });
 
-it('a storefront read is denied for media that is not a gallery image of the product (unrelated media)', () => {
+it('a storefront read is denied for media the product does not show (unrelated media)', () => {
   expect(mediaReadAllowed(published, otherImage, true)).toBe(false);
+});
+
+it("a storefront read serves a variant's own uploaded photo that is not in the gallery", () => {
+  expect(mediaReadAllowed({ ...published, images: [], variants: [{ imageSrc: ownImage }] }, ownImage, true)).toBe(true);
+});
+
+it('a storefront read is denied for an earlier photo only the library keeps', () => {
+  expect(mediaReadAllowed({ ...published, images: [], photoLibrary: [ownImage] }, ownImage, true)).toBe(false);
 });
 
 it('a storefront read is denied for an unpublished, inactive or archived product', () => {
@@ -100,7 +108,8 @@ it('a storefront read is denied for an unpublished, inactive or archived product
   expect(mediaReadAllowed({ ...published, demoArchive: { at: 'x' } }, ownImage, true)).toBe(false);
 });
 
-it('staff reads keep their own rule: the product gallery decides, visibility does not', () => {
+it("staff reads keep their own rule: the product's photos and library decide, visibility does not", () => {
   expect(mediaReadAllowed({ ...published, published: false }, ownImage, false)).toBe(true);
+  expect(mediaReadAllowed({ ...published, images: [], photoLibrary: [ownImage] }, ownImage, false)).toBe(true);
   expect(mediaReadAllowed(published, otherImage, false)).toBe(false);
 });
