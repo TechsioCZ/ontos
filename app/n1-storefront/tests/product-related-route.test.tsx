@@ -42,6 +42,8 @@ const marketCatalog = {
 };
 const CatalogQuery = Schema.Struct({
   categorySlug: Schema.optionalKey(Schema.String),
+  featured: Schema.optionalKey(Schema.Boolean),
+  mode: Schema.optionalKey(Schema.String),
   slug: Schema.optionalKey(Schema.String),
 });
 const GatewayRead = Schema.Struct({
@@ -80,7 +82,8 @@ beforeAll(() => {
       if (query === undefined) {
         throw new Error("Expected a storefront catalog query");
       }
-      reads.push(query);
+      // The catalogue revision head read (no market, no products) is not a catalogue read.
+      if (query.mode !== "categories") reads.push(query);
       return window.Response.json(
         {
           categories: [category],
@@ -133,7 +136,12 @@ describe("PDP owner-backed route boundary", () => {
         })),
       ];
       const html = await page(locale);
-      expect(reads).toEqual([{ slug: product.slug }, { categorySlug: category.slug }]);
+      // The category tree comes from the layout's featured read, not from the product read.
+      expect(reads).toEqual([
+        { slug: product.slug },
+        { featured: true },
+        { categorySlug: category.slug },
+      ]);
       expect(html).toContain(`href="/${locale}/produkt/related-shirt-0"`);
       expect(html).toContain(`href="/${locale}/produkt/related-shirt-3"`);
       expect(html).not.toContain(`href="/${locale}/produkt/related-shirt-4"`);
@@ -153,7 +161,7 @@ describe("PDP owner-backed route boundary", () => {
   );
   it("shows empty only after a successful category read with no other product", async () => {
     expect(await page()).toContain(getDictionary("cs").empty);
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(3);
   });
   it.each([undefined, "missing-category"])(
     "does not substitute an unfiltered read for missing category %s",
@@ -164,7 +172,7 @@ describe("PDP owner-backed route boundary", () => {
           : { ...product, categoryId },
       ];
       const html = await page();
-      expect(reads).toEqual([{ slug: product.slug }]);
+      expect(reads).toEqual([{ slug: product.slug }, { featured: true }]);
       expect(html).not.toContain('aria-labelledby="product-related-heading"');
       expect(html).not.toContain(getDictionary("cs").empty);
     },
@@ -173,7 +181,7 @@ describe("PDP owner-backed route boundary", () => {
     "rejects a plural selector before a related read: %j",
     async ({ selector }) => {
       await expect(page("cs", selector)).rejects.toThrow("NEXT_HTTP_ERROR_FALLBACK;404");
-      expect(reads).toEqual([{ slug: product.slug }]);
+      expect(reads).toEqual([{ slug: product.slug }, { featured: true }]);
     },
   );
   it("allows a generic owner variant without a query but blocks an explicit unknown selector", async () => {

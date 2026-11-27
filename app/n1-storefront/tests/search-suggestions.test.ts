@@ -184,6 +184,18 @@ describe("search suggestions read boundary", () => {
         state: "ready",
       });
       expect(requests).toEqual([
+        // The company's catalogue revision head: equal answers of one revision are shared across shoppers.
+        {
+          audience: "merchandise",
+          legalEntityId,
+          query: {
+            view: {
+              storefront: true,
+              storefrontCatalog: { includeCategories: false, mode: "categories" },
+            },
+          },
+          readName: "records",
+        },
         {
           audience: "commerce-market-catalog",
           legalEntityId,
