@@ -22,6 +22,8 @@ const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
 
+const uiKit = resolveUiKitShare(import.meta.url);
+
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
@@ -62,7 +64,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       react: reactVersion,
       'react-dom': reactDomVersion,
     },
-    { role: 'remote', uiKit: resolveUiKitShare(import.meta.url) },
+    { role: 'remote', uiKit },
   ),
 });
 
