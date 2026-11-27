@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { DateTime, Effect, Option, Result } from 'effect';
 
 import {
@@ -13,7 +13,6 @@ import type {
   OntosRegisteredWorkloadCallInput,
   RegisteredWorkloadCallReceiver,
 } from '../../modules/registered-workload-calls.ts';
-import { principalEnrolledFor } from './system-enrollment.ts';
 
 /*
  * A Tenant's system Principal for one system workload a module declares (`systemWorkloads` in its manifest): the
@@ -239,9 +238,9 @@ const readActiveTenantModuleKeys = (
     );
 
 /**
- * The Tenant's system Principals that are not archived, hold an active binding of the workload and may stand for it
- * (`principalEnrolledFor`); two are enough to refuse. A disabled one still holds the enrollment, so an enrollment never
- * creates a second beside it.
+ * The Tenant's system Principals enrolled for the workload that are not archived and hold an active binding of it; two
+ * are enough to refuse. A disabled one still holds the enrollment, so an enrollment never creates a second beside it. A
+ * Principal with no recorded workload is no enrollment: it is never adopted or ended.
  */
 const readSystemWorkloadEnrollmentHolders = (
   transaction: ScopedTransactionExecutor,
@@ -267,7 +266,7 @@ const readSystemWorkloadEnrollmentHolders = (
         eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
         eq(accessWorkloadBindings.workloadKey, workloadKey),
         eq(accessWorkloadBindings.status, 'active'),
-        principalEnrolledFor(workloadKey),
+        eq(principals.systemWorkloadKey, workloadKey),
         eq(principals.kind, 'system'),
         inArray(principals.status, ['active', 'disabled']),
       ),
@@ -386,20 +385,20 @@ const revokeSystemWorkloadPrincipalBindings = Effect.fn(
 });
 
 /**
- * Revokes the bindings of a system workload's key that system Principals enrolled for another workload hold, and names
- * those Principals. The installed catalog refuses a call that borrows a declared key, so only one enrolled before the
- * key's module declared it in the composition can hold it; the key's own enrollment takes it back.
+ * Revokes the bindings of a system workload's key that system Principals not enrolled for it hold, and names those
+ * Principals: one enrolled for another workload before the key's module declared it in the composition, or one with no
+ * recorded workload. The key's own enrollment takes it back.
  */
 const reclaimSystemWorkloadKey = Effect.fn('SystemWorkloadEnrollment.reclaimSystemWorkloadKey')(
   function* reclaimSystemWorkloadKey(transaction: ScopedTransactionExecutor, workloadKey: string) {
-    const enrolledForAnother = transaction
+    const notEnrolledForIt = transaction
       .select({ principalId: principals.principalId })
       .from(principals)
       .where(
         and(
           eq(principals.tenantId, transaction.scope.tenantId),
           eq(principals.kind, 'system'),
-          ne(principals.systemWorkloadKey, workloadKey),
+          or(isNull(principals.systemWorkloadKey), ne(principals.systemWorkloadKey, workloadKey)),
         ),
       );
     const reclaimed = yield* transaction
@@ -410,7 +409,7 @@ const reclaimSystemWorkloadKey = Effect.fn('SystemWorkloadEnrollment.reclaimSyst
           eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
           eq(accessWorkloadBindings.workloadKey, workloadKey),
           eq(accessWorkloadBindings.status, 'active'),
-          inArray(accessWorkloadBindings.principalId, enrolledForAnother),
+          inArray(accessWorkloadBindings.principalId, notEnrolledForIt),
         ),
       )
       .returning({ principalId: accessWorkloadBindings.principalId })

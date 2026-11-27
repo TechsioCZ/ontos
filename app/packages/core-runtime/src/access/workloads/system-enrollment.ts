@@ -1,18 +1,10 @@
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
 import { WorkloadKeySchema } from '../../authorization/access-declaration.ts';
 import { accessWorkloadBindings, principals, tenants } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
-
-/**
- * Whether a principal may stand for a system workload as its own identity: it was enrolled for that workload, or no
- * enrollment recorded one. A system principal also holds the owner workloads its job calls under; holding a binding of
- * another system workload's key never makes it that workload's identity.
- */
-export const principalEnrolledFor = (workloadKey: string) =>
-  or(isNull(principals.systemWorkloadKey), eq(principals.systemWorkloadKey, workloadKey));
 
 /** Factual enrollment only. No authentication context or permission is constructed here. */
 export const readScopedSystemWorkloadEnrollment = Effect.fn('SystemWorkload.readScopedEnrollment')(
