@@ -2533,6 +2533,9 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
     ),
 );
 
+/** The caller as a tenant-wide principal, for a company-free Read (a tenant's theme, a reserved upload's row). */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
 // @ontos-core-read tenant-theme
 const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadTenantTheme', (handlers) =>
   handlers.handle('executeTenantTheme', ({ payload, request }) =>
@@ -2549,7 +2552,7 @@ const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi
       return yield* runtime
         .runRead({
           input: payload,
-          principal: resolved.principal,
+          principal: withoutSelectedLegalEntity(resolved.principal),
           registration: tenantThemeRead,
           transport: { correlationId: correlationFromRequest(request) },
         })
@@ -2562,9 +2565,6 @@ const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi
   ),
 );
 // @ontos-codesmith-core-read-server-groups:end
-
-/** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
-const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
 
 /**
  * The request-scoped evidence of the Core Media confirm route. The confirm Action decides on a verification of the
