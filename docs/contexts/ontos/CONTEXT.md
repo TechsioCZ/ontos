@@ -217,6 +217,14 @@ use is not a Published Event.
 to the Module that declares it, such as a payment provider's notification or a partner's call.
 _Avoid_: webhook, which does not say which side sends.
 
+**Module Audience** — The people outside staff who register and sign in to use one particular
+Module, such as the players of a game.
+_Avoid_: bare audience, user base, portal users, staff user.
+
+**Interface Slot** — A named place in a Module's interface that the Module offers so that other
+Modules can show a public component there.
+_Avoid_: bare slot, extension point, hook.
+
 **Outbound Webhook** — A Tenant's configured delivery of one Published Event to a system outside
 OntOS. It is configuration over a Module's public contract, not Module behavior.
 _Avoid_: webhook for an Inbound Endpoint.

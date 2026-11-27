@@ -31,11 +31,11 @@ release. V0 is close to complete; this decision shapes what follows it.
    move onto the kernel, and the earlier authoring forms are removed as their callers migrate. A
    Tenant Module differs from a Platform Module in what it is granted, never in how it is written.
 2. **A closed vocabulary.** A Module declares only what the CoreSDK vocabulary names. What it
-   publishes: Resources, Actions, reads, Published Events, interface contributions, and search. What
-   it receives and runs: Outbox Workers, schedules, and Inbound Endpoints. What it needs: other
-   Modules' public operations, settings, and its outside dependencies. Any Module may call another
-   Module's public operations and embed its public interface contributions through the same
-   contracts. Adding a vocabulary item is a Core change.
+   publishes: Resources, Actions, reads, Published Events, interface contributions, Interface Slots,
+   and search. What it receives and runs: Outbox Workers, schedules, and Inbound Endpoints. What it
+   needs: other Modules' public operations, settings, a Module Audience, and its outside
+   dependencies. Any Module may call another Module's public operations and embed its public
+   interface contributions through the same contracts. Adding a vocabulary item is a Core change.
 3. **Enforce on types, with Effect, from declared values.** The CoreSDK reuses Effect Schema, Layer,
    requirements, and typed errors so that a Module that violates its own declarations does not
    compile. Each outside dependency (a datastore, an external host, a secret) is declared once as a
@@ -50,13 +50,23 @@ release. V0 is close to complete; this decision shapes what follows it.
    - A Module Blueprint generates business structure once: schemas, handlers, pages, and the
      declarations that name them. The author owns that code afterwards and regeneration never
      overwrites it. A blueprint change reaches an existing Module only as a codemod with a
-     reviewable diff.
+     reviewable diff. The first Module Blueprints are a Resource with its standard reads, an Action,
+     a Published Event with its Outbox Worker, and a list-and-detail page.
    - The manifest, the runtime registration, the provider contract package, and the Module
      Federation exposes are build outputs derived from the Module Definition. They are not checked
-     in and not hand-edited, and slot markers go.
+     in and not hand-edited, and the generator's marker comments go.
+   - Only the trusted build produces what ships. No author, human or AI, supplies a manifest, a
+     registration, or a contract.
+   - Every Codesmith operation can be called by a program and changes the Module Definition
+     directly. This makes it possible to limit an AI author to Codesmith operations for a Module's
+     structure and to free writing for the bodies of handlers and pages. Whether the Vibe Module
+     applies that limit is decided with the Vibe Module.
 
-   Database migrations are authored source and immutable once applied. The source of every immutable
-   Module version is retained so that the version can be rebuilt.
+   Each Action, read, Published Event, and page is its own exported value in its own file, and the
+   Module Definition lists them. Type checking with tsrs and linting with oxlint can then scale
+   their parallelism across those files, and the layout is chosen to support that. Database
+   migrations are authored source and immutable once applied. The source of every immutable Module
+   version is retained so that the version can be rebuilt.
 
 ### Data and outside systems
 
@@ -72,12 +82,17 @@ release. V0 is close to complete; this decision shapes what follows it.
    handler in the Shell. A Module reacts to another Module's Published Event through an Outbox
    Worker it declares. An Outbound Webhook is Tenant configuration over a Published Event and needs
    no Module code.
-8. **Sign-up and login for a Module's own audience is a CoreSDK capability.** A Module that serves
-   people outside the staff Shell, such as a game with a minimal registration, obtains registration,
-   login, and sessions through the CoreSDK and does not wire its own authentication. This applies to
+8. **A Module Audience is a CoreSDK capability.** A Module that serves people outside the staff
+   Shell, such as a game with a minimal registration, declares a Module Audience: who may register,
+   which details are collected, and which login methods are offered. Core runs registration, login,
+   sessions, and account recovery for it on BetterAuth, so that the login methods BetterAuth offers
+   can be supported. Each Module Audience is isolated: its members are kept apart from staff and
+   from every other Module Audience and never gain staff access. The declaring Module receives
+   operations and interface primitives with which it can build a management interface for its
+   members when it needs one. The first CoreSDK version includes this capability, and it applies to
    any Module. Commerce owns a separate realm for Commerce Portal Accounts today
    ([ADR-0017](0017-commerce-application-boundaries.md),
-   [ADR-0014](0014-authenticated-principal-session.md)); it moves into Core identity over time.
+   [ADR-0014](0014-authenticated-principal-session.md)); it moves onto a Module Audience later.
 
 ### Platform and Tenant Modules
 
@@ -86,62 +101,88 @@ release. V0 is close to complete; this decision shapes what follows it.
    Module Replacement. Dependants bind to a Module Contract Identity, not to its implementation. The
    first CoreSDK version makes that identity explicit; Module Replacement itself is not available
    until a later version.
-10. **A Tenant Module's server code runs in its own Module Runtime**, apart from Core, the Shell,
+10. **A Platform Module can be extended in exactly two ways in the first CoreSDK version.** Another
+    Module reacts to its Published Events, or shows a public component in an Interface Slot the
+    Platform Module offers. Custom fields on a Platform Module's Resources come later.
+11. **A Tenant Module's server code runs in its own Module Runtime**, apart from Core, the Shell,
     and every other Module. How a Tenant is charged for it is outside this decision.
-11. **Isolation of a Tenant Module's interface in the browser is deliberately not designed now**,
+12. **Isolation of a Tenant Module's interface in the browser is deliberately not designed now**,
     because the Vibe Module is still far away. Running that interface in a sandboxed frame on its
     own origin was proposed and rejected. Isolation is revisited before Tenant Modules ship.
 
 ### Runtime and delivery
 
-12. **Module code is runtime-neutral.** The CoreSDK does not assume Node.js. Node.js, Bun, and
+13. **Module code is runtime-neutral.** The CoreSDK does not assume Node.js. Node.js, Bun, and
     Cloudflare Workers are intended targets and other serverless hosts are not excluded, with Module
     Federation for browser and server code.
-13. **One version of the shared foundations.** One CoreSDK version pins exactly one version of
+14. **One version of the shared foundations.** One CoreSDK version pins exactly one version of
     Effect, React, and the design system. Each is a Module Federation shared singleton, and
     admission to the Application Composition rejects a Module built against another version. Inside
     one runtime that is one shared instance; between runtimes it is the same pinned version.
-14. **Several immutable versions of one Module may be live in one deployment.** Configuration
-    selects among them for an Environment or an audience, such as a beta group or an A/B test,
-    without a new deployment. Only versions that need the same database schema may be live side by
-    side.
+15. **Several immutable versions of one Module may be live in one deployment.**
+    - Which version serves a request is selected without a new deployment: by Environment, by
+      domain, and by a rule over Tenants or people, such as a beta group or a share of traffic in an
+      A/B test. An OntOS operator can, for example, run a domain on which every Platform Module is
+      at its latest version.
+    - OntOS operators select versions of Platform Modules. A Tenant's administrators select versions
+      of that Tenant's own Tenant Modules. A Tenant never selects the version of a Platform Module.
+    - The Application Composition stays the one authority for what is live. An artifact store,
+      Zephyr Cloud included, only stores immutable files.
+    - The selection is data that can be changed and overridden at runtime. It is never a value
+      pinned in code.
+    - Each version states which database migrations it needs applied. Versions are live side by side
+      only when they need the same migrations, and a version that needs a further migration replaces
+      every older version.
+16. **A Tenant Module never blocks a CoreSDK upgrade.** Every Platform Module builds and passes on a
+    new CoreSDK version before an Environment moves to it. A Tenant Module that still fails after
+    the automatic codemod does not hold the Environment back. Its Tenant receives a highly visible
+    warning, before the Environment moves, that the Module will stop on the new CoreSDK version
+    unless OntOS repairs it with an agent. A Module still failing when the Environment moves stops,
+    because decision 14 admits no Module built against another version.
 
 ### Interface
 
-15. **The design system is the only interface surface.** The CoreSDK re-exports `@techsio/ui-kit`,
+17. **The design system is the only interface surface.** The CoreSDK re-exports `@techsio/ui-kit`,
     so that one version is enforced and shared correctly through Module Federation, and a Module
     imports interface components only through the CoreSDK. There is no separate administration
     interface package: a piece generic enough for every Module belongs in the design system or in
     the CoreSDK itself.
-16. **Themes are runtime data attached to a Tenant.** A theme is never hardcoded into a build: it is
+18. **Themes are runtime data attached to a Tenant.** A theme is never hardcoded into a build: it is
     applied at runtime and can be swapped without a rebuild or a redeployment. It provides a light
     mode, a dark mode, or both. A Module follows its Tenant's theme. A Module may optionally alter
     that theme or bring its own for its interface; this is supported but not configured by default.
-17. **The staff Shell is the first interface host.** Channel Applications later become Modules; they
+19. **The staff Shell is the first interface host.** Channel Applications later become Modules; they
     are out of scope for the first CoreSDK version.
-18. **One Business Module remains one MicroVertical**
+20. **One Business Module remains one MicroVertical**
     ([ADR-0016](0016-independently-deployable-microverticals.md)), and every Module publishes its
     Resources under the one ResourceRef
     ([ADR-0006](0006-explicit-domain-tables-plus-resource-ref.md)).
 
+### Proving the first version
+
+21. **Three Modules move to the CoreSDK first and prove it before the others migrate.** They are
+    chosen to differ as much as possible. `projects` is small and has an interface. `payment` has
+    the hardest server side: provider notifications, schedules, and recovery. The third is an open
+    point.
+
 ## Open points
 
-These are asked in the interview and not yet decided. They are listed so that no reader takes the
-decisions above as complete.
+These are not decided yet. They are listed so that no reader takes the decisions above as complete.
 
-- The shape of the sign-up capability in decision 8: who may register to a Module's audience, how
-  that audience is kept apart from staff identities, and the order in which the Commerce Portal
-  realm moves.
-- The mechanism behind decision 14: who may change the selection, which authority holds it, and how
-  a version states the database schema it needs.
-- Where the source of a Tenant Module lives.
-- Whether an AI author may write declarations by hand or must change declared structure only through
-  Codesmith operations. The second council split on this point.
+- The third Module of decision 21. A new tagging module was proposed and not accepted. What the
+  third Module must prove, and which Module it is, is asked again.
+- The names Module Audience and Interface Slot. They are proposed and the Product Owner has not
+  confirmed them.
+- What overriding the selection in decision 15 covers beyond an operator changing it, for example
+  one person previewing another version.
+- Where the source of a Tenant Module lives. The Product Owner leans towards files that OntOS itself
+  stores and versions.
+- Which module state a Tenant Module enters when it stops under decision 16.
+- When the Commerce Portal realm moves onto a Module Audience.
 - Whether inference from one Module Definition stays fast and readable at the size of the largest
   module. It is measured before the current representations are deleted.
-- Which modules prove the first CoreSDK version before the others migrate.
-- The exact shape of the Module Definition, the first Module Blueprints, the extension points a
-  Platform Module offers, and the migration order.
+- The exact shape of the Module Definition, how the CoreSDK is packaged for a Module built outside
+  this repository, and the migration order of the remaining Modules.
 
 ## Considered options
 
@@ -171,11 +212,16 @@ option unanimously.
 4. **Rules as CoreSDK code, structure generated once, the rest derived at build (decision 4).**
    Accepted.
 
+The second council split on one point: whether an AI author must change declared structure only
+through Codesmith operations, or whether the trusted build alone decides what ships. Decision 4
+takes both: the trusted build is the rule for every author, and Codesmith operations make the limit
+possible.
+
 ## Consequences
 
 - A CoreSDK upgrade is a rebuild of every Module, Tenant Modules included, because the shared
-  foundations move together. An Environment moves to a new CoreSDK version only when every Module it
-  runs builds and passes on it. This is why decision 4 retains the source of every version.
+  foundations move together. This is why decision 4 retains the source of every version and decision
+  16 says what happens to a Tenant Module that fails the rebuild.
 - What crosses a boundary between two runtimes is a serialized contract: operation schemas, typed
   outcomes, ResourceRefs, events, and interface contribution contracts. Live Effect values, Layers,
   and transactions do not cross it.
@@ -187,10 +233,15 @@ option unanimously.
   points ship:
   - [ADR-0020](0020-governed-application-composition.md) treats every module as first-party code in
     one browser realm with no further trust tier, and one composition revision admits one build per
-    Module. Its strict shared-singleton rule already covers decision 13.
-  - Decision 14 must be reconciled with ADR-0020, which rejects Tenant-pinned application versions,
+    Module. Its strict shared-singleton rule already covers decision 14.
+  - Decision 15 must be reconciled with ADR-0020, which rejects Tenant-pinned application versions,
     with [ADR-0017](0017-commerce-application-boundaries.md), which rejects customer-pinned product
     versions, and with the Build Revision term, which is not a customer-selectable product version.
+    Decision 15 keeps one part of their intent: a Tenant never selects the version of a Platform
+    Module. Selecting by a rule over Tenants, and letting a Tenant select the versions of its own
+    Tenant Modules, still contradicts them. ADR-0020 also pins one browser document to one
+    composition revision and rejects runtime hot-swap; whether a changed selection may take effect
+    inside an open document is part of the same reconciliation.
   - Decision 8 changes ADR-0017 and ADR-0014, under which Commerce owns its portal realm.
   - Decision 5 allows an exception to [ADR-0004](0004-postgres-canonical-neo4j-projection.md), which
     makes PostgreSQL canonical for operational facts. ADR-0004 is amended before the first Module
