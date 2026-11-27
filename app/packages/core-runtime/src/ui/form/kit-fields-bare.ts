@@ -17,7 +17,10 @@ import { useFormContext } from './form-root.ts';
 type BareInputProps = Omit<
   ComponentProps<typeof Input>,
   'defaultValue' | 'onBlur' | 'onChange' | 'ref' | 'validateStatus' | 'value'
->;
+> & {
+  /** The caller's verdict on the text, for a rule that reads more than this one value. */
+  readonly invalid?: boolean | undefined;
+};
 type BareTextareaProps = Omit<
   ComponentProps<typeof Textarea>,
   'defaultValue' | 'onBlur' | 'onChange' | 'ref' | 'validateStatus' | 'value'
@@ -25,13 +28,14 @@ type BareTextareaProps = Omit<
 
 /** A text value in a bare kit input, such as a search box; name it with `aria-label`. */
 export const BareTextField: FormReact.FieldComponent<string, BareInputProps> = ({ field, props }) => {
+  const { invalid: verdict = false, ...rest } = props;
   const { pending } = useFormContext();
-  const invalid = Option.isSome(field.error);
+  const invalid = Option.isSome(field.error) || verdict;
   return createElement(Input, {
-    ...props,
+    ...rest,
     'aria-invalid': invalid || undefined,
-    disabled: pending || props.disabled,
-    name: props.name ?? field.path,
+    disabled: pending || rest.disabled,
+    name: rest.name ?? field.path,
     onBlur: () => field.onBlur(),
     onChange: (event) => field.onChange(event.currentTarget.value),
     validateStatus: invalid ? 'error' : 'default',

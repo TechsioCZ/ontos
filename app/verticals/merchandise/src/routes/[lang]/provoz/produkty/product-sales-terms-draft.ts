@@ -1,4 +1,5 @@
 // Sales-terms drafts: Kč and quantity text parsing and the quantity tier rows the product and variant editors share.
+import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { moneyInputText } from '../../../../form-number.ts';
 
@@ -24,13 +25,14 @@ export const parseQuantityText = (text: string): number | null => {
 
 export const czkText = (minor: number | undefined): string => (minor === undefined ? '' : moneyInputText(minor / 100));
 
-/** One quantity tier row as typed: from quantity, net and gross price in Kč. */
-export interface TierDraft {
-  readonly grossText: string;
-  readonly key: number;
-  readonly minimumText: string;
-  readonly netText: string;
-}
+/** One quantity tier row as typed: from quantity, net and gross price in Kč; `key` names the row. */
+export const TierDraftSchema = Schema.Struct({
+  grossText: Schema.String,
+  key: Schema.Number,
+  minimumText: Schema.String,
+  netText: Schema.String,
+});
+export type TierDraft = typeof TierDraftSchema.Type;
 
 export type PriceTiers = NonNullable<ProductRecord['priceTiers']>;
 

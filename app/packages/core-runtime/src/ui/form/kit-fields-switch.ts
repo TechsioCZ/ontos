@@ -16,11 +16,15 @@ import { useFormContext } from './form-root.ts';
 type SwitchFieldProps = Omit<
   SwitchProps,
   'checked' | 'defaultChecked' | 'id' | 'onCheckedChange' | 'ref' | 'validateStatus'
-> & { readonly id?: string };
+> & {
+  readonly id?: string;
+  /** The caller's verdict on the value, for a rule that reads more than this one field. */
+  readonly invalid?: boolean | undefined;
+};
 
 /** A boolean value shown as a switch. The field's translated error wins over the help text. */
 export const SwitchField: FormReact.FieldComponent<boolean, SwitchFieldProps> = ({ field, props }) => {
-  const { disabled, helpText, id, ...rest } = props;
+  const { disabled, helpText, id, invalid = false, ...rest } = props;
   const { pending, translate } = useFormContext();
   const generated = useId();
   return createElement(Switch, {
@@ -34,6 +38,6 @@ export const SwitchField: FormReact.FieldComponent<boolean, SwitchFieldProps> = 
       field.onChange(checked);
       field.onBlur();
     },
-    validateStatus: Option.isSome(field.error) ? 'error' : 'default',
+    validateStatus: Option.isSome(field.error) || invalid ? 'error' : 'default',
   } satisfies SwitchProps);
 };

@@ -1059,14 +1059,6 @@ export default defineConfig({
       },
     },
     {
-      // effect-form port: paths not yet migrated. Each port step removes the paths it moves onto
-      // @app/core-runtime/ui/form, so the rule applies there.
-      files: ['verticals/merchandise/src/**'],
-      rules: {
-        'effect-native/no-hand-rolled-form-state': 'off',
-      },
-    },
-    {
       // Dynamic Modern.js cache paths contain `.js-${appId}` but are filesystem paths,
       // not CSS class names; the GitHub rule cannot distinguish those string domains.
       files: ['apps/shell-super-app/modern.config.ts', 'verticals/party-registry/modern.config.ts'],

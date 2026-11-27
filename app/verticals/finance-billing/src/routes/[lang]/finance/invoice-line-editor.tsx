@@ -1,6 +1,6 @@
 import { formatMoney, matchesSearch, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { ComboboxField, NumericField, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
-import type { FormReact } from '@app/core-runtime/ui/form';
+import type { FormReact, NumberText } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -89,6 +89,15 @@ const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2,
 // Without a format the input parses with parseFloat, which stops at the decimal comma: `2,25` became 2.
 // Three digits keep a typed fraction visible so `lineIssue` can reject it with a message.
 const quantityFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 3, minimumFractionDigits: 0 };
+
+/**
+ * A line's number as the text its input shows, written the way the input itself formats it; `NaN` (text that is no
+ * number) shows as `""`, and the input keeps the text the person typed.
+ */
+const shownNumber = (value: number, options: Intl.NumberFormatOptions): NumberText => ({
+  number: value,
+  text: Number.isFinite(value) ? new Intl.NumberFormat('cs-CZ', options).format(value) : '',
+});
 
 const InvoiceLineDiscount = ({
   field,
@@ -352,8 +361,11 @@ const InvoiceLineEditor = ({
       <div className="finance-invoice-line-values grid items-end gap-150">
         <div className="min-w-0">
           {createElement(NumericField, {
-            field: fieldPart(field, `${line.key}.quantity`, line.quantity, (quantity) =>
-              onChange({ ...line, quantity }),
+            field: fieldPart(
+              field,
+              `${line.key}.quantity`,
+              shownNumber(line.quantity, quantityFormatOptions),
+              (quantity) => onChange({ ...line, quantity: quantity.number }),
             ),
             props: {
               // Blur must not clamp a typed 0,001 to 1; `lineIssue` rejects it with a message instead.
@@ -371,14 +383,17 @@ const InvoiceLineEditor = ({
         {line.kind === 'free' && (
           <div className="min-w-0">
             {createElement(NumericField, {
-              // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0; a NaN price
-              // leaves the input uncontrolled, so the typed text stays visible next to the error.
+              // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0; the input keeps
+              // the typed text visible next to the error.
               field: fieldPart(
                 field,
                 `${line.key}.unitPrice`,
-                Number.isFinite(line.unitPriceMinor) ? line.unitPriceMinor / 100 : Number.NaN,
-                (value) =>
-                  onChange({ ...line, unitPriceMinor: Number.isFinite(value) ? czkToMinor(value) : Number.NaN }),
+                shownNumber(
+                  Number.isFinite(line.unitPriceMinor) ? line.unitPriceMinor / 100 : Number.NaN,
+                  priceFormatOptions,
+                ),
+                ({ number }) =>
+                  onChange({ ...line, unitPriceMinor: Number.isFinite(number) ? czkToMinor(number) : Number.NaN }),
               ),
               props: {
                 // Two decimals at most, so `1234,5` stays 1 234,50 Kč instead of being rounded to whole crowns.

@@ -20,6 +20,7 @@ import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-cat
 import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { ProductBulkBar } from '../../src/routes/[lang]/provoz/produkty/product-bulk-bar.tsx';
+import { EshopForm } from '../../src/routes/[lang]/provoz/produkty/product-eshop-form.ts';
 import { ArchiveSection } from '../../src/routes/[lang]/provoz/produkty/product-eshop-sections.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
@@ -143,16 +144,19 @@ it.live('archiving a product asks first, naming the product, and runs once after
   Effect.gen(function* archive() {
     yield* pinTestDocument;
     const archived: string[] = [];
+    // The section is part of the "E-shop a obrázky" tab's form, which holds the typed reason.
     yield* mountInRoute(
-      <ArchiveSection
-        onArchived={() => {
-          archived.push('archived');
-        }}
-        onCommitted={constVoid}
-        onReload={constVoid}
-        product={product}
-        revision={4}
-      />,
+      <EshopForm product={product}>
+        <ArchiveSection
+          onArchived={() => {
+            archived.push('archived');
+          }}
+          onCommitted={constVoid}
+          onReload={constVoid}
+          product={product}
+          revision={4}
+        />
+      </EshopForm>,
     );
     yield* type('product-archive-reason', 'Testovací produkt');
     yield* click(byTestId('product-archive'));

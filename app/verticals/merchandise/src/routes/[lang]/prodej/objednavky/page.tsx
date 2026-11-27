@@ -1,7 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { companyVatOf } from '../../provoz/produkty/product-tax-classification.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -22,7 +21,17 @@ import {
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import {
+  BareTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Effect, Option, Schema, SchemaGetter } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -31,7 +40,7 @@ import type { OrderStatus } from '../../../../../shared/domain/merchandise-model
 import { storefrontBrandOf } from '../../../../../shared/domain/storefront-brand.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
@@ -121,12 +130,26 @@ const orderIdOfSearch = (searchStr: string): string | undefined =>
     Option.getOrUndefined,
   );
 
+/** The list's search box. A change filters the list at once; the form itself is never submitted. */
+const orderSearchForm = FormReact.make(FormBuilder.empty.addField('search', Schema.String), {
+  fields: { search: BareTextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noSearch = { search: '' };
+/** The search text as a plain value, which changes only when the text does. */
+const searchText = orderSearchForm.values.pipe(
+  Atom.map(Option.match({ onNone: () => noSearch.search, onSome: (values) => values.search })),
+);
+
 const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
   const [viewMode, setViewMode] = useDetailViewMode();
-  const [search, setSearch] = useState('');
+  const search = useAtomValue(searchText);
+  const setSearchValues = useAtomSet(orderSearchForm.setValues);
+  const setSearch = (next: string) => setSearchValues({ search: next });
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const settledSearch = useDebounced(search);
@@ -174,6 +197,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
     setSelectedOrders({});
   };
+  useAtomSubscribe(searchText, refilter, { immediate: false });
   const readyCanEditOrders = ready === undefined ? canEditOrders : recordsCanEditOrders(ready.records);
   if (readyCanEditOrders !== canEditOrders) {
     setCanEditOrders(readyCanEditOrders);
@@ -303,7 +327,6 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     resetOpen,
     rowIntent,
     runStatusChange,
-    search,
     selected,
     selectedOrdersAreFinal,
     selectedStatusItems,
@@ -549,7 +572,6 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
     resetOpen,
     rowIntent,
     runStatusChange,
-    search,
     selected,
     selection,
     setCreateOpen,
@@ -557,7 +579,6 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
     setPagination,
     setPendingCancel,
     setResetOpen,
-    setSearch,
     setSelectedOrders,
     setSelection,
     setStatusFilter,
@@ -581,18 +602,18 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
 
         {renderOrderStats(model)}
 
-        <div className="flex flex-wrap items-end gap-150">
-          <Input
+        <FormRoot
+          className="flex flex-wrap items-end gap-150"
+          defaultValues={noSearch}
+          form={orderSearchForm}
+          translateMessage={t}
+        >
+          <orderSearchForm.search
             aria-label={t(key('table.searchLabel'))}
             className="w-64"
-            onChange={(event) => {
-              setSearch(event.target.value);
-              refilter();
-            }}
             placeholder={t(key('table.searchPlaceholder'))}
             size="sm"
             type="search"
-            value={search}
           />
           <div className="w-48">
             <SelectTemplate
@@ -621,7 +642,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
               />
             </div>
           )}
-        </div>
+        </FormRoot>
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
             {t(key('states.tagFilterFailed'))}

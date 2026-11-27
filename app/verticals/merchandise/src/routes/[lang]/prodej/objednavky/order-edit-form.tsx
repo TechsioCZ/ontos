@@ -1,8 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormNumericInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
@@ -17,13 +15,36 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
+import {
+  Field,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  NumberTextSchema,
+  NumericField,
+  TextAreaField,
+  TextField,
+  unrenderedField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { NumberText } from '@app/core-runtime/ui/form';
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
 import { useEffect, useRef, useState } from 'react';
 import { constVoid } from 'effect/Function';
 import { createPortal } from 'react-dom';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
-import { orderCurrency, shippingMethodFor, shippingMethods } from '../../../../../shared/domain/merchandise-model.ts';
+import {
+  orderCurrency,
+  ProductIdSchema,
+  shippingMethodFor,
+  ShippingMethodSchema,
+  shippingMethods,
+  VariantIdSchema,
+} from '../../../../../shared/domain/merchandise-model.ts';
 import {
   firstOrderableQuantity,
   isOrderQuantityValid,
@@ -33,7 +54,7 @@ import { recordGrossForQuantity } from '../../../../../shared/domain/unit-price.
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
-import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from './order-edit-draft.ts';
+import { addressIncomplete, contactIncomplete, draftOf, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { useOrderEditDraft } from './order-edit-save.ts';
 import { activeVariants, lineClassification } from './order-line-draft.ts';
@@ -42,7 +63,10 @@ import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts'
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat, TaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useRecordForm } from '../../../../ui/record-form.ts';
 
 /** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
 const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number =>
@@ -80,9 +104,9 @@ const withOffer = (line: DraftLine, offer: number): DraftLine => {
 /** A line's price field: no price typed, or (an added line) no price including VAT for its quantity. */
 const lineFieldError = (price: number | null, priceMissing: boolean, missingText: string) => {
   if (priceMissing) {
-    return { helpText: missingText, validateStatus: 'error' as const };
+    return { helpText: missingText, invalid: true };
   }
-  return price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {};
+  return price === null ? { helpText: 'Zadejte cenu', invalid: true } : {};
 };
 
 /** The quantity a picked unit is added at: the smallest quantity it can be ordered in. */
@@ -141,13 +165,6 @@ const unrepricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string
   const noneRepriced = repricedLines(added, offers).length === 0;
   return added.flatMap((line) => (noneRepriced || !offers.has(line.key) ? [lineName(line)] : []));
 };
-
-/** The lines with their new offers taken. */
-const withOffers = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): DraftLine[] =>
-  lines.map((line) => {
-    const offer = offers.get(line.key);
-    return offer === undefined ? line : withOffer(line, offer);
-  });
 
 /**
  * Why the picked product cannot be added: it names no VAT classification, or its classification has no usable rate.
@@ -245,6 +262,229 @@ const previewTotals = (
     shippingMethod !== null && shippingPrice !== null
       ? { ...totalsInput, shipping: { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 } }
       : totalsInput,
+  );
+};
+
+/** One line of the order as the form holds it: the quantity and price as typed, and the line's product as it is. */
+const EditLineSchema = Schema.Struct({
+  key: Schema.String,
+  name: Schema.String,
+  offeredPriceText: Schema.OptionFromNullOr(Schema.String),
+  price: NumberTextSchema,
+  productId: ProductIdSchema,
+  quantity: NumberTextSchema,
+  sku: Schema.String,
+  taxClassificationCode: Schema.OptionFromNullOr(CzVatClassificationCodeSchema),
+  variantId: Schema.OptionFromNullOr(VariantIdSchema),
+  variantName: Schema.OptionFromNullOr(Schema.String),
+  vatRate: Schema.Number,
+});
+
+/**
+ * The editable fields of the order. Typing changes only this form; the Save button sends the draft it stands for, and
+ * Enter in a field is the same one save. The shipping method is picked in a select that writes its field; a line's
+ * product, its offer and VAT are the line's own and never rendered as fields.
+ */
+const orderEditForm = FormReact.make(
+  FormBuilder.empty
+    .addField('city', Schema.String)
+    .addField('country', Schema.String)
+    .addField('email', Schema.String)
+    .addField(Field.makeArrayField('lines', EditLineSchema))
+    .addField('name', Schema.String)
+    .addField('note', Schema.String)
+    .addField('phone', Schema.String)
+    .addField('postalCode', Schema.String)
+    .addField('reason', Schema.String)
+    .addField('shippingMethod', Schema.OptionFromNullOr(ShippingMethodSchema))
+    .addField('shippingPrice', NumberTextSchema)
+    .addField('street', Schema.String),
+  {
+    fields: {
+      city: TextField,
+      country: TextField,
+      email: TextField,
+      // `key` names a line; the line's product, offer and VAT are not edited here.
+      lines: {
+        key: unrenderedField<string>(),
+        name: unrenderedField<string>(),
+        offeredPriceText: unrenderedField<string | null>(),
+        price: NumericField,
+        productId: unrenderedField<string>(),
+        quantity: NumericField,
+        sku: unrenderedField<string>(),
+        taxClassificationCode: unrenderedField<typeof CzVatClassificationCodeSchema.Encoded | null>(),
+        variantId: unrenderedField<string | null>(),
+        variantName: unrenderedField<string | null>(),
+        vatRate: unrenderedField<number>(),
+      },
+      name: TextField,
+      note: TextAreaField,
+      phone: TextField,
+      postalCode: TextField,
+      reason: TextField,
+      shippingMethod: unrenderedField<ShippingMethod | null>(),
+      shippingPrice: NumericField,
+      street: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type EditValues = typeof orderEditForm.schema.Encoded;
+type EditRow = EditValues['lines'][number];
+
+const linesField = orderEditForm.getFieldAtoms(orderEditForm.fields.lines);
+const shippingMethodField = orderEditForm.getFieldAtoms(orderEditForm.fields.shippingMethod);
+const shippingPriceField = orderEditForm.getFieldAtoms(orderEditForm.fields.shippingPrice);
+/** The form's lines, as a value of their own. */
+const linesAtom = orderEditForm.values.pipe(
+  Atom.map(Option.match({ onNone: (): readonly EditRow[] => [], onSome: (values) => values.lines })),
+);
+
+/** A quantity's display format: up to six decimals, as the order's quantities allow. */
+const QUANTITY_FORMAT = { maximumFractionDigits: 6 };
+
+/** A number field's value for a text the form holds: the text, and the number it reads as. */
+const numberTextOf = (text: string): NumberText => {
+  const normalized = text.replaceAll(/\s/gu, '').replace(',', '.');
+  return { number: normalized === '' ? Number.NaN : Number(normalized), text };
+};
+
+const rowOf = (line: DraftLine): EditRow => ({
+  key: line.key,
+  name: line.name,
+  offeredPriceText: line.offeredPriceText ?? null,
+  price: numberTextOf(line.priceText),
+  productId: line.productId,
+  quantity: numberTextOf(line.quantityText),
+  sku: line.sku,
+  taxClassificationCode: line.taxClassificationCode ?? null,
+  variantId: line.variantId ?? null,
+  variantName: line.variantName ?? null,
+  vatRate: line.vatRate,
+});
+
+const decodeEditLine = Schema.decodeOption(EditLineSchema);
+
+/** The draft line a form line stands for. */
+const draftLineOfRow = (row: EditRow): Option.Option<DraftLine> =>
+  decodeEditLine(row).pipe(
+    Option.map((line): DraftLine => {
+      const base = {
+        key: line.key,
+        name: line.name,
+        priceText: line.price.text,
+        productId: line.productId,
+        quantityText: line.quantity.text,
+        sku: line.sku,
+        taxClassificationCode: Option.getOrUndefined(line.taxClassificationCode),
+        vatRate: line.vatRate,
+      } satisfies DraftLine;
+      const withOffered = Option.match(line.offeredPriceText, {
+        onNone: (): DraftLine => base,
+        onSome: (offeredPriceText) => ({ ...base, offeredPriceText }),
+      });
+      const withVariant = Option.match(line.variantId, {
+        onNone: () => withOffered,
+        onSome: (variantId) => ({ ...withOffered, variantId }),
+      });
+      return Option.match(line.variantName, {
+        onNone: () => withVariant,
+        onSome: (variantName) => ({ ...withVariant, variantName }),
+      });
+    }),
+  );
+
+/** The form's values for a draft. */
+const editValuesOf = (draft: Draft): EditValues => ({
+  city: draft.city,
+  country: draft.country,
+  email: draft.email,
+  lines: draft.lines.map(rowOf),
+  name: draft.name,
+  note: draft.note,
+  phone: draft.phone,
+  postalCode: draft.postalCode,
+  reason: draft.reason,
+  shippingMethod: draft.shippingMethod,
+  shippingPrice: numberTextOf(draft.shippingPriceText),
+  street: draft.street,
+});
+
+/** The draft the form's values stand for. */
+const editDraftOf = (values: EditValues): Draft => ({
+  city: values.city,
+  country: values.country,
+  email: values.email,
+  lines: values.lines.flatMap((row) =>
+    Option.match(draftLineOfRow(row), { onNone: () => [], onSome: (line) => [line] }),
+  ),
+  name: values.name,
+  note: values.note,
+  phone: values.phone,
+  postalCode: values.postalCode,
+  reason: values.reason,
+  shippingMethod: values.shippingMethod,
+  shippingPriceText: values.shippingPrice.text,
+  street: values.street,
+});
+
+/**
+ * Changes the form's lines from their current rows. `useAtomSet` calls a function it is given with the setter's own
+ * value, so the update goes in as the result of one: the field's setter then applies it to the field's current rows.
+ */
+const useLinesUpdate = () => {
+  const setValue = useAtomSet(linesField.setValue);
+  return (update: (rows: readonly EditRow[]) => readonly EditRow[]) => setValue(() => update);
+};
+
+/** A form line changed as the draft line it stands for. */
+const updatedRow = (row: EditRow, update: (line: DraftLine) => DraftLine): EditRow =>
+  Option.match(draftLineOfRow(row), { onNone: () => row, onSome: (line) => rowOf(update(line)) });
+
+/** The form lines with their new offers taken (`withOffer`). */
+const rowsWithOffers = (rows: readonly EditRow[], offers: ReadonlyMap<string, number>): EditRow[] =>
+  rows.map((row) => {
+    const offer = offers.get(row.key);
+    return offer === undefined ? row : updatedRow(row, (line) => withOffer(line, offer));
+  });
+
+/** A line whose quantity alone changed since `before`: a change that set its offer too is priced already. */
+const quantityAloneChanged = (row: EditRow, before: readonly EditRow[]): boolean => {
+  const earlier = before.find((entry) => entry.key === row.key);
+  return (
+    earlier !== undefined &&
+    earlier.quantity.text !== row.quantity.text &&
+    earlier.offeredPriceText === row.offeredPriceText
+  );
+};
+
+/**
+ * An added line follows the price of the quantity break its changed quantity reaches: a price staff left at the old
+ * offer takes the new one, a price they typed stays (`withOffer`). `offerFor` is the line's offer now, undefined
+ * for a line of the order itself or one whose product cannot go on the order now.
+ */
+const useRepriceOnQuantity = (opening: readonly EditRow[], offerFor: (line: DraftLine) => number | undefined): void => {
+  const setLines = useLinesUpdate();
+  const previous = useRef(opening);
+  useAtomSubscribe(
+    linesAtom,
+    (rows) => {
+      const before = previous.current;
+      previous.current = rows;
+      const offers = new Map(
+        rows.flatMap((row) => {
+          const line = quantityAloneChanged(row, before) ? draftLineOfRow(row) : Option.none<DraftLine>();
+          const offer = Option.flatMapNullishOr(line, offerFor);
+          return Option.match(offer, { onNone: () => [], onSome: (price) => [[row.key, price] as const] });
+        }),
+      );
+      if (offers.size > 0) {
+        setLines((current) => rowsWithOffers(current, offers));
+      }
+    },
+    { immediate: false },
   );
 };
 
@@ -417,25 +657,44 @@ const useOrderEditForm = ({
     order,
     revision,
   });
-  const { draft } = record;
+  // The form holds what the fields show; the record owns the draft, its save, conflicts and kept versions.
+  useRecordForm({
+    draft: record.draft,
+    draftOf: editDraftOf,
+    form: orderEditForm,
+    setDraft: record.setDraft,
+    valuesOf: editValuesOf,
+  });
+  const values = Option.getOrElse(useAtomValue(orderEditForm.values), () => editValuesOf(record.draft));
+  const draft = editDraftOf(values);
+  const setLines = useLinesUpdate();
+  const setShippingMethod = useAtomSet(shippingMethodField.setValue);
+  const setShippingPrice = useAtomSet(shippingPriceField.setValue);
+  /** Changes the line `key` of the form, as the draft line it stands for. */
+  const updateLine = (key: string, update: (line: DraftLine) => DraftLine) =>
+    setLines((rows) => rows.map((row) => (row.key === key ? updatedRow(row, update) : row)));
   useEffect(() => {
     takeOffers.current = (offers) => {
       setRepriced(repricedLines(draft.lines, offers));
       setUnrepriced(unrepricedLines(draft.lines, offers));
-      record.setDraft((current) => ({ ...current, lines: withOffers(current.lines, offers) }));
+      setLines((rows) => rowsWithOffers(rows, offers));
     };
-  }, [draft.lines, record]);
-  const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
-  const patchLine = (key: string, next: Partial<DraftLine>) =>
-    patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
-  /** A changed quantity; an added line follows the price of the quantity break it now reaches. */
-  const handleQuantityChange = (line: DraftLine, quantityText: string) => {
+  }, [draft.lines, setLines]);
+  useRepriceOnQuantity(values.lines, (line) => {
     const product =
       line.offeredPriceText === undefined ? undefined : addedProducts.find((entry) => entry.id === line.productId);
-    const next = { ...line, quantityText };
-    const offer = product === undefined ? undefined : currentOfferOf(product, next);
-    patchLine(line.key, offer === undefined ? { quantityText } : withOffer(next, offer));
-  };
+    return product === undefined ? undefined : currentOfferOf(product, line);
+  });
+  // Enter in a field is the Save button.
+  useAtomSubscribe(
+    orderEditForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        record.save();
+      }
+    },
+    { immediate: false },
+  );
   const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } = draftValidation(
     draft,
     record.confirmed,
@@ -469,8 +728,7 @@ const useOrderEditForm = ({
       const more = { ...existing, quantityText: String(quantity + rulesFor(existing).step) };
       const offer = offerOf(unit, quantity + rulesFor(existing).step);
       // A line added in this edit takes the product's price as it is now; the order's own lines keep theirs.
-      patchLine(
-        existing.key,
+      updateLine(existing.key, () =>
         existing.offeredPriceText === undefined || offer === undefined ? more : withOffer(more, offer),
       );
       clearPick();
@@ -497,9 +755,16 @@ const useOrderEditForm = ({
     const withVariant = unit.variantId === undefined ? added : { ...added, variantId: unit.variantId };
     const line: DraftLine =
       unit.variantName === undefined ? withVariant : { ...withVariant, variantName: unit.variantName };
-    patch({ lines: [...draft.lines, line] });
+    setLines((rows) => [...rows, rowOf(line)]);
     sequence.current += 1;
     clearPick();
+  };
+  const removeLine = (key: string) => setLines((rows) => rows.filter((row) => row.key !== key));
+  const chooseShipping = (method: ShippingMethod) => {
+    setShippingMethod(method);
+    setShippingPrice(
+      numberTextOf(moneyInputText(inOrderCurrency(order, shippingMethods[method].grossPriceMinor) / 100)),
+    );
   };
 
   const methodItems = shippingOptions.map((option) =>
@@ -512,12 +777,12 @@ const useOrderEditForm = ({
   return {
     addLine,
     addressInvalid,
+    chooseShipping,
     contactInvalid,
     currencyUnit,
     draft,
     gross,
     guard,
-    handleQuantityChange,
     labels: saveLabelsFor(language),
     leave,
     linesInvalid,
@@ -525,8 +790,6 @@ const useOrderEditForm = ({
     movesStock,
     order,
     parsedLines,
-    patch,
-    patchLine,
     pick,
     pickedPriceMissing,
     pickedRateMissing,
@@ -536,6 +799,7 @@ const useOrderEditForm = ({
     preview,
     ratesConfirmation,
     record,
+    removeLine,
     repriced,
     setPickedVariantId,
     shippingInvalid,
@@ -543,15 +807,15 @@ const useOrderEditForm = ({
     taxLabels,
     unit,
     unrepriced,
+    values,
   };
 };
 
 const renderOrderShipping = ({
+  chooseShipping,
   currencyUnit,
   draft,
   methodItems,
-  order,
-  patch,
   shippingInvalid,
   t,
 }: ReturnType<typeof useOrderEditForm>) => (
@@ -565,69 +829,34 @@ const renderOrderShipping = ({
           const [next] = details.value;
           const method = shippingOptions.find((option) => option.method === next);
           if (method !== undefined) {
-            patch({
-              shippingMethod: method.method,
-              shippingPriceText: moneyInputText(
-                inOrderCurrency(order, shippingMethods[method.method].grossPriceMinor) / 100,
-              ),
-            });
+            chooseShipping(method.method);
           }
         }}
         placeholder={t('merchandise.ui.selectShipping')}
         size="sm"
         value={draft.shippingMethod === null ? [] : [draft.shippingMethod]}
       />
-      <FormNumericInput
+      <orderEditForm.shippingPrice
         formatOptions={MONEY_FORMAT}
         id="edit-shipping-price"
         label={t('merchandise.ui.shippingPriceInclVat', { currency: currencyUnit })}
         locale="cs-CZ"
         min={0}
         name="shippingPrice"
-        onValueChange={(details) => patch({ shippingPriceText: details.value })}
         size="sm"
-        value={draft.shippingPriceText}
-        {...(shippingInvalid ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
-      >
-        <NumericInput.Control>
-          <NumericInput.Input />
-        </NumericInput.Control>
-      </FormNumericInput>
+        {...(shippingInvalid ? { helpText: 'Zadejte cenu', invalid: true } : {})}
+      />
     </div>
   </SectionCard>
 );
 
-const renderOrderAddress = ({ addressInvalid, draft, patch, t }: ReturnType<typeof useOrderEditForm>) => (
+const renderOrderAddress = ({ addressInvalid, t }: ReturnType<typeof useOrderEditForm>) => (
   <SectionCard title={t('merchandise.ui.deliveryAddress')}>
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-      <FormInput
-        id="edit-street"
-        label={t('merchandise.ui.streetNumber')}
-        name="street"
-        onChange={(event) => patch({ street: event.target.value })}
-        value={draft.street}
-      />
-      <FormInput
-        id="edit-city"
-        label={t('merchandise.ui.city')}
-        name="city"
-        onChange={(event) => patch({ city: event.target.value })}
-        value={draft.city}
-      />
-      <FormInput
-        id="edit-postal"
-        label={t('merchandise.ui.postalCode')}
-        name="postalCode"
-        onChange={(event) => patch({ postalCode: event.target.value })}
-        value={draft.postalCode}
-      />
-      <FormInput
-        id="edit-country"
-        label={t('merchandise.ui.country')}
-        name="country"
-        onChange={(event) => patch({ country: event.target.value })}
-        value={draft.country}
-      />
+      <orderEditForm.street id="edit-street" label={t('merchandise.ui.streetNumber')} name="street" />
+      <orderEditForm.city id="edit-city" label={t('merchandise.ui.city')} name="city" />
+      <orderEditForm.postalCode id="edit-postal" label={t('merchandise.ui.postalCode')} name="postalCode" />
+      <orderEditForm.country id="edit-country" label={t('merchandise.ui.country')} name="country" />
     </div>
     {addressInvalid && (
       <StatusText showIcon status="error">
@@ -637,31 +866,12 @@ const renderOrderAddress = ({ addressInvalid, draft, patch, t }: ReturnType<type
   </SectionCard>
 );
 
-const renderOrderContact = ({ contactInvalid, draft, patch, t }: ReturnType<typeof useOrderEditForm>) => (
+const renderOrderContact = ({ contactInvalid, t }: ReturnType<typeof useOrderEditForm>) => (
   <SectionCard title={t('merchandise.ui.demoCustomerContact')}>
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-      <FormInput
-        id="edit-name"
-        label={t('merchandise.ui.contactName')}
-        name="name"
-        onChange={(event) => patch({ name: event.target.value })}
-        value={draft.name}
-      />
-      <FormInput
-        id="edit-email"
-        label={t('merchandise.ui.email')}
-        name="email"
-        onChange={(event) => patch({ email: event.target.value })}
-        type="email"
-        value={draft.email}
-      />
-      <FormInput
-        id="edit-phone"
-        label={t('merchandise.ui.phone')}
-        name="phone"
-        onChange={(event) => patch({ phone: event.target.value })}
-        value={draft.phone}
-      />
+      <orderEditForm.name id="edit-name" label={t('merchandise.ui.contactName')} name="name" />
+      <orderEditForm.email id="edit-email" label={t('merchandise.ui.email')} name="email" type="email" />
+      <orderEditForm.phone id="edit-phone" label={t('merchandise.ui.phone')} name="phone" />
     </div>
     {contactInvalid && (
       <StatusText showIcon status="error">
@@ -671,7 +881,98 @@ const renderOrderContact = ({ contactInvalid, draft, patch, t }: ReturnType<type
   </SectionCard>
 );
 
-export const OrderEditForm = (props: OrderEditFormProps) => {
+/** One line of the order: its quantity and price fields are the form's `lines` item at `index`. */
+const EditLineRow = ({
+  canRemove,
+  entry: { line, price, priceMissing, quantity, rules },
+  index,
+  onRemove,
+  order,
+}: {
+  readonly canRemove: boolean;
+  readonly entry: ReturnType<typeof useOrderEditForm>['parsedLines'][number];
+  readonly index: number;
+  readonly onRemove: () => void;
+  readonly order: Order;
+}) => {
+  const { t } = useModernI18n();
+  const taxLabels = useTaxLabels();
+  return (
+    <orderEditForm.lines.Item index={index}>
+      <Table.Row>
+        <Table.Cell>
+          <div className="flex min-w-32 flex-col">
+            <span className="font-medium">{line.name}</span>
+            <span className="text-fg-secondary text-xs">
+              {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
+            </span>
+            <span className="text-fg-secondary text-xs">
+              {`${t('merchandise.pages.orders.detail.lineVat')} ${taxLabels.line(line.taxClassificationCode, line.vatRate)}`}
+            </span>
+          </div>
+        </Table.Cell>
+        <Table.Cell align="end">
+          <div className="ml-auto" style={{ minWidth: 100 }}>
+            <orderEditForm.lines.quantity
+              clampValueOnBlur={false}
+              formatOptions={QUANTITY_FORMAT}
+              hideValueMax
+              id={`edit-qty-${line.key}`}
+              label={<span className="sr-only">Množství</span>}
+              locale="cs-CZ"
+              min={rules.minimum}
+              name={`qty-${line.key}`}
+              size="sm"
+              step={rules.step}
+              {...(quantity === null
+                ? {
+                    helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
+                    invalid: true,
+                  }
+                : {})}
+            />
+          </div>
+        </Table.Cell>
+        <Table.Cell align="end">
+          <div className="ml-auto w-24">
+            <orderEditForm.lines.price
+              formatOptions={MONEY_FORMAT}
+              id={`edit-price-${line.key}`}
+              label={<span className="sr-only">Cena za jednotku</span>}
+              locale="cs-CZ"
+              min={0}
+              name={`price-${line.key}`}
+              size="sm"
+              {...lineFieldError(price, priceMissing, t('merchandise.pages.orders.create.noPriceForQuantity'))}
+            />
+          </div>
+        </Table.Cell>
+        <Table.Cell align="end" className="tabular-nums">
+          {price === null || quantity === null
+            ? '—'
+            : formatMoney(
+                lineGrossMinor({ quantity, unitPriceMinor: price, vatRate: line.vatRate }, order.pricesIncludeVat),
+                orderCurrency(order),
+              )}
+        </Table.Cell>
+        <Table.Cell align="end">
+          <Button
+            appearance="ghost"
+            aria-label={`Odebrat ${line.name}`}
+            disabled={!canRemove}
+            icon="icon-[mdi--delete-outline]"
+            onClick={onRemove}
+            severity="secondary"
+            size="sm"
+            type="button"
+          />
+        </Table.Cell>
+      </Table.Row>
+    </orderEditForm.lines.Item>
+  );
+};
+
+const OrderEditFields = (props: OrderEditFormProps) => {
   const model = useOrderEditForm(props);
   const {
     addLine,
@@ -679,15 +980,12 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     draft,
     gross,
     guard,
-    handleQuantityChange,
     labels,
     leave,
     linesInvalid,
     movesStock,
     order,
     parsedLines,
-    patch,
-    patchLine,
     pick,
     pickedPriceMissing,
     pickedRateMissing,
@@ -697,12 +995,13 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     preview,
     ratesConfirmation,
     record,
+    removeLine,
     repriced,
     setPickedVariantId,
     t,
-    taxLabels,
     unit,
     unrepriced,
+    values,
   } = model;
   const { actionsSlot } = props;
   const handleSave = record.save;
@@ -722,247 +1021,165 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
 
   return (
     <>
-      <form
-        className="flex flex-col gap-250"
-        id="order-edit-form"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleSave();
-        }}
-      >
-        <p className="text-fg-secondary text-sm">
-          Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se
-          nemění.{' '}
-          {movesStock
-            ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
-            : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
-        </p>
-        <SectionCard flush title={t('merchandise.ui.items')}>
-          <ScrollRegion label={t('merchandise.ui.orderItems')}>
-            <Table appearance="line" size="sm">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>Položka</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">
-                    {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
-                  </Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">
-                    <span className="sr-only">Akce</span>
-                  </Table.ColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {parsedLines.map(({ line, price, priceMissing, quantity, rules }) => (
-                  <Table.Row key={line.key}>
-                    <Table.Cell>
-                      <div className="flex min-w-32 flex-col">
-                        <span className="font-medium">{line.name}</span>
-                        <span className="text-fg-secondary text-xs">
-                          {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
-                        </span>
-                        <span className="text-fg-secondary text-xs">
-                          {`${t('merchandise.pages.orders.detail.lineVat')} ${taxLabels.line(line.taxClassificationCode, line.vatRate)}`}
-                        </span>
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell align="end">
-                      <div className="ml-auto" style={{ minWidth: 100 }}>
-                        <FormNumericInput
-                          clampValueOnBlur={false}
-                          formatOptions={{ maximumFractionDigits: 6 }}
-                          id={`edit-qty-${line.key}`}
-                          label={<span className="sr-only">Množství</span>}
-                          locale="cs-CZ"
-                          min={rules.minimum}
-                          name={`qty-${line.key}`}
-                          onValueChange={(details) => handleQuantityChange(line, details.value)}
-                          size="sm"
-                          step={rules.step}
-                          value={line.quantityText}
-                          {...(quantity === null
-                            ? {
-                                helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
-                                validateStatus: 'error' as const,
-                              }
-                            : {})}
-                        >
-                          <NumericInput.Control>
-                            <NumericInput.Input aria-valuemax={undefined} />
-                          </NumericInput.Control>
-                        </FormNumericInput>
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell align="end">
-                      <div className="ml-auto w-24">
-                        <FormNumericInput
-                          formatOptions={MONEY_FORMAT}
-                          id={`edit-price-${line.key}`}
-                          label={<span className="sr-only">Cena za jednotku</span>}
-                          locale="cs-CZ"
-                          min={0}
-                          name={`price-${line.key}`}
-                          onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
-                          size="sm"
-                          value={line.priceText}
-                          {...lineFieldError(
-                            price,
-                            priceMissing,
-                            t('merchandise.pages.orders.create.noPriceForQuantity'),
-                          )}
-                        >
-                          <NumericInput.Control>
-                            <NumericInput.Input />
-                          </NumericInput.Control>
-                        </FormNumericInput>
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
-                      {price === null || quantity === null
-                        ? '—'
-                        : formatMoney(
-                            lineGrossMinor(
-                              { quantity, unitPriceMinor: price, vatRate: line.vatRate },
-                              order.pricesIncludeVat,
-                            ),
-                            orderCurrency(order),
-                          )}
-                    </Table.Cell>
-                    <Table.Cell align="end">
-                      <Button
-                        appearance="ghost"
-                        aria-label={`Odebrat ${line.name}`}
-                        disabled={draft.lines.length <= 1}
-                        icon="icon-[mdi--delete-outline]"
-                        onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
-                        severity="secondary"
-                        size="sm"
-                        type="button"
-                      />
-                    </Table.Cell>
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table>
-          </ScrollRegion>
-          <div className="flex flex-col gap-150 p-200">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
-              <ProductSearchCombobox
-                activeOnly
-                errorMessage="Produkty se nepodařilo načíst."
-                id="order-edit-add-product"
-                label={t('merchandise.ui.addItem')}
-                loadingMessage="Načítám…"
-                noResultsMessage="Žádný produkt neodpovídá."
-                onSelect={pickProduct}
-                placeholder={t('merchandise.ui.searchProduct')}
-                retryLabel="Zkusit znovu"
-                selected={pick?.product ?? null}
-              />
-              <Button
-                appearance="outline"
-                disabled={unit === undefined || pickedPriceMissing}
-                icon="icon-[mdi--plus]"
-                onClick={addLine}
-                severity="secondary"
-                type="button"
-              >
-                Přidat
-              </Button>
-            </div>
-            {pickedVariants.length > 0 && (
-              <SelectTemplate
-                items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
-                label={t('merchandise.ui.variant')}
-                name="order-edit-add-variant"
-                onValueChange={(details) => {
-                  const [next] = details.value;
-                  setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
-                }}
-                placeholder={t('merchandise.ui.selectVariant')}
-                size="sm"
-                value={pickedVariantId === null ? [] : [pickedVariantId]}
-              />
-            )}
-            {pickedRateMissing !== undefined && (
-              <StatusText showIcon status="error">
-                {pickedRateMissing}
-              </StatusText>
-            )}
-            {pickedPriceMissing && (
-              <StatusText showIcon status="error">
-                {t('merchandise.pages.orders.create.noPriceAtMinimum')}
-              </StatusText>
-            )}
-            {ratesConfirmation !== undefined && (
-              <StatusText showIcon size="sm" status="warning">
-                {ratesConfirmation}
-              </StatusText>
-            )}
-            {pick?.record.status === 'error' && (
-              <StatusText showIcon status="error">
-                Produkt se nepodařilo načíst. Vyberte ho znovu.
-              </StatusText>
-            )}
-            {repriced.length > 0 && (
-              <StatusText showIcon status="warning">
-                {t('merchandise.ui.offeredPriceChanged', {
-                  lines: repriced
-                    .map((entry) => `${entry.name}: ${formatMoney(entry.price, orderCurrency(order))}`)
-                    .join(', '),
-                })}
-              </StatusText>
-            )}
-            {unrepriced.length > 0 && (
-              <StatusText showIcon status="error">
-                {t('merchandise.ui.offeredPriceUnreadable', { lines: unrepriced.join(', ') })}
-              </StatusText>
-            )}
+      <p className="text-fg-secondary text-sm">
+        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se nemění.{' '}
+        {movesStock
+          ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
+          : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
+      </p>
+      <SectionCard flush title={t('merchandise.ui.items')}>
+        <ScrollRegion label={t('merchandise.ui.orderItems')}>
+          <Table appearance="line" size="sm">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Položka</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">
+                  {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
+                </Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">
+                  <span className="sr-only">Akce</span>
+                </Table.ColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {parsedLines.map((entry) => (
+                <EditLineRow
+                  canRemove={draft.lines.length > 1}
+                  entry={entry}
+                  index={values.lines.findIndex((row) => row.key === entry.line.key)}
+                  key={entry.line.key}
+                  onRemove={() => removeLine(entry.line.key)}
+                  order={order}
+                />
+              ))}
+            </Table.Body>
+          </Table>
+        </ScrollRegion>
+        <div className="flex flex-col gap-150 p-200">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
+            <ProductSearchCombobox
+              activeOnly
+              errorMessage="Produkty se nepodařilo načíst."
+              id="order-edit-add-product"
+              label={t('merchandise.ui.addItem')}
+              loadingMessage="Načítám…"
+              noResultsMessage="Žádný produkt neodpovídá."
+              onSelect={pickProduct}
+              placeholder={t('merchandise.ui.searchProduct')}
+              retryLabel="Zkusit znovu"
+              selected={pick?.product ?? null}
+            />
+            <Button
+              appearance="outline"
+              disabled={unit === undefined || pickedPriceMissing}
+              icon="icon-[mdi--plus]"
+              onClick={addLine}
+              severity="secondary"
+              type="button"
+            >
+              Přidat
+            </Button>
           </div>
-        </SectionCard>
-
-        {renderOrderShipping(model)}
-
-        {renderOrderAddress(model)}
-
-        {renderOrderContact(model)}
-
-        <FormTextarea
-          id="edit-note"
-          label={t('merchandise.ui.orderNote')}
-          maxLength={1000}
-          name="note"
-          onChange={(event) => patch({ note: event.target.value })}
-          value={draft.note}
-        />
-        <FormInput
-          id="edit-reason"
-          label={t('merchandise.ui.changeReason')}
-          maxLength={500}
-          name="reason"
-          onChange={(event) => patch({ reason: event.target.value })}
-          placeholder={t('merchandise.ui.changeReasonPlaceholder')}
-          value={draft.reason}
-        />
-
-        <div className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-200`}>
-          <div className="flex flex-col">
-            <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
-            <span className="font-semibold text-lg tabular-nums">
-              {linesInvalid
-                ? 'Zkontrolujte množství a ceny položek'
-                : formatMoney(preview.totalMinor, orderCurrency(order))}
-            </span>
-          </div>
-          {actionsSlot === undefined && (
-            <div className="flex flex-wrap items-center justify-end gap-150">{actions}</div>
+          {pickedVariants.length > 0 && (
+            <SelectTemplate
+              items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
+              label={t('merchandise.ui.variant')}
+              name="order-edit-add-variant"
+              onValueChange={(details) => {
+                const [next] = details.value;
+                setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
+              }}
+              placeholder={t('merchandise.ui.selectVariant')}
+              size="sm"
+              value={pickedVariantId === null ? [] : [pickedVariantId]}
+            />
+          )}
+          {pickedRateMissing !== undefined && (
+            <StatusText showIcon status="error">
+              {pickedRateMissing}
+            </StatusText>
+          )}
+          {pickedPriceMissing && (
+            <StatusText showIcon status="error">
+              {t('merchandise.pages.orders.create.noPriceAtMinimum')}
+            </StatusText>
+          )}
+          {ratesConfirmation !== undefined && (
+            <StatusText showIcon size="sm" status="warning">
+              {ratesConfirmation}
+            </StatusText>
+          )}
+          {pick?.record.status === 'error' && (
+            <StatusText showIcon status="error">
+              Produkt se nepodařilo načíst. Vyberte ho znovu.
+            </StatusText>
+          )}
+          {repriced.length > 0 && (
+            <StatusText showIcon status="warning">
+              {t('merchandise.ui.offeredPriceChanged', {
+                lines: repriced
+                  .map((entry) => `${entry.name}: ${formatMoney(entry.price, orderCurrency(order))}`)
+                  .join(', '),
+              })}
+            </StatusText>
+          )}
+          {unrepriced.length > 0 && (
+            <StatusText showIcon status="error">
+              {t('merchandise.ui.offeredPriceUnreadable', { lines: unrepriced.join(', ') })}
+            </StatusText>
           )}
         </div>
-      </form>
+      </SectionCard>
+
+      {renderOrderShipping(model)}
+
+      {renderOrderAddress(model)}
+
+      {renderOrderContact(model)}
+
+      <orderEditForm.note id="edit-note" label={t('merchandise.ui.orderNote')} maxLength={1000} name="note" />
+      <orderEditForm.reason
+        id="edit-reason"
+        label={t('merchandise.ui.changeReason')}
+        maxLength={500}
+        name="reason"
+        placeholder={t('merchandise.ui.changeReasonPlaceholder')}
+      />
+
+      <div className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-200`}>
+        <div className="flex flex-col">
+          <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
+          <span className="font-semibold text-lg tabular-nums">
+            {linesInvalid
+              ? 'Zkontrolujte množství a ceny položek'
+              : formatMoney(preview.totalMinor, orderCurrency(order))}
+          </span>
+        </div>
+        {actionsSlot === undefined && <div className="flex flex-wrap items-center justify-end gap-150">{actions}</div>}
+      </div>
       {actionsSlot !== undefined && actionsSlot !== null && createPortal(actions, actionsSlot)}
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
+  );
+};
+
+/**
+ * The order edit form. Its fields, the save bar and the leave question render inside it, so whatever reads the form's
+ * values reads this order's. Enter in a field is the Save button.
+ */
+export const OrderEditForm = (props: OrderEditFormProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot
+      className="flex flex-col gap-250"
+      defaultValues={editValuesOf(draftOf(props.order))}
+      form={orderEditForm}
+      id="order-edit-form"
+      translateMessage={t}
+    >
+      <OrderEditFields {...props} />
+    </FormRoot>
   );
 };

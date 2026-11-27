@@ -18,14 +18,29 @@ import { jsx } from 'react/jsx-runtime';
 
 import { useFormContext } from './form-root.ts';
 
+interface Verdict {
+  /**
+   * The caller's verdict on this field, for a rule of the form's draft that reads more than this one value (a SKU the
+   * server refused, a limit that depends on other fields); the caller's `helpText` says why. The field's own error wins.
+   */
+  readonly invalid?: boolean | undefined;
+}
+
 type InputProps = Omit<
   ComponentProps<typeof FormInput>,
   'defaultValue' | 'id' | 'onBlur' | 'onChange' | 'validateStatus' | 'value'
-> & { readonly id?: string };
+> &
+  Verdict & { readonly id?: string };
 type TextareaProps = Omit<
   ComponentProps<typeof FormTextarea>,
   'defaultValue' | 'id' | 'onBlur' | 'onChange' | 'validateStatus' | 'value'
-> & { readonly id?: string };
+> &
+  Verdict & { readonly id?: string };
+type CheckboxProps = Omit<
+  ComponentProps<typeof FormCheckbox>,
+  'checked' | 'defaultChecked' | 'id' | 'onCheckedChange' | 'ref' | 'validateStatus'
+> &
+  Verdict & { readonly id?: string };
 
 /** One choice of a select or radio field. */
 export interface FieldChoice {
@@ -44,12 +59,15 @@ interface ChoiceProps {
   readonly placeholder?: string;
 }
 
-/** The validation status and help text of a field: its translated error wins over the help text. */
-const useFieldFeedback = (error: Option.Option<string>, helpText?: ReactNode) => {
+/**
+ * The validation status and help text of a field: its translated error wins over the help text; the caller's verdict
+ * marks it invalid too.
+ */
+const useFieldFeedback = (error: Option.Option<string>, helpText?: ReactNode, invalid = false) => {
   const { pending, translate } = useFormContext();
   return {
     helpText: Option.isSome(error) ? translate(error.value) : helpText,
-    invalid: Option.isSome(error),
+    invalid: Option.isSome(error) || invalid,
     pending,
   };
 };
@@ -61,12 +79,12 @@ const useFieldId = (id: string | undefined) => {
 
 /** A required text value. */
 export const TextField: FormReact.FieldComponent<string, InputProps> = ({ field, props }) => {
-  const { disabled, helpText, id, ...rest } = props;
-  const feedback = useFieldFeedback(field.error, helpText);
+  const { disabled, helpText, id, invalid, ...rest } = props;
+  const feedback = useFieldFeedback(field.error, helpText, invalid);
   return createElement(FormInput, {
     ...rest,
     'aria-invalid': feedback.invalid || undefined,
-    disabled: feedback.pending || disabled,
+    disabled: feedback.pending || disabled === true,
     helpText: feedback.helpText,
     id: useFieldId(id),
     name: rest.name ?? field.path,
@@ -79,8 +97,8 @@ export const TextField: FormReact.FieldComponent<string, InputProps> = ({ field,
 
 /** An optional text value of a payload `OptionFromNullOr` field: an empty input is `null`. */
 export const OptionalTextField: FormReact.FieldComponent<string | null, InputProps> = ({ field, props }) => {
-  const { disabled, helpText, id, ...rest } = props;
-  const feedback = useFieldFeedback(field.error, helpText);
+  const { disabled, helpText, id, invalid, ...rest } = props;
+  const feedback = useFieldFeedback(field.error, helpText, invalid);
   return createElement(FormInput, {
     ...rest,
     'aria-invalid': feedback.invalid || undefined,
@@ -97,12 +115,12 @@ export const OptionalTextField: FormReact.FieldComponent<string | null, InputPro
 
 /** A required multi-line text value. */
 export const TextAreaField: FormReact.FieldComponent<string, TextareaProps> = ({ field, props }) => {
-  const { disabled, helpText, id, ...rest } = props;
-  const feedback = useFieldFeedback(field.error, helpText);
+  const { disabled, helpText, id, invalid, ...rest } = props;
+  const feedback = useFieldFeedback(field.error, helpText, invalid);
   return createElement(FormTextarea, {
     ...rest,
     'aria-invalid': feedback.invalid || undefined,
-    disabled: feedback.pending || disabled,
+    disabled: feedback.pending || disabled === true,
     helpText: feedback.helpText,
     id: useFieldId(id),
     name: rest.name ?? field.path,
@@ -115,8 +133,8 @@ export const TextAreaField: FormReact.FieldComponent<string, TextareaProps> = ({
 
 /** An optional multi-line text value of a payload `OptionFromNullOr` field. */
 export const OptionalTextAreaField: FormReact.FieldComponent<string | null, TextareaProps> = ({ field, props }) => {
-  const { disabled, helpText, id, ...rest } = props;
-  const feedback = useFieldFeedback(field.error, helpText);
+  const { disabled, helpText, id, invalid, ...rest } = props;
+  const feedback = useFieldFeedback(field.error, helpText, invalid);
   return createElement(FormTextarea, {
     ...rest,
     'aria-invalid': feedback.invalid || undefined,
@@ -131,24 +149,17 @@ export const OptionalTextAreaField: FormReact.FieldComponent<string | null, Text
   });
 };
 
-/** A boolean value. */
-export const CheckboxField: FormReact.FieldComponent<
-  boolean,
-  {
-    readonly disabled?: boolean;
-    readonly helpText?: ReactNode;
-    readonly id?: string;
-    readonly label: ReactNode;
-  }
-> = ({ field, props }) => {
-  const feedback = useFieldFeedback(field.error, props.helpText);
+/** A boolean value as a checkbox, with the kit's checkbox props (label, size, class). */
+export const CheckboxField: FormReact.FieldComponent<boolean, CheckboxProps> = ({ field, props }) => {
+  const { disabled, helpText, id, invalid, ...rest } = props;
+  const feedback = useFieldFeedback(field.error, helpText, invalid);
   return createElement(FormCheckbox, {
+    ...rest,
     checked: field.value,
-    disabled: feedback.pending || (props.disabled ?? false),
+    disabled: feedback.pending || disabled === true,
     helpText: feedback.helpText,
-    id: useFieldId(props.id),
-    label: props.label,
-    name: field.path,
+    id: useFieldId(id),
+    name: rest.name ?? field.path,
     onCheckedChange: (checked) => {
       field.onChange(checked);
       field.onBlur();
@@ -156,6 +167,14 @@ export const CheckboxField: FormReact.FieldComponent<
     validateStatus: feedback.invalid ? 'error' : 'default',
   });
 };
+
+/**
+ * A field the form holds that no binding renders: a row's identity, or a value that a composite control without a
+ * binding of its own (a select template, a search combobox) reads and writes through the field's atoms.
+ */
+const Unrendered = () => null;
+
+export const unrenderedField = <A>(): FormReact.FieldComponent<A> => Unrendered;
 
 /** The translated error of a compound control, announced next to it. */
 const FieldAlert = ({ error, text }: { readonly error: Option.Option<string>; readonly text: ReactNode }) =>

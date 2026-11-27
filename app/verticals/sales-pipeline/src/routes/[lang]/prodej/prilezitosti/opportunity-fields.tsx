@@ -8,6 +8,7 @@ import {
   FormBuilder,
   FormReact,
   FormRoot,
+  NumberTextSchema,
   NumericField,
   TextAreaField,
   TextField,
@@ -106,9 +107,9 @@ const opportunityForm = FormReact.make(
     )
     .addField('lines', Schema.Array(LineEntrySchema))
     .addField('pickProductId', Schema.String)
-    .addField('lineQuantity', Schema.Number)
+    .addField('lineQuantity', NumberTextSchema)
     .addField('rentDescription', Schema.String)
-    .addField('rentPrice', Schema.Number)
+    .addField('rentPrice', NumberTextSchema)
     .addField('rentVat', Schema.String),
   {
     fields: {
@@ -133,10 +134,10 @@ type OpportunityValues = typeof opportunityForm.schema.Encoded;
 
 /** The line being picked, as it starts and as it starts again once it was added. */
 const emptyPick = {
-  lineQuantity: 1,
+  lineQuantity: { number: 1, text: '1' },
   pickProductId: '',
   rentDescription: '',
-  rentPrice: 0,
+  rentPrice: { number: 0, text: '0' },
   rentVat: '21',
 } as const satisfies Partial<OpportunityValues>;
 
@@ -273,9 +274,9 @@ const LinesEditor = ({ products }: { readonly products: LoadState<readonly Produ
   const { t } = useModernI18n();
   const lines = valueOr(useAtomValue(opportunityFields.lines.value), []);
   const productId = valueOr(useAtomValue(opportunityFields.pickProductId.value), '');
-  const quantity = valueOr(useAtomValue(opportunityFields.lineQuantity.value), emptyPick.lineQuantity);
+  const quantity = valueOr(useAtomValue(opportunityFields.lineQuantity.value), emptyPick.lineQuantity).number;
   const description = valueOr(useAtomValue(opportunityFields.rentDescription.value), '');
-  const price = valueOr(useAtomValue(opportunityFields.rentPrice.value), emptyPick.rentPrice);
+  const price = valueOr(useAtomValue(opportunityFields.rentPrice.value), emptyPick.rentPrice).number;
   const vat = valueOr(useAtomValue(opportunityFields.rentVat.value), emptyPick.rentVat);
   const setLines = useAtomSet(opportunityFields.lines.setValue);
   const setProductId = useAtomSet(opportunityFields.pickProductId.setValue);

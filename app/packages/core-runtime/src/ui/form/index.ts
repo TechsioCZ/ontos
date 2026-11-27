@@ -22,6 +22,7 @@ export {
   RadioField,
   TextAreaField,
   TextField,
+  unrenderedField,
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { ComboboxField, MultiComboboxField } from './kit-fields-combobox.ts';
@@ -31,9 +32,10 @@ export { ClearableChoiceField } from './kit-fields-clearable-select.ts';
 export { SelectTemplateField } from './kit-fields-select-template.ts';
 export { DateField, DateRangeField } from './kit-fields-date.ts';
 export type { DayRangeValue } from './kit-fields-date.ts';
-export { NumericField, makeItemNumericField } from './kit-fields-numeric.ts';
-export type { ItemNumber } from './kit-fields-numeric.ts';
-export { ChoiceLensField } from './kit-fields-choice-lens.ts';
+export { NumberTextSchema, NumericField, makeItemNumericField } from './kit-fields-numeric.ts';
+export type { ItemNumber, NumberText } from './kit-fields-numeric.ts';
+export { ChoiceLensField, TextLensField } from './kit-fields-choice-lens.ts';
+export type { TextLensProps } from './kit-fields-choice-lens.ts';
 export { CheckedTextField } from './kit-fields-checked-text.ts';
 export { makeCheckboxGroupField } from './kit-fields-checkbox-group.ts';
 export { SuggestedTextAreaField, SuggestedTextField } from './kit-fields-suggested.ts';

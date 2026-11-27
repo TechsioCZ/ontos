@@ -2,12 +2,11 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // Storefront content of one product: category, labels, parameters, main image alt text and its change history.
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { formatDateTime, ScrollRegion, SectionCard } from '@app/admin-ui';
-import { DateTime } from 'effect';
-import { useRef, useState } from 'react';
+import { useAtomValue } from '@app/core-runtime/ui/form';
+import { DateTime, Option } from 'effect';
+import { useRef } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
@@ -15,7 +14,15 @@ import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import { productVersionOf } from './products-api.ts';
 import { ContentExtrasError, ContentExtrasSections } from './product-content-extras.tsx';
 import { addContentExtrasPatch, contentExtrasInvalid, contentExtrasOf } from './product-content-extras-draft.ts';
-import type { ContentExtras } from './product-content-extras-draft.ts';
+import {
+  ContentForm,
+  contentDraft,
+  contentFields,
+  useSetContentCategory,
+  useUpdateContentParameters,
+  useSetContentDraft,
+} from './product-catalog-content-form.ts';
+import type { ContentDraft, ParameterDraft } from './product-catalog-content-form.ts';
 
 export interface CatalogContentPanelProps {
   /** The editor shows this tab; the form's Save button is rendered only then. */
@@ -33,28 +40,8 @@ export interface CatalogContentPanelProps {
   readonly revision: number;
 }
 
-interface ParameterDraft {
-  readonly key: number;
-  readonly label: string;
-  readonly unit: string;
-  readonly value: string;
-}
-
-interface Flags {
-  readonly isAction: boolean;
-  readonly isNew: boolean;
-  readonly isRecommended: boolean;
-  readonly isSale: boolean;
-}
-
-/** The content form's draft. `category` is the tree category picked here; `keep` keeps the product's own. */
-interface ContentDraft {
-  readonly category: CategoryTrail | null | 'keep';
-  readonly extras: ContentExtras;
-  readonly flags: Flags;
-  readonly imageAlt: string;
-  readonly parameters: readonly ParameterDraft[];
-}
+/** No category paths: the product has none besides its own. */
+const NO_TRAILS: readonly CategoryTrail[] = [];
 
 const contentDraftOf = (product: ProductRecord, trails: readonly CategoryTrail[] = []): ContentDraft => ({
   category: 'keep',
@@ -97,15 +84,137 @@ const contentPatchOf = (draft: ContentDraft, product: ProductRecord): ProductPat
   return patch;
 };
 
-/**
- * Storefront content of one product. Editing changes the draft only; the Save button under the form sends it as one
- * UpdateProduct, and leaving with unsaved changes asks first.
- */
-export const CatalogContentPanel = ({
+const labelFields = [
+  ['isAction', 'Akce', contentFields.isAction],
+  ['isNew', 'Novinka', contentFields.isNew],
+  ['isRecommended', 'Doporučujeme', contentFields.isRecommended],
+  ['isSale', 'Výprodej', contentFields.isSale],
+] as const;
+
+/** The product's parameters: a row of name, value and unit each, added and removed here. */
+const ParameterRows = ({
+  canWrite,
+  onAdd,
+  parameters,
+}: {
+  readonly canWrite: boolean;
+  /** Adds an empty row. */
+  readonly onAdd: () => void;
+  readonly parameters: readonly ParameterDraft[];
+}) => {
+  const { t } = useModernI18n();
+  const setParameters = useUpdateContentParameters();
+  const removeParameter = (key: number) => setParameters((current) => current.filter((entry) => entry.key !== key));
+  const parametersInvalid = parametersInvalidOf(parameters);
+  return (
+    <SectionCard title={`Parametry (${parameters.length})`}>
+      {parameters.length === 0 ? (
+        <p className="text-fg-secondary text-sm">Produkt nemá žádné parametry.</p>
+      ) : (
+        <div className="flex flex-col gap-100">
+          {parameters.map((parameter, index) => (
+            <contentFields.parameters.Item index={index} key={parameter.key}>
+              <div className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]">
+                <contentFields.parameters.label
+                  disabled={!canWrite}
+                  id={`parameter-label-${parameter.key}`}
+                  label={t('merchandise.ui.parameterName')}
+                  name={`parameter-label-${parameter.key}`}
+                  size="sm"
+                />
+                <contentFields.parameters.value
+                  disabled={!canWrite}
+                  id={`parameter-value-${parameter.key}`}
+                  label={t('merchandise.ui.value')}
+                  name={`parameter-value-${parameter.key}`}
+                  size="sm"
+                />
+                <contentFields.parameters.unit
+                  disabled={!canWrite}
+                  id={`parameter-unit-${parameter.key}`}
+                  label={t('merchandise.ui.unit')}
+                  name={`parameter-unit-${parameter.key}`}
+                  size="sm"
+                />
+                {canWrite ? (
+                  <Button
+                    appearance="ghost"
+                    aria-label={`Odebrat parametr ${index + 1}`}
+                    icon="icon-[mdi--delete-outline]"
+                    onClick={() => removeParameter(parameter.key)}
+                    severity="secondary"
+                    size="sm"
+                    type="button"
+                  />
+                ) : null}
+              </div>
+            </contentFields.parameters.Item>
+          ))}
+        </div>
+      )}
+      {parametersInvalid ? (
+        <StatusText showIcon status="error">
+          Vyplňte název i hodnotu každého parametru.
+        </StatusText>
+      ) : null}
+      {canWrite ? (
+        <div className="mt-100">
+          <Button
+            appearance="outline"
+            icon="icon-[mdi--plus]"
+            onClick={onAdd}
+            severity="secondary"
+            size="sm"
+            type="button"
+          >
+            Přidat parametr
+          </Button>
+        </div>
+      ) : null}
+    </SectionCard>
+  );
+};
+
+const ContentHistory = ({ product }: { readonly product: ProductRecord }) => {
+  const { t } = useModernI18n();
+  const history = (product.contentHistory ?? []).toReversed();
+  return (
+    <SectionCard title={t('merchandise.ui.contentChangeHistory')}>
+      {history.length === 0 ? (
+        <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
+      ) : (
+        <ScrollRegion label={t('merchandise.ui.contentChangeHistory')}>
+          <Table appearance="line" size="sm">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Kdy</Table.ColumnHeader>
+                <Table.ColumnHeader>Co se změnilo</Table.ColumnHeader>
+                <Table.ColumnHeader>Původně</Table.ColumnHeader>
+                <Table.ColumnHeader>Nově</Table.ColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {history.map((entry, index) => (
+                <Table.Row key={`${DateTime.formatIso(entry.at)}-${index}`}>
+                  <Table.Cell>{formatDateTime(DateTime.formatIso(entry.at))}</Table.Cell>
+                  <Table.Cell>{entry.fields.join(', ')}</Table.Cell>
+                  <Table.Cell className="max-w-80 break-words text-fg-secondary">{entry.before}</Table.Cell>
+                  <Table.Cell className="max-w-80 break-words">{entry.after}</Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        </ScrollRegion>
+      )}
+    </SectionCard>
+  );
+};
+
+const CatalogContentFields = ({
   active = true,
   canWrite,
   category,
-  categoryTrails = [],
+  categoryTrails = NO_TRAILS,
   hasCategoryTree,
   onCommitted,
   onReload,
@@ -113,16 +222,12 @@ export const CatalogContentPanel = ({
   revision,
 }: CatalogContentPanelProps) => {
   const { t } = useModernI18n();
-  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product, categoryTrails));
+  const form = Option.getOrElse(useAtomValue(contentDraft), () => contentDraftOf(product, categoryTrails));
+  const setDraft = useSetContentDraft();
+  const setCategoryDraft = useSetContentCategory();
+  const setParameters = useUpdateContentParameters();
   const picked = form.category === 'keep' ? category : form.category;
-  const { flags, imageAlt, parameters } = form;
   const nextKey = useRef((product.parameters ?? []).length);
-  const setCategoryDraft = (next: CategoryTrail | null) => setForm((current) => ({ ...current, category: next }));
-  const setFlags = (update: (current: Flags) => Flags) =>
-    setForm((current) => ({ ...current, flags: update(current.flags) }));
-  const setImageAlt = (next: string) => setForm((current) => ({ ...current, imageAlt: next }));
-  const setParameters = (update: (current: readonly ParameterDraft[]) => readonly ParameterDraft[]) =>
-    setForm((current) => ({ ...current, parameters: update(current.parameters) }));
   const save = useProductTabSave<ContentDraft>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, product) }),
     isValid: (value) => !parametersInvalidOf(value.parameters) && !contentExtrasInvalid(value.extras),
@@ -130,7 +235,7 @@ export const CatalogContentPanel = ({
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
     reset: (next) => {
-      setForm(next);
+      setDraft(next);
       nextKey.current = Math.max(nextKey.current, next.parameters.length);
     },
     revision,
@@ -139,19 +244,8 @@ export const CatalogContentPanel = ({
     version: productVersionOf(product),
   });
 
-  const parametersInvalid = parametersInvalidOf(parameters);
-
-  const removeParameter = (key: number) => setParameters((current) => current.filter((entry) => entry.key !== key));
-
-  const patchParameter = (key: number, next: Partial<ParameterDraft>) =>
-    setParameters((current) =>
-      current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
-    );
-
-  const history = (product.contentHistory ?? []).toReversed();
-
   return (
-    <div className="flex flex-col gap-250">
+    <>
       <SectionCard title={t('merchandise.ui.storefrontCategory')}>
         {hasCategoryTree ? (
           <>
@@ -184,126 +278,30 @@ export const CatalogContentPanel = ({
 
       <SectionCard title={t('merchandise.ui.storefrontLabels')}>
         <div className="flex flex-wrap gap-200">
-          <Switch
-            checked={flags.isAction}
-            disabled={!canWrite}
-            name="label-isAction"
-            onCheckedChange={(checked: boolean) => setFlags((current) => ({ ...current, isAction: checked }))}
-          >
-            Akce
-          </Switch>
-          <Switch
-            checked={flags.isNew}
-            disabled={!canWrite}
-            name="label-isNew"
-            onCheckedChange={(checked: boolean) => setFlags((current) => ({ ...current, isNew: checked }))}
-          >
-            Novinka
-          </Switch>
-          <Switch
-            checked={flags.isRecommended}
-            disabled={!canWrite}
-            name="label-isRecommended"
-            onCheckedChange={(checked: boolean) => setFlags((current) => ({ ...current, isRecommended: checked }))}
-          >
-            Doporučujeme
-          </Switch>
-          <Switch
-            checked={flags.isSale}
-            disabled={!canWrite}
-            name="label-isSale"
-            onCheckedChange={(checked: boolean) => setFlags((current) => ({ ...current, isSale: checked }))}
-          >
-            Výprodej
-          </Switch>
+          {labelFields.map(([flag, label, LabelField]) => (
+            <LabelField disabled={!canWrite} key={flag} name={`label-${flag}`}>
+              {label}
+            </LabelField>
+          ))}
         </div>
       </SectionCard>
 
-      <SectionCard title={`Parametry (${parameters.length})`}>
-        {parameters.length === 0 ? (
-          <p className="text-fg-secondary text-sm">Produkt nemá žádné parametry.</p>
-        ) : (
-          <div className="flex flex-col gap-100">
-            {parameters.map((parameter, index) => (
-              <div
-                className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]"
-                key={parameter.key}
-              >
-                <FormInput
-                  disabled={!canWrite}
-                  id={`parameter-label-${parameter.key}`}
-                  label={t('merchandise.ui.parameterName')}
-                  name={`parameter-label-${parameter.key}`}
-                  onChange={(event) => patchParameter(parameter.key, { label: event.target.value })}
-                  size="sm"
-                  value={parameter.label}
-                />
-                <FormInput
-                  disabled={!canWrite}
-                  id={`parameter-value-${parameter.key}`}
-                  label={t('merchandise.ui.value')}
-                  name={`parameter-value-${parameter.key}`}
-                  onChange={(event) => patchParameter(parameter.key, { value: event.target.value })}
-                  size="sm"
-                  value={parameter.value}
-                />
-                <FormInput
-                  disabled={!canWrite}
-                  id={`parameter-unit-${parameter.key}`}
-                  label={t('merchandise.ui.unit')}
-                  name={`parameter-unit-${parameter.key}`}
-                  onChange={(event) => patchParameter(parameter.key, { unit: event.target.value })}
-                  size="sm"
-                  value={parameter.unit}
-                />
-                {canWrite ? (
-                  <Button
-                    appearance="ghost"
-                    aria-label={`Odebrat parametr ${index + 1}`}
-                    icon="icon-[mdi--delete-outline]"
-                    onClick={() => removeParameter(parameter.key)}
-                    severity="secondary"
-                    size="sm"
-                    type="button"
-                  />
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-        {parametersInvalid ? (
-          <StatusText showIcon status="error">
-            Vyplňte název i hodnotu každého parametru.
-          </StatusText>
-        ) : null}
-        {canWrite ? (
-          <div className="mt-100">
-            <Button
-              appearance="outline"
-              icon="icon-[mdi--plus]"
-              onClick={() => {
-                const key = nextKey.current;
-                nextKey.current += 1;
-                setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
-              }}
-              severity="secondary"
-              size="sm"
-              type="button"
-            >
-              Přidat parametr
-            </Button>
-          </div>
-        ) : null}
-      </SectionCard>
+      <ParameterRows
+        canWrite={canWrite}
+        onAdd={() => {
+          const key = nextKey.current;
+          nextKey.current += 1;
+          setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
+        }}
+        parameters={form.parameters}
+      />
 
       <SectionCard title={t('merchandise.ui.mainImage')}>
-        <FormInput
+        <contentFields.imageAlt
           disabled={!canWrite}
           id="content-image-alt"
           label={t('merchandise.ui.mainImageAlt')}
           name="imageAlt"
-          onChange={(event) => setImageAlt(event.target.value)}
-          value={imageAlt}
         />
         <p className="mt-100 text-fg-secondary text-sm">
           Obrázky přidáte nebo odeberete na kartě E-shop a obrázky; název a popisy na kartě Detail.
@@ -315,41 +313,23 @@ export const CatalogContentPanel = ({
         extras={form.extras}
         hasCategoryTree={hasCategoryTree}
         hasPrimaryCategory={(picked?.id ?? product.categoryId) !== undefined}
-        onChange={(update) => setForm((current) => ({ ...current, extras: update(current.extras) }))}
         product={product}
       />
       <ContentExtrasError invalid={contentExtrasInvalid(form.extras)} />
 
       {canWrite ? <ProductTabSaveBar active={active} save={save} /> : null}
 
-      <SectionCard title={t('merchandise.ui.contentChangeHistory')}>
-        {history.length === 0 ? (
-          <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
-        ) : (
-          <ScrollRegion label={t('merchandise.ui.contentChangeHistory')}>
-            <Table appearance="line" size="sm">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>Kdy</Table.ColumnHeader>
-                  <Table.ColumnHeader>Co se změnilo</Table.ColumnHeader>
-                  <Table.ColumnHeader>Původně</Table.ColumnHeader>
-                  <Table.ColumnHeader>Nově</Table.ColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {history.map((entry, index) => (
-                  <Table.Row key={`${DateTime.formatIso(entry.at)}-${index}`}>
-                    <Table.Cell>{formatDateTime(DateTime.formatIso(entry.at))}</Table.Cell>
-                    <Table.Cell>{entry.fields.join(', ')}</Table.Cell>
-                    <Table.Cell className="max-w-80 break-words text-fg-secondary">{entry.before}</Table.Cell>
-                    <Table.Cell className="max-w-80 break-words">{entry.after}</Table.Cell>
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table>
-          </ScrollRegion>
-        )}
-      </SectionCard>
-    </div>
+      <ContentHistory product={product} />
+    </>
   );
 };
+
+/**
+ * Storefront content of one product. Editing changes the form only; the Save button under the form sends it as one
+ * UpdateProduct, and leaving with unsaved changes asks first.
+ */
+export const CatalogContentPanel = (props: CatalogContentPanelProps) => (
+  <ContentForm className="flex flex-col gap-250" draft={contentDraftOf(props.product, props.categoryTrails)}>
+    <CatalogContentFields {...props} />
+  </ContentForm>
+);
