@@ -110,6 +110,7 @@ let matchOverride: unknown;
 let omitEvidence: boolean;
 let hideProduct: boolean;
 let returnedVariantCount: number;
+let productDelayMs: number;
 
 // Market-directory and market-offer discovery are genuine prerequisite HTTP reads, not search reads.
 const productRequests = () =>
@@ -144,6 +145,7 @@ beforeEach(async () => {
   omitEvidence = false;
   hideProduct = false;
   returnedVariantCount = 2;
+  productDelayMs = 0;
   network = await serveHttp(async (request) => {
     if (new URL(request.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read")
       return new Response("Unknown gateway path", { status: 404 });
@@ -190,6 +192,8 @@ beforeEach(async () => {
     requests.push(payload);
     const query = payload.query.view.storefrontCatalog;
     const categoriesOnly = query.mode === "categories";
+    if (!categoriesOnly && productDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, productDelayMs));
     const navigation = categoriesOnly && query.includeCategories !== false;
     const market = {
       marketId: "search-test-market",
@@ -336,6 +340,22 @@ describe("header search BFF", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).not.toHaveProperty("items");
     await noFullReads();
+  });
+  it("answers within 0.6 s while a new term's catalogue page is still read, and the next ask gets that read", async () => {
+    productDelayMs = 1_200;
+    const started = Date.now();
+    const first = (await (await ask("šroub")).json()) as RemoteSearchResponse;
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // The tree answered in time; the page did not: shown without its products and asked again, never as complete.
+    expect(first).toMatchObject({ items: [], total: 0, partial: true });
+    expect(first.categories).toHaveLength(2);
+    await network.idle();
+    const second = (await (await ask("šroub")).json()) as RemoteSearchResponse;
+    expect(second.partial).toBeUndefined();
+    expect(second.total).toBe(37);
+    expect(second.items).toEqual([expect.objectContaining({ productId: "p1" })]);
+    // One owner read answered both asks: the first one's went on after its answer.
+    expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(1);
   });
   it("does not read OntOS for fewer than two characters", async () => {
     expect(await (await ask("š")).json()).toEqual({ items: [], total: 0, categories: [] });

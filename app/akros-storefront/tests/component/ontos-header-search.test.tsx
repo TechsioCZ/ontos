@@ -75,6 +75,49 @@ describe("SiteHeader search through the OntOS BFF", () => {
     expect(await request.json()).toEqual({ q: "šroub" });
   });
 
+  it("shows a partial answer at once and fills in its missing part when it asks again", async () => {
+    const suggestion = (productId: string, name: string, path: string) => ({
+      productId,
+      slug: productId,
+      name,
+      imageSrc: "/akros/products/product-02.jpg",
+      currency: "CZK",
+      priceMinor: 733,
+      priceIsFrom: false,
+      hasVariants: false,
+      path,
+      stockLabel: "Skladem",
+      stockTone: "in-stock",
+    });
+    const erp = suggestion("e1", "Vrut z ERP", "/novinky-z-erp/e1");
+    const shop = suggestion("p1", "Vrut z katalogu", "/produkt/vrut");
+    let asks = 0;
+    network = await serveHttp(async () => {
+      asks += 1;
+      return Response.json(
+        asks === 1 ? { total: 1, items: [erp], partial: true } : { total: 2, items: [erp, shop] },
+      );
+    });
+    browserAt(`${network.origin}/cs`);
+    const user = userEvent.setup();
+    renderHeader();
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "vrut");
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group", { name: "Produkty" })).getByRole("option", {
+          name: /Vrut z ERP/,
+        }),
+      ).toBeDefined(),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
+      ).toHaveLength(2),
+    );
+    expect(screen.getByRole("link", { name: "Zobrazit všechny produkty (2)" })).toBeDefined();
+    expect(asks).toBe(2);
+  });
+
   it("shows „Cena není dostupná“ instead of 0,00 Kč for a zero or foreign-currency suggestion", async () => {
     network = await serveHttp(async () =>
       Response.json({

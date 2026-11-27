@@ -97,7 +97,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   const [searchAttempt, setSearchAttempt] = useState(0);
   // Answers already seen in this page: repeated or backspaced queries show at once.
   const seen = useRef(new Map<string, typeof remote>());
-  // Terms whose answer came before its ERP part was ready: each is asked again a second later, a few times at most.
+  // Terms whose answer came before all its parts were read: each is asked again after the usual pause, a few times at
+  // most. The server holds each ask at most 0.6 s, so the missing part shows about when its shared read ends.
   const askedAgain = useRef(new Map<string, number>());
   useEffect(() => {
     if (!ready || idle) return;
@@ -131,17 +132,19 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
           return body;
         })
         .then((body) => {
+          const asked = askedAgain.current.get(trimmedQuery) ?? 0;
           const next = {
             query: trimmedQuery,
             items: body.items ?? [],
             total: typeof body.total === "number" ? body.total : 0,
             categories: Array.isArray(body.categories) ? body.categories : [],
+            ...(body.partial === true && asked < 8 ? { partial: true as const } : {}),
           };
-          // An answer without its ERP part is shown, never kept: the ERP products fill in when it is asked again.
-          if (body.erpPartial !== true) seen.current.set(trimmedQuery, next);
-          else if ((askedAgain.current.get(trimmedQuery) ?? 0) < 5) {
-            askedAgain.current.set(trimmedQuery, (askedAgain.current.get(trimmedQuery) ?? 0) + 1);
-            again = window.setTimeout(() => setSearchAttempt((attempt) => attempt + 1), 1_000);
+          // A partial answer is shown, never kept: the missing part fills in when it is asked again.
+          if (body.partial !== true) seen.current.set(trimmedQuery, next);
+          else if (asked < 8) {
+            askedAgain.current.set(trimmedQuery, asked + 1);
+            again = window.setTimeout(() => setSearchAttempt((attempt) => attempt + 1), 0);
           }
           setRemote(next);
         })
@@ -167,7 +170,12 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   }, [ready, idle, trimmedQuery, searchAttempt, cs]);
   const remoteCurrent = remote.query === trimmedQuery;
   const searchError = remoteCurrent ? remote.error : undefined;
-  const searchLoading = ready && !remoteCurrent;
+  // A partial answer with nothing to show yet still reads as loading, never as „nothing found“.
+  const remotePending = remoteCurrent && remote.partial === true;
+  const searchLoading =
+    ready &&
+    (!remoteCurrent ||
+      (remotePending && remote.items.length === 0 && remote.categories.length === 0));
   const remoteItems = useMemo(() => (remoteCurrent ? remote.items : []), [remoteCurrent, remote]);
   const remoteTotal = remoteCurrent ? remote.total : 0;
   const remoteCategories = useMemo(
@@ -296,7 +304,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
               placeholder={cs.search.placeholder}
               size="md"
               allResultsLink={
-                searchError || searchLoading ? undefined : (
+                searchError || searchLoading || remotePending ? undefined : (
                   <Link
                     as={StoreLink}
                     href={resultsHref}
