@@ -5,14 +5,15 @@ import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { CORE_THEMES_MODULE_ID, TenantThemeRequestSchema, TenantThemeResponseSchema } from '../themes/contract.ts';
-import { effectiveTenantTheme, tenantThemeRevision } from '../themes/definition.ts';
+import { TenantThemeKit, tenantThemeRevision } from '../themes/definition.ts';
+import type { TenantThemeKitService } from '../themes/definition.ts';
 import type { TenantThemeUnavailable } from '../themes/errors.ts';
 import { tenantThemeRepositoryFromTransaction } from '../themes/repository.ts';
 
 export { TenantThemeRequestSchema, TenantThemeResponseSchema } from '../themes/contract.ts';
 
 /*
- * The effective theme of the caller's own tenant: the attached theme, else the kit's Business brand, with a short
+ * The effective theme of the caller's own tenant: the attached theme, else the kit's default (its Business brand), with a short
  * revision a client compares to notice a change without diffing the tokens. It is NOT a capability: every signed-in
  * member of a tenant sees the tenant's look, so the entrypoint is `authenticated_principal` and carries no access
  * declaration. The input names nothing; the tenant is the trusted scope's.
@@ -36,9 +37,9 @@ export const tenantThemeRead = defineRead<
   typeof TenantThemeRequestSchema,
   typeof TenantThemeResponseSchema,
   typeof CORE_THEMES_MODULE_ID,
-  { readonly themes: ReturnType<typeof tenantThemeRepositoryFromTransaction> },
+  { readonly kit: TenantThemeKitService; readonly themes: ReturnType<typeof tenantThemeRepositoryFromTransaction> },
   ReadHandlerUnavailable,
-  never
+  TenantThemeKit
 >(
   {
     accessKind: 'detail',
@@ -62,11 +63,14 @@ export const tenantThemeRead = defineRead<
   {
     load: Effect.fn('TenantTheme.read')(function* tenantThemeHandler(_input, context) {
       const attached = yield* context.services.themes.attached().pipe(Effect.mapError(readFailureOf));
-      const theme = effectiveTenantTheme(attached);
+      const theme = attached ?? context.services.kit.defaultTheme;
       const revision = yield* tenantThemeRevision(theme).pipe(Effect.mapError(readFailureOf));
       return { evidence: { resultCount: 1 }, result: { revision, theme } };
     }),
   },
-  (transaction, scope) => Effect.succeed({ themes: tenantThemeRepositoryFromTransaction(transaction, scope.tenantId) }),
+  (transaction, scope) =>
+    TenantThemeKit.pipe(
+      Effect.map((kit) => ({ kit, themes: tenantThemeRepositoryFromTransaction(transaction, scope.tenantId) })),
+    ),
   () => ({ kind: 'module', moduleId: CORE_THEMES_MODULE_ID }),
 );

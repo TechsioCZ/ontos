@@ -203,6 +203,9 @@ export { assetByteSourceRead } from './generated-reads/asset-byte-source.ts';
 // @ontos-core-read tenant-theme
 export { tenantThemeRead } from './generated-reads/tenant-theme.ts';
 // @ontos-codesmith-core-read-exports:end
+/** The UI kit as the theme operations need it; the host binds it with `@app/core-runtime/themes/kit`. */
+export { TenantThemeKit } from './themes/definition.ts';
+export type { TenantThemeKitService } from './themes/definition.ts';
 export {
   LegalEntityContext,
   LegalEntityContextAmbiguousError,
