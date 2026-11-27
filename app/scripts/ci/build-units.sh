@@ -29,8 +29,9 @@ served="$(node -e '
   console.log("shell-super-app");
 ')"
 export logs served UNIT_POST_BUILD="${UNIT_POST_BUILD:-}" UNIT_SERVED_ENTRY="${UNIT_SERVED_ENTRY:-}"
-# Each unit runs its own package `build` script, as pnpm -r run build does, from clean outputs, then gets its post-build
-# step when served and its cache receipt.
+# Each unit runs its own package `build` script, as pnpm -r run build does, from clean outputs; a module's browser
+# bundle must then carry no CSS of its own (the kit stylesheet the Shell loads styles it); then the unit gets its
+# post-build step when served and its cache receipt.
 # shellcheck disable=SC2016 # expanded by the bash -c that runs it for each unit
 build_unit='
   id="$1"
@@ -41,6 +42,7 @@ build_unit='
   if {
     rm -rf -- "$unit/dist" "$unit/.output" &&
       pnpm --filter "./$unit" run build &&
+      { [ "$id" = shell-super-app ] || node scripts/check-module-browser-css.mts --unit "$unit"; } &&
       { [ -z "$UNIT_POST_BUILD" ] || ! grep -qxF "$id" <<<"$served" || node "$UNIT_POST_BUILD" "$unit"; } &&
       node scripts/ci/unit-output-cache.mts stamp --unit "$id" \
         ${UNIT_SERVED_ENTRY:+--served-entry "$UNIT_SERVED_ENTRY"} ${UNIT_POST_BUILD:+--post-build "$UNIT_POST_BUILD"}
