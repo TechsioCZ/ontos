@@ -41,7 +41,7 @@ export const registerSystemWorkload = (input: {
 
 /**
  * Why a system workload key does not belong to the module, if it does not: the key starts with the module's own id and
- * a dot, so `commerce.catalog` never declares `commerce.pricing.source-write` and one key names one owning module.
+ * a dot, so a module `acme.ledger` never declares `acme.billing.source-write` and one key names one owning module.
  * The manifest definition, the published-contract decoder and the enrollment Action all hold a key to this rule.
  */
 export const systemWorkloadKeyIssue = (workloadKey: string, moduleId: string): string | undefined =>

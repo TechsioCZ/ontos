@@ -410,10 +410,18 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       for (const refused of [
         { ...enroll, workloadKey: 'enrollment.worker.other-job' },
         { _tag: 'ENROLL', moduleKey: dormantModule, workloadKey: dormantKey },
-        { _tag: 'ENROLL', moduleKey: 'enrollment.absent', workloadKey: workerKey },
+        { _tag: 'ENROLL', moduleKey: 'enrollment.absent', workloadKey: 'enrollment.absent.execute-job' },
       ] as const) {
         const refusal = yield* Effect.flip(change(yield* sessionOf(administrator), refused));
         expect(Predicate.isTagged(refusal, 'IdentityTargetInvalidError')).toBe(true);
+      }
+      // A key outside the named module's own id never reaches the handler, for an end as for an enrollment.
+      for (const foreignKey of [
+        { ...enroll, workloadKey: dormantKey },
+        { ...end, workloadKey: dormantKey },
+      ]) {
+        const refusal = yield* Effect.flip(change(yield* sessionOf(administrator), foreignKey));
+        expect(Predicate.isTagged(refusal, 'ActionPayloadValidationError')).toBe(true);
       }
       expect(yield* activeHolders(tenantId)).toEqual([{ principalId: first.principalId }]);
 

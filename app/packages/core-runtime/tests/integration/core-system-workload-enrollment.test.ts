@@ -260,8 +260,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core system workload 
             tenantId: id,
           })),
         );
-        yield* writeTestTenantScopes(admin, { principalId: administrator.principalId, tenantId });
-        yield* writeTestTenantScopes(admin, {
+        // Demo line: scopes are written through the runtime identity, the one role that installs a tenant scope.
+        yield* writeTestTenantScopes(runtimeDatabase, { principalId: administrator.principalId, tenantId });
+        yield* writeTestTenantScopes(runtimeDatabase, {
           principalId: foreignAdministrator.principalId,
           tenantId: foreignTenantId,
         });
