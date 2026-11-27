@@ -101,7 +101,7 @@ Markdown-only pushes lint just those files in one `docs` row, with the global pr
 
 Red lint means this run cannot change stage, even if its planning or builds succeeded. It cannot advance the verified base, including when the plan selects no service. Fix the findings and push again; the next comparison still includes the refused commit's changes. A recovery dispatch selects every service, but delivery skips when stage already runs a newer commit. Only the exact verified SHA earns the cheaper lint proof.
 
-A failed lint job can be re-run on its own; the run then delivers with its existing plan.
+A retry that re-runs planning selects every service. A failed lint job can be re-run on its own; the run then delivers with its existing plan.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 

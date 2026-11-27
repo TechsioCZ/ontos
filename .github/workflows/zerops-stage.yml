@@ -25,8 +25,10 @@ on:
         description: Share one warmed connection with the first upload of each service
         type: boolean
         default: false
-      # A full release (a dispatch, a retry, or the first push after a failed deploy) selects every service, yet keeps
-      # each unit whose committed inputs are unchanged. Delivery skips if stage already runs a newer commit.
+      # A full release (a dispatch, a retry that re-runs planning, or the first push after a failed deploy)
+      # selects every service, yet keeps each unit whose committed inputs are unchanged.
+      # Delivery skips if stage already runs a newer commit.
+      # Re-running only lint keeps the run's existing plan.
       # Only this input rebuilds every unit regardless of its cache.
       rebuild_units:
         description: Rebuild every app unit, ignoring the unit build cache

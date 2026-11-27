@@ -31,7 +31,7 @@ Zerops pricing for the services in `app/zerops-import.yaml` before you create an
    service IDs. Keep planning and unit builds parallel with lint, but require lint success before
    `deliver_app`, the only delivering job, can sync secrets or push. Red lint means stage was not changed by that run, even if
    its builds succeeded. Fix the findings and push again; the verified base has not advanced.
-   A failed lint job can be re-run on its own; the run then delivers with its existing plan.
+   A retry that re-runs planning selects every service. A failed lint job can be re-run on its own; the run then delivers with its existing plan.
    Code pushes lint the whole tree before delivery, through three slices of `lint-app`,
    `lint-shard-files.sh` and `lint-files.sh`. Markdown-only pushes lint just those files, plus the
    global generator once. This requires a complete, non-empty, verified ancestor diff in which every
