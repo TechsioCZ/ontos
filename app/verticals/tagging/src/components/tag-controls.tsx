@@ -32,17 +32,28 @@ import type { SaveOutcome, SidePanelSize } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox, RadioGroup } from '@app/admin-ui/form-controls';
+import {
+  ComboboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RadioField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { useState } from 'react';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
 import { AssignTagActionForbiddenProblemSchema } from '../../shared/apis/assign-tag-action.ts';
 import { UnassignTagActionForbiddenProblemSchema } from '../../shared/apis/unassign-tag-action.ts';
+import { TagIdSchema } from '../../shared/apis/records.ts';
 import type { Subject, SubjectId, SubjectKind, Tag, TagId } from '../../shared/apis/records.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { pendingProposalMessage } from '../tags/action-result.ts';
 import { assignTag, unassignTag } from '../tags/records-commands.ts';
 import { isTagReadForbidden, tagsReadable } from '../tags/tag-access.ts';
@@ -57,6 +68,7 @@ export type { TagCatalog } from '../tags/tag-catalog.ts';
 
 const bulkModeValues = Schema.Literals(['add', 'remove']);
 type BulkMode = typeof bulkModeValues.Type;
+const isBulkMode = Schema.is(bulkModeValues);
 
 export interface TagChipProps {
   readonly tag: Tag;
@@ -87,11 +99,9 @@ export const TagCell = ({ loading = false, tags }: TagCellProps) => {
   );
 };
 
-/** Maps a Combobox value back to a loaded tag. Anything outside the loaded catalog counts as no selection. */
-const pickTagId = (tags: readonly Tag[], next: string | string[]): TagId | null => {
-  const id = Array.isArray(next) ? next[0] : next;
-  return tags.find((tag) => tag.id === id)?.id ?? null;
-};
+/** Maps a picked value back to a loaded tag. Anything outside the loaded catalog counts as no selection. */
+const pickTagId = (tags: readonly Tag[], picked: string): TagId | null =>
+  tags.find((tag) => tag.id === picked)?.id ?? null;
 
 /** Value of the filter's "all tags" option. It is not a tag id, so `pickTagId` maps it to no selection. */
 const allTagsValue = '__all_tags__';
@@ -108,7 +118,27 @@ const tagItems = (tags: readonly Tag[], allLabel: string | null) => [
 const visibleTagItems = <T extends { readonly label: string }>(items: readonly T[], query: string): T[] =>
   items.some((item) => item.label === query) ? [...items] : items.filter((item) => matchesSearch(item.label, query));
 
+/**
+ * The one-field form of a tag filter of one subject kind: picking a tag applies it at once, so the form is never
+ * submitted. Each kind has its own, so filters of different kinds on one page keep their own pick.
+ */
+const tagFilterFormOf = Atom.family((_kind: SubjectKind) => {
+  const form = FormReact.make(FormBuilder.empty.addField('tagId', Schema.String), {
+    fields: { tagId: ComboboxField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+  const tagId = form.getFieldAtoms(form.fields.tagId);
+  // A plain string that changes only when the pick does: the field's own value atom reports every change of the form.
+  return { form, picked: tagId.value.pipe(Atom.map(Option.getOrElse(() => ''))), setPicked: tagId.setValue };
+});
+
+/** The tag combobox of a form: its `tagId` field. */
+type BoundTagCombobox = ReturnType<typeof tagFilterFormOf>['form']['tagId'];
+
 interface TagPickerFieldProps {
+  /** The form field the picker renders; it holds the picked tag id, `""` for none. */
+  readonly Bound: BoundTagCombobox;
   /** Tags the caller already loaded. Without it the picker reads the shared catalog. A retry calls `refetch`. */
   readonly catalog?: TagCatalog;
   readonly clearable: boolean;
@@ -124,11 +154,14 @@ interface TagPickerFieldProps {
   /** Visible label already translated by the caller. Wins over `labelKey`. */
   readonly label?: string;
   readonly labelKey?: string;
-  readonly onChange: (tagId: TagId | null) => void;
-  readonly value: TagId | null;
+  /** Emptying the typed text drops the pick (a filter); without it the text only searches. */
+  readonly onClear?: () => void;
+  /** The field's picked tag id, `""` for none. */
+  readonly picked: string;
 }
 
 const TagPickerField = ({
+  Bound,
   catalog: provided,
   clearable,
   compact = false,
@@ -139,8 +172,8 @@ const TagPickerField = ({
   kind,
   label,
   labelKey,
-  onChange,
-  value,
+  onClear,
+  picked,
 }: TagPickerFieldProps) => {
   const { t } = useModernI18n();
   const own = useTagCatalog(kind, enabled && provided === undefined);
@@ -150,11 +183,11 @@ const TagPickerField = ({
   const [typed, setTyped] = useState<string | null>(null);
   const items = tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null);
   const fieldLabel = label ?? (labelKey === undefined ? undefined : t(labelKey));
-  const appliedName = catalog.tags.find((tag) => tag.id === value)?.name ?? '';
+  const appliedName = catalog.tags.find((tag) => tag.id === picked)?.name ?? '';
   // A closed field always shows the applied tag, so text typed before Escape or a blur never outlives the list.
   const query = open ? (typed ?? appliedName) : appliedName;
   return (
-    <Combobox
+    <Bound
       clearable={clearable}
       error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
       {...(id === undefined ? {} : { id })}
@@ -162,17 +195,17 @@ const TagPickerField = ({
       filterBehavior="external"
       helpText={helpText}
       inputValue={query}
+      invalid={invalid}
       items={visibleTagItems(items, query)}
       {...(fieldLabel === undefined ? {} : { label: fieldLabel })}
       loading={catalog.status === 'loading'}
       loadingMessage={t('tagging.tags.loading')}
       noResultsMessage={t('tagging.tags.filter.noResults')}
-      onChange={(next) => onChange(pickTagId(catalog.tags, next))}
       onInputValueChange={(text) => {
         setTyped(text);
         // Emptying a filter's text clears the filter; zag restores a picked label on blur, never an empty one.
-        if (compact && value !== null && text.trim() === '') {
-          onChange(null);
+        if (onClear !== undefined && picked !== '' && text.trim() === '') {
+          onClear();
         }
       }}
       onOpenChange={(next) => {
@@ -192,17 +225,9 @@ const TagPickerField = ({
         clearTriggerLabel: comboboxTranslations.clearTriggerLabel,
         triggerLabel: t('tagging.tags.filter.toggle'),
       }}
-      validateStatus={invalid ? 'error' : 'default'}
-      value={value === null ? [] : [value]}
     />
   );
 };
-
-const TagPicker = (props: TagPickerFieldProps) => (
-  <TagI18n>
-    <TagPickerField {...props} />
-  </TagI18n>
-);
 
 export interface TagFilterProps {
   /** Tags the page already loaded for this kind. Without it the filter reads the shared catalog. */
@@ -213,6 +238,74 @@ export interface TagFilterProps {
   onChange: (tagId: TagId | null) => void;
   value: TagId | null;
 }
+
+const TagFilterForm = ({
+  catalog,
+  kind,
+  label,
+  onChange,
+  value,
+}: TagFilterProps & { readonly catalog: TagCatalog }) => {
+  const { t } = useModernI18n();
+  const { form, picked: pickedAtom, setPicked: setPickedAtom } = tagFilterFormOf(kind);
+  const picked = useAtomValue(pickedAtom);
+  const setPicked = useAtomSet(setPickedAtom);
+  const applied = value ?? '';
+  // A pick applies at once: the host gets the tag, or none for "all tags" and anything outside the loaded catalog,
+  // and the field shows what was applied.
+  useAtomSubscribe(
+    pickedAtom,
+    (next) => {
+      if (next === applied) {
+        return;
+      }
+      const tagId = pickTagId(catalog.tags, next);
+      if (tagId !== value) {
+        onChange(tagId);
+      }
+      if (next !== (tagId ?? '')) {
+        setPicked(tagId ?? '');
+      }
+    },
+    { immediate: false },
+  );
+  // The host owns the filter: a value it sets on its own (a reset, a link) shows in the field.
+  const shownApplied = useRef(applied);
+  useEffect(() => {
+    if (shownApplied.current === applied) {
+      return;
+    }
+    shownApplied.current = applied;
+    if (picked !== applied) {
+      setPicked(applied);
+    }
+  }, [applied, picked, setPicked]);
+  return (
+    // The Combobox root gaps its label wider than a Select root does (6 px against 4 px). Beside Selects in a filter
+    // row, that lifts the label, so the picker takes the Select gap.
+    <FormRoot
+      className="w-48 *:gap-(--spacing-select)"
+      defaultValues={{ tagId: applied }}
+      form={form}
+      translateMessage={(message) => t(message)}
+    >
+      {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
+      <TagPickerField
+        Bound={form.tagId}
+        catalog={catalog}
+        clearable={false}
+        compact
+        enabled
+        helpText=""
+        invalid={false}
+        kind={kind}
+        {...(label === undefined ? {} : { label })}
+        onClear={() => setPicked('')}
+        picked={picked}
+      />
+    </FormRoot>
+  );
+};
 
 /**
  * Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. Renders nothing
@@ -225,23 +318,15 @@ export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterPr
     return null;
   }
   return (
-    // The Combobox root gaps its label wider than a Select root does (6 px against 4 px). Beside Selects in a filter
-    // row, that lifts the label, so the picker takes the Select gap.
-    <div className="w-48 *:gap-(--spacing-select)">
-      {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
-      <TagPicker
+    <TagI18n>
+      <TagFilterForm
         catalog={resolved}
-        clearable={false}
-        compact
-        enabled
-        helpText=""
-        invalid={false}
         kind={kind}
         {...(label === undefined ? {} : { label })}
         onChange={onChange}
         value={value}
       />
-    </div>
+    </TagI18n>
   );
 };
 
@@ -273,6 +358,21 @@ interface BulkTagDraft {
 
 const emptyBulkTagDraft: BulkTagDraft = { mode: 'add', tagId: null };
 
+/** The tag and add/remove of the bulk panel. Uložit sends them through the panel's save bar, never the form. */
+const bulkTagForm = FormReact.make(FormBuilder.empty.addField('mode', Schema.String).addField('tagId', Schema.String), {
+  fields: { mode: RadioField, tagId: ComboboxField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+type BulkTagValues = typeof bulkTagForm.schema.Encoded;
+const emptyBulkTagValues: BulkTagValues = { mode: emptyBulkTagDraft.mode, tagId: '' };
+
+/** The choice the form holds: a picked tag is only ever one the picker offered from the loaded catalog. */
+const bulkTagDraftOf = (values: BulkTagValues): BulkTagDraft => ({
+  mode: isBulkMode(values.mode) ? values.mode : emptyBulkTagDraft.mode,
+  tagId: Option.getOrNull(Schema.decodeUnknownOption(TagIdSchema)(values.tagId)),
+});
+
 /**
  * Picking the tag and add/remove changes only the draft; the shared Save button ("Uložit", last in the footer) applies
  * it to every selected subject, and leaving a started choice asks Uložit / Zahodit změny / Zůstat first.
@@ -280,8 +380,10 @@ const emptyBulkTagDraft: BulkTagDraft = { mode: 'add', tagId: null };
 const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
   const { language, t } = useModernI18n();
   const toaster = useToast();
-  const [draft, setDraft] = useState<BulkTagDraft>(emptyBulkTagDraft);
-  const { mode, tagId } = draft;
+  const values = Option.getOrElse(useAtomValue(bulkTagForm.values), () => emptyBulkTagValues);
+  const setValues = useAtomSet(bulkTagForm.setValues);
+  const draft = bulkTagDraftOf(values);
+  const { tagId } = draft;
   const [failure, setFailure] = useState<BulkFailure>('none');
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   // The picker reads the same shared catalog; a refusal means this role may not tag at all, so the panel says so.
@@ -321,7 +423,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
 
   const close = () => {
-    setDraft(emptyBulkTagDraft);
+    setValues(emptyBulkTagValues);
     // The panel can stay mounted while closed: the next opening starts from an empty choice again.
     record.adopt(emptyBulkTagDraft);
     setFailure('none');
@@ -380,7 +482,12 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
         size={size}
         title={t('tagging.tags.bulk.title')}
       >
-        <div className="flex flex-col gap-200 py-200">
+        <FormRoot
+          className="flex flex-col gap-200 py-200"
+          defaultValues={emptyBulkTagValues}
+          form={bulkTagForm}
+          translateMessage={(message) => t(message)}
+        >
           {forbidden && (
             <StatusText showIcon status="error">
               {t('tagging.tags.bulk.forbidden')}
@@ -392,7 +499,8 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
             </StatusText>
           )}
           {!forbidden && (
-            <TagPicker
+            <TagPickerField
+              Bound={bulkTagForm.tagId}
               clearable={false}
               enabled={open}
               helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
@@ -400,33 +508,18 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
               invalid={tagError}
               kind={kind}
               labelKey="tagging.tags.bulk.tag"
-              onChange={(next) => setDraft((current) => ({ ...current, tagId: next }))}
-              value={tagId}
+              picked={values.tagId}
             />
           )}
-          <RadioGroup
+          <bulkTagForm.mode
             disabled={forbidden}
-            onValueChange={(next) =>
-              setDraft((current) => ({ ...current, mode: next === 'remove' ? 'remove' : 'add' }))
-            }
-            size="sm"
-            value={mode}
-          >
-            <RadioGroup.Label>{t('tagging.tags.bulk.action')}</RadioGroup.Label>
-            <RadioGroup.ItemGroup>
-              <RadioGroup.Item value="add">
-                <RadioGroup.ItemHiddenInput />
-                <RadioGroup.ItemControl />
-                <RadioGroup.ItemText>{t('tagging.tags.bulk.add')}</RadioGroup.ItemText>
-              </RadioGroup.Item>
-              <RadioGroup.Item value="remove">
-                <RadioGroup.ItemHiddenInput />
-                <RadioGroup.ItemControl />
-                <RadioGroup.ItemText>{t('tagging.tags.bulk.remove')}</RadioGroup.ItemText>
-              </RadioGroup.Item>
-            </RadioGroup.ItemGroup>
-          </RadioGroup>
-        </div>
+            items={[
+              { label: t('tagging.tags.bulk.add'), value: 'add' },
+              { label: t('tagging.tags.bulk.remove'), value: 'remove' },
+            ]}
+            label={t('tagging.tags.bulk.action')}
+          />
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

@@ -24,4 +24,6 @@ export {
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { ComboboxField, MultiComboboxField, SwitchField } from './kit-fields-combobox.ts';
+export { makeCheckboxGroupField } from './kit-fields-checkbox-group.ts';
+export { SelectTemplateField } from './kit-fields-select-template.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
