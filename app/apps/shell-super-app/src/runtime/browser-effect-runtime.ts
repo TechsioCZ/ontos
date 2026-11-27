@@ -1,4 +1,5 @@
 import { FetchHttpClient } from 'effect/http';
+import { Atom } from 'effect/reactivity';
 
 import { Layer, Logger, ManagedRuntime, Random, References, Tracer } from 'effect';
 
@@ -19,13 +20,16 @@ const browserRandom: Random.Random = {
   },
 };
 
-export const browserRuntime = ManagedRuntime.make(
-  Layer.mergeAll(
-    FetchHttpClient.layer,
-    Layer.succeed(FetchHttpClient.RequestInit, { credentials: 'same-origin' }),
-    Layer.succeed(Random.Random, browserRandom),
-    Logger.layer([Logger.defaultLogger]),
-    Layer.succeed(Tracer.Tracer, browserTracer),
-    Layer.succeed(References.MinimumLogLevel, 'Info'),
-  ),
+const browserLayer = Layer.mergeAll(
+  FetchHttpClient.layer,
+  Layer.succeed(FetchHttpClient.RequestInit, { credentials: 'same-origin' }),
+  Layer.succeed(Random.Random, browserRandom),
+  Logger.layer([Logger.defaultLogger]),
+  Layer.succeed(Tracer.Tracer, browserTracer),
+  Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
+
+export const browserRuntime = ManagedRuntime.make(browserLayer);
+
+/** The same browser services for atoms: forms and reads that React renders from atom state. */
+export const browserAtomRuntime = Atom.runtime(browserLayer);

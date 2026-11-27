@@ -1,7 +1,5 @@
-import { UnsavedChangesDialog, saveLabelsFor, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveState } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 
@@ -11,19 +9,10 @@ import type {
   PreviewAccessRoleEditResponse,
 } from '../../../../shared/access-admin-api.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import {
-  addExactLevel,
-  canSaveRolePreview,
-  editRoleDraft,
-  initialRoleDraft,
-  parseAmountCeiling,
-  roleCellSlot,
-  toggleRoleCell,
-} from './model.ts';
+import { canSaveRolePreview, initialRoleDraft } from './model.ts';
 import type { RoleCellView } from './model.ts';
 import { commitRolePreview, prepareRolePreview, roleErrorStatus, toRolePreviewView } from './role-commands.ts';
 import { RoleEditorView } from './role-editor-view.tsx';
-import { roleSaveState, sameRoleCells, useRoleDraft } from './role-save.ts';
 
 export const RoleEditorFeature = ({
   catalog,
@@ -44,13 +33,13 @@ export const RoleEditorFeature = ({
   const idempotencyKey = useRef<string | null>(null);
   useEffect(() => () => operation.current?.abort(), []);
   const entries = catalog.entries.map((entry) => ({ ...entry, key: entry.capabilityKey }));
-  const status = draft.invalidAmounts.length > 0 ? 'invalid' : draft.status;
-  const payload = {
+  const { status } = draft;
+  const payloadOf = (cells: readonly RoleCellView[]) => ({
     catalogSnapshotId: catalog.catalogSnapshotId,
-    cells: draft.cells,
+    cells,
     expectedRoleRevisionId: initialRole.revisionId,
     roleId: initialRole.id,
-  };
+  });
   const describeEffect = (effect: PreviewAccessRoleEditResponse['dangerous'][number]) => {
     const entry = catalog.entries.find((candidate) => candidate.capabilityKey === effect.capabilityKey);
     return t('shell.accessAdmin.role.dangerousEffectDescription', {
@@ -60,37 +49,29 @@ export const RoleEditorFeature = ({
       risk: t(`shell.accessAdmin.risk.${effect.risk}`),
     });
   };
-  const edited = (cells: readonly RoleCellView[]) => {
-    idempotencyKey.current = null;
-    setDraft((current) => editRoleDraft(current, cells));
-  };
-  const previewSucceeded = ({
-    key,
-    result,
-  }: {
-    readonly key: string;
-    readonly result: PreviewAccessRoleEditResponse;
-  }) => {
-    idempotencyKey.current = key;
-    const preview = toRolePreviewView(result, describeEffect);
-    setDraft((current) => ({ ...current, cells: result.cells, preview, status: 'idle' }));
-  };
+  const previewSucceeded =
+    (previewedCells: readonly RoleCellView[]) =>
+    ({ key, result }: { readonly key: string; readonly result: PreviewAccessRoleEditResponse }) => {
+      idempotencyKey.current = key;
+      const preview = toRolePreviewView(result, describeEffect);
+      setDraft((current) => ({ ...current, cells: result.cells, preview, previewedCells, status: 'idle' }));
+    };
   const releaseOperation = () => {
     operation.current = null;
   };
-  const runPreview = () => {
-    if (operation.current !== null || draft.invalidAmounts.length > 0) {
+  const runPreview = (cells: readonly RoleCellView[]) => {
+    if (operation.current !== null) {
       return;
     }
     const controller = new AbortController();
     operation.current = controller;
     idempotencyKey.current = null;
-    setDraft((current) => ({ ...current, confirmations: [], preview: null, status: 'loading' }));
+    setDraft((current) => ({ ...current, preview: null, status: 'loading' }));
     browserRuntime.runFork(
-      prepareRolePreview(payload, language).pipe(
+      prepareRolePreview(payloadOf(cells), language).pipe(
         Effect.match({
           onFailure: (error) => setDraft((current) => ({ ...current, status: roleErrorStatus(error) })),
-          onSuccess: previewSucceeded,
+          onSuccess: previewSucceeded(cells),
         }),
         Effect.ensuring(Effect.sync(releaseOperation)),
       ),
@@ -103,26 +84,23 @@ export const RoleEditorFeature = ({
     if (invalidate) {
       idempotencyKey.current = null;
     }
-    setDraft((current) => ({
-      ...current,
-      confirmations: invalidate ? [] : current.confirmations,
-      preview: invalidate ? null : current.preview,
-      status: next,
-    }));
+    setDraft((current) => ({ ...current, preview: invalidate ? null : current.preview, status: next }));
   };
-  const savable = canSaveRolePreview(draft.preview, draft.confirmations, status, writesAvailable);
-  const changed = !sameRoleCells(draft.cells, initialRole.cells);
-  const saveState = roleSaveState(status, changed, savable);
   /** Uložit: commits the previewed and confirmed change once; answers whether a commit started. */
-  const save = (settle: (end: SaveState) => void): boolean => {
-    if (operation.current !== null || draft.preview === null || idempotencyKey.current === null || !savable) {
+  const save = (confirmations: readonly string[], settle: (end: SaveState) => void): boolean => {
+    if (
+      operation.current !== null ||
+      draft.preview === null ||
+      idempotencyKey.current === null ||
+      !canSaveRolePreview(draft.preview, confirmations, status, writesAvailable)
+    ) {
       return false;
     }
     const controller = new AbortController();
     operation.current = controller;
     setDraft((current) => ({ ...current, status: 'saving' }));
     browserRuntime.runFork(
-      commitRolePreview(payload, draft.preview, idempotencyKey.current, language).pipe(
+      commitRolePreview(payloadOf(draft.cells), draft.preview, idempotencyKey.current, language).pipe(
         Effect.match({
           onFailure: (error) => {
             saveFailed(error);
@@ -145,86 +123,27 @@ export const RoleEditorFeature = ({
     );
     return true;
   };
-  const roleDraft = useRoleDraft({ changed, onSave: save, savable, saveState });
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => roleDraft.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({
-    draft: roleDraft,
-    navigation: blocker,
-    onDiscard: () => {
-      idempotencyKey.current = null;
-      setDraft((current) => ({ ...initialRoleDraft(initialRole.cells), editorVersion: current.editorVersion + 1 }));
-    },
-  });
-  const handleSave = roleDraft.save;
-  const updateAmount = (cell: RoleCellView, amount: string, currency: string) => {
+  /** Zahodit změny: the preview and its key are forgotten; the editor puts the saved cells back itself. */
+  const discard = () => {
     idempotencyKey.current = null;
-    const value = parseAmountCeiling(amount, currency);
-    const slot = roleCellSlot(cell);
-    setDraft((current) => {
-      if (value === 'invalid') {
-        return {
-          ...current,
-          confirmations: [],
-          invalidAmounts: [...new Set([...current.invalidAmounts, slot])],
-          preview: null,
-        };
-      }
-      const { amountCeiling: previous, ...base } = cell;
-      void previous;
-      const next = value === undefined ? base : { ...base, amountCeiling: value };
-      return {
-        ...editRoleDraft(current, toggleRoleCell(current.cells, next, true)),
-        invalidAmounts: current.invalidAmounts.filter((item) => item !== slot),
-      };
-    });
+    setDraft((current) => ({ ...initialRoleDraft(initialRole.cells), editorVersion: current.editorVersion }));
   };
   return (
-    <>
-      <RoleEditorView
-        catalogSnapshotId={catalog.catalogSnapshotId}
-        cells={draft.cells}
-        confirmations={draft.confirmations}
-        entries={entries}
-        key={draft.editorVersion}
-        onAmount={updateAmount}
-        onConfirm={(id, checked) =>
-          setDraft((current) => ({
-            ...current,
-            confirmations: checked
-              ? [...new Set([...current.confirmations, id])]
-              : current.confirmations.filter((item) => item !== id),
-          }))
-        }
-        onLevel={(moduleKey, level) => edited(addExactLevel(draft.cells, entries, moduleKey, level))}
-        onPreview={runPreview}
-        onRefresh={onRefresh}
-        onSave={handleSave}
-        onTemplate={(template) => {
-          if (template.catalogSnapshotId !== catalog.catalogSnapshotId) {
-            return;
-          }
-          idempotencyKey.current = null;
-          setDraft((current) => ({
-            ...editRoleDraft(current, template.cells),
-            editorVersion: current.editorVersion + 1,
-            invalidAmounts: [],
-          }));
-        }}
-        onToggleCell={(cell, enabled) => {
-          idempotencyKey.current = null;
-          setDraft((current) => ({
-            ...editRoleDraft(current, toggleRoleCell(current.cells, cell, enabled)),
-            invalidAmounts: current.invalidAmounts.filter((item) => item !== roleCellSlot(cell)),
-          }));
-        }}
-        preview={draft.preview}
-        role={initialRole}
-        saveState={saveState}
-        status={status}
-        templates={catalog.templates}
-        writesAvailable={writesAvailable}
-      />
-      <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={guard.prompt} />
-    </>
+    <RoleEditorView
+      catalogSnapshotId={catalog.catalogSnapshotId}
+      cells={draft.cells}
+      entries={entries}
+      key={draft.editorVersion}
+      onDiscard={discard}
+      onPreview={runPreview}
+      onRefresh={onRefresh}
+      onSave={save}
+      preview={draft.preview}
+      previewedCells={draft.previewedCells}
+      role={initialRole}
+      status={status}
+      templates={catalog.templates}
+      writesAvailable={writesAvailable}
+    />
   );
 };

@@ -1,3 +1,4 @@
+import { ChoiceField, FormBuilder, FormReact, FormRoot, useAtomSet, useAtomSubscribe } from '@app/core-runtime/ui/form';
 import { Helmet } from '@modern-js/runtime/head';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter, useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -10,18 +11,17 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { useDocumentTitle } from '@app/admin-ui';
-import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
 import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
+import type { Atom } from 'effect/reactivity';
 
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import { staffDocumentTheme } from './staff-brand.ts';
@@ -114,20 +114,6 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
   readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
-}
-
-interface DashboardSelectorProps {
-  readonly ariaLabel?: string;
-  readonly currentValue: string | undefined;
-  readonly disabled: boolean;
-  readonly items: SelectItem[];
-  readonly label: string;
-  readonly name: string;
-  readonly onChange: (value: string) => void;
-  readonly placeholder: string;
-  readonly status: 'default' | 'error' | 'warning';
-  readonly statusId: string;
-  readonly statusText: string | null;
 }
 
 interface NavigationSection {
@@ -417,56 +403,171 @@ const selectorStatusText = (
   return unavailable ? messages.unavailable : null;
 };
 
-const DashboardSelector = ({
-  ariaLabel,
-  currentValue,
-  disabled,
-  items,
-  label,
-  name,
-  onChange,
-  placeholder,
+/**
+ * A one-field switch form per session choice: picking another value submits it at once, and the
+ * Shell controls switch the session to it. The form shows the session's choice again whenever a
+ * switch starts or settles.
+ */
+const tenantSwitchForm = FormReact.make(FormBuilder.empty.addField('tenantId', Schema.String), {
+  fields: { tenantId: ChoiceField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.tenantId),
+  runtime: browserAtomRuntime,
+});
+
+const legalEntitySwitchForm = FormReact.make(FormBuilder.empty.addField('legalEntityId', Schema.String), {
+  fields: { legalEntityId: ChoiceField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.legalEntityId),
+  runtime: browserAtomRuntime,
+});
+
+/** Hands a submitted choice to the Shell controls, unless it is the session's current one. */
+const useSwitchOnSubmit = (
+  submit: Atom.Atom<AsyncResult.AsyncResult<string, unknown>>,
+  currentValue: string | undefined,
+  onChange: (value: string) => void,
+) =>
+  useAtomSubscribe(submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== '' && result.value !== currentValue) {
+      onChange(result.value);
+    }
+  });
+
+const SelectorStatus = ({
+  id,
   status,
-  statusId,
-  statusText,
-}: DashboardSelectorProps) => (
-  <Select
-    disabled={disabled}
-    items={withNativeLabels(items)}
-    name={name}
-    onValueChange={({ value }) => {
-      const [selected] = value;
-      if (value.length === 1 && selected !== undefined && selected !== currentValue) {
-        onChange(selected);
-      }
-    }}
-    size="sm"
-    validateStatus={status}
-    value={currentValue === undefined ? [] : [currentValue]}
-  >
-    <Select.Label className="font-medium text-fg-secondary text-xs uppercase tracking-wide">{label}</Select.Label>
-    <Select.Control>
-      <Select.Trigger aria-label={ariaLabel}>
-        <Select.ValueText placeholder={placeholder} />
-      </Select.Trigger>
-    </Select.Control>
-    <Select.Positioner>
-      <Select.Content>
-        {items.map((item) => (
-          <Select.Item item={item} key={item.value}>
-            <Select.ItemText />
-            <Select.ItemIndicator />
-          </Select.Item>
-        ))}
-      </Select.Content>
-    </Select.Positioner>
-    {statusText === null ? null : (
-      <Select.StatusText aria-live="polite" id={statusId} showIcon status={status}>
-        {statusText}
-      </Select.StatusText>
-    )}
-  </Select>
+  text,
+}: {
+  readonly id: string;
+  readonly status: 'default' | 'error' | 'warning';
+  readonly text: string | null;
+}) =>
+  text === null ? null : (
+    <StatusText aria-live="polite" id={id} showIcon status={status}>
+      {text}
+    </StatusText>
+  );
+
+/** The small uppercase caption the navigation foot gives each switcher. */
+const SelectorLabel = ({ children }: { readonly children: string }) => (
+  <span className="font-medium text-fg-secondary text-xs uppercase tracking-wide">{children}</span>
 );
+
+const DashboardTenantSelector = ({
+  currentTenantId,
+  onTenantChange,
+  tenantChoices,
+  tenantState,
+  tenantSwitchFailed,
+  tenantSwitchPending,
+}: DashboardContextSelectorsProps) => {
+  const { t } = useModernI18n();
+  const tenantItems = tenantChoices.map(({ name, tenantId }) => ({ label: name, value: tenantId }));
+  const tenantUnavailable = tenantState === 'unavailable';
+  const unavailableText = t('shell.dashboard.tenant.unavailable');
+  const statusId = 'tenant-switch-status';
+  const statusText = selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
+    failed: t('shell.dashboard.tenant.failed'),
+    pending: t('shell.dashboard.tenant.pending'),
+    unavailable: unavailableText,
+  });
+  useSwitchOnSubmit(tenantSwitchForm.submit, currentTenantId, onTenantChange);
+  const showTenant = useAtomSet(tenantSwitchForm.setValues);
+  // The form stays mounted, so the sidebar keeps its layout and scroll position; once a switch
+  // settles, the select shows the session's tenant again.
+  useEffect(() => {
+    if (!tenantSwitchPending) {
+      showTenant({ tenantId: currentTenantId });
+    }
+  }, [currentTenantId, showTenant, tenantSwitchPending]);
+
+  return (
+    <FormRoot
+      defaultValues={{ tenantId: currentTenantId }}
+      form={tenantSwitchForm}
+      translateMessage={(message) => t(message, { defaultValue: t('shell.dashboard.tenant.failed') })}
+    >
+      <tenantSwitchForm.tenantId
+        describedBy={statusText === null ? undefined : statusId}
+        disabled={
+          tenantUnavailable || tenantSwitchPending || !tenantItems.some((item) => item.value !== currentTenantId)
+        }
+        invalid={tenantSwitchFailed}
+        items={tenantItems}
+        label={<SelectorLabel>{t('shell.dashboard.tenant.accessibleLabel')}</SelectorLabel>}
+        placeholder={unavailableText}
+      />
+      <SelectorStatus id={statusId} status={selectorStatus(tenantSwitchFailed, tenantUnavailable)} text={statusText} />
+    </FormRoot>
+  );
+};
+
+/** The legal-entity choice that leaves the session in its tenant with no company selected. */
+const tenantContextChoice = 'tenant';
+
+const DashboardLegalEntitySelector = ({
+  currentLegalEntityId,
+  legalEntityChoices,
+  legalEntityState,
+  legalEntitySwitchFailed,
+  legalEntitySwitchPending,
+  onLegalEntityChange,
+  onTenantContextChange,
+  tenantContextActive,
+  tenantContextAvailable,
+}: DashboardContextSelectorsProps) => {
+  const { t } = useModernI18n();
+  const legalEntityItems = [
+    ...(tenantContextAvailable === true
+      ? [{ label: t('shell.dashboard.legalEntity.tenantContext'), value: tenantContextChoice }]
+      : []),
+    ...legalEntityChoices.map(({ legalEntityId, legalName }) => ({ label: legalName, value: legalEntityId })),
+  ];
+  const currentValue = tenantContextActive === true ? tenantContextChoice : (currentLegalEntityId ?? '');
+  const legalEntityUnavailable = legalEntityState === 'unavailable';
+  const statusId = 'legal-entity-switch-status';
+  const statusText = selectorStatusText(legalEntitySwitchPending, legalEntitySwitchFailed, legalEntityUnavailable, {
+    failed: t('shell.dashboard.legalEntity.failed'),
+    pending: t('shell.dashboard.legalEntity.pending'),
+    unavailable: t('shell.dashboard.legalEntity.unavailable'),
+  });
+  useSwitchOnSubmit(legalEntitySwitchForm.submit, currentValue, (value) => {
+    if (value === tenantContextChoice) {
+      onTenantContextChange?.();
+    } else {
+      onLegalEntityChange(value);
+    }
+  });
+  const showLegalEntity = useAtomSet(legalEntitySwitchForm.setValues);
+  useEffect(() => {
+    if (!legalEntitySwitchPending) {
+      showLegalEntity({ legalEntityId: currentValue });
+    }
+  }, [currentValue, legalEntitySwitchPending, showLegalEntity]);
+
+  return (
+    <FormRoot
+      defaultValues={{ legalEntityId: currentValue }}
+      form={legalEntitySwitchForm}
+      translateMessage={(message) => t(message, { defaultValue: t('shell.dashboard.legalEntity.failed') })}
+    >
+      <legalEntitySwitchForm.legalEntityId
+        describedBy={statusText === null ? undefined : statusId}
+        disabled={legalEntityUnavailable || legalEntitySwitchPending}
+        invalid={legalEntitySwitchFailed}
+        items={legalEntityItems}
+        label={<SelectorLabel>{t('shell.dashboard.legalEntity.accessibleLabel')}</SelectorLabel>}
+        placeholder={t('shell.dashboard.legalEntity.placeholder')}
+      />
+      <SelectorStatus
+        id={statusId}
+        status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
+        text={statusText}
+      />
+    </FormRoot>
+  );
+};
 
 type DashboardContextSelectorsProps = Pick<
   AuthenticatedDashboardLayoutProps,
@@ -537,82 +638,12 @@ const HeaderButtonTooltip = ({
 };
 
 /** Tenant and legal-entity switchers; the shell keeps them at the foot of the navigation. */
-const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
-  const { t } = useModernI18n();
-  const tenantItems = props.tenantChoices.map(({ name, tenantId }) => ({
-    displayValue: name,
-    label: name,
-    value: tenantId,
-  }));
-  const tenantUnavailable = props.tenantState === 'unavailable';
-  const tenantLabel = t('shell.dashboard.tenant.accessibleLabel');
-  const tenantUnavailableText = t('shell.dashboard.tenant.unavailable');
-  const legalEntityItems = props.legalEntityChoices.map(({ legalEntityId, legalName }) => ({
-    displayValue: legalName,
-    label: legalName,
-    value: legalEntityId,
-  }));
-  if (props.tenantContextAvailable === true) {
-    const tenantContextLabel = t('shell.dashboard.legalEntity.tenantContext');
-    legalEntityItems.unshift({ displayValue: tenantContextLabel, label: tenantContextLabel, value: 'tenant' });
-  }
-  const legalEntityUnavailable = props.legalEntityState === 'unavailable';
-
-  return (
-    <div className="grid gap-100">
-      <DashboardSelector
-        ariaLabel={tenantLabel}
-        currentValue={props.currentTenantId}
-        disabled={
-          tenantUnavailable ||
-          props.tenantSwitchPending ||
-          !tenantItems.some((item) => item.value !== props.currentTenantId)
-        }
-        items={tenantItems}
-        label={tenantLabel}
-        name="tenant"
-        onChange={(tenantId) => {
-          props.onTenantChange(tenantId);
-        }}
-        placeholder={tenantUnavailableText}
-        status={selectorStatus(props.tenantSwitchFailed, tenantUnavailable)}
-        statusId="tenant-switch-status"
-        statusText={selectorStatusText(props.tenantSwitchPending, props.tenantSwitchFailed, tenantUnavailable, {
-          failed: t('shell.dashboard.tenant.failed'),
-          pending: t('shell.dashboard.tenant.pending'),
-          unavailable: tenantUnavailableText,
-        })}
-      />
-      <DashboardSelector
-        currentValue={props.tenantContextActive === true ? 'tenant' : props.currentLegalEntityId}
-        disabled={legalEntityUnavailable || props.legalEntitySwitchPending}
-        items={legalEntityItems}
-        label={t('shell.dashboard.legalEntity.accessibleLabel')}
-        name="legalEntity"
-        onChange={(value) => {
-          if (value === 'tenant') {
-            props.onTenantContextChange?.();
-          } else {
-            props.onLegalEntityChange(value);
-          }
-        }}
-        placeholder={t('shell.dashboard.legalEntity.placeholder')}
-        status={selectorStatus(props.legalEntitySwitchFailed, legalEntityUnavailable)}
-        statusId="legal-entity-switch-status"
-        statusText={selectorStatusText(
-          props.legalEntitySwitchPending,
-          props.legalEntitySwitchFailed,
-          legalEntityUnavailable,
-          {
-            failed: t('shell.dashboard.legalEntity.failed'),
-            pending: t('shell.dashboard.legalEntity.pending'),
-            unavailable: t('shell.dashboard.legalEntity.unavailable'),
-          },
-        )}
-      />
-    </div>
-  );
-};
+const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => (
+  <div className="grid gap-100">
+    <DashboardTenantSelector {...props} />
+    <DashboardLegalEntitySelector {...props} />
+  </div>
+);
 
 const DashboardAccountMenu = ({
   identity,

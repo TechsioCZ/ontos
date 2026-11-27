@@ -1,22 +1,29 @@
+import {
+  FormReact,
+  FormRoot,
+  SubmitButton,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouter } from '@modern-js/plugin-tanstack/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
-import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Function as Fn, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Function as Fn, Match, Option, Schema, SchemaIssue } from 'effect';
 import type { Cause } from 'effect';
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
+import { AsyncResult } from 'effect/reactivity';
 import { useEffect, useRef, useState } from 'react';
 
-import { SignInPayloadSchema } from '../../../../shared/browser-api.ts';
-import { submitCredentialForm } from '../../../credential-form.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { useBrowserLocationHref } from '../../browser-location.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { endBrowserSession } from '../../session-scope.ts';
 import { openSignedInPage, signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
@@ -25,25 +32,8 @@ import { useHydratedMarker } from '../../use-hydrated.ts';
 import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginError, readOAuthLoginRequest } from './oauth-handoff.ts';
 import type { OAuthLoginRequest } from './oauth-handoff.ts';
 
-interface LoginValidation {
-  loginMissing: boolean;
-  passwordMissing: boolean;
-}
-
-const validLogin: LoginValidation = {
-  loginMissing: false,
-  passwordMissing: false,
-};
-
-const SignInFormSchema = Schema.fromFormData(
-  Schema.Struct({
-    email: SignInPayloadSchema.fields.email,
-    password: Schema.RedactedFromValue(SignInPayloadSchema.fields.password.value),
-  }).pipe(Schema.encodeKeys({ email: 'login' })),
-);
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
-const submitDisabled = (hydrated: true | undefined, attempt: string) => hydrated !== true || attempt !== 'idle';
 
 const loginReason = (href: string | undefined, language: string): SignInReason | 'sign_in_required' | undefined =>
   href === undefined
@@ -84,14 +74,54 @@ const oauthBannerText = (
           : t('shell.login.oauth.unverified', { client: clientName ?? request.clientId }),
       };
 
-const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
-  Match.value(error).pipe(
-    Match.tag('InvalidCredentialsProblem', () => 'shell.login.error.invalid' as const),
-    Match.tag('OntosIdentityForbiddenProblem', () => 'shell.login.error.forbidden' as const),
-    Match.tag('AuthenticationUnavailableProblem', () => 'shell.login.error.unavailable' as const),
-    Match.tag('AuthenticationInternalProblem', 'HttpClientError', 'SchemaError', () => internalErrorMessageKey),
-    Match.exhaustive,
-  );
+/** Why the Shell refused the credentials; each reason names its `shell.login.error.*` message. */
+class SignInRefused extends Schema.TaggedError<SignInRefused>()('SignInRefused', {
+  reason: Schema.Literals(['invalid', 'forbidden', 'unavailable', 'internal']),
+}) {}
+
+const refusal = (failure: ShellAuthenticationClientError) =>
+  new SignInRefused({
+    reason: Match.value(failure).pipe(
+      Match.tag('InvalidCredentialsProblem', () => 'invalid' as const),
+      Match.tag('OntosIdentityForbiddenProblem', () => 'forbidden' as const),
+      Match.tag('AuthenticationUnavailableProblem', () => 'unavailable' as const),
+      Match.tag('AuthenticationInternalProblem', 'HttpClientError', 'SchemaError', () => 'internal' as const),
+      Match.exhaustive,
+    ),
+  });
+
+/**
+ * The sign-in payload as the person types it: the login is trimmed, the password is redacted once
+ * decoded, and the request carries the page language. A refusal is the form's own error, kept next to
+ * the form until the next attempt; a short-lived toast is easy to miss during an outage.
+ */
+const loginForm = FormReact.make(
+  fromPayload(
+    Schema.Struct({
+      email: Schema.Trim.check(Schema.isMinLength(1, { message: 'shell.login.required.login' })),
+      locale: Schema.String,
+      password: Schema.RedactedFromValue(
+        Schema.String.check(Schema.isMinLength(1, { message: 'shell.login.required.password' })),
+      ),
+    }),
+  ),
+  {
+    fields: { email: TextField, locale: TextField, password: TextField },
+    onSubmit: (_submit, { decoded: { locale, ...credentials } }) =>
+      signIn(credentials, { locale }).pipe(Effect.mapError(refusal)),
+    runtime: browserAtomRuntime,
+    submitErrors: ({ reason }) => [{ message: `shell.login.error.${reason}`, path: '' as const }],
+  },
+);
+const passwordField = loginForm.getFieldAtoms(loginForm.fields.password);
+
+const LoginFieldSchema = Schema.Literals(['login', 'password']);
+type LoginField = typeof LoginFieldSchema.Type;
+/** The first field a failed validation names: the login before the password. */
+const firstMissingField = (error: Schema.SchemaError): LoginField =>
+  SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues.some((issue) => issue.path?.[0] === 'email')
+    ? 'login'
+    : 'password';
 
 /** The active URL owns its client-name lookup; leaving it cancels the request and hides stale names. */
 const useOAuthLoginLocation = () => {
@@ -132,14 +162,16 @@ const LoginPage = () => {
   const toaster = useToast();
   const loginRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
-  const [validation, setValidation] = useState<LoginValidation>(validLogin);
+  const clearPassword = useAtomSet(passwordField.setValue);
+  const refused = useAtomValue(loginForm.rootError);
+  // A request, not a flag: every failed attempt focuses its field again once the form is enabled.
+  const [focusRequest, setFocusRequest] = useState<{ readonly field: LoginField } | null>(null);
   // After a successful sign-in the URL moves at once, but this form stays on screen until the next page has loaded.
   // The button then says the app is opening instead of still claiming to sign in.
-  const [attempt, setAttempt] = useState<'idle' | 'opening' | 'signing-in'>('idle');
-  // Keep the login so only the password is retyped after an attempt.
-  const [attemptedLogin, setAttemptedLogin] = useState('');
-  // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
-  const [submissionError, setSubmissionError] = useState<string>();
+  const [opening, setOpening] = useState(false);
+  // Signed in, but the next page did not open; said next to the form until the next attempt.
+  const [navigationFailed, setNavigationFailed] = useState(false);
+  const submissionError = navigationFailed ? internalErrorMessageKey : Option.getOrUndefined(refused);
   // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
   // A protected page opened without signing in arrives with only the page to return to: "not signed in".
   // The server snapshot keeps hydration's first render free of browser-only notices.
@@ -147,97 +179,70 @@ const LoginPage = () => {
   const reason = loginReason(href, language);
   const oauthBanner = oauthBannerText(oauthRequest, clientName, t);
   const hydrated = useHydratedMarker();
-  const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
-    Effect.sync(() => {
-      void error;
-      setSubmissionError(internalErrorMessageKey);
-      loginRef.current?.focus();
-    });
-
-  const handleSubmit = (formData: FormData) => {
-    if (attempt !== 'idle') {
+  useEffect(() => {
+    if (focusRequest !== null) {
+      (focusRequest.field === 'login' ? loginRef : passwordRef).current?.focus();
+    }
+  }, [focusRequest]);
+  /** A sent attempt that did not open the app: the login stays filled, so only the password is retyped. */
+  const retryFrom = (field: LoginField) => {
+    clearPassword('');
+    setFocusRequest({ field });
+  };
+  const enterShell = () => {
+    if (oauthRequest !== undefined) {
+      // OAuth connect flow: back to authorization without opening a Shell page.
+      globalThis.location.assign(oauthRequest.authorizeUrl);
       return;
     }
-
-    const login = formData.get('login');
-    const password = formData.get('password');
-    const loginValue = Predicate.isString(login) ? login : '';
-    const passwordValue = Predicate.isString(password) ? password : '';
-    setSubmissionError(undefined);
-    setAttemptedLogin(loginValue.trim());
-    const nextValidation = {
-      loginMissing: loginValue.trim().length === 0,
-      passwordMissing: passwordValue.length === 0,
-    };
-
-    setValidation(nextValidation);
-
-    if (nextValidation.loginMissing || nextValidation.passwordMissing) {
+    // Signed in: what remains is loading the next page, which can take a few seconds.
+    setOpening(true);
+    void browserRuntime.runPromise(
+      endBrowserSession.pipe(
+        Effect.andThen(Effect.tryPromise(() => router.invalidate({ sync: true }))),
+        Effect.andThen(Effect.suspend(() => openSignedInPage(router, window.location.href, language))),
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (failure: Cause.TimeoutError | Cause.UnknownError) =>
+            Effect.sync(() => {
+              void failure;
+              setNavigationFailed(true);
+              retryFrom('login');
+            }),
+          onSuccess: Effect.succeed,
+        }),
+        Effect.ensuring(Effect.sync(() => setOpening(false))),
+      ),
+    );
+  };
+  useAtomSubscribe(loginForm.submit, (result) => {
+    // Every attempt supersedes what the previous one said.
+    setNavigationFailed(false);
+    if (result.waiting) {
+      return;
+    }
+    if (AsyncResult.isSuccess(result)) {
+      toaster.dismiss();
+      enterShell();
+      return;
+    }
+    const failure = AsyncResult.error(result);
+    if (Option.isNone(failure)) {
+      return;
+    }
+    if (Schema.isSchemaError(failure.value)) {
       toaster.create({
         description: t('shell.login.toast.description'),
         title: t('shell.login.toast.title'),
         type: 'error',
       });
-
-      if (nextValidation.loginMissing) {
-        loginRef.current?.focus();
-        return;
-      }
-
-      passwordRef.current?.focus();
+      setFocusRequest({ field: firstMissingField(failure.value) });
       return;
     }
-
-    formData.set('login', loginValue.trim());
-    const credentials = Schema.decodeOption(SignInFormSchema)(formData);
-    if (Option.isNone(credentials)) {
-      toaster.create({
-        description: t(internalErrorMessageKey),
-        title: t(errorTitleKey),
-        type: 'error',
-      });
-      return;
-    }
-
-    // A sign-in attempt supersedes the feedback of earlier attempts, so stale validation toasts go away.
+    // The form shows the refusal; stale validation toasts of earlier attempts go away.
     toaster.dismiss();
-    setAttempt('signing-in');
-    void browserRuntime.runPromise(
-      signIn(credentials.value, { locale: language }).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.sync(() => {
-              setSubmissionError(authenticationErrorMessageKey(error));
-              // The login stays filled after a failed attempt, so the retry starts at the password.
-              passwordRef.current?.focus();
-            }),
-          onSuccess: () =>
-            oauthRequest === undefined
-              ? Effect.andThen(
-                  endBrowserSession,
-                  Effect.tryPromise(() => {
-                    // Signed in: what remains is loading the next page, which can take a few seconds.
-                    setAttempt('opening');
-                    return router.invalidate({ sync: true });
-                  }).pipe(
-                    Effect.andThen(Effect.suspend(() => openSignedInPage(router, window.location.href, language))),
-                    Effect.timeout('10 seconds'),
-                    Effect.matchEffect({
-                      onFailure: handleNavigationFailure,
-                      onSuccess: Effect.succeed,
-                    }),
-                  ),
-                )
-              : Effect.sync(() => {
-                  // OAuth connect flow: back to authorization without opening a Shell page.
-                  setAttempt('opening');
-                  globalThis.location.assign(oauthRequest.authorizeUrl);
-                }),
-        }),
-        Effect.ensuring(Effect.sync(() => setAttempt('idle'))),
-      ),
-    );
-  };
+    retryFrom('password');
+  });
 
   return (
     <>
@@ -282,44 +287,38 @@ const LoginPage = () => {
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
           <div hidden={oauthError !== undefined}>
-            <h1 className="text-2xl font-bold" hidden={attempt === 'opening'}>
+            <h1 className="text-2xl font-bold" hidden={opening}>
               {t('shell.login.title')}
             </h1>
-            <form
-              action={`/${language}/login`}
+            <FormRoot
+              blocked={opening}
               className="mt-200 flex flex-col gap-200"
               data-hydrated={hydrated}
-              method="post"
-              noValidate
-              onSubmit={(event) => submitCredentialForm(event, hydrated === true, handleSubmit, passwordRef.current)}
+              defaultValues={{ email: '', locale: language, password: '' }}
+              form={loginForm}
+              key={language}
+              translateMessage={(message) => t(message, { defaultValue: t(internalErrorMessageKey) })}
             >
-              <div hidden={attempt === 'opening'}>
-                <FormInput
-                  aria-invalid={validation.loginMissing || undefined}
+              <div hidden={opening}>
+                <loginForm.email
                   autoComplete="username"
-                  defaultValue={attemptedLogin}
-                  helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
                   id="login"
                   label={t('shell.login.field.login')}
                   name="login"
                   ref={loginRef}
                   required
                   type="text"
-                  validateStatus={validation.loginMissing ? 'error' : 'default'}
                 />
               </div>
-              <div hidden={attempt === 'opening'}>
-                <FormInput
-                  aria-invalid={validation.passwordMissing || undefined}
+              <div hidden={opening}>
+                <loginForm.password
                   autoComplete="current-password"
-                  helpText={validation.passwordMissing ? t('shell.login.required.password') : undefined}
                   id="password"
                   label={t('shell.login.field.password')}
                   name="password"
                   ref={passwordRef}
                   required
                   type="password"
-                  validateStatus={validation.passwordMissing ? 'error' : 'default'}
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
@@ -334,19 +333,16 @@ const LoginPage = () => {
                   <p>{t(submissionError)}</p>
                 </div>
               )}
-              <Button
+              <SubmitButton
                 appearance="solid"
                 block
-                disabled={submitDisabled(hydrated, attempt)}
-                isLoading={attempt !== 'idle'}
-                loadingText={t(attempt === 'opening' ? 'shell.login.opening' : 'shell.login.pending')}
+                loadingText={t(opening ? 'shell.login.opening' : 'shell.login.pending')}
                 severity="primary"
                 size="md"
-                type="submit"
               >
                 {t('shell.login.submit')}
-              </Button>
-            </form>
+              </SubmitButton>
+            </FormRoot>
           </div>
           <p className="border-border-primary border-t pt-200 text-fg-secondary text-xs">
             {t('shell.login.contextHint')}

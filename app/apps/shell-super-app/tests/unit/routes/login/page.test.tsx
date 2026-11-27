@@ -8,6 +8,7 @@ import {
   HttpServerResponse,
 } from '@modern-js/bff-effect/effect-edge';
 import { Outlet, RouterContextProvider } from '@modern-js/plugin-tanstack/runtime';
+import { UiMessagesProvider } from '@techsio/ui-kit/messages/ui-messages-provider';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -130,6 +131,9 @@ const getLogin = () => screen.getByRole('textbox', { name: /^Login/u });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 /** The submit control, idle or announcing the sign-in it started. */
+/** The alert next to the form that says `message`; the emptied password announces its own. */
+const alertSaying = (message: string) =>
+  screen.getAllByRole('alert').find((alert) => alert.textContent.includes(message));
 const getSubmitControl = () => screen.getByRole('button', { name: /^(?:Login|Signing in…)$/u });
 
 afterEach(() => {
@@ -141,7 +145,7 @@ afterEach(() => {
   rstest.restoreAllMocks();
 });
 
-it.effect('renders a fixed POST action and a disabled submit button before hydration', () =>
+it.effect('renders no credential controls before hydration, so the browser never submits them natively', () =>
   Effect.gen(function* serverRenderedForm() {
     const router = loginRouter();
     yield* Effect.promise(async () => await router.load());
@@ -154,9 +158,8 @@ it.effect('renders a fixed POST action and a disabled submit button before hydra
     );
     const document = new DOMParser().parseFromString(html, 'text/html');
     const form = document.querySelector('form');
-    expect(form?.getAttribute('method')).toBe('post');
-    expect(form?.getAttribute('action')).toBe('/en/login');
-    expect(form?.querySelector('button[type="submit"]')?.hasAttribute('disabled')).toBe(true);
+    // The form model renders its controls once hydrated: a server-rendered form holds nothing to submit.
+    expect(form?.querySelector('input, button')).toBeNull();
     expect(form?.dataset['hydrated']).toBeUndefined();
     yield* renderLogin();
     expect(getSubmit().hasAttribute('disabled')).toBe(false);
@@ -225,9 +228,19 @@ it.effect('shows the required login controls through the UI kit', () =>
   }),
 );
 
+/** The kit's own words in Czech around every route, as the Shell layout gives them to its pages. */
+const CzechKitMessages = () => (
+  <UiMessagesProvider messages={{ label: { required: requiredLabelFor('cs') }, locale: 'cs' }}>
+    <Outlet />
+  </UiMessagesProvider>
+);
+
 it.effect('reads the required text of a required field in Czech', () =>
   Effect.gen(function* czechRequiredText() {
-    yield* renderLogin(loginRouter('cs'), 'cs');
+    yield* renderLogin(
+      makeShellRouter({ page: { component: LoginPage, path: 'login' }, root: CzechKitMessages, url: '/cs/login' }),
+      'cs',
+    );
 
     const login = getLogin();
     expect(document.querySelector(`label[for="${login.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
@@ -245,9 +258,25 @@ it.effect('the back link resolves Czech from the same canonical target', () =>
   }),
 );
 
-/** Every Effect the page has handed to the browser runtime, settled. */
-const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly { readonly value: unknown }[] } }) =>
-  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value))).pipe(
+/**
+ * Spies on the browser runtime the page hands its navigation home to; `navigation` resolves with
+ * that run as soon as the page starts it, once the sign-in the form submitted has been answered.
+ */
+const observePageRuns = () => {
+  const started = Promise.withResolvers<Promise<unknown>>();
+  const run = browserRuntime.runPromise.bind(browserRuntime);
+  const runs = rstest.spyOn(browserRuntime, 'runPromise').mockImplementation((effect, options) => {
+    const running = run(effect, options);
+    started.resolve(running);
+    return running;
+  });
+  return { navigation: started.promise, runs };
+};
+
+/** The sign-in the form submitted, answered, and the navigation home the page started, settled. */
+const signInSettled = (navigation: Promise<Promise<unknown>>) =>
+  Effect.promise(() => navigation).pipe(
+    Effect.flatMap((running) => Effect.promise(() => Promise.allSettled([running]))),
     Effect.andThen(networkIdle),
   );
 
@@ -258,7 +287,7 @@ const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly 
 const submitLogin = (login: string, password: string, router: ShellRouter = loginRouter()) =>
   Effect.gen(function* submitLoginEffect() {
     const user = userEvent.setup();
-    const runs = rstest.spyOn(browserRuntime, 'runPromise');
+    const { navigation, runs } = observePageRuns();
     yield* renderLogin(router);
     if (login.length > 0) {
       yield* Effect.promise(() => user.type(getLogin(), login));
@@ -269,7 +298,7 @@ const submitLogin = (login: string, password: string, router: ShellRouter = logi
     yield* Effect.promise(() => user.click(getSubmit()));
     // Some cases deliberately hold the sign-in response open. Wait for traffic to settle without releasing it.
     yield* networkSteady;
-    return { runs, user };
+    return { navigation, runs, user };
   });
 
 /** Let the real Location.assign update its URL without replacing the test document or any browser method. */
@@ -302,11 +331,15 @@ it.effect('returns an OAuth sign-in to authorization without opening a Shell pag
     const invalidations = rstest.spyOn(router, 'invalidate');
     const navigations = rstest.spyOn(router, 'navigate');
     yield* Effect.gen(function* signInForAuthorization() {
-      const { runs } = yield* submitLogin('admin', 'secret', router);
-      yield* pageEffectsSettled(runs);
+      yield* submitLogin('admin', 'secret', router);
+      yield* networkIdle;
     }).pipe(Effect.provide(origin.browser));
-    expect(globalThis.location.href).toBe(
-      'http://localhost:3000/shell-super-app-api/oauth/oauth2/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&state=preserved',
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(globalThis.location.href).toBe(
+          'http://localhost:3000/shell-super-app-api/oauth/oauth2/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&state=preserved',
+        ),
+      ),
     );
     expect(invalidations).not.toHaveBeenCalled();
     expect(navigations).not.toHaveBeenCalled();
@@ -378,7 +411,7 @@ it.effect.each(validationCases)(
       const answered = yield* Latch.make();
       const bff = signInBff(answered);
       yield* Effect.gen(function* submitAndRead() {
-        const { runs } = yield* submitLogin(login, password);
+        const { navigation } = yield* submitLogin(login, password);
 
         const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
         expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
@@ -390,7 +423,9 @@ it.effect.each(validationCases)(
         expect(document.activeElement).toBe(focusTargets[focus]());
         // Only a complete submission reaches the authentication client.
         yield* answered.open;
-        yield* pageEffectsSettled(runs);
+        if (incompleteToasts === 0) {
+          yield* signInSettled(navigation);
+        }
         expect(bff.requests).toHaveLength(incompleteToasts === 0 ? 1 : 0);
       }).pipe(Effect.provide(bff.browser));
     }),
@@ -411,7 +446,7 @@ it.effect('clears stale errors after both fields are corrected', () =>
     const answered = yield* Latch.make();
     const bff = signInBff(answered);
     yield* Effect.gen(function* correctAndResubmit() {
-      const { runs, user } = yield* submitLogin('', '');
+      const { navigation, user } = yield* submitLogin('', '');
 
       yield* Effect.promise(() => user.type(getLogin(), 'admin'));
       yield* Effect.promise(() => user.type(getPassword(), 'secret'));
@@ -421,7 +456,7 @@ it.effect('clears stale errors after both fields are corrected', () =>
       expect(screen.queryByText('Enter your login.')).toBeNull();
       expect(screen.queryByText('Enter your password.')).toBeNull();
       yield* answered.open;
-      yield* pageEffectsSettled(runs);
+      yield* signInSettled(navigation);
       expect(bff.requests.map((received) => received.endpoint)).toEqual(['signIn']);
     }).pipe(Effect.provide(bff.browser));
   }),
@@ -447,8 +482,8 @@ it.effect('submits valid values through the Shell authentication client and navi
     const router = loginRouter();
     const invalidations = rstest.spyOn(router, 'invalidate');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation, runs } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(runs).toHaveBeenCalledTimes(1);
     expect(bff.requests).toHaveLength(1);
@@ -467,11 +502,11 @@ it.effect('says the app is opening while the next page loads after a successful 
   const bff = signInBff();
   return Effect.gen(function* saysTheAppIsOpening() {
     const router = loginRouter();
-    const navigation = Promise.withResolvers<null>();
+    const pageLoad = Promise.withResolvers<null>();
     const navigations = rstest.spyOn(router, 'navigate').mockImplementationOnce(async () => {
-      await navigation.promise;
+      await pageLoad.promise;
     });
-    const { runs } = yield* submitLogin('admin', 'secret', router);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
 
     const submit = yield* Effect.promise(() => screen.findByRole('button', { name: /shell\.login\.opening/u }));
     yield* networkIdle;
@@ -479,8 +514,8 @@ it.effect('says the app is opening while the next page loads after a successful 
     expect(submit.hasAttribute('disabled')).toBe(true);
     expect(screen.queryByText(copy['shell.login.pending'])).toBeNull();
 
-    navigation.resolve(null);
-    yield* pageEffectsSettled(runs);
+    pageLoad.resolve(null);
+    yield* signInSettled(navigation);
     yield* Effect.promise(() => waitFor(() => expect(getSubmit().hasAttribute('disabled')).toBe(false)));
   }).pipe(Effect.provide(bff.browser));
 });
@@ -518,8 +553,8 @@ it.effect('returns to the protected page that sent the visitor to sign-in, with 
     );
     const clearCache = rstest.spyOn(router, 'clearCache');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(clearCache).toHaveBeenCalledTimes(1);
     expect(navigations).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky?group=month' });
@@ -540,11 +575,11 @@ it.effect.each(['cs', 'en'] as const)('opens Home when the saved return page no 
     const navigations = rstest.spyOn(router, 'navigate');
     yield* renderLogin(router, language);
     const user = userEvent.setup();
-    const runs = rstest.spyOn(browserRuntime, 'runPromise');
+    const { navigation } = observePageRuns();
     yield* Effect.promise(() => user.type(getLogin(), 'admin'));
     yield* Effect.promise(() => user.type(getPassword(), 'secret'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Login' })));
-    yield* pageEffectsSettled(runs);
+    yield* signInSettled(navigation);
 
     expect(navigations).toHaveBeenNthCalledWith(1, { href: `/${language}/retired-dashboard` });
     expect(navigations).toHaveBeenNthCalledWith(2, { replace: true, to: `/${language}/` });
@@ -559,8 +594,8 @@ it.effect.each(['resolved', 'forbidden', 'unavailable'])(
     return Effect.gen(function* keepsExistingReturnPageResult() {
       const router = returnRouter('en', 'returnTo=%2Fen%2Fprehledy%2Fstatistiky', 'prehledy/statistiky', state);
       const navigations = rstest.spyOn(router, 'navigate');
-      const { runs } = yield* submitLogin('admin', 'secret', router);
-      yield* pageEffectsSettled(runs);
+      const { navigation } = yield* submitLogin('admin', 'secret', router);
+      yield* signInSettled(navigation);
 
       expect(getSubmit().hasAttribute('disabled')).toBe(false);
       expect(navigations).toHaveBeenCalledTimes(1);
@@ -575,8 +610,8 @@ it.effect('ignores a return target outside the application and goes home', () =>
   return Effect.gen(function* ignoresForeignReturnTarget() {
     const router = returnRouter('en', 'returnTo=%2F%2Fevil.example%2Fen%2F', 'prehledy/statistiky', 'resolved');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(navigations).toHaveBeenCalledWith({ to: '/en/' });
     expect(router.state.location.pathname).toBe('/en');
@@ -588,14 +623,18 @@ it.effect('reports navigation failure and restores the login form after authenti
   return Effect.gen(function* reportsNavigationFailure() {
     const router = loginRouter();
     const navigations = rstest.spyOn(router, 'navigate').mockRejectedValueOnce('Navigation failed');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(navigations).toHaveBeenCalledWith(expect.objectContaining({ to: '/en/' }));
     expect(router.state.location.pathname).toBe('/en/login');
-    expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
-    expect(document.activeElement).toBe(getLogin());
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(alertSaying('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(document.activeElement).toBe(getLogin());
+      }),
+    );
   }).pipe(Effect.provide(bff.browser));
 });
 
@@ -605,16 +644,31 @@ it.effect('keeps navigation on the login route when auth cache refresh fails', (
     const router = loginRouter();
     const invalidations = rstest.spyOn(router, 'invalidate').mockRejectedValueOnce('Route refresh failed');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(invalidations).toHaveBeenCalledWith({ sync: true });
     expect(navigations).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/en/login');
-    expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(alertSaying('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      }),
+    );
   }).pipe(Effect.provide(bff.browser));
 });
+
+/** A refused sign-in, as the form leaves it: why, next to the form, with the login kept and the password emptied. */
+const refusalShown = (message: string) =>
+  Effect.promise(() =>
+    waitFor(() => {
+      expect(alertSaying(message)).toBeDefined();
+      expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      expect(getLogin()).toHaveProperty('value', 'admin');
+      expect(getPassword()).toHaveProperty('value', '');
+    }),
+  );
 
 it.effect('keeps an unavailable explanation in the form after toast notifications are dismissed', () => {
   const bff = signInAnswers(
@@ -631,17 +685,14 @@ it.effect('keeps an unavailable explanation in the form after toast notification
   return Effect.gen(function* retainsUnavailableFeedback() {
     const router = loginRouter();
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs, user } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
-    expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
+    const { navigation, user } = yield* submitLogin('admin', 'secret', router);
+    yield* networkIdle;
+    yield* refusalShown('shell.login.error.unavailable');
     toaster.remove();
-    expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
-    expect(getLogin()).toHaveProperty('value', 'admin');
-    expect(getPassword()).toHaveProperty('value', '');
+    expect(alertSaying('shell.login.error.unavailable')).toBeDefined();
     yield* Effect.promise(() => user.type(getPassword(), 'secret'));
     yield* Effect.promise(() => user.click(getSubmit()));
-    yield* pageEffectsSettled(runs);
+    yield* signInSettled(navigation);
     expect(screen.queryByText('shell.login.error.unavailable')).toBeNull();
     expect(navigations).toHaveBeenCalledWith({ to: '/en/' });
     expect(bff.requests.map((received) => received.endpoint)).toEqual(['signIn', 'signIn']);
@@ -659,13 +710,10 @@ it.effect('keeps the login and clears only the password after rejected credentia
     ),
   );
   return Effect.gen(function* keepsLoginAfterRejectedCredentials() {
-    const { runs } = yield* submitLogin('admin', 'wrong');
-    yield* pageEffectsSettled(runs);
+    yield* submitLogin('admin', 'wrong');
+    yield* networkIdle;
 
-    expect(screen.getByText('shell.login.error.invalid')).toBeDefined();
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
-    expect(getLogin()).toHaveProperty('value', 'admin');
-    expect(getPassword()).toHaveProperty('value', '');
+    yield* refusalShown('shell.login.error.invalid');
     expect(document.activeElement).toBe(getPassword());
   }).pipe(Effect.provide(bff.browser));
 });

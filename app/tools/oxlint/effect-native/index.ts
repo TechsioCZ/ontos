@@ -21,6 +21,7 @@ import { rule as noGlobalTestReplacements } from './rules/no-global-test-replace
 import { rule as noHandBuiltHttpServerInTests } from './rules/no-hand-built-http-server-in-tests.ts';
 import { rule as noHandBuiltProblemDetails } from './rules/no-hand-built-problem-details.ts';
 import { rule as noHandParsedEnvironmentValue } from './rules/no-hand-parsed-environment-value.ts';
+import { rule as noHandRolledFormState } from './rules/no-hand-rolled-form-state.ts';
 import { rule as noHandRolledTaggedUnion } from './rules/no-hand-rolled-tagged-union.ts';
 import { rule as noImperativeLoopInEffectGen } from './rules/no-imperative-loop-in-effect-gen.ts';
 import { rule as noInstanceof } from './rules/no-instanceof.ts';
@@ -104,6 +105,7 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-hand-built-http-server-in-tests': noHandBuiltHttpServerInTests,
     'no-hand-built-problem-details': noHandBuiltProblemDetails,
     'no-hand-parsed-environment-value': noHandParsedEnvironmentValue,
+    'no-hand-rolled-form-state': noHandRolledFormState,
     'no-hand-rolled-tagged-union': noHandRolledTaggedUnion,
     'no-imperative-loop-in-effect-gen': noImperativeLoopInEffectGen,
     'no-interface-first-codec': noInterfaceFirstCodec,

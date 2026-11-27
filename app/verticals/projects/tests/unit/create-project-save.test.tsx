@@ -129,7 +129,11 @@ it.live('typing and Enter send nothing; Uložit creates once and the page can be
     const { router } = yield* mount();
     yield* expectAllowed(router, '/cs/projects/create-project?clean=1');
     yield* fill;
-    yield* acted(() => field('#project-name').form?.requestSubmit());
+    // Enter submits a form only through its submit button when it has several text fields: this form has none,
+    // so Enter sends nothing, and only Uložit (a plain button) saves.
+    const form = Option.getOrThrow(Option.fromNullOr(field('#project-name').form));
+    expect(form.querySelectorAll('[type="submit"]')).toHaveLength(0);
+    expect(buttonNamed(labels.save).type).toBe('button');
     yield* networkIdle;
     expect(commands).toHaveLength(0);
     yield* expectBlocked(router);

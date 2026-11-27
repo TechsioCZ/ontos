@@ -83,6 +83,10 @@
     "count": 5,
     "file": "apps/shell-super-app/api/build-config.ts"
   },
+  "no-hand-rolled-form-state": {
+    "count": 5,
+    "file": "verticals/demo/src/routes/hand-rolled-form.tsx"
+  },
   "no-hand-rolled-tagged-union": {
     "count": 3,
     "file": "apps/demo-app/src/routes/state.tsx"

@@ -1014,6 +1014,103 @@ test('every admission and end-membership key exists in Czech and English', () =>
   }
 });
 
+/** Opens the delegation form of the company scope with every choice and the end date filled in. */
+const fillDelegation = Effect.fn('fillDelegation')(function* fillDelegation() {
+  fireEvent.click(screen.getByRole('combobox', { name: translate('shell.accessAdmin.people.scope') }));
+  fireEvent.click(yield* Effect.promise(() => screen.findByRole('option', { name: 'Alpha s.r.o.' })));
+  const form = yield* Effect.promise(() =>
+    screen.findByRole('form', { name: translate('shell.accessAdmin.people.delegationCreate') }),
+  );
+  const field = (key: string) =>
+    within(form).getByLabelText(translate(`shell.accessAdmin.people.${key}`), { exact: false });
+  const choice = (key: string) =>
+    within(form).getByRole('combobox', { name: translate(`shell.accessAdmin.people.${key}`) });
+  for (const [label, option] of [
+    ['delegatedManager', 'Grace Hopper'],
+    ['delegationPeople', 'Ada Lovelace'],
+    ['delegationRoles', 'Buyer'],
+    ['permissions', capability],
+  ] as const) {
+    fireEvent.click(choice(label));
+    fireEvent.click(yield* Effect.promise(() => screen.findByRole('option', { name: option })));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  }
+  fireEvent.change(field('endDate'), { target: { value: '2026-12-01T10:00' } });
+  // The form's one Save button opens the confirmation once every required choice is made.
+  const submit = within(form).getByRole('button', { name: saveLabelsFor('en').save });
+  yield* Effect.promise(() => waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false)));
+  return { choice, field, form, submit };
+});
+
+it.effect(
+  'the delegation form rejects a negative, fractional or malformed amount and a malformed currency before its preview',
+  () =>
+    Effect.gen(function* delegationLimits() {
+      renderPeople();
+      const { field, form, submit } = yield* fillDelegation();
+      expect(field('amountMinor').getAttribute('type')).toBe('text');
+      for (const [amount, currency, invalid, message] of [
+        ['-', '', 'amountMinor', 'invalidAmount'],
+        ['-1', 'CZK', 'amountMinor', 'invalidAmount'],
+        ['1.5', 'CZK', 'amountMinor', 'invalidAmount'],
+        ['1e3', 'CZK', 'amountMinor', 'invalidAmount'],
+        ['500', 'czk', 'currency', 'invalidCurrency'],
+        ['500', '', 'currency', 'invalidCurrency'],
+      ] as const) {
+        fireEvent.change(field('amountMinor'), { target: { value: amount } });
+        fireEvent.change(field('currency'), { target: { value: currency } });
+        fireEvent.click(submit);
+        yield* Effect.promise(() => waitFor(() => expect(field(invalid).getAttribute('aria-invalid')).toBe('true')));
+        expect(within(form).getByText(translate(`shell.accessAdmin.people.${message}`))).toBeTruthy();
+        expect(screen.queryByRole('dialog')).toBeNull();
+      }
+      fireEvent.change(field('currency'), { target: { value: 'CZK' } });
+      fireEvent.click(submit);
+      const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+      expect(within(dialog).getByText('500 CZK')).toBeTruthy();
+    }),
+);
+
+it.effect('a blank amount previews a delegation without an amount limit', () =>
+  Effect.gen(function* blankAmount() {
+    renderPeople();
+    const { submit } = yield* fillDelegation();
+    fireEvent.click(submit);
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(within(dialog).getByText(translate('shell.accessAdmin.people.noAmountLimit'))).toBeTruthy();
+  }),
+);
+
+it.effect('a refresh that withdraws a picked person or role asks for that choice again before any preview', () =>
+  Effect.gen(function* withdrawnChoices() {
+    const rendered = renderPeople();
+    const callbacks = { onCommand: rendered.onCommand, onNextPage: rendered.onNextPage, onRefresh: rendered.onRefresh };
+    const { choice, submit } = yield* fillDelegation();
+    const { options, snapshot } = fixture();
+    const refreshed = Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+      ...snapshot.options,
+      people: snapshot.options.people.filter((person) => person.principalId !== personId),
+      roles: [],
+    });
+    expect(options.roles).toHaveLength(1);
+    rendered.rerender(
+      <PeopleView
+        feedback="idle"
+        model={model({ ...snapshot, options: Schema.encodeSync(ListAccessPeopleOptionsResponseSchema)(refreshed) })}
+        {...callbacks}
+      />,
+    );
+    fireEvent.click(submit);
+    for (const label of ['delegationPeople', 'delegationRoles']) {
+      yield* Effect.promise(() => waitFor(() => expect(choice(label).getAttribute('aria-invalid')).toBe('true')));
+    }
+    expect(choice('permissions').getAttribute('aria-invalid')).toBeNull();
+    expect(screen.getAllByText(translate('shell.accessAdmin.people.choiceWithdrawn'))).toHaveLength(2);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(rendered.onCommand).not.toHaveBeenCalled();
+  }),
+);
+
 test('English and Czech presentation use real locale keys without untranslated output', () => {
   for (const language of ['en', 'cs'] as const) {
     locale.current = language;
