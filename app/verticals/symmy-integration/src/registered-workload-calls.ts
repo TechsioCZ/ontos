@@ -105,7 +105,8 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     declarationKey: 'commerce.catalog.variant-axes.govern',
     entrypointKey: 'commerce.catalog.govern-variant-axes',
     jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
+    // The Action takes an optional company since 908ea0f4df (staff with theirs selected); Symmy calls it with none.
+    legalEntityScope: 'optional',
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: commerceCatalogSymmyProductImport,
@@ -127,7 +128,8 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     declarationKey: 'commerce.catalog.variant-combination.confirm',
     entrypointKey: 'commerce.catalog.confirm-variant-combination',
     jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
+    // The Action takes an optional company since 908ea0f4df (staff with theirs selected); Symmy calls it with none.
+    legalEntityScope: 'optional',
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: commerceCatalogSymmyProductImport,
