@@ -112,7 +112,6 @@
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.67.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "i18next": "26.4.2",
