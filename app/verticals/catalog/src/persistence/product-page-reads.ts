@@ -1,10 +1,11 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { and, asc, count, eq, exists, ilike, inArray, isNull } from 'drizzle-orm';
+import { and, asc, count, eq, exists, ilike, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { Effect } from 'effect';
 
 import type { ProductPageRequest } from '../../shared/apis/product-page.ts';
 import {
   commercialSkuReservations,
+  productCategories,
   productCategoryAssignments,
   productLocalizedFacts,
   products,
@@ -36,8 +37,19 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 
+/** An ACTIVE Category with the Products directly assigned to it and its subcategories, each in any lifecycle. */
+export interface ProductPageCategoryRow {
+  readonly categoryId: string;
+  readonly children: number;
+  readonly name: string;
+  readonly products: number;
+  readonly revision: number;
+}
+
 /** The page itself: which Products match, how many, and the Current SKU of their Variants. */
 export interface ProductPageReads {
+  /** Every ACTIVE Category of the Tenant, by name and then id. */
+  readonly categories: () => Effect.Effect<readonly ProductPageCategoryRow[], CatalogPersistenceUnavailable>;
   readonly count: (input: ProductPageRequest) => Effect.Effect<number, CatalogPersistenceUnavailable>;
   /** The Current SKU display code of each Variant that has one, by Variant id. */
   readonly currentSkus: (
@@ -97,6 +109,44 @@ const productPageForTransaction = (transaction: ScopedTransaction, tenantId: str
       input.categoryRef === undefined ? undefined : directlyIn(input.categoryRef.resourceId),
     );
   return {
+    categories: () =>
+      Effect.all(
+        [
+          transaction
+            .select({
+              categoryId: productCategories.categoryId,
+              name: productCategories.name,
+              revision: productCategories.currentRevision,
+            })
+            .from(productCategories)
+            .where(and(eq(productCategories.tenantId, tenantId), eq(productCategories.lifecycleState, 'ACTIVE')))
+            .orderBy(asc(productCategories.name), asc(productCategories.categoryId)),
+          transaction
+            .select({ categoryId: productCategoryAssignments.categoryId, total: count() })
+            .from(productCategoryAssignments)
+            .where(eq(productCategoryAssignments.tenantId, tenantId))
+            .groupBy(productCategoryAssignments.categoryId),
+          transaction
+            .select({ categoryId: productCategories.parentCategoryId, total: count() })
+            .from(productCategories)
+            .where(and(eq(productCategories.tenantId, tenantId), isNotNull(productCategories.parentCategoryId)))
+            .groupBy(productCategories.parentCategoryId),
+        ],
+        { concurrency: 1 },
+      ).pipe(
+        Effect.mapError(unavailable),
+        Effect.map(([rows, assigned, children]) => {
+          const assignedProducts = new Map(assigned.map(({ categoryId, total }) => [categoryId, total]));
+          const subcategories = new Map(children.map(({ categoryId, total }) => [categoryId, total]));
+          return rows.map(({ categoryId, name, revision }) => ({
+            categoryId,
+            children: subcategories.get(categoryId) ?? 0,
+            name,
+            products: assignedProducts.get(categoryId) ?? 0,
+            revision,
+          }));
+        }),
+      ),
     count: (input) =>
       transaction
         .select({ total: count() })

@@ -4,6 +4,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { SkuCodeSchema } from '../actions/assign-sku.ts';
+import { CategoryCounterSchema, CategoryRevisionSchema } from '../actions/create-product-category.ts';
 import { ProductLifecycleSchema, ProductRevisionSchema, ProductVariantLifecycleSchema } from '../domain/product.ts';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductCategoryRefSchema } from '../resources/product-category.ts';
@@ -20,10 +21,12 @@ import { ProductDetailLocalizedSchema, ProductDetailRequestSchema } from './prod
  * `locale` contains the text, ignoring case; `categoryRef` keeps the Products directly assigned to that
  * Category. Paging and search are those of the source product page. On the demo line DRAFT and ACTIVE are listed
  * to every admitted caller, since an ERP import creates DRAFT Products that cannot be activated from the import;
- * RETIRED is listed only to a caller who may read the detail of any Product.
+ * RETIRED is listed only to a caller who may read the detail of any Product. `includeCategories` adds every ACTIVE
+ * Category of the Tenant (the staff ERP editor's category list), likewise only for that caller.
  */
 export const ProductPageRequestSchema = Schema.Struct({
   categoryRef: Schema.optionalKey(ProductCategoryRefSchema),
+  includeCategories: Schema.optionalKey(Schema.Boolean),
   lifecycles: Schema.Array(ProductLifecycleSchema).check(
     Schema.isMinLength(1),
     Schema.makeFilter((lifecycles) =>
@@ -82,8 +85,24 @@ const ProductPageItemSchema = Schema.Struct({
 );
 export type ProductPageItem = typeof ProductPageItemSchema.Type;
 
-/** `count` is the number of matching Products before paging. */
+/**
+ * An ACTIVE Category of the Tenant with what keeps it from being retired: the Products directly assigned to it and
+ * its subcategories, each in any lifecycle. Its revision is the one the retire Action expects.
+ */
+const ProductPageCategorySchema = Schema.Struct({
+  ...ProductCategoryClassificationResponseSchema.fields.categoryNames.value.fields,
+  children: CategoryCounterSchema,
+  products: CategoryCounterSchema,
+  revision: CategoryRevisionSchema,
+});
+export type ProductPageCategory = typeof ProductPageCategorySchema.Type;
+
+/**
+ * `count` is the number of matching Products before paging. `categories` answers `includeCategories`: every ACTIVE
+ * Category of the Tenant by name, whatever the search or page.
+ */
 export const ProductPageResponseSchema = Schema.Struct({
+  categories: Schema.optionalKey(Schema.Array(ProductPageCategorySchema)),
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   items: Schema.Array(ProductPageItemSchema),
 });

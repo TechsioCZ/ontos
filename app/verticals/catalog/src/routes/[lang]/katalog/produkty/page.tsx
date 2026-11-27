@@ -22,6 +22,7 @@ import {
   rememberErpOffer,
 } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
+import { ErpCategoriesSection } from '../../../../products-admin/erp-categories-section.tsx';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
 import { erpStorefrontStatus } from '../../../../products-admin/erp-storefront-status.ts';
 import { ErpVariantEditor, erpVariantKeepKey } from '../../../../products-admin/erp-variant-editor.tsx';
@@ -376,6 +377,14 @@ const Pager = ({
   );
 };
 
+/** The Tenant's ERP Categories the page read answered with the list; an empty one can be retired there. */
+const CategoriesSection = ({ input }: { readonly input: ProductListInput }) => {
+  const page = useData(productListData, input);
+  return page.state === 'ready' && page.value.categories !== undefined ? (
+    <ErpCategoriesSection categories={page.value.categories} />
+  ) : null;
+};
+
 /** The list page a reload that keeps drafts comes back to, so the row of a kept dialog is on screen again. */
 const QUERY_KEEP_KEY = 'catalog:erp-products:query';
 
@@ -435,6 +444,7 @@ const ProductsPageContent = (props: ProductsPageProps) => {
         <ProductsList input={input} offer={offer} />
         <Pager input={input} onOffset={setOffset} />
       </section>
+      <CategoriesSection input={input} />
     </div>
   );
 };

@@ -36,6 +36,7 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
 const categoryId = '55555555-5555-4555-8555-555555555555';
+const emptyCategoryId = '66666666-6666-4666-8666-666666666666';
 const compositionRevision = 'a'.repeat(64);
 const at = DateTime.toDateUtc(DateTime.makeUnsafe('2030-06-01T00:00:00Z'));
 const storefrontWorkload = 'commerce.storefront-client';
@@ -473,6 +474,11 @@ const services = (): ProductPageServices => {
         ),
     },
     page: {
+      categories: () =>
+        Effect.succeed([
+          { categoryId, children: 0, name: 'Kladiva', products: 1, revision: 2 },
+          { categoryId: emptyCategoryId, children: 0, name: 'Test kategorie', products: 0, revision: 1 },
+        ]),
       count: () => Effect.succeed(2),
       currentSkus: (ids) => Effect.succeed(new Map(ids.includes(activeVariantId) ? [[activeVariantId, 'KL-500']] : [])),
       editRevisions: (ids) =>
@@ -566,6 +572,31 @@ describe('Catalog product page items', () => {
         },
       ]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect(
+    'lists every ACTIVE Category with its products and subcategories only to a caller who may read any detail',
+    () =>
+      Effect.gen(function* categoryList() {
+        const plain = yield* readProductPage(request(), tenantId, 'allowed', services());
+        expect(plain.categories).toBeUndefined();
+        const listed = yield* readProductPage(request({ includeCategories: true }), tenantId, 'allowed', services());
+        expect(listed.categories).toEqual([
+          { categoryRef: categoryRefOf(categoryId, tenantId), children: 0, name: 'Kladiva', products: 1, revision: 2 },
+          {
+            categoryRef: categoryRefOf(emptyCategoryId, tenantId),
+            children: 0,
+            name: 'Test kategorie',
+            products: 0,
+            revision: 1,
+          },
+        ]);
+        expect(listed.items).toEqual(plain.items);
+        const storefront = yield* Effect.flip(
+          readProductPage(request({ includeCategories: true }), tenantId, 'denied', services()),
+        );
+        expect(Schema.is(ReadPermissionDenied)(storefront)).toBe(true);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('refuses a Category of another Tenant and fails closed on an unanswerable lifecycle question', () =>

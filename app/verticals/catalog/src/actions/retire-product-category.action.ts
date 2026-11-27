@@ -97,7 +97,7 @@ export const retireProductCategoryAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: 'commerce.catalog',
     payloadSchema: RetireProductCategoryPayloadSchema,
     policies: [],

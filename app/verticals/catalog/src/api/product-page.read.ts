@@ -165,12 +165,13 @@ export const readProductPage = Effect.fn('ProductPageRead.read')(function* readP
       reason: 'The requested Category does not exist in the trusted tenant scope',
     });
   }
-  if (input.lifecycles.includes('RETIRED') && unpublished !== 'allowed') {
+  // The Tenant's Category list is the staff editor's, so it asks what RETIRED Products ask.
+  if ((input.lifecycles.includes('RETIRED') || input.includeCategories === true) && unpublished !== 'allowed') {
     return yield* unpublished === 'unavailable'
       ? unavailable()
       : new ReadPermissionDenied({
           code: 'read_permission_denied',
-          reason: 'Only a caller who may read any Product detail may page RETIRED Products',
+          reason: 'Only a caller who may read any Product detail may page RETIRED Products or list every Category',
         });
   }
   const [total, productIds] = yield* Effect.all([services.page.count(input), services.page.productIds(input)], {
@@ -181,7 +182,25 @@ export const readProductPage = Effect.fn('ProductPageRead.read')(function* readP
     (productId) => readPageItem(productId, input, trustedTenantId, services),
     { concurrency: 1 },
   );
-  return yield* Schema.decodeUnknownEffect(ProductPageResponseSchema)({ count: total, items }).pipe(
+  if (input.includeCategories !== true) {
+    return yield* Schema.decodeUnknownEffect(ProductPageResponseSchema)({ count: total, items }).pipe(
+      Effect.mapError(unavailable),
+    );
+  }
+  const rows = yield* services.page.categories().pipe(Effect.mapError(unavailable));
+  const categories = rows.map(({ categoryId, children, name, products, revision }) => ({
+    categoryRef: {
+      moduleId: catalogModuleKey,
+      resourceId: categoryId,
+      resourceType: 'commerce.catalog.product-category',
+      tenantId: trustedTenantId,
+    },
+    children,
+    name,
+    products,
+    revision,
+  }));
+  return yield* Schema.decodeUnknownEffect(ProductPageResponseSchema)({ categories, count: total, items }).pipe(
     Effect.mapError(unavailable),
   );
 });

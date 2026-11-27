@@ -111,6 +111,8 @@ export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
   'commerce.catalog.product-category-assignment.add',
   'commerce.catalog.product-category-assignment.remove',
   'commerce.catalog.product-category.create',
+  // erp-categories-section.tsx: an empty category is retired.
+  'commerce.catalog.product-category.retire',
   'commerce.catalog.variant-axes.govern',
   'commerce.catalog.variant-combination.confirm',
   // erp-media-section.tsx: the main image.

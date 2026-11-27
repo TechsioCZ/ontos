@@ -29,9 +29,10 @@ export interface ProductListInput {
   readonly search: string;
 }
 
-/** The encoded product page request; an empty search names none. */
+/** The encoded product page request, with the Tenant's Categories; an empty search names none. */
 const productPageRequestOf = (input: ProductListInput) => {
   const request = {
+    includeCategories: true,
     lifecycles: ALL_PRODUCT_LIFECYCLES,
     limit: PRODUCT_PAGE_SIZE,
     locale: input.locale,
