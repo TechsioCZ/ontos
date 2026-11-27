@@ -27,7 +27,7 @@ import { Command, Flag } from 'effect/cli';
 import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 
-import { createSharedRuntimeConfig } from '../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../module-federation.shared.ts';
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
 import { parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import {
@@ -215,6 +215,7 @@ const PackageSchema = Schema.Struct({
 /** Matches the actual owner-local Module Federation policy, without evaluating framework configuration. */
 const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(function* sharedClaims(
   directory: string,
+  role: 'host' | 'remote',
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const ownerPackage = path.join(directory, 'package.json');
@@ -241,13 +242,19 @@ const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(f
   if (router !== packageJson.dependencies?.['@tanstack/react-router']) {
     return yield* fail('the installed router singleton does not match the owner policy');
   }
-  const sharing = createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
-    '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
-    '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
-    react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
-    'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
-  });
+  const ownerUrl = pathToFileURL(ownerPackage).href;
+  const sharing = createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
+      '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
+      '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
+      react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
+      'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
+    },
+    role === 'remote' && packageJson.dependencies?.['@techsio/ui-kit'] === undefined
+      ? { role }
+      : { role, uiKit: resolveUiKitShare(ownerUrl) },
+  );
   return Object.entries(sharing).map(([name, value]) => ({
     name,
     requiredVersion: value.requiredVersion,
@@ -366,7 +373,7 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
           const manifest = yield* Schema.encodeEffect(federationClaimsJson)({
             exposes: contract.manifest.publicSurface.components.map(({ expose }) => ({ path: expose })),
             name: owner.moduleFederation.name,
-            shared: yield* ownerSharedClaims(path.join(workspaceRoot, owner.path)),
+            shared: yield* ownerSharedClaims(path.join(workspaceRoot, owner.path), 'remote'),
           });
           ownerArtifacts.set(manifestPath, manifest);
           yield* Ref.set(ownerDocuments, ownerArtifacts);
@@ -383,7 +390,7 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
     const shellManifest = yield* Schema.encodeEffect(federationClaimsJson)({
       exposes: [],
       name: topology.shell.moduleFederation.name,
-      shared: yield* ownerSharedClaims(path.join(workspaceRoot, topology.shell.path)),
+      shared: yield* ownerSharedClaims(path.join(workspaceRoot, topology.shell.path), 'host'),
     });
     artifacts.set(ONTOS_SHELL_RUNTIME_CONTRACT_PATH, shellRuntime);
     artifacts.set('/mf-manifest.json', shellManifest);

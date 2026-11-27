@@ -8,7 +8,7 @@ import {
   Struct as PackageVersionStruct,
 } from 'effect/Schema';
 
-import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -21,6 +21,8 @@ const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+
+const uiKit = resolveUiKitShare(import.meta.url);
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
@@ -40,13 +42,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   filename: 'remoteEntry.js',
   name: 'verticalCommerceMarketCatalog',
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': pluginI18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': pluginI18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'remote', uiKit },
+  ),
 });
 
 export default moduleFederationConfig;

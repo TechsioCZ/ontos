@@ -26,6 +26,7 @@ import { partySourceComponentContracts } from '../fixtures/party-source-componen
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { partyRegistryManifest } from '../../vertical.manifest.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 class PartySourceCompositionUnavailable extends Schema.TaggedError<PartySourceCompositionUnavailable>()(
   'PartySourceCompositionUnavailable',
@@ -186,7 +187,7 @@ const sourceComposition = Effect.scoped(
       ),
     )(shellFederationDocument);
     const sharedSingletons = yield* Effect.forEach(
-      shellFederation.shared.filter(({ singleton }) => singleton === true),
+      sharedPackagesOf(shellFederation.shared).filter(({ singleton }) => singleton === true),
       (entry) =>
         entry.requiredVersion === undefined
           ? Effect.fail(unavailable())
