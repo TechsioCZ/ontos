@@ -44,7 +44,7 @@ it('publishes the admission set for the customer-profile source page with its wo
       workloadKey: 'party.registry.source-read',
     },
     {
-      deployment: { appId: 'party-registry', buildMarker: 'test' },
+      deployment: { appId: 'party-registry' },
       manifest: {
         publicSurface: {
           actions: partyRegistryRuntimeManifest.publicSurface.actions.map(({ descriptor }) => descriptor),
