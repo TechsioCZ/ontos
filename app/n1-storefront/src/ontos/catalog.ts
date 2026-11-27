@@ -127,7 +127,16 @@ const readCatalog = async (locale: string, queryKey: string, options: OperationO
 // save shows on every visit 1.5 s after it, and while visitors come the head read repeats in the background, so a warm
 // visit does not wait for the owner.
 const CATALOG_TTL_MS = 15_000;
-const REVISION_TIMING = { intervalMs: 500, keepAliveMs: 10 * 60_000, maxAgeMs: 1_500 };
+// A visit waits at most OWNER_WAIT_MS for a revision read that is not young, and for the first catalogue read of a new
+// revision, then takes the newest answer (up to 10 minutes old), as AKROS does: a slow owner (stage: 0.6-1 s per read)
+// never holds a page.
+const OWNER_WAIT_MS = 300;
+const REVISION_TIMING = {
+  intervalMs: 500,
+  keepAliveMs: 10 * 60_000,
+  maxAgeMs: 1_500,
+  waitMs: OWNER_WAIT_MS,
+};
 const RevisionSchema = Schema.Struct({ revision: Schema.Int });
 const loadRevision = async (operation: Operation) =>
   await storefrontRuntime.runPromise(
@@ -188,6 +197,7 @@ export const getCatalog = cache(
         generation: revision,
         keep: (result) => result.state === "ready",
         stale: true,
+        waitMs: OWNER_WAIT_MS,
       },
     );
   },

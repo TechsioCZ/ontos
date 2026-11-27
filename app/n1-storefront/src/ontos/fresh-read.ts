@@ -9,7 +9,8 @@ import { joined, MAX_STALE_MS } from "./shared-read";
 // visit that `maxAgeMs` after the save. While visitors keep coming, and for `keepAliveMs` after the last one, the read
 // repeats in the background, one at a time and at most every `intervalMs`, so a visit takes the newest answer at once
 // instead of waiting for the owner. A visit after a longer quiet waits for its own read. When a read fails, visits keep
-// the newest answer for up to 10 minutes, as during an owner outage.
+// the newest answer for up to 10 minutes, as during an owner outage; with `waitMs` a visit that cannot wait for a slow read
+// takes that answer too while the read goes on for the visits after it.
 interface Answer<A> {
   startedAt: number;
   value: A;
@@ -29,6 +30,11 @@ export interface FreshReadTiming {
   intervalMs: number;
   keepAliveMs: number;
   maxAgeMs: number;
+  /**
+   * A visit waits at most this long for a read that is not young, then takes the newest answer (up to 10 minutes
+   * old): an owner that answers in time still shows a save on the first visit, a slow one never holds the visit.
+   */
+  waitMs?: number;
 }
 const states = new Map<string, State<unknown>>();
 let epoch = 0;
@@ -80,6 +86,26 @@ const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) 
   }
 };
 
+const kept = <A>(state: State<A>): Answer<A> | undefined => {
+  const { latest } = state;
+  return latest !== undefined && Date.now() - latest.startedAt < MAX_STALE_MS ? latest : undefined;
+};
+
+/** `answer`, or after `waitMs` the newest kept answer while the read goes on for the visits after it. */
+const within = <A>(answer: Promise<A>, waitMs: number | undefined, state: State<A>): Promise<A> => {
+  if (waitMs === undefined || kept(state) === undefined) return answer;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    answer,
+    new Promise<A>((resolve) => {
+      timer = setTimeout(() => {
+        const newest = kept(state);
+        if (newest !== undefined) resolve(newest.value);
+      }, waitMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+};
+
 export function freshRead<A>(
   key: string,
   timing: FreshReadTiming,
@@ -103,13 +129,17 @@ export function freshRead<A>(
     state.pending !== undefined && young(state.pending.startedAt) ? state.pending : start(state);
   const current = state;
   return joined(
-    pending.answer.then(
-      ({ value }) => value,
-      (error: unknown) => {
-        const kept = current.latest;
-        if (kept !== undefined && Date.now() - kept.startedAt < MAX_STALE_MS) return kept.value;
-        throw error;
-      },
+    within(
+      pending.answer.then(
+        ({ value }) => value,
+        (error: unknown) => {
+          const newest = kept(current);
+          if (newest !== undefined) return newest.value;
+          throw error;
+        },
+      ),
+      timing.waitMs,
+      current,
     ),
     caller,
   );

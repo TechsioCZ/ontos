@@ -12,6 +12,8 @@ interface Entry {
   value: Promise<unknown>;
   done: boolean;
   refreshing: boolean;
+  /** The settled answer of the generation this entry's first read replaces, for readers with `waitMs`. */
+  replaced: { at: number; value: Promise<unknown> } | undefined;
 }
 const entries = new Map<string, Entry>();
 // Full product records are large: keep the newest entries only, least recently used first out.
@@ -58,7 +60,9 @@ export const joined = <A>(
 
 /**
  * `ttlMs` fresh; with `stale`, an older kept value keeps being served while one background refresh replaces it.
- * A value read at another `generation` (the owner's catalogue revision) is never served: the read waits for its own load.
+ * A value read at another `generation` (the owner's catalogue revision) is served only to a reader with `waitMs` whose
+ * new generation's read has not answered within `waitMs` (as an owner outage would still serve it); otherwise the read
+ * waits for its own load.
  */
 export function sharedRead<A>(
   key: string,
@@ -69,18 +73,20 @@ export function sharedRead<A>(
     generation,
     keep = () => true,
     stale = false,
+    waitMs,
   }: {
     caller?: OperationOptions;
     generation?: number;
     keep?: (value: A) => boolean;
     stale?: boolean;
+    waitMs?: number;
   } = {},
 ): Promise<A> {
   const found = entries.get(key);
   const held = found?.generation === generation ? found : undefined;
   if (held !== undefined) put(key, held);
   if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
-    return joined(held.value as Promise<A>, caller);
+    return joined(within(held, waitMs, keep), caller);
   if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
     if (!held.refreshing) {
       held.refreshing = true;
@@ -97,6 +103,7 @@ export function sharedRead<A>(
             done: true,
             generation,
             refreshing: false,
+            replaced: undefined,
             value: Promise.resolve(value),
           });
         },
@@ -108,7 +115,21 @@ export function sharedRead<A>(
     return joined(held.value as Promise<A>, caller);
   }
   const value = detached(load);
-  const entry: Entry = { at: Date.now(), done: false, generation, refreshing: false, value };
+  // A new generation's first read keeps the settled answer it replaces for readers that cannot wait.
+  const replaced =
+    found === undefined || found === held
+      ? undefined
+      : found.done
+        ? { at: found.at, value: found.value }
+        : found.replaced;
+  const entry: Entry = {
+    at: Date.now(),
+    done: false,
+    generation,
+    refreshing: false,
+    replaced,
+    value,
+  };
   put(key, entry);
   value.then(
     (result) => {
@@ -119,5 +140,31 @@ export function sharedRead<A>(
       if (entries.get(key) === entry) entries.delete(key);
     },
   );
-  return joined(value, caller);
+  return joined(within(entry, waitMs, keep), caller);
+}
+
+/** The entry's read, or after `waitMs` (or when it fails or `keep` refuses it) the answer of the generation it replaces. */
+function within<A>(
+  entry: Entry,
+  waitMs: number | undefined,
+  keep: (value: A) => boolean,
+): Promise<A> {
+  const { replaced } = entry;
+  if (
+    entry.done ||
+    waitMs === undefined ||
+    replaced === undefined ||
+    Date.now() - replaced.at >= MAX_STALE_MS
+  )
+    return entry.value as Promise<A>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    (entry.value as Promise<A>).then(
+      (value) => (keep(value) ? value : replaced.value),
+      () => replaced.value,
+    ),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, waitMs);
+    }).then(() => replaced.value),
+  ]).finally(() => clearTimeout(timer)) as Promise<A>;
 }
