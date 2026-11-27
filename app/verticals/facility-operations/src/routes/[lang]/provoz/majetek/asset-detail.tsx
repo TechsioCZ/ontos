@@ -308,7 +308,7 @@ const BuildingContents = ({
           <span className="text-fg-secondary">{k('card.units')}</span>
           {units.map((unit) => (
             <a
-              className="rounded-md border border-border-primary px-100 py-50 hover:bg-surface-hover"
+              className="rounded-md border border-border-primary px-100 py-50 hover:bg-fill-hover"
               href={propertyHref(language, unit.id)}
               key={unit.id}
             >
@@ -323,7 +323,7 @@ const BuildingContents = ({
           return (
             <li key={entry.id}>
               <button
-                className="flex w-full flex-wrap items-center justify-between gap-100 py-100 text-left hover:bg-surface-hover"
+                className="flex w-full flex-wrap items-center justify-between gap-100 py-100 text-left hover:bg-fill-hover"
                 onClick={() => onOpenAsset(entry)}
                 type="button"
               >

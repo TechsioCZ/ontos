@@ -368,7 +368,7 @@ export const DepreciationOverview = ({
           </Table.Header>
           <Table.Body>
             {rows.map(({ asset, plan }) => (
-              <Table.Row className="cursor-pointer hover:bg-surface-hover" key={plan.id} onClick={() => onOpen(asset)}>
+              <Table.Row className="cursor-pointer hover:bg-fill-hover" key={plan.id} onClick={() => onOpen(asset)}>
                 <Table.Cell>
                   <span className="flex flex-col">
                     <span className="font-medium">{asset.name}</span>

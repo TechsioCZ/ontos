@@ -403,7 +403,7 @@ export const InvestmentPlan = ({
                   const difference = investmentDifference(investment);
                   return (
                     <Table.Row
-                      className="cursor-pointer hover:bg-surface-hover"
+                      className="cursor-pointer hover:bg-fill-hover"
                       key={investment.id}
                       onClick={() => onEdit(investment)}
                     >

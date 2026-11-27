@@ -179,7 +179,7 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
         )}
         {vm.canWrite && (
           <label
-            className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-surface-hover print:hidden"
+            className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden"
             htmlFor={`attach-${invoice.ref.resourceId}`}
           >
             <span aria-hidden className="icon-[mdi--paperclip] size-4" />

@@ -200,7 +200,7 @@ export const SalesTab = ({
                   const delivered = order.lines.reduce((sum, line) => sum + line.deliveredQuantity, 0);
                   return (
                     <Table.Row
-                      className="cursor-pointer hover:bg-surface-hover"
+                      className="cursor-pointer hover:bg-fill-hover"
                       key={order.id}
                       onClick={() => onOpenOrder(order.id)}
                     >
@@ -252,7 +252,7 @@ export const SalesTab = ({
               <Table.Body>
                 {quotes.map((quote) => (
                   <Table.Row
-                    className="cursor-pointer hover:bg-surface-hover"
+                    className="cursor-pointer hover:bg-fill-hover"
                     key={quote.id}
                     onClick={() => onOpenQuote(quote.id)}
                   >

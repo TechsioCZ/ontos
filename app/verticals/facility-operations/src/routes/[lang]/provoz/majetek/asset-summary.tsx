@@ -244,7 +244,7 @@ export const AssetSummary = ({
               <Table.Body>
                 {disposed.map((asset) => (
                   <Table.Row
-                    className="cursor-pointer hover:bg-surface-hover"
+                    className="cursor-pointer hover:bg-fill-hover"
                     key={asset.id}
                     onClick={() => onOpen(asset)}
                   >

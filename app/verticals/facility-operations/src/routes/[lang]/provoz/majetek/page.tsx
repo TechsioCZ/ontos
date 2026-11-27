@@ -674,7 +674,7 @@ const AssetsServices = ({ vm }: { readonly vm: AssetsViewModel }) => {
             const serviceDueState = dueState(due.nextDueOn, today);
             return (
               <Table.Row
-                className="cursor-pointer hover:bg-surface-hover"
+                className="cursor-pointer hover:bg-fill-hover"
                 key={due.recordId}
                 onClick={() => setOpenId(due.assetId)}
               >

@@ -164,7 +164,7 @@ export const InventoryTab = ({
           const isSelected = inventory.id === selected?.id;
           return (
             <button
-              className={`flex flex-col gap-50 rounded-lg border p-200 text-left transition-colors ${isSelected ? 'border-primary bg-surface' : 'border-border-primary bg-surface hover:bg-surface-hover'}`}
+              className={`flex flex-col gap-50 rounded-lg border p-200 text-left transition-colors ${isSelected ? 'border-primary bg-surface' : 'border-border-primary bg-surface hover:bg-fill-hover'}`}
               key={inventory.id}
               onClick={() => setSelectedId(inventory.id)}
               type="button"
