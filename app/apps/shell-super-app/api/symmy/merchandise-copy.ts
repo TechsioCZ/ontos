@@ -1075,6 +1075,27 @@ export const copySymmyJobOnCompleted = (jobId: string): Effect.Effect<void> =>
     }
   }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);
 
+/**
+ * After a job poll found a products job completed: when no copy has read its products since it settled and none is
+ * running or queued with it (the copy started by its last owner commit can find it still running), its products are
+ * copied at once, so a missed or failed copy does not wait for the next full sweep. Never fails and never waits.
+ */
+export const copySymmyJobOnCompleted = (jobId: string): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    for (const [company, watch] of watches) {
+      const job = watch.jobs.get(jobId);
+      if (
+        job !== undefined &&
+        job.settledAt === undefined &&
+        targeted.current?.targets.jobs.has(job) !== true &&
+        targeted.pending.get(company)?.jobs.has(job) !== true
+      ) {
+        return copyJobs(company, [job]);
+      }
+    }
+    return Effect.void;
+  }).pipe(Effect.catchCause((cause) => Console.error(`${LOG} targeted copy not scheduled: ${describe(cause)}`)));
+
 /** After an accepted stock import: the products of its items are copied at once. Never fails and never waits. */
 export const copySymmyStockToMerchandise = (
   admission: SymmyIngressAdmission,
