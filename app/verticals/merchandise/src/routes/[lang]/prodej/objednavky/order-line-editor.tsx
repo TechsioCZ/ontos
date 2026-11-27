@@ -1,13 +1,11 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatMoney, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import type { VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
@@ -15,7 +13,8 @@ import { activeVariants, lineClassification, lineProduct } from './order-line-dr
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import { DateTime } from 'effect';
-import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
+import type { ReactNode } from 'react';
+import type { DraftLine } from './order-line-draft.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 
@@ -23,10 +22,14 @@ interface OrderLineEditorProps {
   readonly canRemove: boolean;
   readonly error: string | undefined;
   readonly line: DraftLine;
-  readonly onChange: (patch: DraftLinePatch) => void;
+  /** Another product was picked (or the pick was cleared); the line's variant starts over. */
+  readonly onPick: (picked: ProductRecord | null) => void;
   /** The picked product's record arrived; the caller keeps it only while that product is still picked. */
   readonly onRecord: (productId: ProductRecord['id'], record: ProductRecordState) => void;
   readonly onRemove: () => void;
+  readonly onVariant: (variantId: VariantId | null) => void;
+  /** The line's quantity field of the new order form. */
+  readonly quantityField: ReactNode;
   /** The company's VAT rates from the staff records read; the line's VAT comes from its product's classification. */
   readonly vat: CompanyVat;
 }
@@ -39,9 +42,11 @@ export const OrderLineEditor = ({
   canRemove,
   error,
   line,
-  onChange,
+  onPick,
   onRecord,
   onRemove,
+  onVariant,
+  quantityField,
   vat,
 }: OrderLineEditorProps) => {
   const { t } = useModernI18n();
@@ -64,7 +69,7 @@ export const OrderLineEditor = ({
             loadingMessage={t('merchandise.loading')}
             noResultsMessage={t(key('create.noMatch'))}
             onSelect={(picked) => {
-              onChange({ picked, record: { status: picked === null ? 'idle' : 'loading' }, variantId: null });
+              onPick(picked);
               if (picked !== null) {
                 loadProductRecord(picked.id, (record) => onRecord(picked.id, record));
               }
@@ -75,23 +80,7 @@ export const OrderLineEditor = ({
             validateStatus={error === undefined ? 'default' : 'error'}
           />
         </div>
-        <div className="min-w-0">
-          <FormNumericInput
-            formatOptions={WHOLE_NUMBER_FORMAT}
-            id={`orders-create-qty-${line.key}`}
-            label={t(key('create.quantity'))}
-            locale="cs-CZ"
-            min={1}
-            name="quantity"
-            onValueChange={(details) => onChange({ quantity: details.valueAsNumber, quantityText: details.value })}
-            step={1}
-            value={line.quantityText}
-          >
-            <NumericInput.Control>
-              <NumericInput.Input aria-valuemax={undefined} />
-            </NumericInput.Control>
-          </FormNumericInput>
-        </div>
+        <div className="min-w-0">{quantityField}</div>
         <Button
           appearance="ghost"
           aria-label={t(key('create.removeLine'))}
@@ -109,7 +98,7 @@ export const OrderLineEditor = ({
           name={`variant-${line.key}`}
           onValueChange={(details) => {
             const [next] = details.value;
-            onChange({ variantId: variants.find((entry) => entry.id === next)?.id ?? null });
+            onVariant(variants.find((entry) => entry.id === next)?.id ?? null);
           }}
           placeholder={t(key('create.variantPlaceholder'))}
           size="sm"

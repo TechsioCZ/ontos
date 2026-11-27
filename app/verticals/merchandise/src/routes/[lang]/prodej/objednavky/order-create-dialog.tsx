@@ -16,23 +16,114 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { DateTime, Effect } from 'effect';
+import {
+  Field,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  NumberTextSchema,
+  NumericField,
+  unrenderedField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CustomerDirectory, CustomerEntry } from './customers-directory.ts';
 import { lineAmounts, sumAmounts } from './orders-model.ts';
-import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
+import { PartyIdSchema, ProductRecordSchema, VariantIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { activeVariants, lineClassification, lineProduct } from './order-line-draft.ts';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
-import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
+import type { DraftLine } from './order-line-draft.ts';
+
+/** The product a line picked, as its search shows it. */
+const PickedProductSchema = ProductRecordSchema.mapFields(Struct.pick(['id', 'name', 'sku']));
+
+const CreateLineSchema = Schema.Struct({
+  key: Schema.String,
+  picked: Schema.OptionFromNullOr(PickedProductSchema),
+  quantity: NumberTextSchema,
+  variantId: Schema.OptionFromNullOr(VariantIdSchema),
+});
+
+/**
+ * The customer and the lines of the new order. The customer and each line's product and variant are picked in
+ * comboboxes and selects that write their fields; the quantity is a number field. Nothing submits the form: the
+ * dialog's Uložit sends the draft.
+ */
+const createOrderForm = FormReact.make(
+  FormBuilder.empty
+    .addField(Field.makeArrayField('lines', CreateLineSchema))
+    .addField('partyId', Schema.OptionFromNullOr(PartyIdSchema)),
+  {
+    fields: {
+      // `key` names a line.
+      lines: {
+        key: unrenderedField<string>(),
+        picked: unrenderedField<typeof PickedProductSchema.Encoded | null>(),
+        quantity: NumericField,
+        variantId: unrenderedField<string | null>(),
+      },
+      partyId: unrenderedField<string | null>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type CreateOrderValues = typeof createOrderForm.schema.Encoded;
+type CreateLineValues = CreateOrderValues['lines'][number];
+
+const createLinesField = createOrderForm.getFieldAtoms(createOrderForm.fields.lines);
+const createPartyField = createOrderForm.getFieldAtoms(createOrderForm.fields.partyId);
+
+/** A line with no product yet, one piece. */
+const blankLine = (key: string): CreateLineValues => ({
+  key,
+  picked: null,
+  quantity: { number: 1, text: '1' },
+  variantId: null,
+});
+
+/** The record a line's pick read, by line key: kept only for the product the line still has picked. */
+type LoadedRecords = Readonly<Record<string, { readonly productId: ProductId; readonly record: ProductRecordState }>>;
+
+const decodeLine = Schema.decodeOption(CreateLineSchema);
+
+/** A line of the form with the record of its picked product: loading until that product's record arrived. */
+const draftLineOf = (row: CreateLineValues, loaded: LoadedRecords): DraftLine => {
+  const line = decodeLine(row);
+  const picked = line.pipe(
+    Option.flatMap((entry) => entry.picked),
+    Option.getOrNull,
+  );
+  const variantId = line.pipe(
+    Option.flatMap((entry) => entry.variantId),
+    Option.getOrNull,
+  );
+  const entry = loaded[row.key];
+  const pickedRecord: ProductRecordState =
+    entry !== undefined && entry.productId === picked?.id ? entry.record : { status: 'loading' };
+  return {
+    key: row.key,
+    picked,
+    quantity: row.quantity.number,
+    quantityText: row.quantity.text,
+    record: picked === null ? { status: 'idle' } : pickedRecord,
+    variantId,
+  };
+};
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 
@@ -43,19 +134,18 @@ interface Draft {
 
 const isValidQuantity = (quantity: number) => Number.isInteger(quantity) && quantity >= 1;
 
-const emptyLine = (lineKey: string): DraftLine => ({
-  key: lineKey,
-  picked: null,
-  quantity: 1,
-  quantityText: '1',
-  record: { status: 'idle' },
-  variantId: null,
-});
-
 const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
 
 /** The form opens with one empty line and no customer; anything picked or typed after that is the draft. */
-const blankDraft: Draft = { lines: [emptyLine('line-1')], partyId: '' };
+const openingValues: CreateOrderValues = { lines: [blankLine('line-1')], partyId: null };
+
+/** The form's values with each line's product record: what the dialog shows, checks and sends. */
+const draftOf = (values: CreateOrderValues, loaded: LoadedRecords): Draft => ({
+  lines: values.lines.map((row) => draftLineOf(row, loaded)),
+  partyId: values.partyId ?? '',
+});
+
+const blankDraft = draftOf(openingValues, {});
 
 /** What the user chose: the customer and, per line, product, variant and quantity. A loading product record is not. */
 const sameDraft = (left: Draft, right: Draft): boolean =>
@@ -91,46 +181,77 @@ interface OrderCreateDialogProps {
   readonly vat: CompanyVat;
 }
 
-export const OrderCreateDialog = ({
-  customers,
-  onCreated,
-  onOpenChange,
-  open,
-  revision,
-  vat,
-}: OrderCreateDialogProps) => {
+/** The lines of the form and the records their picks read, with the ways to change them. */
+const useCreateLines = () => {
+  const values = Option.getOrElse(useAtomValue(createOrderForm.values), () => openingValues);
+  const setValues = useAtomSet(createOrderForm.setValues);
+  const setLinesValue = useAtomSet(createLinesField.setValue);
+  // `useAtomSet` calls a function it is given with the setter's own value, so the update goes in as the result of one:
+  // the field's setter then applies it to the field's current lines.
+  const setLines = (update: (rows: readonly CreateLineValues[]) => readonly CreateLineValues[]) =>
+    setLinesValue(() => update);
+  const setPartyId = useAtomSet(createPartyField.setValue);
+  // The full record each line's pick read; a record that arrives after the line picked another product is dropped.
+  const [loaded, setLoaded] = useState<LoadedRecords>({});
+  const lineSequence = useRef(1);
+  const nextKey = () => {
+    lineSequence.current += 1;
+    return `line-${lineSequence.current}`;
+  };
+  const updateLine = (
+    lineKey: string,
+    update: (row: CreateOrderValues['lines'][number]) => CreateOrderValues['lines'][number],
+  ) => setLines((current) => current.map((row) => (row.key === lineKey ? update(row) : row)));
+  const pick = (lineKey: string, picked: ProductRecord | null) => {
+    updateLine(lineKey, (row) => ({
+      ...row,
+      picked: picked === null ? null : { id: picked.id, name: picked.name, sku: picked.sku },
+      variantId: null,
+    }));
+    if (picked !== null) {
+      setLoaded((current) => ({ ...current, [lineKey]: { productId: picked.id, record: { status: 'loading' } } }));
+    }
+  };
+  const receiveRecord = (lineKey: string, productId: ProductId, record: ProductRecordState) =>
+    setLoaded((current) =>
+      current[lineKey]?.productId === productId ? { ...current, [lineKey]: { productId, record } } : current,
+    );
+  const chooseVariant = (lineKey: string, variantId: VariantId | null) =>
+    updateLine(lineKey, (row) => ({ ...row, variantId }));
+  const removeLine = (lineKey: string) => setLines((current) => current.filter((row) => row.key !== lineKey));
+  const addLine = () => {
+    const lineKey = nextKey();
+    setLines((current) => [...current, blankLine(lineKey)]);
+  };
+  /** An empty form with a fresh line; returns its draft. */
+  const clear = (): Draft => {
+    const next: CreateOrderValues = { lines: [blankLine(nextKey())], partyId: null };
+    setValues(next);
+    setLoaded({});
+    return draftOf(next, {});
+  };
+  return {
+    addLine,
+    chooseVariant,
+    clear,
+    draft: draftOf(values, loaded),
+    pick,
+    receiveRecord,
+    removeLine,
+    setPartyId,
+  };
+};
+
+const CreatePanel = ({ customers, onCreated, onOpenChange, open, revision, vat }: OrderCreateDialogProps) => {
   const { language, t } = useModernI18n();
   const taxLabels = useTaxLabels();
   const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
   const now = DateTime.nowUnsafe();
   const toaster = useToast();
-  const lineSequence = useRef(1);
-  const newLine = (): DraftLine => {
-    lineSequence.current += 1;
-    return emptyLine(`line-${lineSequence.current}`);
-  };
 
   // The order is only on screen until Uložit sends it; picking and typing never write.
-  const [draft, setDraft] = useState<Draft>(blankDraft);
+  const { addLine, chooseVariant, clear, draft, pick, receiveRecord, removeLine, setPartyId } = useCreateLines();
   const [serverError, setServerError] = useState<string | null>(null);
-
-  const updateLine = (lineKey: string, patch: DraftLinePatch) =>
-    setDraft((current) => ({
-      ...current,
-      lines: current.lines.map((line) => (line.key === lineKey ? { ...line, ...patch } : line)),
-    }));
-
-  /** A record that arrives after the line picked another product is dropped. */
-  const receiveRecord = (lineKey: string, productId: ProductId, record: ProductRecordState) =>
-    setDraft((current) => ({
-      ...current,
-      lines: current.lines.map((line) =>
-        line.key === lineKey && line.picked?.id === productId ? { ...line, record } : line,
-      ),
-    }));
-
-  const removeLine = (lineKey: string) =>
-    setDraft((current) => ({ ...current, lines: current.lines.filter((line) => line.key !== lineKey) }));
 
   const partyErrorOf = (value: Draft) => (value.partyId.trim() === '' ? t(key('create.errorCustomer')) : undefined);
   // The server snapshots the rate Tax gives the classification; without a usable one the line cannot be ordered.
@@ -202,10 +323,8 @@ export const OrderCreateDialog = ({
 
   /** Every way out (Zrušit, the panel's dismissal, a created order) starts the next open from an empty form. */
   const startOver = () => {
-    const next = { lines: [newLine()], partyId: '' };
-    setDraft(next);
     setServerError(null);
-    save.adopt(next);
+    save.adopt(clear());
   };
   const leave = () => {
     startOver();
@@ -253,7 +372,7 @@ export const OrderCreateDialog = ({
         size="lg"
         title={t(key('create.title'))}
       >
-        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+        <div className="flex flex-col gap-200 py-200">
           {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another customer replaces it. */}
           <Combobox<CustomerEntry>
             clearable={false}
@@ -269,7 +388,8 @@ export const OrderCreateDialog = ({
             loadingMessage={t('merchandise.loading')}
             noResultsMessage={t(key('create.noCustomerMatch'))}
             onChange={(values) => {
-              setDraft((current) => ({ ...current, partyId: firstValue(values) ?? '' }));
+              const partyId = firstValue(values) ?? '';
+              setPartyId(partyId === '' ? null : partyId);
             }}
             onRetry={() => customers.reload()}
             placeholder={t(key('create.customerPlaceholder'))}
@@ -301,20 +421,29 @@ export const OrderCreateDialog = ({
                 error={submitted ? lineErrors[index] : undefined}
                 key={line.key}
                 line={line}
-                onChange={(patch) => updateLine(line.key, patch)}
+                onPick={(picked) => pick(line.key, picked)}
                 onRecord={(productId, record) => receiveRecord(line.key, productId, record)}
                 onRemove={() => removeLine(line.key)}
+                onVariant={(variantId) => chooseVariant(line.key, variantId)}
+                quantityField={
+                  <createOrderForm.lines.Item index={index}>
+                    <createOrderForm.lines.quantity
+                      formatOptions={WHOLE_NUMBER_FORMAT}
+                      hideValueMax
+                      id={`orders-create-qty-${line.key}`}
+                      label={t(key('create.quantity'))}
+                      locale="cs-CZ"
+                      min={1}
+                      name="quantity"
+                      step={1}
+                    />
+                  </createOrderForm.lines.Item>
+                }
                 vat={vat}
               />
             ))}
             <div>
-              <Button
-                appearance="outline"
-                icon="icon-[mdi--plus]"
-                onClick={() => setDraft((current) => ({ ...current, lines: [...current.lines, newLine()] }))}
-                severity="secondary"
-                size="sm"
-              >
+              <Button appearance="outline" icon="icon-[mdi--plus]" onClick={addLine} severity="secondary" size="sm">
                 {t(key('create.addLine'))}
               </Button>
             </div>
@@ -337,9 +466,23 @@ export const OrderCreateDialog = ({
             ]}
           />
           <p className="text-fg-secondary text-xs">{t(key('create.priceNote'))}</p>
-        </form>
+        </div>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
+  );
+};
+
+/**
+ * The new order panel. Its form holds the customer and the lines; the panel, its save bar and the leave question
+ * render inside it, so all of them read this panel's draft. The panel renders in a portal, so the form's own box
+ * takes no room.
+ */
+export const OrderCreateDialog = (props: OrderCreateDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot className="contents" defaultValues={openingValues} form={createOrderForm} translateMessage={t}>
+      <CreatePanel {...props} />
+    </FormRoot>
   );
 };

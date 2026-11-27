@@ -2,11 +2,20 @@ import { dialogCloseLabel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { useState } from 'react';
+import { FormBuilder, FormInputField, FormReact, FormRoot, useAtomSet, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
+
+/** The optional cancellation reason. The dialog's button sends it; the form itself is never submitted. */
+const cancelReasonForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: FormInputField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noReason = { reason: '' };
 
 interface OrderCancelDialogProps {
   readonly busy: boolean;
@@ -17,12 +26,12 @@ interface OrderCancelDialogProps {
   readonly orders: readonly Order[] | null;
 }
 
-/** Destructive confirmation. Names the record when one order is cancelled, counts the rest otherwise. */
-export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderCancelDialogProps) => {
+const CancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderCancelDialogProps) => {
   const { t } = useModernI18n();
   const [only] = orders ?? [];
   const single = orders?.length === 1 ? only : undefined;
-  const [reason, setReason] = useState('');
+  const { reason } = Option.getOrElse(useAtomValue(cancelReasonForm.values), () => noReason);
+  const setValues = useAtomSet(cancelReasonForm.setValues);
   const trimmed = reason.trim();
   const storefront = orders?.some((order) => order.channel === 'STOREFRONT') === true;
 
@@ -39,7 +48,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
             loadingText={t(key('create.submitting'))}
             onClick={() => {
               onConfirm(orders ?? [], trimmed === '' ? undefined : trimmed);
-              setReason('');
+              setValues(noReason);
             }}
             severity="danger"
             style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
@@ -53,7 +62,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
       description={t(key('confirm.description'))}
       onOpenChange={({ open }) => {
         if (!open) {
-          setReason('');
+          setValues(noReason);
           onDismiss();
         }
       }}
@@ -66,16 +75,27 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
           : t(key('confirm.cancelTitle'), { number: single.number })
       }
     >
-      <FormInput
+      <cancelReasonForm.reason
         id="order-cancel-reason"
         label={t('merchandise.ui.cancellationReason')}
         maxLength={500}
         name="reason"
-        onChange={(event) => setReason(event.target.value)}
         placeholder={t('merchandise.ui.cancellationReasonPlaceholder')}
-        value={reason}
         {...(storefront ? { helpText: 'Zákazník z e-shopu uvidí důvod v e-mailu o stornování.' } : {})}
       />
     </Dialog>
+  );
+};
+
+/**
+ * Destructive confirmation. Names the record when one order is cancelled, counts the rest otherwise. The reason
+ * stays in its form while the dialog is closed between confirmations; confirming or dismissing clears it.
+ */
+export const OrderCancelDialog = (props: OrderCancelDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot className="contents" defaultValues={noReason} form={cancelReasonForm} translateMessage={t}>
+      <CancelDialog {...props} />
+    </FormRoot>
   );
 };
