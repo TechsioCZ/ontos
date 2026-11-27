@@ -98,7 +98,7 @@ export const SymmyLinkSection = ({ onCommitted, onReload, product, revision }: S
       )}
       <LiveShopConfirm
         confirmLabel="Odpojit od Symmy"
-        description={`Cena a sklad produktu „${product.name}“ už nebudou sledovat ERP (Symmy) a značka „Importováno přes Symmy“ zmizí. Současná cena, sklad, texty, obrázky a zveřejnění zůstanou. Symmy produkt znovu nepropojí, dokud ERP produkt nezmění.`}
+        description={`Cena a sklad produktu „${product.name}“ už nebudou sledovat ERP (Symmy) a značka „Symmy“ zmizí. Současná cena, sklad, texty, obrázky a zveřejnění zůstanou. Symmy produkt znovu nepropojí, dokud ERP produkt nezmění.`}
         destructive
         onCancel={() => setAsking(false)}
         onConfirm={() => send('UNLINK')}

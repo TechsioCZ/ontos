@@ -61,6 +61,16 @@ const claimedByLineage = (entries: readonly CatalogSnapshotEntry[]): ReadonlySet
   return claimed;
 };
 
+/**
+ * The capabilities a release retired through declared lineage: claimed by a successor's `renamedFrom` or `splitFrom`
+ * and declared by none of the entries. A Role keeps their cells (a release follow never removes a cell), and those
+ * cells are inert: never projected and never granted, because no running code presents their declaration.
+ */
+export const retiredByLineage = (entries: readonly CatalogSnapshotEntry[]): ReadonlySet<string> => {
+  const declared = new Set<string>(entries.map(({ key }) => key));
+  return new Set([...claimedByLineage(entries)].filter((key) => !declared.has(key)));
+};
+
 /** Every capability of the newest release the candidate drops or narrows without lineage, sorted. */
 const uncoveredKeysOf = (candidate: CatalogSnapshot, newest: CatalogSnapshot): readonly CapabilityKey[] => {
   const byKey = new Map(candidate.entries.map((entry) => [entry.key, entry] as const));
