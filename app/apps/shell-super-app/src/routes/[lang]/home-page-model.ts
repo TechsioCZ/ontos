@@ -24,7 +24,6 @@ import {
   canManageDemoAccounts,
   currentSession,
   documentContext,
-  executeLegalEntityDetail,
   shellComposition,
 } from '../../api/auth-client.ts';
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
@@ -105,6 +104,8 @@ export interface AuthenticatedHomePageModel {
         readonly items: readonly ShellNavigationItem[];
         /** Module ids the composition lists for the person here; pinned on the document for remotes' optional reads. */
         readonly moduleIds: readonly string[];
+        /** Set when the person may use the global search here; without it the frame offers no search box. */
+        readonly search?: true;
         readonly state: 'available';
         readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
       }
@@ -333,50 +334,26 @@ const serverBrowserReads = (
         tenants: { tenants: context.tenants.tenants },
       };
 
-/** What the selected company says about itself on Home; nothing when it provides no text or the read fails. */
-interface HomeCompanyContext {
-  readonly legalEntityId: SafeAuthenticatedIdentity['legalEntityId'];
-  readonly tenantId: SafeTenantIdentity['tenantId'];
-}
-
-const companyWelcomeFor = (identity: HomeCompanyContext, options: ShellAuthenticationClientOptions) =>
-  executeLegalEntityDetail(
-    {
-      legalEntityRef: {
-        moduleId: 'core.identity',
-        resourceId: identity.legalEntityId,
-        resourceType: 'core.identity.legal-entity',
-        tenantId: identity.tenantId,
-      },
-    },
-    options,
-  ).pipe(
-    Effect.map(({ welcome }) => welcome),
-    Effect.orElseSucceed(() => {
-      // Optional welcome copy must not block the governed Home route.
-    }),
-  );
-
 export interface ResolvedHomeContribution {
   readonly contribution: HomeContribution;
   /** The company's own Home text; read only when the Shell shows its welcome page. */
   readonly welcome?: string;
 }
 
-/** The first Home component the person may open, or the Shell's welcome page with the company's own text. */
+/**
+ * The first Home component the person may open, or the Shell's welcome page with the company's own text, which the
+ * composition carries as part of the frame.
+ */
 export const resolveHomeContributionWithWelcome = (
-  identity: HomeCompanyContext,
-  compositionRevision: string,
+  composition: Pick<Extract<ShellComposition, { readonly state: 'available' }>, 'compositionRevision' | 'welcome'>,
   candidates: readonly ShellHomeComponent[],
   options: ShellAuthenticationClientOptions,
 ): Effect.Effect<ResolvedHomeContribution> =>
-  resolveHomeContribution(candidates, compositionRevision, options).pipe(
-    Effect.flatMap((contribution) =>
-      contribution.state === 'forbidden'
-        ? companyWelcomeFor(identity, options).pipe(
-            Effect.map((welcome) => (welcome === undefined ? { contribution } : { contribution, welcome })),
-          )
-        : Effect.succeed({ contribution }),
+  resolveHomeContribution(candidates, composition.compositionRevision, options).pipe(
+    Effect.map((contribution) =>
+      contribution.state !== 'forbidden' || composition.welcome === undefined
+        ? { contribution }
+        : { contribution, welcome: composition.welcome },
     ),
   );
 
@@ -415,13 +392,17 @@ const emptyNavigation: ComposedNavigation = {
 const presentedNavigation = (
   composition: Extract<ShellComposition, { readonly state: 'available' }>,
   canManagePeople: boolean,
-): ComposedNavigation => ({
-  deniedAppIds: composition.deniedAppIds,
-  items: presentedShellNavigationItems(composition.navigation, canManagePeople),
-  moduleIds: [...new Set(composition.navigation.map(({ moduleId }) => String(moduleId)))],
-  state: 'available',
-  unavailableDeployments: composition.unavailableDeployments,
-});
+): ComposedNavigation => {
+  const navigation: ComposedNavigation = {
+    deniedAppIds: composition.deniedAppIds,
+    items: presentedShellNavigationItems(composition.navigation, canManagePeople),
+    moduleIds: [...new Set(composition.navigation.map(({ moduleId }) => String(moduleId)))],
+    state: 'available',
+    unavailableDeployments: composition.unavailableDeployments,
+  };
+  // The frame offers its search box only to a person the composition admits to the search.
+  return composition.search === true ? { ...navigation, search: true } : navigation;
+};
 
 const navigationModuleIds = (navigation: ComposedNavigation) =>
   new Set(navigation.items.map(({ moduleId }) => String(moduleId)));
@@ -668,9 +649,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
         homeContribution:
           homeCandidates === undefined
             ? Effect.succeedNone
-            : resolveHomeContributionWithWelcome(session.identity, compositionRevision, homeCandidates, options).pipe(
-                Effect.asSome,
-              ),
+            : resolveHomeContributionWithWelcome(composition, homeCandidates, options).pipe(Effect.asSome),
       },
       { concurrency: 2 },
     ).pipe(

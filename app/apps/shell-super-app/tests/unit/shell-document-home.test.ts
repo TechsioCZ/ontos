@@ -1,9 +1,7 @@
 import {
   ReadHandlerNotFound,
-  ReadHandlerUnavailable,
   ReadPermissionDenied,
   ReadPermissionUnavailable,
-  ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { Effect, Layer, Schema } from 'effect';
@@ -71,19 +69,11 @@ const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   writable: false,
 });
 const moduleTarget = rstest.fn<ShellGovernedReadsService['moduleTarget']>();
-interface CoreReadRequest {
-  readonly principal: unknown;
-  readonly transport: unknown;
-}
-const runRead = rstest.fn((_request: CoreReadRequest) =>
-  Effect.fail(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'welcome unavailable' })),
-);
 const loadHome = (overrides: Partial<typeof composition> = {}) =>
   resolveDocumentHome({ canManagePeople: false, composition: { ...composition, ...overrides }, principal }).pipe(
     Effect.provide(
       Layer.mock(ShellGovernedReads, { moduleTarget, tenantModuleTargetCarrier: tenantModuleTargetTestCarrier }),
     ),
-    Effect.provide(Layer.mock(ReadRuntime, { runRead })),
     Effect.provideService(DocumentHomeCorrelationId, 'home-correlation'),
   );
 
@@ -101,7 +91,6 @@ it.effect('resolves the first admitted candidate with the document revision, pri
       moduleId: 'fixture.first',
       principal,
     });
-    expect(runRead).not.toHaveBeenCalled();
   }),
 );
 
@@ -131,9 +120,10 @@ it.effect('keeps unavailable admission unavailable instead of advancing or showi
         }),
       ),
     );
-    expect(yield* loadHome()).toEqual({ contribution: { state: 'unavailable' } });
+    expect(yield* loadHome({ welcome: 'Bread and pastry for the whole town.' })).toEqual({
+      contribution: { state: 'unavailable' },
+    });
     expect(moduleTarget).toHaveBeenCalledTimes(1);
-    expect(runRead).not.toHaveBeenCalled();
   }),
 );
 
@@ -150,17 +140,17 @@ it.effect('does not resolve components requiring an unlisted module', () =>
       contribution: { state: 'forbidden' },
     });
     expect(moduleTarget).not.toHaveBeenCalled();
-    expect(runRead).toHaveBeenCalledTimes(1);
-    expect(runRead.mock.calls[0]?.[0]).toMatchObject({ principal, transport: { correlationId: 'home-correlation' } });
   }),
 );
 
-it.effect('keeps the welcome optional when its own governed Core read is unavailable', () =>
-  Effect.gen(function* unavailableWelcome() {
-    runRead.mockReturnValueOnce(
-      Effect.fail(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'welcome unavailable' })),
-    );
-    expect(yield* loadHome({ homeComponents: [] })).toEqual({ contribution: { state: 'forbidden' } });
-    expect(moduleTarget).not.toHaveBeenCalled();
+it.effect('shows the welcome text the composition carries for the company on the welcome page', () =>
+  Effect.gen(function* companyWelcome() {
+    expect(yield* loadHome({ homeComponents: [], welcome: 'Bread and pastry for the whole town.' })).toEqual({
+      contribution: { state: 'forbidden' },
+      welcome: 'Bread and pastry for the whole town.',
+    });
+    expect(yield* loadHome({ welcome: 'Bread and pastry for the whole town.' })).toEqual({
+      contribution: { state: 'ready', target },
+    });
   }),
 );

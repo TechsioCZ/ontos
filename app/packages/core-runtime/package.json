@@ -118,6 +118,7 @@
     "./db/agent-history-page": "./src/db/agent-history-page.ts",
     "./demo-company-profiles": "./src/install/demo-company-profiles.ts",
     "./modules/legal-entity-navigation-exclusions": "./src/modules/legal-entity-navigation-exclusions.ts",
+    "./modules/legal-entity-welcome": "./src/modules/legal-entity-welcome.ts",
     "./outbox/core-modules-tenant-module-state-changed-v1": "./src/outbox/core-modules-tenant-module-state-changed-v1.ts",
     "./outbox/core-system-worker": "./src/outbox/core-system-worker-entry.ts",
     "./resources/scoped-resource-id": "./src/resources/scoped-resource-id.ts",

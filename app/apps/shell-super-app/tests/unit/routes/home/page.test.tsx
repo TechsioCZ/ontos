@@ -126,6 +126,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Aut
       },
     ],
     moduleIds: [inventoryModuleId],
+    search: true,
     state: 'available',
     unavailableDeployments: [],
   },
@@ -323,6 +324,28 @@ it.live('successful legal-entity switch performs a full document reload', () => 
     expect(boundary()).toEqual({ announced: true, resets: 1 });
   }).pipe(Effect.provide(bff.browser));
 });
+
+it.effect('offers no header search to a person the composition does not admit to it', () =>
+  Effect.gen(function* noSearchWithoutTheRight() {
+    const model = authenticatedModel();
+    const { navigation } = model;
+    yield* renderHome({
+      ...model,
+      navigation:
+        navigation.state === 'available'
+          ? {
+              deniedAppIds: navigation.deniedAppIds,
+              items: navigation.items,
+              moduleIds: navigation.moduleIds,
+              state: 'available',
+              unavailableDeployments: navigation.unavailableDeployments,
+            }
+          : navigation,
+    });
+    const header = screen.getByRole('banner', { name: 'Dashboard header' });
+    expect(within(header).queryByRole('searchbox')).toBeNull();
+  }),
+);
 
 it.live('top-bar search submits on Enter to the localized Shell search route', () =>
   Effect.gen(function* topBarSearchSubmitsOnEnter() {

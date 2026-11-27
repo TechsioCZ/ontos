@@ -515,27 +515,43 @@ it.effect('answers an unreadable company list as a retryable 503', () =>
   }),
 );
 
-it.effect('refuses a question whose scope domain the release does not support', () =>
-  Effect.gen(function* refusesScopeDomain() {
+it.effect('asks a tenant question in the tenant context, whatever kind the capability is', () =>
+  Effect.gen(function* asksTenantQuestionInTenantContext() {
     const { bff, gate } = bffOf({
-      answers: { [SURFACE_KEY]: { outcome: 'ALLOWED' } },
-      catalog: published([
-        capability(PAY_KEY),
-        capability(AUTHORITY_KEY, { kind: 'admin', modes: ['run'], risk: 'critical' }),
-      ]),
+      answers: {
+        [AUTHORITY_KEY]: { outcome: 'ALLOWED' },
+        [PAY_KEY]: { evidence: [evidenceOf()], outcome: 'ALLOWED' },
+        [SURFACE_KEY]: { outcome: 'ALLOWED' },
+      },
+      catalog: published([capability(PAY_KEY)]),
     });
 
-    const companyQuestionForCompanyCapability = yield* Effect.flip(bff.explain(new Headers(), tenantQuestion(PAY_KEY)));
+    const response = yield* bff.explain(new Headers(), tenantQuestion(PAY_KEY));
+
+    // Core decides an `optional` entrypoint in the tenant context, where only tenant roles count.
+    const [, subject] = gate.askedDecisions;
+    expect({
+      hasCompany: Object.hasOwn(subject?.scope ?? {}, 'legalEntityId'),
+      key: subject?.carrier.accessDeclaration?.key,
+      legalEntityScope: subject?.legalEntityScope,
+    }).toEqual({ hasCompany: false, key: PAY_KEY, legalEntityScope: 'optional' });
+    expect(response.outcome).toBe('ALLOWED');
+  }),
+);
+
+it.effect('refuses an admin capability asked in a company', () =>
+  Effect.gen(function* refusesAdminCapabilityInCompany() {
+    const { bff, gate } = bffOf({
+      answers: { [SURFACE_KEY]: { outcome: 'ALLOWED' } },
+      catalog: published([capability(AUTHORITY_KEY, { kind: 'admin', modes: ['run'], risk: 'critical' })]),
+    });
+
     const adminCapabilityAsCompany = yield* Effect.flip(
       bff.explain(new Headers(), question({ capabilityKey: AccessCapabilityKeySchema.make(AUTHORITY_KEY) })),
     );
 
-    expect(Schema.is(AccessAdminUnprocessableProblemSchema)(companyQuestionForCompanyCapability)).toBe(true);
     expect(Schema.is(AccessAdminUnprocessableProblemSchema)(adminCapabilityAsCompany)).toBe(true);
-    expect(gate.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
-      SURFACE_KEY,
-      SURFACE_KEY,
-    ]);
+    expect(gate.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([SURFACE_KEY]);
   }),
 );
 

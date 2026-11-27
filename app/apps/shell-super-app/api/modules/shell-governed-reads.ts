@@ -23,6 +23,7 @@ import type {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
+import { makeLegalEntityWelcome } from '@app/core-runtime/modules/legal-entity-welcome';
 import { Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 
 import {
@@ -405,8 +406,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     catalog: capturedShellCatalog,
     moduleStates,
   };
-  // Catalog and SpiceDB decisions run before and after the governed-read transaction; it holds tenant data only.
-  const compositionAccess = compositionFactory.access(dependencies);
   const serviceFactory = (transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor']) => {
     const moduleStatesInTransaction = scopedModuleStateFactory(transaction);
     return Effect.succeed(
@@ -414,6 +413,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
         composition: compositionFactory.data({
           moduleStates: moduleStatesInTransaction,
           navigationExclusions: makeLegalEntityNavigationExclusions({ executor: transaction }),
+          welcome: makeLegalEntityWelcome({ executor: transaction }),
         }),
         moduleStates: moduleStatesInTransaction,
       }),
@@ -433,52 +433,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       .pipe(Effect.mapError(unavailableBecause('Shell module states are temporarily unavailable')));
   const compositionUnavailable = unavailableBecause('Shell composition is temporarily unavailable');
   const moduleTargetUnavailable = unavailableBecause('The Shell module target is temporarily unavailable');
-  const composition = defineRead(
-    {
-      accessDeclaration: {
-        // The frame (membership, no Role cell): the installed composition; each contribution is decided on its own.
-        baseline: true,
-        key: 'core.shell.composition.read',
-        kind: 'read',
-        modes: ['run'],
-        placement: { group: 'shell', level: 'basic' },
-        risk: 'routine',
-        selectors: [],
-      },
-      accessKind: 'list',
-      entrypoint: compositionEntrypoint,
-      evidencePolicy: {
-        captureMode: 'metadata_only',
-        policyKey: 'core.shell.composition.evidence.v1',
-      },
-      inputSchema: emptyInput,
-      legalEntityScope: 'required',
-      owningModuleKey: 'core.shell',
-      policies: [],
-      readKey: 'core.shell.composition',
-      resultSchema: ShellCompositionSchema,
-      schemaVersion: '1',
-    },
-    {
-      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
-      prepare: (_input, context) =>
-        compositionAccess.authorizeComposition(context.scope).pipe(Effect.mapError(compositionUnavailable)),
-      load: (_input, context) =>
-        context.services.composition
-          .loadComposition(context.scope, context.prepared)
-          .pipe(Effect.mapError(compositionUnavailable)),
-      finish: (_input, context) =>
-        compositionAccess.finishComposition(context.prepared, context.loaded).pipe(
-          Effect.map((result) => ({
-            evidence: { resultCount: result.navigation.length },
-            result,
-          })),
-          Effect.mapError(compositionUnavailable),
-        ),
-      // oxlint-enable perfectionist/sort-objects
-    },
-    serviceFactory,
-  );
   const search = defineRead(
     {
       accessDeclaration: {
@@ -632,6 +586,55 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           ),
         );
       }),
+      // oxlint-enable perfectionist/sort-objects
+    },
+    serviceFactory,
+  );
+  // Catalog and SpiceDB decisions run before and after the governed-read transaction; it holds tenant data only. The
+  // frame's search box is decided with the search read's own carrier, so it is offered exactly to who may search.
+  const compositionAccess = compositionFactory.access({ ...dependencies, search: search.descriptor });
+  const composition = defineRead(
+    {
+      accessDeclaration: {
+        // The frame (membership, no Role cell): the installed composition; each contribution is decided on its own.
+        baseline: true,
+        key: 'core.shell.composition.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
+      accessKind: 'list',
+      entrypoint: compositionEntrypoint,
+      evidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'core.shell.composition.evidence.v1',
+      },
+      inputSchema: emptyInput,
+      legalEntityScope: 'required',
+      owningModuleKey: 'core.shell',
+      policies: [],
+      readKey: 'core.shell.composition',
+      resultSchema: ShellCompositionSchema,
+      schemaVersion: '1',
+    },
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      prepare: (_input, context) =>
+        compositionAccess.authorizeComposition(context.scope).pipe(Effect.mapError(compositionUnavailable)),
+      load: (_input, context) =>
+        context.services.composition
+          .loadComposition(context.scope, context.prepared)
+          .pipe(Effect.mapError(compositionUnavailable)),
+      finish: (_input, context) =>
+        compositionAccess.finishComposition(context.prepared, context.loaded).pipe(
+          Effect.map((result) => ({
+            evidence: { resultCount: result.navigation.length },
+            result,
+          })),
+          Effect.mapError(compositionUnavailable),
+        ),
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,

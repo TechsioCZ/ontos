@@ -1,6 +1,5 @@
-import { legalEntityDetailRead, ReadRuntime } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { Context, Effect, Match, Option } from 'effect';
+import { Context, Effect, Match } from 'effect';
 
 import type { ShellComposition, ShellDocumentHome, ShellHomeContribution } from '../../shared/browser-api.ts';
 import { presentedShellNavigationItems } from '../../shared/shell-platform-navigation.ts';
@@ -62,31 +61,8 @@ export const resolveDocumentHome = Effect.fn('ShellDocument.resolveHome')(functi
       );
   };
   const contribution = yield* tryFrom(0);
-  if (contribution.state !== 'forbidden') {
-    return { contribution } satisfies ShellDocumentHome;
-  }
-  // The company's text remains a governed Core read, only for people shown the welcome page.
-  const runtime = yield* ReadRuntime;
-  const welcome = yield* runtime
-    .runRead({
-      input: {
-        legalEntityRef: {
-          moduleId: 'core.identity',
-          resourceId: principal.legalEntityId,
-          resourceType: 'core.identity.legal-entity',
-          tenantId: principal.tenantId,
-        },
-      },
-      principal,
-      registration: legalEntityDetailRead,
-      transport: { correlationId },
-    })
-    .pipe(
-      Effect.map((response) => Option.fromUndefinedOr(response.welcome)),
-      Effect.orElseSucceed(Option.none),
-    );
-  return Option.match(welcome, {
-    onNone: (): ShellDocumentHome => ({ contribution }),
-    onSome: (text): ShellDocumentHome => ({ contribution, welcome: text }),
-  });
+  // The welcome page shows the company's own text, which the composition carries as part of the frame.
+  return contribution.state !== 'forbidden' || composition.welcome === undefined
+    ? ({ contribution } satisfies ShellDocumentHome)
+    : ({ contribution, welcome: composition.welcome } satisfies ShellDocumentHome);
 });

@@ -104,6 +104,8 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
   readonly onTenantContextChange?: (() => void) | undefined;
+  /** The person may use the global search here; without it the header offers no search box and asks nothing. */
+  readonly search?: boolean | undefined;
   readonly tenantChoices: readonly DashboardTenantItem[];
   readonly tenantContextActive?: boolean | undefined;
   readonly tenantContextAvailable?: boolean | undefined;
@@ -1162,12 +1164,14 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             </ShellRouteLink>
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
-          <DashboardHeaderSearch
-            compositionRevision={props.compositionRevision}
-            hidden={props.logoutPending}
-            onSearch={props.onSearch}
-            scopeKey={searchScopeKey}
-          />
+          {props.search === true ? (
+            <DashboardHeaderSearch
+              compositionRevision={props.compositionRevision}
+              hidden={props.logoutPending}
+              onSearch={props.onSearch}
+              scopeKey={searchScopeKey}
+            />
+          ) : null}
           <Header.Container className="flex w-auto shrink-0 justify-end" position="end">
             <Header.Actions>
               {guide === undefined || props.logoutPending ? null : (

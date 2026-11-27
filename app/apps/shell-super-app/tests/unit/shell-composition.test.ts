@@ -4,7 +4,12 @@ import type {
   ContextAccessDecision,
   TenantModuleState,
 } from '@app/core-runtime';
-import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
+import {
+  decodeAccessDeclarationOrThrow,
+  defineSystemModuleEntrypoint,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  ONTOS_SHELL_CONTRIBUTION_ABI,
+} from '@app/core-runtime';
 import { LegalEntityNavigationExclusionsUnavailableError } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -283,6 +288,32 @@ it.effect(
     }),
 );
 
+/** The global search's own capability, which the composition asks beside its contributions. */
+const SEARCH_KEY = 'core.shell.resources.search';
+/** The search Read's carrier as `api/modules/shell-governed-reads.ts` declares it; production passes its descriptor. */
+const searchCarrier: ShellCompositionAccessSources['search'] = {
+  accessDeclaration: decodeAccessDeclarationOrThrow(
+    {
+      key: SEARCH_KEY,
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'resources', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'core.shell.search',
+      moduleKey: 'core.shell',
+      role: 'search',
+    }),
+  ),
+};
+
+/** A company that provides no welcome text. */
+const noWelcome: ShellCompositionDataSources['welcome'] = { readWelcome: () => Effect.succeedNone };
+
 /**
  * The one access gate a Shell suite scripts, keyed by module id for readability. The fixture's pages ask
  * `${moduleId}.page.open`, so the shim maps that declaration key and reports the module ids one gate
@@ -291,7 +322,7 @@ it.effect(
 const moduleIdsOf = (inputs: readonly GateInput[]) =>
   inputs.flatMap(({ carrier }) => {
     const key = carrier.accessDeclaration?.key;
-    return key === undefined ? [] : [key.replace(/\.page\.open$/u, '')];
+    return key === undefined || key === SEARCH_KEY ? [] : [key.replace(/\.page\.open$/u, '')];
   });
 
 const contextAccess = (
@@ -323,11 +354,17 @@ const makeShellComposition = (sources: {
   readonly contextAccess: ShellTestAccessGate;
   readonly moduleStates: ShellCompositionDataSources['moduleStates'];
   readonly navigationExclusions: ShellCompositionDataSources['navigationExclusions'];
+  readonly welcome?: ShellCompositionDataSources['welcome'];
 }) => {
-  const access = makeShellCompositionAccess({ access: sources.contextAccess, catalog: sources.catalog });
+  const access = makeShellCompositionAccess({
+    access: sources.contextAccess,
+    catalog: sources.catalog,
+    search: searchCarrier,
+  });
   const data = makeShellCompositionData({
     moduleStates: sources.moduleStates,
     navigationExclusions: sources.navigationExclusions,
+    welcome: sources.welcome ?? noWelcome,
   });
   return {
     compose: (composeContext: ShellCompositionContext) =>
@@ -1362,6 +1399,7 @@ it.effect('keeps the admitted Shell frame available when every contributed modul
     yield* makeShellCompositionAccess({
       access: sources.contextAccess,
       catalog: sources.catalog,
+      search: searchCarrier,
     }).prefetchCompositionDecisions(context);
     const result = yield* makeShellComposition(sources).compose(context);
     expect(result).toEqual({
@@ -1429,7 +1467,61 @@ it.effect('asks for a company when nothing company-scoped could be decided witho
     expect(result).toEqual({ navigation: [], state: 'selection_required' });
     // The Shell never guesses at the company's absence: the gate reports the missing scope (O28).
     expect(gate.batches.length).toBe(1);
-    expect(gate.batches[0]?.every((entry) => entry.legalEntityScope === 'required') ?? false).toBe(true);
+    const contributions = gate.batches[0]?.filter(({ carrier }) => carrier.accessDeclaration?.key !== SEARCH_KEY);
+    expect(contributions?.every((entry) => entry.legalEntityScope === 'required') ?? false).toBe(true);
+  }),
+);
+
+it.effect('offers the global search only to a person the gate admits to it, asked as the search read is', () =>
+  Effect.gen(function* offersSearchToAdmittedPeople() {
+    const admittedGate = makeShellTestAccessGate({ answers: { [SEARCH_KEY]: 'allowed' } });
+    const source = {
+      catalog: catalog(),
+      contextAccess: admittedGate,
+      moduleStates: {
+        getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    };
+    expect(yield* makeShellComposition(source).compose(context)).toMatchObject({ search: true, state: 'available' });
+    // One gate snapshot holds the search question beside the contributions, in the tenant context (`optional`).
+    expect(admittedGate.batches).toHaveLength(1);
+    expect(
+      admittedGate.batches[0]
+        ?.filter(({ carrier }) => carrier.accessDeclaration?.key === SEARCH_KEY)
+        .map(({ legalEntityScope, scope }) => ({ legalEntityId: scope.legalEntityId, legalEntityScope })),
+    ).toEqual([{ legalEntityId, legalEntityScope: 'optional' }]);
+    for (const refusal of ['denied', 'unavailable'] as const) {
+      const refused = yield* makeShellComposition({
+        ...source,
+        contextAccess: makeShellTestAccessGate({ answers: { [SEARCH_KEY]: refusal } }),
+      }).compose(context);
+      expect(Object.hasOwn(refused, 'search')).toBe(false);
+    }
+  }),
+);
+
+it.effect("carries the selected company's own welcome text, read inside the composition transaction", () =>
+  Effect.gen(function* carriesCompanyWelcome() {
+    const asked: (readonly [string, string])[] = [];
+    const result = yield* makeShellComposition({
+      catalog: catalog(),
+      contextAccess: makeShellTestAccessGate(),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+      navigationExclusions: noExclusions,
+      welcome: {
+        readWelcome: (welcomeTenantId, welcomeLegalEntityId) => {
+          asked.push([welcomeTenantId, welcomeLegalEntityId]);
+          return Effect.succeedSome('Bread and pastry for the whole town.');
+        },
+      },
+    }).compose(context);
+    expect(result).toMatchObject({ state: 'available', welcome: 'Bread and pastry for the whole town.' });
+    expect(asked).toEqual([[tenantId, legalEntityId]]);
   }),
 );
 

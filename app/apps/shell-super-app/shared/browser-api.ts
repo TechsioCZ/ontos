@@ -717,8 +717,15 @@ export const ShellCompositionSchema = Schema.Union([
     navigation: Schema.Array(ShellNavigationItemSchema),
     /** Record destinations the composed modules declare; absent when no page declares one. */
     recordDestinations: Schema.optionalKey(Schema.Array(ShellRecordDestinationSchema)),
+    /**
+     * Present when the gate admits the person to the global search (`core.shell.resources.search`), asked as the search
+     * read is. Absent, the frame offers no search box, so it never sends a search the person would be refused.
+     */
+    search: Schema.optionalKey(Schema.Literal(true)),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),
+    /** What the selected company says about itself on the Shell's welcome page; absent when it provides no text. */
+    welcome: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400))),
   }),
 ]);
 

@@ -45,6 +45,7 @@ export const ShellContentLayout = ({
       onSearch={controls.handleSearch}
       onTenantChange={controls.handleTenantChange}
       onTenantContextChange={controls.handleTenantContextChange}
+      search={shell.navigation.state === 'available' && shell.navigation.search === true}
       tenantChoices={shell.tenants.items}
       tenantContextActive={shell.contextState === 'tenant_authenticated'}
       tenantContextAvailable={

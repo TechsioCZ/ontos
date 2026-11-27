@@ -13,13 +13,11 @@ import {
   ShellDocumentContextSchema,
   ShellReloadRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
-  ShellTargetNotFoundProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
   TenantCapabilityUnavailableProblemSchema,
   TenantInternalProblemSchema,
 } from '../../../../shared/browser-api.ts';
 import type { CurrentSession, ShellComposition } from '../../../../shared/browser-api.ts';
-import { LegalEntityDetailResponseSchema } from '../../../../shared/core-reads/legal-entity-detail.ts';
 import {
   loadHomePageModel,
   primeBrowserReads,
@@ -99,11 +97,6 @@ const targetForbidden = Schema.decodeUnknownSync(ShellTargetForbiddenProblemSche
   _tag: 'ShellTargetForbiddenProblem',
   status: 403,
 });
-const targetNotFound = Schema.decodeUnknownSync(ShellTargetNotFoundProblemSchema)({
-  ...problem,
-  _tag: 'ShellTargetNotFoundProblem',
-  status: 404,
-});
 const capabilityUnavailable = Schema.decodeUnknownSync(ShellCapabilityUnavailableProblemSchema)({
   ...problem,
   _tag: 'ShellCapabilityUnavailableProblem',
@@ -118,7 +111,6 @@ const signedInBff = (overrides: ShellBffScript = {}) =>
     availableTenants: () => Effect.succeed(tenants),
     currentSession: () => Effect.succeed(session({ identity, state: 'authenticated' })),
     demoAccountCapability: () => Effect.succeed({ canManage: false }),
-    executeLegalEntityDetail: () => Effect.fail(targetNotFound),
     resolveModuleTarget: () => Effect.fail(targetForbidden),
     shellComposition: () => Effect.succeed(composition),
     ...overrides,
@@ -195,7 +187,6 @@ it.effect('resolves trusted context before returning one serializable compositio
       'availableLegalEntities',
       'availableTenants',
       'demoAccountCapability',
-      'executeLegalEntityDetail',
       'shellComposition',
     ]);
   }),
@@ -559,31 +550,17 @@ it.effect.each([false, true])(
     }),
 );
 
-const welcomeRef = {
-  moduleId: 'core.identity',
-  resourceId: legalEntityId,
-  resourceType: 'core.identity.legal-entity',
-  tenantId,
-} as const;
-
-it.effect('shows the welcome text the selected company provides on the Shell welcome page', () =>
+it.effect('shows the welcome text the composition carries for the selected company on the Shell welcome page', () =>
   Effect.gen(function* companyWelcome() {
     const bff = signedInBff({
-      executeLegalEntityDetail: () =>
-        Effect.succeed(
-          Schema.decodeUnknownSync(LegalEntityDetailResponseSchema)({
-            legalEntityRef: welcomeRef,
-            legalName: 'Alpha company',
-            status: 'active',
-            welcome: 'Bread and pastry for the whole town.',
-          }),
-        ),
+      shellComposition: () => Effect.succeed(availableComposition({ welcome: 'Bread and pastry for the whole town.' })),
     });
     expect(yield* loadModel(bff)).toMatchObject({
       companyWelcome: 'Bread and pastry for the whole town.',
       homeContribution: { state: 'forbidden' },
     });
-    expect(requestsTo(bff, 'executeLegalEntityDetail').at(-1)?.body).toEqual({ legalEntityRef: welcomeRef });
+    // The frame's own read carries it: the Shell asks no identity read the person may not hold.
+    expect(requestsTo(bff, 'executeLegalEntityDetail')).toEqual([]);
   }),
 );
 

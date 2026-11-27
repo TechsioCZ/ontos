@@ -157,8 +157,8 @@ export const accessExplainDeclarations = Object.freeze({
   ),
 });
 
-/** An administration surface is tenant work: it never needs a selected company (O28, P3). */
-const ADMIN_LEGAL_ENTITY_SCOPE = 'optional' as const;
+/** The tenant context: administration surfaces are tenant work (O28, P3), and so is every tenant question. */
+const TENANT_LEGAL_ENTITY_SCOPE = 'optional' as const;
 /** A company's own scope: the only context its roles and people are explained in (O88). */
 const COMPANY_LEGAL_ENTITY_SCOPE = 'required' as const;
 
@@ -594,7 +594,7 @@ export const makeAccessExplainBff = (ports: AccessExplainPorts): AccessExplainBf
   ) {
     const decision = yield* decide({
       carrier: { accessDeclaration: carrier },
-      legalEntityScope: ADMIN_LEGAL_ENTITY_SCOPE,
+      legalEntityScope: TENANT_LEGAL_ENTITY_SCOPE,
       now: yield* DateTime.nowAsDate,
       scope,
     });
@@ -666,11 +666,14 @@ export const makeAccessExplainBff = (ports: AccessExplainPorts): AccessExplainBf
   });
 
   /**
-   * The company a company-owned capability is asked in. Administration runs in the tenant context (O28)
-   * and everything else in the company context it belongs to (O7), so the payload's scope domain must be
-   * the one the release declares; a mismatch is the request's own error, never a denial. A company the
-   * person may not select is refused through the gate's own `access_legal_entity#select` question, so the
-   * body never picks a company context: it asks for one that is already authorized.
+   * The context a question is asked in, as the question names it. Core decides every entrypoint in the context its own
+   * `legalEntityScope` puts it in, not by the kind of its capability: most business entrypoints are `optional` and
+   * decided in the tenant context, where only tenant roles count, others are `required` and decided in a company. The
+   * published capability does not say which, so a tenant question is decided in the tenant context and a company
+   * question in that company. Administration exists only in the tenant context (O28), so an admin capability asked in
+   * a company is the request's own error, never a denial. A company the person may not select is refused through the
+   * gate's own `access_legal_entity#select` question, so the body never picks a company context: it asks for one that
+   * is already authorized.
    */
   const companyScope = Effect.fn('AccessExplainBff.companyScope')(function* resolveCompanyScope(
     asker: OperationalScope,
@@ -678,18 +681,10 @@ export const makeAccessExplainBff = (ports: AccessExplainPorts): AccessExplainBf
     declaration: AccessDeclaration,
     payload: ExplainAccessPayload,
   ) {
-    const tenantContext = declaration.kind === 'admin';
     if (payload.scope.kind === 'tenant') {
-      if (tenantContext) {
-        return scope;
-      }
-      return yield* Effect.fail(
-        accessAdminUnprocessableProblem(
-          'this capability belongs to a company, so the question names the company it belongs to',
-        ),
-      );
+      return scope;
     }
-    if (tenantContext) {
+    if (declaration.kind === 'admin') {
       return yield* Effect.fail(
         accessAdminUnprocessableProblem(
           'this capability is administered in the tenant context, so it is asked without a company',
@@ -746,7 +741,7 @@ export const makeAccessExplainBff = (ports: AccessExplainPorts): AccessExplainBf
     const tenantVisibility = authorityVisibility(
       yield* decide({
         carrier: { accessDeclaration: accessExplainDeclarations.readAuthority },
-        legalEntityScope: ADMIN_LEGAL_ENTITY_SCOPE,
+        legalEntityScope: TENANT_LEGAL_ENTITY_SCOPE,
         now: yield* DateTime.nowAsDate,
         scope: asker,
       }),
@@ -844,7 +839,7 @@ export const makeAccessExplainBff = (ports: AccessExplainPorts): AccessExplainBf
     }
     const question: GateInput = {
       carrier: { accessDeclaration: declaration },
-      legalEntityScope: declaration.kind === 'admin' ? ADMIN_LEGAL_ENTITY_SCOPE : COMPANY_LEGAL_ENTITY_SCOPE,
+      legalEntityScope: payload.scope.kind === 'tenant' ? TENANT_LEGAL_ENTITY_SCOPE : COMPANY_LEGAL_ENTITY_SCOPE,
       now: yield* DateTime.nowAsDate,
       scope: yield* companyScope(asker, subject, declaration, payload),
     };

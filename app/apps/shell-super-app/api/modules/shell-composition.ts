@@ -6,8 +6,9 @@ import type {
   TenantModuleStateServiceContract,
 } from '@app/core-runtime';
 import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-runtime';
-import type { GateInput } from '@app/core-runtime/access/enforcement';
+import type { GateCarrier, GateInput } from '@app/core-runtime/access/enforcement';
 import type { LegalEntityNavigationExclusionsContract } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
+import type { LegalEntityWelcomeContract } from '@app/core-runtime/modules/legal-entity-welcome';
 import { ConnectorPartnerKindSchema } from '@app/shared-contracts/integrations/connector-partners';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
@@ -66,6 +67,11 @@ export type ShellCompositionContext = OperationalScope;
 export interface ShellCompositionAccessSources {
   readonly access: ShellAccessGate;
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError>;
+  /**
+   * The global search read's own carrier (`core.shell.resources.search`). The frame offers the search box only to a
+   * person the gate admits to it, so a person without the right never sends a search that is refused.
+   */
+  readonly search: GateCarrier;
 }
 
 /** What composition reads inside the governed-read transaction: tenant data only. */
@@ -73,6 +79,8 @@ export interface ShellCompositionDataSources {
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
   /** Destinations the selected company does not offer (tenant data keyed by page entrypoint). */
   readonly navigationExclusions: LegalEntityNavigationExclusionsContract;
+  /** What the selected company says about itself on the Shell's welcome page (tenant data). */
+  readonly welcome: LegalEntityWelcomeContract;
 }
 
 const isVisibleState = Schema.is(ShellNavigationItemSchema.fields.state);
@@ -337,6 +345,8 @@ export interface ShellCompositionAuthorization {
   readonly decisions: ReadonlyMap<string, ShellAccessDecision>;
   readonly deniedModules: ReadonlySet<string>;
   readonly legalEntityId?: string;
+  /** The gate admits the person to the global search, asked exactly as the search read is. */
+  readonly search: boolean;
   readonly state: 'authorized';
 }
 
@@ -348,6 +358,7 @@ type ModuleState = Effect.Success<
 export interface ShellCompositionData {
   readonly excludedEntrypoints: ReadonlySet<string>;
   readonly states: ReadonlyMap<string, ModuleState>;
+  readonly welcome?: string;
 }
 
 /** A module target whose catalog page and access are decided; its module state is still to be read. */
@@ -406,10 +417,11 @@ export const makeShellCompositionData = (sources: ShellCompositionDataSources) =
         states: new Map<string, ModuleState>(),
       } satisfies ShellCompositionData;
     }
-    // Company-specific destinations exist only in a selected company; a tenant-context document has none.
+    // Company-specific destinations and the company's own text exist only in a selected company; a tenant-context
+    // document has none.
     const { legalEntityId } = authorization;
-    // Sequential on purpose: both reads share the governed read's Core transaction.
-    const { excludedEntrypoints, records } = yield* Effect.all(
+    // Sequential on purpose: the reads share the governed read's Core transaction.
+    const { excludedEntrypoints, records, welcome } = yield* Effect.all(
       {
         excludedEntrypoints:
           legalEntityId === undefined
@@ -418,13 +430,23 @@ export const makeShellCompositionData = (sources: ShellCompositionDataSources) =
                 .listExcludedEntrypoints(context.tenantId, legalEntityId)
                 .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause }))),
         records: loadStates(sources, context, authorization.catalog.moduleIds),
+        welcome:
+          legalEntityId === undefined
+            ? Effect.succeedNone
+            : sources.welcome
+                .readWelcome(context.tenantId, legalEntityId)
+                .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause }))),
       },
       { concurrency: 1 },
     );
-    return {
+    const data = {
       excludedEntrypoints,
       states: new Map(records.map(({ moduleKey, state }) => [moduleKey, state])),
     } satisfies ShellCompositionData;
+    return Option.match(welcome, {
+      onNone: (): ShellCompositionData => data,
+      onSome: (text): ShellCompositionData => ({ ...data, welcome: text }),
+    });
   });
 
   const loadModuleTarget = Effect.fn('ShellCompositionData.loadModuleTarget')(function* loadModuleTargetEffect(
@@ -526,6 +548,14 @@ const integrationComponents = (catalog: ShellInstalledCatalog, decisions: Readon
 
 /** The steps of composition and module targets around the transaction: the catalog and one gate snapshot, no database. */
 export const makeShellCompositionAccess = (sources: ShellCompositionAccessSources) => {
+  /** The search question, asked as the search read itself is decided: in the tenant context (`optional`). */
+  const searchGateInput = (scope: ShellCompositionContext, now: Date): GateInput => ({
+    carrier: sources.search,
+    legalEntityScope: 'optional',
+    now,
+    scope,
+  });
+
   /** The gate's answer for one contribution, as the Shell's own denial vocabulary; `null` when it may open. */
   const contributionDenial = Effect.fn('ShellCompositionAccess.contributionDenial')(function* contributionDenialEffect(
     context: ShellCompositionContext,
@@ -544,10 +574,13 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
       const catalog = yield* loadCatalog(sources);
       const gated = gatedContributions(catalog);
       const now = yield* DateTime.nowAsDate;
-      const decisions = yield* sources.access.decideMany(
-        gated.map(({ contribution }) => pageGateInput(context, contribution, now)),
-      );
-      if (decisions.length !== gated.length) {
+      // One gate snapshot: every gated contribution, then the global search.
+      const decisions = yield* sources.access.decideMany([
+        ...gated.map(({ contribution }) => pageGateInput(context, contribution, now)),
+        searchGateInput(context, now),
+      ]);
+      const searchDecision = decisions[gated.length];
+      if (decisions.length !== gated.length + 1 || searchDecision === undefined) {
         return yield* new ShellCompositionUnavailableErrorConstructor();
       }
       const decisionOf = new Map<string, ShellAccessDecision>();
@@ -567,6 +600,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         catalog,
         decisions: decisionOf,
         deniedModules: new Set([...deniedByModule].flatMap(([moduleId, denied]) => (denied ? [moduleId] : []))),
+        search: searchDecision.outcome === 'ALLOWED',
         state: 'authorized',
       } as const satisfies ShellCompositionAuthorization;
       if (context.legalEntityId === undefined) {
@@ -580,8 +614,8 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     authorization: ShellCompositionAuthorization,
     data: ShellCompositionData,
   ) {
-    const { catalog, decisions, deniedModules } = authorization;
-    const { excludedEntrypoints, states } = data;
+    const { catalog, decisions, deniedModules, search } = authorization;
+    const { excludedEntrypoints, states, welcome } = data;
     const pages = pageByContributionKey(catalog);
     const approvedModules = new Map(catalog.composition.modules.map((module) => [module.moduleId, module] as const));
     /** The page's approved remote, when it is browser code whose exposure the catalog confirms. */
@@ -681,7 +715,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     const unavailableAppIds = new Set(
       catalog.deploymentStatuses.flatMap((deployment) => (deployment.status === 'available' ? [] : [deployment.appId])),
     );
-    const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
+    const available = {
       compositionRevision: catalog.composition.revision,
       deniedAppIds,
       gatewayAudiences: appIds.filter((appId) => !denied.has(appId) && !unavailableAppIds.has(appId)),
@@ -709,7 +743,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
           left.label.cs.localeCompare(right.label.cs) ||
           left.moduleId.localeCompare(right.moduleId),
       ),
-      state: 'available',
+      state: 'available' as const,
       unavailableDeployments: catalog.deploymentStatuses.flatMap((deployment) =>
         deployment.status === 'available'
           ? []
@@ -723,7 +757,12 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
                 : { appId: deployment.appId, status: deployment.status },
             ],
       ),
-    }).pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
+    };
+    // The search box and the company's own text are offered only when they exist for this person here.
+    const searchable = search ? { ...available, search: true as const } : available;
+    const composition = yield* Schema.decodeEffect(ShellCompositionSchema)(
+      welcome === undefined ? searchable : { ...searchable, welcome },
+    ).pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
     if (composition.state !== 'available') {
       return yield* new ShellCompositionUnavailableErrorConstructor({
         cause: 'Shell composition decoded to an unexpected state',
@@ -799,11 +838,11 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
   const prefetchCompositionDecisions = (context: ShellCompositionContext) =>
     Effect.gen(function* prefetchCompositionDecisionsEffect() {
       const gated = gatedContributions(yield* loadCatalog(sources));
-      if (gated.length === 0) {
-        return;
-      }
       const now = yield* DateTime.nowAsDate;
-      yield* sources.access.decideMany(gated.map(({ contribution }) => pageGateInput(context, contribution, now)));
+      yield* sources.access.decideMany([
+        ...gated.map(({ contribution }) => pageGateInput(context, contribution, now)),
+        searchGateInput(context, now),
+      ]);
     }).pipe(Effect.ignore);
 
   /** The module target's counterpart of `prefetchCompositionDecisions`: the entrypoint page's own question. */
