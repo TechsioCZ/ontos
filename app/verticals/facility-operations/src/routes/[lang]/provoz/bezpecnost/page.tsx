@@ -1,26 +1,33 @@
 import { selectItem } from '../../../../ui/select-item.ts';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — S11 Evidence bezpečnostních zařízení. OWNED BY THE `security` LANE.
 // Restricted agenda: the server returns no state without the restricted field group
 // (facility.operations.records-restricted.read; external persona → forbidden).
 import { EmptyState, PageHeader, StatCard, StatRow, formatDate, surfaceTileClassName } from '@app/admin-ui';
+import {
+  BareTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
-import { Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';
 import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../shared/domain/security.ts';
 import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../shared/domain/security.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
+import { ListSwitch, useListSwitch } from '../../../../ui/list-switch.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { DeviceDetailPanel } from './device-detail.tsx';
@@ -64,6 +71,20 @@ type Panel =
   | { readonly deviceId: string; readonly incidentId: string; readonly kind: 'resolve' };
 
 const ALL = 'all';
+
+/** The filters over the devices list; they act as they change, so Enter sends nothing. */
+const deviceFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('search', Schema.String)
+    .addField('stateFilter', Schema.String)
+    .addField('typeFilter', Schema.String),
+  {
+    fields: { search: BareTextField, stateFilter: TemplateChoiceField, typeFilter: TemplateChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noDeviceFilters = { search: '', stateFilter: ALL, typeFilter: ALL };
 const emptyState: SecurityState = { devices: [], incidents: [] };
 
 const SecurityStateContext = createContext(emptyState);
@@ -200,10 +221,12 @@ const useSecurityView = () => {
   const [panel, setPanel] = useState<Panel>(() =>
     initialSelection === undefined ? { kind: 'none' } : { deviceId: initialSelection, kind: 'detail' },
   );
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState(ALL);
-  const [stateFilter, setStateFilter] = useState(ALL);
-  const [openOnly, setOpenOnly] = useState(true);
+  const { search, stateFilter, typeFilter } = Option.getOrElse(
+    useAtomValue(deviceFilterForm.values),
+    () => noDeviceFilters,
+  );
+  const setFilters = useAtomSet(deviceFilterForm.setValues);
+  const openOnly = useListSwitch('incidentsOpenOnly');
   const today = todayPrague();
 
   const deviceById = (deviceId: string) => devices.find((device) => device.id === deviceId);
@@ -346,12 +369,9 @@ const useSecurityView = () => {
     panelDevice,
     resolveIncident,
     search,
-    setOpenOnly,
+    setFilters,
     setPanel,
-    setSearch,
-    setStateFilter,
     setTab,
-    setTypeFilter,
     shownIncidents,
     state,
     stateFilter,
@@ -432,6 +452,7 @@ const SecurityPanels = ({ view }: { readonly view: ReturnType<typeof useSecurity
 };
 
 const SecurityView = () => {
+  const { t } = useModernI18n();
   const view = useSecurityView();
   const {
     active,
@@ -444,23 +465,16 @@ const SecurityView = () => {
     incidentColumns,
     k,
     openIncidents,
-    openOnly,
     ops,
-    search,
-    setOpenOnly,
+    setFilters,
     setPanel,
-    setSearch,
-    setStateFilter,
     setTab,
-    setTypeFilter,
     shownIncidents,
     state,
-    stateFilter,
     stats,
     tab,
     tableText,
     today,
-    typeFilter,
   } = view;
   return (
     <>
@@ -527,57 +541,53 @@ const SecurityView = () => {
             <Tabs.Indicator />
           </Tabs.List>
           <Tabs.Content className="flex flex-col gap-200 pt-200" value="devices">
-            <div className="flex flex-wrap items-end gap-150">
-              <Input
+            <FormRoot
+              className="flex flex-wrap items-end gap-150"
+              defaultValues={noDeviceFilters}
+              form={deviceFilterForm}
+              translateMessage={(message) => t(message)}
+            >
+              <deviceFilterForm.search
                 aria-label={k('filters.search')}
                 className="w-80"
-                onChange={(event) => setSearch(event.target.value)}
                 placeholder={k('filters.search')}
                 size="sm"
                 type="search"
-                value={search}
               />
               <div className="w-48">
-                <Select
+                <deviceFilterForm.typeFilter
                   items={[
                     selectItem(ALL, k('filters.allTypes')),
                     ...securityDeviceTypes.map((value) => selectItem(value, k(`deviceType.${value}`))),
                   ]}
                   label={k('fields.deviceType')}
-                  name="typeFilter"
-                  onValueChange={({ value }) => setTypeFilter(value[0] ?? ALL)}
                   size="sm"
-                  value={[typeFilter]}
                 />
               </div>
               <div className="w-48">
-                <Select
+                <deviceFilterForm.stateFilter
                   items={[
                     selectItem(ALL, k('filters.allStates')),
                     ...securityDeviceStates.map((value) => selectItem(value, k(`state.${value}`))),
                   ]}
                   label={k('fields.state')}
-                  name="stateFilter"
-                  onValueChange={({ value }) => setStateFilter(value[0] ?? ALL)}
                   size="sm"
-                  value={[stateFilter]}
                 />
               </div>
               {filtersActive && (
                 <Button
                   appearance="ghost"
                   onClick={() => {
-                    setSearch('');
-                    setTypeFilter(ALL);
-                    setStateFilter(ALL);
+                    setFilters(noDeviceFilters);
                   }}
                   severity="secondary"
                   size="sm"
+                  type="button"
                 >
                   {k('actions.clearFilters')}
                 </Button>
               )}
-            </div>
+            </FormRoot>
             <SecurityStateContext value={state}>
               <SecurityTodayContext value={today}>
                 <DataTable
@@ -599,9 +609,7 @@ const SecurityView = () => {
             </SecurityStateContext>
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 pt-200" value="incidents">
-            <Switch checked={openOnly} name="openOnly" onCheckedChange={setOpenOnly}>
-              {k('filters.openOnly')}
-            </Switch>
+            <ListSwitch name="incidentsOpenOnly">{k('filters.openOnly')}</ListSwitch>
             <SecurityStateContext value={state}>
               <SecurityTodayContext value={today}>
                 <DataTable

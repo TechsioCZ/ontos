@@ -28,3 +28,4 @@ export { BareTextAreaField, BareTextField } from './kit-fields-bare.ts';
 export { FileField } from './kit-fields-file.ts';
 export { RuledTextAreaField, RuledTextField } from './kit-fields-ruled.ts';
 export { SwitchField } from './kit-fields-switch.ts';
+export { TemplateChoiceField } from './kit-fields-template-choice.ts';
