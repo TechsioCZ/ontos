@@ -72,6 +72,7 @@ import {
   saveTenantThemeAction,
   attachTenantThemeAction,
 } from '@app/core-runtime';
+import { TenantThemeKitLive } from '@app/core-runtime/themes/kit';
 import {
   AccessDecisionLive,
   AccessEnforcementPortsLive,
@@ -2563,7 +2564,7 @@ const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi
       ),
     ),
   ),
-);
+).pipe(Layer.provide(TenantThemeKitLive));
 // @ontos-codesmith-core-read-server-groups:end
 
 /**
@@ -2843,7 +2844,7 @@ const coreActionSaveTenantThemeGroupLive = HttpApiBuilder.group(
         ),
       ),
     ),
-);
+).pipe(Layer.provide(TenantThemeKitLive));
 
 // @ontos-core-action attach-tenant-theme
 const coreActionAttachTenantThemeProblem = (
