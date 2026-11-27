@@ -461,7 +461,7 @@ export const VariantDetailEditor = ({
           vatRate={vatRate}
         />
         {tiersNote === null ? null : <p className="text-fg-secondary text-xs">{tiersNote}</p>}
-        {draft.tiers.length > 0 && nextTierKey(draft.tiers) > 0 && !draft.tiersEdited ? (
+        {draft.tiers.length > 0 && nextTierKey(draft.tiers) > 0 && !draft.tiersEdited && tiers === draft.tiers ? (
           <p className="text-fg-secondary text-xs">Při změně ceny varianty se množstevní ceny přepočítají.</p>
         ) : null}
       </div>
