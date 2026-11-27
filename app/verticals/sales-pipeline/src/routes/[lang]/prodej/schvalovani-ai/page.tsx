@@ -23,7 +23,6 @@ import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import '../../../index.css';
 import { applyPipelineCommand } from '../prilezitosti/pipeline-api.ts';
 import { salesPipelineAiCommandSchemas } from '../../../../../shared/actions/apply-command.ts';
 import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';

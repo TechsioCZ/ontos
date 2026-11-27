@@ -162,7 +162,7 @@ done
 
 if [ -n "$pending" ]; then
   # Source-only declarations: the ordinary configs retain the test/script programs for the CI gates.
-  for project in packages/shared-contracts packages/shared-design-tokens; do
+  for project in packages/shared-contracts; do
     pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.build.json"
   done
   # xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).

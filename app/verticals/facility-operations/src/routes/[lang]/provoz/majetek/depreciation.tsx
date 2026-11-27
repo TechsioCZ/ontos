@@ -4,6 +4,7 @@ import { ScrollRegion, SectionCard, formatMoney, surfaceTileClassName } from '@a
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { TOptions } from 'i18next';
 import { useState } from 'react';
@@ -15,12 +16,7 @@ import { instantLabel, isoDateLabel, planOf, principalLabel, todayIsoDate } from
 const YEARS_LABEL = 'depreciation.yearsValue';
 const START_DATE_LABEL = 'fields.startDate';
 const TAX_GROUP_LABEL = 'fields.taxGroup';
-const auditViewport = {
-  marginInline: '-1.25rem',
-  minWidth: 0,
-  overflowX: 'auto',
-  overscrollBehaviorX: 'contain',
-} as const;
+const auditViewport = '-mx-5 min-w-0 overflow-x-auto overscroll-x-contain';
 
 const useK = () => {
   const { t } = useModernI18n();
@@ -157,26 +153,27 @@ const PlanCard = ({
       </dl>
       {plan.note !== undefined && <p className="text-fg-secondary text-sm">{plan.note}</p>}
       {/* Keep the audit's intrinsic width inside its own viewport, not the panel's prose and controls. */}
-      <ScrollRegion label={k(`depreciation.${plan.type}Plan`)} style={auditViewport}>
-        <Table appearance="line" size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }}>
+      <ScrollRegion className={auditViewport} label={k(`depreciation.${plan.type}Plan`)}>
+        {/* A fixed layout is as wide as its columns (840px) or its viewport, whichever is wider. */}
+        <Table appearance="line" className="table-fixed" size="sm">
           <colgroup>
-            <col style={{ width: 70 }} />
-            <col style={{ width: 155 }} />
-            <col style={{ width: 210 }} />
-            <col style={{ width: 145 }} />
-            <col style={{ width: 260 }} />
+            <col className="w-17.5" />
+            <col className="w-39" />
+            <col className="w-52.5" />
+            <col className="w-36" />
+            <col className="w-65" />
           </colgroup>
           <Table.Header>
             <Table.Row>
-              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('fields.period')}</Table.ColumnHeader>
-              <Table.ColumnHeader align="end" style={{ whiteSpace: 'nowrap' }}>
+              <Table.ColumnHeader className="whitespace-nowrap">{k('fields.period')}</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
                 {k('depreciation.indicative')}
               </Table.ColumnHeader>
-              <Table.ColumnHeader align="end" style={{ whiteSpace: 'nowrap' }}>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
                 {k('fields.approvedAmount')}
               </Table.ColumnHeader>
-              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('fields.documentRef')}</Table.ColumnHeader>
-              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('depreciation.recordedBy')}</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">{k('fields.documentRef')}</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">{k('depreciation.recordedBy')}</Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -202,10 +199,10 @@ const PlanCard = ({
                       </span>
                     )}
                   </Table.Cell>
-                  <Table.Cell style={{ whiteSpace: 'nowrap' }}>
+                  <Table.Cell className="whitespace-nowrap">
                     {entry?.documentRef ?? (entry === undefined ? '' : k('notProvided'))}
                   </Table.Cell>
-                  <Table.Cell className="text-fg-secondary" style={{ fontSize: '1rem', maxWidth: 320, minWidth: 260 }}>
+                  <Table.Cell className="min-w-65 max-w-80 text-fg-secondary" style={{ fontSize: '1rem' }}>
                     {entry === undefined ? null : (
                       <>
                         <div>{principalLabel(entry.by, actor, k('you'))}</div>
@@ -231,18 +228,25 @@ const PlanCard = ({
           </Button>
         )}
       </div>
-      <details className="text-sm">
-        <summary className="cursor-pointer text-fg-secondary">{k('depreciation.history')}</summary>
-        <ul className="mt-100 flex flex-col gap-50">
-          {plan.history.toReversed().map((entry) => (
-            <li key={`${instantLabel(entry.at)}-${entry.change}-${entry.note ?? ''}`}>
-              <span className="text-fg-secondary">{instantLabel(entry.at)}</span> ·{' '}
-              {k(`planChange.${entry.change}`, { period: entry.note ?? '' })} ·{' '}
-              {principalLabel(entry.by, actor, k('you'))}
-            </li>
-          ))}
-        </ul>
-      </details>
+      <Accordion appearance="ghost" className="text-sm" collapsible size="sm">
+        <Accordion.Item value="history">
+          <Accordion.Header>
+            <Accordion.Title className="text-fg-secondary">{k('depreciation.history')}</Accordion.Title>
+            <Accordion.Indicator />
+          </Accordion.Header>
+          <Accordion.Content>
+            <ul className="mt-100 flex flex-col gap-50">
+              {plan.history.toReversed().map((entry) => (
+                <li key={`${instantLabel(entry.at)}-${entry.change}-${entry.note ?? ''}`}>
+                  <span className="text-fg-secondary">{instantLabel(entry.at)}</span> ·{' '}
+                  {k(`planChange.${entry.change}`, { period: entry.note ?? '' })} ·{' '}
+                  {principalLabel(entry.by, actor, k('you'))}
+                </li>
+              ))}
+            </ul>
+          </Accordion.Content>
+        </Accordion.Item>
+      </Accordion>
     </SectionCard>
   );
 };

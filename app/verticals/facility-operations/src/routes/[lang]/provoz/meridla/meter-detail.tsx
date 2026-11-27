@@ -13,6 +13,7 @@ import {
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -223,12 +224,13 @@ const MeterMasterData = ({
     if (!location.id.startsWith('label:')) {
       locationValue = (
         <Tooltip content={t(`${k}.actions.openProperty`)}>
-          <a
+          <Link
             className="text-primary underline"
             href={`/${language}/nemovitosti?resourceId=${encodeURIComponent(location.id)}`}
+            size="current"
           >
             {location.label}
-          </a>
+          </Link>
         </Tooltip>
       );
     }

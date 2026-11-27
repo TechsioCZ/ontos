@@ -76,7 +76,6 @@ import {
 import type { CustomerOption, ObjectOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
 import csResource from '../../../../locales/cs/work-tasks.json';
 import enResource from '../../../../locales/en/work-tasks.json';
-import '../../index.css';
 import { Link } from '@techsio/ui-kit/atoms/link';
 
 const workTasksI18nResources = {

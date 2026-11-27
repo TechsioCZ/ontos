@@ -12,6 +12,7 @@ import type { StoredFileRef } from '../../shared/domain/documents.ts';
 import { fetchFileObjectUrl, fileKindOf, formatBytes } from './documents-kit.tsx';
 import { downloadFile } from './use-agenda.ts';
 import { PdfPreview } from './pdf-preview.tsx';
+import type { PreviewHeight } from './pdf-preview.tsx';
 
 const k = 'facility-operations.documents';
 
@@ -25,13 +26,15 @@ type PreviewState =
   | { readonly error: Effect.Error<ReturnType<typeof fetchFileObjectUrl>>; readonly status: 'failed' }
   | { readonly mime: string; readonly status: 'ready'; readonly url: string };
 
+const previewHeight = { panel: 'h-96', viewport: 'h-[70vh]' } satisfies Record<PreviewHeight, string>;
+
 /** Inline preview body (PDF in an iframe, image, plain text) for one stored file. */
 export const FilePreviewBody = ({
   file,
-  height = '70vh',
+  height = 'viewport',
 }: {
   readonly file: StoredFileRef;
-  readonly height?: string;
+  readonly height?: PreviewHeight;
 }) => {
   const { t } = useModernI18n();
   const [preview, setPreview] = useState<{ readonly fileId: string; readonly state: PreviewState }>({
@@ -94,10 +97,9 @@ export const FilePreviewBody = ({
   if (kind === 'text') {
     return (
       <iframe
-        className="w-full rounded-md border border-border-primary bg-surface"
+        className={`w-full rounded-md border border-border-primary bg-surface ${previewHeight[height]}`}
         sandbox=""
         src={state.url}
-        style={{ height }}
         title={file.name}
       />
     );

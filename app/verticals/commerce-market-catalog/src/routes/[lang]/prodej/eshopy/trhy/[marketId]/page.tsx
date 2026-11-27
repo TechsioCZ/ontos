@@ -39,7 +39,6 @@ import type { MarketInput } from '../../../../../../market-admin/page-data.ts';
 import { RevisionsSection } from '../../../../../../market-admin/revisions-section.tsx';
 import { StorefrontsSection } from '../../../../../../market-admin/storefronts-section.tsx';
 import { UltramodernRouteHead } from '../../../../../ultramodern-route-head';
-import '../../../../../index.css';
 
 const commerceMarketCatalogI18nResources = {
   cs: { 'commerce-market-catalog': csResource },

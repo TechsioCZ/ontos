@@ -19,7 +19,7 @@ if [ "${#ids[@]}" -eq 0 ]; then
   echo 'Every unit of this shard was kept from the unit output cache.'
   exit 0
 fi
-for project in packages/shared-contracts packages/shared-design-tokens; do
+for project in packages/shared-contracts; do
   pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.build.json"
 done
 logs="$(mktemp -d)"

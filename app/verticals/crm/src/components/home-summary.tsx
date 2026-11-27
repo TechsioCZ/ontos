@@ -12,7 +12,6 @@ import { useCrmRecords } from '../crm/records.ts';
 import { CrmStateGate } from '../crm/ui.tsx';
 import { useFormatDecimalMoney } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
 import { CrmMoneyFormatsProvider } from '../crm/number-formats.tsx';
-import '../routes/index.css';
 
 const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
   const formatDecimalMoney = useFormatDecimalMoney();

@@ -38,7 +38,6 @@ import {
 import type { WriteFailure } from '../../../../market-admin/page-data.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 
 const commerceMarketCatalogI18nResources = {
   cs: { 'commerce-market-catalog': csResource },

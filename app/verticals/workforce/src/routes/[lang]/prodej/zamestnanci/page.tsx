@@ -42,7 +42,6 @@ import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { AiActivityCard } from './ai-activity-card.tsx';
 import { aiActivityData, employeeTagsData, employeesData, tagsFailureStatus, tagsReadable } from './employees-data.ts';
 import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';

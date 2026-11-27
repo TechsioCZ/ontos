@@ -120,7 +120,7 @@ const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]
 
 /** A shared package, a manifest or configuration, or an authority or database file: no scope or owner narrows it. */
 const sensitivePath = (changedPath: string) =>
-  /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
+  /^app\/packages\/(?:core-runtime|shared-contracts|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
     changedPath,
   ) ||
   /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts)$/u.test(

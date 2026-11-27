@@ -110,7 +110,7 @@ export const ReplenishTab = ({
                 </StatusText>
               )}
               <ScrollRegion label={t('facility-operations.ui.recommendedReplenishment')}>
-                <Table appearance="line" size="sm" style={{ minWidth: '40rem' }}>
+                <Table appearance="line" className="min-w-[40rem]" size="sm">
                   <Table.Header>
                     <Table.Row>
                       <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>

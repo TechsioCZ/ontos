@@ -5,6 +5,7 @@ import { DetailList, SaveBar, SidePanel, UnsavedChangesDialog, saveLabelsFor, us
 import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
@@ -546,8 +547,7 @@ const renderDeadlineActions = ({
 }: ReturnType<typeof useDeadlinePanel>) => {
   if (event !== undefined && canWrite) {
     return (
-      <div className="" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-        <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
+      <div className="flex w-full flex-wrap gap-2">
         {status === 'PLANNED' && (
           <Button
             appearance="ghost"
@@ -591,9 +591,9 @@ const renderDeadlineActions = ({
   }
   if (deadline !== undefined && deadline.eventId === undefined) {
     return (
-      <a className="font-medium" href={`/${lang}${deadline.href}`}>
+      <Link className="font-medium text-inherit no-underline" href={`/${lang}${deadline.href}`} size="current">
         {t(`${k}.event.openSource`, { source: t(`${k}.sources.${deadline.source}`) })}
-      </a>
+      </Link>
     );
   }
   return null;
@@ -695,7 +695,7 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
           )}
           {renderDeadlineDetails(model)}
           {deadline.eventId === undefined && (
-            <p className="m-0 rounded-lg p-3 text-sm" style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}>
+            <p className="m-0 rounded-lg bg-surface p-3 text-sm">
               {t(`${k}.event.derivedNote`, { source: t(`${k}.sources.${deadline.source}`) })}
             </p>
           )}

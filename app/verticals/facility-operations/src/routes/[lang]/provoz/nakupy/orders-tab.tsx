@@ -665,7 +665,7 @@ const OrderRecordSections = ({
     <>
       <SectionCard title={k('orders.lines')}>
         <div className="overflow-x-auto">
-          <Table appearance="line" size="sm" style={{ minWidth: '40rem' }}>
+          <Table appearance="line" className="min-w-[40rem]" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
@@ -682,7 +682,7 @@ const OrderRecordSections = ({
                 const unit = item?.unit ?? '';
                 return (
                   <Table.Row key={line.id}>
-                    <Table.Cell style={{ minWidth: '12rem' }}>
+                    <Table.Cell className="min-w-48">
                       {item === undefined ? (
                         <span className="flex flex-col">
                           <span>{line.description}</span>

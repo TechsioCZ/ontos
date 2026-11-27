@@ -59,7 +59,6 @@ import type { PropertySearch, PropertyTab } from './property-navigation.ts';
 import { PropertyWorkspace } from './property-workspace.tsx';
 import csWorkspace from '../../../../locales/cs/property-workspace.json';
 import enWorkspace from '../../../../locales/en/property-workspace.json';
-import '../../index.css';
 import {
   propertyRecords,
   recordsInput,

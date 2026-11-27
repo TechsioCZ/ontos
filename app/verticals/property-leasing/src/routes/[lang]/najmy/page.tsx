@@ -55,7 +55,6 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
-import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierSave, DossierChanges } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';

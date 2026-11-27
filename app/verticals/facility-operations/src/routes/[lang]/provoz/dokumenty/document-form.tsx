@@ -213,8 +213,9 @@ const DocumentFilePicker = ({
         tabIndex={-1}
         type="file"
       />
-      <button
-        className={`flex cursor-pointer flex-col items-center gap-100 rounded-lg border-2 border-dashed px-200 py-300 text-center transition-colors ${dragging ? 'border-primary bg-primary-light' : 'border-border-primary bg-highlight hover:bg-surface'}`}
+      <Button
+        className={`block rounded-lg border-2 border-dashed px-200 py-300 text-center transition-colors ${dragging ? 'border-primary bg-primary-light' : 'border-border-primary bg-highlight hover:bg-surface'}`}
+        composition
         data-testid="document-dropzone"
         onClick={() => fileInput.current?.click()}
         onDragLeave={() => setDragging(false)}
@@ -227,28 +228,31 @@ const DocumentFilePicker = ({
           setDragging(false);
           onFilePicked(event.dataTransfer.files[0]);
         }}
-        type="button"
+        size="current"
+        unstyled
       >
-        {file === undefined ? (
-          <>
-            <span aria-hidden="true" className="text-2xl">
-              ⇪
-            </span>
-            <span className="font-semibold text-sm">{t(`${k}.create.dropTitle`)}</span>
-            <span className="text-fg-secondary text-xs">{t(`${k}.create.dropHint`)}</span>
-          </>
-        ) : (
-          <span className="flex items-center gap-150 text-left">
-            <FileTypeIcon mime={file.type} name={file.name} />
-            <span className="flex flex-col">
-              <span className="font-semibold text-sm">{file.name}</span>
-              <span className="text-fg-secondary text-xs">
-                {formatBytes(file.size)} · {t(`${k}.create.replace`)}
+        <span className="flex flex-col items-center gap-100">
+          {file === undefined ? (
+            <>
+              <span aria-hidden="true" className="text-2xl">
+                ⇪
+              </span>
+              <span className="font-semibold text-sm">{t(`${k}.create.dropTitle`)}</span>
+              <span className="text-fg-secondary text-xs">{t(`${k}.create.dropHint`)}</span>
+            </>
+          ) : (
+            <span className="flex items-center gap-150 text-left">
+              <FileTypeIcon mime={file.type} name={file.name} />
+              <span className="flex flex-col">
+                <span className="font-semibold text-sm">{file.name}</span>
+                <span className="text-fg-secondary text-xs">
+                  {formatBytes(file.size)} · {t(`${k}.create.replace`)}
+                </span>
               </span>
             </span>
-          </span>
-        )}
-      </button>
+          )}
+        </span>
+      </Button>
     </>
   );
 };
@@ -276,7 +280,7 @@ const DocumentLinkFields = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
+    <fieldset className={`${surfaceTileClassName} flex min-w-0 max-w-full flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
       <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
       {links.length > 0 && (
@@ -424,7 +428,7 @@ const DocumentContractFields = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
+    <fieldset className={`${surfaceTileClassName} flex min-w-0 max-w-full flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
       {category === 'amendment' && amendsLocked !== true && onAmendsChange !== undefined && (
         <Select

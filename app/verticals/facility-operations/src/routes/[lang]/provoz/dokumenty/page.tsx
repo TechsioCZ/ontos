@@ -5,6 +5,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
@@ -45,7 +46,6 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { changedOn, documentSortKey, DocumentsSearchSchema, selectionForSearch } from './documents-route-state.ts';
 import { DocumentDetailPanel } from './document-detail.tsx';
 import { DocumentFormPanel, documentFormKey } from './document-form.tsx';
-import './documents.css';
 import type { DocumentFormMode } from './document-form.tsx';
 import {
   ContractStatusBadge,
@@ -498,7 +498,7 @@ const DocumentsListing = ({ model }: { readonly model: DocumentsModel }) => {
   return (
     <>
       <DocumentsFilters model={model} />{' '}
-      <div className="facility-documents-desktop">
+      <div className="hidden sm:block">
         <DataTable
           columns={columns}
           data={filtered}
@@ -514,34 +514,38 @@ const DocumentsListing = ({ model }: { readonly model: DocumentsModel }) => {
           }}
         />
       </div>
-      <div className="facility-documents-mobile">
+      <div className="flex flex-col gap-3 sm:hidden">
         {filtered.length === 0 && <EmptyState description={t(`${k}.filters.noMatch`)} title={t(emptyTitleKey)} />}
         {filtered.map((document) => {
           const version = document.versions.at(-1);
           return (
-            <button
-              className="facility-documents-card"
+            <Button
+              className="block w-full rounded-md bg-surface p-4 text-left hover:bg-overlay focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+              composition
               key={document.id}
               onClick={() => setOpenId(document.id)}
-              type="button"
+              size="current"
+              unstyled
             >
-              <FileTypeIcon mime={version?.file.mime ?? ''} name={version?.file.name ?? ''} />
-              <span className="flex min-w-0 flex-1 flex-col gap-100">
-                <span className="break-words font-semibold text-sm">{document.title}</span>
-                <span className="flex flex-wrap items-center gap-50">
-                  <CategoryBadge category={document.category} />
-                  {version !== undefined && (
-                    <Badge appearance="outline" severity="neutral" size="sm">{`v${version.version}`}</Badge>
-                  )}
+              <span className="flex items-start gap-3">
+                <FileTypeIcon mime={version?.file.mime ?? ''} name={version?.file.name ?? ''} />
+                <span className="flex min-w-0 flex-1 flex-col gap-100">
+                  <span className="break-words font-semibold text-sm">{document.title}</span>
+                  <span className="flex flex-wrap items-center gap-50">
+                    <CategoryBadge category={document.category} />
+                    {version !== undefined && (
+                      <Badge appearance="outline" severity="neutral" size="sm">{`v${version.version}`}</Badge>
+                    )}
+                  </span>
+                  <span className="text-fg-secondary text-xs">
+                    {version === undefined
+                      ? t(`${k}.noFileYet`)
+                      : `${formatWhen(version.uploadedAt)} · ${formatBytes(version.file.size)}`}
+                  </span>
+                  <LinksCell document={document} />
                 </span>
-                <span className="text-fg-secondary text-xs">
-                  {version === undefined
-                    ? t(`${k}.noFileYet`)
-                    : `${formatWhen(version.uploadedAt)} · ${formatBytes(version.file.size)}`}
-                </span>
-                <LinksCell document={document} />
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -672,13 +676,15 @@ const DeadlinesTab = ({ model }: { readonly model: DocumentsModel }) => {
                 </Badge>
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <button
-                  className="text-left font-medium text-sm hover:underline"
+                <Button
+                  className="justify-start text-left font-medium text-sm hover:underline"
+                  composition
                   onClick={() => setOpenId(entry.document.id)}
-                  type="button"
+                  size="current"
+                  unstyled
                 >
                   {entry.document.title}
-                </button>
+                </Button>
                 <span className="text-fg-secondary text-xs">
                   {entry.kind === 'end' ? t(`${k}.deadlines.end`) : t(`${k}.deadlines.notice`)}
                   {entry.document.contract === undefined
@@ -713,12 +719,14 @@ const MessagesTab = ({ model }: { readonly model: DocumentsModel }) => {
               ? 'border-primary bg-primary-light'
               : 'border-border-primary bg-surface hover:bg-highlight';
           return (
-            <button
+            <Button
               aria-current={channel === value ? 'page' : undefined}
-              className={`flex flex-col rounded-lg border px-150 py-100 text-left ${selectedClass}`}
+              className={`block rounded-lg border px-150 py-100 text-left ${selectedClass}`}
+              composition
               key={value}
               onClick={() => setChannel(value)}
-              type="button"
+              size="current"
+              unstyled
             >
               <span className="flex items-center justify-between gap-100 font-medium text-sm">
                 # {t(`${k}.messages.channel.${value}`)}
@@ -726,8 +734,8 @@ const MessagesTab = ({ model }: { readonly model: DocumentsModel }) => {
                   {String(count)}
                 </Badge>
               </span>
-              <span className="text-fg-secondary text-xs">{t(`${k}.messages.channelHint.${value}`)}</span>
-            </button>
+              <span className="block text-fg-secondary text-xs">{t(`${k}.messages.channelHint.${value}`)}</span>
+            </Button>
           );
         })}
       </nav>
@@ -804,9 +812,13 @@ const DocumentsView = () => {
       >
         {taskSubject !== undefined && (
           <SectionCard title={`${linkedTaskTitle} · ${taskSubject.label}`}>
-            <a className="text-sm underline" href={`/cs/ukoly?resourceId=${encodeURIComponent(taskSubject.id)}`}>
+            <Link
+              className="text-inherit text-sm underline"
+              href={`/cs/ukoly?resourceId=${encodeURIComponent(taskSubject.id)}`}
+              size="current"
+            >
               {t(`${k}.linked.backToTask`)}
-            </a>
+            </Link>
             <LinkedDocuments records={ops} subject={taskSubject} />
           </SectionCard>
         )}
@@ -825,15 +837,15 @@ const DocumentsView = () => {
           )}
         </StatRow>
 
-        <div className="facility-documents-tabs">
+        <div className="max-w-full overflow-x-auto">
           <Tabs
             appearance="line"
             onValueChange={(value) => setTab(tabs.find((entry) => entry === value) ?? 'all')}
             value={tab}
           >
-            <Tabs.List>
+            <Tabs.List className="w-max min-w-full flex-nowrap">
               {tabs.map((value) => (
-                <Tabs.Trigger key={value} value={value}>
+                <Tabs.Trigger className="shrink-0 whitespace-nowrap" key={value} value={value}>
                   {t(`${k}.tabs.${value}`)}
                   {value === 'deadlines' && deadlines.length > 0 && (
                     <span className="ml-100">

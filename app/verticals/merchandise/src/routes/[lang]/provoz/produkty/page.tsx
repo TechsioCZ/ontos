@@ -26,7 +26,6 @@ import enResource from '../../../../../locales/en/merchandise.json';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { formatKc } from '../../../../list-format.ts';
 import {
   categoryChoicesData,
@@ -331,16 +330,16 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     setSearch,
     setSelection,
     setSort,
+    setSymmyOnly,
     setTable,
     setTreeCategory,
     sort,
     state,
+    symmyOnly,
     t,
     tableStatus,
     tagFilter,
     toggleArchived,
-    setSymmyOnly,
-    symmyOnly,
     treeCategory,
   };
 };
@@ -383,16 +382,16 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     setSearch,
     setSelection,
     setSort,
+    setSymmyOnly,
     setTable,
     setTreeCategory,
     sort,
     state,
+    symmyOnly,
     t,
     tableStatus,
     tagFilter,
     toggleArchived,
-    setSymmyOnly,
-    symmyOnly,
     treeCategory,
   } = useProductListPage(props);
 

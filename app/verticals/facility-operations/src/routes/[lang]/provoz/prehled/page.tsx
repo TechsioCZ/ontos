@@ -6,6 +6,7 @@
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { useEffect, useState } from 'react';
 import { Array as EffectArray, Option, Order, Schema } from 'effect';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
@@ -102,19 +103,19 @@ const OverviewView = ({
     <>
       <PageHeader
         actions={
-          <a
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium no-underline"
+          <Link
+            className="inline-flex items-center gap-2 rounded-lg border border-border-primary px-3 py-1.5 text-sm font-medium text-inherit no-underline"
             href={`/${lang}/provoz/agenda`}
-            style={{ border: '1px solid var(--color-border-primary, #d1d5db)', color: 'inherit' }}
+            size="current"
           >
             <Icon name="calendar" size={18} />
             {t('facility-operations.agenda.overview.openCalendar')}
-          </a>
+          </Link>
         }
         description={t('facility-operations.agenda.overview.description')}
         meta={
           lastRead === undefined ? undefined : (
-            <span className="text-xs" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+            <span className="text-xs text-fg-secondary">
               {t('facility-operations.agenda.overview.dataAt', { time: fmt.stamp(lang, lastRead) })}
             </span>
           )

@@ -24,6 +24,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { BadgeProps } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
@@ -1134,17 +1135,19 @@ const SalesOrderDetails = ({ lang, onOpenQuote, order }: SalesOrderDetailsProps)
                 order.quoteId === undefined ? (
                   '—'
                 ) : (
-                  <button
+                  <Button
                     className="underline underline-offset-2"
+                    composition
                     onClick={() => {
                       if (order.quoteId !== undefined) {
                         onOpenQuote(order.quoteId);
                       }
                     }}
-                    type="button"
+                    size="current"
+                    unstyled
                   >
                     {order.quoteNumber ?? '—'}
-                  </button>
+                  </Button>
                 ),
             },
             ...(order.note === undefined ? [] : [{ label: k(noteLabelKey), value: order.note }]),
@@ -1167,12 +1170,13 @@ const SalesOrderDetails = ({ lang, onOpenQuote, order }: SalesOrderDetailsProps)
                   <span className="tabular-nums">{formatAmount(entry.totalMinor)}</span>
                 )}
                 <span className="text-fg-secondary text-xs">{formatStamp(entry.linkedAt)}</span>
-                <a
-                  className="font-medium underline underline-offset-2"
+                <Link
+                  className="font-medium text-inherit underline underline-offset-2"
                   href={`/${lang}/finance?resourceId=${encodeURIComponent(entry.invoiceId)}`}
+                  size="current"
                 >
                   {k('sales.openInvoice')}
-                </a>
+                </Link>
               </li>
             ))}
           </ul>

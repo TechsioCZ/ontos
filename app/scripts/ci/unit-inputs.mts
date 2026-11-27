@@ -164,17 +164,6 @@ export interface BuildDriver {
   readonly path: string;
   readonly tools: ReadonlyMap<string, string>;
 }
-/**
- * Reads a build step makes outside its reference graph. The Shell's build generates its gitignored Tailwind candidate
- * projection from every vertical's UI sources (VERTICAL_UI_SOURCES of the script), so the Shell is rebuilt whenever
- * those sources change.
- */
-const BUILD_STEP_READS = new Map([
-  [
-    'app/scripts/generate-shell-ui-candidates.mts',
-    /^app\/verticals\/[^/]+\/(?:src\/|vertical\.manifest\.ts$|vertical\.runtime-declaration\.ts$)/u,
-  ],
-]);
 /** The build driver typechecks these packages before any unit build, which then reads their declarations. */
 const PREBUILT_PACKAGES = /^\s*for project in (?<value>[^;]+);\s*do\b/mu;
 const TEST_PATH = /(?:^|\/)(?:tests|__tests__|fixtures|__fixtures__)\/|\.(?:test|spec)\.[^/]+$/u;
@@ -454,7 +443,6 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     const literals = code
       ? matches(PATH_LITERAL, withoutComments(text)).flatMap((literal) => resolveLiteral(filepath, literal))
       : [];
-    const stepReads = BUILD_STEP_READS.get(filepath);
     const manifest = ancestors(filepath)
       .map((directory) => `${directory}/package.json`)
       .find((candidate) => tracked.has(candidate));
@@ -484,7 +472,6 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
               )),
         ...resolved.flatMap((entry) => entry.files),
         ...literals,
-        ...(stepReads === undefined ? [] : [...tracked].filter((candidate) => stepReads.test(candidate))),
         ...(manifest === undefined ? [] : [manifest]),
       ],
       packages: resolved.flatMap((entry) => entry.packages),

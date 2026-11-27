@@ -33,7 +33,6 @@ import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
 import type { OpportunitySave } from './pipeline-dialogs.tsx';
 import { opportunitySaveResult } from './opportunity-draft.ts';

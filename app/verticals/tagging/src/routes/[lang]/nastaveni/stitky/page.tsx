@@ -36,7 +36,6 @@ import { TagI18n } from '../../../../tags/tag-i18n.tsx';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { TagCreatePanel } from './tag-create-panel.tsx';
 import { TagEditPanel } from './tag-edit-panel.tsx';
 

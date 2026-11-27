@@ -42,7 +42,6 @@ import type {
   SourceRow,
   WorkRecords,
 } from './overview-model';
-import '../../../index.css';
 
 const overviewClass = 'grid min-w-0 gap-6 max-[480px]:gap-4';
 const headingClass = 'flex flex-wrap items-start justify-between gap-4';

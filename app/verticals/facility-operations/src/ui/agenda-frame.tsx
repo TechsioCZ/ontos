@@ -6,8 +6,6 @@ import type { ReactNode } from 'react';
 import { facilityOperationsI18nResources } from '../i18n/resources.ts';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import type { LoadStatus } from './use-agenda.ts';
-import '../routes/index.css';
-
 /** i18n boundary + one Toaster per page tree (the shell mounts none, ui-kit's toast store is per remote). */
 export const AgendaFrame = ({ children }: { readonly children: ReactNode }) => (
   <FederatedI18nBoundary
@@ -17,14 +15,6 @@ export const AgendaFrame = ({ children }: { readonly children: ReactNode }) => (
     supportedLanguages={['en', 'cs']}
   >
     <Toaster />
-    <style>{`
-      [data-scope="toast"][data-part="root"][data-type="info"] {
-        background: #eff6ff !important;
-        border-color: #bfdbfe !important;
-        color: #1e3a8a !important;
-      }
-      [data-scope="toast"][data-part="root"][data-type="info"] * { color: #1e3a8a !important; }
-    `}</style>
     <div className="flex flex-col gap-300">{children}</div>
   </FederatedI18nBoundary>
 );

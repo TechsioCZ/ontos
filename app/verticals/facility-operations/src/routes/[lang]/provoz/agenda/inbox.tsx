@@ -13,6 +13,7 @@ import {
 import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
@@ -45,7 +46,6 @@ import type { AgendaEmailReceipts, EmailProviderState } from './agenda-email.tsx
 import { agendaEmailKey, useAgendaEmailReceipts, useEmailProvider } from './agenda-email.tsx';
 
 const k = 'facility-operations.agenda';
-const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 
 const notificationTone = {
   ASSIGNED: 'primary',
@@ -152,22 +152,19 @@ export const NotificationCenter = ({
     <SectionCard
       actions={
         <>
-          <div className="inline-flex rounded-lg p-0.5" style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}>
+          <div className="inline-flex rounded-lg bg-surface p-0.5">
             {(['all', 'unread'] as const).map((value) => (
-              <button
+              <Button
                 aria-pressed={filter === value}
-                className="cursor-pointer rounded-md border-0 px-3 py-1 text-sm font-medium"
+                className={`rounded-md border-0 px-3 py-1 text-sm font-medium text-inherit ${filter === value ? 'bg-base shadow-sm' : 'bg-transparent'}`}
+                composition
                 key={value}
                 onClick={() => setFilter(value)}
-                style={{
-                  background: filter === value ? '#ffffff' : 'transparent',
-                  boxShadow: filter === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
-                  color: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
                 {t(`${k}.notifications.filter.${value}`, { count: value === 'all' ? all.length : unread.length })}
-              </button>
+              </Button>
             ))}
           </div>
           {canWrite && (
@@ -184,21 +181,7 @@ export const NotificationCenter = ({
       }
       title={t(`${k}.notifications.title`)}
     >
-      <style>{`
-        .ops-inbox-card { display: grid; grid-template-columns: 36px minmax(0, 1fr); }
-        .ops-inbox-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
-        .ops-inbox-title { overflow-wrap: anywhere; }
-        @media (min-width: 768px) {
-          .ops-inbox-card { grid-template-columns: 36px minmax(0, 1fr) auto; }
-          .ops-inbox-actions { grid-column: 3; grid-row: 1; max-width: 260px; justify-content: flex-end; }
-        }
-        @media (max-width: 639px) {
-          .ops-inbox-title { font-size: 16px; line-height: 1.5; }
-          .ops-inbox-meta { font-size: 14px; line-height: 1.5; }
-          .ops-inbox-actions > a, .ops-inbox-actions > button { min-height: 44px; }
-        }
-      `}</style>
-      <p className="m-0 text-xs" style={muted}>
+      <p className="m-0 text-xs text-fg-secondary">
         {canWrite ? t(`${k}.notifications.explain`) : t(`${k}.notifications.readOnly`)}
       </p>
       {rows.length === 0 ? (
@@ -214,14 +197,15 @@ export const NotificationCenter = ({
             const from = personOf(entry.createdBy.principalId);
             return (
               <li
-                className="items-start gap-3 rounded-lg p-3"
+                className={[
+                  'items-start gap-3 rounded-lg border p-3',
+                  ...(isUnread
+                    ? [toneColors(tone).tint, toneColors(tone).ringBorder]
+                    : ['border-transparent bg-surface']),
+                ].join(' ')}
                 data-event-key={entry.eventKey}
                 data-unread={isUnread}
                 key={entry.id}
-                style={{
-                  background: isUnread ? toneColors(tone).bg : 'var(--color-surface)',
-                  border: `1px solid ${isUnread ? toneColors(tone).ring : 'transparent'}`,
-                }}
               >
                 <IconBadge name={notificationIcon[entry.category]} size={36} tone={tone} />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -231,7 +215,7 @@ export const NotificationCenter = ({
                     </Pill>
                     <span className="w-full font-medium">{entry.title}</span>
                   </div>
-                  <span className="text-xs" style={muted}>
+                  <span className="text-xs text-fg-secondary">
                     {[
                       t(`${k}.sources.${entry.source}`),
                       entry.dueDate === undefined
@@ -251,10 +235,14 @@ export const NotificationCenter = ({
                 </div>
                 <div className="">
                   {entry.href !== undefined && (
-                    <a className="inline-flex items-center gap-1 text-sm font-medium" href={`/${lang}${entry.href}`}>
+                    <Link
+                      className="inline-flex items-center gap-1 text-sm font-medium text-inherit no-underline"
+                      href={`/${lang}${entry.href}`}
+                      size="current"
+                    >
                       {t(`${k}.open`)}
                       <Icon name="arrowRight" size={14} />
-                    </a>
+                    </Link>
                   )}
                   {isUnread && canWrite && (
                     <Button appearance="ghost" onClick={() => onMarkRead(entry.id)} severity="secondary" size="sm">
@@ -269,9 +257,8 @@ export const NotificationCenter = ({
                     const label = notificationEmailLabel(receipt, lang, t);
                     return (
                       <span
-                        className="inline-flex items-center gap-1 text-xs"
+                        className="inline-flex items-center gap-1 text-xs text-fg-secondary"
                         data-testid="notification-email"
-                        style={muted}
                       >
                         <Icon name="mail" size={14} />
                         {label}
@@ -279,7 +266,7 @@ export const NotificationCenter = ({
                     );
                   })()}
                   {!isUnread && entry.readAt !== undefined && (
-                    <span className="inline-flex items-center gap-1 text-xs" style={muted}>
+                    <span className="inline-flex items-center gap-1 text-xs text-fg-secondary">
                       <Icon name="check" size={14} />
                       {t(`${k}.notifications.readAt`, { time: fmt.stamp(lang, DateTime.formatIso(entry.readAt)) })}
                     </span>
@@ -327,45 +314,37 @@ export const MyAgenda = ({
   const person = personOf(me);
   const list = (rows: readonly Deadline[], empty: string) =>
     rows.length === 0 ? (
-      <p className="m-0 text-sm" style={muted}>
-        {empty}
-      </p>
+      <p className="m-0 text-sm text-fg-secondary">{empty}</p>
     ) : (
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
         {rows.slice(0, 12).map((row) => {
           const urgency = urgencyOf(row, today);
           return (
             <li key={row.key}>
-              <button
-                className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-left facilityoperations:hover:shadow-sm"
+              <Button
+                className="block w-full rounded-lg border-0 bg-surface px-2 py-2 text-left text-inherit hover:shadow-sm"
+                composition
                 data-key={row.key}
                 onClick={() => onOpen(row)}
-                style={{
-                  background: 'var(--color-surface-subtle, #f8fafc)',
-                  border: 0,
-                  color: 'inherit',
-                  font: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
-                <span
-                  className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-xs font-semibold"
-                  style={{
-                    background: toneColors(urgencyTone[urgency]).bg,
-                    color: toneColors(urgencyTone[urgency]).fg,
-                  }}
-                >
-                  <span className="text-base leading-none">{Number(row.date.slice(8, 10))}</span>
-                  <span className="facilityoperations:text-[10px] uppercase">{fmt.weekday(lang, row.date)}</span>
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate font-medium">{row.title}</span>
-                  <span className="truncate text-xs" style={muted}>
-                    {row.location ?? t(`${k}.sources.${row.source}`)}
+                <span className="flex items-center gap-3">
+                  <span
+                    className={`flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-xs font-semibold ${toneColors(urgencyTone[urgency]).tint} ${toneColors(urgencyTone[urgency]).fg}`}
+                  >
+                    <span className="text-base leading-none">{Number(row.date.slice(8, 10))}</span>
+                    <span className="text-[10px] uppercase">{fmt.weekday(lang, row.date)}</span>
                   </span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate font-medium">{row.title}</span>
+                    <span className="truncate text-xs text-fg-secondary">
+                      {row.location ?? t(`${k}.sources.${row.source}`)}
+                    </span>
+                  </span>
+                  <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
                 </span>
-                <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
-              </button>
+              </Button>
             </li>
           );
         })}
@@ -373,7 +352,7 @@ export const MyAgenda = ({
     );
   return (
     <div className="flex flex-col gap-4">
-      <p className="m-0 text-sm" style={muted}>
+      <p className="m-0 text-sm text-fg-secondary">
         {t(`${k}.mine.intro`, { who: person?.displayName ?? t(`${k}.mine.you`) })}
       </p>
       <StatRow>
@@ -385,18 +364,16 @@ export const MyAgenda = ({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard
           actions={
-            <a className="text-sm font-medium" href={`/${lang}/ukoly`}>
+            <Link className="text-sm font-medium text-inherit no-underline" href={`/${lang}/ukoly`} size="current">
               {t(`${k}.mine.allTasks`)}
-            </a>
+            </Link>
           }
           title={t(`${k}.mine.tasks`, { count: tasks.length })}
         >
           {workStatus === 'ready' ? (
             list(tasks, t(`${k}.mine.noTasks`))
           ) : (
-            <p className="m-0 text-sm" style={muted}>
-              {t(`${k}.state.${workStatus}`)}
-            </p>
+            <p className="m-0 text-sm text-fg-secondary">{t(`${k}.state.${workStatus}`)}</p>
           )}
         </SectionCard>
         <SectionCard title={t(`${k}.mine.events`, { count: events.length })}>
@@ -410,11 +387,7 @@ export const MyAgenda = ({
               {t(`${k}.category.${category}`)}: {mine.filter((row) => row.category === category).length}
             </Pill>
           ))}
-          {mine.length === 0 && (
-            <span className="text-sm" style={muted}>
-              {t(`${k}.mine.nothing`)}
-            </span>
-          )}
+          {mine.length === 0 && <span className="text-sm text-fg-secondary">{t(`${k}.mine.nothing`)}</span>}
         </div>
       </SectionCard>
     </div>
@@ -512,7 +485,7 @@ export const SettingsPanel = ({
               <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
                 {t(`${k}.settings.email`)}
               </Switch>
-              <span className="flex flex-col items-start gap-1 text-xs" data-testid="email-provider" style={muted}>
+              <span className="flex flex-col items-start gap-1 text-xs text-fg-secondary" data-testid="email-provider">
                 {providerPill}
                 <span>{providerText}</span>
               </span>
@@ -552,12 +525,10 @@ export const SettingsPanel = ({
                     size="sm"
                   />
                 ))}
-                <span className="text-xs" style={muted}>
-                  {t(`${k}.settings.optionalHint`)}
-                </span>
+                <span className="text-xs text-fg-secondary">{t(`${k}.settings.optionalHint`)}</span>
               </fieldset>
             )}
-            <p className="m-0 text-xs" style={muted}>
+            <p className="m-0 text-xs text-fg-secondary">
               {current === undefined
                 ? t(`${k}.settings.default`, { count: DEFAULT_LEAD_DAYS })
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
@@ -584,7 +555,7 @@ export const SettingsPanel = ({
           ) : (
             <table className="w-full border-collapse text-sm" data-testid="export-log">
               <thead>
-                <tr className="text-left" style={muted}>
+                <tr className="text-left text-fg-secondary">
                   <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.when`)}</th>
                   <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.who`)}</th>
                   <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.list`)}</th>
@@ -593,7 +564,7 @@ export const SettingsPanel = ({
               </thead>
               <tbody>
                 {exports.map((entry) => (
-                  <tr key={entry.id} style={{ borderTop: '1px solid var(--color-border-muted, #f1f5f9)' }}>
+                  <tr className="border-t border-border-primary/60" key={entry.id}>
                     <td className="whitespace-nowrap px-2 py-1.5">
                       {fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}
                     </td>
@@ -601,9 +572,7 @@ export const SettingsPanel = ({
                     <td className="px-2 py-1.5">
                       <div>{exportListLabel(entry.list, t)}</div>
                       {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
-                        <div className="text-xs" style={muted}>
-                          {entry.filter}
-                        </div>
+                        <div className="text-xs text-fg-secondary">{entry.filter}</div>
                       )}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{entry.rowCount}</td>

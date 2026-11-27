@@ -21,7 +21,6 @@ import { useState } from 'react';
 import { Option, Result, Schema, SchemaGetter } from 'effect';
 import csResource from '../../../../locales/cs/finance-billing.json';
 import enResource from '../../../../locales/en/finance-billing.json';
-import '../../index.css';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
 import { FinanceDocumentDetail } from './document-detail.tsx';

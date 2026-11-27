@@ -672,9 +672,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/symmy-integration':
         specifier: workspace:*
         version: link:../../verticals/symmy-integration
@@ -805,9 +802,6 @@ importers:
       '@playwright/test':
         specifier: 1.61.0
         version: 1.61.0
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -844,9 +838,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1426,8 +1417,6 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
-  packages/shared-design-tokens: {}
-
   packages/storefront-registry-contracts:
     dependencies:
       '@app/shared-contracts':
@@ -1480,9 +1469,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/storefront-registry-contracts':
         specifier: workspace:*
         version: link:../../packages/storefront-registry-contracts
@@ -1574,9 +1560,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -1601,9 +1584,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -1713,9 +1693,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
@@ -1804,9 +1781,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -1831,9 +1805,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -2121,9 +2092,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/storefront-registry':
         specifier: workspace:*
         version: link:../storefront-registry
@@ -2224,9 +2192,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -2251,9 +2216,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -2457,9 +2419,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
@@ -2545,9 +2504,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -2572,9 +2528,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -2605,9 +2558,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/work-tasks':
         specifier: workspace:*
         version: link:../work-tasks
@@ -2696,9 +2646,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -2723,9 +2670,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -2768,9 +2712,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/work-tasks':
         specifier: workspace:*
         version: link:../work-tasks
@@ -2862,9 +2803,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -2889,9 +2827,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -2940,9 +2875,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tax':
         specifier: workspace:*
         version: link:../tax
@@ -3040,9 +2972,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -3064,9 +2993,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -3097,9 +3023,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
@@ -3188,9 +3111,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -3218,9 +3138,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -3260,9 +3177,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
@@ -3348,9 +3262,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -3372,9 +3283,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -3408,9 +3316,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -3502,9 +3407,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -3529,9 +3431,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -3568,9 +3467,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -3668,9 +3564,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -3707,9 +3600,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4104,9 +3994,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/symmy-integration':
         specifier: workspace:*
         version: link:../symmy-integration
@@ -4207,9 +4094,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -4234,9 +4118,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4258,9 +4139,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
@@ -4346,9 +4224,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7b0a2fce743d0042af6379c63110ffb0)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -4373,9 +4248,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4494,9 +4366,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/work-tasks':
         specifier: workspace:*
         version: link:../work-tasks
@@ -4585,9 +4454,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -4609,9 +4475,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4648,9 +4511,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/work-tasks':
         specifier: workspace:*
         version: link:../work-tasks
@@ -4742,9 +4602,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -4766,9 +4623,6 @@ importers:
       effect-rstest:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4805,9 +4659,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -4905,9 +4756,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -4932,9 +4780,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -4968,9 +4813,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -5065,9 +4907,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -5092,9 +4931,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -5228,9 +5064,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tax':
         specifier: workspace:*
         version: link:../tax
@@ -5319,9 +5152,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -5343,9 +5173,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -5376,9 +5203,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/workforce':
         specifier: workspace:*
         version: link:../workforce
@@ -5467,9 +5291,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -5494,9 +5315,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -5612,9 +5430,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/workforce':
         specifier: workspace:*
         version: link:../workforce
@@ -5706,9 +5521,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -5733,9 +5545,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -5760,9 +5569,6 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -5851,9 +5657,6 @@ importers:
       '@modern-js/ultramodern-app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e1a1bc5154e306e31a4dbcf94deb49bb)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -5878,9 +5681,6 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
       tsrs:
         specifier: 0.25.0-ts7.1.0-beta
         version: 0.25.0-ts7.1.0-beta
@@ -21325,27 +21125,9 @@ snapshots:
       - supports-color
       - typescript
 
-  '@rsbuild/plugin-tailwindcss@2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))':
-    dependencies:
-      '@tailwindcss/webpack': 4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
-    optionalDependencies:
-      '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
-    transitivePeerDependencies:
-      - '@rspack/core'
-      - webpack
-
   '@rsbuild/plugin-tailwindcss@2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))':
     dependencies:
       '@tailwindcss/webpack': 4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
-    optionalDependencies:
-      '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
-    transitivePeerDependencies:
-      - '@rspack/core'
-      - webpack
-
-  '@rsbuild/plugin-tailwindcss@2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))':
-    dependencies:
-      '@tailwindcss/webpack': 4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
     optionalDependencies:
       '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
     transitivePeerDependencies:
@@ -21852,16 +21634,6 @@ snapshots:
       postcss: 8.5.31
       tailwindcss: 4.3.3
 
-  '@tailwindcss/webpack@4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))':
-    dependencies:
-      '@alloc/quick-lru': 5.3.0
-      '@tailwindcss/node': 4.3.3
-      '@tailwindcss/oxide': 4.3.3
-      tailwindcss: 4.3.3
-    optionalDependencies:
-      '@rspack/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)
-      webpack: 5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0)
-
   '@tailwindcss/webpack@4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))':
     dependencies:
       '@alloc/quick-lru': 5.3.0
@@ -21871,16 +21643,6 @@ snapshots:
     optionalDependencies:
       '@rspack/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24)
       webpack: 5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0)
-
-  '@tailwindcss/webpack@4.3.3(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))':
-    dependencies:
-      '@alloc/quick-lru': 5.3.0
-      '@tailwindcss/node': 4.3.3
-      '@tailwindcss/oxide': 4.3.3
-      tailwindcss: 4.3.3
-    optionalDependencies:
-      '@rspack/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24)
-      webpack: 5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0)
 
   '@tanstack/charts@1.5.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)':
     dependencies:

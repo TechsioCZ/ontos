@@ -30,7 +30,6 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/crm-activities.json';
 import enResource from '../../../../locales/en/crm-activities.json';
-import '../../index.css';
 
 const searchSchema = Schema.Struct({
   resourceId: Schema.optional(ActivityRefSchema.fields.resourceId.check(Schema.isUUID())),

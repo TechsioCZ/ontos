@@ -10,7 +10,6 @@ import { dashboardData, dashboardInputOf } from '../dashboard/dashboard-data.ts'
 import { formatMetricValue } from '../statistics/format-metric.ts';
 import csResource from '../../locales/cs/sales-insights.json';
 import enResource from '../../locales/en/sales-insights.json';
-import '../routes/index.css';
 
 export type CrmDashboardProps = ModulePageProps;
 const key = 'sales-insights.dashboard';

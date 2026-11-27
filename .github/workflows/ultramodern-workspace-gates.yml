@@ -1346,7 +1346,6 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 

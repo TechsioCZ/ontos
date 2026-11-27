@@ -4,7 +4,6 @@ import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Option, Result, Schema } from 'effect';
 
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
-import '../../../../index.css';
 import { PartyIdentityPageView } from './party-identity-view.tsx';
 import { PARTY_IDENTITY_KEY, partyIdentityInput } from './party-identity-data.ts';
 import { partyIdentityI18nResources } from './party-identity-i18n.ts';

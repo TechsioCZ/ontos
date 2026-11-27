@@ -27,9 +27,6 @@
       "path": "../../packages/shared-contracts"
     },
     {
-      "path": "../../packages/shared-design-tokens"
-    },
-    {
       "path": "../../packages/catalog-selection-contracts"
     },
     {

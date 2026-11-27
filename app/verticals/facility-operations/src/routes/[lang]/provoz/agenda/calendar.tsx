@@ -3,6 +3,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { EmptyState, foldSearchText } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
 import { useState, useSyncExternalStore } from 'react';
 import { DateTime, Schema } from 'effect';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
@@ -24,7 +25,6 @@ import {
 } from '../../../../ui/ops-agenda/ui-bits.tsx';
 
 const k = 'facility-operations.agenda';
-const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 
 export const CalendarModeSchema = Schema.Literals(['mesic', 'tyden', 'seznam']);
 export type CalendarMode = typeof CalendarModeSchema.Type;
@@ -66,11 +66,13 @@ const sourceTone = (status: RentalOverviewSources[SourceId]['status']): Tone => 
   return status === 'loading' || status === 'forbidden' ? 'neutral' : 'danger';
 };
 
-const cellBackground = (outside: boolean, weekend: boolean) => {
-  if (outside) {
-    return '#f4f5f7';
+const cellBackground = (outside: boolean) => (outside ? 'bg-surface' : 'bg-base');
+
+const dayNumberColour = (isToday: boolean, outside: boolean) => {
+  if (isToday) {
+    return `${toneColors('primary').accent} text-fg-reverse`;
   }
-  return weekend ? '#fafafb' : '#ffffff';
+  return outside ? 'text-fg-secondary' : '';
 };
 
 const relativeDayLabel = (days: number, t: ReturnType<typeof useModernI18n>['t']) => {
@@ -89,20 +91,24 @@ const Toggle = ({
   readonly label: string;
   readonly onToggle: () => void;
 }) => (
-  <button
+  <Button
     aria-pressed={active}
-    className="inline-flex cursor-pointer items-center gap-1 rounded-full px-3 py-1 text-xs font-medium"
+    className={[
+      'rounded-full border px-3 py-1 text-xs font-medium',
+      ...(active
+        ? [toneColors('primary').border, toneColors('primary').tint, toneColors('primary').fg]
+        : ['border-border-primary bg-transparent text-inherit']),
+    ].join(' ')}
+    composition
     onClick={onToggle}
-    style={{
-      background: active ? toneColors('primary').bg : 'transparent',
-      border: `1px solid ${active ? toneColors('primary').accent : 'var(--color-border-primary, #d1d5db)'}`,
-      color: active ? toneColors('primary').fg : 'inherit',
-    }}
-    type="button"
+    size="current"
+    unstyled
   >
-    {active && <Icon name="check" size={12} />}
-    {label}
-  </button>
+    <span className="inline-flex items-center gap-1">
+      {active && <Icon name="check" size={12} />}
+      {label}
+    </span>
+  </Button>
 );
 
 const EventChip = ({
@@ -121,21 +127,16 @@ const EventChip = ({
   const categoryLabel = t(`${k}.category.${row.category}`);
   return (
     <Tooltip content={`${categoryLabel}: ${row.title}`}>
-      <button
-        className="flex w-full cursor-pointer items-center gap-1 truncate rounded-md border-0 px-1.5 py-0.5 text-left facilityoperations:text-[11px] font-medium"
+      <Button
+        className={`flex w-full justify-start truncate rounded-md border-0 border-l-2 px-1.5 py-0.5 text-left text-[11px] font-medium ${colors.tint} ${colors.fg} ${overdue ? toneColors('danger').border : colors.border}${row.done ? ' line-through opacity-60' : ''}`}
+        composition
         data-key={row.key}
         onClick={() => onOpen(row)}
-        style={{
-          background: colors.bg,
-          borderLeft: `3px solid ${overdue ? toneColors('danger').accent : colors.accent}`,
-          color: colors.fg,
-          opacity: row.done ? 0.55 : 1,
-          textDecoration: row.done ? 'line-through' : 'none',
-        }}
-        type="button"
+        size="current"
+        unstyled
       >
         <span className="truncate">{row.title}</span>
-      </button>
+      </Button>
     </Tooltip>
   );
 };
@@ -162,14 +163,10 @@ const MonthGrid = ({
   const month = cursor.slice(0, 7);
   const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
   return (
-    <div
-      className="overflow-hidden rounded-lg"
-      data-testid="calendar-month"
-      style={{ border: '1px solid var(--color-border-primary, #e5e7eb)' }}
-    >
-      <div className="grid grid-cols-7" style={{ background: '#f4f5f7' }}>
+    <div className="overflow-hidden rounded-lg border border-border-primary" data-testid="calendar-month">
+      <div className="grid grid-cols-7 bg-surface">
         {weekdayHeaders(lang, start).map((label) => (
-          <div className="px-2 py-2 text-xs font-semibold uppercase" key={label} style={muted}>
+          <div className="px-2 py-2 text-xs font-semibold uppercase text-fg-secondary" key={label}>
             {label}
           </div>
         ))}
@@ -180,25 +177,14 @@ const MonthGrid = ({
           const more = rows.at(3);
           const isToday = date === today;
           const outside = date.slice(0, 7) !== month;
-          const weekend = [5, 6].includes(mondayWeekday(date));
           return (
             <div
-              className="flex min-h-28 flex-col gap-1 p-1.5"
+              className={`flex min-h-28 flex-col gap-1 border-l border-t border-border-primary/60 p-1.5 ${cellBackground(outside)}`}
               data-date={date}
               key={date}
-              style={{
-                background: cellBackground(outside, weekend),
-                borderLeft: '1px solid var(--color-border-muted, #eef0f3)',
-                borderTop: '1px solid var(--color-border-muted, #eef0f3)',
-              }}
             >
               <span
-                className="inline-flex h-6 w-6 items-center justify-center self-end rounded-full text-xs font-semibold"
-                style={
-                  isToday
-                    ? { background: toneColors('primary').accent, color: '#fff' }
-                    : { color: outside ? 'var(--color-fg-secondary, #9ca3af)' : 'inherit' }
-                }
+                className={`inline-flex h-6 w-6 items-center justify-center self-end rounded-full text-xs font-semibold ${dayNumberColour(isToday, outside)}`}
               >
                 {Number(date.slice(8, 10))}
               </span>
@@ -206,14 +192,15 @@ const MonthGrid = ({
                 <EventChip key={row.key} onOpen={onOpen} row={row} today={today} />
               ))}
               {rows.length > 3 && more !== undefined && (
-                <button
-                  className="cursor-pointer border-0 bg-transparent px-1 text-left facilityoperations:text-[11px] font-medium"
+                <Button
+                  className="justify-start border-0 bg-transparent px-1 text-left text-[11px] font-medium text-fg-secondary"
+                  composition
                   onClick={() => onOpen(more)}
-                  style={muted}
-                  type="button"
+                  size="current"
+                  unstyled
                 >
                   {t(`${k}.calendar.more`, { count: rows.length - 3 })}
-                </button>
+                </Button>
               )}
             </div>
           );
@@ -245,25 +232,21 @@ const WeekGrid = ({
         const isToday = date === today;
         return (
           <div
-            className="flex facilityoperations:min-h-[260px] flex-col gap-1.5 rounded-lg p-2"
+            className={[
+              'flex min-h-[260px] flex-col gap-1.5 rounded-lg border bg-surface p-2',
+              ...(isToday
+                ? ['ring-2', toneColors('primary').border, toneColors('primary').ring]
+                : ['border-transparent']),
+            ].join(' ')}
             data-date={date}
             key={date}
-            style={{
-              background: 'var(--color-surface)',
-              border: `1px solid ${isToday ? toneColors('primary').accent : 'transparent'}`,
-              boxShadow: isToday ? `0 0 0 2px ${toneColors('primary').ring}` : 'none',
-            }}
           >
             <div className="flex items-baseline justify-between">
-              <span className="text-xs font-semibold uppercase" style={muted}>
-                {fmt.weekday(lang, date)}
-              </span>
+              <span className="text-xs font-semibold uppercase text-fg-secondary">{fmt.weekday(lang, date)}</span>
               <span className="text-lg font-semibold">{fmt.dayMonth(lang, date)}</span>
             </div>
             {rows.length === 0 ? (
-              <span className="text-xs" style={muted}>
-                {t(`${k}.calendar.free`)}
-              </span>
+              <span className="text-xs text-fg-secondary">{t(`${k}.calendar.free`)}</span>
             ) : (
               rows.map((row) => <EventChip key={row.key} onOpen={onOpen} row={row} today={today} />)
             )}
@@ -299,37 +282,35 @@ const ListView = ({
         const days = daysUntil(date, today);
         return (
           <section className="flex flex-col gap-1.5" key={date}>
-            <h3 className="m-0 flex items-center gap-2 text-sm font-semibold facilityoperations:first-letter:uppercase">
+            <h3 className="m-0 flex items-center gap-2 text-sm font-semibold first-letter:uppercase">
               {fmt.long(lang, date)}
-              <span className="text-xs font-normal" style={muted}>
-                {relativeDayLabel(days, t)}
-              </span>
+              <span className="text-xs font-normal text-fg-secondary">{relativeDayLabel(days, t)}</span>
             </h3>
             {items.map((row) => {
               const urgency = urgencyOf(row, today);
               return (
-                <button
-                  className="flex w-full cursor-pointer flex-wrap items-center gap-3 rounded-lg px-3 py-2.5 text-left facilityoperations:hover:shadow-md"
+                <Button
+                  className="block w-full rounded-lg border-0 bg-surface px-3 py-2.5 text-left text-inherit hover:shadow-md"
+                  composition
                   data-key={row.key}
                   key={row.key}
                   onClick={() => onOpen(row)}
-                  style={{ background: 'var(--color-surface)', border: 0, color: 'inherit', font: 'inherit' }}
-                  type="button"
+                  size="current"
+                  unstyled
                 >
-                  <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span
-                      className="truncate font-medium"
-                      style={{ textDecoration: row.done ? 'line-through' : 'none' }}
-                    >
-                      {row.title}
+                  <span className="flex flex-wrap items-center gap-3">
+                    <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className={`truncate font-medium${row.done ? ' line-through' : ''}`}>{row.title}</span>
+                      <span className="truncate text-xs text-fg-secondary">
+                        {[t(`${k}.sources.${row.source}`), row.location]
+                          .filter((part) => part !== undefined)
+                          .join(' · ')}
+                      </span>
                     </span>
-                    <span className="truncate text-xs" style={muted}>
-                      {[t(`${k}.sources.${row.source}`), row.location].filter((part) => part !== undefined).join(' · ')}
-                    </span>
+                    <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
                   </span>
-                  <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
-                </button>
+                </Button>
               );
             })}
           </section>
@@ -560,34 +541,25 @@ export const CalendarView = ({
           >
             <Icon name="chevronRight" size={18} />
           </Button>
-          <h2
-            className="m-0 ml-2 text-lg font-semibold facilityoperations:first-letter:uppercase"
-            data-testid="calendar-period"
-          >
+          <h2 className="m-0 ml-2 text-lg font-semibold first-letter:uppercase" data-testid="calendar-period">
             {overdueOnly ? t(`${k}.calendar.overduePeriod`) : periodLabel}
           </h2>
         </div>
         <div className="flex items-center gap-2">
-          <fieldset
-            className="inline-flex rounded-lg p-0.5"
-            style={{ background: 'var(--color-surface-subtle, #f1f5f9)', border: 0, margin: 0, minWidth: 0 }}
-          >
+          <fieldset className="m-0 inline-flex min-w-0 rounded-lg border-0 bg-surface p-0.5">
             {(['mesic', 'tyden', 'seznam'] as const).map((value) => (
-              <button
+              <Button
                 aria-pressed={mode === value}
-                className="cursor-pointer rounded-md border-0 px-3 py-1.5 text-sm font-medium"
+                className={`rounded-md border-0 px-3 py-1.5 text-sm font-medium text-inherit ${mode === value ? 'bg-base shadow-sm' : 'bg-transparent'}`}
+                composition
                 data-mode={value}
                 key={value}
                 onClick={() => setChosenMode(value)}
-                style={{
-                  background: mode === value ? '#ffffff' : 'transparent',
-                  boxShadow: mode === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
-                  color: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
                 {t(`${k}.calendar.mode.${value}`)}
-              </button>
+              </Button>
             ))}
           </fieldset>
           <Button appearance="outline" onClick={csv} severity="secondary" size="sm">
@@ -602,9 +574,10 @@ export const CalendarView = ({
           const { status } = sources[source];
           return (
             <Tooltip content={t(`${k}.state.${status}`)} key={source}>
-              <button
+              <Button
                 aria-pressed={!off}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+                className={`rounded-full border border-border-primary px-3 py-1 text-xs font-medium text-inherit ${off ? 'bg-transparent opacity-50' : 'bg-base'}`}
+                composition
                 data-source={source}
                 onClick={() =>
                   setHidden((current) => {
@@ -617,22 +590,19 @@ export const CalendarView = ({
                     return next;
                   })
                 }
-                style={{
-                  background: off ? 'transparent' : '#ffffff',
-                  border: '1px solid var(--color-border-primary, #d1d5db)',
-                  color: 'inherit',
-                  opacity: off ? 0.5 : 1,
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
-                <Dot tone={sourceTone(status)} />
-                {t(`${k}.sources.${source}`)}
-                {status === 'forbidden' && <Icon name="lock" size={12} />}
-              </button>
+                <span className="inline-flex items-center gap-1.5">
+                  <Dot tone={sourceTone(status)} />
+                  {t(`${k}.sources.${source}`)}
+                  {status === 'forbidden' && <Icon name="lock" size={12} />}
+                </span>
+              </Button>
             </Tooltip>
           );
         })}
-        <span className="mx-1 h-5 w-px" style={{ background: 'var(--color-border-primary, #d1d5db)' }} />
+        <span className="mx-1 h-5 w-px bg-border-primary" />
         <Toggle active={mineOnly} label={t(`${k}.calendar.mineOnly`)} onToggle={() => setMineOnly((value) => !value)} />
         <Toggle
           active={overdueOnly}
@@ -640,19 +610,19 @@ export const CalendarView = ({
           onToggle={() => setOverdueOnly((value) => !value)}
         />
         <Toggle active={showDone} label={t(`${k}.calendar.showDone`)} onToggle={() => setShowDone((value) => !value)} />
-        <input
+        <Input
           aria-label={t(`${k}.calendar.filter`)}
-          className="ml-auto facilityoperations:min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
+          className="ml-auto h-auto w-auto min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t(`${k}.calendar.filter`)}
-          style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)' }}
+          size="sm"
           type="search"
           value={query}
         />
       </div>
 
       {missing.length > 0 && (
-        <p className="m-0 flex items-center gap-2 text-xs" style={muted}>
+        <p className="m-0 flex items-center gap-2 text-xs text-fg-secondary">
           <Icon name="info" size={14} />
           {t(`${k}.calendar.missingSources`, {
             sources: missing
@@ -667,9 +637,7 @@ export const CalendarView = ({
       )}
 
       {renderCalendarGrid(mode, overdueOnly, { byDate, cursor, lang, onOpen, range, rows: inRange, today })}
-      <p className="m-0 text-xs" style={muted}>
-        {t(`${k}.calendar.readOnlyNote`)}
-      </p>
+      <p className="m-0 text-xs text-fg-secondary">{t(`${k}.calendar.readOnlyNote`)}</p>
     </div>
   );
 };

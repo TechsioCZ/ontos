@@ -1,9 +1,7 @@
 import { optionalField } from '../../../shared/domain/common.ts';
 import { DateTime, Effect, Option, Schema } from 'effect';
-// Small visual building blocks of the calendar / overview pages (ops-agenda lane). Colours come from the ui-kit
-// theme variables with neutral fallbacks, applied inline so they never depend on class scanning.
-import type { CSSProperties, ReactNode } from 'react';
-import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
+// Small visual building blocks of the calendar / overview pages (ops-agenda lane). Colours are ui-kit token classes.
+import type { ReactNode } from 'react';
 import type { Tone } from './model.ts';
 import { runCommand } from '../use-agenda.ts';
 import { toCsv } from './deadlines.ts';
@@ -11,39 +9,75 @@ import type { Urgency } from './deadlines.ts';
 import type { DeadlineCategory } from '../../../shared/domain/ops-overview.ts';
 import type { SourceStatus } from './sources.ts';
 
+/** Kit colour tokens of a tone: `accent` fills, `border` and `text` in the accent, `tint` backgrounds, `fg` text on
+ * the tint, `ring` (and `ringBorder`, the same colour as a border) emphasis around a tile. */
 const palette = {
   danger: {
-    accent: 'var(--color-danger-500, #dc2626)',
-    bg: 'var(--color-danger-100, #fee2e2)',
-    fg: 'var(--color-danger-800, #991b1b)',
-    ring: 'var(--color-danger-300, #fca5a5)',
+    accent: 'bg-danger',
+    border: 'border-danger',
+    fg: 'text-danger-fg',
+    ring: 'ring-danger-light-active',
+    ringBorder: 'border-danger-light-active',
+    text: 'text-danger',
+    tint: 'bg-danger-light',
   },
-  info: { accent: '#2563eb', bg: '#e8f0fe', fg: '#1e3a8a', ring: '#93c5fd' },
+  info: {
+    accent: 'bg-info',
+    border: 'border-info',
+    fg: 'text-info-fg',
+    ring: 'ring-info-light-active',
+    ringBorder: 'border-info-light-active',
+    text: 'text-info',
+    tint: 'bg-info-light',
+  },
   neutral: {
-    accent: 'var(--color-neutral-500, #6b7280)',
-    bg: 'var(--color-neutral-100, #f3f4f6)',
-    fg: 'var(--color-neutral-700, #374151)',
-    ring: 'var(--color-neutral-300, #d1d5db)',
+    accent: 'bg-fg-secondary',
+    border: 'border-fg-secondary',
+    fg: 'text-fg-secondary',
+    ring: 'ring-border-primary',
+    ringBorder: 'border-border-primary',
+    text: 'text-fg-secondary',
+    tint: 'bg-fill-base',
   },
   primary: {
-    accent: 'var(--color-primary-500, #d4a106)',
-    bg: 'var(--color-primary-100, #fef3c7)',
-    fg: '#713f12',
-    ring: 'var(--color-primary-300, #fcd34d)',
+    accent: 'bg-primary',
+    border: 'border-primary',
+    fg: 'text-primary-accent-fg',
+    ring: 'ring-primary-light-active',
+    ringBorder: 'border-primary-light-active',
+    text: 'text-primary',
+    tint: 'bg-primary-light',
   },
   success: {
-    accent: 'var(--color-success-500, #16a34a)',
-    bg: 'var(--color-success-100, #dcfce7)',
-    fg: 'var(--color-success-800, #166534)',
-    ring: 'var(--color-success-300, #86efac)',
+    accent: 'bg-success',
+    border: 'border-success',
+    fg: 'text-success-fg',
+    ring: 'ring-success-light-active',
+    ringBorder: 'border-success-light-active',
+    text: 'text-success',
+    tint: 'bg-success-light',
   },
   warning: {
-    accent: 'var(--color-warning-500, #ea580c)',
-    bg: 'var(--color-warning-100, #ffedd5)',
-    fg: 'var(--color-warning-800, #9a3412)',
-    ring: 'var(--color-warning-300, #fdba74)',
+    accent: 'bg-warning',
+    border: 'border-warning',
+    fg: 'text-warning-fg',
+    ring: 'ring-warning-light-active',
+    ringBorder: 'border-warning-light-active',
+    text: 'text-warning',
+    tint: 'bg-warning-light',
   },
-} satisfies Record<Tone, { readonly accent: string; readonly bg: string; readonly fg: string; readonly ring: string }>;
+} satisfies Record<
+  Tone,
+  {
+    readonly accent: string;
+    readonly border: string;
+    readonly fg: string;
+    readonly ring: string;
+    readonly ringBorder: string;
+    readonly text: string;
+    readonly tint: string;
+  }
+>;
 
 export const toneColors = (tone: Tone) => palette[tone];
 
@@ -83,43 +117,27 @@ export const statusTone = {
 export const Pill = ({
   children,
   solid = false,
-  title,
   tone,
 }: {
   readonly children: ReactNode;
   readonly solid?: boolean;
-  readonly title?: string;
   readonly tone: Tone;
 }) => {
-  const colors = palette[tone];
-  const style: CSSProperties = solid
-    ? { background: colors.accent, color: '#fff' }
-    : { background: colors.bg, color: colors.fg };
-  const label = (
+  const colours = solid ? [palette[tone].accent, 'text-fg-reverse'] : [palette[tone].tint, palette[tone].fg];
+  return (
     <span
-      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
-      style={style}
+      className={[
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium',
+        ...colours,
+      ].join(' ')}
     >
       {children}
     </span>
   );
-  return title === undefined ? (
-    label
-  ) : (
-    <Tooltip content={title}>
-      <button className="inline-flex rounded-full" type="button">
-        {label}
-      </button>
-    </Tooltip>
-  );
 };
 
-export const Dot = ({ size = 8, tone }: { readonly size?: number; readonly tone: Tone }) => (
-  <span
-    aria-hidden
-    className="inline-block shrink-0 rounded-full"
-    style={{ background: palette[tone].accent, height: size, width: size }}
-  />
+export const Dot = ({ tone }: { readonly tone: Tone }) => (
+  <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${palette[tone].accent}`} />
 );
 
 // ---- Icons (inline SVG, Material Design paths) -------------------------------------------------------------------
@@ -158,34 +176,27 @@ const paths = {
 
 export type IconName = keyof typeof paths;
 
-export const Icon = ({
-  color,
-  name,
-  size = 20,
-}: {
-  readonly color?: string;
-  readonly name: IconName;
-  readonly size?: number;
-}) => (
-  <svg aria-hidden height={size} style={{ color, flexShrink: 0 }} viewBox="0 0 24 24" width={size}>
+export const Icon = ({ name, size = 20 }: { readonly name: IconName; readonly size?: number }) => (
+  <svg aria-hidden className="shrink-0" height={size} viewBox="0 0 24 24" width={size}>
     <path d={paths[name]} fill="currentColor" />
   </svg>
 );
 
 /** Tinted circle with an icon (KPI tiles, empty states). */
+const iconBadgeSize = { 34: 'size-8.5', 36: 'size-9', 40: 'size-10' } as const;
+
 export const IconBadge = ({
   name,
   size = 40,
   tone,
 }: {
   readonly name: IconName;
-  readonly size?: number;
+  readonly size?: keyof typeof iconBadgeSize;
   readonly tone: Tone;
 }) => (
   <span
     aria-hidden
-    className="inline-flex shrink-0 items-center justify-center rounded-lg"
-    style={{ background: palette[tone].bg, color: palette[tone].accent, height: size, width: size }}
+    className={`inline-flex shrink-0 items-center justify-center rounded-lg ${iconBadgeSize[size]} ${palette[tone].tint} ${palette[tone].text}`}
   >
     <Icon name={name} size={Math.round(size * 0.55)} />
   </span>

@@ -239,13 +239,15 @@ const CommentItem = ({
             {formatWhen(comment.createdAt)}
           </time>
           {comment.edits.length > 0 && !retracted && (
-            <button
+            <Button
               className="text-fg-secondary text-xs underline decoration-dotted hover:text-fg-primary"
+              composition
               onClick={() => setShowHistory((value) => !value)}
-              type="button"
+              size="current"
+              unstyled
             >
               {t(`${k}.edited`)} · {formatWhen(comment.updatedAt)}
-            </button>
+            </Button>
           )}
         </div>
         {retracted && (
@@ -286,8 +288,9 @@ const CommentItem = ({
           </div>
         )}
         {comment.attachment !== undefined && !retracted && (
-          <button
-            className="inline-flex w-fit items-center gap-50 rounded-md border border-border-primary bg-surface px-100 py-50 text-xs hover:bg-highlight"
+          <Button
+            className="w-fit rounded-md border border-border-primary bg-surface px-100 py-50 text-xs hover:bg-highlight"
+            composition
             onClick={() => {
               if (comment.attachment === undefined) {
                 return;
@@ -300,11 +303,14 @@ const CommentItem = ({
                 );
               }
             }}
-            type="button"
+            size="current"
+            unstyled
           >
-            <span aria-hidden="true">📎</span>
-            <span className="font-medium">{comment.attachment.label}</span>
-          </button>
+            <span className="inline-flex items-center gap-50">
+              <span aria-hidden="true">📎</span>
+              <span className="font-medium">{comment.attachment.label}</span>
+            </span>
+          </Button>
         )}
         {showHistory && (
           <ol className="flex flex-col gap-50 border-border-primary border-l-2 pl-150">
@@ -323,16 +329,18 @@ const CommentItem = ({
         )}
         {mine && canWrite && !retracted && !editing && (
           <div className="flex flex-wrap items-center gap-100">
-            <button
+            <Button
               className="text-fg-secondary text-xs hover:text-fg-primary hover:underline"
+              composition
               onClick={() => {
                 setDraft(comment.body);
                 setEditing(true);
               }}
-              type="button"
+              size="current"
+              unstyled
             >
               {t(`${k}.edit`)}
-            </button>
+            </Button>
             {confirmRetract ? (
               <span className="flex items-center gap-100 text-xs">
                 <span className="text-fg-secondary">{t(`${k}.retractConfirm`)}</span>
@@ -351,13 +359,15 @@ const CommentItem = ({
                 </Button>
               </span>
             ) : (
-              <button
+              <Button
                 className="text-fg-secondary text-xs hover:text-fg-primary hover:underline"
+                composition
                 onClick={() => setConfirmRetract(true)}
-                type="button"
+                size="current"
+                unstyled
               >
                 {t(`${k}.retract`)}
-              </button>
+              </Button>
             )}
           </div>
         )}

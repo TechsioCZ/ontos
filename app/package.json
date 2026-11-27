@@ -25,7 +25,7 @@
     "dev:storefront-registry": "pnpm --filter @app/storefront-registry dev",
     "dev:assortment": "pnpm --filter @app/assortment dev",
     "dev:tax": "pnpm --filter @app/tax dev",
-    "build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.build.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.build.json && pnpm -r --no-sort --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
+    "build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.build.json && pnpm -r --no-sort --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "node:backend-federation:generate": "ultramodern-create ultramodern backend-federation-generate",
     "node:proof": "ultramodern-create ultramodern backend-federation-proof",
     "mf:types": "ultramodern-create ultramodern mf-types",
@@ -153,9 +153,7 @@
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts",
     "demo:stage:reviewed-people": "node scripts/demo/stage-reviewed-people.mts",
-    "shell:ui-candidates": "node scripts/generate-shell-ui-candidates.mts --all",
     "lint:effect-diagnostics:demo": "effect-tsgo diagnostics --project packages/shared-contracts/tooling/tsconfig.json --strict --severity error,warning --format text && effect-tsgo diagnostics --project scripts/demo/email-dispatcher/tsconfig.json --strict --severity error,warning --format text",
-    "shell:ui-candidates:check": "node scripts/generate-shell-ui-candidates.mts --check --all",
     "dev:promotion": "pnpm --filter @app/promotion dev",
     "dev:communications": "pnpm --filter @app/communications dev"
   },

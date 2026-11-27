@@ -43,6 +43,8 @@ import { ContractStatusBadge } from './documents-model.tsx';
 import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 
+/** Detail actions: a full-width half of the phone grid with a compact label, their own width from `sm`. */
+const detailActionClassName = 'w-full min-w-0 whitespace-nowrap px-2 text-sm sm:w-auto sm:px-5 sm:text-md';
 const k = 'facility-operations.documents';
 const notProvidedKey = 'facility-operations.common.notProvided';
 
@@ -399,9 +401,15 @@ const DocumentMetadata = ({
           <div className="flex flex-wrap gap-100">
             {links.map((link) =>
               link.kind === 'document' ? (
-                <button key={`${link.kind}:${link.id}`} onClick={() => openSubject(link)} type="button">
+                <Button
+                  composition
+                  key={`${link.kind}:${link.id}`}
+                  onClick={() => openSubject(link)}
+                  size="current"
+                  unstyled
+                >
                   <SubjectChip subject={link} />
-                </button>
+                </Button>
               ) : (
                 <SubjectChip key={`${link.kind}:${link.id}`} subject={link} />
               ),
@@ -474,13 +482,15 @@ const DocumentAmendments = ({
         <ul className="flex flex-col gap-100">
           {amendments.map((amendment) => (
             <li className="flex items-center justify-between gap-100" key={amendment.id}>
-              <button
-                className="text-left font-medium text-sm hover:underline"
+              <Button
+                className="justify-start text-left font-medium text-sm hover:underline"
+                composition
                 onClick={() => onOpenDocument(amendment.id)}
-                type="button"
+                size="current"
+                unstyled
               >
                 {amendment.title}
-              </button>
+              </Button>
               <span className="flex items-center gap-100">
                 {amendment.contract?.validFrom !== undefined && (
                   <span className="text-fg-secondary text-xs">
@@ -658,18 +668,33 @@ export const DocumentDetailPanel = ({
     <UnsavedChangesBoundary scope={scope}>
       <SidePanel
         actions={
-          <div className="facility-documents-actions">
+          // Keep full Czech action labels inside their outlines at 390px: two columns, a third action on its own row.
+          <div className="grid w-full grid-cols-2 gap-3 sm:flex sm:justify-end">
             {canWrite && (
-              <Button appearance="outline" onClick={leaveTo(() => onEdit(document))} severity="secondary">
+              <Button
+                appearance="outline"
+                className={detailActionClassName}
+                onClick={leaveTo(() => onEdit(document))}
+                severity="secondary"
+              >
                 {t(`${k}.detail.edit`)}
               </Button>
             )}
             {canWrite && document.category === 'contract' && (
-              <Button appearance="outline" onClick={leaveTo(() => onAmend(document))} severity="secondary">
+              <Button
+                appearance="outline"
+                className={detailActionClassName}
+                onClick={leaveTo(() => onAmend(document))}
+                severity="secondary"
+              >
                 {t(`${k}.contract.createAmendment`)}
               </Button>
             )}
-            <Button onClick={leaveTo(onClose)} severity="primary">
+            <Button
+              className={`${detailActionClassName}${canWrite && document.category === 'contract' ? ' col-span-2' : ''}`}
+              onClick={leaveTo(onClose)}
+              severity="primary"
+            >
               {t('facility-operations.common.close')}
             </Button>
           </div>
@@ -700,20 +725,22 @@ export const DocumentDetailPanel = ({
       >
         <div className="flex flex-col gap-250 py-200" data-testid="document-detail">
           {original !== undefined && (
-            <button
-              className="w-fit rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
+            <Button
+              className="w-fit justify-start rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
+              composition
               onClick={() => openDocument(original.id)}
-              type="button"
+              size="current"
+              unstyled
             >
               ↳ {t(`${k}.contract.amendmentOf`, { title: original.title })}
-            </button>
+            </Button>
           )}
           {current !== undefined && canPreview(current.file) && (
             <SectionCard
               actions={<DownloadButton file={current.file} />}
               title={[t(`${k}.preview`), t(`${k}.detail.versionLabel`, { version: current.version })].join(' · ')}
             >
-              <FilePreviewBody file={current.file} height="420px" />
+              <FilePreviewBody file={current.file} height="panel" />
             </SectionCard>
           )}
 

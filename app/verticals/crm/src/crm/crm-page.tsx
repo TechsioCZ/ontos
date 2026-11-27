@@ -3,7 +3,6 @@ import { Toaster } from '@app/admin-ui';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
 import type { ReactNode } from 'react';
-import '../routes/index.css';
 import { crmI18nResources } from './i18n.ts';
 import { CrmMoneyFormatsProvider } from './number-formats.tsx';
 

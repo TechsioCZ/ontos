@@ -37,8 +37,6 @@ import { Effect, Match, Predicate } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 
-import '../../../index.css';
-
 import { partyRegistryI18nResources } from '../../../../i18n/resources.ts';
 import type { TagId } from '@app/tagging/contracts/records';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';

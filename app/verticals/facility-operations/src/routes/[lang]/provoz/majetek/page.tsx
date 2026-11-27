@@ -171,12 +171,7 @@ const AssetNextDueCell = (info: CellContext<Asset>) => {
       <Badge severity={dueBadgeVariant(due)} size="sm">
         {isoDateLabel(next.nextDueOn)}
       </Badge>
-      <span
-        className="text-fg-secondary text-xs"
-        style={{ maxWidth: '100%', overflowWrap: 'anywhere', whiteSpace: 'normal' }}
-      >
-        {next.title}
-      </span>
+      <span className="max-w-full wrap-anywhere whitespace-normal text-fg-secondary text-xs">{next.title}</span>
     </span>
   );
 };
@@ -736,23 +731,23 @@ const AssetsTabs = ({ vm }: { readonly vm: AssetsViewModel }) => {
   } = vm;
   return (
     <Tabs appearance="line" onValueChange={setTab} value={tab}>
-      <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="register">
+      <Tabs.List className="overflow-x-auto whitespace-nowrap">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="register">
           {k('tabs.register')}
         </Tabs.Trigger>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="services">
           {k('tabs.services', { count: dues.length })}
         </Tabs.Trigger>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="inventories">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="inventories">
           {k('tabs.inventories')}
         </Tabs.Trigger>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="summary">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="summary">
           {k('tabs.summary')}
         </Tabs.Trigger>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="investments">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="investments">
           {k('tabs.investments', { count: (state.investments ?? []).length })}
         </Tabs.Trigger>
-        <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
+        <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="depreciation">
           {k('tabs.depreciation')}
         </Tabs.Trigger>
         <Tabs.Indicator />

@@ -1,0 +1,13 @@
+absolute
+block
+collapse
+filter
+fixed
+hidden
+lowercase
+rounded
+running
+shadow
+table
+transition
+visible

@@ -27,7 +27,6 @@ import type { AgreementDocumentState } from './document-selection.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/legal-agreements.json';
 import enResource from '../../../../locales/en/legal-agreements.json';
-import '../../index.css';
 import { Link } from '@techsio/ui-kit/atoms/link';
 
 /**

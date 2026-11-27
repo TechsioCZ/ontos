@@ -36,7 +36,6 @@ import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { paginationProps } from '../../../../form-number.ts';
 import { formatKc } from '../../../../list-format.ts';
 import { customersMatching, useCustomerDirectory } from './customers-directory.ts';

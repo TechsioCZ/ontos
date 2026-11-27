@@ -332,7 +332,7 @@ const { scripts } = Schema.decodeUnknownSync(Schema.fromJsonString(RootScriptsSc
 /**
  * What each command of a source row that some scope skips reads: app-relative trees (ending in `/`) and files, `''`
  * for the whole app. The TS-Go programs are read from their tsconfig files; the scripts' inputs are the trees they
- * walk (scripts/check-ontos-api-boundaries.mts, check-handler-service-provision.mts, generate-shell-ui-candidates.mts,
+ * walk (scripts/check-ontos-api-boundaries.mts, check-handler-service-provision.mts,
  * check-module-entrypoint-boundaries.mts, authorization-catalog-report.mts and authorization-catalog-artifact.mts, and
  * the files the generation tests copy). What a command imports is found by the name checks above. A command that
  * walks the whole app, as the repository policy does, can therefore never be skipped by a scope, and a new command in
@@ -366,7 +366,6 @@ const skippedCommandInputs = new Map<string, readonly string[]>([
     ),
   ],
   ['pnpm module-entrypoints:check', [...WORKSPACE, 'scripts/zerops/module-credential-callers.generated.mts']],
-  ['pnpm shell:ui-candidates', ['apps/shell-super-app/', VERTICALS]],
   ['pnpm test:generation', ['scripts/scaffolding/', ...WORKSPACE]],
   ['pnpm typecheck', programInputs('tsconfig.json')],
 ]);

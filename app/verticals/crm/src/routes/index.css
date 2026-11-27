@@ -1,3 +1,0 @@
-@import 'tailwindcss' prefix(crm) source(none);
-@source '..';
-@import '@app/shared-design-tokens/tokens.css';

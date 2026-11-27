@@ -6,6 +6,7 @@ import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // file straight onto the record (new document linked to it) or attach an existing document.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Label } from '@techsio/ui-kit/atoms/label';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
@@ -120,7 +121,7 @@ export const LinkedDocuments = ({
   const hrefOf = (documentId: string) => `/${language ?? 'cs'}/provoz/dokumenty?doc=${encodeURIComponent(documentId)}`;
 
   return (
-    <section className="facility-linked-documents flex flex-col gap-150" data-testid="linked-documents">
+    <section className="flex flex-col gap-150" data-testid="linked-documents">
       {documents.length === 0 ? (
         <p className="text-fg-secondary text-sm">{t(`${k}.linked.empty`)}</p>
       ) : (
@@ -129,20 +130,23 @@ export const LinkedDocuments = ({
             const version = currentVersion(document);
             return (
               <li className="flex flex-wrap items-center gap-150 px-150 py-100" key={document.id}>
-                {version === undefined ? (
-                  <FileTypeIcon mime="" name="" />
-                ) : (
-                  <FileTypeIcon mime={version.file.mime} name={version.file.name} />
-                )}
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <Link className="truncate font-medium text-sm" href={hrefOf(document.id)}>
-                    {document.title}
-                  </Link>
-                  <span className="text-fg-secondary text-xs">
-                    {version === undefined
-                      ? t(`${k}.noFileYet`)
-                      : `v${version.version} · ${formatBytes(version.file.size)} · ${formatWhen(version.uploadedAt)}`}
-                  </span>
+                {/* On a phone the file and its title take a row of their own, above the actions. */}
+                <div className="flex min-w-0 basis-full items-center gap-150 sm:flex-1">
+                  {version === undefined ? (
+                    <FileTypeIcon mime="" name="" />
+                  ) : (
+                    <FileTypeIcon mime={version.file.mime} name={version.file.name} />
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <Link className="truncate font-medium text-sm" href={hrefOf(document.id)}>
+                      {document.title}
+                    </Link>
+                    <span className="text-fg-secondary text-xs">
+                      {version === undefined
+                        ? t(`${k}.noFileYet`)
+                        : `v${version.version} · ${formatBytes(version.file.size)} · ${formatWhen(version.uploadedAt)}`}
+                    </span>
+                  </div>
                 </div>
                 <CategoryBadge category={document.category} />
                 {version !== undefined && canPreview(version.file) && (
@@ -162,8 +166,8 @@ export const LinkedDocuments = ({
         </ul>
       )}
       {canWrite && (
-        <div className="facility-linked-document-actions flex flex-wrap items-end gap-150">
-          <label className={busy ? 'pointer-events-none opacity-60' : 'cursor-pointer'}>
+        <div className="flex flex-col items-stretch gap-150 sm:flex-row sm:flex-wrap sm:items-end">
+          <Label className={busy ? 'pointer-events-none opacity-60' : 'cursor-pointer'}>
             <input
               className="sr-only"
               data-testid="linked-documents-upload"
@@ -176,9 +180,9 @@ export const LinkedDocuments = ({
             <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
               ⇪ {busy ? t(`${k}.uploading`) : t(`${k}.linked.upload`)}
             </span>
-          </label>
+          </Label>
           {others.length > 0 && (
-            <div className="min-w-0 flex-1 sm:max-w-xs">
+            <div className="w-full min-w-0 flex-1 sm:w-auto sm:max-w-xs">
               <Select
                 items={others.map((document) => ({
                   displayValue: document.title,

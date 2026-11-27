@@ -70,15 +70,17 @@ const supplierLabelKey = 'fields.supplier';
 
 const ALL = '__all__';
 
-/** Inline link-styled button (wraps like text, unlike the ui-kit Button). */
+/** Inline link-styled button: an unstyled kit Button at the surrounding text size. */
 export const TextLink = ({ children, onClick }: { readonly children: ReactNode; readonly onClick: () => void }) => (
-  <button
-    className="cursor-pointer text-left font-medium text-fg-primary underline underline-offset-2"
+  <Button
+    className="justify-start text-left font-medium text-fg-primary underline underline-offset-2"
+    composition
     onClick={onClick}
-    type="button"
+    size="current"
+    unstyled
   >
     {children}
-  </button>
+  </Button>
 );
 
 const levelBadgeVariants = { above_maximum: 'warning', below_minimum: 'danger', ok: 'success' } as const;

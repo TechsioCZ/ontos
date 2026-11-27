@@ -12951,12 +12951,6 @@
       "description": "Generated route, ownership, and topology contracts."
     },
     {
-      "id": "shared-design-tokens",
-      "package": "@app/shared-design-tokens",
-      "path": "packages/shared-design-tokens",
-      "description": "Generated design tokens consumed by shell and verticals."
-    },
-    {
       "id": "customer-market-retirement-contracts",
       "package": "@app/customer-market-retirement-contracts",
       "path": "packages/customer-market-retirement-contracts",

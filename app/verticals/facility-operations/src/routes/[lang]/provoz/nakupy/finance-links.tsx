@@ -1,6 +1,7 @@
 import { optionalField } from '../../../../../shared/domain/common.ts';
 // Finance remains the owner of invoices; resolve references through its governed public read.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
 import { readFinance } from '../../../../ui/finance-reads.ts';
@@ -91,11 +92,12 @@ export const FinanceInvoiceLink = ({
   }
   const lang = langOf(language.slice(0, 2));
   return (
-    <a
+    <Link
       className="font-medium text-fg-primary underline underline-offset-2"
       href={`/${lang}/finance?resourceId=${encodeURIComponent(match.resourceId)}`}
+      size="current"
     >
       {k('orders.finance.open')}
-    </a>
+    </Link>
   );
 };

@@ -14,7 +14,6 @@ import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
-import '../../../../index.css';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';
 import type { CustomerDetailSubject } from '../customer-detail-content.tsx';
 import {
