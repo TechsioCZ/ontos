@@ -28,7 +28,11 @@ const unavailable = (cause: PersistenceFailure) => {
   return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
 };
 
-/** Every Storefront application registration of the trusted Tenant, each at its current revision. */
+/**
+ * Every Storefront application registration of the trusted Tenant, each at its current revision. It is read in the
+ * signed-in company's context, so a company's own e-shop administrator (a company Role) reaches the list of the
+ * e-shops its markets sell in; the registrations themselves stay Tenant-wide.
+ */
 export const handleStorefrontApplications = Effect.fn('StorefrontApplicationsRead.handle')(function* handleRead(
   input: StorefrontApplicationsRequest,
   context: ReadLoadContext<StorefrontApplicationsPersistence>,
@@ -54,7 +58,7 @@ export const storefrontApplicationsRead = defineRead(
       policyKey: 'commerce.storefront-registry.api.storefront-applications.evidence.v1',
     },
     inputSchema: StorefrontApplicationsRequestSchema,
-    legalEntityScope: 'optional',
+    legalEntityScope: 'required',
     owningModuleKey: moduleKey,
     policies: [],
     readKey: 'commerce.storefront-registry.api.storefront-applications',
