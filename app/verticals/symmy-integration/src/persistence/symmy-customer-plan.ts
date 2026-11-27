@@ -137,7 +137,7 @@ const profileSubject = (facts: ItemFacts, kind: 'COUNTERPARTY' | 'RETAIL') => ({
 });
 
 const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
-  // The DIČ goes to Party, which takes a company DIČ (CZ and eight digits) and refuses any other for good; the ICO
+  // The DIČ goes to Party, which takes a company or VAT group DIČ and refuses any other for good; the ICO
   // reaches the profile below.
   const identifiers = row.officialIdentifiers.filter(({ identifierType }) => identifierType !== 'ICO');
   const evidence = {

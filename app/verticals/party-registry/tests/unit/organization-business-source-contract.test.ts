@@ -114,6 +114,13 @@ it.effect('the corporate projection carries the company DIČ', () =>
       },
     });
     expect(withDic.inputDigest).not.toBe((yield* organizationBusinessSourceInputDigest(input())).inputDigest);
+    // A member of a VAT group states the group's DIČ, CZ699 and six digits: a company identifier, no birth number.
+    yield* organizationBusinessSourceInputDigest({
+      operation: 'CREATE',
+      payload: {
+        candidate: { ...candidate, officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ699001234' }] },
+      },
+    });
   }),
 );
 

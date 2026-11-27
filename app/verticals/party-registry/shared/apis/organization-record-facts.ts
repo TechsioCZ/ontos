@@ -329,15 +329,15 @@ export const organizationBusinessRecordInputDigest = (input: Schema.Json) =>
   );
 
 /**
- * The one identifier a source organization states to Party: its company DIČ, CZ and the eight IČO digits. A nine- or
- * ten-digit DIČ carries a birth number, personal data no organization business fact may hold. The IČO belongs to the
- * customer profile.
+ * The one identifier a source organization states to Party: its company DIČ, CZ and the eight IČO digits, or the DIČ
+ * of the VAT group it belongs to, CZ699 and six digits. Any other nine- or ten-digit DIČ carries a birth number,
+ * personal data no organization business fact may hold. The IČO belongs to the customer profile.
  */
 export const OrganizationBusinessSourceDicSchema = OfficialIdentifierInputSchema.check(
   Schema.makeFilter((identifier) =>
-    identifier.identifierType === 'CZ_DIC' && /^CZ[0-9]{8}$/u.test(identifier.value.trim().toUpperCase())
+    identifier.identifierType === 'CZ_DIC' && /^CZ(?:[0-9]{8}|699[0-9]{6})$/u.test(identifier.value.trim().toUpperCase())
       ? undefined
-      : 'Expected a company CZ_DIC: CZ and eight digits',
+      : 'Expected a company CZ_DIC: CZ and eight digits, or a VAT group CZ699 and six digits',
   ),
 );
 /** A strict subset of the native payload. This validates an existing assertion; it never rewrites one. */
