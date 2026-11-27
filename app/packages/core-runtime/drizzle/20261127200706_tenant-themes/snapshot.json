@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "7b3af13a-aa1e-42f3-9dce-dc7b6c52af2c",
+  "id": "618fc380-b84b-4e5f-bca2-672b76c0dded",
   "prevIds": [
-    "c258c22d-d679-41d1-85aa-a37691995516"
+    "899be176-9a7d-4e63-bab3-8a8d97891d3a"
   ],
   "ddl": [
     {
@@ -7343,6 +7343,19 @@
     {
       "type": "text",
       "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "system_workload_key",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
@@ -11918,6 +11931,34 @@
       "method": "btree",
       "concurrently": false,
       "name": "core_principals_release_actor_uk",
+      "entityType": "indexes",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "system_workload_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"status\" <> 'archived'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_principals_system_workload_uk",
       "entityType": "indexes",
       "schema": "core",
       "table": "principals"
@@ -16740,6 +16781,13 @@
     {
       "value": "\"integration_kind\" is null or (\"kind\" = 'integration' and \"integration_kind\" ~ '^[a-z][a-z0-9-]{0,39}$')",
       "name": "core_principals_integration_kind_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "value": "\"system_workload_key\" is null or \"kind\" = 'system'",
+      "name": "core_principals_system_workload_ck",
       "entityType": "checks",
       "schema": "core",
       "table": "principals"
