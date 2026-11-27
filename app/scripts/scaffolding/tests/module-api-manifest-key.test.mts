@@ -26,6 +26,32 @@ it('accepts only canonical owner-local Action, Read and Worker registration impo
   }
 });
 
+it('accepts grouped owner-local Read imports without aliases or unrelated bindings', () => {
+  const readModule = './src/api/current-details.read.ts';
+  for (const bindings of [
+    '{ currentDetailsRead, currentDetailsSetRead }',
+    '{\n  currentDetailsRead,\n  currentDetailsSetRead,\n}',
+  ]) {
+    const candidate = `import ${bindings} from '${readModule}';`;
+    expect(isModuleRegistrationImport(candidate)).toBe(true);
+    expect(isModuleManifestImport(candidate)).toBe(true);
+  }
+  for (const bindings of [
+    '{ currentDetailsRead, handler }',
+    '{ currentDetailsRead, currentDetailsSetRead as renamed }',
+    '{}',
+  ]) {
+    const candidate = `import ${bindings} from '${readModule}';`;
+    expect(isModuleRegistrationImport(candidate)).toBe(false);
+    expect(isModuleManifestImport(candidate)).toBe(false);
+  }
+  expect(
+    isModuleManifestImport(
+      "import { currentDetailsRead, currentDetailsSetRead } from '../foreign/src/api/current-details.read.ts';",
+    ),
+  ).toBe(false);
+});
+
 it.effect('formats identifier API keys while preserving required quoted slugs', () =>
   formatGeneratedMutationContent(
     '/workspace/verticals/catalog/vertical.manifest.ts',

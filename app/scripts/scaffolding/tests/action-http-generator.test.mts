@@ -89,8 +89,12 @@ it.effect('preserves the actual Symmy owner runtimes with public unaliased Core 
     );
     const owner = { ...vertical, slug: 'symmy-integration' };
     const patched = patchRuntimeRoot(source, owner, 'admitSymmyJobActionApiLive');
-    expect(patched).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)');
-    expect(patched).toContain('makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)');
+    expect(patched).toMatch(
+      /makeReadRuntimeLive\(\s*ultramodernDeliveryUnit,\s*symmyIntegrationBackendRegistration,?\s*\)/u,
+    );
+    expect(patched).toMatch(
+      /makeActionRuntimeLive\(\s*ultramodernDeliveryUnit,\s*symmyIntegrationBackendRegistration,?\s*\)/u,
+    );
     expect(patchRuntimeRoot(patched, owner, 'admitSymmyJobActionApiLive')).toBe(patched);
     for (const [original, counterfeit] of [
       ["from '@app/core-runtime';", "from './counterfeit-core.ts';"],
@@ -98,7 +102,7 @@ it.effect('preserves the actual Symmy owner runtimes with public unaliased Core 
       ["from '../shared/ultramodern-build.ts';", "from '../foreign/ultramodern-build.ts';"],
       ['makeReadRuntimeLive,', 'ReadRuntimeLive as makeReadRuntimeLive,'],
       [
-        'makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)',
+        /makeActionRuntimeLive\(\s*ultramodernDeliveryUnit,\s*symmyIntegrationBackendRegistration,?\s*\)/u,
         'makeActionRuntimeLive(ultramodernApiMarker, symmyIntegrationBackendRegistration)',
       ],
       [

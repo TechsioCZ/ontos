@@ -985,7 +985,9 @@ export const renderAccessWorkload = (reason: string, workloads: readonly string[
 };
 
 const isModuleReadImport = (candidate: string): boolean =>
-  /^import \{ [a-z][A-Za-z0-9]*Read \} from '\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts';$/u.test(candidate);
+  /^import \{\s*[a-z][A-Za-z0-9]*Read(?:\s*,\s*[a-z][A-Za-z0-9]*Read)*\s*,?\s*\} from '\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts';$/u.test(
+    candidate,
+  );
 
 export const isModuleRegistrationImport = (candidate: string): boolean =>
   isModuleReadImport(candidate) ||
