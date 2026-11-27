@@ -2838,9 +2838,9 @@ const MAX_LIVE_AUDIENCES = 8;
 
 /**
  * What a storefront server's live-changes connection may hear about: its integration API key (`x-api-key`) acting for
- * its company (`x-ontos-legal-entity-id`), and each owner API it names (`x-ontos-live-audiences`) that the key obtains a
- * gateway context for, exactly as the API-key read relay admits it. An audience the issuer refuses is left out; an
- * issuer that is unavailable refuses the connection, so the storefront connects again instead of missing that owner.
+ * its company (`x-ontos-legal-entity-id`), and the owner APIs it names (`x-ontos-live-audiences`), each of which the key
+ * must obtain a gateway context for, exactly as the API-key read relay admits it. One the issuer refuses refuses the
+ * connection: a storefront that trusted the stream for an owner it never hears about would keep that owner's old answers.
  */
 const resolveApiKeyLiveChangeScope = Effect.fn('Shell.resolveApiKeyLiveChangeScope')(
   function* resolveApiKeyLiveChangeScopeEffect(rawKey: string, headers: RequestHeaders) {
@@ -2855,23 +2855,14 @@ const resolveApiKeyLiveChangeScope = Effect.fn('Shell.resolveApiKeyLiveChangeSco
       [captureShellRelease(), resolveApiKeyGatewayPrincipal(rawKey, legalEntityId)],
       { concurrency: 2 },
     );
-    const admitted = yield* Effect.forEach(
+    yield* Effect.forEach(
       audiences,
       (audience) =>
-        issueGatewayContextAssertion({ audience, compositionRevision: catalog.composition.revision, principal }).pipe(
-          Effect.as([audience]),
-          Effect.catchTag('GatewayIssuerError', (error) =>
-            error.code === 'gateway_issuer_unavailable' ? Effect.fail(error) : Effect.succeed([]),
-          ),
-        ),
-      { concurrency: MAX_LIVE_AUDIENCES },
+        issueGatewayContextAssertion({ audience, compositionRevision: catalog.composition.revision, principal }),
+      { concurrency: MAX_LIVE_AUDIENCES, discard: true },
     );
-    const allowedApps = new Set(admitted.flat());
-    if (allowedApps.size === 0) {
-      return Option.none<LiveScope>();
-    }
     return Option.some<LiveScope>({
-      allowedApps,
+      allowedApps: new Set(audiences),
       legalEntityId,
       moduleApps: new Map(
         catalog.contracts.map((contract) => [contract.manifest.module.id, contract.deployment.appId]),

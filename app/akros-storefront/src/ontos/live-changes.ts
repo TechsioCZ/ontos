@@ -142,6 +142,7 @@ export const followLiveChanges = async (owners: readonly string[]) => {
       await response.body?.cancel();
       throw new Error(`HTTP ${response.status}`);
     }
+    console.info(`[ontos] live changes stream open for ${owners.join(",")}`);
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
     for (;;) {
