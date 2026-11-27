@@ -487,7 +487,7 @@ describe("ProductPurchaseForm", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(VARIANT_PAGE_SIZE + 1);
     expect(screen.getByText("Zobrazeno 45 z 45 variant")).toBeTruthy();
     expect(variantReads).toBe(0);
-    await user.click(screen.getByRole("link", { name: "Strana 3 z 3" }));
+    await user.click(screen.getByRole("button", { name: "Strana 3 z 3" }));
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(5 + 1));
     expect(within(table).getByRole("link", { name: sorted[44].label })).toBeTruthy();
     const minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { ProductVariantLink } from "@/components/product-variant-link";
 import { useProductVariants } from "@/features/cart/product-variants-context";
@@ -105,7 +104,7 @@ const parseQuantity = (text: string) => {
 };
 
 /**
- * One row's quantity editor and buy button. Native elements styled by `sf-variant-order` classes
+ * One row's quantity editor and buy button. Native elements styled by the `sf-variant-table` classes
  * (globals.css applies the kit's numeric input and button utilities once): every row is server-rendered,
  * so the kit's per-element utility strings would make each row about six times larger.
  */
@@ -170,27 +169,20 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
   const canIncrement = maximum > 0 && current < maximum;
 
   return (
-    <div
-      className={`sf-variant-order sf-variant-table__order sf-variant-table__order--${mode}`}
-      data-part="root"
-    >
+    <div className={`sf-variant-table__order sf-variant-table__order--${mode}`} data-part="root">
       <div
-        className="sf-variant-order__control sf-variant-table__quantity-control group numeric-input-focus-owner"
-        data-part="control"
+        className="sf-variant-table__quantity-control"
         data-invalid={error ? "" : undefined}
         role="group"
       >
         <button
           aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
-          className="sf-variant-order__step"
-          data-part="decrement-trigger"
-          data-scope="number-input"
           disabled={!canDecrement}
           onClick={() => stepBy(-1)}
           tabIndex={-1}
           type="button"
         >
-          <span aria-hidden="true" className="sf-variant-order__icon token-icon-minus" />
+          <span aria-hidden="true" className="token-icon-minus" />
         </button>
         <input
           aria-describedby={hint ? `${id}-hint` : undefined}
@@ -202,10 +194,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
           aria-valuemin={minimum}
           aria-valuenow={Number.isFinite(selectedQuantity) ? selectedQuantity : undefined}
           autoComplete="off"
-          className="sf-variant-order__input"
           data-invalid={error ? "" : undefined}
-          data-part="input"
-          data-scope="number-input"
           id={id}
           inputMode="decimal"
           onBlur={() => setShowError(true)}
@@ -227,23 +216,20 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
         />
         <button
           aria-label={isPackage ? cs.product.incrementPackages : cs.product.incrementQuantity}
-          className="sf-variant-order__step"
-          data-part="increment-trigger"
-          data-scope="number-input"
           disabled={!canIncrement}
           onClick={() => stepBy(1)}
           tabIndex={-1}
           type="button"
         >
-          <span aria-hidden="true" className="sf-variant-order__icon token-icon-plus" />
+          <span aria-hidden="true" className="token-icon-plus" />
         </button>
       </div>
       <button
         aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
         className={
           isPackage
-            ? "sf-variant-order__buy--package sf-variant-table__buy-button sf-variant-table__buy-button--package"
-            : "sf-variant-order__buy sf-variant-table__buy-button"
+            ? "sf-variant-table__buy-button sf-variant-table__buy-button--package"
+            : "sf-variant-table__buy-button"
         }
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
@@ -281,12 +267,80 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
           role="alert"
         >
           <span aria-hidden="true" className="sf-variant-order__error-icon">
-            <span className="sf-variant-order__icon token-icon-status-text-error" />
+            <span className="token-icon-status-text-error" />
           </span>
           <span>{error}</span>
         </div>
       )}
     </div>
+  );
+}
+
+/** First, last and the pages around the current one; a gap stands for the pages between. */
+const pagerItems = (page: number, pageCount: number): (number | "gap")[] => {
+  const pages = [...new Set([1, page - 1, page, page + 1, pageCount])]
+    .filter((item) => item >= 1 && item <= pageCount)
+    .sort((left, right) => left - right);
+  return pages.flatMap((item, index) =>
+    index > 0 && item - pages[index - 1] > 1 ? (["gap", item] as const) : [item],
+  );
+};
+
+/** The variant table's pages: native buttons with the kit's pagination look applied once in globals.css. */
+function VariantPager({
+  page,
+  pageCount,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (page: number) => void;
+}) {
+  const cs = useDictionary();
+  return (
+    <nav aria-label={cs.variants.pagination} className="sf-pagination sf-variant-pager">
+      <ul>
+        <li>
+          <button
+            aria-label={cs.pagination.previous}
+            disabled={page <= 1}
+            onClick={() => onPage(page - 1)}
+            type="button"
+          >
+            <span aria-hidden="true" className="token-icon-pagination-prev" />
+          </button>
+        </li>
+        {pagerItems(page, pageCount).map((item, index) =>
+          item === "gap" ? (
+            <li data-gap="" key={`gap-${index}`}>
+              <span aria-hidden="true">…</span>
+            </li>
+          ) : (
+            <li key={item}>
+              <button
+                aria-current={item === page ? "page" : undefined}
+                aria-label={cs.pagination.page(item, pageCount)}
+                data-selected={item === page ? "" : undefined}
+                onClick={() => onPage(item)}
+                type="button"
+              >
+                {item}
+              </button>
+            </li>
+          ),
+        )}
+        <li>
+          <button
+            aria-label={cs.pagination.next}
+            disabled={page >= pageCount}
+            onClick={() => onPage(page + 1)}
+            type="button"
+          >
+            <span aria-hidden="true" className="token-icon-pagination-next" />
+          </button>
+        </li>
+      </ul>
+    </nav>
   );
 }
 
@@ -777,22 +831,15 @@ export function ProductPurchaseForm({
           </div>
         </div>
         {pageCount > 1 && (
-          <Pagination
-            className="sf-pagination"
-            count={visibleCount}
-            // Each page link returns to the top of the variant section.
-            getPageUrl={() => "#product-variants"}
-            onPageChange={setPage}
+          <VariantPager
             page={currentPage}
-            pageSize={VARIANT_PAGE_SIZE}
-            size="sm"
-            translations={{
-              itemLabel: ({ page: item, totalPages }) => cs.pagination.page(item, totalPages),
-              nextTriggerLabel: cs.pagination.next,
-              prevTriggerLabel: cs.pagination.previous,
-              rootLabel: cs.variants.pagination,
+            pageCount={pageCount}
+            onPage={(next) => {
+              setPage(next);
+              const section = document.getElementById("product-variants");
+              if (section && section.getBoundingClientRect().top < 0)
+                section.scrollIntoView({ block: "start" });
             }}
-            variant="filled"
           />
         )}
       </>
