@@ -258,9 +258,13 @@ describe('rent panel across a background reload', () => {
 
 /** The failed Save bar inside `form`; null until its save has failed. */
 const failedBar = (form: Element | null | undefined) => form?.querySelector('[data-save-state="error"]') ?? null;
-/** The state picker of the lease's business case; null until the dossier is on screen. */
+/** The state picker of the lease's business case, its native select found by its label; null until it is on screen. */
 const caseState = () =>
-  document.querySelector<HTMLSelectElement>(`select[aria-label="${czech('property-leasing.dossier.caseState')}"]`);
+  [...document.querySelectorAll<HTMLSelectElement>('select')].find(
+    (candidate) =>
+      document.querySelector(`[id="${candidate.getAttribute('aria-labelledby') ?? ''}"]`)?.textContent?.trim() ===
+      czech('property-leasing.dossier.caseState'),
+  ) ?? null;
 
 /** The business case's form, around its state picker. */
 const caseForm = () => caseState()?.closest('form');
