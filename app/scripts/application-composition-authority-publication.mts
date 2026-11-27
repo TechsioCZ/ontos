@@ -369,10 +369,38 @@ const requireNoLegacyRuntimeTransactions = Effect.fn('ApplicationCompositionAuth
   },
 );
 
+/** PostgreSQL's `lock_not_available`: a `lock_timeout` expired while another session held a lock. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
+/** How long one attempt of a fence waits for the exclusive authority lock while the running release serves. */
+const FENCE_LOCK_TIMEOUT = sql`set local lock_timeout = '1s'`;
+/** Further attempts after a refused one, a second apart: at most about a minute in all, inside the drain budget. */
+const FENCE_LOCK_RETRIES = 30;
+
+/**
+ * The fences that take the exclusive authority lock while the running release still serves — closing durable
+ * admission and entering draining — wait for it at most one second per attempt. PostgreSQL queues every later shared
+ * request behind a waiting exclusive one, so an unbounded wait behind a single long transaction stalled all traffic of
+ * the running release (25 s on 2026-11-26, pools empty and requests failing). A refused attempt rolls back and lets
+ * that traffic through, then tries again; the last refusal fails the publication, which leaves the release active.
+ */
+const boundFenceLockWait = (transaction: CoreTransaction) => transaction.execute(FENCE_LOCK_TIMEOUT, 'objects');
+
+/** Tries one whole fence transaction again while PostgreSQL refused it only for its `lock_timeout` (`55P03`). */
+const withBoundedFenceLock = <Value, Failure, Requirements>(fence: Effect.Effect<Value, Failure, Requirements>) =>
+  fence.pipe(
+    Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+    Effect.retry({
+      schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ times: FENCE_LOCK_RETRIES })),
+      while: (failure) => Option.isSome(findPostgresFailure(failure, ({ code }) => code === LOCK_NOT_AVAILABLE)),
+    }),
+  );
+
 const withVerifiedLegacyTransition = Effect.fn('ApplicationCompositionAuthority.withLegacyOwners')(
   function* withVerifiedLegacyTransition<Value, Failure, Requirements>(
     expectedRevision: string | null,
     transition: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
+    boundedLockWait = false,
   ) {
     const database = yield* CoreDatabase;
     return yield* Effect.scoped(
@@ -385,6 +413,9 @@ const withVerifiedLegacyTransition = Effect.fn('ApplicationCompositionAuthority.
         const core = yield* database.executor
           .transaction((transaction) =>
             Effect.gen(function* verifiedCoreTransition() {
+              if (boundedLockWait) {
+                yield* boundFenceLockWait(transaction);
+              }
               // Runtime Actions acquire authority before touching owner tables. The publisher must
               // follow the same order; an activity observation is not an admission fence.
               yield* lockApplicationCompositionPublication(transaction);
@@ -646,6 +677,13 @@ const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseU
 const MATCHED_BEFORE_DRAINING = Duration.seconds(10);
 
 /**
+ * How often a publication asks whether outstanding work is over. From closing durable admission new durable
+ * workflows are refused, and from the enter-draining commit to the promote Core refuses every read and write of the
+ * running release while the new one does not serve yet, so the end must be seen at once: each poll is one short read.
+ */
+const DRAIN_POLL_SPACING = Duration.millis(200);
+
+/**
  * Waits, bounded, until no message is unmatched. The pre-flight is a point in time; the enter-draining fence
  * re-checks under the exclusive lock, and this wait keeps that re-check from refusing for ordinary traffic the
  * running matcher would have taken a poll later.
@@ -658,7 +696,7 @@ const waitForMatchedMessages = Effect.gen(function* waitForMatchedMessagesEffect
     .where(sql`${outboxMessages.matchedAt} is null`)
     .pipe(Effect.map((rows) => rows[0]?.count ?? 0));
   while ((yield* unmatched) > 0) {
-    yield* Effect.sleep(Duration.seconds(1));
+    yield* Effect.sleep(DRAIN_POLL_SPACING);
   }
 }).pipe(Effect.timeout(MATCHED_BEFORE_DRAINING), Effect.ignore);
 
@@ -737,9 +775,6 @@ const failureReason = <Failure,>(failure: Failure): string => {
   }
   return Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : 'The publication failed';
 };
-
-/** PostgreSQL's `lock_not_available`: the restore's `lock_timeout` expired while another session held a lock. */
-const LOCK_NOT_AVAILABLE = '55P03';
 
 /**
  * Four more attempts after the first, from 250 ms apart and doubling. One attempt can wait on two locks in turn (the
@@ -927,7 +962,7 @@ const waitForDurablePublicationWork = Effect.fn('ApplicationCompositionAuthority
       ))
     ) {
       yield* reportDeadDrainDeliveries(revision, reported);
-      yield* Effect.sleep(Duration.seconds(3));
+      yield* Effect.sleep(DRAIN_POLL_SPACING);
     }
   },
 );
@@ -938,8 +973,6 @@ export interface DrainPoll {
   /** Why outstanding work can never drain inside the drain's window; empty while it is merely in flight. */
   readonly refusals: readonly string[];
 }
-
-const DRAIN_POLL_SPACING = Duration.seconds(3);
 
 /**
  * Polls until the drain is over. Work that can no longer finish inside the drain's window — a delivery that died, or
@@ -1090,8 +1123,12 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           progressState.phase = 'close-admission';
           yield* withApplicationCompositionPublicationProgress(
             'close durable admission (authority fence)',
-            database.executor.transaction((transaction) =>
-              closeApplicationCompositionDurableAdmission(transaction, current.revision),
+            withBoundedFenceLock(
+              database.executor.transaction((transaction) =>
+                boundFenceLockWait(transaction).pipe(
+                  Effect.andThen(closeApplicationCompositionDurableAdmission(transaction, current.revision)),
+                ),
+              ),
             ),
           );
           progressState.phase = DURABLE_DRAIN;
@@ -1106,14 +1143,19 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           // where the matcher is blocked and the answer cannot move before the phase does. The legacy observation
           // stays immediately before the fence it justifies. Writes admitted while the lock waited can leave fresh
           // unmatched messages behind; only those are tried again, a bounded number of times, inside the budget.
+          // Between native releases the exclusive authority lock is the fence: every runtime operation takes its
+          // shared side first. No database-wide quiet moment is asked for; live traffic never has one.
           const enterDraining = waitForMatchedMessages.pipe(
             // A provider receipt alone is insufficient: re-observe the actual retired executables.
             Effect.andThen(verifyLegacyQuiescence),
-            Effect.andThen(requireNoLegacyRuntimeTransactions()),
             // Owner locks remain held until the nested Core transaction actually COMMITs.
             Effect.andThen(
-              withVerifiedLegacyTransition(current.revision, (transaction) =>
-                enterDrainingIfDrainable(transaction, current.revision, window),
+              withBoundedFenceLock(
+                withVerifiedLegacyTransition(
+                  current.revision,
+                  (transaction) => enterDrainingIfDrainable(transaction, current.revision, window),
+                  true,
+                ),
               ),
             ),
             Effect.retry({
@@ -1504,8 +1546,10 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
     if (current.phase === 'sealed') {
       return yield* unavailable('A sealed Application Composition requires a successfully completed migration');
     }
-    // From closing admission to the promote's commit — the drain, the quiescence checks after it and the promote
-    // itself — any early end returns this revision to active.
+    // From closing admission to the promote's commit — the drain, the legacy observation after it and the promote
+    // itself — any early end returns this revision to active. From the enter-draining commit on Core refuses the
+    // running release's reads and writes, so nothing here waits for the rest of the database to fall quiet: the
+    // exclusive authority lock is the fence.
     return yield* Effect.gen(function* drainAndPromote() {
       if (current.phase !== 'migrated') {
         yield* installApplicationCompositionCompletionSchema();
@@ -1513,7 +1557,6 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       }
       // A recovered row is not proof that this deployment observed legacy absence.
       yield* verifyInitialCutover;
-      yield* requireNoLegacyRuntimeTransactions();
       return yield* withApplicationCompositionPublicationProgress(
         'promote native authority and publish provider pointer',
         withDrainedCompositionTransition(current, promoteAndPublish),

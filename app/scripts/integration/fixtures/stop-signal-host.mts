@@ -1,6 +1,6 @@
 /**
  * A public host process for the stop-signal test: the real `hostApplication` on its own port, its `crm` unit serving
- * an event stream and an upload that only answers once its body ended, the real `publicPortClosing` and the real
+ * an event stream, a read that answers after a second and an upload that only answers once its body ended, the real `publicPortClosing` and the real
  * `stopSignal` race, wired as `app-host.mts` wires them. Prints `PORT <n>` once it serves.
  */
 import { createServer } from 'node:http';
@@ -23,6 +23,10 @@ import { SupersedeDrains, SupersedeDrainsLive } from '../../zerops/supersede-dra
 
 const unit = Effect.gen(function* unitAnswer() {
   const request = yield* HttpServerRequest.HttpServerRequest;
+  if (request.url.startsWith('/slow')) {
+    yield* Effect.sleep('1 second');
+    return HttpServerResponse.text('slow');
+  }
   if (request.url.startsWith('/events')) {
     return HttpServerResponse.stream(
       Stream.tick('50 millis').pipe(Stream.map((): Uint8Array => new TextEncoder().encode('data: tick\n\n'))),

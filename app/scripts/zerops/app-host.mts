@@ -98,6 +98,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
@@ -121,6 +122,7 @@ import {
   FileSystem,
   flow,
   Layer,
+  Match,
   Option,
   Order,
   Redacted,
@@ -1677,11 +1679,6 @@ const routedUnit = (url: string) => {
 };
 
 /**
- * The one way the public port closes (drain end, stop signal, any end of the host): first `stopping`, so relayed
- * event streams end, other relayed responses are cut and relays awaiting an answer answer 503, then the server's
- * graceful close, which then has nothing left to wait for. Runs once, whoever asks first.
- */
-/**
  * Stops accepting connections on the public port, nothing more: Node closes the idle kept-alive ones, and every
  * request already on its way finishes (the drain's end; its relays keep their answers).
  */
@@ -1694,20 +1691,49 @@ export const stopAccepting = (server: Server) =>
 
 /**
  * Bounds of the public port's stop. The platform's stop timeout is not documented in this repository; it is assumed
- * to be 30 s, so the port closes well inside it and leaves the units their time. After `stopping`, connections that are
- * kept alive or hold a half-sent request get a 2 s grace, then are closed; the server's graceful close is capped at
- * 10 s whatever happens.
+ * to be 30 s, so the port closes well inside it and leaves the units their time. Finite requests already dispatched
+ * get `PUBLIC_PORT_FINISH_BUDGET` to answer; then what still runs is cut, connections that hold a half-sent request
+ * get `PUBLIC_PORT_FORCE_CLOSE_AFTER` more, then are closed; the server's graceful close is capped at 10 s whatever
+ * happens.
  */
-export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(2);
+export const PUBLIC_PORT_FINISH_BUDGET = Duration.millis(2500);
+export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(1);
 export const PUBLIC_PORT_GRACEFUL_CLOSE_CAP = Duration.seconds(10);
 
+/** Connections the public server still holds: idle kept-alive ones are closed first, so only busy ones count. */
+const busyConnections = (server: Server) => {
+  const connections = promisify((reply: (error: Error | null, count: number) => void) => {
+    server.getConnections(reply);
+  });
+  return Effect.sync(() => {
+    server.closeIdleConnections();
+  }).pipe(
+    Effect.andThen(Effect.tryPromise(async () => await connections())),
+    Effect.orElseSucceed(() => 0),
+  );
+};
+
+/**
+ * The one way the public port closes (stop signal, any end of the host); runs once, whoever asks first.
+ * - `closing`: the listener closes, idle kept-alive connections close and event streams end, so their clients
+ *   reconnect to a container that serves.
+ * - Finite requests already dispatched keep running until they answered, for at most `PUBLIC_PORT_FINISH_BUDGET`: a
+ *   superseded host is relaying them to the new release, and cutting them at the stop signal answered 502 to reads the
+ *   new release was serving (2026-11-26 21:43:16, `/api/symmy` after 1069 ms).
+ * - `stopping`: whatever still runs is cut and relays still waiting for an answer (an upload in flight) answer, then
+ *   the server's graceful close, which has nothing left to wait for.
+ */
 export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain, server: Server) =>
   Effect.cached(
     Effect.gen(function* closePublicPort() {
+      yield* Deferred.succeed(drain.closing, true);
+      yield* stopAccepting(server);
+      yield* busyConnections(server).pipe(
+        Effect.repeat({ schedule: Schedule.spaced('50 millis'), until: (busy) => busy === 0 }),
+        Effect.timeout(PUBLIC_PORT_FINISH_BUDGET),
+        Effect.ignore,
+      );
       yield* Deferred.succeed(drain.stopping, true);
-      yield* Effect.sync(() => {
-        server.closeIdleConnections();
-      });
       const force = yield* Effect.forkChild(
         Effect.sleep(PUBLIC_PORT_FORCE_CLOSE_AFTER).pipe(
           Effect.andThen(
@@ -1849,7 +1875,7 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
         // and only the host's stop cuts it.
         (eventStream) =>
           eventStream
-            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping)) }
+            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.closing)) }
             : { cut: Deferred.await(drain.stopping) },
         Deferred.await(drain.stopping),
       ).pipe(Effect.result);
@@ -1877,6 +1903,16 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
   yield* drain.count('failed');
   return yield* refuse(last.code, lastPeer);
 });
+
+/** Methods a host may send again: they ask for a representation and change nothing. */
+const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD']);
+
+/** Reads and drops an answer that will not be sent (a refusal's short body), bounded so it can never hold a request. */
+const discardBody = (response: HttpServerResponse.HttpServerResponse) =>
+  Match.value(response.body).pipe(
+    Match.tag('Stream', ({ stream }) => Stream.runDrain(stream).pipe(Effect.timeout('2 seconds'), Effect.ignore)),
+    Match.orElse(() => Effect.void),
+  );
 
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
@@ -1927,6 +1963,13 @@ export const hostApplication = <Failure, Requirements>(
       return HttpServerResponse.empty({ status: 404 });
     }
     const { path: upstreamPath, port } = route.value;
+    // While Core refuses this release (its authority drains, or a newer one just took the row), a request waits for the
+    // authority to settle instead of reaching a unit that would answer 503: then it is relayed to the new release, or
+    // served here when this one serves again.
+    yield* drain.hold;
+    if (yield* drain.active) {
+      return yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher);
+    }
     const started = yield* Clock.currentTimeMillis;
     const report = (problem: RelayFailure, status: number | 'cut') =>
       Clock.currentTimeMillis.pipe(
@@ -1947,16 +1990,15 @@ export const hostApplication = <Failure, Requirements>(
           }),
         ),
       );
-    return yield* relay(
+    const serveHere = relay(
       request,
       { headersTimeout: RELAY_HEADERS_TIMEOUT, origin: loopbackOrigin(port), path: upstreamPath },
       (problem) => report(problem, 'cut'),
-      // An event stream of this release ends once a newer one took over, so its browser reconnects to the new one.
       // An event stream of this release ends once a newer one took over or the host stops, so its browser reconnects;
       // every other response is cut when the host stops.
       (eventStream) =>
         eventStream
-          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.stopping)) }
+          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.closing)) }
           : { cut: Deferred.await(drain.stopping) },
       Deferred.await(drain.stopping),
     ).pipe(
@@ -1968,11 +2010,24 @@ export const hostApplication = <Failure, Requirements>(
           : report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
+    const answer = yield* serveHere;
+    // A unit can refuse before the authority watch saw the fence (its last reading is up to 100 ms old). A safe
+    // request answered 5xx while Core refuses this release is sent once more after the authority settled: it asked
+    // nothing that could have changed anything.
+    if (answer.status < 500 || !SAFE_METHODS.has(request.method) || !(yield* drain.refusedNow)) {
+      return answer;
+    }
+    yield* discardBody(answer);
+    yield* drain.count('retried');
+    yield* drain.hold;
+    return (yield* drain.active)
+      ? yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher)
+      : yield* serveHere;
   }).pipe(
-    // Once the listener stopped (the drain's end) or the host stops, every answer closes its connection, so the client's
-    // next request opens a new one, on a container that still serves.
+    // Once the listener stopped (the drain's end or a stop) or the host stops, every answer closes its connection, so
+    // the client's next request opens a new one, on a container that still serves.
     Effect.map((response) =>
-      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.stopping)
+      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.closing)
         ? HttpServerResponse.setHeader(response, 'connection', 'close')
         : response,
     ),
@@ -2073,19 +2128,37 @@ export const writeAndHold = <JournalFailure, Failure, Requirements>(
 ) => write(pointer.publish(snapshot)).pipe(Effect.tap(pointer.hold));
 
 /**
+ * How often a serving host reads the authority row. From a newer release's enter-draining commit Core refuses this
+ * release's reads and writes, and from its promote this host must relay; each reading tells the host's public port.
+ */
+export const AUTHORITY_WATCH_INTERVAL = Duration.millis(100);
+
+/** The part of the authority row the watch reads. */
+export interface WatchedAuthority {
+  readonly phase: string;
+  readonly revision: string;
+}
+
+/**
  * Resolves with the revision that replaced `ownRevision` once the authority names another one. Only a newer release
- * can take the authority row, and a superseded revision is never admitted again. A failed read is not evidence.
+ * can take the authority row, and a superseded revision is never admitted again. Every reading is observed: Core
+ * refuses this release while its own row drains and once another revision holds it. A failed read is not evidence.
  */
 export const awaitSupersedingRevision = <Failure, Requirements>(
   ownRevision: string,
-  activeRevision: Effect.Effect<Option.Option<string>, Failure, Requirements>,
-  interval: Duration.Input = Duration.seconds(1),
+  authority: Effect.Effect<Option.Option<WatchedAuthority>, Failure, Requirements>,
+  observe: (refused: boolean) => Effect.Effect<void>,
+  interval: Duration.Input = AUTHORITY_WATCH_INTERVAL,
 ) =>
   Effect.gen(function* awaitSuperseding() {
     for (;;) {
-      const active = yield* activeRevision.pipe(Effect.option, Effect.map(Option.flatten));
-      if (Option.isSome(active) && active.value !== ownRevision) {
-        return active.value;
+      const row = yield* authority.pipe(Effect.option, Effect.map(Option.flatten));
+      if (Option.isSome(row)) {
+        if (row.value.revision !== ownRevision) {
+          yield* observe(true);
+          return row.value.revision;
+        }
+        yield* observe(row.value.phase === 'draining');
       }
       yield* Effect.sleep(interval);
     }
@@ -2240,7 +2313,10 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   const drainWhenSuperseded = (ownRevision: string) =>
     awaitSupersedingRevision(
       ownRevision,
-      readAuthority.pipe(Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision))),
+      readAuthority.pipe(
+        Effect.map((rows) => Option.map(EffectArray.head(rows), ({ phase, revision }) => ({ phase, revision }))),
+      ),
+      drain.observe,
     ).pipe(
       Effect.flatMap((revision) =>
         drainSupersededHost({
