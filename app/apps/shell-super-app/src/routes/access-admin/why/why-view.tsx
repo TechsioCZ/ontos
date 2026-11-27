@@ -1,17 +1,28 @@
+import {
+  ChoiceField,
+  FormReact,
+  FormRoot,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { DateTime, Option, Schema } from 'effect';
-import { useState } from 'react';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
+import { useEffect } from 'react';
 
-import { emptyWhySearch, hiddenWhySubjects, WhySearchDraftSchema } from './why-view-model.ts';
+import { browserAtomRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { hiddenWhySubjects, WhySearchDraftSchema } from './why-view-model.ts';
 import type { WhyResultView, WhySearchDraft, WhySubjectOptions } from './why-view-model.ts';
-import { WhySubjectPicker } from './why-subject-picker.tsx';
 
 const modeLabelKey = 'shell.accessAdmin.mode.label';
+const retryKey = 'shell.accessAdmin.common.retry';
+const currentPersonKey = 'shell.accessAdmin.why.currentPersonChoice';
 const inputFields = [
   ['capabilityKey', 'capabilityKey', 200],
   ['companyId', 'companyId', 36],
@@ -20,7 +31,46 @@ const inputFields = [
   ['currency', 'currency', 3],
   ['minor', 'amountMinor', 16],
 ] as const;
-const WhyFormSchema = Schema.fromFormData(WhySearchDraftSchema);
+
+/** The people the picker offers now; another page or a new directory revision can drop the picked one. */
+const offeredSubjects = Atom.make<WhySubjectOptions>(hiddenWhySubjects).pipe(Atom.keepAlive);
+
+/** The picked person is no longer among the offered people: the person picks again. */
+class WithdrawnSubject extends Schema.TaggedError<WithdrawnSubject>()('WithdrawnSubject', {}) {}
+
+/**
+ * The Why question as the person enters it: every field is trimmed by the draft Schema, and a
+ * submitted draft is the trimmed one the route validates before it asks the BFF. A check needs a
+ * capability key and, for another person, one the picker still offers.
+ */
+const whySearchForm = FormReact.make(
+  fromPayload(WhySearchDraftSchema).refine(
+    ({ capabilityKey }) =>
+      capabilityKey.length > 0 || { issue: 'shell.accessAdmin.why.capabilityKeyRequired', path: ['capabilityKey'] },
+  ),
+  {
+    fields: {
+      capabilityKey: TextField,
+      companyId: TextField,
+      currency: TextField,
+      minor: TextField,
+      mode: ChoiceField,
+      recordKey: TextField,
+      subject: ChoiceField,
+      targetModule: TextField,
+    },
+    onSubmit: (_submit, { decoded, get }) => {
+      const subjects = get(offeredSubjects);
+      // Another person is checked only while the picker offers them; an unavailable picker offers no one.
+      return decoded.subject === '' ||
+        (subjects.state === 'ready' && subjects.people.some((person) => person.value === decoded.subject))
+        ? Effect.succeed(decoded)
+        : Effect.fail(new WithdrawnSubject());
+    },
+    runtime: browserAtomRuntime,
+    submitErrors: () => [{ message: 'shell.accessAdmin.why.subjectWithdrawn', path: 'subject' }],
+  },
+);
 
 const outcomeVariants = { allowed: 'success', denied: 'danger', needsApproval: 'warning' } as const;
 const stateKeys = {
@@ -53,7 +103,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
         </Badge>
         <p>
           {decision.subjectName === null
-            ? t('shell.accessAdmin.why.currentPersonChoice')
+            ? t(currentPersonKey)
             : t('shell.accessAdmin.why.checkingPerson', { name: decision.subjectName })}
         </p>
         <dl className="grid gap-150 break-words">
@@ -143,7 +193,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
         )}
         {decision.authorityMetadata === 'unavailable' ? (
           <Button onClick={onRetry} severity="secondary">
-            {t('shell.accessAdmin.common.retry')}
+            {t(retryKey)}
           </Button>
         ) : null}
         <p>{t('shell.accessAdmin.why.checkOnly')}</p>
@@ -162,9 +212,67 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
       </StatusText>
       {result.state === 'unavailable' || result.state === 'conflict' ? (
         <Button onClick={onRetry} severity="secondary">
-          {t('shell.accessAdmin.common.retry')}
+          {t(retryKey)}
         </Button>
       ) : null}
+    </div>
+  );
+};
+
+const subjectField = whySearchForm.getFieldAtoms(whySearchForm.fields.subject);
+
+export const WhySubjectPicker = ({
+  onMore,
+  options,
+  pending,
+}: {
+  readonly onMore?: (() => void) | undefined;
+  readonly options: WhySubjectOptions;
+  readonly pending: boolean;
+}) => {
+  const { t } = useModernI18n();
+  const subject = useAtomValue(subjectField.value);
+  const setSubject = useAtomSet(subjectField.setValue);
+  if (options.state === 'hidden') {
+    return null;
+  }
+  if (options.state === 'unavailable') {
+    const otherPerson = Option.exists(subject, (value) => value !== '');
+    return (
+      <div className="grid gap-150">
+        <StatusText aria-live="polite" status="default">
+          {t('shell.accessAdmin.why.subjectPickerUnavailable')}
+        </StatusText>
+        {otherPerson ? (
+          <>
+            <StatusText aria-live="polite" status="error">
+              {t('shell.accessAdmin.why.subjectWithdrawn')}
+            </StatusText>
+            <Button disabled={pending} onClick={() => setSubject('')} severity="secondary" type="button">
+              {t(currentPersonKey)}
+            </Button>
+          </>
+        ) : null}
+        <Button disabled={pending || onMore === undefined} onClick={onMore} severity="secondary" type="button">
+          {t(retryKey)}
+        </Button>
+      </div>
+    );
+  }
+  const currentPerson = t(currentPersonKey);
+  return (
+    <div className="grid gap-150">
+      <whySearchForm.subject
+        disabled={pending}
+        items={[{ label: currentPerson, value: '' }, ...options.people]}
+        label={t('shell.accessAdmin.why.subjectPickerLabel')}
+        placeholder={currentPerson}
+      />
+      {options.nextCursor === null ? null : (
+        <Button disabled={pending || onMore === undefined} onClick={onMore} severity="secondary" type="button">
+          {t('shell.accessAdmin.why.morePeople')}
+        </Button>
+      )}
     </div>
   );
 };
@@ -187,7 +295,7 @@ export const AgentsUnavailable = () => {
 };
 
 export const WhyView = ({
-  draft: initialDraft,
+  draft,
   onCheck,
   onMorePeople,
   onRetry,
@@ -204,80 +312,47 @@ export const WhyView = ({
   readonly subjects?: WhySubjectOptions;
 }) => {
   const { t } = useModernI18n();
-  const [draft, setDraft] = useState(() => initialDraft);
+  const offer = useAtomSet(offeredSubjects);
+  useEffect(() => offer(subjects), [offer, subjects]);
   const modes = (['run', 'propose'] as const).map((value) => ({ label: t(`shell.accessAdmin.mode.${value}`), value }));
+  useAtomSubscribe(whySearchForm.submit, (submitted) => {
+    if (AsyncResult.isSuccess(submitted) && !submitted.waiting) {
+      onCheck(submitted.value);
+    }
+  });
   return (
     <section aria-label={t('shell.accessAdmin.why.title')} className="grid w-full max-w-5xl gap-300">
       <p>{t('shell.accessAdmin.why.description')}</p>
       <p>{t('shell.accessAdmin.why.currentPerson')}</p>
-      <form
-        action={(data) => {
-          data.set('mode', draft.mode);
-          data.set('subject', draft.subject);
-          onCheck(Option.getOrElse(Schema.decodeOption(WhyFormSchema)(data), () => emptyWhySearch));
-        }}
-        aria-busy={pending}
+      <FormRoot
         className="grid gap-200"
+        defaultValues={draft}
+        form={whySearchForm}
+        translateMessage={(message) => t(message, { defaultValue: t('shell.accessAdmin.why.invalidInput') })}
       >
         <fieldset className="grid gap-200 md:grid-cols-2" disabled={pending}>
           <legend className="sr-only">{t('shell.accessAdmin.common.search')}</legend>
-          <WhySubjectPicker
-            onChange={(subject) => setDraft((previous) => ({ ...previous, subject }))}
-            onMore={onMorePeople}
-            options={subjects}
-            pending={pending}
-            value={draft.subject}
-          />
-          {inputFields.map(([name, label, maxLength]) => (
-            <FormInput
-              autoCapitalize="off"
-              autoComplete="off"
-              autoCorrect="off"
-              id={`why-${name}`}
-              inputMode={name === 'minor' ? 'numeric' : 'text'}
-              key={name}
-              label={t(`shell.accessAdmin.why.${label}`)}
-              maxLength={maxLength}
-              name={name}
-              onChange={(event) => {
-                const { value } = event.currentTarget;
-                setDraft((previous) => ({ ...previous, [name]: value }));
-              }}
-              required={name === 'capabilityKey'}
-              spellCheck={false}
-              type="text"
-              value={draft[name]}
-            />
-          ))}
-          <Select
-            disabled={pending}
-            items={modes}
-            name="mode"
-            onValueChange={({ value }) => {
-              const [selected] = value;
-              if (selected === 'run' || selected === 'propose') {
-                setDraft((previous) => ({ ...previous, mode: selected }));
-              }
-            }}
-            value={[draft.mode]}
-          >
-            <Select.Label>{t(modeLabelKey)}</Select.Label>
-            <Select.Control>
-              <Select.Trigger aria-label={t(modeLabelKey)}>
-                <Select.ValueText />
-              </Select.Trigger>
-            </Select.Control>
-            <Select.Positioner>
-              <Select.Content>
-                {modes.map((item) => (
-                  <Select.Item item={item} key={item.value}>
-                    <Select.ItemText />
-                    <Select.ItemIndicator />
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select.Positioner>
-          </Select>
+          <WhySubjectPicker onMore={onMorePeople} options={subjects} pending={pending} />
+          {inputFields.map(([name, label, maxLength]) => {
+            const Input = whySearchForm[name];
+            return (
+              <Input
+                autoCapitalize="off"
+                autoComplete="off"
+                autoCorrect="off"
+                disabled={pending}
+                id={`why-${name}`}
+                inputMode={name === 'minor' ? 'numeric' : 'text'}
+                key={name}
+                label={t(`shell.accessAdmin.why.${label}`)}
+                maxLength={maxLength}
+                required={name === 'capabilityKey'}
+                spellCheck={false}
+                type="text"
+              />
+            );
+          })}
+          <whySearchForm.mode disabled={pending} items={modes} label={t(modeLabelKey)} />
         </fieldset>
         <Button
           disabled={pending}
@@ -288,7 +363,7 @@ export const WhyView = ({
         >
           {t('shell.accessAdmin.why.submit')}
         </Button>
-      </form>
+      </FormRoot>
       <div aria-busy={pending} aria-live="polite">
         {pending ? (
           <StatusText status="default">{t('shell.accessAdmin.common.loading')}</StatusText>

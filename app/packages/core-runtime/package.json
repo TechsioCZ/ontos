@@ -71,6 +71,7 @@
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./route-meta": "./src/modules/route-meta.ts",
     "./sdk": "./src/sdk/index.ts",
+    "./ui/form": "./src/ui/form/index.ts",
     "./sdk/core": "./src/sdk/core-operations.ts",
     "./sdk/read": "./src/sdk/read.ts",
     "./testing/access-gate": "./src/testing/access-gate.ts",
@@ -115,6 +116,7 @@
     "db:test": "rstest --project unit --project integration",
     "db:verify": "node scripts/verify-db-schema.mts",
     "test:unit": "rstest --project unit",
+    "test:component": "rstest --project component",
     "test:integration": "rstest --project integration",
     "test:s3-mock-server": "node tests/support/r2-behaviour-mock-server.ts",
     "test:s3-provider": "rstest --project integration tests/integration/core-media-s3-storage.test.ts tests/integration/core-media-recovery-s3.test.ts tests/integration/core-media-r2-behaviour-mock.test.ts tests/integration/core-media-r2-mock-version-pin.test.ts tests/integration/core-media-s3-run-cleanup.test.ts",
@@ -126,19 +128,30 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
+    "@effect/atom-react": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",
+    "@lucas-barake/effect-form-react": "1.1.0",
     "@noble/hashes": "2.2.0",
+    "@techsio/ui-kit": "0.67.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.7"
+    "effect": "4.0.7",
+    "react": "19.3.1"
   },
   "devDependencies": {
     "@grpc/grpc-js": "1.14.5",
     "@rstest/core": "0.12.6",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "^26.4.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "1.0.0",
+    "happy-dom": "21.0.4",
     "pg": "8.22.0",
+    "react-dom": "19.3.1",
     "yaml": "2.9.1"
   }
 }

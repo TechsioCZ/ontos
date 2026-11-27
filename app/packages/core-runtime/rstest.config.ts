@@ -12,6 +12,13 @@ export default defineConfig({
       testTimeout: 2856,
     },
     {
+      include: ['tests/component/**/*.test.tsx'],
+      name: 'component',
+      testEnvironment: 'happy-dom',
+      testTimeout: 2856,
+      tools: { swc: { jsc: { transform: { react: { runtime: 'automatic' } } } } },
+    },
+    {
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
       setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],

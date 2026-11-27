@@ -91,6 +91,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-hand-built-http-server-in-tests': 'error',
   'effect-native/no-hand-built-problem-details': 'error',
   'effect-native/no-hand-parsed-environment-value': 'error',
+  'effect-native/no-hand-rolled-form-state': 'error',
   'effect-native/no-hand-rolled-tagged-union': 'error',
   'effect-native/no-imperative-loop-in-effect-gen': 'error',
   'effect-native/no-interface-first-codec': 'error',
