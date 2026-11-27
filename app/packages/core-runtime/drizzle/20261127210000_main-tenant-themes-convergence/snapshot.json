@@ -1,9 +1,10 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "adef8a17-7da7-47d3-8089-7f7fb0624e25",
+  "id": "bb015a67-ecb2-4da1-a649-39592539d172",
   "prevIds": [
-    "899be176-9a7d-4e63-bab3-8a8d97891d3a"
+    "899be176-9a7d-4e63-bab3-8a8d97891d3a",
+    "572d5f7d-b018-4979-8c13-af2e97c25024"
   ],
   "ddl": [
     {
@@ -11923,27 +11924,6 @@
           "asc": true,
           "nullsFirst": false,
           "opclass": null
-        }
-      ],
-      "isUnique": true,
-      "where": "\"platform_role\" = 'access_release_actor'",
-      "with": "",
-      "method": "btree",
-      "concurrently": false,
-      "name": "core_principals_release_actor_uk",
-      "entityType": "indexes",
-      "schema": "core",
-      "table": "principals"
-    },
-    {
-      "nameExplicit": true,
-      "columns": [
-        {
-          "value": "tenant_id",
-          "isExpression": false,
-          "asc": true,
-          "nullsFirst": false,
-          "opclass": null
         },
         {
           "value": "system_workload_key",
@@ -11959,6 +11939,27 @@
       "method": "btree",
       "concurrently": false,
       "name": "core_principals_system_workload_uk",
+      "entityType": "indexes",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"platform_role\" = 'access_release_actor'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_principals_release_actor_uk",
       "entityType": "indexes",
       "schema": "core",
       "table": "principals"
@@ -14967,23 +14968,6 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "RESTRICT",
-      "name": "tenant_module_states_tenant_id_tenants_tenant_id_fkey",
-      "entityType": "fks",
-      "schema": "core",
-      "table": "tenant_module_states"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
-        "tenant_id"
-      ],
-      "schemaTo": "core",
-      "tableTo": "tenants",
-      "columnsTo": [
-        "tenant_id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "RESTRICT",
       "name": "tenant_theme_attachments_tenant_id_tenants_tenant_id_fkey",
       "entityType": "fks",
       "schema": "core",
@@ -15024,6 +15008,23 @@
       "entityType": "fks",
       "schema": "core",
       "table": "tenant_themes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tenant_module_states_tenant_id_tenants_tenant_id_fkey",
+      "entityType": "fks",
+      "schema": "core",
+      "table": "tenant_module_states"
     },
     {
       "nameExplicit": false,
@@ -15263,17 +15264,6 @@
     {
       "columns": [
         "tenant_id",
-        "theme_key"
-      ],
-      "nameExplicit": true,
-      "name": "core_tenant_themes_pk",
-      "entityType": "pks",
-      "schema": "core",
-      "table": "tenant_themes"
-    },
-    {
-      "columns": [
-        "tenant_id",
         "consumer_name",
         "stream_key"
       ],
@@ -15293,6 +15283,17 @@
       "entityType": "pks",
       "schema": "core",
       "table": "source_execution_gates"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "theme_key"
+      ],
+      "nameExplicit": true,
+      "name": "core_tenant_themes_pk",
+      "entityType": "pks",
+      "schema": "core",
+      "table": "tenant_themes"
     },
     {
       "columns": [
@@ -16772,6 +16773,13 @@
       "table": "principals"
     },
     {
+      "value": "\"system_workload_key\" is null or \"kind\" = 'system'",
+      "name": "core_principals_system_workload_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
       "value": "\"platform_role\" is null or (\"platform_role\" = 'access_release_actor' and \"kind\" = 'system') or (\"platform_role\" = 'internal_workload' and \"kind\" = 'service')",
       "name": "core_principals_platform_role_ck",
       "entityType": "checks",
@@ -16781,13 +16789,6 @@
     {
       "value": "\"integration_kind\" is null or (\"kind\" = 'integration' and \"integration_kind\" ~ '^[a-z][a-z0-9-]{0,39}$')",
       "name": "core_principals_integration_kind_ck",
-      "entityType": "checks",
-      "schema": "core",
-      "table": "principals"
-    },
-    {
-      "value": "\"system_workload_key\" is null or \"kind\" = 'system'",
-      "name": "core_principals_system_workload_ck",
       "entityType": "checks",
       "schema": "core",
       "table": "principals"
@@ -17351,6 +17352,32 @@
       "entityType": "policies",
       "schema": "core",
       "table": "tenant_module_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "true",
+      "withCheck": "true",
+      "name": "core_tenant_theme_attachments_shared_runtime_all",
+      "entityType": "policies",
+      "schema": "core",
+      "table": "tenant_theme_attachments"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "true",
+      "withCheck": "true",
+      "name": "core_tenant_themes_shared_runtime_all",
+      "entityType": "policies",
+      "schema": "core",
+      "table": "tenant_themes"
     },
     {
       "as": "PERMISSIVE",
@@ -19301,32 +19328,6 @@
       "entityType": "policies",
       "schema": "core",
       "table": "tenant_module_states"
-    },
-    {
-      "as": "PERMISSIVE",
-      "for": "ALL",
-      "roles": [
-        "ontos_runtime"
-      ],
-      "using": "true",
-      "withCheck": "true",
-      "name": "core_tenant_theme_attachments_shared_runtime_all",
-      "entityType": "policies",
-      "schema": "core",
-      "table": "tenant_theme_attachments"
-    },
-    {
-      "as": "PERMISSIVE",
-      "for": "ALL",
-      "roles": [
-        "ontos_runtime"
-      ],
-      "using": "true",
-      "withCheck": "true",
-      "name": "core_tenant_themes_shared_runtime_all",
-      "entityType": "policies",
-      "schema": "core",
-      "table": "tenant_themes"
     },
     {
       "as": "PERMISSIVE",
