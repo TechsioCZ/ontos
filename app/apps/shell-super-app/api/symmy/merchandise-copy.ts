@@ -125,12 +125,10 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
   if (admission.acquireRouteAssertion === undefined) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
-  const read = yield* admission.acquireRouteAssertion({ routeKey: 'adminProducts' });
+  // The admission proves owner calls with the route selected last, so each phase selects its own route first:
+  // productsBatch (enrollment), adminProducts (the Catalog read), productsBatch again (the merchandise writes).
   const write = yield* admission.acquireRouteAssertion({ routeKey: 'productsBatch' });
-  if (
-    read.compositionRevision !== admission.compositionRevision ||
-    write.compositionRevision !== admission.compositionRevision
-  ) {
+  if (write.compositionRevision !== admission.compositionRevision) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
   const { legalEntityId } = write.route;
@@ -140,10 +138,18 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
       operation.entrypointKey === importOperation.entrypointKey &&
       operation.schemaVersion === importOperation.schemaVersion,
   );
-  if (legalEntityId === undefined || !enrolled || read.route.tenantId !== write.route.tenantId) {
+  if (legalEntityId === undefined || !enrolled) {
     return { skipped: 'not_enrolled' } as const;
   }
+  const read = yield* admission.acquireRouteAssertion({ routeKey: 'adminProducts' });
+  if (read.compositionRevision !== admission.compositionRevision || read.route.tenantId !== write.route.tenantId) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
   const products = yield* readAllSourceProducts(read.route, admission);
+  const reselected = yield* admission.acquireRouteAssertion({ routeKey: 'productsBatch' });
+  if (reselected.compositionRevision !== admission.compositionRevision) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
   const outcomes: Record<string, number> = {};
   for (const item of products) {
     const command = symmyUpsertSourceProductCommand(item, stock);
