@@ -103,6 +103,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
       return;
     }
     const controller = new AbortController();
+    // Ask once the shopper pauses: every new term is an owner search, so not one per keystroke while typing.
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
         method: "POST",
@@ -147,7 +148,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
                 : cs.search.unavailable,
           });
         });
-    }, 120);
+    }, 300);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
