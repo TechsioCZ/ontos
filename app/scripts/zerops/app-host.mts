@@ -40,6 +40,7 @@ import {
   platformDrainPeers,
   publicationAllowed,
   renewWhileHolding,
+  reportReadyOnceSettled,
   restartMayPublish,
   SupersedeDrains,
   SupersedeDrainsLive,
@@ -234,7 +235,7 @@ const PUBLICATION_RETRY_SPACING = Duration.seconds(20);
  * How long one boot keeps retrying a refused publication: well inside the 15 minute readiness limit (app/zerops.yaml)
  * after a two-minute boot, so a refusal that never clears still fails this boot before Zerops gives up on it.
  */
-const PUBLICATION_RETRY_WINDOW_MS = 9 * 60_000;
+const PUBLICATION_RETRY_WINDOW = Duration.minutes(9);
 
 /** Dynamic host reasons can include configuration names or downstream details; only these literals may be logged. */
 const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
@@ -1598,12 +1599,12 @@ const refusedRequest = (request: HttpServerRequest.HttpServerRequest, status: nu
 /**
  * Only processes inside this container read the composition; public peers get 404 without a log line (a public probe
  * of an internal path is expected noise). A process inside the container that is refused is logged: a reader with a
- * wrong method, or a published host that has no snapshot it may serve (before publication, 503 is the expected
+ * wrong method, or a ready host that has no snapshot it may serve (before it reports ready, 503 is the expected
  * answer while the host starts).
  */
 const compositionSourceResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
-  published: Ref.Ref<boolean>,
+  ready: Ref.Ref<boolean>,
   load: Effect.Effect<Option.Option<string>, Failure, Requirements>,
   refusals: HostRefusalLog,
 ) =>
@@ -1623,7 +1624,7 @@ const compositionSourceResponse = <Failure, Requirements>(
     if (Option.isSome(current)) {
       return compositionSnapshotResponse(current.value, request.headers['if-none-match']);
     }
-    if (yield* Ref.get(published)) {
+    if (yield* Ref.get(ready)) {
       yield* refusals.record({
         fields: { ...refusedRequest(request, 503), reason: 'no snapshot the authority admits' },
         key: 'composition',
@@ -1636,24 +1637,25 @@ const compositionSourceResponse = <Failure, Requirements>(
 /** Liveness, readiness and the loopback composition source; none for every application path. */
 const hostControlResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
-  published: Ref.Ref<boolean>,
+  ready: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
   refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* answerHostControl() {
     if (request.url === COMPOSITION_PATH) {
-      return Option.some(yield* compositionSourceResponse(request, published, loadComposition, refusals));
+      return Option.some(yield* compositionSourceResponse(request, ready, loadComposition, refusals));
     }
     if (request.url === LIVE_PATH) {
       return Option.some(HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } }));
     }
     if (request.url === READY_PATH) {
-      // A readiness probe before publication is expected to answer 503; the boot lines say why.
-      const ready = yield* Ref.get(published);
+      // A readiness probe before publication (after a takeover: before the container settled) is expected to answer
+      // 503; the boot lines say why.
+      const isReady = yield* Ref.get(ready);
       return Option.some(
-        HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
+        HttpServerResponse.text(isReady ? 'ready\n' : 'starting\n', {
           headers: { 'cache-control': 'no-store' },
-          status: ready ? 200 : 503,
+          status: isReady ? 200 : 503,
         }),
       );
     }
@@ -1665,13 +1667,13 @@ const hostControlResponse = <Failure, Requirements>(
  * of this container reach it, so any other path is a misconfigured caller and is logged.
  */
 export const hostControlApplication = <Failure, Requirements>(
-  published: Ref.Ref<boolean>,
+  ready: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
   refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* routeControlRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
+    const control = yield* hostControlResponse(request, ready, loadComposition, refusals);
     if (Option.isSome(control)) {
       return control.value;
     }
@@ -1701,13 +1703,15 @@ export const stopAccepting = (server: Server) =>
   });
 
 /**
- * Bounds of the public port's stop. The platform's stop timeout is not documented in this repository; it is assumed
- * to be 30 s, so the port closes well inside it and leaves the units their time. Finite requests already dispatched
- * get `PUBLIC_PORT_FINISH_BUDGET` to answer; then what still runs is cut, connections that hold a half-sent request
- * get `PUBLIC_PORT_FORCE_CLOSE_AFTER` more, then are closed; the server's graceful close is capped at 10 s whatever
- * happens.
+ * Bounds of the public port's stop. Zerops kills the host 5.0 s after its stop signal (`=> 9 (killed)` 5.04 s and
+ * 5.06 s after SIGTERM, stage 2026-11-27 02:44:47 and 02:52:24), and the port begins to close about 0.5 s after the
+ * signal, once the boot's own work stopped. Finite requests already dispatched get `PUBLIC_PORT_FINISH_BUDGET`, nearly
+ * all of that time, to answer (2.5 s cut a relayed Symmy read the new release answered a moment later with 502); then
+ * what still runs is cut, so its 502 is sent before the kill would only reset its connection. Connections that hold a
+ * half-sent request get `PUBLIC_PORT_FORCE_CLOSE_AFTER` more, then are closed; the server's graceful close is capped
+ * at 10 s whatever happens. The units get no time of their own: the kill ends them.
  */
-export const PUBLIC_PORT_FINISH_BUDGET = Duration.millis(2500);
+export const PUBLIC_PORT_FINISH_BUDGET = Duration.seconds(4);
 export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(1);
 export const PUBLIC_PORT_GRACEFUL_CLOSE_CAP = Duration.seconds(10);
 
@@ -1927,7 +1931,7 @@ const discardBody = (response: HttpServerResponse.HttpServerResponse) =>
 
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
-  published: Ref.Ref<boolean>,
+  ready: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
   refusals: HostRefusalLog,
   drain: SupersedeDrain,
@@ -1962,7 +1966,7 @@ export const hostApplication = <Failure, Requirements>(
       }
       return fixture;
     }
-    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
+    const control = yield* hostControlResponse(request, ready, loadComposition, refusals);
     if (Option.isSome(control)) {
       return control.value;
     }
@@ -2013,6 +2017,8 @@ export const hostApplication = <Failure, Requirements>(
           : { cut: Deferred.await(drain.stopping) },
       Deferred.await(drain.stopping),
     ).pipe(
+      // Counted while its unit owes the answer: a container that took over reports ready once none waits long.
+      drain.waits.track,
       Effect.catchTag('RelayFailure', (problem) =>
         problem.code === 'HOST_STOPPING' || !CONNECT_FAILURES.has(problem.code)
           ? report(problem, problem.code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502).pipe(
@@ -2282,7 +2288,8 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   const node = process.execPath;
   const runtime = yield* shellRuntime;
   const memoryBytes = yield* readContainerMemoryBytes;
-  const published = yield* Ref.make(false);
+  // Whether this host reports ready to Zerops: once published (after a takeover: once settled, reportReadyOnceSettled).
+  const ready = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   // The restart check compares `activatedAtMillis` with the container clock; the pointer compares the exact text.
   const readAuthority = database.executor.execute<{
@@ -2304,7 +2311,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   // Superseded, this host keeps its public port open as a relay to the new release (supersede-drain.mts).
   const drain = yield* SupersedeDrains;
   yield* refusals.flush.pipe(Effect.repeat(Schedule.spaced(HOST_REFUSAL_LOG_WINDOW)), Effect.forkScoped);
-  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
+  yield* HttpServer.serveEffect(hostControlApplication(ready, pointer.load, refusals));
   const publicScope = yield* Scope.make();
   // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
   // The public server is made here so the host can stop its listener alone (the drain's end) or close it whole (stop).
@@ -2317,7 +2324,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
     port: publicPort,
   }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
-    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals, drain))),
+    Effect.flatMap((server) => server.serve(hostApplication(ports, ready, pointer.load, refusals, drain))),
     Scope.provide(publicScope),
     Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
   );
@@ -2366,7 +2373,14 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
   const owners = yield* makeCredentialHolder((channel) =>
     startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
   );
-  const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
+  // The owners run in the host's scope, as the Shell does, so a stop closes the public port and lets its requests in
+  // flight finish before they stop. Raced with the boot instead, they stopped at the stop signal itself (stage
+  // 2026-11-27 02:52:24: HANDOVER CHANNEL LOST 0.6 ms after SIGTERM, half a second before the port began to close).
+  const ownersRunning = yield* Effect.forkScoped(owners.exit);
+  const exits = [
+    yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes),
+    Fiber.join(ownersRunning),
+  ];
   // Registered after the units started, so it runs before they are stopped: on a stop signal (or any end) the
   // public port first ends this release's event streams, lets in-flight requests finish and closes; then the
   // units stop.
@@ -2569,7 +2583,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       `[app-host] observe-only: composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) not published`,
     );
     yield* openPublicPort;
-    yield* Ref.set(published, true);
+    yield* Ref.set(ready, true);
     return yield* Effect.never;
   });
 
@@ -2643,6 +2657,11 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
     );
     yield* reconcileErpEditorGrants.pipe(timedBootStageJudged('host.erp-editor-grants', (granted: boolean) => granted));
+    // Whether this publication takes the authority from a running release, whose host then relays its traffic here.
+    const takesOver = Option.exists(
+      yield* activeRevision.pipe(Effect.option, Effect.map(Option.flatten)),
+      (active) => active !== releaseSnapshot.composition.revision,
+    );
     // A refusal before the drain started leaves the running release serving with nothing changed, so this boot tries
     // the same publication again in place, from a fresh observation, until the retiring release's work can drain.
     // Exiting instead re-ran the whole two-minute boot (migrator and access-release activation against the live
@@ -2667,7 +2686,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
                 while: (problem) => isDrainNotStartedRefusal(problem),
               }),
               Effect.timeoutOrElse({
-                duration: Duration.millis(Math.max(1, PUBLICATION_RETRY_WINDOW_MS)),
+                duration: PUBLICATION_RETRY_WINDOW,
                 orElse: () => Effect.fail(refusal),
               }),
             ),
@@ -2686,9 +2705,18 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       timedBootStage('host.publish'),
     );
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
-    // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
+    // traffic here until the balancer moved (supersede-drain.mts); this one serves at once. It reports ready at once
+    // too, unless it took over from a running release: then once it settled, so that Zerops stops the old container
+    // (cutting what it still relays) while this one answers fast.
     yield* openPublicPort.pipe(timedBootStage('host.open-public-port'));
-    yield* Ref.set(published, true);
+    const reportReady = takesOver
+      ? reportReadyOnceSettled(drain.waits, ready).pipe(
+          Effect.flatMap((held) => Console.log(bootTimingLine('host.takeover-ready-hold', held, 'ok'))),
+          Effect.forkChild,
+          Effect.asVoid,
+        )
+      : Ref.set(ready, true);
+    yield* reportReady;
     const servingAt = yield* Clock.monotonicTimeNanos;
     yield* Console.log(
       bootTimingLine('host.start-to-serving', Duration.toMillis(Duration.nanos(servingAt - hostStarted)), 'ok'),

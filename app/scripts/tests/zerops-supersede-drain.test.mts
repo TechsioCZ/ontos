@@ -43,6 +43,7 @@ import {
   platformDrainPeers,
   publicationAllowed,
   renewWhileHolding,
+  reportReadyOnceSettled,
   restartMayPublish,
 } from '../zerops/supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from '../zerops/supersede-drain.mts';
@@ -500,13 +501,58 @@ it('the relay resolves the app service name the project declares, and the new ho
   const publish = startup.indexOf('yield* publishSnapshot(');
   // The port may be opened through a timing wrapper (`yield* openPublicPort.pipe(…)`); the order is what counts.
   const open = startup.indexOf('yield* openPublicPort');
-  const ready = startup.indexOf('yield* Ref.set(published, true);');
+  // At once, or after a takeover once it settled (reportReadyOnceSettled).
+  const ready = startup.indexOf('yield* reportReady;');
   const drain = startup.indexOf('yield* drainWhenSuperseded(revision)');
   expect(publish).toBeGreaterThan(0);
   expect(open).toBeGreaterThan(publish);
+  expect(startup.indexOf('reportReadyOnceSettled(drain.waits, ready)')).toBeGreaterThan(open);
+  expect(startup.indexOf(': Ref.set(ready, true)')).toBeGreaterThan(open);
   expect(ready).toBeGreaterThan(open);
   expect(drain).toBeGreaterThan(ready);
 });
+
+it.effect('a container that took over reports ready once no unit answer was awaited long, within its bounds', () =>
+  Effect.gen(function* takeoverReadiness() {
+    const console = yield* TestConsole.make;
+    const { waits } = makeSupersedeDrain();
+    const hold = (ready: Ref.Ref<boolean>) =>
+      reportReadyOnceSettled(waits, ready).pipe(Effect.provideService(Console.Console, console), Effect.forkChild);
+    // Nothing waits: ready at the minimum, not before.
+    const quiet = yield* Ref.make(false);
+    const quietHold = yield* hold(quiet);
+    yield* TestClock.adjust('9 seconds');
+    expect(yield* Ref.get(quiet)).toBe(false);
+    yield* TestClock.adjust('2 seconds');
+    expect(yield* Ref.get(quiet)).toBe(true);
+    expect(yield* Fiber.join(quietHold)).toBe(10_000);
+    // A request waiting for its unit keeps it unready; once answered, ready after the settled period.
+    const answer = yield* Deferred.make<true>();
+    const waiting = yield* waits.track(Deferred.await(answer)).pipe(Effect.forkChild);
+    const busy = yield* Ref.make(false);
+    yield* hold(busy);
+    yield* TestClock.adjust('20 seconds');
+    expect(yield* Ref.get(busy)).toBe(false);
+    yield* Deferred.succeed(answer, true);
+    yield* Fiber.join(waiting);
+    yield* TestClock.adjust('4 seconds');
+    expect(yield* Ref.get(busy)).toBe(false);
+    yield* TestClock.adjust('2 seconds');
+    expect(yield* Ref.get(busy)).toBe(true);
+    // A request that never gets its answer: ready at the latest at the maximum.
+    yield* waits.track(Effect.never).pipe(Effect.forkChild);
+    const stuck = yield* Ref.make(false);
+    yield* hold(stuck);
+    yield* TestClock.adjust('44 seconds');
+    expect(yield* Ref.get(stuck)).toBe(false);
+    yield* TestClock.adjust('2 seconds');
+    expect(yield* Ref.get(stuck)).toBe(true);
+    const lines = (yield* console.logLines).map(String);
+    expect(lines[0]).toMatch(/reporting ready after 10000 ms \(settled, longest unit wait 0 ms\)/u);
+    expect(lines[1]).toMatch(/reporting ready after 25000 ms \(settled, longest unit wait 20000 ms\)/u);
+    expect(lines[2]).toMatch(/reporting ready after 45000 ms \(deadline, longest unit wait 45000 ms\)/u);
+  }),
+);
 
 it.live('back-to-back deploys: a host drops a peer that is draining itself and reaches the current one', () =>
   Effect.gen(function* threeHosts() {

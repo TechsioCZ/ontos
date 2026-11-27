@@ -21,6 +21,13 @@
  * The readiness answer stays 200: `deploy.readinessCheck` decides when a NEW container takes traffic during a deploy
  * (`failureTimeout` bounds that wait and fails the deploy), not when an old one leaves, so a 503 from the old host
  * could not move the balancer sooner and could only be read as a failing container.
+ *
+ * The NEW container uses exactly that: once it took the authority from a running release, it reports ready only when
+ * it settled (`reportReadyOnceSettled`). From its publication on it already serves all traffic, cold, through the old
+ * host's relay. Zerops stopped the old container 15-16 s after the new one reported ready (at its publication, then)
+ * and killed it 5.0 s after the stop signal (`=> 9 (killed)`, stage 2026-11-27 02:44:52 and 02:52:29), cutting what it
+ * still relayed: that cut landed in the new container's first, slowest seconds (02:52: relayed reads waited 5-16 s,
+ * one Symmy read answered 502).
  */
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
@@ -41,11 +48,12 @@ import {
 } from 'effect';
 
 /**
- * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
- * balancer's reconfiguration (measured: about 8 s), 2.5 times over. A stop signal ends it earlier: the platform stops
- * the old container only once traffic moved to the new one.
+ * How long a superseded host relays: the new container's readiness hold (at most `TAKEOVER_READY_MAX`), the readiness
+ * probe period (`zerops.yaml` app `retryPeriod: 10s`) and the balancer's reconfiguration (measured: about 8 s), with
+ * room to spare. A stop signal ends it earlier: the platform stops the old container only once traffic moved to the new
+ * one.
  */
-export const SUPERSEDED_DRAIN = Duration.seconds(45);
+export const SUPERSEDED_DRAIN = Duration.seconds(90);
 
 /** Marks a request relayed by a draining host; a draining host never relays it again. Never reaches a unit. */
 export const DRAIN_FORWARDED_HEADER = 'x-ontos-drain-forwarded';
@@ -100,6 +108,43 @@ const NEXT_READING_WAIT = Duration.seconds(1);
 const peerKey = ({ address, port }: DrainPeer) => `${address}:${String(port)}`;
 
 /**
+ * Public requests waiting for their unit's answer (its status line and headers), each by when it was sent. A streamed
+ * body (an event stream, a download) no longer counts once its headers arrived.
+ */
+export interface UnitWaits {
+  /** How long the request waiting longest has waited, in milliseconds; 0 when none waits. */
+  readonly longest: (now: number) => number;
+  readonly track: <A, E, R>(waiting: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+}
+
+const makeUnitWaits = (): UnitWaits => {
+  const sent = new Set<{ readonly at: number }>();
+  return {
+    longest: (now) => {
+      let longest = 0;
+      for (const { at } of sent) {
+        longest = Math.max(longest, now - at);
+      }
+      return longest;
+    },
+    track: (waiting) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((at) => {
+          const entry = { at };
+          sent.add(entry);
+          return waiting.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                sent.delete(entry);
+              }),
+            ),
+          );
+        }),
+      ),
+  };
+};
+
+/**
  * Whether this host relays, and to whom. `superseded` completes when the drain starts (relayed event streams of the
  * old release end then, so a browser reconnects to the new one); `ended` completes when it ends (in-flight relays
  * are cut then, before the port closes). A peer that refused as draining itself, or refused the connection, is
@@ -145,6 +190,8 @@ export interface SupersedeDrain {
    */
   readonly stopping: Deferred.Deferred<true>;
   readonly superseded: Deferred.Deferred<true>;
+  /** The public requests this host's units still owe an answer: after a takeover, the readiness hold reads them. */
+  readonly waits: UnitWaits;
 }
 
 interface DrainState {
@@ -267,6 +314,7 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
     }),
     stopping,
     superseded,
+    waits: makeUnitWaits(),
   };
 };
 
@@ -484,4 +532,54 @@ export const renewWhileHolding = <E, R>(input: {
       }
       yield* input.renew;
     }
+  });
+
+/**
+ * Bounds of the readiness hold of a container that took the authority from a running release. It reports ready once
+ * no request has waited longer than `TAKEOVER_SETTLED_WAIT` for its unit during the last `TAKEOVER_SETTLED_FOR`, but
+ * not before `TAKEOVER_READY_MIN` and at the latest at `TAKEOVER_READY_MAX`, both counted from its public port's
+ * opening. At 02:52 on 2026-11-27 the stage container's burst (every open browser reloading onto the new release, the
+ * Shell's event loop at 94 %, 31 requests queued for 6 pooled connections) lasted about 22 s; in steady state 87 % of
+ * the slowest stage read (Symmy `catalog/revision`) answer within 3 s.
+ */
+export const TAKEOVER_READY_MIN = Duration.seconds(10);
+export const TAKEOVER_READY_MAX = Duration.seconds(45);
+export const TAKEOVER_SETTLED_WAIT = Duration.seconds(3);
+export const TAKEOVER_SETTLED_FOR = Duration.seconds(5);
+const TAKEOVER_READY_POLL = Duration.millis(250);
+
+/**
+ * Sets `ready` once this container settled after taking over (bounds above), logs when and why, and returns how long
+ * the hold took. The old host relays to it meanwhile, so nothing waits for the hold but the old container's stop.
+ */
+export const reportReadyOnceSettled = (waits: UnitWaits, ready: Ref.Ref<boolean>) =>
+  Effect.gen(function* holdReadiness() {
+    const opened = yield* Clock.currentTimeMillis;
+    const settledWait = Duration.toMillis(TAKEOVER_SETTLED_WAIT);
+    let lastLongWait = opened;
+    let longestSeen = 0;
+    const outcome = yield* Clock.currentTimeMillis.pipe(
+      Effect.map((now) => {
+        const longest = waits.longest(now);
+        longestSeen = Math.max(longestSeen, longest);
+        if (longest >= settledWait) {
+          lastLongWait = now;
+        }
+        if (now - opened >= Duration.toMillis(TAKEOVER_READY_MAX)) {
+          return 'deadline';
+        }
+        const settled =
+          now - opened >= Duration.toMillis(TAKEOVER_READY_MIN) &&
+          now - lastLongWait >= Duration.toMillis(TAKEOVER_SETTLED_FOR);
+        return settled ? 'settled' : undefined;
+      }),
+      Effect.delay(TAKEOVER_READY_POLL),
+      Effect.repeat({ until: (reached) => reached !== undefined }),
+    );
+    yield* Ref.set(ready, true);
+    const held = (yield* Clock.currentTimeMillis) - opened;
+    yield* Console.log(
+      `[app-host] took over from a running release; reporting ready after ${String(held)} ms (${outcome ?? 'deadline'}, longest unit wait ${String(longestSeen)} ms)`,
+    );
+    return held;
   });

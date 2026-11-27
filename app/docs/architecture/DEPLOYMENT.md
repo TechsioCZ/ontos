@@ -55,7 +55,7 @@ The host renews the lease itself every 6 hours. Validity is 24 hours. A failed r
 Probes:
 
 - `/_host/live` answers as soon as the host listens.
-- `/_host/ready` returns 200 after publication. Zerops switches traffic only after it answers.
+- `/_host/ready` returns 200 after publication. Zerops switches traffic only after it answers, then stops the old container (SIGTERM) and kills it 5.0 s later. A container that took the authority from a running release answers 200 only once it settled: no request waited more than 3 s for its unit during the last 5 s, at least 10 s and at most 45 s after its port opened (`reportReadyOnceSettled` in `scripts/zerops/supersede-drain.mts`). Until then the old host relays every request to it, so the old container stops only once the new one answers fast.
 - `ONTOS_APP_HOST_PUBLISH=false` starts and observes every unit without migrating or publishing. In that mode `/_host/ready` returns 200 after observation. Use it only to try a build next to a live stage.
 
 ### Secrets
