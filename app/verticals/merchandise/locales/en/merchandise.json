@@ -484,8 +484,15 @@
           "products": "Products",
           "stockValue": "Stock value"
         },
+        "stockLevel": {
+          "almostEmpty": "Almost sold out",
+          "empty": "Sold out",
+          "low": "Running low",
+          "minimum": "minimum"
+        },
         "symmy": {
-          "badge": "Imported via Symmy",
+          "badge": "Symmy",
+          "badgeTitle": "Imported via Symmy",
           "erpCode": "ERP code",
           "writeThrough": "The price and stock of this product are also written to the ERP."
         },

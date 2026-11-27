@@ -30,6 +30,7 @@ import type {
   RoleRevision,
 } from '../model.ts';
 import { AssignmentSchema, DelegationSchema, sameHolder } from '../model.ts';
+import { retiredByLineage } from '../catalog/release-ordering.ts';
 import type { AccessLifecycleError, AccessLifecycleFailureCode } from './errors.ts';
 import type { ManagerAuthority } from './delegation.ts';
 import {
@@ -1069,7 +1070,11 @@ const catalogIssue = (request: {
   readonly roleRevision: RoleRevision;
 }): Effect.Effect<void, PeopleCommandError> => {
   const known = new Set(request.catalog.map((entry) => entry.key));
-  const unknown = request.roleRevision.cells.find((cell) => !known.has(cell.capabilityKey));
+  // A capability the release retired along declared lineage is inert in the revisions that still hold it.
+  const retired = retiredByLineage(request.catalog);
+  const unknown = request.roleRevision.cells.find(
+    (cell) => !known.has(cell.capabilityKey) && !retired.has(cell.capabilityKey),
+  );
   return unknown === undefined
     ? Effect.void
     : Effect.fail(
