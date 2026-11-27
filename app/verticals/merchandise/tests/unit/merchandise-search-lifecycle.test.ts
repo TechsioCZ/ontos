@@ -129,6 +129,79 @@ it.effect('business mutation commits its targeted projection request atomically 
   }),
 );
 
+const catalogHarness = makeActionTestHarness({
+  access: 'allowed',
+  ownerRegistration: merchandiseRegistration,
+  services: [
+    bindActionTestServices(manageCatalogAction, {
+      apply: (command) =>
+        Effect.succeed({
+          entityIds: [EntityIdSchema.make(Predicate.isTagged(command, 'DeleteCategory') ? 'category-1' : 'product-1')],
+          revision: 1,
+        }),
+      productImage: () => Effect.die('No media read during mutation'),
+      records: () => Effect.die('No records read during mutation'),
+    }),
+  ],
+});
+
+// A restore refreshes the product's search rows with the commit. Deleting a category names no product (an archived
+// product, the only kind it can still hold, is not searchable), so it commits no refresh request.
+for (const [command, productIds] of [
+  [{ _tag: 'RestoreProduct', id: 'product-1' }, ['product-1']],
+  [{ _tag: 'DeleteCategory', id: 'category-1' }, undefined],
+] as const) {
+  it.effect(`${command._tag} commits exactly its own search refresh request`, () =>
+    Effect.gen(function* scenario() {
+      const harness = yield* catalogHarness;
+      yield* harness.runtime
+        .runAction({
+          payload: { command, expectedRevision: 0 },
+          principal,
+          registration: manageCatalogAction,
+          transport: { correlationId: 'merchandise-search-test', idempotencyKey: `catalog-${command._tag}` },
+        })
+        .pipe(Effect.provide(unusedRuntimeDependencies));
+      const { committed } = harness.snapshot();
+      expect(committed.length).toBe(1);
+      expect(committed[0]?.evidence.outboxMessages.map(({ message }) => message)).toEqual(
+        productIds === undefined
+          ? []
+          : [
+              {
+                payloadJson: { legalEntityId: principal.legalEntityId, orderIds: [], productIds, rebuild: false },
+                producerModuleKey: 'demo.merchandise',
+                topic: 'demo.merchandise.search-refresh-requested.v1',
+              },
+            ],
+      );
+    }),
+  );
+}
+
+it.effect('a retried archive with the same idempotency key commits and requests a refresh only once', () =>
+  Effect.gen(function* scenario() {
+    const harness = yield* catalogHarness;
+    const archive = {
+      payload: {
+        command: { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' },
+        expectedRevision: 0,
+      },
+      principal,
+      registration: manageCatalogAction,
+      transport: { correlationId: 'merchandise-search-test', idempotencyKey: 'archive-retry-1' },
+    } as const;
+    yield* harness.runtime.runAction(archive).pipe(Effect.provide(unusedRuntimeDependencies));
+    const replay = yield* harness.runtime
+      .runAction(archive)
+      .pipe(Effect.provide(unusedRuntimeDependencies), Effect.flip);
+    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+    const { committed } = harness.snapshot();
+    expect(committed.length).toBe(1);
+    expect(committed[0]?.evidence.outboxMessages.length).toBe(1);
+  }),
+);
+
 it.effect('failed business mutation leaves no projection intent or outbox message', () =>
   Effect.gen(function* scenario() {
     const harness = yield* makeActionTestHarness({

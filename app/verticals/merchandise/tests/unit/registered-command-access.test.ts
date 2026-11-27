@@ -200,6 +200,42 @@ commandTests(manageCatalogAction, {
 commandTests(manageMarketsAction, { _tag: 'RemoveMarket', marketId: '50000000-0000-4000-8000-000000000001' });
 commandTests(cleanupDemoAction, { _tag: 'RemoveDemoOrder', id: 'order-1', reason: 'Remove demo fixture' });
 commandTests(manageCatalogAction, { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' });
+commandTests(manageCatalogAction, { _tag: 'RestoreProduct', id: 'product-1' });
+commandTests(manageCatalogAction, { _tag: 'DeleteCategory', id: 'category-1' });
+// Archiving and deleting a category are catalogue work: the owner-only cleanup no longer takes an archive, and the
+// catalogue grant every shop operator holds never takes the demo reset.
+const refusesCommand = <Payload extends Schema.ConstraintDecoder<unknown>, Owner extends string>(
+  registration: ActionRegistration<
+    Payload,
+    typeof ApplyCommandResultSchema,
+    typeof MerchandiseErrorSchema,
+    typeof applyCommandAction.descriptor.domainEvents,
+    Owner,
+    NonNullable<typeof applyCommandAction._services>,
+    NonNullable<typeof applyCommandAction._handlerRequirements>
+  >,
+  command: (typeof MerchandiseCommandPayloadSchema.Encoded)['command'],
+) =>
+  it.effect(`${registration.descriptor.actionKey} refuses ${command._tag} before any write`, () =>
+    Effect.gen(function* wrongOwnerCommand() {
+      const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration: merchandiseRegistration });
+      const failure = yield* harness.runtime
+        .runAction({
+          payload: { command, expectedRevision: 1 },
+          principal,
+          registration,
+          transport: { correlationId: 'wrong-owner', idempotencyKey: `wrong-owner-${command._tag}` },
+        })
+        .pipe(Effect.flip);
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
+      expect(harness.snapshot().committed).toEqual([]);
+      expect(harness.snapshot().transactionCount).toBe(0);
+    }).pipe(Effect.provide(unusedRuntimeDependencies)),
+  );
+refusesCommand(cleanupDemoAction, { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' });
+refusesCommand(cleanupDemoAction, { _tag: 'DeleteCategory', id: 'category-1' });
+refusesCommand(manageCatalogAction, { _tag: 'ResetDemoData', confirmation: 'OBNOVIT', reason: 'Obnovit demo data' });
+refusesCommand(manageCatalogAction, { _tag: 'RemoveDemoOrder', id: 'order-1', reason: 'Remove demo fixture' });
 commandTests(changeProductImagesAction, {
   _tag: 'ChangeProductImages',
   change: { _tag: 'Reorder', images: [] },

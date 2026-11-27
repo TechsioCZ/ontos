@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { asc } from 'drizzle-orm';
-import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
+import { Array as Arr, DateTime, Effect, Match, Order, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -13,7 +13,7 @@ import {
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
+import { RecordsViewSchema, StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
 import {
   CatalogChangeSchema,
   OrderSchema,
@@ -30,7 +30,7 @@ import {
   products,
   stockMovements,
 } from '../../src/database/schema.ts';
-import { categoryTree, storefrontProducts } from '../../src/services/merchandise-queries.ts';
+import { categoryTree, staffProducts, storefrontProducts } from '../../src/services/merchandise-queries.ts';
 import {
   decodeOrderDocument,
   loadHead,
@@ -785,5 +785,206 @@ it.live('Bulk native memberships commit one scoped delta and roll back entirely 
       });
       expect(removed.total).toBe(0);
     }),
+  ),
+);
+
+// ------------------------------------------------------------------------------------------------ archive and delete
+
+const decodeView = Schema.decodeSync(RecordsViewSchema);
+/** The product ids a staff (or storefront) records read lists for `view`, sorted. */
+const listedIds = (fixture: MerchandiseFixture, view: typeof RecordsViewSchema.Encoded, storefront = false) =>
+  staffProducts(fixture.db, fixture.scope, decodeView(view), storefront).pipe(
+    Effect.map((page) =>
+      Arr.sort(
+        page.products.map((product) => String(product.id)),
+        Order.String,
+      ),
+    ),
+  );
+const storefrontCard = (fixture: MerchandiseFixture, id: string) =>
+  storefrontProducts(fixture.db, fixture.scope, {
+    query: { fields: 'card', productIds: [Schema.decodeUnknownSync(ProductIdSchema)(id)] },
+  }).pipe(Effect.map((page) => page.products.map((product) => String(product.id))));
+
+it.live(
+  'ArchiveProduct hides a live product from lists and storefront in one write; RestoreProduct brings it back',
+  () =>
+    withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
+      Effect.gen(function* archiveAndRestore() {
+        const before = yield* rowsOf(fixture);
+        const p1Before = yield* requiredFixtureValue(productRow(before, 'p1'));
+        expect([p1Before.active, p1Before.published, p1Before.archived]).toEqual([true, true, false]);
+        expect(yield* listedIds(fixture, {})).toContain('p1');
+        expect(yield* storefrontCard(fixture, 'p1')).toEqual(['p1']);
+
+        // An active, published product is archived in one command: one revision, no prior hide step.
+        const archived = yield* runCommand(fixture, {
+          _tag: 'ArchiveProduct',
+          id: 'p1',
+          reason: 'Úklid testovacích dat',
+        });
+        expect(archived.revision).toBe(fixture.revision + 1);
+        const after = yield* rowsOf(fixture);
+        const p1 = yield* requiredFixtureValue(productRow(after, 'p1'));
+        expect([p1.active, p1.published, p1.archived]).toEqual([false, false, true]);
+        const document = decodeProductDocument(p1.document);
+        expect(document.demoArchive?.reason).toBe('Úklid testovacích dat');
+        // Variants, tiers, stock ledger and stock columns, orders and media stay as they were.
+        expect(document.images).toEqual(decodeProductDocument(p1Before.document).images);
+        expect(p1.stockOnHand).toBe(p1Before.stockOnHand);
+        expect(after.variants).toEqual(before.variants);
+        expect(after.tiers).toEqual(before.tiers);
+        expect(after.movements).toEqual(before.movements);
+        expect(after.orders).toEqual(before.orders);
+        expect(after.categories).toEqual(before.categories);
+        expect(after.products.filter((row) => row.id !== 'p1')).toEqual(
+          before.products.filter((row) => row.id !== 'p1'),
+        );
+
+        // Default list without it, the archived list with it (and the earlier archived p4), the detail finds it.
+        expect(yield* listedIds(fixture, {})).not.toContain('p1');
+        expect(yield* listedIds(fixture, { archived: true })).toEqual(['p1', 'p4']);
+        expect(yield* listedIds(fixture, { productId: 'p1' })).toEqual(['p1']);
+        // The storefront never shows it, even when a read asks for archived products.
+        expect(yield* storefrontCard(fixture, 'p1')).toEqual([]);
+        expect(yield* listedIds(fixture, { archived: true }, true)).toEqual([]);
+        expect(yield* listedIds(fixture, { productId: 'p1' }, true)).toEqual([]);
+
+        // A retried archive writes nothing.
+        const retry = yield* runCommand(fixture, { _tag: 'ArchiveProduct', id: 'p1', reason: 'Úklid testovacích dat' });
+        expect(retry.change.state).toBe(retry.working.state);
+        expect(retry.revision).toBe(archived.revision);
+        expect(yield* rowsOf(fixture)).toEqual(after);
+
+        // Restore: back on the lists, still inactive and hidden, its category kept.
+        const restored = yield* runCommand(fixture, { _tag: 'RestoreProduct', id: 'p1' });
+        expect(restored.revision).toBe(fixture.revision + 2);
+        const back = yield* requiredFixtureValue(productRow(yield* rowsOf(fixture), 'p1'));
+        expect([back.active, back.published, back.archived]).toEqual([false, false, false]);
+        expect(back.categoryId).toBe('c');
+        expect(decodeProductDocument(back.document).demoArchive).toBeUndefined();
+        expect(yield* listedIds(fixture, {})).toContain('p1');
+        expect(yield* listedIds(fixture, { archived: true })).toEqual(['p4']);
+        expect(yield* storefrontCard(fixture, 'p1')).toEqual([]);
+        const restoreRetry = yield* runCommand(fixture, { _tag: 'RestoreProduct', id: 'p1' });
+        expect(restoreRetry.change.state).toBe(restoreRetry.working.state);
+        expect(yield* headRevision(fixture)).toBe(restored.revision);
+        const stored = yield* rowsOf(fixture);
+        expect(stored.variants).toEqual(before.variants);
+        expect(stored.movements).toEqual(before.movements);
+        expect(stored.orders).toEqual(before.orders);
+      }),
+    ),
+);
+
+it.live('ArchiveProduct against a stale revision rolls back and leaves the product live', () =>
+  withMerchandise(catalogState, (fixture) =>
+    Effect.gen(function* staleArchive() {
+      const before = yield* rowsOf(fixture);
+      const command = yield* decodeWorkingCommand({
+        _tag: 'ArchiveProduct',
+        id: 'p1',
+        reason: 'Úklid testovacích dat',
+      });
+      const outcome = yield* fixture.db
+        .transaction((transaction) =>
+          Effect.gen(function* staleArchiveTransaction() {
+            const head = yield* requiredFixtureValue(yield* loadHead(transaction, fixture.scope, { lock: true }));
+            const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'x'));
+            const change = yield* evolveMerchandiseState(working.state, command, {
+              actor,
+              now,
+              resourceId: 'x',
+              tax: TEST_TAX,
+            });
+            const stale = { ...working, revision: working.revision + 3 };
+            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now, TEST_RATES, {});
+            return revision ?? (yield* Effect.fail('conflict'));
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(outcome).toBe('conflict');
+      expect(yield* rowsOf(fixture)).toEqual(before);
+      expect(yield* listedIds(fixture, {})).toContain('p1');
+    }),
+  ),
+);
+
+it.live('DeleteCategory removes an empty category for good and refuses one a subcategory or live product holds', () =>
+  withMerchandise(catalogState, (fixture) =>
+    Effect.gen(function* deleteCategoryPersistence() {
+      const refused = (id: string) =>
+        runCommand(fixture, { _tag: 'DeleteCategory', id }).pipe(
+          Effect.flip,
+          Effect.map((failure) => Schema.is(MerchandiseLifecycleConflict)(failure)),
+        );
+      const initial = yield* rowsOf(fixture);
+      // r: its subcategory c is not part of the working set the command names; the store loads it.
+      expect(yield* refused('r')).toBe(true);
+      // c: p1's primary category.
+      expect(yield* refused('c')).toBe(true);
+      expect(yield* rowsOf(fixture)).toEqual(initial);
+      const missing = yield* runCommand(fixture, { _tag: 'DeleteCategory', id: 'missing' }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseNotFound)(missing)).toBe(true);
+
+      // An additional category of a live product is held too.
+      yield* runCommand(fixture, { _tag: 'CreateCategory', id: 'extra', name: 'Extra', parentId: 'r', slug: 'extra' });
+      yield* runCommand(fixture, { _tag: 'UpdateProduct', id: 'p3', patch: { additionalCategoryIds: ['extra'] } });
+      const held = yield* rowsOf(fixture);
+      expect(yield* refused('extra')).toBe(true);
+      expect(yield* rowsOf(fixture)).toEqual(held);
+
+      // Once its only products are archived, the category goes; an archived product no longer holds it.
+      yield* runCommand(fixture, { _tag: 'ArchiveProduct', id: 'p3', reason: 'Úklid testovacích dat' });
+      const beforeDelete = yield* rowsOf(fixture);
+      const deleted = yield* runCommand(fixture, { _tag: 'DeleteCategory', id: 'extra' });
+      expect(deleted.revision).toBe((beforeDelete.head?.revision ?? -1) + 1);
+      yield* runCommand(fixture, { _tag: 'ArchiveProduct', id: 'p1', reason: 'Úklid testovacích dat' });
+      yield* runCommand(fixture, { _tag: 'DeleteCategory', id: 'c' });
+
+      // Gone after a reload: no row, not in the snapshot, the parent has no children left.
+      const after = yield* rowsOf(fixture);
+      expect(after.categories.map((row) => row.id)).toEqual(['r']);
+      expect(after.categories[0]?.hasChildren).toBe(false);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
+      expect((snapshot.state.categories ?? []).map((category) => category.id)).toEqual(['r']);
+      expect(after.variants).toEqual(beforeDelete.variants);
+      expect(after.movements).toEqual(beforeDelete.movements);
+      expect(after.orders).toEqual(beforeDelete.orders);
+      const retry = yield* runCommand(fixture, { _tag: 'DeleteCategory', id: 'c' }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseNotFound)(retry)).toBe(true);
+
+      // Restoring drops memberships of the deleted categories: p3 keeps r without extra, p1 keeps none.
+      yield* runCommand(fixture, { _tag: 'RestoreProduct', id: 'p3' });
+      yield* runCommand(fixture, { _tag: 'RestoreProduct', id: 'p1' });
+      const restored = yield* rowsOf(fixture);
+      const p3 = yield* requiredFixtureValue(productRow(restored, 'p3'));
+      expect(p3.categoryId).toBe('r');
+      expect(p3.categoryPathIds).toEqual(['r']);
+      expect(decodeProductDocument(p3.document).additionalCategoryIds ?? []).toEqual([]);
+      const p1 = yield* requiredFixtureValue(productRow(restored, 'p1'));
+      expect(p1.categoryId).toBeNull();
+      expect(decodeProductDocument(p1.document).categoryId).toBeUndefined();
+    }),
+  ),
+);
+
+it.live('archive and category delete stay inside their own company', () =>
+  withMerchandise(catalogState, (other) =>
+    withMerchandise(catalogState, (fixture) =>
+      Effect.gen(function* companyIsolation() {
+        const otherBefore = yield* rowsOf(other);
+        yield* runCommand(fixture, { _tag: 'ArchiveProduct', id: 'p1', reason: 'Úklid testovacích dat' });
+        yield* runCommand(fixture, { _tag: 'DeleteCategory', id: 'c' });
+        expect((yield* rowsOf(fixture)).categories.map((row) => row.id)).toEqual(['r']);
+        // The other company's same ids are untouched and its lists still show the product.
+        expect(yield* rowsOf(other)).toEqual(otherBefore);
+        expect(yield* listedIds(other, {})).toContain('p1');
+        expect(yield* listedIds(other, { archived: true })).toEqual([]);
+        // Its c still holds p1, so its own delete is refused.
+        const refused = yield* runCommand(other, { _tag: 'DeleteCategory', id: 'c' }).pipe(Effect.flip);
+        expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+      }),
+    ),
   ),
 );
