@@ -67,9 +67,12 @@ business behavior.
 **Shell** — The staff application boundary that authenticates staff, resolves trusted context, and
 composes governed module entrypoints. It is not a business fact owner.
 
-**CoreSDK** — The server-side boundary through which public writes and governed reads pass so Core
-can apply shared scope, authorization, policy, evidence, transaction, event, and outbox semantics.
-It is not a BFF business layer or a direct database path.
+**CoreSDK** — The one boundary every Module is authored against and executed through. Public writes
+and governed reads pass through it so Core can apply shared scope, authorization, policy, evidence,
+transaction, event, and outbox semantics. Platform Modules and Tenant Modules use the same CoreSDK;
+they differ in what they are granted, not in how they are written. It is not a BFF business layer or
+a direct database path.
+_Avoid_: Module SDK, customer SDK, a second or simplified SDK for Tenant Modules.
 
 **UltraModern.js MicroVertical** — A cohesive full-stack capability behind a strict independently
 deployable seam. It owns its UI and server behavior; co-location does not permit private imports,
@@ -90,6 +93,26 @@ and it is not a Core company registry or a corporate ownership ledger.
 
 **System Module** — A Core-owned capability described through a module contract, or a smaller
 system variant, for consistent discovery and governance. It is not tenant-optional business logic.
+
+**Platform Module** — A Foundational or Business Module whose implementation OntOS publishes and
+maintains for every Tenant. A Tenant never changes a Platform Module's implementation; it configures
+the module, builds a Tenant Module on its public contract, or uses a Module Replacement.
+_Avoid_: native module, core module, forking or patching a module for one Tenant.
+
+**Tenant Module** — A Business Module authored for and owned by one Tenant and available only inside
+that Tenant. It is an ordinary Module: it owns its Resources, Actions, and events under its own
+identity and reaches other Modules only through their public contracts.
+_Avoid_: customer module, plugin, extension, vibe module.
+
+**Vibe Module** — The Platform Module through which a Tenant's authorized people create, change,
+version, revert, and delete that Tenant's Tenant Modules with AI assistance. It is the authoring
+tool, not the modules it produces.
+_Avoid_: calling a Tenant Module a vibe module.
+
+**Module Replacement** — Use, for one Tenant, of a different Module Implementation Identity for the
+same Module Contract Identity. A substitute that cannot honour the complete contract is a different
+Module installed alongside the original, not a Module Replacement.
+_Avoid_: override, fork, redirecting a module's address.
 
 **Application Composition** — A named dependency-closed graph of compatible Foundational and
 Business Modules serving a coherent purpose.
@@ -142,6 +165,16 @@ business obligations.
 **OntOS Module Manifest** — Effect Schema-defined public module contract that exposes safe module
 semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,
 and tests. The exact current and target fields are owned by app-local manifest guidance.
+
+**Module Definition** — The single authored description of a Module from which its OntOS Module
+Manifest, Vertical Runtime Registration, and public contracts are derived. Each fact about a Module
+is stated once, there.
+_Avoid_: hand-maintained copies of a manifest, registration, or contract.
+
+**Module Blueprint** — A deterministic generator that produces an ordinary Module, or part of one,
+from a named pattern and explicit inputs. Its output is plain CoreSDK code with no runtime meaning of
+its own; equal inputs produce equal output.
+_Avoid_: low-code interpreter, template runtime, treating a blueprint as a module kind.
 
 **Vertical Runtime Registration** — Owner-local private binding from a module's public contract to
 its executable Actions, APIs, pages, policies, migrations, workers, search, and reports. It never
