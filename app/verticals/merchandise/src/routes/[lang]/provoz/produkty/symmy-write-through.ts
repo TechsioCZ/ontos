@@ -163,7 +163,10 @@ const ProductPageSchema = Schema.Struct({
 });
 const pageSize = 100;
 
-/** The Catalog references of the variant (Pricing and Inventory key them with the tenant), page by page. */
+/**
+ * The Catalog references of the variant (Pricing and Inventory key them with the tenant), page by page. The variant id
+ * alone decides: a shop product linked to Symmy by SKU can hold variants of several Catalog products.
+ */
 const findCatalogRefs = (
   input: SymmyWriteThroughInput,
   offset = 0,
@@ -176,7 +179,9 @@ const findCatalogRefs = (
   }).pipe(
     Effect.flatMap(decode('Čtení produktu z ERP', ProductPageSchema)),
     Effect.flatMap((page) => {
-      const item = page.items.find(({ productRef }) => productRef.resourceId === input.catalogProductId);
+      const item = page.items.find(({ variants }) =>
+        variants.some(({ variantRef }) => variantRef.resourceId === input.catalogVariantId),
+      );
       const variant = item?.variants.find(({ variantRef }) => variantRef.resourceId === input.catalogVariantId);
       if (item !== undefined && variant !== undefined) {
         return Effect.succeed({ productRef: item.productRef, variantRef: variant.variantRef });
