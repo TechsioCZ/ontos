@@ -4,18 +4,27 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { Effect, Schema } from 'effect';
+import {
+  FormBuilder,
+  FormCheckboxField,
+  FormReact,
+  FormRoot,
+  InputField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
 import { useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -125,6 +134,30 @@ const bulkFailureKey = (reason: FailureReason): string => {
   return reason === 'rejected' ? 'messages.rejected' : 'messages.failed';
 };
 
+/**
+ * The list's search text and its two switches. A change filters the list at once; the form itself is never
+ * submitted.
+ */
+const productFiltersForm = FormReact.make(
+  FormBuilder.empty
+    .addField('archived', Schema.Boolean)
+    .addField('lowStockOnly', Schema.Boolean)
+    .addField('search', Schema.String),
+  {
+    fields: { archived: FormCheckboxField, lowStockOnly: FormCheckboxField, search: InputField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noFilters = { archived: false, lowStockOnly: false, search: '' };
+const filters = productFiltersForm.values.pipe(Atom.map(Option.getOrElse(() => noFilters)));
+/** One filter as a plain value, which changes only when that filter does. */
+const filterOf = <K extends keyof typeof noFilters>(name: K) =>
+  filters.pipe(Atom.map((values): (typeof noFilters)[K] => values[name]));
+const searchFilter = filterOf('search');
+const lowStockFilter = filterOf('lowStockOnly');
+const archivedFilter = filterOf('archived');
+
 interface RecordsPageContentProps {
   readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
@@ -136,12 +169,11 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
 
-  const [search, setSearch] = useState('');
+  const { archived, lowStockOnly, search } = useAtomValue(filters);
+  const setFilters = useAtomSet(productFiltersForm.setValues);
   /** A storefront tree category, or a product category label when the company has no tree. */
   const [treeCategory, setTreeCategory] = useState<CategoryTrail | null>(null);
   const [labelCategory, setLabelCategory] = useState<string | null>(null);
-  const [lowStockOnly, setLowStockOnly] = useState(false);
-  const [archived, setArchived] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const [table, setTable] = useState<TanstackTable<ProductRecord>>();
@@ -171,6 +203,17 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   /** A filter change starts again at the first page. */
   const firstPage = () =>
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  useAtomSubscribe(searchFilter, firstPage, { immediate: false });
+  useAtomSubscribe(lowStockFilter, firstPage, { immediate: false });
+  /** The archived list is a list of its own: the selection and the page start again. */
+  useAtomSubscribe(
+    archivedFilter,
+    () => {
+      setSelection({});
+      firstPage();
+    },
+    { immediate: false },
+  );
 
   const ready = state.status === 'ready' ? state.response : undefined;
   const products = ready?.products ?? [];
@@ -206,18 +249,10 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     reloadCategories();
   };
   const clearFilters = () => {
-    setSearch('');
+    setFilters(noFilters);
     setTreeCategory(null);
     setLabelCategory(null);
-    setLowStockOnly(false);
-    setArchived(false);
     tagFilter.setTagId(null);
-    firstPage();
-  };
-  /** The archived list is a list of its own: the selection and the page start again. */
-  const toggleArchived = (checked: boolean) => {
-    setArchived(checked);
-    setSelection({});
     firstPage();
   };
 
@@ -297,7 +332,6 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     k,
     labelCategory,
     labelItems,
-    lowStockOnly,
     onCategoriesCommitted,
     onCommitted,
     openDetail,
@@ -310,13 +344,10 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     revision,
     rowIntent,
     runBulk,
-    search,
     selectedIds,
     selection,
     setLabelCategory,
-    setLowStockOnly,
     setPagination,
-    setSearch,
     setSelection,
     setSort,
     setTable,
@@ -326,7 +357,6 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     t,
     tableStatus,
     tagFilter,
-    toggleArchived,
     treeCategory,
   };
 };
@@ -346,7 +376,6 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     k,
     labelCategory,
     labelItems,
-    lowStockOnly,
     onCategoriesCommitted,
     onCommitted,
     openDetail,
@@ -359,13 +388,10 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     revision,
     rowIntent,
     runBulk,
-    search,
     selectedIds,
     selection,
     setLabelCategory,
-    setLowStockOnly,
     setPagination,
-    setSearch,
     setSelection,
     setSort,
     setTable,
@@ -375,7 +401,6 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     t,
     tableStatus,
     tagFilter,
-    toggleArchived,
     treeCategory,
   } = useProductListPage(props);
 
@@ -409,18 +434,18 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
 
         <ProductStats indicators={ready?.indicators} label={k} />
 
-        <div className="flex flex-wrap items-end gap-150">
-          <Input
+        <FormRoot
+          className="flex flex-wrap items-end gap-150"
+          defaultValues={noFilters}
+          form={productFiltersForm}
+          translateMessage={t}
+        >
+          <productFiltersForm.search
             aria-label={k('filters.search')}
             className="w-64"
-            onChange={(event) => {
-              setSearch(event.target.value);
-              firstPage();
-            }}
             placeholder={k('filters.search')}
             size="sm"
             type="search"
-            value={search}
           />
           {byTree && (
             <div className="w-64">
@@ -490,28 +515,9 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               />
             </div>
           )}
-          <FormCheckbox
-            checked={lowStockOnly}
-            className="self-center"
-            label={k('filters.lowStockOnly')}
-            name="lowStockOnly"
-            onCheckedChange={(checked) => {
-              setLowStockOnly(checked);
-              firstPage();
-            }}
-            size="sm"
-          />
-          {canWrite && (
-            <FormCheckbox
-              checked={archived}
-              className="self-center"
-              label={k('filters.archived')}
-              name="archived"
-              onCheckedChange={toggleArchived}
-              size="sm"
-            />
-          )}
-        </div>
+          <productFiltersForm.lowStockOnly className="self-center" label={k('filters.lowStockOnly')} size="sm" />
+          {canWrite && <productFiltersForm.archived className="self-center" label={k('filters.archived')} size="sm" />}
+        </FormRoot>
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
             {k('states.tagFilterFailed')}

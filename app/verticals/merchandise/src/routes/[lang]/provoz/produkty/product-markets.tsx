@@ -2,11 +2,21 @@
 // (merchandise market settings, DESIGN 3.2). The switches change only the draft; the tab's one Save button sends a
 // SetProductMarketOffer for every market whose offer changed, so a live e-shop never changes on a click alone.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { ScrollRegion, SectionCard } from '@app/admin-ui';
+import {
+  Field,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  InputField,
+  SwitchField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { MarketIdSchema } from '../../../../../shared/domain/market-offers.ts';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import {
@@ -18,6 +28,33 @@ import {
 import type { MarketOfferDraft, MarketsLabels } from './product-market-view-model.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import { productVersionOf } from './products-api.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
+/**
+ * The offer of every market of the open product. A switch changes only this form; the tab's Save button sends it, so
+ * the form itself is never submitted.
+ */
+const marketsForm = FormReact.make(
+  FormBuilder.empty.addField(
+    Field.makeArrayField('offers', Schema.Struct({ marketId: MarketIdSchema, offered: Schema.Boolean })),
+  ),
+  {
+    // `marketId` names the market of a row and is never rendered.
+    fields: { offers: { marketId: InputField, offered: SwitchField } },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** The form's offers as the tab's draft: one per market the product is shown in, in the markets' order. */
+const offersOf = (
+  markets: readonly ProductMarket[],
+  offers: readonly { readonly marketId: string; readonly offered: boolean }[],
+): readonly MarketOfferDraft[] =>
+  markets.map(({ marketId, offered }) => ({
+    marketId,
+    offered: offers.find((entry) => entry.marketId === marketId)?.offered ?? offered,
+  }));
 
 export interface MarketsPanelViewProps {
   /** Market managers only (records `canManageMarkets`); everybody else sees the switches disabled. */
@@ -25,14 +62,61 @@ export interface MarketsPanelViewProps {
   /** The form's footer (the Save button). */
   readonly footer?: ReactNode;
   readonly labels: MarketsLabels;
-  /** The markets with the offer as the draft has it. */
+  /** The markets as the server has them; the switches show the offers of the form. */
   readonly markets: readonly ProductMarket[];
-  readonly onToggle: (market: ProductMarket, offered: boolean) => void;
   /** The offers are being saved; every switch waits for it. */
   readonly saving: boolean;
 }
 
-export const MarketsPanelView = ({ canManage, footer, labels, markets, onToggle, saving }: MarketsPanelViewProps) => (
+/** One market's offer switch, labelled by the offer as the form has it. */
+const OfferSwitch = ({
+  disabled,
+  labels,
+  market,
+}: {
+  readonly disabled: boolean;
+  readonly labels: MarketsLabels;
+  readonly market: ProductMarket;
+}) => {
+  const offers = Option.match(useAtomValue(marketsForm.values), {
+    onNone: () => [],
+    onSome: (values) => values.offers,
+  });
+  const index = offers.findIndex((entry) => entry.marketId === market.marketId);
+  if (index === -1) {
+    return null;
+  }
+  return (
+    <marketsForm.offers.Item index={index}>
+      <marketsForm.offers.offered disabled={disabled} name={`market-offered-${market.marketCode}`}>
+        {offers[index]?.offered === true ? labels.offered : labels.notOffered}
+        <span className="sr-only">{` · ${market.marketCode}`}</span>
+      </marketsForm.offers.offered>
+    </marketsForm.offers.Item>
+  );
+};
+
+/**
+ * The offers form of the tab, opening with `markets` as the server has them. The tab renders inside it, so whatever
+ * reads the form's values reads this product's.
+ */
+export const MarketsOffersForm = ({
+  children,
+  markets,
+}: {
+  readonly children: ReactNode;
+  readonly markets: readonly ProductMarket[];
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={{ offers: marketOffersOf(markets) }} form={marketsForm} translateMessage={t}>
+      {children}
+    </FormRoot>
+  );
+};
+
+/** The tab's table; it renders inside `MarketsOffersForm`. */
+export const MarketsPanelView = ({ canManage, footer, labels, markets, saving }: MarketsPanelViewProps) => (
   <SectionCard flush title={labels.title}>
     {markets.length === 0 ? (
       <p className="px-200 py-200 text-fg-secondary text-sm">{labels.empty}</p>
@@ -56,15 +140,7 @@ export const MarketsPanelView = ({ canManage, footer, labels, markets, onToggle,
                   {marketPriceText(market, labels.noPrice)}
                 </Table.Cell>
                 <Table.Cell>
-                  <Switch
-                    checked={market.offered}
-                    disabled={!canManage || saving}
-                    name={`market-offered-${market.marketCode}`}
-                    onCheckedChange={(checked: boolean) => onToggle(market, checked)}
-                  >
-                    {market.offered ? labels.offered : labels.notOffered}
-                    <span className="sr-only">{` · ${market.marketCode}`}</span>
-                  </Switch>
+                  <OfferSwitch disabled={!canManage || saving} labels={labels} market={market} />
                 </Table.Cell>
               </Table.Row>
             ))}
@@ -88,7 +164,7 @@ export interface MarketsPanelProps {
 
 const key = (path: string) => `merchandise.pages.products.markets.${path}`;
 
-export const MarketsPanel = ({
+const MarketsPanelForm = ({
   active = true,
   canManage,
   markets,
@@ -98,36 +174,34 @@ export const MarketsPanel = ({
   revision,
 }: MarketsPanelProps) => {
   const { t } = useModernI18n();
-  const [drafts, setDrafts] = useState(() => marketOffersOf(markets));
+  const values = useAtomValue(marketsForm.values);
+  const setValues = useAtomSet(marketsForm.setValues);
+  const drafts = offersOf(markets, Option.match(values, { onNone: () => [], onSome: ({ offers }) => offers }));
   const save = useProductTabSave<readonly MarketOfferDraft[]>({
     commandOf: (value, confirmed) => marketOfferCommands(product.id, value, confirmed),
     isValid: () => true,
     keepAs: `markets:${product.id}`,
     onReload,
     onSaved: () => onCommitted(t(key('saved'))),
-    reset: setDrafts,
+    reset: (offers) => setValues({ offers }),
     revision,
     server: marketOffersOf(markets),
     value: drafts,
     version: productVersionOf(product),
   });
-  const shown = markets.map((market) => ({
-    ...market,
-    offered: drafts.find((entry) => entry.marketId === market.marketId)?.offered ?? market.offered,
-  }));
-  const toggle = (market: ProductMarket, offered: boolean) => {
-    setDrafts((current) =>
-      current.map((entry) => (entry.marketId === market.marketId ? { ...entry, offered } : entry)),
-    );
-  };
   return (
     <MarketsPanelView
       canManage={canManage}
       {...(canManage && markets.length > 0 ? { footer: <ProductTabSaveBar active={active} save={save} /> } : {})}
       labels={marketsLabelsFrom((path) => t(key(path)))}
-      markets={shown}
-      onToggle={toggle}
+      markets={markets}
       saving={save.draft.status === 'saving'}
     />
   );
 };
+
+export const MarketsPanel = (props: MarketsPanelProps) => (
+  <MarketsOffersForm markets={props.markets}>
+    <MarketsPanelForm {...props} />
+  </MarketsOffersForm>
+);

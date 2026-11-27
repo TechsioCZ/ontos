@@ -1,19 +1,19 @@
-import { Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
-import { constVoid } from 'effect/Function';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+// @rstest-environment happy-dom
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Effect, Schema } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
 import csResource from '../../locales/cs/merchandise.json';
 import enResource from '../../locales/en/merchandise.json';
 import { MarketIdSchema } from '../../shared/domain/market-offers.ts';
 import type { ProductMarket } from '../../shared/domain/market-offers.ts';
 import { formatOrderTotal } from '../../src/list-format.ts';
-import { MarketsPanelView } from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
+import { MarketsOffersForm, MarketsPanelView } from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
 import {
   marketPriceText,
   marketsLabelsFrom,
 } from '../../src/routes/[lang]/provoz/produkty/product-market-view-model.ts';
 import type { MarketsPanelViewProps } from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
+import { mountInRoute } from '../support/module-ui.ts';
 
 type LocaleResource = typeof csResource | typeof enResource;
 
@@ -45,50 +45,64 @@ const labelsOf = (resource: LocaleResource) => {
   });
 };
 
-const render = (overrides: Partial<MarketsPanelViewProps> = {}) =>
-  renderToStaticMarkup(
-    createElement(MarketsPanelView, {
-      canManage: true,
-      labels: labelsOf(csResource),
-      markets,
-      onToggle: constVoid,
-      saving: false,
-      ...overrides,
+/** The section as the offers form shows it, rendered in the module's real route; its markup. */
+const render = (overrides: Partial<MarketsPanelViewProps> = {}) => {
+  const props = { canManage: true, labels: labelsOf(csResource), markets, saving: false, ...overrides };
+  return mountInRoute(
+    <MarketsOffersForm markets={props.markets}>
+      <MarketsPanelView {...props} />
+    </MarketsOffersForm>,
+    { path: 'provoz/produkty', url: '/cs/provoz/produkty' },
+  ).pipe(
+    Effect.map(() => {
+      const markup = new XMLSerializer().serializeToString(document.body);
+      unmountAll();
+      // The DOM serializes a no-break space as an entity; the static markup this test read printed the character.
+      return markup.replaceAll('&#160;', '\u00A0').replaceAll('&nbsp;', '\u00A0');
     }),
   );
+};
+
+afterEach(unmountAll);
 
 const visibleText = (markup: string) => markup.replaceAll(/<[^>]+>/gu, ' ').replaceAll(/\s+/gu, ' ');
 const switchInputs = (markup: string) => markup.match(/<input[^>]*type="checkbox"[^>]*>/gu) ?? [];
 
-it('lists every configured market by its code, currency and converted price, without technical ids', () => {
-  const markup = render();
-  const text = visibleText(markup);
-  expect(text).toContain('Trhy');
-  expect(text).toContain('AKROS-SK');
-  expect(text).toContain('AKROS-PL');
-  expect(text).toContain('EUR');
-  expect(text).toContain('PLN');
-  expect(text).toMatch(/11,60\s€/u);
-  expect(text).toContain('V nabídce');
-  expect(text).toContain('Není v nabídce');
-  expect(text).toContain('cena není dostupná');
-  expect(markup).not.toContain(SK);
-  expect(markup).not.toContain(PL);
-  expect(switchInputs(markup)).toHaveLength(2);
-  expect(switchInputs(markup).some((input) => input.includes('disabled'))).toBe(false);
-});
+it.live('lists every configured market by its code, currency and converted price, without technical ids', () =>
+  Effect.gen(function* listsMarkets() {
+    const markup = yield* render();
+    const text = visibleText(markup);
+    expect(text).toContain('Trhy');
+    expect(text).toContain('AKROS-SK');
+    expect(text).toContain('AKROS-PL');
+    expect(text).toContain('EUR');
+    expect(text).toContain('PLN');
+    expect(text).toMatch(/11,60\s€/u);
+    expect(text).toContain('V nabídce');
+    expect(text).toContain('Není v nabídce');
+    expect(text).toContain('cena není dostupná');
+    expect(markup).not.toContain(SK);
+    expect(markup).not.toContain(PL);
+    expect(switchInputs(markup)).toHaveLength(2);
+    expect(switchInputs(markup).some((input) => input.includes('disabled'))).toBe(false);
+  }),
+);
 
-it('disables the offer switches without catalog management and while the offers are saving', () => {
-  for (const overrides of [{ canManage: false }, { saving: true }]) {
-    const inputs = switchInputs(render(overrides));
-    expect(inputs).toHaveLength(2);
-    expect(inputs.every((input) => input.includes('disabled'))).toBe(true);
-  }
-});
+it.live('disables the offer switches without catalog management and while the offers are saving', () =>
+  Effect.gen(function* disablesSwitches() {
+    for (const overrides of [{ canManage: false }, { saving: true }]) {
+      const inputs = switchInputs(yield* render(overrides));
+      expect(inputs).toHaveLength(2);
+      expect(inputs.every((input) => input.includes('disabled'))).toBe(true);
+    }
+  }),
+);
 
-it('shows a plain message when the company has no markets', () => {
-  expect(visibleText(render({ markets: [] }))).toContain('Pro tuto společnost zatím nejsou nastavené trhy.');
-});
+it.live('shows a plain message when the company has no markets', () =>
+  Effect.gen(function* noMarkets() {
+    expect(visibleText(yield* render({ markets: [] }))).toContain('Pro tuto společnost zatím nejsou nastavené trhy.');
+  }),
+);
 
 it('has every market label in Czech and English', () => {
   const cs = labelsOf(csResource);
