@@ -30,7 +30,7 @@ import type { Socket } from 'effect/socket';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestClock, TestConsole } from 'effect/testing';
 
-import { hostApplication } from '../zerops/app-host.mts';
+import { hostApplication, PUBLIC_PORT_FINISH_BUDGET, PUBLIC_PORT_FORCE_CLOSE_AFTER } from '../zerops/app-host.mts';
 import { workspaceRoot } from '../zerops/hosted-units.mts';
 import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
 import {
@@ -752,9 +752,11 @@ it.live(
       yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
       const stoppedAfter = (yield* Clock.currentTimeMillis) - started;
       expect(yield* child.exitCode).toBe(0);
-      // Requests in flight get 2.5 s to answer, then what still runs is cut: the server's graceful close is left
-      // nothing to wait for.
-      expect(stoppedAfter).toBeLessThan(5000);
+      // Requests in flight get the finish budget to answer, then what still runs is cut and a half-sent request gets the
+      // force-close grace: the server's graceful close is left nothing to wait for.
+      expect(stoppedAfter).toBeLessThan(
+        Duration.toMillis(PUBLIC_PORT_FINISH_BUDGET) + Duration.toMillis(PUBLIC_PORT_FORCE_CLOSE_AFTER) + 1000,
+      );
       const slow = yield* Fiber.join(slowRead);
       expect(slow.status).toBe(200);
       expect(slow.body).toBe('slow');
@@ -811,8 +813,11 @@ it.live('on SIGTERM after the drain deadline closed the listener, a half-sent re
     yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
     const stoppedAfter = (yield* Clock.currentTimeMillis) - started;
     expect(yield* child.exitCode).toBe(0);
-    // The 2 s grace, then every connection is closed: the server's shutdown returned at once (no listener left).
-    expect(stoppedAfter).toBeLessThan(5000);
+    // The finish budget and the force-close grace, then every connection is closed: the server's shutdown returned at
+    // once (no listener left).
+    expect(stoppedAfter).toBeLessThan(
+      Duration.toMillis(PUBLIC_PORT_FINISH_BUDGET) + Duration.toMillis(PUBLIC_PORT_FORCE_CLOSE_AFTER) + 1000,
+    );
     expect(yield* Fiber.join(halfSent)).toBe('');
   }).pipe(Effect.provide(NodeServices.layer)),
 );
