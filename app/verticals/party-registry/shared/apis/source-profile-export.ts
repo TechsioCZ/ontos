@@ -9,6 +9,22 @@ import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts'
 
 export const SourceProfileExportRequestSchema = SourcePersonAdmissionRequestSchema;
 export type SourceProfileExportRequest = typeof SourceProfileExportRequestSchema.Type;
+/** The most Parties one export answers: a whole page of source customers. */
+export const SOURCE_PROFILE_EXPORT_SET_MAX = 100;
+/** The profiles of a whole page of source customers in one governed read, each checked as its single export is. */
+export const SourceProfileExportSetRequestSchema = Schema.Struct({
+  parties: Schema.Array(SourceProfileExportRequestSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(SOURCE_PROFILE_EXPORT_SET_MAX),
+  ),
+});
+export type SourceProfileExportSetRequest = typeof SourceProfileExportSetRequestSchema.Type;
+/** One Party, or a set of them; the set form answers one result per Party in the request order. */
+export const SourceProfileExportInputSchema = Schema.Union([
+  SourceProfileExportRequestSchema,
+  SourceProfileExportSetRequestSchema,
+]);
+export type SourceProfileExportInput = typeof SourceProfileExportInputSchema.Type;
 export const SourceProfileExportContactSchema = Schema.Struct({
   contactPointRef: PartyContactPointRefSchema,
   type: Schema.Literals(['EMAIL', 'PHONE']),
@@ -16,18 +32,26 @@ export const SourceProfileExportContactSchema = Schema.Struct({
   displayValue: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   purposes: Schema.Array(Schema.String).check(Schema.isMaxLength(256)),
 });
+const SourceProfileExportNotAvailableSchema = Schema.Struct({ outcome: Schema.Literal('NOT_AVAILABLE') });
+const SourceProfileExportAvailableSchema = Schema.Struct({
+  outcome: Schema.Literal('AVAILABLE'),
+  partyRef: PartyRefSchema,
+  revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  partyType: Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']),
+  firstName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+  lastName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+  businessName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+  contactPoints: Schema.Array(SourceProfileExportContactSchema).check(Schema.isMaxLength(256)),
+  unsupported: Schema.Tuple([Schema.Literal('ADDRESSES')]),
+});
 export const SourceProfileExportResponseSchema = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal('NOT_AVAILABLE') }),
+  SourceProfileExportNotAvailableSchema,
+  SourceProfileExportAvailableSchema,
   Schema.Struct({
-    outcome: Schema.Literal('AVAILABLE'),
-    partyRef: PartyRefSchema,
-    revision: Schema.Int.check(Schema.isGreaterThan(0)),
-    partyType: Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']),
-    firstName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
-    lastName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
-    businessName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
-    contactPoints: Schema.Array(SourceProfileExportContactSchema).check(Schema.isMaxLength(256)),
-    unsupported: Schema.Tuple([Schema.Literal('ADDRESSES')]),
+    outcome: Schema.Literal('SET'),
+    items: Schema.Array(Schema.Union([SourceProfileExportNotAvailableSchema, SourceProfileExportAvailableSchema])).check(
+      Schema.isMaxLength(SOURCE_PROFILE_EXPORT_SET_MAX),
+    ),
   }),
 ]);
 export type SourceProfileExportResponse = typeof SourceProfileExportResponseSchema.Type;
@@ -76,7 +100,7 @@ export const SourceProfileExportApi = HttpApi.make('SourceProfileExportApi').add
         SourceProfileExportUnavailableProblemSchema,
         SourceProfileExportInternalProblemSchema,
       ],
-      payload: SourceProfileExportRequestSchema,
+      payload: SourceProfileExportInputSchema,
       success: SourceProfileExportResponseSchema,
     }),
   ),

@@ -18,6 +18,8 @@ import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
+  SourceProcessingEligibilitySetRequestSchema,
+  SourceProcessingEligibilitySetResponseSchema,
   CommunicationsSourceProcessingConsumerModule,
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
@@ -25,6 +27,7 @@ import {
 import { SourceProcessingContextSchema } from '../../shared/domain/source-processing-context.ts';
 import type {
   SourceProcessingEligibilityRequest,
+  SourceProcessingEligibilitySetRequest,
   SourceProcessingNotEvaluatedCause,
   SourceProcessingEligibilityResponse,
 } from '@app/privacy-contracts/source-processing-eligibility';
@@ -80,6 +83,8 @@ const commerceCustomerContextModule = 'commerce.customer-context';
 const partyRegistryAppId = 'party-registry';
 const sourceProcessingWorkloadKey = 'privacy.core.source-processing-check';
 const sourceProcessingEntrypointKey = 'privacy.core.api.source-processing-eligibility';
+const sourceProcessingSetEntrypointKey = 'privacy.core.api.source-processing-eligibility-set';
+const sourceProcessingSetDeclarationKey = 'privacy.core.source-processing-eligibility-set.read';
 const symmyAppId = 'symmy-integration';
 
 const unavailable = (cause?: unknown) => {
@@ -869,12 +874,19 @@ const traceSourceStage = (stage: string) =>
     ),
   );
 
+/** The two governed reads that answer a source processing decision: one request, or a set of them. */
+const sourceProcessingWorkloadOperations = [
+  ['privacy.core.source-processing-eligibility.read', sourceProcessingEntrypointKey],
+  [sourceProcessingSetDeclarationKey, sourceProcessingSetEntrypointKey],
+] as const;
 const sourceProcessingCaller = (scope: OperationalScope) => {
   const workload = readVerifiedGatewayWorkload(scope);
   if (workload !== undefined) {
     return workload.workloadKey === sourceProcessingWorkloadKey &&
-      workload.declarationKey === 'privacy.core.source-processing-eligibility.read' &&
-      workload.entrypointKey === sourceProcessingEntrypointKey &&
+      sourceProcessingWorkloadOperations.some(
+        ([declarationKey, entrypointKey]) =>
+          workload.declarationKey === declarationKey && workload.entrypointKey === entrypointKey,
+      ) &&
       workload.schemaVersion === '1'
       ? workload.sourceAppId
       : undefined;
@@ -945,6 +957,92 @@ export const runSourceProcessingEligibility = Effect.fn('Privacy.runSourceProces
   },
 );
 
+/** The owner services both source processing reads evaluate against, in their one Read transaction. */
+const sourceProcessingEligibilityServices = Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(
+  transaction: SourceTransaction,
+  scope: OperationalScope,
+) {
+  yield* traceSourceStage('services-entered');
+  const crypto = yield* Crypto.Crypto;
+  const contexts = yield* configuredContexts.pipe(
+    Effect.mapError(sourceConfigurationUnavailable),
+    Effect.tapError(() => traceSourceStage('configuration-unavailable')),
+  );
+  const sourceSyncEnabled = yield* Config.Boolean('ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED').pipe(
+    Config.withDefault(false),
+    Effect.mapError(sourceConfigurationUnavailable),
+  );
+  const configuredSourceSync: ConfiguredSourceSync = {};
+  if (sourceSyncEnabled) {
+    const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
+      Effect.mapError(sourceConfigurationUnavailable),
+    );
+    if (environment !== 'stage') {
+      return yield* sourceConfigurationUnavailable('This source synchronization policy is restricted to stage');
+    }
+    const rows = yield* transaction
+      .select({ record: demoSourceProcessingPolicies.policyRecord })
+      .from(demoSourceProcessingPolicies)
+      .where(
+        and(
+          eq(demoSourceProcessingPolicies.tenantId, scope.tenantId),
+          eq(demoSourceProcessingPolicies.legalEntityId, scope.legalEntityId ?? ''),
+          eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-source-sync-v2'),
+        ),
+      )
+      .pipe(Effect.mapError(sourceConfigurationUnavailable));
+    const records = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          record: SourceSyncProcessingPolicySchema,
+        }),
+      ).check(Schema.isMaxLength(1)),
+    )(rows).pipe(Effect.mapError(sourceConfigurationUnavailable));
+    const [record] = records;
+    if (record !== undefined) {
+      configuredSourceSync.sourceSync = {
+        hasScopeProtections: () =>
+          transaction
+            .select({ id: antiResurrectionProtections.protectionId })
+            .from(antiResurrectionProtections)
+            .where(
+              and(
+                eq(antiResurrectionProtections.tenantId, scope.tenantId),
+                eq(antiResurrectionProtections.legalEntityId, scope.legalEntityId ?? ''),
+              ),
+            )
+            .limit(1)
+            .pipe(
+              Effect.map((protections) => protections.length > 0),
+              Effect.mapError(unavailable),
+            ),
+        policy: record.record,
+      };
+    }
+  }
+  const { purposes, repository } = yield* Effect.all(
+    {
+      purposes: processingPurposeRepositoryForScope(transaction, scope),
+      repository: privacyOperationRepositoryForScope(transaction, scope),
+    },
+    { concurrency: 2 },
+  ).pipe(Effect.tapError(() => traceSourceStage('repositories-unavailable')));
+  yield* traceSourceStage('services-ready');
+  return {
+    contexts,
+    ...configuredSourceSync,
+    protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
+      readSourceProtections(transaction, scope, subjectRef, request),
+    purposes,
+    repository,
+    subjectExists: (
+      subjectRef: string,
+      request: SourceProcessingEligibilityRequest,
+      targetAdmission?: SourceProcessingContext['targetAdmission'],
+    ) => sourceSubjectExists(transaction, scope, subjectRef, request, repository, crypto, targetAdmission),
+  };
+});
+
 const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -994,85 +1092,71 @@ export const sourceProcessingEligibilityRead = defineRead(
   ) {
     return yield* runSourceProcessingEligibility(input, context);
   }),
-  Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(transaction, scope) {
-    yield* traceSourceStage('services-entered');
-    const crypto = yield* Crypto.Crypto;
-    const contexts = yield* configuredContexts.pipe(
-      Effect.mapError(sourceConfigurationUnavailable),
-      Effect.tapError(() => traceSourceStage('configuration-unavailable')),
-    );
-    const sourceSyncEnabled = yield* Config.Boolean('ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED').pipe(
-      Config.withDefault(false),
-      Effect.mapError(sourceConfigurationUnavailable),
-    );
-    const configuredSourceSync: ConfiguredSourceSync = {};
-    if (sourceSyncEnabled) {
-      const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
-        Effect.mapError(sourceConfigurationUnavailable),
-      );
-      if (environment !== 'stage') {
-        return yield* sourceConfigurationUnavailable('This source synchronization policy is restricted to stage');
-      }
-      const rows = yield* transaction
-        .select({ record: demoSourceProcessingPolicies.policyRecord })
-        .from(demoSourceProcessingPolicies)
-        .where(
-          and(
-            eq(demoSourceProcessingPolicies.tenantId, scope.tenantId),
-            eq(demoSourceProcessingPolicies.legalEntityId, scope.legalEntityId ?? ''),
-            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-source-sync-v2'),
-          ),
-        )
-        .pipe(Effect.mapError(sourceConfigurationUnavailable));
-      const records = yield* Schema.decodeUnknownEffect(
-        Schema.Array(
-          Schema.Struct({
-            record: SourceSyncProcessingPolicySchema,
-          }),
-        ).check(Schema.isMaxLength(1)),
-      )(rows).pipe(Effect.mapError(sourceConfigurationUnavailable));
-      const [record] = records;
-      if (record !== undefined) {
-        configuredSourceSync.sourceSync = {
-          hasScopeProtections: () =>
-            transaction
-              .select({ id: antiResurrectionProtections.protectionId })
-              .from(antiResurrectionProtections)
-              .where(
-                and(
-                  eq(antiResurrectionProtections.tenantId, scope.tenantId),
-                  eq(antiResurrectionProtections.legalEntityId, scope.legalEntityId ?? ''),
-                ),
-              )
-              .limit(1)
-              .pipe(
-                Effect.map((protections) => protections.length > 0),
-                Effect.mapError(unavailable),
-              ),
-          policy: record.record,
-        };
-      }
+  sourceProcessingEligibilityServices,
+);
+
+const sourceProcessingEligibilitySetEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'protected' },
+  entrypointKey: sourceProcessingSetEntrypointKey,
+  moduleKey: 'privacy.core',
+  role: 'api',
+});
+
+/**
+ * The source-sync decisions of a set of exact requests in one governed call: a page of source customers asks once
+ * instead of once per customer. Each request is evaluated by the single read's own body, for the same caller, in
+ * request order and in the same Read transaction. It serves the source-sync path only: without a configured
+ * source-sync policy it is unavailable, and its callers keep the single read for every other path.
+ */
+export const sourceProcessingEligibilitySetRead = defineRead(
+  {
+    accessActor: {
+      callers: ['party-registry', 'commerce-customer-context'],
+      reason: 'Party and customer-profile source reads check the current source-sync decisions of a whole source page',
+      subject: 'identity',
+      subjectWorkloads: ['privacy.core.source-processing-check'],
+    },
+    accessDeclaration: {
+      key: sourceProcessingSetDeclarationKey,
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'processing-governance', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessKind: 'detail',
+    accessWorkload: {
+      reason:
+        'Only explicitly enrolled source-processing machine workers may check their exact current Privacy context',
+      workloads: [sourceProcessingWorkloadKey],
+    },
+    entrypoint: sourceProcessingEligibilitySetEntrypoint,
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'privacy.core.api.source-processing-eligibility-set.evidence.v1',
+    },
+    inputSchema: SourceProcessingEligibilitySetRequestSchema,
+    legalEntityScope: 'required',
+    owningModuleKey: 'privacy.core',
+    policies: [],
+    readKey: sourceProcessingSetEntrypointKey,
+    resultSchema: SourceProcessingEligibilitySetResponseSchema,
+    schemaVersion: '1',
+  },
+  Effect.fn('Privacy.sourceProcessingEligibilitySetRead')(function* sourceSetRead(
+    input: SourceProcessingEligibilitySetRequest,
+    context: ReadHandlerContext<SourceProcessingEligibilityServices>,
+  ) {
+    if (context.services.sourceSync === undefined) {
+      return yield* unavailable();
     }
-    const { purposes, repository } = yield* Effect.all(
-      {
-        purposes: processingPurposeRepositoryForScope(transaction, scope),
-        repository: privacyOperationRepositoryForScope(transaction, scope),
-      },
-      { concurrency: 2 },
-    ).pipe(Effect.tapError(() => traceSourceStage('repositories-unavailable')));
-    yield* traceSourceStage('services-ready');
-    return {
-      contexts,
-      ...configuredSourceSync,
-      protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
-        readSourceProtections(transaction, scope, subjectRef, request),
-      purposes,
-      repository,
-      subjectExists: (
-        subjectRef: string,
-        request: SourceProcessingEligibilityRequest,
-        targetAdmission?: SourceProcessingContext['targetAdmission'],
-      ) => sourceSubjectExists(transaction, scope, subjectRef, request, repository, crypto, targetAdmission),
-    };
+    const decisions = yield* Effect.forEach(
+      input.requests,
+      (request) => runSourceProcessingEligibility(request, context).pipe(Effect.map(({ result }) => result)),
+      { concurrency: 1 },
+    );
+    return { evidence: { resultCount: decisions.length }, result: { decisions } };
   }),
+  sourceProcessingEligibilityServices,
 );

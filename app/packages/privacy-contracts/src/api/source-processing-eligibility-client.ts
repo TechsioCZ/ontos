@@ -2,7 +2,10 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { SourceProcessingEligibilityApi } from '../apis/source-processing-eligibility.ts';
-import type { SourceProcessingEligibilityRequest } from '../apis/source-processing-eligibility.ts';
+import type {
+  SourceProcessingEligibilityRequest,
+  SourceProcessingEligibilitySetRequest,
+} from '../apis/source-processing-eligibility.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface SourceProcessingEligibilityClientOptions {
@@ -42,6 +45,15 @@ export const executeSourceProcessingEligibilityWithAuthorization = (
 ) =>
   sourceProcessingEligibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) => client.sourceProcessingEligibility.execute({ payload })),
+  );
+
+/** One governed call for the decisions of several exact requests, answered in the request order. */
+export const executeSourceProcessingEligibilitySetWithAuthorization = (
+  payload: SourceProcessingEligibilitySetRequest,
+  ...[credential, requestCorrelation, options = {}]: SourceProcessingEligibilityAuthorizedInvocation
+) =>
+  sourceProcessingEligibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
+    Effect.flatMap((client) => client.sourceProcessingEligibility.executeSet({ payload })),
   );
 
 export const executeSourceProcessingEligibility = (

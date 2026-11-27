@@ -3,7 +3,10 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { SourcePersonAdmissionReferenceSchema } from './source-person-admission.ts';
+import {
+  SourcePersonAdmissionReferenceSchema,
+  SourcePersonAdmissionResponseSchema,
+} from './source-person-admission.ts';
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyRefSchema } from '../resources/party.ts';
@@ -29,6 +32,39 @@ export const SourceCounterpartyAdmissionResponseSchema = Schema.Union([
   }),
 ]);
 export type SourceCounterpartyAdmissionResponse = typeof SourceCounterpartyAdmissionResponseSchema.Type;
+
+/** The most source customers one admission set answers: a whole source page. */
+export const SOURCE_ADMISSION_SET_MAX = 100;
+/**
+ * The current admission of every customer of a source page in one governed read: a Counterparty customer as the
+ * Counterparty admission proves it, a person as the PERSON admission proves it, each answered in the request order.
+ */
+export const SourceAdmissionSetRequestSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Union([
+      Schema.Struct({
+        kind: Schema.Literal('COUNTERPARTY'),
+        counterpartyRef: CounterpartyRefSchema,
+        sourceReference: SourcePersonAdmissionReferenceSchema,
+      }),
+      Schema.Struct({
+        kind: Schema.Literal('PERSON'),
+        partyRef: PartyRefSchema,
+        sourceReference: SourcePersonAdmissionReferenceSchema,
+      }),
+    ]),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(SOURCE_ADMISSION_SET_MAX)),
+});
+export type SourceAdmissionSetRequest = typeof SourceAdmissionSetRequestSchema.Type;
+export const SourceAdmissionSetResponseSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Union([
+      Schema.Struct({ kind: Schema.Literal('COUNTERPARTY'), result: SourceCounterpartyAdmissionResponseSchema }),
+      Schema.Struct({ kind: Schema.Literal('PERSON'), result: SourcePersonAdmissionResponseSchema }),
+    ]),
+  ).check(Schema.isMaxLength(SOURCE_ADMISSION_SET_MAX)),
+});
+export type SourceAdmissionSetResponse = typeof SourceAdmissionSetResponseSchema.Type;
 
 export const SourceCounterpartyAdmissionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'SourceCounterpartyAdmissionAuthenticationProblem',
@@ -78,6 +114,21 @@ export const SourceCounterpartyAdmissionApi = HttpApi.make('SourceCounterpartyAd
       ],
       payload: SourceCounterpartyAdmissionRequestSchema,
       success: SourceCounterpartyAdmissionResponseSchema,
+    }),
+  ).add(
+    HttpApiEndpoint.post('executeSet', '/reads/source-admission-set', {
+      error: [
+        SourceCounterpartyAdmissionInvalidProblemSchema,
+        SourceCounterpartyAdmissionAuthenticationProblemSchema,
+        SourceCounterpartyAdmissionForbiddenProblemSchema,
+        SourceCounterpartyAdmissionNotFoundProblemSchema,
+        SourceCounterpartyAdmissionPolicyConflictProblemSchema,
+        SourceCounterpartyAdmissionPolicyProblemSchema,
+        SourceCounterpartyAdmissionUnavailableProblemSchema,
+        SourceCounterpartyAdmissionInternalProblemSchema,
+      ],
+      payload: SourceAdmissionSetRequestSchema,
+      success: SourceAdmissionSetResponseSchema,
     }),
   ),
 );

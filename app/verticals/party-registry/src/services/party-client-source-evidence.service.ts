@@ -2,7 +2,7 @@ import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement
 import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { checkPartyClientSourcePrivacy } from './party-client-source-privacy.service.ts';
+import { checkPartyClientSourcePrivacy, checkPartyClientSourcePrivacySet } from './party-client-source-privacy.service.ts';
 import { and, eq, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { Config, Context, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 
@@ -136,6 +136,13 @@ export const requirePartyClientSourceEnrollment = Effect.fn('PartyClientSourceEv
   },
 );
 
+/** The intents a reviewing session may ask about a source reference it did not enroll itself. */
+const reviewingIntent = (intent: SourceIntent): boolean =>
+  intent.operation === 'REVIEW' ||
+  intent.operation === 'EVIDENCE_READ' ||
+  intent.operation === 'PROFILE_EXPORT' ||
+  intent.operation === 'ORGANIZATION_BUSINESS_NAME_EXPORT';
+
 export const authorizePartyClientSourceReferenceWithProjection = Effect.fn(
   'PartyClientSourceEvidence.authorizeReferenceWithProjection',
 )(function* authorizeReference(
@@ -143,14 +150,7 @@ export const authorizePartyClientSourceReferenceWithProjection = Effect.fn(
   scope: PartyClientSourceScope,
   intent: SourceIntent,
 ) {
-  yield* requirePartyClientSourceEnrollment(
-    assertion,
-    scope,
-    intent.operation === 'REVIEW' ||
-      intent.operation === 'EVIDENCE_READ' ||
-      intent.operation === 'PROFILE_EXPORT' ||
-      intent.operation === 'ORGANIZATION_BUSINESS_NAME_EXPORT',
-  );
+  yield* requirePartyClientSourceEnrollment(assertion, scope, reviewingIntent(intent));
   const privacy = yield* Effect.serviceOption(PartyClientSourcePrivacy);
   const outcome = yield* Option.isSome(privacy)
     ? privacy.value.checkImport({ assertion, scope, intent })
@@ -171,6 +171,32 @@ export const authorizePartyClientSourceReference = (
   scope: PartyClientSourceScope,
   intent: SourceIntent,
 ) => authorizePartyClientSourceReferenceWithProjection(assertion, scope, intent).pipe(Effect.asVoid);
+
+/**
+ * The same source enrollment and current Privacy authorization for several references of one scope, with one Privacy
+ * set decision instead of one call each. Any refused reference refuses them all, as its single check would.
+ */
+export const authorizePartyClientSourceReferences = Effect.fn('PartyClientSourceEvidence.authorizeReferences')(
+  function* authorizeReferences(
+    items: readonly { readonly assertion: PartyClientSourceReference; readonly intent: SourceIntent }[],
+    scope: PartyClientSourceScope,
+  ) {
+    yield* Effect.forEach(
+      items,
+      ({ assertion, intent }) => requirePartyClientSourceEnrollment(assertion, scope, reviewingIntent(intent)),
+      { concurrency: 1, discard: true },
+    );
+    const privacy = yield* Effect.serviceOption(PartyClientSourcePrivacy);
+    const outcomes = Option.isSome(privacy)
+      ? yield* Effect.forEach(items, ({ assertion, intent }) => privacy.value.checkImport({ assertion, scope, intent }), {
+          concurrency: 1,
+        })
+      : yield* checkPartyClientSourcePrivacySet(scope, items);
+    if (outcomes.length !== items.length || outcomes.some((outcome) => outcome === 'DENIED')) {
+      return yield* evidenceDenied('client_source_privacy_denied');
+    }
+  },
+);
 
 /** Core binds the actual chosen machine branch to this exact transaction and scope. */
 export const requireAdmittedPartySourceReference = Effect.fn('PartyClientSourceEvidence.requireAdmittedReference')(
