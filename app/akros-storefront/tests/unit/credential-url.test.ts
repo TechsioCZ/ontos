@@ -109,8 +109,9 @@ describe("credential query guard", () => {
       );
     }
     await network.idle();
-    // Each proxy request resolves its own market; navigation must not reuse the prior request's assertion.
-    expect(network.requests).toHaveLength(2);
+    // Both navigations resolve their market from one directory read the process shares for 60 s (400f19cd47); the
+    // read carries the storefront key and its own correlation, never a shopper's credential.
+    expect(network.requests).toHaveLength(1);
     for (const read of network.requests) {
       expect(read.headers.get("x-api-key")).toBe("credential-url-test-key");
       expect(read.headers.get("x-correlation-id")).toEqual(expect.any(String));
@@ -122,7 +123,7 @@ describe("credential query guard", () => {
       });
     }
     expect(new Set(network.requests.map((read) => read.headers.get("x-correlation-id"))).size).toBe(
-      2,
+      1,
     );
   });
 });

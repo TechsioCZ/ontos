@@ -4,29 +4,10 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 
+import { NAVIGATION_START as START } from "@/components/navigation-start";
 import { useDictionary } from "@/ontos/market-context";
 
-const START = "sf:navigation-start";
 const SLOW_MS = 12_000;
-
-/** Shows the top progress bar at once; hash-only and same-URL navigations are skipped. */
-export function startNavigationProgress(href?: string) {
-  if (typeof window === "undefined") return;
-  if (href !== undefined) {
-    try {
-      const target = new URL(href, window.location.href);
-      if (
-        target.origin === window.location.origin &&
-        target.pathname === window.location.pathname &&
-        target.search === window.location.search
-      )
-        return;
-    } catch {
-      // An unparsable href still navigates somewhere: show the bar.
-    }
-  }
-  window.dispatchEvent(new CustomEvent(START, { detail: href }));
-}
 
 const isForm = (value: EventTarget | null): value is HTMLFormElement =>
   value !== null && HTMLFormElement.prototype.isPrototypeOf(value);

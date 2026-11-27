@@ -30,7 +30,7 @@ import {
   type RemoteCategorySuggestion,
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
-import { startNavigationProgress } from "@/components/navigation-progress";
+import { startNavigationProgress } from "@/components/navigation-start";
 
 /** Runs while the HTML parses: text typed before hydration (even before this script is parsed) reaches the hidden q field, a pre-hydration native submit carries it, and it survives the streamed loading-shell swap and hydration. */
 const EARLY_QUERY_SCRIPT = `(function(){var w=window,d=document;function hq(g){return g&&g.querySelector('input[type="hidden"][name="q"]')}function vis(g){return g.querySelector('input:not([type="hidden"])')}function fill(g,v){if(g.hasAttribute("data-sf-hydrated"))return;var q=hq(g);if(!q)return;q.value=v;g.setAttribute("data-sf-early-query",v);var t=vis(g);if(t&&t.value!==v)t.value=v;}function all(v){w.__sfEarlyQuery=v;var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++)fill(a[i],v);}if(!w.__sfEarlyQueryInit){w.__sfEarlyQueryInit=1;d.addEventListener("input",function(e){var t=e.target,g=t&&t.form;if(!g||t.type==="hidden"||typeof t.value!=="string"||g.hasAttribute("data-sf-hydrated")||!hq(g))return;all(t.value);},true);d.addEventListener("submit",function(e){var g=e.target;if(!g||!g.hasAttribute||g.hasAttribute("data-sf-hydrated")||!hq(g))return;var t=vis(g);if(t&&t.value.trim())hq(g).value=t.value;},true);}var a=d.querySelectorAll("form");for(var i=0;i<a.length;i++){var g=a[i];if(g.hasAttribute("data-sf-hydrated")||!hq(g))continue;var t=vis(g);if(t&&t.value){all(t.value);break;}}if(w.__sfEarlyQuery)all(w.__sfEarlyQuery);})();`;

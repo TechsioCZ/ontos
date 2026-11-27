@@ -132,12 +132,15 @@ async function renderCategory(compact: boolean) {
         async (read) => (await read.clone().json()).query?.view?.storefrontCatalog,
       ),
     );
-    return queries.filter((query) => query?.mode === "categories");
+    // The catalogue revision check (includeCategories: false) reads no navigation.
+    return queries.filter(
+      (query) => query?.mode === "categories" && query.includeCategories !== false,
+    );
   };
   try {
     return await request.run(async () => {
-      // These calls share Next stores, not an RSC cache dispatcher or an acquired operation holder.
-      // Loading a shell snapshot must not hide later page/branch navigation reads in this SSR fixture.
+      // These calls share Next stores, not an RSC cache dispatcher or an acquired operation holder. The root tree is
+      // shared per process for 60 s (400f19cd47): the shell's one navigation read serves the page and its branch.
       const snapshot = await getShellSnapshot();
       const shellNavigation = await navigationQueries();
       expect(shellNavigation).toEqual([navigationQuery]);
@@ -146,7 +149,7 @@ async function renderCategory(compact: boolean) {
         searchParams: Promise.resolve({}),
       });
       const pageNavigation = await navigationQueries();
-      expect(pageNavigation.slice(shellNavigation.length)).toEqual([navigationQuery]);
+      expect(pageNavigation.slice(shellNavigation.length)).toEqual([]);
       const Component = () => (
         <MarketProvider
           market={{
@@ -184,10 +187,13 @@ async function renderCategory(compact: boolean) {
       const queries = await Promise.all(
         network.requests.map(async (read) => (await read.json()).query?.view?.storefrontCatalog),
       );
-      // The async CategoryBranch is another independent operation during the subsequent SSR render.
+      // The async CategoryBranch is another independent operation during the subsequent SSR render; it reads the
+      // shared tree too.
       expect(
-        queries.filter((query) => query?.mode === "categories").slice(pageNavigation.length),
-      ).toEqual([navigationQuery]);
+        queries
+          .filter((query) => query?.mode === "categories" && query.includeCategories !== false)
+          .slice(pageNavigation.length),
+      ).toEqual([]);
       expect(queries).toContainEqual(
         expect.objectContaining({
           categorySlug: "srouby",

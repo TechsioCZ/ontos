@@ -98,7 +98,7 @@ describe("variant filter dimensions", () => {
     ).toEqual([]);
   });
 
-  it("omits conflicting feed dimensions and constant or incomplete ranges", () => {
+  it("takes the parameter staff edit over the label and omits other units and constant or incomplete ranges", () => {
     const variants = [
       {
         ...variant,
@@ -108,9 +108,18 @@ describe("variant filter dimensions", () => {
       },
       { ...variant, id: "b", label: "vrut 4x70", parameters: [] },
     ];
+    // The staff-edited "Délka" (60 mm) wins over the label's 30.
     expect(getVariantRangeFilters(product, variants).map((filter) => filter.id)).toEqual([
       "diameter",
+      "length",
     ]);
+    // A parameter in another unit never silently becomes a filter.
+    expect(
+      getVariantRangeFilters(product, [
+        { ...variants[0], parameters: [{ label: "Délka", value: "6", unit: "cm" }] },
+        variants[1],
+      ]).map((filter) => filter.id),
+    ).toEqual(["diameter"]);
     expect(getVariantRangeFilters(product, [variants[0]])).toEqual([]);
     expect(getVariantRangeFilters(product, [variants[1], { ...variants[1], id: "c" }])).toEqual([]);
     expect(

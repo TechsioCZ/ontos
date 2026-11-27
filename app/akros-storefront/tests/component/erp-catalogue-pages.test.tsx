@@ -33,7 +33,7 @@ const catalogPage = {
   items: [
     {
       productRef,
-      lifecycle: "DRAFT",
+      lifecycle: "ACTIVE",
       revision: 1,
       localized: {
         kind: "PRESENT",
@@ -237,7 +237,8 @@ describe("ERP product pages", () => {
       {
         audience: "catalog",
         readName: "product-page",
-        query: { lifecycles: ["DRAFT", "ACTIVE"], locale: "cs", limit: 48, offset: 0 },
+        // Only ACTIVE products are sold: a Koncept (DRAFT) stays off the e-shop (5723b06c7b).
+        query: { lifecycles: ["ACTIVE"], locale: "cs", limit: 48, offset: 0 },
       },
       {
         audience: "inventory",

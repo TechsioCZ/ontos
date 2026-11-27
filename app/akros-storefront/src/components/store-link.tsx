@@ -3,7 +3,7 @@ import NextLink from "next/link";
 import type { ComponentProps } from "react";
 import { useMarket } from "@/ontos/market-context";
 import { localizeHref } from "@/ontos/market-locale";
-import { startNavigationProgress } from "@/components/navigation-progress";
+import { startNavigationProgress } from "@/components/navigation-start";
 
 type Href = ComponentProps<typeof NextLink>["href"];
 

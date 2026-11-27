@@ -8,7 +8,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { startNavigationProgress } from "@/components/navigation-progress";
+import { startNavigationProgress } from "@/components/navigation-start";
 
 export default function NotFoundPage() {
   const router = useRouter();
