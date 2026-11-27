@@ -13,7 +13,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { settle as uiSettle, waitUntil as uiWaitUntil, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act } from 'react';
@@ -226,8 +226,24 @@ it.layer(network, { excludeTestServices: true })('product editor with one Save b
       yield* Effect.promise(() => click(button('Uložit')));
       yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
       yield* networkIdle;
-      expect(catalogRequests.map(({ command }) => command)).toEqual([
-        { _tag: 'UpdateProduct', id: 'product-1', patch: { name: 'Etiopie B' } },
+      // The save names the product version the editor read, so only a change of this product refuses it.
+      expect(
+        catalogRequests.map(({ command }) =>
+          Predicate.isTagged(command, 'UpdateProduct')
+            ? {
+                expectedUpdatedAt:
+                  command.expectedUpdatedAt === undefined ? null : DateTime.toEpochMillis(command.expectedUpdatedAt),
+                id: command.id,
+                patch: command.patch,
+              }
+            : command._tag,
+        ),
+      ).toEqual([
+        {
+          expectedUpdatedAt: DateTime.toEpochMillis(product.updatedAt),
+          id: 'product-1',
+          patch: { name: 'Etiopie B' },
+        },
       ]);
     }),
   );
