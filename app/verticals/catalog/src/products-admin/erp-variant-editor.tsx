@@ -504,6 +504,22 @@ const loadedFigures = (value: Loaded) => {
   };
 };
 
+/** The figures the user typed that differ from what the owners answered. */
+const editedFigures = (
+  value: Loaded,
+  typed: { readonly amount: string; readonly groupAmounts: Readonly<Record<string, string>>; readonly stock: string },
+): KeptFigures => {
+  const figures = loadedFigures(value);
+  const changedGroups = Object.fromEntries(
+    Object.entries(typed.groupAmounts).filter(([id, amount]) => figures.groupAmounts[id] !== amount),
+  );
+  return {
+    ...(typed.amount === figures.amount ? {} : { amount: typed.amount }),
+    ...(Object.keys(changedGroups).length === 0 ? {} : { groupAmounts: changedGroups }),
+    ...(typed.stock === figures.stock ? {} : { stock: typed.stock }),
+  };
+};
+
 export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariantEditorProps) => {
   const variant = item.variants.find(({ variantRef }) => variantRef.resourceId === variantId);
   const keepKey = erpVariantKeepKey(variantId);
@@ -517,6 +533,11 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
   const [reason, setReason] = useState(() => kept?.reason ?? DEFAULT_REASON);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // What the dialog last loaded and what the user has typed, so a re-read (the list reloads after every save,
+  // failed or not) refreshes the owners' figures without wiping the figures the user changed.
+  const loadedRef = useRef<Loaded | null>(null);
+  const typedRef = useRef({ amount, groupAmounts, stock });
+  typedRef.current = { amount, groupAmounts, stock };
   useEffect(() => {
     if (variant === undefined) {
       return;
@@ -534,8 +555,10 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
           onFailure: (text: string) => setFailure(text),
           onSuccess: (value) => {
             const figures = loadedFigures(value);
-            const restored = keptFigures.current;
+            const previous = loadedRef.current;
+            const restored = previous === null ? keptFigures.current : editedFigures(previous, typedRef.current);
             keptFigures.current = undefined;
+            loadedRef.current = value;
             setLoaded(value);
             setAmount(restored?.amount ?? figures.amount);
             setGroupAmounts({ ...figures.groupAmounts, ...restored?.groupAmounts });
@@ -551,15 +574,9 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
         if (loaded === null) {
           return undefined;
         }
-        const figures = loadedFigures(loaded);
-        const changedGroups = Object.fromEntries(
-          Object.entries(groupAmounts).filter(([id, typed]) => figures.groupAmounts[id] !== typed),
-        );
         const changed: KeptFigures = {
-          ...(amount === figures.amount ? {} : { amount }),
-          ...(Object.keys(changedGroups).length === 0 ? {} : { groupAmounts: changedGroups }),
+          ...editedFigures(loaded, { amount, groupAmounts, stock }),
           ...(reason === DEFAULT_REASON ? {} : { reason }),
-          ...(stock === figures.stock ? {} : { stock }),
         };
         return Object.keys(changed).length === 0 ? undefined : changed;
       }),
