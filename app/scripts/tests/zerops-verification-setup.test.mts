@@ -19,8 +19,8 @@ const CHECKOUT_SIGNAL = 'checkout-started';
 const SERVICE_SIGNAL = 'service-started';
 const PACKAGED_BUILD_FLAG = '--expect-build-id=-packaged-build';
 const ORIGINS_CHECK = 'Check that the stage origins answer';
-const DELIVER_STAGE = './.github/actions/deliver-stage';
 const SKIP_NEWER = 'Skip when stage already runs a newer commit';
+const DELIVER_STAGE = './.github/actions/deliver-stage';
 const SUPERSEDED = 'End here when a newer push superseded this run';
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -95,10 +95,9 @@ it.effect(
   () =>
     Effect.gen(function* originsAnswer() {
       const fs = yield* FileSystem.FileSystem;
-      const command = (yield* readDelivery).find((step) => step.name === ORIGINS_CHECK)?.run;
-      if (command === undefined) {
-        return yield* Effect.die('The delivery must check the stage origins');
-      }
+      const command = yield* Schema.decodeUnknownEffect(Schema.String)(
+        (yield* readDelivery).find((step) => step.name === ORIGINS_CHECK)?.run,
+      );
       for (const shop of ['200', '503']) {
         const directory = yield* fs.makeTempDirectoryScoped();
         yield* fs.writeFileString(path.join(directory, 'curl'), fakeCurl);
@@ -130,7 +129,6 @@ it.effect(
           expect(result.stdout).not.toContain('::warning::');
         }
       }
-      return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -165,11 +163,9 @@ for (const scenario of [
       const { steps } = (yield* readWorkflow).jobs.deliver_app;
       const index = (name: string) => steps.findIndex((step) => step.name === name);
       const skip = steps[index(SKIP_NEWER)];
-      const mark = steps[index(MUTATION_MARKER)];
+      const mark = yield* Schema.decodeUnknownEffect(Step)(steps[index(MUTATION_MARKER)]);
       const delivery = steps.findIndex((step) => step.uses === DELIVER_STAGE);
-      if (skip?.run === undefined || mark === undefined) {
-        return yield* Effect.die('deliver_app must decide whether to deliver and mark its attempt');
-      }
+      const skipRun = yield* Schema.decodeUnknownEffect(Schema.String)(skip?.run);
       // The decision precedes the mark, and the mark every secret sync and push; both follow the decision.
       expect(index(SKIP_NEWER)).toBeLessThan(index(MUTATION_MARKER));
       expect(index(MUTATION_MARKER)).toBeLessThan(delivery);
@@ -184,7 +180,7 @@ for (const scenario of [
       const output = path.join(directory, 'output');
       yield* fs.writeFileString(output, '');
       const result = yield* collectToolingProcess(
-        ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', skip.run], {
+        ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', skipRun], {
           env: {
             CALLS: path.join(directory, 'calls'),
             DEPLOYED: scenario.deployed,
@@ -204,7 +200,6 @@ for (const scenario of [
       expect((yield* fs.readFileString(path.join(directory, 'calls'))).trim().split('\n')).toEqual([
         `https://api.app-prg1.zerops.io/api/rest/public/service-stack/${scenario.planned}-id`,
       ]);
-      return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }

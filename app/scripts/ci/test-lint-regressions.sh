@@ -4,7 +4,6 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 hook="$root/app/node_modules/.bin/lefthook"
 runner="$root/app/scripts/ci/lint-files.sh"
-selector="$root/app/scripts/ci/lint-shard-files.sh"
 # Reproduce the real global job's root filter: root affects selection as well as working directory.
 global_root=app/
 work="$(mktemp -d "${TMPDIR:-/tmp}/lint-regressions.XXXXXX")"
@@ -49,12 +48,11 @@ CONFIG
     awk -v root="$global_root" '{print; if ($0 ~ /name: global$/) print "      root: " root}' lefthook.yml >next.yml
     mv next.yml lefthook.yml
   fi
-  for input in excluded workflow empty proof; do
+  for input in excluded workflow empty; do
     case "$input" in
       excluded) printf 'app/fixtures/excluded.ts\0' >files ;;
       workflow) printf '.github/workflows/fixture.yml\0' >files ;;
       empty) : >files ;;
-      proof) bash "$selector" proof >files ;;
     esac
     status=0
     bash "$runner" <files >"$input.log" 2>&1 || status=$?
@@ -74,7 +72,7 @@ CONFIG
   FAIL_GENERATION=true bash "$runner" </dev/null >global-failure.log 2>&1 || status=$?
   test "$status" -eq 1
   grep -q '^GLOBAL' global-failure.log
-  echo 'Ignored projections regenerate without a diff; generation failures still block empty and proof inputs.'
+  echo 'Ignored projections regenerate without a diff; generation failures still block empty inputs.'
 }
 quoted_boundary() {
   # 176 apostrophes per path: +4 bytes each, not +3. The old 160-path estimate fits 120 kB,
@@ -127,24 +125,6 @@ unsupported_templates() {
   done
   echo 'Unsupported file templates in run and args fail closed before executing the hook.'
 }
-docs_inputs() {
-  for input in non-markdown unterminated empty; do
-    case "$input" in
-      non-markdown) printf 'deleted.md\0deleted.ts\0' >files ;;
-      unterminated) printf 'deleted.md\0unterminated.md' >files ;;
-      empty) : >files ;;
-    esac
-    status=0
-    bash "$selector" docs "$work/files" >docs.out 2>docs.err || status=$?
-    test "$status" -eq 1
-    test ! -s docs.out
-    grep -q 'Docs paths must' docs.err
-  done
-  printf 'deleted.md\0' >files
-  bash "$selector" docs "$work/files" >docs.out
-  test ! -s docs.out
-  echo 'Invalid docs lists fail closed before deletion filtering; all-deleted lists succeed.'
-}
 exclusion_collisions() {
   for tagged in lint global; do
     cat >lefthook.yml <<CONFIG
@@ -171,7 +151,6 @@ case "${1:-all}" in
   quotes) quoted_boundary ;;
   templates) unsupported_templates ;;
   exclusions) exclusion_collisions ;;
-  docs) docs_inputs ;;
-  all) local_skip; no_match; quoted_boundary; unsupported_templates; exclusion_collisions; docs_inputs ;;
+  all) local_skip; no_match; quoted_boundary; unsupported_templates; exclusion_collisions ;;
   *) exit 1 ;;
 esac

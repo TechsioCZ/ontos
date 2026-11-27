@@ -852,7 +852,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Whole-tree slices even for narrowed plans; stage alone can select a proof row.
+        # All three whole-tree slices run even for narrowed plans.
         shard: [1, 2, 3]
     steps:
       - name: Harden Runner

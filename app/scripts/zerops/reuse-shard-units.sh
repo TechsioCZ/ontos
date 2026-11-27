@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage unit reuse and packing (zerops-stage.yml, jobs `deliver` and `build`), run from app/.
+# One stage build shard's units (zerops-stage.yml, job `build`), run from app/.
 #
 #   reuse-shard-units.sh reuse <identities-dir> <shard> <unit-cache-dir> <archive>
 #   reuse-shard-units.sh pack <archive> <unit>...
@@ -8,7 +8,7 @@
 #
 # `reuse` takes the shard's units from its restored unit cache only when every one of them is proven unchanged: the
 # cached build's recorded identity (.zerops-build-digest, written when it was built) equals the identity this commit
-# gives the unit (<identities-dir>/digests.tsv, written by `build-app.sh --digests-only` in the planning job `deliver`),
+# gives the unit (<identities-dir>/digests.tsv, written by `build-app.sh --digests-only` in the delivery job),
 # and the cached build has its entry. Then it lays the builds out as dist/ and packs them as a build would, so the job
 # needs no install and builds nothing. Any doubt (no unit list, no identity, a missing or different cached build)
 # exits 3: the job installs and builds as before, and build-app.sh proves every kept unit again. The Zerops build
@@ -18,12 +18,11 @@
 # holds unit builds (artifact zerops-units-0), from the Actions API (GH_TOKEN with `actions: read`). No such run, or any
 # API failure, prints nothing: the matrix builds.
 #
-# `take-units` selects the planning job's front path, unit by unit.
-# Every unit of this commit's identity table that the archives under <archives-dir> (an earlier run's unit builds,
-# at any depth) hold exactly once, with its entry and the
+# `take-units` is the delivery job's front path, unit by unit. Every unit of this commit's identity table that the
+# archives under <archives-dir> (an earlier run's unit builds, at any depth) hold exactly once, with its entry and the
 # recorded identity this commit gives it, is laid out under <dists-dir> as <unit dir>/dist. Every other unit is written
 # to <missing-file>, one per line: the Zerops build or the build matrix builds it. No archive, or an unreadable one,
-# takes nothing. The planning job transfers selected units to deliver_app as the taken-units artifact.
+# takes nothing.
 #
 # `pack` is the one packing step of both paths: the units' dist/ without source maps, type bundles or precompressed
 # copies, which never serve at runtime.
