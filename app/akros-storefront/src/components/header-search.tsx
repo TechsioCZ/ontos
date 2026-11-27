@@ -76,6 +76,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   }, [initialQuery]);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
+  // The results page's own query is already answered by the page: suggestions load once the shopper edits it.
+  const idle = !open && trimmedQuery === initialQuery.trim();
   // The browser only holds featured products and navigation, so all suggestions come from the BFF.
   const [remote, setRemote] = useState<
     RemoteSearchResponse & {
@@ -94,7 +96,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   // Answers already seen in this page: repeated or backspaced queries show at once.
   const seen = useRef(new Map<string, typeof remote>());
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || idle) return;
     const held = seen.current.get(trimmedQuery);
     if (held !== undefined) {
       setRemote(held);
@@ -150,7 +152,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ready, trimmedQuery, searchAttempt, cs]);
+  }, [ready, idle, trimmedQuery, searchAttempt, cs]);
   const remoteCurrent = remote.query === trimmedQuery;
   const searchError = remoteCurrent ? remote.error : undefined;
   const searchLoading = ready && !remoteCurrent;
