@@ -32,6 +32,7 @@ const sourceOf = (row: CatalogSourceCorrelation) => ({
 export const readCatalogSourceProductPage = Effect.fn('CatalogSourceProductPage.read')(
   function* readCatalogSourceProductPage(input: CatalogSourceProductPageRequest, services: SourceProductPageServices) {
     const [total, rows] = yield* Effect.all([services.count(input), services.rows(input)], { concurrency: 1 });
+    const names = yield* services.variantNames(rows.map(({ productId }) => productId));
     const items = yield* Effect.forEach(
       rows,
       Effect.fn('CatalogSourceProductPage.item')(function* item(row) {
@@ -53,7 +54,13 @@ export const readCatalogSourceProductPage = Effect.fn('CatalogSourceProductPage.
           product: product.value,
           source: sourceOf(row),
           variantId: row.variantId,
-          variantSources: variants.map((variant) => ({ source: sourceOf(variant), variantId: variant.variantId })),
+          variantSources: variants.map((variant) => ({
+            localizedNames: names.flatMap((fact) =>
+              fact.variantId === variant.variantId && fact.name !== null ? [{ locale: fact.locale, name: fact.name }] : [],
+            ),
+            source: sourceOf(variant),
+            variantId: variant.variantId,
+          })),
         };
       }),
       { concurrency: 1 },

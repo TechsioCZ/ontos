@@ -3056,6 +3056,7 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const admission = yield* acquireSymmyOwnerAssertion(rawKey, { audience: 'symmy-integration' });
+  const random = yield* Crypto.Crypto;
   const context =
     yield* Effect.context<
       Effect.Services<ReturnType<typeof acquireSymmyOwnerAssertion> | ReturnType<typeof acquireSymmyIngressRouteProof>>
@@ -3104,6 +3105,9 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
       acquireOwner(input).pipe(Effect.provide(context)),
     acquireRouteAssertion: (input: typeof SymmyRouteContextRequestSchema.Encoded) =>
       acquireRoute(input).pipe(Effect.provide(context)),
+    newRequestIdentifier: random
+      .randomUUIDv4()
+      .pipe(Effect.catchTag('PlatformError', () => Effect.fail(symmyUnavailableProblem))),
   };
 });
 

@@ -1016,7 +1016,7 @@ export const cs = {
         "Registrace byla dokončena, ale přístup k účtu nyní není povolen. Obnovení registrace neopravňuje přístup.",
       admitted: "Účet je připraven.",
       intro:
-        "Přihlášení samo o sobě nedokončuje registraci. Zde ověříte přijetí účtu a obnovíte rozpracované kroky.",
+        "Registrace se po přihlášení dokončí sama, obvykle během několika sekund. Nakupovat můžete hned. Tady vidíte její stav a můžete ji obnovit, kdyby se zastavila.",
       checking: "Ověřuji…",
       check: "Ověřit stav",
       resume: "Obnovit registraci",

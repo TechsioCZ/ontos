@@ -335,7 +335,8 @@ for (const outcome of ['DENIED', 'UNAVAILABLE', 'NEEDS_APPROVAL'] as const) {
           Effect.isFailure,
         ),
       ).toBe(true);
-      expect(gate.askedDecisions).toHaveLength(1);
+      // A staff read asks its right and its capabilities in one round; the read right decides alone.
+      expect(gate.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(recordsCarrier.accessDeclaration.key);
       expect(gate.askedLists).toEqual([]);
     }),
   );

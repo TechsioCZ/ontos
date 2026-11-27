@@ -220,6 +220,8 @@ export const RecordsViewSchema = Schema.Struct({
   includeProductCategories: Schema.optionalKey(Schema.Boolean),
   /** Only products with these ids: the products carrying the tag selected in the staff list. */
   taggedProductIds: Schema.optionalKey(TaggedProductIdListSchema),
+  /** Staff reads: only products imported through the ERP connector Symmy (copied rows and shop products linked by SKU). */
+  importedVia: Schema.optionalKey(Schema.Literal('symmy')),
   /** Storefront lookup of one guest order by its submission id (only with `storefront: true`). */
   orderClientRequestId: Schema.optionalKey(
     Schema.Trim.pipe(Schema.decodeTo(ClientRequestIdSchema.check(Schema.isMinLength(8), Schema.isMaxLength(120)))),
@@ -331,6 +333,8 @@ export const RecordsResponseSchema = Schema.Struct({
   total: Schema.optionalKey(Schema.Int),
   totalOrders: Schema.optionalKey(Schema.Int),
   totalProducts: Schema.optionalKey(Schema.Int),
+  /** Staff reads: products (not archived) imported through Symmy, whole company; the list offers its filter when > 0. */
+  symmyProductCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** AKROS administrators may reset the company's demo data to its baseline (ResetDemoData). */
   canResetDemo: Schema.optionalKey(Schema.Boolean),
   indicators: Schema.Struct({

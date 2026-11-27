@@ -13,6 +13,7 @@ import type {
   CatalogCustomerPrice,
   CatalogProduct,
   CatalogProductVariant,
+  CatalogSearchVariantOffer,
 } from "./catalog-types";
 import { getConfig } from "./config";
 
@@ -310,7 +311,97 @@ const personalized = (
       ],
     };
   });
-  return changed ? { ...product, detail: { ...product.detail, variants } } : product;
+  if (!changed) return product;
+  // The group's own price, its card and the variant its search hit stands for are the customer's prices too: the
+  // cheapest priced variant after repricing, and the matched offer repriced by its exact variant.
+  const cheapest = variants
+    .filter((variant) => !variant.priceUnavailableReason && variant.priceMinor > 0)
+    .reduce<CatalogProductVariant | undefined>(
+      (best, variant) => (best === undefined || variant.priceMinor < best.priceMinor ? variant : best),
+      undefined,
+    );
+  const repriced = (offer: CatalogSearchVariantOffer): CatalogSearchVariantOffer => {
+    const variant = variants.find((entry) => entry.id === offer.id);
+    if (variant?.customerPrice === undefined) return offer;
+    const { originalPriceMinor: _original, ...rest } = offer;
+    void _original;
+    return { ...rest, priceMinor: variant.priceMinor, priceExcludingVatMinor: variant.customerPrice.netMinor };
+  };
+  const match = product.searchMatch;
+  const searchMatch =
+    match?.kind === "single"
+      ? { ...match, variant: repriced(match.variant) }
+      : match?.kind !== "multiple" && match?.onlyVariant !== undefined
+        ? { ...match, onlyVariant: repriced(match.onlyVariant) }
+        : match;
+  // „Vaše cena“ of a card is the price of the one variant it stands for; a group card shows the price per variant.
+  const shown =
+    match?.kind === "single"
+      ? variants.find((variant) => variant.id === match.variant.id)
+      : variants.length === 1
+        ? variants[0]
+        : undefined;
+  const { originalPriceMinor: _original, customerPrice: _customer, searchMatch: _match, ...rest } = product;
+  void _original;
+  void _customer;
+  void _match;
+  return {
+    ...rest,
+    ...(cheapest === undefined
+      ? {}
+      : {
+          priceMinor: cheapest.priceMinor,
+          variantSummary: { ...product.variantSummary, minGrossPriceMinor: cheapest.priceMinor },
+        }),
+    ...(shown?.customerPrice === undefined ? {} : { customerPrice: shown.customerPrice }),
+    ...(searchMatch === undefined ? {} : { searchMatch }),
+    detail: {
+      ...product.detail,
+      variants,
+      priceTiers: cheapest?.priceTiers ?? product.detail.priceTiers,
+    },
+  };
+};
+
+/**
+ * Listing cards carry no variant records, so a Symmy-linked group's variants (and their Catalog variants) are read
+ * in full for a signed-in visitor before Pricing is asked: the shared answer (`shared`: no customer prices, never
+ * personalised itself). A guest reads nothing more; a failed read leaves the cards at the shared price.
+ */
+const withVariantRecords = async (
+  products: readonly CatalogProduct[],
+  operation: Operation,
+): Promise<readonly CatalogProduct[]> => {
+  const groups = products.filter(
+    (product) =>
+      product.catalogProductId !== undefined &&
+      product.variantSummary.count > 0 &&
+      product.detail.variants.length === 0,
+  );
+  if (groups.length === 0) return products;
+  if (portalCookie((await requestPortal()).cookie) === "") return products;
+  try {
+    // catalog-server lays these prices over its reads: imported here, when a page needs it.
+    const { readProducts } = await import("./catalog-server");
+    const full = await readProducts(
+      { productIds: groups.map((product) => product.id), pageSize: groups.length },
+      "full",
+      false,
+      { operation, shared: true },
+    );
+    const details = new Map(full.products.map((product) => [product.id, product.detail]));
+    return products.map((product) => {
+      const detail = groups.includes(product) ? details.get(product.id) : undefined;
+      return detail === undefined
+        ? product
+        : { ...product, detail: { ...product.detail, variants: detail.variants, priceTiers: detail.priceTiers } };
+    });
+  } catch (error) {
+    operation.check();
+    if (isOperationError(error)) throw error;
+    console.error(`[ontos] customer group prices: variants unread (${String(error)}); shown at the shared price`);
+    return products;
+  }
 };
 
 /**
@@ -322,13 +413,22 @@ export const withCustomerPrices = async (
   operation: Operation,
   charged = false,
 ): Promise<ProductPage> => {
-  const refs = refsOf(page.products);
-  if (refs.length === 0) return page;
+  if (!page.products.some((product) => product.catalogProductId !== undefined)) return page;
   const scope = priceScope();
   if (scope === undefined || (page.market?.currency ?? "CZK") !== scope.currencyCode) return page;
+  const products = await withVariantRecords(page.products, operation);
+  const refs = refsOf(products);
+  if (refs.length === 0) return page;
   const prices = await readGroupPrices(refs, scope, operation, charged);
   if (prices.size === 0) return page;
-  return { ...page, products: page.products.map((product) => personalized(product, prices)) };
+  // A card without a price of its own stays the shared card, without the variants read for it.
+  return {
+    ...page,
+    products: products.map((product, index) => {
+      const priced = personalized(product, prices);
+      return priced === product ? (page.products[index] ?? product) : priced;
+    }),
+  };
 };
 
 /** The group price claim of one cart line, from a page read with `withCustomerPrices` (charged). */

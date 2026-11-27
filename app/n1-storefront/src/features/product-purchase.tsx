@@ -131,7 +131,9 @@ export const ProductPurchase = ({
             // The kit clamps a quantity outside the range on blur; one between packages snaps to the nearest package.
             onValueCommit={({ valueAsNumber }) => {
               const pack = current.packageQuantity ?? 0;
-              if (exhausted || !(pack > 0) || !Number.isFinite(valueAsNumber)) return;
+              if (exhausted || pack <= 0 || Number.isNaN(pack) || !Number.isFinite(valueAsNumber)) {
+                return;
+              }
               const snapped = Number((Math.round(valueAsNumber / pack) * pack).toFixed(12));
               setDraft({
                 key: selectionKey,
