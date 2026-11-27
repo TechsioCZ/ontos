@@ -6,10 +6,12 @@ import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedC
 import type { DraftSave, DraftSaveOutcome, KeptDraft, PartlySaved, UnsavedChangesGuard } from '@app/admin-ui';
 import { keepDraftOnReload, keptDraft, reloadKeepingDrafts } from '@app/shared-contracts';
 import { Array as Arr, Effect, Equal, Option } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { productCommandOutcome } from './products-api.ts';
 import type { CommandOutcome, ProductCommand } from './products-api.ts';
+import { mergeDraft } from './product-draft-merge.ts';
+import type { DraftMerge } from './product-draft-merge.ts';
 import { useProductLabel } from './product-form-labels.ts';
 
 /** How a product command ended, as the save bar shows it. */
@@ -73,6 +75,21 @@ const runCommands = (
   );
 };
 
+/** Rebased saves of one draft that go out by themselves; a catalogue that keeps changing leaves it to the operator. */
+const AUTOMATIC_REBASES = 3;
+
+/**
+ * A save refused because the catalogue moved past the revision it expected: the version the draft was based on and
+ * that revision. Once the page has read a newer revision, the draft's own changes go over it. `save` came from a save
+ * and saves the rebased draft at once when it overlaps nothing someone else changed; `keep` came from "Načíst
+ * aktuální verzi" and only puts the draft back; `held` overlaps someone else's change and waits for that button.
+ */
+interface Refusal<V> {
+  readonly base: V;
+  readonly from: number;
+  readonly mode: 'held' | 'keep' | 'save';
+}
+
 export interface ProductTabSaveOptions<V> {
   /**
    * The product command that saves `value`, or several sent one after another (one per changed market). `confirmed`
@@ -95,7 +112,12 @@ export interface ProductTabSaveOptions<V> {
    * as `variants:${product.id}`. After that reload the form opens with the kept draft, unsaved, through `reset`.
    */
   readonly keepAs: string;
-  /** Re-reads the product, after "Načíst aktuální verzi". */
+  /**
+   * Puts the operator's draft over a newer server version after a conflict; `base` is the version the draft was
+   * based on. `mergeDraft` (field by field) by default.
+   */
+  readonly merge?: (base: V, mine: V, theirs: V) => DraftMerge<V>;
+  /** Re-reads the product: after a save someone else's change refused, and on "Načíst aktuální verzi". */
   readonly onReload: () => void;
   /** The saved draft was committed (the page re-reads the product). */
   readonly onSaved: () => void;
@@ -123,13 +145,16 @@ export interface ProductTabSave<V> {
   readonly draft: DraftSave<V>;
   readonly error: string | null;
   readonly guard: UnsavedChangesGuard;
+  /** "Načíst aktuální verzi": the draft's own changes go over the current version, unsaved, for the operator to check. */
   readonly reloadLatest: () => void;
 }
 
 /**
  * Draft, save and unsaved-changes guard of one product tab form. Nothing is sent on change, blur, tab switch or
- * unmount; `draft.save()` (the Save button) sends one command. A conflict keeps the draft and offers the current
- * version; a change parked for approval saved nothing.
+ * unmount; `draft.save()` (the Save button) sends one command. A save refused over someone else's change re-reads the
+ * product and puts the draft's own changes over the fresh version: saved again at once when they touch nothing the
+ * other change did, otherwise kept unsaved behind the conflict message until "Načíst aktuální verzi". A change parked
+ * for approval saved nothing.
  */
 export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): ProductTabSave<V> => {
   const label = useProductLabel();
@@ -156,6 +181,11 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   const [committedRevision, setCommittedRevision] = useState(0);
   // The confirmed version as of the last render, which a save compares its draft with.
   const confirmedNow = useRef(kept?.confirmed ?? options.value);
+  // A save someone else's change refused, until the draft is rebased on the version they saved.
+  const refusal = useRef<Refusal<V> | undefined>(undefined);
+  // Rebased saves that went out by themselves since the operator last saved or reloaded.
+  const rebases = useRef(0);
+  const [retry, setRetry] = useState(false);
   const draft = useDraftSave<V, never>({
     initial: kept?.confirmed,
     isValid: (value) => options.isValid(value),
@@ -167,6 +197,7 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
           base.current = Math.max(base.current, committed);
           if (outcome.ok) {
             base.current = outcome.revision;
+            rebases.current = 0;
             setCommittedRevision(outcome.revision);
             setError(null);
             options.onSaved();
@@ -177,12 +208,19 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
               (outcome.reason === 'rejected' ? label('messages.rejected') : label('messages.failed')),
           );
           const result = tabSaveOutcome(outcome);
-          if (sent.length === 0 || options.partlyConfirmed === undefined || result === 'saved') {
+          const { partlyConfirmed } = options;
+          if (sent.length > 0 && partlyConfirmed !== undefined) {
+            confirmedNow.current = partlyConfirmed(value, confirmedNow.current, sent);
+          }
+          if (result === 'conflict') {
+            // Read the version someone else saved; the draft's own changes then go over it.
+            refusal.current = { base: confirmedNow.current, from: base.current, mode: 'save' };
+            options.onReload();
+          }
+          if (sent.length === 0 || partlyConfirmed === undefined || result === 'saved') {
             return result;
           }
-          const confirmed = options.partlyConfirmed(value, confirmedNow.current, sent);
-          confirmedNow.current = confirmed;
-          return { confirmed, outcome: result, revision: committed };
+          return { confirmed: confirmedNow.current, outcome: result, revision: committed };
         }),
       ),
     value: options.value,
@@ -192,13 +230,15 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
     confirmedNow.current = confirmedValue;
   }, [confirmedValue]);
   const { pending } = draft;
+  const { reset: putBack, server: serverNow } = options;
   useEffect(() => {
-    // A kept draft about to be put back is no clean draft: it stays on the revision it was based on.
-    if (!pending && restoring.current === undefined) {
+    // A kept draft about to be put back stays on the revision it was based on. Any other draft follows the page's
+    // revision while the server still has the version it builds on: the revision counts every write to the company's
+    // catalogue, and a newer one that left this form's fields alone is no conflict.
+    if (restoring.current === undefined && (!pending || Equal.equals(serverNow, confirmedNow.current))) {
       base.current = Math.max(base.current, options.revision);
     }
-  }, [options.revision, pending]);
-  const { reset: putBack, server: serverNow } = options;
+  }, [options.revision, pending, serverNow]);
   useEffect(() => {
     const restored = restoring.current;
     if (restored === undefined) {
@@ -259,6 +299,56 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
       takeServer();
     }
   }
+  const merge = options.merge ?? mergeDraft;
+  const { status } = draft;
+  /**
+   * Puts the draft's own changes since the refused save's base over the version the page has now. After a save that
+   * overlaps nothing someone else changed, the rebased draft is saved at once; one that does waits behind the
+   * conflict message, and "Načíst aktuální verzi" puts the operator's values over the fresh version for them to check.
+   */
+  const rebase = (conflict: Refusal<V>, mode: Refusal<V>['mode']) => {
+    const { merged, overlap } = merge(conflict.base, value, server);
+    const automatic = mode === 'save';
+    if (automatic && (overlap || rebases.current >= AUTOMATIC_REBASES)) {
+      refusal.current = { ...conflict, mode: 'held' };
+      return;
+    }
+    refusal.current = undefined;
+    base.current = Math.max(base.current, shownRevision);
+    setPassedOver(Option.none());
+    adopt(server);
+    reset(merged);
+    if (automatic) {
+      rebases.current += 1;
+      setRetry(true);
+    }
+  };
+  // The read after a refused save landed (or the refusal found a newer read already on the page).
+  const rebaseOnRead = useEffectEvent(() => {
+    const conflict = refusal.current;
+    if (conflict === undefined || conflict.mode === 'held' || staleRead || shownRevision <= conflict.from) {
+      return;
+    }
+    if (status === 'conflict') {
+      rebase(conflict, conflict.mode);
+    } else {
+      // Discarded, or typed back to the confirmed version: nothing is left to put over the fresh version.
+      refusal.current = undefined;
+    }
+  });
+  useEffect(() => {
+    rebaseOnRead();
+  }, [shownRevision, staleRead, status]);
+  // The rebased draft is the form's draft by now (the draft controller took it in its own effect): send it.
+  const saveRebased = useEffectEvent(() => {
+    setRetry(false);
+    draft.save();
+  });
+  useEffect(() => {
+    if (retry) {
+      saveRebased();
+    }
+  }, [retry]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => draft.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft,
@@ -273,9 +363,15 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
     error,
     guard,
     reloadLatest: () => {
-      options.reset(draft.confirmed);
-      draft.adopt(draft.confirmed);
-      options.onReload();
+      // The operator asked: a later conflict may save again by itself.
+      rebases.current = 0;
+      const conflict: Refusal<V> = refusal.current ?? { base: draft.confirmed, from: base.current, mode: 'keep' };
+      if (!staleRead && shownRevision > conflict.from) {
+        rebase(conflict, 'keep');
+        return;
+      }
+      refusal.current = { ...conflict, mode: 'keep' };
+      onReload();
     },
   };
 };
