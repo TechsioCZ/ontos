@@ -105,8 +105,14 @@ const manifestFindings = (manifest: RemoteManifest): string[] =>
       ];
     });
 
+/**
+ * A bundled copy keeps each class list as one whole string literal. A module's own class string may begin with the
+ * same utilities (`inline-flex … justify-center rounded-lg ${size}`), so only a quote-delimited match counts.
+ */
 const assetFinding = (name: string, source: string, classStrings: ReadonlySet<string>): string[] => {
-  const literal = [...classStrings].find((candidate) => source.includes(candidate));
+  const literal = [...classStrings].find((candidate) =>
+    ['"', "'", '`'].some((quote) => source.includes(`${quote}${candidate}${quote}`)),
+  );
   return literal === undefined ? [] : [`${name} bundles kit JavaScript (class string "${literal}")`];
 };
 
