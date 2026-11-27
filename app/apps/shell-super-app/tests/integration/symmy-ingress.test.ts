@@ -1167,9 +1167,9 @@ const priceBatchRoute = (logicalRouteId: string, namespace: string) => ({
 });
 
 it.effect(
-  'copies the priceGroupRef of GET Price Lists into POST Price Batch and refuses every other list with one answer',
+  'copies the priceGroupId of GET Price Lists into POST Price Batch and refuses every other list with one answer',
   () =>
-    Effect.gen(function* priceGroupRefRoundTrip() {
+    Effect.gen(function* priceGroupIdRoundTrip() {
       let sequence = 0;
       for (const sourceRecordId of ['CZ wholesale', 'CZ/wholesale', 'Žluťoučký / 価格', 'x'.repeat(300)]) {
         sequence += 1;

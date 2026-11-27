@@ -9,7 +9,11 @@ import {
 } from '../../api/symmy/price-lists-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from '../../api/symmy/price-lists-prices-batch-public-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../../api/symmy/price-lists-prices-batch-request-contract.ts';
-import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { mapSymmyProductsProjection } from '../../api/symmy/products-public-contract.ts';
+import {
+  SymmyInternalPriceListsProjectionSchema,
+  SymmyInternalProductsProjectionSchema,
+} from '../../api/symmy/read-projection-contracts.ts';
 import { SymmySourcePricesSchema } from '../../api/symmy/source-prices-public-contract.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -155,6 +159,14 @@ const projection = (endsAt?: string) => {
 };
 const projectionWithoutPrices = () => decodeProjection(baseList, ['prices']);
 const decodeQuery = Schema.decodeUnknownResult(SymmyPriceListsReadQuerySchema);
+/** The price list as Symmy reads it, and its first entry: a current price. */
+const readPricedList = () => {
+  const [list] = mapSymmyPriceListsProjection(decodeProjection({ ...baseList, prices: ownerPrices }, [])).priceLists;
+  const [entry] = Schema.decodeUnknownSync(Schema.toType(SymmySourcePricesSchema))(list?.prices).prices;
+  assert.isDefined(list);
+  assert(entry?.price.outcome === 'PRICE_DEFINITION_CURRENT');
+  return { list, price: entry.price };
+};
 
 describe('Symmy public price lists body', () => {
   it('maps the projection to camelCase with the price group id and without markers or the qualified id', () => {
@@ -197,7 +209,14 @@ describe('Symmy public price lists body', () => {
         ...ids,
         configuration: {
           ...ids,
-          choices: [{ attributeDefinition: revised('7'), choiceKey: 'colour', unit: revised('8'), value: 'red' }],
+          choices: [
+            {
+              attributeDefinition: { attributeDefinitionId: uuid('7'), revision: 1 },
+              choiceKey: 'colour',
+              unit: revised('8'),
+              value: 'red',
+            },
+          ],
           definition: revised('9'),
         },
         packageOption: { contentRevision: revised('a'), optionId: uuid('a') },
@@ -218,15 +237,13 @@ describe('Symmy public price lists body', () => {
     });
     expect(priced?.provenance?.evidence.sourceAssertion.originalAssertion.unitBasis).toEqual(unit);
     expect(missing?.price).toEqual({ outcome: 'PRICE_DEFINITION_NOT_FOUND', priceId: priceRef.resourceId });
-    expect(JSON.stringify(prices)).not.toMatch(/moduleId|resourceType/u);
+    expect(priced?.provenance?.evidence.sourceAssertion.sourceRecord.sourceSystem).toEqual({ sourceSystemRef: 'erp' });
+    expect(JSON.stringify(prices)).not.toMatch(/moduleId|ownerModuleId|resourceType|tenantId/u);
   });
 
   it('rebuilds the owner references when the price import sends back what the read answered', () => {
-    const [list] = mapSymmyPriceListsProjection(decodeProjection({ ...baseList, prices: ownerPrices }, [])).priceLists;
-    const [entry] = Schema.decodeUnknownSync(Schema.toType(SymmySourcePricesSchema))(list?.prices).prices;
-    assert.isDefined(list);
-    assert(entry?.price.outcome === 'PRICE_DEFINITION_CURRENT');
-    const { identityKey: key, priceId, revision: current } = entry.price.definition;
+    const { list, price } = readPricedList();
+    const { identityKey: key, priceId, revision: current } = price.definition;
     const { productId, variantId } = key.catalogSelection;
     const { amount, currencyCode } = current.monetaryAmount;
     const body = Schema.decodeUnknownSync(SymmyPriceListPricesBatchRequestSchema, { onExcessProperty: 'error' })({
@@ -254,6 +271,59 @@ describe('Symmy public price lists body', () => {
     expect(mapSymmyPriceListPricesBatchRequest(body, tenantId)).toMatchObject({
       priceGroupRef: groupRef,
       prices: [{ productRef, unitBasis, variantRef }, { priceRef }],
+    });
+  });
+
+  it('builds a price import from the ids the products and price list reads answer', () => {
+    const { list, price } = readPricedList();
+    const [item] = mapSymmyProductsProjection(
+      Schema.decodeUnknownSync(SymmyInternalProductsProjectionSchema)({
+        contractVersion: 'INTERNAL_C14',
+        count: 1,
+        limit: 50,
+        offset: 0,
+        products: [
+          {
+            id: `~c14r1.${'a'.repeat(43)}`,
+            product: {
+              catalogReady: true,
+              createdAt: at,
+              lifecycle: 'ACTIVE',
+              productRef,
+              revision: 1,
+              updatedAt: at,
+              variants: [{ lifecycle: 'ACTIVE', productRef, variantId: variantRef.resourceId, variantRef }],
+            },
+            source_record_id: 'source-product',
+            variantSources: [],
+          },
+        ],
+        projection: 'products',
+        unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],
+      }),
+    ).products;
+    const [variant] = item?.product.variants ?? [];
+    assert.isDefined(item);
+    assert.isDefined(variant);
+    const { commercialScope, unitBasis: basis } = price.definition.identityKey;
+    const body = Schema.decodeUnknownSync(SymmyPriceListPricesBatchRequestSchema, { onExcessProperty: 'error' })({
+      priceGroupId: list.priceGroupId,
+      prices: [
+        {
+          amount: '30',
+          commercialScope: { channelId: commercialScope.channelId, marketId: commercialScope.marketId },
+          currencyCode: 'CZK',
+          effectiveFrom: at,
+          operation: 'DEFINE',
+          productId: item.product.productId,
+          unitBasis: { quantity: '1', unitId: basis.unitId },
+          variantId: variant.variantId,
+        },
+      ],
+    });
+    expect(mapSymmyPriceListPricesBatchRequest(body, tenantId)).toMatchObject({
+      priceGroupRef: groupRef,
+      prices: [{ productRef, unitBasis, variantRef }],
     });
   });
 

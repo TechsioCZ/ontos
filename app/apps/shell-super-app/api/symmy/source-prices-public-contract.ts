@@ -4,9 +4,10 @@ import { Match, Schema, Struct } from 'effect';
 import type { Types } from 'effect';
 
 /**
- * The source price page as Symmy reads it: every owner reference is its plain id, under the name the price import
- * accepts. The shapes are built from the owner fields, so no limit can drift. The owner checks that bind those
- * fields to each other already ran on the internal projection and are not repeated here.
+ * The source price page as Symmy reads it: every owner reference is its plain id, under the name an import accepts
+ * where one takes it, and no tenant or module is named. The shapes are built from the owner fields, so no limit can
+ * drift. The owner checks that bind those fields to each other already ran on the internal projection and are not
+ * repeated here.
  */
 const page = PriceGroupSourcePricesResponseSchema.fields;
 const entry = page.prices.value.fields;
@@ -24,6 +25,7 @@ const link = provenance.canonicalLink.fields;
 const evidence = provenance.evidence.fields;
 const assertion = evidence.sourceAssertion.fields;
 const original = assertion.originalAssertion.fields;
+const sourceRecord = assertion.sourceRecord.fields;
 
 const priceId = definition.priceRef.fields.resourceId;
 const productId = selection.productRef.fields.resourceId;
@@ -35,10 +37,15 @@ const CatalogRevisionSchema = Schema.Struct({
   ...revisionRest,
   resourceId: revisionResourceRef.fields.resourceId,
 });
+/** The one configuration revision whose id an import also takes, so it goes by the import's name. */
+const AttributeDefinitionRevisionSchema = Schema.Struct({
+  ...revisionRest,
+  attributeDefinitionId: revisionResourceRef.fields.resourceId,
+});
 const ConfigurationSchema = Schema.Struct({
   choices: Schema.Array(
     Schema.Struct({
-      attributeDefinition: Schema.optionalKey(CatalogRevisionSchema),
+      attributeDefinition: Schema.optionalKey(AttributeDefinitionRevisionSchema),
       choiceKey: choice.choiceKey,
       unit: Schema.optionalKey(CatalogRevisionSchema),
       value: choice.value,
@@ -96,12 +103,17 @@ const ProvenanceSchema = Schema.Struct({
     priceId,
   }),
   evidence: Schema.Struct({
-    ...Struct.omit(evidence, ['sourceAssertion']),
+    ...Struct.omit(evidence, ['sourceAssertion', 'tenantId']),
     sourceAssertion: Schema.Struct({
-      ...Struct.omit(assertion, ['originalAssertion']),
+      ...Struct.omit(assertion, ['originalAssertion', 'sourceRecord']),
       originalAssertion: Schema.Struct({
         ...Struct.omit(original, ['unitBasis']),
         unitBasis: UnitBasisSchema,
+      }),
+      // The owner module of the source system is the route's own, the same for every entry of a page.
+      sourceRecord: Schema.Struct({
+        ...Struct.omit(sourceRecord, ['sourceSystem']),
+        sourceSystem: Schema.Struct({ sourceSystemRef: sourceRecord.sourceSystem.fields.sourceSystemRef }),
       }),
     }),
   }),
@@ -130,7 +142,8 @@ type Choice = Configuration['choices'][number];
 const mapChoice = ({ attributeDefinition, unit, ...rest }: Choice) => {
   const mapped: Types.Mutable<(typeof ConfigurationSchema.Type)['choices'][number]> = { ...rest };
   if (attributeDefinition !== undefined) {
-    mapped.attributeDefinition = mapRevision(attributeDefinition);
+    const { resourceRef, ...revision } = attributeDefinition;
+    mapped.attributeDefinition = { ...revision, attributeDefinitionId: resourceRef.resourceId };
   }
   if (unit !== undefined) {
     mapped.unit = mapRevision(unit);
@@ -196,17 +209,16 @@ const mapPrice = (price: Price) =>
 
 const mapProvenance = ({ canonicalLink, evidence: recorded, provenanceRef }: NonNullable<Entry['provenance']>) => {
   const { identityKey, priceRef, ...linked } = canonicalLink;
-  const { sourceAssertion } = recorded;
+  const { sourceAssertion, tenantId: _routeTenant, ...evidenceRest } = recorded;
+  const { originalAssertion, sourceRecord: record } = sourceAssertion;
   return {
     canonicalLink: { ...linked, identityKey: mapIdentityKey(identityKey), priceId: priceRef.resourceId },
     evidence: {
-      ...recorded,
+      ...evidenceRest,
       sourceAssertion: {
         ...sourceAssertion,
-        originalAssertion: {
-          ...sourceAssertion.originalAssertion,
-          unitBasis: mapUnitBasis(sourceAssertion.originalAssertion.unitBasis),
-        },
+        originalAssertion: { ...originalAssertion, unitBasis: mapUnitBasis(originalAssertion.unitBasis) },
+        sourceRecord: { ...record, sourceSystem: { sourceSystemRef: record.sourceSystem.sourceSystemRef } },
       },
     },
     provenanceRef,
