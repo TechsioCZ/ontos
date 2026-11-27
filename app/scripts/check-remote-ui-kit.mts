@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Fails a browser remote that ships its own copy of @techsio/ui-kit. The Shell provides the kit's code as
- * strict Module Federation singletons and its stylesheet once; a remote consumes both and carries neither.
+ * Fails a browser remote that ships its own copy of @techsio/ui-kit's JavaScript. The Shell provides the kit's
+ * code as strict Module Federation singletons; a remote consumes it and carries none. (A remote's CSS is
+ * judged by check-module-browser-css.mts: a module ships no stylesheet at all.)
  *
  *   node scripts/check-remote-ui-kit.mts <remote dist directory>...
  *
  * A remote ships a copy when its Module Federation manifest shares a kit subpath with a fallback of its own
- * or not as a versioned singleton, or when any JavaScript or CSS file it emits carries the kit's component
- * class strings or component tokens. The fingerprints come from the kit the Shell installs, so the check keeps
+ * or not as a versioned singleton, or when any JavaScript file it emits carries the kit's component class
+ * strings. The fingerprints come from the kit the Shell installs, so the check keeps
  * no list of its own and judges a remote built anywhere the same way.
  */
 import { createRequire } from 'node:module';
@@ -41,10 +42,6 @@ const RemoteManifestSchema = Schema.Struct({
 type RemoteManifest = typeof RemoteManifestSchema.Type;
 
 const CLASS_STRING = /"(?<literal>[^"\\\n]{40,})"/gu;
-const CUSTOM_PROPERTY = /(?<property>--[a-z][a-z0-9-]*)\s*:/gu;
-
-const definedProperties = (source: string): string[] =>
-  [...source.matchAll(CUSTOM_PROPERTY)].map(({ groups }) => groups?.property ?? '');
 
 const filesUnder = Effect.fn('RemoteUiKit.filesUnder')(function* filesUnder(directory: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -88,17 +85,6 @@ const kitClassStrings = Effect.fn('RemoteUiKit.kitClassStrings')(function* kitCl
   );
 });
 
-/** Custom properties the kit's component token files define, such as --color-button-bg-primary. */
-const kitComponentTokens = Effect.fn('RemoteUiKit.kitComponentTokens')(function* kitComponentTokens(root: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const pathService = yield* Path.Path;
-  const sheets = (yield* filesUnder(pathService.join(root, 'src', 'tokens', 'components'))).filter((file) =>
-    file.endsWith('.css'),
-  );
-  const sources = yield* Effect.forEach(sheets, (file) => fileSystem.readFileString(file), { concurrency: 8 });
-  return new Set(sources.flatMap((source) => definedProperties(source)));
-});
-
 const manifestFindings = (manifest: RemoteManifest): string[] =>
   manifest.shared
     .filter(({ name }) => name.startsWith(`${UI_KIT_PACKAGE}/`))
@@ -113,37 +99,27 @@ const manifestFindings = (manifest: RemoteManifest): string[] =>
       ];
     });
 
-const assetFinding = (
-  name: string,
-  source: string,
-  classStrings: ReadonlySet<string>,
-  tokens: ReadonlySet<string>,
-): string[] => {
-  if (/\.[cm]?js$/u.test(name)) {
-    const literal = [...classStrings].find((candidate) => source.includes(candidate));
-    return literal === undefined ? [] : [`${name} bundles kit JavaScript (class string "${literal}")`];
-  }
-  const token = definedProperties(source).find((property) => tokens.has(property));
-  return token === undefined ? [] : [`${name} ships kit CSS (defines ${token})`];
+const assetFinding = (name: string, source: string, classStrings: ReadonlySet<string>): string[] => {
+  const literal = [...classStrings].find((candidate) => source.includes(candidate));
+  return literal === undefined ? [] : [`${name} bundles kit JavaScript (class string "${literal}")`];
 };
 
 const remoteFindings = Effect.fn('RemoteUiKit.remoteFindings')(function* remoteFindings(
   dist: string,
   classStrings: ReadonlySet<string>,
-  tokens: ReadonlySet<string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const manifest = yield* fileSystem
     .readFileString(pathService.join(dist, 'mf-manifest.json'))
     .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RemoteManifestSchema))));
-  const assets = (yield* filesUnder(dist)).filter((file) => /\.(?:[cm]?js|css)$/u.test(file));
+  const assets = (yield* filesUnder(dist)).filter((file) => /\.[cm]?js$/u.test(file));
   const assetResults = yield* Effect.forEach(
     assets,
     (file) =>
       fileSystem
         .readFileString(file)
-        .pipe(Effect.map((source) => assetFinding(pathService.relative(dist, file), source, classStrings, tokens))),
+        .pipe(Effect.map((source) => assetFinding(pathService.relative(dist, file), source, classStrings))),
     { concurrency: 8 },
   );
   return [...manifestFindings(manifest), ...assetResults.flat()].map((finding) => `${dist}: ${finding}`);
@@ -155,17 +131,17 @@ const checkRemoteUiKitCommand = Command.make(
   ({ remotes }) =>
     Effect.gen(function* checkRemoteUiKit() {
       const root = yield* shellKitRoot();
-      const [classStrings, tokens] = yield* Effect.all([kitClassStrings(root), kitComponentTokens(root)]);
-      const findings = (yield* Effect.forEach(remotes, (dist) => remoteFindings(dist, classStrings, tokens), {
+      const classStrings = yield* kitClassStrings(root);
+      const findings = (yield* Effect.forEach(remotes, (dist) => remoteFindings(dist, classStrings), {
         concurrency: 1,
       })).flat();
       if (findings.length > 0) {
         return yield* new RemoteUiKitCopyError({
-          reason: `A remote ships its own copy of ${UI_KIT_PACKAGE}. The Shell provides the kit and its stylesheet: import kit components, share them through createSharedRuntimeConfig, and load no kit CSS.\n${findings.join('\n')}`,
+          reason: `A remote ships its own copy of ${UI_KIT_PACKAGE}. The Shell provides the kit: import kit components and share them through createSharedRuntimeConfig.\n${findings.join('\n')}`,
         });
       }
       return yield* Console.log(
-        `${remotes.join(', ')}: no own copy of ${UI_KIT_PACKAGE} (${classStrings.size} class strings and ${tokens.size} tokens checked)`,
+        `${remotes.join(', ')}: no own copy of ${UI_KIT_PACKAGE} (${classStrings.size} class strings checked)`,
       );
     }).pipe(
       Effect.mapError((cause) =>
