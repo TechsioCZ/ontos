@@ -22,7 +22,7 @@ interface State<A> {
   demandAt: number;
   latest?: Answer<A>;
   load: (operation: Operation) => Promise<A>;
-  pending?: Pending<A>;
+  pending?: Pending<A> | undefined;
   polling: boolean;
 }
 export interface FreshReadTiming {
