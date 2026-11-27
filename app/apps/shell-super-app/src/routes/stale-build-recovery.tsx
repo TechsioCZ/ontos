@@ -1,6 +1,7 @@
 import { ErrorComponent, useRouter } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
 import { useEffect } from 'react';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import { Clock, Option, Ref, Schema, flow } from 'effect';
 import { browserRuntime } from '../runtime/browser-effect-runtime';
 
@@ -81,20 +82,11 @@ export const StaleBuildAwareErrorComponent = (props: ErrorComponentProps) => {
     }
   }, [chunkFailure]);
   return (
-    <div style={{ display: 'grid', gap: '0.75rem', justifyItems: 'start', padding: '1rem' }}>
+    <div className="grid justify-items-start gap-3 p-4">
       <ErrorComponent {...props} />
-      <button
-        onClick={reloadNow}
-        style={{
-          border: '1px solid currentColor',
-          borderRadius: '0.375rem',
-          fontWeight: 600,
-          padding: '0.4rem 0.9rem',
-        }}
-        type="button"
-      >
+      <Button appearance="outline" onClick={reloadNow} severity="secondary" size="sm">
         Načíst znovu
-      </button>
+      </Button>
     </div>
   );
 };

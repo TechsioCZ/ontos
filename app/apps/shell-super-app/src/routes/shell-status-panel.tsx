@@ -54,10 +54,7 @@ export const ShellStatusPanel = ({
   const missing = status === 'not_found';
   const forbidden = status === 'forbidden';
   return (
-    <section
-      aria-live="polite"
-      className="rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 flex w-full max-w-2xl flex-col items-start gap-200 p-300"
-    >
+    <section aria-live="polite" className="surface-card flex w-full max-w-2xl flex-col items-start gap-200 p-300">
       <span className="flex size-icon-control-lg items-center justify-center rounded-md bg-surface text-fg-secondary">
         <Icon icon={statusIcon(status)} size="md" />
       </span>

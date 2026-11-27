@@ -1173,9 +1173,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         <DrawerRouteSync />
         <Header
           aria-label={t('shell.dashboard.header.label')}
-          className="sticky top-0 z-20 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
+          className="sticky top-0 z-20 h-700 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
           size="sm"
-          style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container
             className="flex w-auto shrink-0 flex-nowrap items-center gap-200 lg:min-w-0 lg:shrink"
