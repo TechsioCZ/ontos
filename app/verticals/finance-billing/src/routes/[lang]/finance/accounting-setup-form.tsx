@@ -1,10 +1,13 @@
 // The accounting registry and issuer identity, edited inline and saved only on the shared Uložit.
 import { UnsavedChangesDialog } from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { useState } from 'react';
+import { Effect, Schema } from 'effect';
 import type { AccountingSetup } from '../../../../shared/apis/records.ts';
+import { financeBrowserAtomRuntime } from '../../../runtime/browser.ts';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 
 export const SETUP_FIELDS = [
@@ -26,8 +29,42 @@ export const ISSUER_FIELDS = [
 ] as const;
 const ALL_FIELDS = [...SETUP_FIELDS, ...ISSUER_FIELDS] as const;
 
-/** Every field as the form shows it, the date as its input text; an empty field is not sent. */
-const setupDraftOf = (setup: AccountingSetup) => ({
+/**
+ * Every field as its input text, the date included; an empty field is not sent. Uložit sends the draft through the
+ * save bar, so the form only holds it.
+ */
+const setupForm = FormReact.make(
+  FormBuilder.empty
+    .addField('accountant', Schema.String)
+    .addField('approvalDate', Schema.String)
+    .addField('issuerCity', Schema.String)
+    .addField('issuerIco', Schema.String)
+    .addField('issuerStreet', Schema.String)
+    .addField('issuerVatId', Schema.String)
+    .addField('issuerZip', Schema.String)
+    .addField('product', Schema.String)
+    .addField('productVersion', Schema.String)
+    .addField('transferFormat', Schema.String),
+  {
+    fields: {
+      accountant: TextField,
+      approvalDate: TextField,
+      issuerCity: TextField,
+      issuerIco: TextField,
+      issuerStreet: TextField,
+      issuerVatId: TextField,
+      issuerZip: TextField,
+      product: TextField,
+      productVersion: TextField,
+      transferFormat: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+/** The setup as the form shows it. */
+const setupDraftOf = (setup: AccountingSetup): SetupDraft => ({
   accountant: setup.accountant ?? '',
   approvalDate: setup.approvalDate ?? '',
   issuerCity: setup.issuerCity ?? '',
@@ -39,7 +76,7 @@ const setupDraftOf = (setup: AccountingSetup) => ({
   productVersion: setup.productVersion ?? '',
   transferFormat: setup.transferFormat ?? '',
 });
-type SetupDraft = ReturnType<typeof setupDraftOf>;
+type SetupDraft = typeof setupForm.schema.Encoded;
 
 const clean = (value: string) => (value.trim() === '' ? undefined : value.trim());
 
@@ -80,14 +117,15 @@ export const AccountingSetupForm = ({
   readonly onClose: () => void;
   readonly vm: FinanceViewModel;
 }) => {
+  const { t } = useModernI18n();
   const server = () => setupDraftOf(vm.snapshot?.state.accountingSetup ?? {});
   const initial = server();
-  const [draft, setDraft] = useState(initial);
+  const { draft, ready, reset } = useFormDraft(setupForm, initial);
   const form = useFinanceFormSave({
     initial,
     isValid: (value) => setupProblem(value) === undefined,
     onClose,
-    reset: setDraft,
+    reset,
     send: (value) => vm.execute(setupCommandOf(value, vm.actorLabel), 'Nastavení účetního napojení uloženo'),
     server,
     value: draft,
@@ -95,21 +133,25 @@ export const AccountingSetupForm = ({
   });
   const problem = form.record.status === 'invalid' ? setupProblem(draft) : undefined;
   return (
-    <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
-      {ALL_FIELDS.map(([key, label]) => (
-        <FormInput
-          id={`setup-${key}`}
-          key={key}
-          label={label}
-          onChange={(event) => {
-            const { value } = event.target;
-            setDraft((current) => ({ ...current, [key]: value }));
-          }}
-          size="sm"
-          type={key === 'approvalDate' ? 'date' : 'text'}
-          value={draft[key]}
-        />
-      ))}
+    <FormRoot
+      className="grid grid-cols-1 gap-200 md:grid-cols-2"
+      defaultValues={initial}
+      form={setupForm}
+      translateMessage={t}
+    >
+      {ready}
+      {ALL_FIELDS.map(([key, label]) => {
+        const Control = setupForm[key];
+        return (
+          <Control
+            id={`setup-${key}`}
+            key={key}
+            label={label}
+            size="sm"
+            type={key === 'approvalDate' ? 'date' : 'text'}
+          />
+        );
+      })}
       {problem !== undefined && (
         <div className="md:col-span-2">
           <StatusText showIcon size="sm" status="error">
@@ -121,6 +163,6 @@ export const AccountingSetupForm = ({
         <FinanceSaveActions form={form} size="sm" />
       </div>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
-    </div>
+    </FormRoot>
   );
 };

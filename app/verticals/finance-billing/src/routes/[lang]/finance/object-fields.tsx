@@ -1,18 +1,24 @@
+import { SelectField } from '@app/core-runtime/ui/form';
+import type { FormReact } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { Schema } from 'effect';
+import { createElement } from 'react';
+import { fieldPart } from './field-lens.ts';
 import { COST_CENTERS } from './use-rental-objects.ts';
 import type { ContractRef, PropertyRef, RentalObjects, UnitRef } from './use-rental-objects.ts';
 
 const NONE = 'NONE';
 const labelProps = { className: 'font-label text-label-md' } as const;
 
-/** Object a document, budget line or plan item belongs to; every part is optional. */
-export interface ObjectSelection {
-  readonly contractId: string;
-  readonly costCenter: string;
-  readonly propertyId: string;
-  readonly unitId: string;
-}
+/** Object a document, budget line or plan item belongs to, as a form field holds it; every part is optional. */
+export const ObjectSelectionSchema = Schema.Struct({
+  contractId: Schema.String.pipe(Schema.brand('FinanceObjectContractId')),
+  costCenter: Schema.String,
+  propertyId: Schema.String.pipe(Schema.brand('FinanceObjectPropertyId')),
+  unitId: Schema.String.pipe(Schema.brand('FinanceObjectUnitId')),
+});
+/** The selection as the form holds it: each id as its text, `''` for none. */
+export type ObjectSelection = typeof ObjectSelectionSchema.Encoded;
 
 export const emptyObjectSelection: ObjectSelection = { contractId: '', costCenter: '', propertyId: '', unitId: '' };
 
@@ -80,120 +86,123 @@ export const objectSummary = (
 interface ObjectFieldsProps {
   readonly idPrefix: string;
   readonly objects: RentalObjects;
-  readonly onChange: (next: ObjectSelection) => void;
   readonly showContract?: boolean;
   readonly showCostCenter?: boolean;
-  readonly value: ObjectSelection;
 }
 
 const unlistedSelection = (id: string, listed: boolean, label: string) =>
   id !== '' && !listed ? [{ displayValue: label, label, value: id }] : [];
 
-/** Property → unit (filtered by property), optional contract and středisko pickers. */
-export const ObjectFields = ({
-  idPrefix,
-  objects,
-  onChange,
-  showContract = false,
-  showCostCenter = true,
-  value,
-}: ObjectFieldsProps) => {
+/** The id a picker shows for a part: none is the `NONE` item. */
+const shownId = (id: string) => (id === '' ? NONE : id);
+const pickedId = (id: string) => (id === NONE ? '' : id);
+
+/** Property → unit (filtered by property), optional contract and středisko pickers, over one selection field. */
+export const ObjectSelectionField: FormReact.FieldComponent<ObjectSelection, ObjectFieldsProps> = ({
+  field,
+  props,
+}) => {
+  const { idPrefix, objects, showContract = false, showCostCenter = true } = props;
+  const { onChange, value } = field;
   const { t } = useModernI18n();
   const units = objects.units.filter((entry) => entry.propertyId === value.propertyId);
   return (
     <div className="grid grid-cols-1 gap-200 md:grid-cols-2" data-finance-object-fields={idPrefix}>
       {(objects.available || value.propertyId !== '') && (
         <>
-          <SelectTemplate
-            items={[
-              { displayValue: 'Bez vazby na objekt', label: 'Bez vazby na objekt', value: NONE },
+          {createElement(SelectField, {
+            field: fieldPart(field, 'propertyId', shownId(value.propertyId), (id) =>
+              onChange({ ...value, propertyId: pickedId(id), unitId: '' }),
+            ),
+            props: {
+              items: [
+                { displayValue: 'Bez vazby na objekt', label: 'Bez vazby na objekt', value: NONE },
+                ...unlistedSelection(
+                  value.propertyId,
+                  objects.propertyName(value.propertyId) !== undefined,
+                  t('finance-billing.financeUi.objects.property'),
+                ),
+                ...objects.properties.map((entry) => ({
+                  displayValue: entry.label,
+                  label: entry.label,
+                  value: entry.ref.resourceId,
+                })),
+              ],
+              label: t('finance-billing.financeUi.objects.property'),
+              labelProps,
+              name: `${idPrefix}-property`,
+              size: 'sm',
+            },
+          })}
+          {createElement(SelectField, {
+            field: fieldPart(field, 'unitId', shownId(value.unitId), (id) =>
+              onChange({ ...value, unitId: pickedId(id) }),
+            ),
+            props: {
+              disabled: value.propertyId === '' || (units.length === 0 && value.unitId === ''),
+              items: [
+                { displayValue: 'Celá nemovitost', label: 'Celá nemovitost', value: NONE },
+                ...unlistedSelection(
+                  value.unitId,
+                  units.some((entry) => entry.ref.resourceId === value.unitId),
+                  t('finance-billing.financeUi.priceList.unit'),
+                ),
+                ...units.map((entry) => ({
+                  displayValue: entry.label,
+                  label: entry.label,
+                  value: entry.ref.resourceId,
+                })),
+              ],
+              label: t('finance-billing.financeUi.priceList.unit'),
+              labelProps,
+              name: `${idPrefix}-unit`,
+              size: 'sm',
+            },
+          })}
+        </>
+      )}
+      {showContract &&
+        (objects.contracts.length > 0 || value.contractId !== '') &&
+        createElement(SelectField, {
+          field: fieldPart(field, 'contractId', shownId(value.contractId), (id) =>
+            onChange({ ...value, contractId: pickedId(id) }),
+          ),
+          props: {
+            items: [
+              { displayValue: 'Bez smlouvy', label: 'Bez smlouvy', value: NONE },
               ...unlistedSelection(
-                value.propertyId,
-                objects.propertyName(value.propertyId) !== undefined,
-                t('finance-billing.financeUi.objects.property'),
+                value.contractId,
+                objects.contractName(value.contractId) !== undefined,
+                t('finance-billing.financeUi.objects.contract'),
               ),
-              ...objects.properties.map((entry) => ({
+              ...objects.contracts.map((entry) => ({
                 displayValue: entry.label,
                 label: entry.label,
                 value: entry.ref.resourceId,
               })),
-            ]}
-            label={t('finance-billing.financeUi.objects.property')}
-            labelProps={labelProps}
-            name={`${idPrefix}-property`}
-            onValueChange={({ value: next }) => {
-              const [id] = next;
-              onChange({ ...value, propertyId: id === undefined || id === NONE ? '' : id, unitId: '' });
-            }}
-            size="sm"
-            value={[value.propertyId === '' ? NONE : value.propertyId]}
-          />
-          <SelectTemplate
-            disabled={value.propertyId === '' || (units.length === 0 && value.unitId === '')}
-            items={[
-              { displayValue: 'Celá nemovitost', label: 'Celá nemovitost', value: NONE },
-              ...unlistedSelection(
-                value.unitId,
-                units.some((entry) => entry.ref.resourceId === value.unitId),
-                t('finance-billing.financeUi.priceList.unit'),
-              ),
-              ...units.map((entry) => ({ displayValue: entry.label, label: entry.label, value: entry.ref.resourceId })),
-            ]}
-            label={t('finance-billing.financeUi.priceList.unit')}
-            labelProps={labelProps}
-            name={`${idPrefix}-unit`}
-            onValueChange={({ value: next }) => {
-              const [id] = next;
-              onChange({ ...value, unitId: id === undefined || id === NONE ? '' : id });
-            }}
-            size="sm"
-            value={[value.unitId === '' ? NONE : value.unitId]}
-          />
-        </>
-      )}
-      {showContract && (objects.contracts.length > 0 || value.contractId !== '') && (
-        <SelectTemplate
-          items={[
-            { displayValue: 'Bez smlouvy', label: 'Bez smlouvy', value: NONE },
-            ...unlistedSelection(
-              value.contractId,
-              objects.contractName(value.contractId) !== undefined,
-              t('finance-billing.financeUi.objects.contract'),
-            ),
-            ...objects.contracts.map((entry) => ({
-              displayValue: entry.label,
-              label: entry.label,
-              value: entry.ref.resourceId,
-            })),
-          ]}
-          label={t('finance-billing.financeUi.objects.contract')}
-          labelProps={labelProps}
-          name={`${idPrefix}-contract`}
-          onValueChange={({ value: next }) => {
-            const [id] = next;
-            onChange({ ...value, contractId: id === undefined || id === NONE ? '' : id });
-          }}
-          size="sm"
-          value={[value.contractId === '' ? NONE : value.contractId]}
-        />
-      )}
-      {showCostCenter && (
-        <SelectTemplate
-          items={[
-            { displayValue: 'Bez střediska', label: 'Bez střediska', value: NONE },
-            ...COST_CENTERS.map((entry) => ({ displayValue: entry, label: entry, value: entry })),
-          ]}
-          label={t('finance-billing.financeUi.objects.costCenter')}
-          labelProps={labelProps}
-          name={`${idPrefix}-cost-center`}
-          onValueChange={({ value: next }) => {
-            const [id] = next;
-            onChange({ ...value, costCenter: id === undefined || id === NONE ? '' : id });
-          }}
-          size="sm"
-          value={[value.costCenter === '' ? NONE : value.costCenter]}
-        />
-      )}
+            ],
+            label: t('finance-billing.financeUi.objects.contract'),
+            labelProps,
+            name: `${idPrefix}-contract`,
+            size: 'sm',
+          },
+        })}
+      {showCostCenter &&
+        createElement(SelectField, {
+          field: fieldPart(field, 'costCenter', shownId(value.costCenter), (id) =>
+            onChange({ ...value, costCenter: pickedId(id) }),
+          ),
+          props: {
+            items: [
+              { displayValue: 'Bez střediska', label: 'Bez střediska', value: NONE },
+              ...COST_CENTERS.map((entry) => ({ displayValue: entry, label: entry, value: entry })),
+            ],
+            label: t('finance-billing.financeUi.objects.costCenter'),
+            labelProps,
+            name: `${idPrefix}-cost-center`,
+            size: 'sm',
+          },
+        })}
     </div>
   );
 };

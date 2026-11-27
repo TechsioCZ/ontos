@@ -217,7 +217,3 @@ export const FinanceFormDialog = ({
     <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
   </>
 );
-
-/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
-export const invalidField = (message: string | undefined) =>
-  message === undefined ? {} : { helpText: message, validateStatus: 'error' as const };

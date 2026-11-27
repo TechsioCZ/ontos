@@ -16,12 +16,12 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Effect, Option, Predicate } from 'effect';
+import { FlaggedTextField, FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { useEffect, useRef } from 'react';
 
 import type { Contract } from '../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import {
   sameTermsDraft,
   termsCommandOf,
@@ -30,12 +30,54 @@ import {
   termsUnchangedSince,
 } from './contract-terms-draft.ts';
 import type { ContractTermsCommand, TermsDraft } from './contract-terms-draft.ts';
+import { useRecordDraftForm } from './form-draft.tsx';
+import type { DraftFields } from './form-draft.tsx';
 import { saveTerms } from './use-agreements-records.ts';
 import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
 const P = 'legal-agreements';
 const mutedClass = 'legalagreements:text-sm legalagreements:text-(--color-fg-secondary)';
+
+/**
+ * The terms of one contract as typed; amounts in crowns and the payment day as their input text. Uložit in the panel
+ * footer sends the draft through the save bar, so the form only holds it and Enter submits nothing. The page opens
+ * one terms panel at a time.
+ */
+const termsForm = FormReact.make(
+  FormBuilder.empty
+    .addField('monthly', Schema.String)
+    .addField('noticePeriod', Schema.String)
+    .addField('paymentDay', Schema.String)
+    .addField('responsiblePerson', Schema.String)
+    .addField('service', Schema.String)
+    .addField('subject', Schema.String),
+  {
+    fields: {
+      monthly: FlaggedTextField,
+      noticePeriod: TextField,
+      paymentDay: FlaggedTextField,
+      responsiblePerson: TextField,
+      service: FlaggedTextField,
+      subject: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** The form holds the whole terms draft. */
+const termsFields: DraftFields<TermsDraft, typeof termsForm.schema.Encoded> = {
+  valuesOf: (draft) => ({
+    monthly: draft.monthly,
+    noticePeriod: draft.noticePeriod,
+    paymentDay: draft.paymentDay,
+    responsiblePerson: draft.responsiblePerson,
+    service: draft.service,
+    subject: draft.subject,
+  }),
+  withValues: (_draft, values) => values,
+};
 
 export const contractMonthlyTotal = (record: Contract) =>
   record.rentTerms === undefined ? undefined : record.rentTerms.monthlyRentMinor + record.rentTerms.serviceChargesMinor;
@@ -227,12 +269,10 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
   }, [base, server, settledOnServer]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
-  const { draft } = record;
-  const problems = termsProblems(draft);
-  const invalid = (problem: boolean) =>
-    problem ? { helpText: t(`${P}.terms.invalidAmount`), validateStatus: 'error' as const } : {};
-  const change = (field: keyof TermsDraft) => (value: string) =>
-    record.setDraft((current) => ({ ...current, [field]: value }));
+  const gate = useRecordDraftForm(termsForm, record, termsFields);
+  const problems = termsProblems(record.draft);
+  const invalid = (problem: boolean, message: 'invalidAmount' | 'invalidPaymentDay') =>
+    problem ? { helpText: t(`${P}.terms.${message}`), invalid: true } : {};
   const requestClose = () => {
     guard.request(onClose);
   };
@@ -261,67 +301,43 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
       size="md"
       title={t(`${P}.terms.title`)}
     >
-      <form
+      <FormRoot
         className="legalagreements:space-y-4 legalagreements:py-2"
-        noValidate
-        onSubmit={(event) => {
-          // Enter never saves: only Uložit in the panel footer sends the draft.
-          event.preventDefault();
-        }}
+        defaultValues={termsFields.valuesOf(record.draft)}
+        form={termsForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
+        {gate}
         <p className={mutedClass}>{t(`${P}.terms.formHint`)}</p>
-        <FormInput
-          id="contract-terms-subject"
-          label={t(`${P}.terms.subject`)}
-          onChange={(event) => change('subject')(event.target.value)}
-          value={draft.subject}
-        />
+        <termsForm.subject id="contract-terms-subject" label={t(`${P}.terms.subject`)} />
         <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
-          <FormInput
-            id="contract-terms-owner"
-            label={t(`${P}.terms.responsiblePerson`)}
-            onChange={(event) => change('responsiblePerson')(event.target.value)}
-            value={draft.responsiblePerson}
-          />
-          <FormInput
-            id="contract-terms-notice"
-            label={t(`${P}.terms.noticePeriod`)}
-            onChange={(event) => change('noticePeriod')(event.target.value)}
-            value={draft.noticePeriod}
-          />
+          <termsForm.responsiblePerson id="contract-terms-owner" label={t(`${P}.terms.responsiblePerson`)} />
+          <termsForm.noticePeriod id="contract-terms-notice" label={t(`${P}.terms.noticePeriod`)} />
         </div>
         <h3 className="legalagreements:text-sm legalagreements:font-semibold">{t(`${P}.terms.rentSection`)}</h3>
         <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-3">
-          <FormInput
+          <termsForm.monthly
             id="contract-terms-monthly"
             inputMode="decimal"
             label={t(`${P}.terms.monthlyRentInput`)}
-            onChange={(event) => change('monthly')(event.target.value)}
-            value={draft.monthly}
-            {...invalid(problems.monthly)}
+            {...invalid(problems.monthly, 'invalidAmount')}
           />
-          <FormInput
+          <termsForm.service
             id="contract-terms-service"
             inputMode="decimal"
             label={t(`${P}.terms.serviceChargesInput`)}
-            onChange={(event) => change('service')(event.target.value)}
-            value={draft.service}
-            {...invalid(problems.service)}
+            {...invalid(problems.service, 'invalidAmount')}
           />
-          <FormInput
+          <termsForm.paymentDay
             id="contract-terms-payment-day"
             label={t(`${P}.terms.paymentDayInput`)}
             max={31}
             min={1}
-            onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
-            value={draft.paymentDay}
-            {...(problems.paymentDay
-              ? { helpText: t(`${P}.terms.invalidPaymentDay`), validateStatus: 'error' as const }
-              : {})}
+            {...invalid(problems.paymentDay, 'invalidPaymentDay')}
           />
         </div>
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );

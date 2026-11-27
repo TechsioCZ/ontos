@@ -1,15 +1,40 @@
 // The manual signature of a contract: signer, file name, reference and date are a draft until the shared Uložit
 // records them once; Enter never records, and leaving the page with typed input asks first.
-import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import {
+  SaveBar,
+  UnsavedChangesDialog,
+  requiredLabelFor,
+  saveLabelsFor,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { failureReasonOf, revisionedResultOf } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
+import { useFormDraft } from './form-draft.tsx';
+
+/**
+ * What the person types for a manual signature, as typed: the draft text of the signed document. Uložit records it
+ * through the save bar, so the form only holds it and Enter submits nothing.
+ */
+const signatureForm = FormReact.make(
+  FormBuilder.empty
+    .addField('signedBy', Schema.String)
+    .addField('signedFileName', Schema.String)
+    .addField('signedOn', Schema.String)
+    .addField('signedReference', Schema.String),
+  {
+    fields: { signedBy: TextField, signedFileName: TextField, signedOn: TextField, signedReference: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
 
 /** What the person types for a manual signature. */
 export interface SignatureDraft {
@@ -40,10 +65,12 @@ export interface SignatureFormProps {
   readonly reload: Effect.Effect<void>;
 }
 
+/** The page shows one signature form, for the selected contract, so the module-level form holds its one draft. */
 export const SignatureForm = ({ busy, onSave, reload }: SignatureFormProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const [draft, setDraft] = useState<SignatureDraft>(emptySignatureDraft);
+  const requiredLabel = requiredLabelFor(language);
+  const { draft, gate, reset } = useFormDraft(signatureForm, emptySignatureDraft);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   const record = useDraftSave<SignatureDraft, never>({
     initial: emptySignatureDraft,
@@ -65,7 +92,7 @@ export const SignatureForm = ({ busy, onSave, reload }: SignatureFormProps) => {
     navigation: blocker,
     onDiscard: () => {
       setReason(Option.none());
-      setDraft(record.confirmed);
+      reset(record.confirmed);
     },
   });
   const saving = record.status === 'saving';
@@ -77,30 +104,28 @@ export const SignatureForm = ({ busy, onSave, reload }: SignatureFormProps) => {
     browserRuntime.runFork(reload);
   };
   return (
-    <form
+    <FormRoot
       className="legalagreements:w-full legalagreements:space-y-3"
-      noValidate
-      onSubmit={(event) => {
-        // Enter never records the signature: only Uložit does.
-        event.preventDefault();
-      }}
+      defaultValues={emptySignatureDraft}
+      form={signatureForm}
+      translateMessage={(message) => t(message, { defaultValue: message })}
     >
+      {gate}
       <p className="legalagreements:text-sm">{t('legal-agreements.demo.manualSignatureHint')}</p>
-      {FIELDS.map((field) => (
-        <FormInput
-          disabled={busy || saving}
-          id={`contract-${field}`}
-          key={field}
-          label={t(`legal-agreements.demo.${field}`)}
-          onChange={(event) => {
-            const { value } = event.target;
-            setDraft((current) => ({ ...current, [field]: value }));
-          }}
-          required
-          type={field === 'signedOn' ? 'date' : 'text'}
-          value={draft[field]}
-        />
-      ))}
+      {FIELDS.map((field) => {
+        const Input = signatureForm[field];
+        return (
+          <Input
+            disabled={busy || saving}
+            id={`contract-${field}`}
+            key={field}
+            label={t(`legal-agreements.demo.${field}`)}
+            required
+            requiredLabel={requiredLabel}
+            type={field === 'signedOn' ? 'date' : 'text'}
+          />
+        );
+      })}
       <SaveBar
         error={Option.match(reason, {
           onNone: () => null,
@@ -113,6 +138,6 @@ export const SignatureForm = ({ busy, onSave, reload }: SignatureFormProps) => {
         status={record.status}
       />
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-    </form>
+    </FormRoot>
   );
 };

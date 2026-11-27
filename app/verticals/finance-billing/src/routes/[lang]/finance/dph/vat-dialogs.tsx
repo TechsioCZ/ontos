@@ -1,22 +1,66 @@
 // The VAT settings dialogs: each one sends one change to Tax, as the signed-in person, and explains Tax's answer.
 import { dialogCloseLabel } from '@app/admin-ui';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import {
+  DateField,
+  FlaggedTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectField,
+  TextField,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
-import { IssueDateField } from '../create-invoice-fields.tsx';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../../runtime/browser.ts';
+import { useIssueDateProps } from '../create-invoice-fields.tsx';
+import { useFormDraft } from '../finance-form-draft.tsx';
 import { formLabelProps } from '../invoice-view.ts';
 import type { RateChangeInput, RegimeChangeInput } from './vat-settings-data.ts';
 import { parseRatePercent } from './vat-settings-model.ts';
 import type { VatChangeOutcome } from './vat-settings-model.ts';
 
 const ns = 'finance-billing.vatSettings';
+
+/**
+ * The typed rate, first day and reason of a rate change. The dialog's own button sends them; Enter sends nothing, so
+ * the form only holds them. Every dialog kind has its own form; the dialogs are modal, so one of a kind is open at a
+ * time.
+ */
+const rateForm = FormReact.make(
+  FormBuilder.empty.addField('from', Schema.String).addField('rate', Schema.String).addField('reason', Schema.String),
+  {
+    fields: { from: DateField, rate: FlaggedTextField, reason: FlaggedTextField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+const openedRate: typeof rateForm.schema.Encoded = { from: '', rate: '', reason: '' };
+
+/** The typed reason a planned rate is withdrawn; the dialog's own button sends it. */
+const withdrawForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: FlaggedTextField },
+  onSubmit: () => Effect.void,
+  runtime: financeBrowserAtomRuntime,
+});
+const openedWithdraw: typeof withdrawForm.schema.Encoded = { reason: '' };
+
+const REGIMES = ['VAT_PAYER', 'NON_PAYER'] as const;
+
+/** The regime picked, its first day and the optional reason; the dialog's own button sends them. */
+const regimeForm = FormReact.make(
+  FormBuilder.empty.addField('from', Schema.String).addField('reason', Schema.String).addField('regime', Schema.String),
+  {
+    fields: { from: DateField, reason: TextField, regime: SelectField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+const openedRegime: typeof regimeForm.schema.Encoded = { from: '', reason: '', regime: 'VAT_PAYER' };
 
 /** Runs one change and reports its outcome; the dialog closes only after Tax accepted it. */
 const useChange = (onDone: () => void) => {
@@ -93,33 +137,21 @@ const ChangeDialog = ({
       size="md"
       title={title}
     >
-      <form className="flex flex-col gap-150" onSubmit={(event) => event.preventDefault()}>
-        {children}
-      </form>
+      {children}
     </Dialog>
   );
 };
 
-const ReasonField = ({
-  invalid,
-  onChange,
-  value,
-}: {
-  readonly invalid: boolean;
-  readonly onChange: (next: string) => void;
-  readonly value: string;
-}) => {
+/** The props of a rate change's reason; empty is flagged once the person tried to send. */
+const useReasonProps = (invalid: boolean) => {
   const { t } = useModernI18n();
-  return (
-    <FormInput
-      id="vat-change-reason"
-      label={t(`${ns}.reason`)}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder={t(`${ns}.reasonExample`)}
-      value={value}
-      {...(invalid ? { helpText: t(`${ns}.reasonRequired`), validateStatus: 'error' as const } : {})}
-    />
-  );
+  return {
+    helpText: invalid ? t(`${ns}.reasonRequired`) : undefined,
+    id: 'vat-change-reason',
+    invalid,
+    label: t(`${ns}.reason`),
+    placeholder: t(`${ns}.reasonExample`),
+  };
 };
 
 /** A new rate from a day: either the first rate of a classification or a planned change of an existing one. */
@@ -137,12 +169,17 @@ export const RateDialog = ({
   readonly title: string;
 }) => {
   const { t } = useModernI18n();
-  const [rate, setRate] = useState('');
-  const [from, setFrom] = useState('');
-  const [reason, setReason] = useState('');
+  const { draft, ready } = useFormDraft(rateForm, openedRate);
+  const { from, rate, reason } = draft;
   const [tried, setTried] = useState(false);
   const change = useChange(onClose);
   const ratePercent = parseRatePercent(rate);
+  const rateInvalid = tried && ratePercent === undefined;
+  const fromProps = useIssueDateProps({
+    error: tried && from === '' ? t(`${ns}.fromRequired`) : undefined,
+    label: t(`${ns}.from`),
+  });
+  const reasonField = useReasonProps(tried && reason.trim() === '');
   const submit = () => {
     setTried(true);
     if (ratePercent !== undefined && from !== '' && reason.trim() !== '') {
@@ -158,24 +195,19 @@ export const RateDialog = ({
       submitLabel={submitLabel}
       title={title}
     >
-      <OutcomeNotice outcome={change.outcome} />
-      <FormInput
-        id="vat-rate-percent"
-        inputMode="numeric"
-        label={t(`${ns}.ratePercent`)}
-        onChange={(event) => setRate(event.target.value)}
-        value={rate}
-        {...(tried && ratePercent === undefined
-          ? { helpText: t(`${ns}.rateInvalid`), validateStatus: 'error' as const }
-          : {})}
-      />
-      <IssueDateField
-        error={tried && from === '' ? t(`${ns}.fromRequired`) : undefined}
-        label={t(`${ns}.from`)}
-        onChange={setFrom}
-        value={from}
-      />
-      <ReasonField invalid={tried && reason.trim() === ''} onChange={setReason} value={reason} />
+      <FormRoot className="flex flex-col gap-150" defaultValues={openedRate} form={rateForm} translateMessage={t}>
+        {ready}
+        <OutcomeNotice outcome={change.outcome} />
+        <rateForm.rate
+          helpText={rateInvalid ? t(`${ns}.rateInvalid`) : undefined}
+          id="vat-rate-percent"
+          inputMode="numeric"
+          invalid={rateInvalid}
+          label={t(`${ns}.ratePercent`)}
+        />
+        <rateForm.from {...fromProps} />
+        <rateForm.reason {...reasonField} />
+      </FormRoot>
     </ChangeDialog>
   );
 };
@@ -191,9 +223,11 @@ export const WithdrawDialog = ({
   readonly send: (reason: string) => Effect.Effect<VatChangeOutcome>;
 }) => {
   const { t } = useModernI18n();
-  const [reason, setReason] = useState('');
+  const { draft, ready } = useFormDraft(withdrawForm, openedWithdraw);
+  const { reason } = draft;
   const [tried, setTried] = useState(false);
   const change = useChange(onClose);
+  const reasonField = useReasonProps(tried && reason.trim() === '');
   return (
     <ChangeDialog
       busy={change.busy}
@@ -208,13 +242,19 @@ export const WithdrawDialog = ({
       submitLabel={t(`${ns}.withdraw`)}
       title={t(`${ns}.withdrawTitle`)}
     >
-      <OutcomeNotice outcome={change.outcome} />
-      <ReasonField invalid={tried && reason.trim() === ''} onChange={setReason} value={reason} />
+      <FormRoot
+        className="flex flex-col gap-150"
+        defaultValues={openedWithdraw}
+        form={withdrawForm}
+        translateMessage={t}
+      >
+        {ready}
+        <OutcomeNotice outcome={change.outcome} />
+        <withdrawForm.reason {...reasonField} />
+      </FormRoot>
     </ChangeDialog>
   );
 };
-
-const REGIMES = ['VAT_PAYER', 'NON_PAYER'] as const;
 
 /** Declares the company a VAT payer or not from a day. */
 export const RegimeDialog = ({
@@ -225,11 +265,15 @@ export const RegimeDialog = ({
   readonly send: (input: RegimeChangeInput) => Effect.Effect<VatChangeOutcome>;
 }) => {
   const { t } = useModernI18n();
-  const [regime, setRegime] = useState<RegimeChangeInput['regime']>('VAT_PAYER');
-  const [from, setFrom] = useState('');
-  const [reason, setReason] = useState('');
+  const { draft, ready } = useFormDraft(regimeForm, openedRegime);
+  const { from, reason } = draft;
+  const regime = REGIMES.find((entry) => entry === draft.regime);
   const [tried, setTried] = useState(false);
   const change = useChange(onClose);
+  const fromProps = useIssueDateProps({
+    error: tried && from === '' ? t(`${ns}.fromRequired`) : undefined,
+    label: t(`${ns}.from`),
+  });
   // Tax asked once to confirm that a planned declaration is replaced; the next send confirms it.
   const confirmReplacesScheduled = change.outcome === 'confirmReplace';
   return (
@@ -239,43 +283,32 @@ export const RegimeDialog = ({
       onClose={onClose}
       onSubmit={() => {
         setTried(true);
-        if (from !== '') {
+        if (from !== '' && regime !== undefined) {
           change.run(send({ confirmReplacesScheduled, from, reason, regime }));
         }
       }}
       submitLabel={t(confirmReplacesScheduled ? `${ns}.regimeConfirm` : `${ns}.regimeSave`)}
       title={t(`${ns}.regimeTitle`)}
     >
-      <OutcomeNotice outcome={change.outcome} />
-      <SelectTemplate
-        items={REGIMES.map((value) => {
-          const label = t(`${ns}.regime.${value}`);
-          return { displayValue: label, label, value };
-        })}
-        label={t(`${ns}.regimeLabel`)}
-        labelProps={formLabelProps}
-        name="vat-regime"
-        onValueChange={({ value }) => {
-          const next = REGIMES.find((entry) => entry === value[0]);
-          if (next !== undefined) {
-            setRegime(next);
-          }
-        }}
-        value={[regime]}
-      />
-      <IssueDateField
-        error={tried && from === '' ? t(`${ns}.fromRequired`) : undefined}
-        label={t(`${ns}.from`)}
-        onChange={setFrom}
-        value={from}
-      />
-      <FormInput
-        id="vat-change-reason"
-        label={t(`${ns}.regimeReason`)}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder={t(`${ns}.reasonExample`)}
-        value={reason}
-      />
+      <FormRoot className="flex flex-col gap-150" defaultValues={openedRegime} form={regimeForm} translateMessage={t}>
+        {ready}
+        <OutcomeNotice outcome={change.outcome} />
+        <regimeForm.regime
+          items={REGIMES.map((value) => {
+            const label = t(`${ns}.regime.${value}`);
+            return { displayValue: label, label, value };
+          })}
+          label={t(`${ns}.regimeLabel`)}
+          labelProps={formLabelProps}
+          name="vat-regime"
+        />
+        <regimeForm.from {...fromProps} />
+        <regimeForm.reason
+          id="vat-change-reason"
+          label={t(`${ns}.regimeReason`)}
+          placeholder={t(`${ns}.reasonExample`)}
+        />
+      </FormRoot>
     </ChangeDialog>
   );
 };
