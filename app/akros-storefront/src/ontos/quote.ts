@@ -265,7 +265,7 @@ export async function quoteCart(
         sku: item.sku,
         unit: item.unit,
         stockCount: item.stockCount,
-        ...purchaseConstraints(item.minimumQuantity),
+        ...purchaseConstraints(item.minimumQuantity, item.packageQuantity),
         priceMinor: price,
         priceExcludingVatMinor: tier?.priceExcludingVatMinor,
       };

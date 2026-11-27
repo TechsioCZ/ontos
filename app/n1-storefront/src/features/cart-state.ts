@@ -1,4 +1,5 @@
 import { Effect, Schema, Struct } from "effect";
+import { firstOrderableQuantity } from "@app/merchandise/domain/order-quantity";
 import { CartQuoteLineSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartScope } from "@/ontos/cart-quote";
 
@@ -10,6 +11,13 @@ export const cartQuantityStep = (packageQuantity?: number | null) =>
   packageQuantity > 0
     ? packageQuantity
     : 1;
+
+/** The owner's first orderable quantity: the minimum rounded up to a whole package. Steppers start here. */
+export const cartQuantityMinimum = (minimumQuantity?: number, packageQuantity?: number | null) =>
+  firstOrderableQuantity({
+    minimumQuantity: minimumQuantity ?? 0.001,
+    packageQuantity: packageQuantity ?? undefined,
+  });
 
 /** Match the native minimum/package checks; never round a customer's draft. */
 export const validCartQuantity = (

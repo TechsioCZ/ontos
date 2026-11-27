@@ -20,7 +20,6 @@ const variants: CatalogProductVariant[] = [
     sku: "10093300020005",
     label: "M 2 × 5",
     minimumQuantity: 10,
-    packageQuantity: 100,
     priceMinor: 84,
     stockCount: 24_000,
     unit: "ks",
@@ -128,69 +127,109 @@ describe("ProductPurchaseForm", () => {
   );
 
   it.each([
-    { minimumQuantity: 6, packageQuantity: 60, quantityStep: 6, unit: "ks" },
-    { minimumQuantity: 50, packageQuantity: 500, quantityStep: 50, unit: "ks" },
-    { minimumQuantity: 0.5, packageQuantity: 100, quantityStep: 0.5, unit: "m" },
-    { minimumQuantity: 200, packageQuantity: 200, quantityStep: 200, unit: "ks" },
-    { minimumQuantity: 100, packageQuantity: 100, quantityStep: 100, unit: "m" },
-    { minimumQuantity: 400, packageQuantity: 200, quantityStep: 200, unit: "ks" },
-  ])("keeps order increments separate from the whole-package shortcut: %j", async (constraints) => {
-    const user = userEvent.setup();
-    const live = { ...variants[0], ...constraints };
-    render(
-      <CartProvider storage={null}>
-        <ProductPurchaseForm product={product} variants={[live]} />
-        <CartLines />
-      </CartProvider>,
-    );
-    expect(screen.queryByText(/Pouze celá balení/)).toBeNull();
-    const total =
-      live.minimumQuantity +
-      Math.max(1, Math.ceil(live.minimumQuantity / live.packageQuantity)) * live.packageQuantity;
-    expect(
-      (screen.getByRole("spinbutton", { name: "Množství M 2 × 5" }) as HTMLInputElement).value,
-    ).toBe(String(live.minimumQuantity));
-    await user.click(screen.getByRole("button", { name: "Koupit M 2 × 5" }));
-    await waitFor(() =>
-      expect(
-        JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
-      ).toBe(live.minimumQuantity),
-    );
-    let lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
-    expect(lines[0].quantity).toBe(live.minimumQuantity);
-    await user.click(screen.getByRole("button", { name: "Koupit celé balení M 2 × 5" }));
-    await waitFor(() =>
-      expect(
-        JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
-      ).toBe(total),
-    );
-    lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
-    expect(lines[0].quantity).toBe(total);
-    expect(lines[0].quantity % live.quantityStep).toBe(0);
-    const packageInput = screen.getByRole("spinbutton", { name: "Počet celých balení M 2 × 5" });
-    const packageControl = packageInput.closest('[data-part="root"]') as HTMLElement;
-    expect(within(packageControl).queryByText(/^1 balení =/)).toBeNull();
-    expect(within(packageControl).queryByText(/^Odběr po/)).toBeNull();
-    const buyPackage = screen.getByRole<HTMLButtonElement>("button", {
-      name: "Koupit celé balení M 2 × 5",
-    });
-    await user.clear(packageInput);
-    await user.type(packageInput, "0");
-    expect(buyPackage.disabled).toBe(true);
-    await user.clear(packageInput);
-    await user.type(packageInput, "1.5");
-    expect(buyPackage.disabled).toBe(true);
-    await user.tab();
-    expect(within(packageControl).getByRole("alert").textContent).toBe(
-      "Zadejte platný počet celých balení podle dostupného skladu.",
-    );
-  });
+    // Projected owner rules (purchaseConstraints): first whole package, then whole packages.
+    {
+      minimumQuantity: 10,
+      quantityStep: 10,
+      packageQuantity: 10,
+      stockCount: 26,
+      first: 1,
+      last: 2,
+    },
+    {
+      minimumQuantity: 200,
+      quantityStep: 200,
+      packageQuantity: 200,
+      stockCount: 210,
+      first: 1,
+      last: 1,
+    },
+    {
+      minimumQuantity: 400,
+      quantityStep: 200,
+      packageQuantity: 200,
+      stockCount: 1000,
+      first: 2,
+      last: 5,
+    },
+    {
+      minimumQuantity: 100,
+      quantityStep: 50,
+      packageQuantity: 50,
+      stockCount: 149,
+      first: 2,
+      last: 2,
+    },
+    {
+      minimumQuantity: 1.5,
+      quantityStep: 1.5,
+      packageQuantity: 1.5,
+      stockCount: 7,
+      unit: "m",
+      first: 1,
+      last: 4,
+    },
+  ])(
+    "sells a packaged variant only in whole packages: %j",
+    async ({ first, last, ...constraints }) => {
+      const user = userEvent.setup();
+      const live = { ...variants[0], ...constraints };
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm product={product} variants={[live]} />
+          <CartLines />
+        </CartProvider>,
+      );
+      expect(screen.queryByText(/Pouze celá balení/)).toBeNull();
+      // No per-unit control or increment: the first order the shop sells is a whole package.
+      expect(screen.queryByRole("spinbutton", { name: "Množství M 2 × 5" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Koupit M 2 × 5" })).toBeNull();
+      expect(screen.queryByText(/^Odběr po/)).toBeNull();
+      const packageInput = screen.getByRole<HTMLInputElement>("spinbutton", {
+        name: "Počet celých balení M 2 × 5",
+      });
+      expect(packageInput.value).toBe(String(first));
+      expect(packageInput.getAttribute("aria-valuemin")).toBe(String(first));
+      expect(packageInput.getAttribute("aria-valuemax")).toBe(String(last));
+      const buyPackage = screen.getByRole<HTMLButtonElement>("button", {
+        name: "Koupit celé balení M 2 × 5",
+      });
+      // A typed count beyond the stock or below the first package snaps back into range at once.
+      await user.clear(packageInput);
+      await user.type(packageInput, "999");
+      await user.tab();
+      expect(packageInput.value).toBe(String(last));
+      expect(buyPackage.disabled).toBe(false);
+      await user.clear(packageInput);
+      await user.type(packageInput, "0");
+      expect(buyPackage.disabled).toBe(true);
+      await user.tab();
+      expect(packageInput.value).toBe(String(first));
+      expect(screen.queryByRole("alert")).toBeNull();
+      await user.click(buyPackage);
+      await waitFor(() =>
+        expect(
+          JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
+        ).toBe(Number((first * live.packageQuantity).toFixed(6))),
+      );
+      if (last > first) {
+        await user.clear(packageInput);
+        await user.type(packageInput, `${first}.5`);
+        expect(buyPackage.disabled).toBe(true);
+        await user.tab();
+        const packageControl = packageInput.closest('[data-part="root"]') as HTMLElement;
+        expect(within(packageControl).getByRole("alert").textContent).toBe(
+          "Zadejte platný počet celých balení podle dostupného skladu.",
+        );
+      }
+    },
+  );
 
   it.each([false, true])(
     "rejects off-step quantities before purchase (variant list: %s)",
     async (variantList) => {
       const user = userEvent.setup();
-      const live = { ...variants[0], minimumQuantity: 6, quantityStep: 6, packageQuantity: 60 };
+      const live = { ...variants[0], minimumQuantity: 6, quantityStep: 6 };
       render(
         <CartProvider storage={null}>
           <ProductPurchaseForm
@@ -233,14 +272,13 @@ describe("ProductPurchaseForm", () => {
   );
 
   it.each([false, true])(
-    "explains the order increment after editing without replacing the draft (variant list: %s)",
+    "explains an off-step quantity and corrects one out of range at once (variant list: %s)",
     async (variantList) => {
       const user = userEvent.setup();
       const live = {
         ...variants[0],
         minimumQuantity: 10,
         quantityStep: 10,
-        packageQuantity: 200,
         stockCount: 280,
       };
       render(
@@ -277,12 +315,13 @@ describe("ProductPurchaseForm", () => {
       await user.clear(input);
       await user.type(input, "4");
       await user.tab();
-      expect(screen.getByRole("alert").textContent).toBe("Zadejte alespoň 10 ks.");
+      await waitFor(() => expect(input.value).toBe("10"));
+      expect(screen.queryByRole("alert")).toBeNull();
       await user.clear(input);
       await user.type(input, "285");
       await user.tab();
-      expect(screen.getByRole("alert").textContent).toBe("Lze koupit nejvýše 280 ks.");
-      expect(input.value).toBe("285");
+      await waitFor(() => expect(input.value).toBe("280"));
+      expect(screen.queryByRole("alert")).toBeNull();
       await user.clear(input);
       await user.tab();
       expect(screen.getByRole("alert").textContent).toBe("Zadejte množství.");
@@ -298,7 +337,6 @@ describe("ProductPurchaseForm", () => {
         ...variants[0],
         minimumQuantity: 0.5,
         quantityStep: 0.5,
-        packageQuantity: 2,
         unit: "m",
       };
       render(
@@ -572,6 +610,9 @@ describe("ProductPurchaseForm", () => {
     expect(screen.getByRole("button", { name: "Koupit M 2 × 5" }).hasAttribute("disabled")).toBe(
       true,
     );
+    expect(
+      screen.getByRole("spinbutton", { name: "Množství M 2 × 5" }).hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("adds the source package quantity when buying a complete package", async () => {
@@ -579,7 +620,13 @@ describe("ProductPurchaseForm", () => {
 
     render(
       <CartProvider storage={null}>
-        <ProductPurchaseForm product={product} variants={variants} />
+        <ProductPurchaseForm
+          product={product}
+          variants={[
+            { ...variants[0], minimumQuantity: 100, quantityStep: 100, packageQuantity: 100 },
+            variants[1],
+          ]}
+        />
         <CartLines />
       </CartProvider>,
     );
@@ -759,19 +806,33 @@ describe("ProductPurchaseForm", () => {
     expect(screen.getByLabelText("Řádky košíku").textContent).toBe("[]");
   });
 
+  // 10835300: sold from 1 ks in packages of 10, projected as a first order of 10 in steps of 10.
+  const singleVariant = {
+    ...variants[0],
+    id: "item-single",
+    sku: "10835300330020",
+    label: "destička kulatá s okem 33x20 AN 8353/A4",
+    minimumQuantity: 10,
+    quantityStep: 10,
+    packageQuantity: 10,
+    priceMinor: 6031,
+    stockCount: 15,
+  };
+
+  it("cannot edit or buy a single source variant holding less than one package", () => {
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variant={{ ...singleVariant, stockCount: 0 }} />
+      </CartProvider>,
+    );
+    expect(screen.getByRole("spinbutton", { name: "Množství" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+    expect(screen.getByRole("button", { name: "Koupit" }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("adds a single source variant through the simple purchase control", async () => {
     const user = userEvent.setup();
-    const singleVariant = {
-      ...variants[0],
-      id: "item-single",
-      sku: "10835300330020",
-      label: "destička kulatá s okem 33x20 AN 8353/A4",
-      minimumQuantity: 1,
-      packageQuantity: 10,
-      priceMinor: 6031,
-      stockCount: 6,
-    };
-
     render(
       <CartProvider storage={null}>
         <ProductPurchaseForm product={product} variant={singleVariant} />
@@ -780,6 +841,17 @@ describe("ProductPurchaseForm", () => {
     );
 
     expect(screen.queryByRole("searchbox")).toBeNull();
+    const input = screen.getByRole<HTMLInputElement>("spinbutton", { name: "Množství" });
+    // 15 ks in stock sell one package of 10: the control starts and stops there.
+    expect(input.value).toBe("10");
+    expect(input.getAttribute("aria-valuemin")).toBe("10");
+    expect(input.getAttribute("aria-valuemax")).toBe("10");
+    expect(screen.getByText("Odběr po 10 ks")).toBeTruthy();
+    await user.clear(input);
+    await user.type(input, "999");
+    await user.tab();
+    await waitFor(() => expect(input.value).toBe("10"));
+    expect(screen.queryByRole("alert")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Koupit" }));
 
     await waitFor(() =>
@@ -789,7 +861,7 @@ describe("ProductPurchaseForm", () => {
           variantId: "item-single",
           sku: "10835300330020",
           priceMinor: 6031,
-          quantity: 1,
+          quantity: 10,
         }),
       ]),
     );

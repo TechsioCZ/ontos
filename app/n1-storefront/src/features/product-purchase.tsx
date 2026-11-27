@@ -11,6 +11,7 @@ import { useCart } from "./cart-provider";
 import {
   cartLineKey,
   cartQuantityMaximum,
+  cartQuantityMinimum,
   cartQuantityStep,
   validCartQuantity,
 } from "./cart-state";
@@ -45,11 +46,7 @@ export const ProductPurchase = ({
   const toaster = useToast();
   const selectionKey = JSON.stringify([product.id, variant?.id ?? null]);
   // The owner sells whole packages: the first orderable quantity is the minimum rounded up to a package.
-  const firstQuantity =
-    current.packageQuantity !== undefined && current.packageQuantity > 0
-      ? Math.ceil(current.minimumQuantity / current.packageQuantity - 1e-6) *
-        current.packageQuantity
-      : current.minimumQuantity;
+  const firstQuantity = cartQuantityMinimum(current.minimumQuantity, current.packageQuantity);
   const [draft, setDraft] = useState({ key: selectionKey, value: String(firstQuantity) });
   const quantity = draft.key === selectionKey ? draft.value : String(firstQuantity);
   const parsedQuantity = Number(quantity);

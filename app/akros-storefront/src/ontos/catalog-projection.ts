@@ -281,7 +281,7 @@ const searchOfferOf = (
           stock,
           firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity }),
         )),
-    ...purchaseConstraints(minimum),
+    ...purchaseConstraints(minimum, packageQuantity),
     packageQuantity,
     imageSrc: productMediaPath(text(product.id), image ?? "") ?? safeImage(image),
   };
@@ -428,7 +428,7 @@ export function projectProducts(body: Raw): ProductPage {
               firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity }),
             )),
         ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
-        ...purchaseConstraints(minimum),
+        ...purchaseConstraints(minimum, packageQuantity),
         packageQuantity,
         priceTiers: priceIssue
           ? []
@@ -561,7 +561,10 @@ export function projectProducts(body: Raw): ProductPage {
               firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity: productPackage }),
             )),
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
-      ...purchaseConstraints(first?.minimumQuantity ?? minimum),
+      ...purchaseConstraints(
+        first?.minimumQuantity ?? minimum,
+        first ? first.packageQuantity : productPackage,
+      ),
       packageQuantity: first ? first.packageQuantity : productPackage,
       stockCount: productAvailabilityUnknown
         ? 0

@@ -438,9 +438,9 @@ describe("fresh searches through the real catalog/gateway transport", () => {
           kind: "quantity",
           status: "in-stock",
           stockCount: 20,
-          minimumQuantity: 2,
+          minimumQuantity: 10,
           packageQuantity: 10,
-          quantityStep: 2,
+          quantityStep: 10,
           unit: "ks",
         },
       });

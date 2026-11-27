@@ -117,8 +117,9 @@ describe("OntOS source-of-truth boundary", () => {
     expect(model.getProducts()[0].detail.variants[0]).toMatchObject({
       priceMinor: 121,
       stockCount: 40,
-      minimumQuantity: 2,
-      quantityStep: 2,
+      // The owner sells it from its first whole package (minimum 2 rounded up to 10), in packages.
+      minimumQuantity: 10,
+      quantityStep: 10,
       packageQuantity: 10,
     });
     expect(s.revision).toBe(7);
@@ -529,9 +530,9 @@ describe("compact owner search evidence", () => {
           priceMinor: 254,
           priceExcludingVatMinor: 207,
           stockCount: 13.5,
-          minimumQuantity: 2,
+          minimumQuantity: 10,
           packageQuantity: 10,
-          quantityStep: 2,
+          quantityStep: 10,
           imageSrc: `/obrazky/${encodeURIComponent(product.id)}/0b6b0c7e-1f2a-4c3d-8e9f-a0b1c2d3e4f5`,
         },
       });
@@ -587,8 +588,8 @@ describe("compact owner search evidence", () => {
         kind: "quantity",
         stockCount,
         status,
-        minimumQuantity: 2,
-        quantityStep: 2,
+        minimumQuantity: 10,
+        quantityStep: 10,
       });
     },
   );

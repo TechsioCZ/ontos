@@ -59,7 +59,7 @@ export function resolveReorder(
       imageSrc: variant?.imageSrc ?? product.imageSrc,
       imageAlt: product.imageAlt,
       unit: item.unit,
-      ...purchaseConstraints(item.minimumQuantity),
+      ...purchaseConstraints(item.minimumQuantity, item.packageQuantity),
       stockCount: item.stockCount,
       priceMinor: tier?.priceMinor ?? item.priceMinor,
       ...(tier ? { priceExcludingVatMinor: tier.priceExcludingVatMinor } : {}),

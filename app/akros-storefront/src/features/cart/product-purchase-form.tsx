@@ -115,18 +115,18 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
   const isPackage = mode === "package";
   const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
   const maximumOrderQuantity = getMaximumOrderQuantity(getVariantCartItem(product, variant));
-  const maximum = isPackage
-    ? Math.floor(maximumOrderQuantity / packageQuantity)
-    : maximumOrderQuantity;
+  // Whole packages, counted without binary-fraction drift (1,5 m packages: 4,5 m is 3 packages).
+  const packages = (quantity: number) => Number((quantity / packageQuantity).toFixed(6));
+  const maximum = isPackage ? Math.floor(packages(maximumOrderQuantity)) : maximumOrderQuantity;
   const minimum = isPackage
-    ? Math.max(1, Math.ceil(variant.minimumQuantity / packageQuantity))
+    ? Math.max(1, Math.ceil(packages(variant.minimumQuantity)))
     : variant.minimumQuantity;
   const step = isPackage ? 1 : (variant.quantityStep ?? variant.minimumQuantity);
   const [draft, setDraft] = useState(String(minimum));
   const [showError, setShowError] = useState(false);
   const selectedQuantity = parseQuantity(draft);
   const quantityToAdd = isPackage
-    ? Math.max(selectedQuantity, 1) * packageQuantity
+    ? Number((Math.max(selectedQuantity, 1) * packageQuantity).toFixed(6))
     : selectedQuantity;
   const label = formatVariantLabel(variant);
   const validQuantity =
@@ -167,6 +167,14 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
   };
   const canDecrement = maximum > 0 && current > minimum;
   const canIncrement = maximum > 0 && current < maximum;
+  // A typed quantity outside what can be bought snaps back into range at once; an off-step one is flagged.
+  const commitDraft = () => {
+    if (Number.isFinite(selectedQuantity) && maximum >= minimum) {
+      const clamped = Math.min(Math.max(selectedQuantity, minimum), maximum);
+      if (clamped !== selectedQuantity) setDraft(String(clamped));
+    }
+    setShowError(true);
+  };
 
   return (
     <div className={`sf-variant-table__order sf-variant-table__order--${mode}`} data-part="root">
@@ -195,15 +203,16 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
           aria-valuenow={Number.isFinite(selectedQuantity) ? selectedQuantity : undefined}
           autoComplete="off"
           data-invalid={error ? "" : undefined}
+          disabled={maximum <= 0}
           id={id}
           inputMode="decimal"
-          onBlur={() => setShowError(true)}
+          onBlur={commitDraft}
           onChange={(event) => {
             setDraft(event.currentTarget.value);
             setShowError(false);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Enter") setShowError(true);
+            if (event.key === "Enter") commitDraft();
             else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
               event.preventDefault();
               stepBy(event.key === "ArrowUp" ? 1 : -1);
@@ -465,15 +474,17 @@ export function ProductPurchaseForm({
           className="col-span-full grid! grid-cols-subgrid gap-(--dimension-8)!"
           id={`quantity-${product.id}`}
           locale={money.locale}
+          // Nothing to buy (stock below one first order): the quantity cannot be edited either.
+          disabled={maximumQuantity <= 0}
           min={purchaseItem.minimumQuantity}
-          max={maximumQuantity}
-          step={purchaseItem.quantityStep ?? purchaseItem.minimumQuantity}
+          max={Math.max(maximumQuantity, purchaseItem.minimumQuantity)}
+          step={step}
           onChange={(value) => {
             setQuantity(value);
             setShowQuantityError(false);
           }}
+          // A typed quantity out of range is clamped on blur; an off-step one is flagged then.
           onValueCommit={() => setShowQuantityError(true)}
-          clampValueOnBlur={false}
           invalid={!!error}
           size="lg"
           value={quantity}
@@ -702,8 +713,9 @@ export function ProductPurchaseForm({
                   const label = formatVariantLabel(item);
                   const isAvailable = getProductStockStatus(item) === "in-stock";
                   const basePriceTier = item.priceTiers[0];
-                  const hasSeparatePackage =
-                    item.packageQuantity !== undefined && item.packageQuantity > 0;
+                  // A package of several units is bought only whole, so it gets the one control.
+                  const sellsInPackages =
+                    item.packageQuantity !== undefined && item.packageQuantity > 1;
                   // Native cells styled once in globals.css: these rows are rendered on the server.
                   return (
                     <tr
@@ -794,23 +806,30 @@ export function ProductPurchaseForm({
                       </td>
                       <td data-align="center">
                         <div className="sf-variant-table__purchase-cell sf-variant-table__purchase-cell--row">
-                          <VariantOrderControl
-                            mode="minimum"
-                            onAdd={addVariant}
-                            product={product}
-                            variant={item}
-                          />
-                          {hasSeparatePackage ? (
-                            <VariantOrderControl
-                              mode="package"
-                              onAdd={addVariant}
-                              product={product}
-                              variant={item}
-                            />
+                          {sellsInPackages ? (
+                            <>
+                              <span aria-hidden="true" className="sf-variant-table__no-package">
+                                —
+                              </span>
+                              <VariantOrderControl
+                                mode="package"
+                                onAdd={addVariant}
+                                product={product}
+                                variant={item}
+                              />
+                            </>
                           ) : (
-                            <span aria-hidden="true" className="sf-variant-table__no-package">
-                              —
-                            </span>
+                            <>
+                              <VariantOrderControl
+                                mode="minimum"
+                                onAdd={addVariant}
+                                product={product}
+                                variant={item}
+                              />
+                              <span aria-hidden="true" className="sf-variant-table__no-package">
+                                —
+                              </span>
+                            </>
                           )}
                         </div>
                       </td>

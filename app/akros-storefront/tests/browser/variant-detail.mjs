@@ -190,7 +190,9 @@ try {
   const packageVariant = product.detail.variants.find(
     (item) =>
       item.id !== b.id &&
-      item.packageQuantity > item.minimumQuantity &&
+      // Sold in whole packages from the first one (the projected minimum is that package).
+      item.packageQuantity > 1 &&
+      item.minimumQuantity === item.packageQuantity &&
       item.stockCount >= item.packageQuantity,
   );
   assert.ok(packageVariant);

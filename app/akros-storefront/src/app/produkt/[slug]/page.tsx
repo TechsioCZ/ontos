@@ -127,7 +127,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const basePriceTier =
     purchasePriceTiers.find((tier) => tier.minimumQuantity === purchaseItem.minimumQuantity) ??
     purchasePriceTiers[0];
-  const packageQuantity = purchaseItem.packageQuantity ?? purchaseItem.minimumQuantity;
+  const packageQuantity = purchaseItem.packageQuantity;
   // A single-variant product shows the variant's struck price, else the product's own (Historie cen › Původní cena).
   const originalPriceMinor = purchaseItem.originalPriceMinor ?? product.originalPriceMinor;
   const variantStock = detail.variants.map(getProductStockStatus);
@@ -337,7 +337,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             </header>
 
             <dl className="sf-product-detail__facts">
-              {packageQuantity > purchaseItem.minimumQuantity && (
+              {packageQuantity !== undefined && packageQuantity > 1 && (
                 <div>
                   <dt>{cs.product.packageQuantity}</dt>
                   <dd>

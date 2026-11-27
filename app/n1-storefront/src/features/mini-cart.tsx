@@ -19,7 +19,12 @@ import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
 import { displayedCartQuote, verifiedCartQuote } from "./cart-quote-state";
-import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "./cart-state";
+import {
+  cartLineKey,
+  cartQuantityMaximum,
+  cartQuantityMinimum,
+  cartQuantityStep,
+} from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
   cartIssueText,
@@ -113,6 +118,8 @@ const MiniCartLine = ({
   const value = draft?.value ?? String(entry.quantity);
   const stockLabel = remainingStock(entry, d, locale);
   const maximum = cartQuantityMaximum(entry.stockQuantity, entry.packageQuantity);
+  // Stepping down from the first package stops there instead of reaching an off-package minimum.
+  const minimum = cartQuantityMinimum(entry.minimumQuantity, entry.packageQuantity);
   const invalid = !validCartQuantity(
     Number(value),
     entry.minimumQuantity,
@@ -165,8 +172,8 @@ const MiniCartLine = ({
             id={inputId}
             invalid={invalid || draft?.saveError === true}
             locale={locale}
-            max={Math.max(entry.minimumQuantity ?? 0.001, maximum)}
-            min={entry.minimumQuantity ?? 0.001}
+            max={Math.max(minimum, maximum)}
+            min={minimum}
             onValueChange={({ value: next }) => {
               const quantity = Number(next);
               const valid = validCartQuantity(
