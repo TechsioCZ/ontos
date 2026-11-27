@@ -25,10 +25,11 @@ export {
 export type { FieldChoice } from './kit-fields.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
 export {
-  AllRowsCheckboxField,
   ComboboxField,
   DateField,
   FileField,
+  FlaggedTextAreaField,
+  FlaggedTextField,
   NumberField,
   RowCheckboxField,
   SelectField,

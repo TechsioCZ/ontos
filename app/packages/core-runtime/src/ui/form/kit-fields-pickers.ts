@@ -15,6 +15,8 @@ import type { ComboboxProps } from '@techsio/ui-kit/molecules/combobox';
 import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
 import type { DatePickerDayRootProps } from '@techsio/ui-kit/molecules/date-picker';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import type { SelectTemplateProps } from '@techsio/ui-kit/templates/select';
@@ -281,50 +283,105 @@ export const SelectField: FormReact.FieldComponent<string, SelectProps> = ({ fie
   return jsx(SelectTemplate, select);
 };
 
-interface RowCheckboxProps {
+interface RowCheckboxCommon {
   readonly 'aria-label': string;
   readonly disabled?: boolean;
-  /** The row this checkbox adds to or removes from the selection. */
-  readonly member: string;
 }
 
-/** The checkbox of one table row over an array field of selected row ids. */
+/** One row's checkbox (`member`), or the header checkbox over every row the table lists (`members`). */
+type RowCheckboxProps = RowCheckboxCommon &
+  (
+    | { readonly member: string; readonly members?: never }
+    | { readonly member?: never; readonly members: readonly string[] }
+  );
+
+/**
+ * The row selection of a table over an array field of selected row ids. A row's checkbox adds or removes its row; the
+ * header checkbox is checked while every listed row is selected, and selects all listed rows or none.
+ */
 export const RowCheckboxField: FormReact.FieldComponent<readonly string[], RowCheckboxProps> = ({ field, props }) => {
   const { pending } = useFormContext();
-  const others = field.value.filter((member) => member !== props.member);
+  const { member, members } = props;
+  const disabled = pending || props.disabled === true;
+  if (members !== undefined) {
+    return createElement(Checkbox, {
+      'aria-label': props['aria-label'],
+      checked: members.length > 0 && members.every((listed) => field.value.includes(listed)),
+      disabled,
+      name: `${field.path}-all`,
+      onChange: (event: { readonly currentTarget: HTMLInputElement }) => {
+        field.onChange(event.currentTarget.checked ? [...members] : []);
+        field.onBlur();
+      },
+    });
+  }
+  const others = field.value.filter((selected) => selected !== member);
   return createElement(Checkbox, {
     'aria-label': props['aria-label'],
     checked: others.length < field.value.length,
-    disabled: pending || props.disabled === true,
+    disabled,
     name: field.path,
     onChange: (event: { readonly currentTarget: HTMLInputElement }) => {
-      field.onChange(event.currentTarget.checked ? [...others, props.member] : others);
+      field.onChange(event.currentTarget.checked ? [...others, member] : others);
       field.onBlur();
     },
   });
 };
 
-interface AllRowsCheckboxProps {
-  readonly 'aria-label': string;
-  readonly disabled?: boolean;
-  /** Every row the header checkbox selects. */
-  readonly members: readonly string[];
-}
+type FlaggedTextareaProps = Omit<
+  ComponentProps<typeof FormTextarea>,
+  'defaultValue' | 'id' | 'onBlur' | 'onChange' | 'validateStatus' | 'value'
+> & {
+  readonly id?: string;
+  /** The caller's verdict on the text, such as a length the schema does not bound, shown with its help text. */
+  readonly invalid?: boolean;
+};
 
-/** The header checkbox of a selectable table: checked while every row is selected; it selects all rows or none. */
-export const AllRowsCheckboxField: FormReact.FieldComponent<readonly string[], AllRowsCheckboxProps> = ({
-  field,
-  props,
-}) => {
-  const { pending } = useFormContext();
-  return createElement(Checkbox, {
-    'aria-label': props['aria-label'],
-    checked: props.members.length > 0 && props.members.every((member) => field.value.includes(member)),
-    disabled: pending || props.disabled === true,
-    name: `${field.path}-all`,
-    onChange: (event: { readonly currentTarget: HTMLInputElement }) => {
-      field.onChange(event.currentTarget.checked ? [...props.members] : []);
-      field.onBlur();
-    },
-  });
+/** A required multi-line text the caller can also mark invalid, with help text that explains why. */
+export const FlaggedTextAreaField: FormReact.FieldComponent<string, FlaggedTextareaProps> = ({ field, props }) => {
+  const { disabled, helpText, id, invalid = false, ...rest } = props;
+  const feedback = useControlFeedback(field.error, helpText);
+  const generated = useId();
+  const failed = Option.isSome(field.error) || invalid;
+  return jsx(FormTextarea, {
+    ...rest,
+    'aria-invalid': failed || undefined,
+    disabled: feedback.pending || disabled === true,
+    helpText: feedback.message,
+    id: id ?? generated,
+    name: rest.name ?? field.path,
+    onBlur: () => field.onBlur(),
+    onChange: (event) => field.onChange(event.currentTarget.value),
+    validateStatus: failed ? 'error' : 'default',
+    value: field.value,
+  } satisfies ComponentProps<typeof FormTextarea>);
+};
+
+type FlaggedInputProps = Omit<
+  ComponentProps<typeof FormInput>,
+  'defaultValue' | 'id' | 'onBlur' | 'onChange' | 'validateStatus' | 'value'
+> & {
+  readonly id?: string;
+  /** The caller's verdict on the text, such as a rule over several fields, shown with its help text. */
+  readonly invalid?: boolean;
+};
+
+/** A text value the caller can also mark invalid, with help text that explains why. */
+export const FlaggedTextField: FormReact.FieldComponent<string, FlaggedInputProps> = ({ field, props }) => {
+  const { disabled, helpText, id, invalid = false, ...rest } = props;
+  const feedback = useControlFeedback(field.error, helpText);
+  const generated = useId();
+  const failed = Option.isSome(field.error) || invalid;
+  return jsx(FormInput, {
+    ...rest,
+    'aria-invalid': failed || undefined,
+    disabled: feedback.pending || disabled === true,
+    helpText: feedback.message,
+    id: id ?? generated,
+    name: rest.name ?? field.path,
+    onBlur: () => field.onBlur(),
+    onChange: (event) => field.onChange(event.currentTarget.value),
+    validateStatus: failed ? 'error' : 'default',
+    value: field.value,
+  } satisfies ComponentProps<typeof FormInput>);
 };
