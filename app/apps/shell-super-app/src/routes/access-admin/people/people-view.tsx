@@ -28,16 +28,16 @@ const PersonDetails = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <li className="shell:grid shell:gap-4">
-      <h3 className="shell:text-title-md">{person.label}</h3>
+    <li className="grid gap-200">
+      <h3 className="text-xl">{person.label}</h3>
       {person.suspended ? <Badge severity="warning">{t(`${prefix}.status.suspended`)}</Badge> : null}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.companyMemberships`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.companyMemberships`)}</h4>
       {person.memberships.length === 0 ? (
         <p>{t(`${prefix}.noCompany`)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-2">
+        <ul className="grid gap-150">
           {person.memberships.map((membership) => (
-            <li className="shell:flex shell:flex-wrap shell:gap-2" key={membership.id}>
+            <li className="flex flex-wrap gap-150" key={membership.id}>
               <span>{membership.scope}</span>
               <Badge appearance="outline" severity="neutral">
                 {t(`${prefix}.kind.${membership.kind}`)}
@@ -67,13 +67,13 @@ const PersonDetails = ({
           <p>{t(`${prefix}.transferUnavailable`)}</p>
         </div>
       ) : null}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.roles`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.roles`)}</h4>
       {person.assignments.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-3">
+        <ul className="grid gap-150">
           {person.assignments.map((assignment) => (
-            <li className="shell:grid shell:gap-2" key={assignment.id}>
+            <li className="grid gap-150" key={assignment.id}>
               <p>
                 {assignment.role} · {assignment.scope}
               </p>
@@ -126,11 +126,11 @@ const PersonDetails = ({
           ))}
         </ul>
       )}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.teams`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.teams`)}</h4>
       {person.teams.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-3">
+        <ul className="grid gap-150">
           {person.teams.map((team) => (
             <li key={team.id}>
               <p>
@@ -154,14 +154,14 @@ const PersonDetails = ({
           ))}
         </ul>
       )}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.delegation`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.delegation`)}</h4>
       {person.delegations.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-4">
+        <ul className="grid gap-200">
           {person.delegations.map((delegation) => (
-            <li className="shell:grid shell:gap-2" key={delegation.id}>
-              <dl className="shell:grid shell:gap-2">
+            <li className="grid gap-150" key={delegation.id}>
+              <dl className="grid gap-150">
                 <dt>{t(`${prefix}.delegatedManager`)}</dt>
                 <dd>{delegation.manager}</dd>
                 <dt>{t(`${prefix}.scope`)}</dt>
@@ -238,7 +238,7 @@ export const PeopleView = ({
   const preview = (change: PeoplePendingChange) => setPending({ ...change, revision: model.revision });
   const stale = pending !== null && pending.revision !== model.revision;
   return (
-    <section aria-label={t(`${prefix}.title`)} className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
+    <section aria-label={t(`${prefix}.title`)} className="grid w-full max-w-5xl gap-300">
       <p>{t(`${prefix}.description`)}</p>
       <p>{t('shell.accessAdmin.description')}</p>
       <StatusText showIcon status="default">
@@ -260,7 +260,7 @@ export const PeopleView = ({
       {model.people.length === 0 ? (
         <StatusText>{t(`${prefix}.empty`)}</StatusText>
       ) : (
-        <ul aria-label={t('shell.accessAdmin.accessible.peopleList')} className="shell:grid shell:gap-6">
+        <ul aria-label={t('shell.accessAdmin.accessible.peopleList')} className="grid gap-300">
           {model.people.map((person) => (
             <PersonDetails busy={busy} key={person.id} onPreview={preview} person={person} />
           ))}
@@ -304,7 +304,7 @@ export const PeopleView = ({
         open={pending !== null}
         title={t(pending?.titleKey ?? `${prefix}.title`)}
       >
-        <ul className="shell:grid shell:gap-2">
+        <ul className="grid gap-150">
           {pending?.facts.map((fact, index) => (
             <li key={`${index}-${fact}`}>{fact}</li>
           ))}

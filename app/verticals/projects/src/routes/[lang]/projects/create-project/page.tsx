@@ -16,8 +16,6 @@ import { executeCreateProject } from '../../../../api/create-project-action-clie
 import { executeProjectOwnerCandidates } from '../../../../api/project-owner-candidates-client.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { projectsI18nResources } from '../../../../i18n/resources';
-import '../../../ui-kit.css';
-import '../../../index.css';
 
 interface OwnerCandidate {
   displayName: string;
@@ -136,18 +134,12 @@ const CreateProjectPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby={headingId}
-        className="projects:mx-auto projects:w-full projects:max-w-5xl projects:px-4 projects:py-8 projects:sm:px-8 projects:lg:px-12"
-      >
-        <h1
-          className="projects:text-3xl projects:font-bold projects:text-(--color-page-fg) projects:sm:text-4xl"
-          id={headingId}
-        >
+      <section aria-labelledby={headingId} className="mx-auto w-full max-w-5xl px-200 py-400 sm:px-400 lg:px-550">
+        <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id={headingId}>
           {t('projects.pages.createProject.title')}
         </h1>
         <form
-          className="projects:mt-6 projects:grid projects:gap-4"
+          className="mt-300 grid gap-200"
           onSubmit={(event) => {
             event.preventDefault();
             create();

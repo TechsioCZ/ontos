@@ -1,7 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
-import '../../index.css';
-
 import { partyRegistryI18nResources } from '../../../i18n/resources.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
@@ -12,20 +10,12 @@ const ContactsContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby={headingId}
-        className="partyregistry:mx-auto partyregistry:w-full partyregistry:max-w-5xl partyregistry:px-4 partyregistry:py-8 partyregistry:sm:px-8 partyregistry:lg:px-12"
-      >
-        <div className="partyregistry:grid partyregistry:gap-4">
-          <h1
-            className="partyregistry:text-3xl partyregistry:font-bold partyregistry:text-(--color-page-fg) partyregistry:sm:text-4xl"
-            id={headingId}
-          >
+      <section aria-labelledby={headingId} className="mx-auto w-full max-w-5xl px-200 py-400 sm:px-400 lg:px-550">
+        <div className="grid gap-200">
+          <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id={headingId}>
             {t('party-registry.pages.contacts.title')}
           </h1>
-          <p className="partyregistry:max-w-2xl partyregistry:text-(--color-page-muted-fg)">
-            {t('party-registry.pages.contacts.description')}
-          </p>
+          <p className="max-w-2xl text-fg-secondary">{t('party-registry.pages.contacts.description')}</p>
         </div>
       </section>
     </>

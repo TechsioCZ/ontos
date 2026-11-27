@@ -217,8 +217,8 @@ test('supports module pages without a shell heading and keeps reduced horizontal
 
   expect(screen.queryByRole('heading')).toBeNull();
   const content = screen.getByText('Module content').parentElement;
-  expect(content?.classList.contains('shell:px-2')).toBe(true);
-  expect(content?.classList.contains('shell:py-4')).toBe(true);
+  expect(content?.classList.contains('px-150')).toBe(true);
+  expect(content?.classList.contains('py-200')).toBe(true);
 });
 
 test('offers access administration in its own landmark and marks the current page', () => {

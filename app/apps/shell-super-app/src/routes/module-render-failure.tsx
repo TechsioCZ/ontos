@@ -9,7 +9,7 @@ interface ModuleRenderFailureProps {
 export const ModuleRenderFailure = ({ onReload }: ModuleRenderFailureProps) => {
   const { t } = useModernI18n();
   return (
-    <div className="shell:grid shell:justify-items-start shell:gap-4">
+    <div className="grid justify-items-start gap-200">
       <StatusText aria-live="polite" showIcon status="error">
         {t('shell.moduleTarget.render_failed')}
       </StatusText>

@@ -15,12 +15,12 @@ const CatalogWidgetContent = () => {
 
   return (
     <section
-      className="catalog:rounded-2xl catalog:bg-white/90 catalog:p-5 catalog:shadow-xl catalog:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-250 shadow-xl"
       data-modern-boundary-id="verticalCatalog"
       data-modern-mf-expose="./CatalogWidget"
     >
-      <h2 className="catalog:text-2xl catalog:font-black">{t('catalog.title')}</h2>
-      <p className="catalog:mt-2 catalog:text-stone-600">{t('catalog.widgetBody')}</p>
+      <h2 className="text-2xl font-bold">{t('catalog.title')}</h2>
+      <p className="mt-150 text-fg-secondary">{t('catalog.widgetBody')}</p>
     </section>
   );
 };

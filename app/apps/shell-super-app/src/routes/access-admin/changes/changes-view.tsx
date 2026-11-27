@@ -39,7 +39,7 @@ const ChangeDetails = ({ item }: { readonly item: ChangeItemView }) => {
   const unavailable = t('shell.accessAdmin.common.notAvailable');
   const none = t('shell.accessAdmin.common.none');
   return (
-    <dl className="shell:grid shell:gap-2 shell:text-body-sm">
+    <dl className="grid gap-150 text-sm">
       <dt>{t('shell.accessAdmin.changes.sourceCatalog')}</dt>
       <dd>{item.catalogSnapshotId}</dd>
       <dt>{t('shell.accessAdmin.changes.provenance')}</dt>
@@ -83,11 +83,7 @@ export const ChangesView = (props: ChangesViewProps) => {
   const selected = props.items.filter((item) => selectedIds.has(item.id));
   const disabled = props.busy || props.requiresRefresh;
   return (
-    <section
-      aria-busy={props.busy}
-      aria-label={t('shell.accessAdmin.changes.title')}
-      className="shell:grid shell:gap-6"
-    >
+    <section aria-busy={props.busy} aria-label={t('shell.accessAdmin.changes.title')} className="grid gap-300">
       <p>{t('shell.accessAdmin.changes.description')}</p>
       <p>{t('shell.accessAdmin.changes.routineBatch')}</p>
       <p>{t('shell.accessAdmin.changes.individualOnly')}</p>
@@ -99,7 +95,7 @@ export const ChangesView = (props: ChangesViewProps) => {
           {t(`shell.accessAdmin.common.${props.notice}`)}
         </StatusText>
       )}
-      <div className="shell:flex shell:flex-wrap shell:gap-2">
+      <div className="flex flex-wrap gap-150">
         <Button disabled={props.busy} onClick={props.onRefresh} severity="secondary" type="button">
           {t('shell.accessAdmin.common.refresh')}
         </Button>
@@ -119,11 +115,11 @@ export const ChangesView = (props: ChangesViewProps) => {
       {props.items.length === 0 ? (
         <StatusText status="default">{t('shell.accessAdmin.changes.empty')}</StatusText>
       ) : (
-        <ul aria-label={t('shell.accessAdmin.accessible.changeList')} className="shell:grid shell:gap-6">
+        <ul aria-label={t('shell.accessAdmin.accessible.changeList')} className="grid gap-300">
           {props.items.map((item) => (
-            <li className="shell:grid shell:gap-3" key={item.id}>
-              <h3 className="shell:text-title-md">{item.capabilityKey}</h3>
-              <div className="shell:flex shell:flex-wrap shell:gap-2">
+            <li className="grid gap-150" key={item.id}>
+              <h3 className="text-xl">{item.capabilityKey}</h3>
+              <div className="flex flex-wrap gap-150">
                 <Badge appearance="outline" severity="neutral">
                   {t(`shell.accessAdmin.changes.kind.${item.kind}`)}
                 </Badge>
@@ -148,7 +144,7 @@ export const ChangesView = (props: ChangesViewProps) => {
                 />
               )}
               {item.status === 'pending' && (
-                <div className="shell:flex shell:flex-wrap shell:gap-2">
+                <div className="flex flex-wrap gap-150">
                   <Button disabled={disabled} onClick={() => props.onPreview([item.id], 'adopt')} type="button">
                     {t('shell.accessAdmin.changes.previewAdopt')}
                   </Button>
@@ -185,15 +181,15 @@ export const ChangesView = (props: ChangesViewProps) => {
         </Button>
       )}
       {props.receipt !== undefined && props.receipt.skipped.length > 0 && (
-        <section aria-label={t('shell.accessAdmin.changes.undo')} className="shell:grid shell:gap-2">
+        <section aria-label={t('shell.accessAdmin.changes.undo')} className="grid gap-150">
           <p>{t('shell.accessAdmin.changes.undoHelp')}</p>
           <p>{t('shell.accessAdmin.changes.noRevocationRestore')}</p>
           <ChangeSkips skipped={props.receipt.skipped} />
         </section>
       )}
       {props.preview !== undefined && (
-        <section aria-labelledby="access-changes-preview" className="shell:grid shell:gap-3">
-          <h3 className="shell:text-title-md" id="access-changes-preview">
+        <section aria-labelledby="access-changes-preview" className="grid gap-150">
+          <h3 className="text-xl" id="access-changes-preview">
             {t('shell.accessAdmin.common.preview')}
           </h3>
           <p>
@@ -225,7 +221,7 @@ export const ChangesView = (props: ChangesViewProps) => {
               onCheckedChange={(checked) => props.onConfirmEffect(effect.itemId, checked)}
             />
           ))}
-          <div className="shell:flex shell:flex-wrap shell:gap-2">
+          <div className="flex flex-wrap gap-150">
             <Button
               disabled={disabled || !props.writesAvailable || !canConfirmPreview(props.preview, props.confirmedItemIds)}
               onClick={props.onConfirm}

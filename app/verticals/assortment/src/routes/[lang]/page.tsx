@@ -37,13 +37,13 @@ const AssortmentHome = () => {
   }, []);
 
   return (
-    <main className="assortment:min-h-screen assortment:bg-um-canvas assortment:px-4 assortment:py-6 assortment:text-um-foreground assortment:sm:px-8">
+    <main className="min-h-screen bg-base px-200 py-300 text-fg-primary sm:px-400">
       <UltramodernRouteHead />
-      <nav aria-label={t('assortment.language.switcher')} className="assortment:flex assortment:gap-3">
+      <nav aria-label={t('assortment.language.switcher')} className="flex gap-150">
         {supportedLanguages.map((code) => (
           <Link
             aria-current={language === code ? 'page' : undefined}
-            className="assortment:rounded-full assortment:border assortment:border-stone-900/15 assortment:bg-white assortment:px-4 assortment:py-2 assortment:text-sm assortment:font-bold assortment:text-stone-950 assortment:no-underline"
+            className="rounded-full border border-border-primary bg-surface px-200 py-150 text-sm font-bold text-fg-primary no-underline"
             key={code}
             params={{ lang: code }}
             to="/$lang"
@@ -52,15 +52,11 @@ const AssortmentHome = () => {
           </Link>
         ))}
       </nav>
-      <h1 className="assortment:mt-10 assortment:text-5xl assortment:font-black">{t('assortment.title')}</h1>
-      <p className="assortment:mt-3 assortment:text-lg assortment:text-stone-600" data-modern-mf-role="vertical">
+      <h1 className="mt-450 text-4xl font-bold">{t('assortment.title')}</h1>
+      <p className="mt-150 text-lg text-fg-secondary" data-modern-mf-role="vertical">
         {t('assortment.role')}
       </p>
-      <p
-        className="assortment:sr-only"
-        data-build-marker={ultramodernUiMarker.build}
-        data-testid="ultramodern-ui-marker"
-      >
+      <p className="sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
       <p data-testid="api-status">{apiStatus}</p>

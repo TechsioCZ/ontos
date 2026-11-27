@@ -38,13 +38,13 @@ const InventoryHome = () => {
   }, []);
 
   return (
-    <main className="inventory:min-h-screen inventory:bg-um-canvas inventory:px-4 inventory:py-6 inventory:text-um-foreground inventory:sm:px-8">
+    <main className="min-h-screen bg-base px-200 py-300 text-fg-primary sm:px-400">
       <UltramodernRouteHead />
-      <nav aria-label={t('inventory.language.switcher')} className="inventory:flex inventory:gap-3">
+      <nav aria-label={t('inventory.language.switcher')} className="flex gap-150">
         {supportedLanguages.map((code) => (
           <Link
             aria-current={language === code ? 'page' : undefined}
-            className="inventory:rounded-full inventory:border inventory:border-stone-900/15 inventory:bg-white inventory:px-4 inventory:py-2 inventory:text-sm inventory:font-bold inventory:text-stone-950 inventory:no-underline"
+            className="rounded-full border border-border-primary bg-surface px-200 py-150 text-sm font-bold text-fg-primary no-underline"
             key={code}
             params={{ lang: code }}
             to="/$lang/"
@@ -53,15 +53,11 @@ const InventoryHome = () => {
           </Link>
         ))}
       </nav>
-      <h1 className="inventory:mt-10 inventory:text-5xl inventory:font-black">{t('inventory.title')}</h1>
-      <p className="inventory:mt-3 inventory:text-lg inventory:text-stone-600" data-modern-mf-role="vertical">
+      <h1 className="mt-450 text-4xl font-bold">{t('inventory.title')}</h1>
+      <p className="mt-150 text-lg text-fg-secondary" data-modern-mf-role="vertical">
         {t('inventory.role')}
       </p>
-      <p
-        className="inventory:sr-only"
-        data-build-marker={ultramodernUiMarker.build}
-        data-testid="ultramodern-ui-marker"
-      >
+      <p className="sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
       <p data-testid="api-status">{apiStatus}</p>

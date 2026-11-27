@@ -12,8 +12,10 @@
  * Reported (`noStylesheet`, once per file): the `stylesheet` option does not resolve from the file, so the
  * module does not depend on the kit whose classes it writes.
  *
- * Options: `stylesheet` (module specifier, resolved from the linted file), `includePaths`. Scope: `verticals/**`
- * and `packages/**`, tests excluded. Report-only: no fixer, no suggestion.
+ * The Shell runs no Tailwind of its own either, so the same holds for it.
+ *
+ * Options: `stylesheet` (module specifier, resolved from the linted file), `includePaths`. Scope: `apps/**`,
+ * `verticals/**` and `packages/**`, tests excluded. Report-only: no fixer, no suggestion.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -22,7 +24,7 @@ import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
 import { stringOption } from '../shared/options.ts';
-import { MODULE_SOURCE_PATHS, inUiScope } from '../shared/ui-kit-scope.ts';
+import { UI_SOURCE_PATHS, inUiScope } from '../shared/ui-kit-scope.ts';
 
 const vocabularies = new Map<string, ReadonlySet<string>>();
 
@@ -83,7 +85,7 @@ export const rule = defineRule({
   create(context) {
     const options = (context.options[0] ?? {}) as { stylesheet?: unknown };
     const stylesheet = stringOption(options.stylesheet, '', false);
-    if (stylesheet === '' || !inUiScope(context.filename, options, MODULE_SOURCE_PATHS)) return {};
+    if (stylesheet === '' || !inUiScope(context.filename, options, UI_SOURCE_PATHS)) return {};
 
     let vocabulary: ReadonlySet<string> | null | undefined;
     const load = (): ReadonlySet<string> | null => {

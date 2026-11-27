@@ -28,6 +28,8 @@ enableGlobalVirtualStore: false
 packageImportMethod: clone-or-copy
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
+  # Our own design system release: the precompiled stylesheet with the consumer vocabulary (new-engine #692, #694).
+  - '@techsio/ui-kit@0.67.0'
   # Official upstream release; tarball integrity and source provenance verified.
   - 'effect-rstest@1.0.0'
   # Exact Effect v4 release requested for this migration.

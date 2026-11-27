@@ -45,13 +45,11 @@ import type {
   ScaffoldPlan,
   OntosVerticalMetadata,
 } from '../shared.mts';
-import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 
 interface PageVerticalMetadata extends OntosVerticalMetadata {
   readonly locales: readonly string[];
   readonly mfBoundaryId: string;
   readonly namespace: string;
-  readonly tailwindPrefix: string;
 }
 
 interface PageRoute {
@@ -289,17 +287,6 @@ const discoverPageVertical = (
     if (!(yield* fileExists(routeHeadPath))) {
       return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated UltramodernRouteHead is missing`);
     }
-    const routeStylesPath = resolveContainedPath(
-      workspaceRoot,
-      'verticals',
-      vertical.slug,
-      'src',
-      'routes',
-      'index.css',
-    );
-    if (!(yield* fileExists(routeStylesPath))) {
-      return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated route stylesheet is missing`);
-    }
     const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
     const resourcesPath = resolveContainedPath(
       workspaceRoot,
@@ -323,7 +310,6 @@ const discoverPageVertical = (
       locales,
       mfBoundaryId,
       namespace,
-      tailwindPrefix: tailwindPrefixForNamespace(namespace),
     };
   });
 
@@ -332,7 +318,6 @@ const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRou
   const contentComponentName = `${componentName}Content`;
   const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
-  const prefix = vertical.tailwindPrefix;
   const schemaImport = route.isDynamic ? `import { Schema } from 'effect';\n` : '';
   const props = route.isDynamic
     ? `export const ${componentName}RouteParams = Schema.Struct({
@@ -362,7 +347,6 @@ interface ${componentName}Props {
   return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 ${schemaImport}import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
 import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';
-import '${relativeFromRoute(route, 'index.css', 1)}';
 
 ${props}${declaration}
   const { t } = useModernI18n();
@@ -373,10 +357,10 @@ ${props}${declaration}
       <UltramodernRouteHead />
       <section
         aria-labelledby={headingId}
-        className="${prefix}:mx-auto ${prefix}:w-full ${prefix}:max-w-5xl ${prefix}:px-4 ${prefix}:py-8 ${prefix}:sm:px-8 ${prefix}:lg:px-12"
+        className="mx-auto w-full max-w-5xl px-200 py-400 sm:px-400 lg:px-550"
       >
         <h1
-          className="${prefix}:text-3xl ${prefix}:font-bold ${prefix}:text-(--color-page-fg) ${prefix}:sm:text-4xl"
+          className="text-3xl font-bold text-fg-primary sm:text-4xl"
           id={headingId}
         >
           {t('${keyRoot}.title')}

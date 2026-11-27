@@ -85,8 +85,8 @@ export const CreateRoleFeature = ({
     );
   };
   return (
-    <form action={submit} className="shell:grid shell:gap-4">
-      <h2 className="shell:text-title-md">{t('shell.accessAdmin.role.createBlank')}</h2>
+    <form action={submit} className="grid gap-200">
+      <h2 className="text-xl">{t('shell.accessAdmin.role.createBlank')}</h2>
       <p>{t('shell.accessAdmin.role.createBlankHelp')}</p>
       <FormInput
         disabled={pending || !writesAvailable}

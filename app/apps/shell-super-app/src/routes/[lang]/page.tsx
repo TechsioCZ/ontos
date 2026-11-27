@@ -21,7 +21,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     return (
       <>
         <UltramodernRouteHead />
-        <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
+        <main className="flex min-h-screen items-center justify-center bg-base p-200">
           <LinkButton appearance="solid" as={LocalizedLink} severity="primary" size="md" to="/login">
             {t('shell.auth.loginLink')}
           </LinkButton>
@@ -34,7 +34,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     return (
       <>
         <UltramodernRouteHead />
-        <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
+        <main className="flex min-h-screen items-center justify-center bg-base p-200">
           <StatusText aria-live="polite" showIcon status="error">
             {t(
               model.state === 'reload_required' || controls.reloadRequired
@@ -74,28 +74,28 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       >
         <section
           aria-label={t('shell.auth.identity.title')}
-          className="shell:flex shell:w-full shell:max-w-lg shell:flex-col shell:gap-4 shell:bg-(--color-surface) shell:p-6"
+          className="flex w-full max-w-lg flex-col gap-200 bg-surface p-300"
         >
-          <dl className="shell:grid shell:gap-3">
+          <dl className="grid gap-150">
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.displayName')}</dt>
+              <dt className="font-semibold">{t('shell.auth.identity.displayName')}</dt>
               <dd>{model.identity.displayName}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.email')}</dt>
+              <dt className="font-semibold">{t('shell.auth.identity.email')}</dt>
               <dd>{model.identity.email}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.principal')}</dt>
+              <dt className="font-semibold">{t('shell.auth.identity.principal')}</dt>
               <dd>{model.identity.principalId}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.tenant')}</dt>
+              <dt className="font-semibold">{t('shell.auth.identity.tenant')}</dt>
               <dd>{model.identity.tenantId}</dd>
             </div>
             {model.contextState === 'authenticated' ? (
               <div>
-                <dt className="shell:font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
+                <dt className="font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
                 <dd>{model.selectedLegalEntityId}</dd>
               </div>
             ) : null}

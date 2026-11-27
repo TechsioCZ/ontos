@@ -300,7 +300,7 @@
     "file": "apps/demo/src/browser-import.ts"
   },
   "ui-kit-class-in-kit-stylesheet": {
-    "count": 1,
+    "count": 7,
     "file": "verticals/crm/src/routes/off-system-classes.tsx"
   },
   "ui-kit-import-through-surface": {

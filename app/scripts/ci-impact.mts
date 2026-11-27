@@ -273,7 +273,7 @@ const rootDocumentation = (changedPath: string) =>
 // declares; this names the paths that widen even inside one.
 const broadPath = (changedPath: string) =>
   !rootDocumentation(changedPath) &&
-  (/^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
+  (/^app\/packages\/(?:core-runtime|shared-contracts|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
     changedPath,
   ) ||
     /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts|vertical\.runtime-declaration\.ts)$/u.test(

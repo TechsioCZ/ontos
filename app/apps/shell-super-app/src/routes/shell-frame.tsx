@@ -310,7 +310,7 @@ const DashboardModuleNavigationItem = ({ currentModuleId, module }: DashboardMod
   const { t } = useModernI18n();
 
   return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
+    <li className="flex flex-wrap items-center gap-150">
       {module.enabled && module.href !== undefined ? (
         <Link
           aria-current={currentModuleId === module.moduleId ? 'page' : undefined}
@@ -345,7 +345,7 @@ const DashboardDeploymentNavigationItem = ({ deployment }: DashboardDeploymentNa
   const { t } = useModernI18n();
 
   return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
+    <li className="flex flex-wrap items-center gap-150">
       <span>{deployment.appId}</span>
       <StatusText showIcon size="sm" status="warning">
         {t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`)}
@@ -364,7 +364,7 @@ const DashboardNavigation = ({
 
   return (
     <nav aria-label={t('shell.dashboard.navigation.label')}>
-      <ul className="shell:flex shell:flex-col shell:gap-2">
+      <ul className="flex flex-col gap-150">
         <li>
           <Link
             aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
@@ -395,10 +395,10 @@ const AccessAdministrationNavigation = ({
   const label = t('shell.accessAdmin.accessible.navigation');
 
   return (
-    <section aria-label={label} className="shell:flex shell:flex-col shell:gap-2">
+    <section aria-label={label} className="flex flex-col gap-150">
       <p>{t('shell.accessAdmin.navigation.label')}</p>
       <nav aria-label={label}>
-        <ul className="shell:flex shell:flex-col shell:gap-2">
+        <ul className="flex flex-col gap-150">
           {AccessAdministrationPageSchema.literals.map((page) => (
             <li key={page}>
               <Link aria-current={currentPage === page ? 'page' : undefined} as={LocalizedLink} to={`/access/${page}`}>
@@ -463,15 +463,15 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   }, [tenantSwitchFailed]);
 
   return (
-    <div className="shell:flex shell:min-h-screen shell:min-w-0 shell:flex-col shell:overflow-x-hidden shell:bg-(--color-page-bg) shell:text-(--color-page-fg) shell:md:flex-row">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-base text-fg-primary md:flex-row">
       {props.compositionRevision === undefined ? null : (
         <meta content={props.compositionRevision} name="ontos-composition-revision" />
       )}
       <aside
         aria-label={t('shell.dashboard.sidebar.label')}
-        className="shell:flex shell:max-h-[65vh] shell:w-full shell:shrink-0 shell:flex-col shell:gap-3 shell:overflow-y-auto shell:bg-(--color-surface) shell:p-4 shell:md:max-h-none shell:md:w-64 shell:md:gap-6 shell:md:overflow-visible"
+        className="flex max-h-screen w-full shrink-0 flex-col gap-150 overflow-y-auto bg-surface p-200 md:max-h-none md:w-3xs md:gap-300 md:overflow-visible"
       >
-        <div className="shell:flex shell:flex-col shell:gap-3 shell:md:gap-6">
+        <div className="flex flex-col gap-150 md:gap-300">
           <p>{t('shell.dashboard.brand')}</p>
           <DashboardTenantSelector
             currentTenantId={props.currentTenantId}
@@ -499,14 +499,14 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         </div>
         <AccessAdministrationNavigation currentPage={props.currentAccessPage} />
       </aside>
-      <main className="shell:flex shell:min-w-0 shell:flex-1 shell:flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         <DashboardHeader
           identity={props.identity}
           logoutPending={props.logoutPending}
           onLogout={props.onLogout}
           title={props.title}
         />
-        <div className="shell:min-w-0 shell:flex-1 shell:px-2 shell:py-4">{props.children}</div>
+        <div className="min-w-0 flex-1 px-150 py-200">{props.children}</div>
       </main>
     </div>
   );
