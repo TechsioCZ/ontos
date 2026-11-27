@@ -984,26 +984,8 @@ export const renderAccessWorkload = (reason: string, workloads: readonly string[
   return `${indent}accessWorkload: ${marker},`;
 };
 
-export const parseModuleReadImport = (
-  candidate: string,
-): { readonly bindings: readonly string[]; readonly specifier: string } | undefined => {
-  const match =
-    /^import \{\s*(?<bindings>[a-z][A-Za-z0-9]*Read(?:\s*,\s*[a-z][A-Za-z0-9]*Read)*\s*,?)\s*\} from '(?<specifier>\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts)';$/u.exec(
-      candidate,
-    );
-  const names = match?.groups?.['bindings'];
-  const specifier = match?.groups?.['specifier'];
-  if (names === undefined || specifier === undefined) {
-    return undefined;
-  }
-  const bindings = names
-    .split(',')
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0);
-  return new Set(bindings).size === bindings.length ? { bindings, specifier } : undefined;
-};
-
-const isModuleReadImport = (candidate: string): boolean => parseModuleReadImport(candidate) !== undefined;
+const isModuleReadImport = (candidate: string): boolean =>
+  /^import \{ [a-z][A-Za-z0-9]*Read \} from '\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts';$/u.test(candidate);
 
 export const isModuleRegistrationImport = (candidate: string): boolean =>
   isModuleReadImport(candidate) ||

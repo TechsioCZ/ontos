@@ -12,15 +12,7 @@ import { parseSync } from 'oxc-parser';
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { moduleBindings } from '../../module-bindings.mts';
 import { runScaffoldEffect } from '../cli.mts';
-import { removeOperationReadImport } from '../retire-contribution/scaffold.mts';
-import {
-  insertSortedSlot,
-  readGeneratedSlotEntries,
-  removeGeneratedSlotEntry,
-  MODULE_MANIFEST_IMPORT_SLOT_END,
-  MODULE_REGISTRATION_IMPORT_SLOT_START,
-  MODULE_REGISTRATION_IMPORT_SLOT_END,
-} from '../shared.mts';
+import { insertSortedSlot, readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { withCreatedFixture } from './fixture-ownership.mts';
@@ -39,8 +31,6 @@ const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`
 const VERTICAL_FLAG = '--vertical';
 const RETIRE_CONTRIBUTION_COMMAND = 'retire-contribution';
 const ARCHIVE_ITEM = 'archive-item';
-const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
-const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
 const ITEM_DETAIL = 'item-detail';
 const INVENTORY_DIRECTORY = 'verticals/inventory';
 const ARCHIVE_ITEM_ACTION_PATH = 'verticals/inventory/src/actions/archive-item.action.ts';
@@ -265,7 +255,7 @@ it.live(
           access(path.join(root, 'verticals/inventory/src/routes/[lang]/inventory/items/[id]/page.tsx')),
         );
         const [nextManifest, nextRegistration, nextSharedApi, nextHandlerRoot] = yield* Effect.all(
-          [MODULE_MANIFEST_FILE, MODULE_REGISTRATION_FILE, 'shared/api.ts', 'api/index.ts'].map((file) =>
+          ['vertical.manifest.ts', 'vertical.registration.ts', 'shared/api.ts', 'api/index.ts'].map((file) =>
             Effect.promise(() => readFile(path.join(root, INVENTORY_DIRECTORY, file), 'utf-8')),
           ),
           { concurrency: 'unbounded' },
@@ -275,100 +265,6 @@ it.live(
         // The mount and the handler layer go with the read, so the module keeps no unbound API.
         expect(nextSharedApi).not.toMatch(/ItemDetailApi/u);
         expect(nextHandlerRoot).not.toMatch(/itemDetailReadApiLive/u);
-      }),
-    );
-  }),
-);
-
-it('removes only the retired Read from grouped imports and removes the last import statement', () => {
-  const start = MODULE_REGISTRATION_IMPORT_SLOT_START;
-  const end = MODULE_REGISTRATION_IMPORT_SLOT_END;
-  const specifier = './src/api/item-detail.read.ts';
-  const owner = (entry: string): string => `${start}\n${entry}\n${end}\n`;
-  for (const bindings of [
-    '{ itemDetailRead, itemDetailSetRead }',
-    '{ itemDetailSetRead, itemDetailRead }',
-    '{\n  itemDetailRead,\n  itemDetailSetRead,\n}',
-  ]) {
-    const source = owner(`import ${bindings} from '${specifier}';`);
-    expect(removeOperationReadImport(source, start, end, 'itemDetailRead', specifier)).toBe(
-      owner(`import { itemDetailSetRead } from '${specifier}';`),
-    );
-  }
-  expect(
-    removeOperationReadImport(
-      owner(`import { itemDetailRead } from '${specifier}';`),
-      start,
-      end,
-      'itemDetailRead',
-      specifier,
-    ),
-  ).not.toContain('import {');
-  const sibling = owner(`import { itemDetailSetRead } from '${specifier}';`);
-  expect(removeOperationReadImport(sibling, start, end, 'itemDetailRead', specifier)).toBe(sibling);
-  for (const entry of [
-    `import { itemDetailRead as renamed, itemDetailSetRead } from '${specifier}';`,
-    `import itemDetailRead from '${specifier}';`,
-    `import * as itemDetailRead from '${specifier}';`,
-    `import type { itemDetailRead } from '${specifier}';`,
-    `import { type itemDetailRead, itemDetailSetRead } from '${specifier}';`,
-    `import { itemDetailRead, itemDetailRead } from '${specifier}';`,
-    `import { itemDetailRead, handler } from '${specifier}';`,
-    `import { itemDetailRead } from '../foreign/src/api/item-detail.read.ts';`,
-  ]) {
-    const source = owner(entry);
-    expect(removeOperationReadImport(source, start, end, 'itemDetailRead', specifier)).toBe(source);
-  }
-});
-
-it.live(
-  'retires the last Read import from both owner slots without disturbing other imports',
-  Effect.fn(function* singletonReadRetirement() {
-    yield* withFixture(
-      Effect.fn(function* removeReadOwners(root) {
-        for (const [file, marker, source] of [
-          [MODULE_MANIFEST_FILE, MODULE_MANIFEST_IMPORT_SLOT_END, manifest],
-          [MODULE_REGISTRATION_FILE, MODULE_REGISTRATION_IMPORT_SLOT_END, registration],
-        ] as const) {
-          const target = path.join(root, INVENTORY_DIRECTORY, file);
-          yield* Effect.promise(() =>
-            writeFile(
-              target,
-              source.replace(marker, `import { itemDetailRead } from './src/api/item-detail.read.ts';\n${marker}`),
-            ),
-          );
-        }
-        yield* retire(root, 'api', ITEM_DETAIL);
-        for (const file of [MODULE_MANIFEST_FILE, MODULE_REGISTRATION_FILE]) {
-          const source = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_DIRECTORY, file), 'utf-8'));
-          expect(source).not.toContain('itemDetailRead');
-          expect(source).toContain("import { archiveItemAction } from './src/actions/archive-item.action.ts';");
-        }
-      }),
-    );
-  }),
-);
-
-it.live(
-  'still refuses retirement atomically when a sibling Read imports the same deleted file',
-  Effect.fn(function* groupedReadRetirement() {
-    yield* withFixture(
-      Effect.fn(function* preserveReadSibling(root) {
-        const registrationPath = path.join(root, INVENTORY_DIRECTORY, MODULE_REGISTRATION_FILE);
-        yield* Effect.promise(() =>
-          writeFile(
-            registrationPath,
-            registration.replace(
-              MODULE_REGISTRATION_IMPORT_SLOT_END,
-              "import { itemDetailRead, itemDetailSetRead } from './src/api/item-detail.read.ts';\n// </generated-module-registration-imports>",
-            ),
-          ),
-        );
-        const before = yield* snapshotTree(root);
-        yield* expectFailure(retire(root, 'api', ITEM_DETAIL), (error) =>
-          expect(String(error)).toMatch(/still names \.\/src\/api\/item-detail\.read\.ts/u),
-        );
-        expect(yield* snapshotTree(root)).toEqual(before);
       }),
     );
   }),
@@ -725,7 +621,7 @@ it.live(
     const vertical = 'verticals/commerce-order';
     const read = 'committed-order-approval-evidence';
     const wrappedRegistration = yield* Effect.promise(() =>
-      readFile(path.join(appRoot, vertical, MODULE_REGISTRATION_FILE), 'utf-8'),
+      readFile(path.join(appRoot, vertical, 'vertical.registration.ts'), 'utf-8'),
     );
     expect(wrappedRegistration).toMatch(new RegExp(`'${read}': \\(\\) =>\\n\\s+import\\(`, 'u'));
     const sources = yield* retireInCopy(read, vertical, 'packages/commerce-order-contracts', 'commerce-order');

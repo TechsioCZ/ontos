@@ -462,25 +462,20 @@ export const hasUniqueExactNamedImport = (source: string, importedName: string, 
   let matchCount = 0;
   let bindingCount = 0;
   for (let index = 0; index < tokens.length; index += 1) {
-    const closeBrace = matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])
-      ? findClosingBrace(tokens, index + 1)
-      : undefined;
-    if (closeBrace === undefined) {
-      continue;
+    if (matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])) {
+      const closeBrace = findClosingBrace(tokens, index + 1);
+      if (closeBrace !== undefined) {
+        bindingCount += tokens
+          .slice(index + 2, closeBrace)
+          .filter(({ kind, value }) => kind === SyntaxKind.Identifier && value === importedName).length;
+      }
     }
-    const bindings = tokens.slice(index + 2, closeBrace);
-    const names = bindings.filter(({ kind }) => kind === SyntaxKind.Identifier).map(({ value }) => value);
-    bindingCount += names.filter((name) => name === importedName).length;
-    const exactNames =
-      bindings.length > 0 &&
-      bindings.every(
-        ({ kind }, position) => kind === (position % 2 === 0 ? SyntaxKind.Identifier : SyntaxKind.CommaToken),
-      ) &&
-      new Set(names).size === names.length;
     if (
-      exactNames &&
-      names.includes(importedName) &&
-      matchesSequence(tokens, closeBrace + 1, [
+      matchesSequence(tokens, index, [
+        [SyntaxKind.ImportKeyword],
+        [SyntaxKind.OpenBraceToken],
+        [SyntaxKind.Identifier, importedName],
+        [SyntaxKind.CloseBraceToken],
         [SyntaxKind.FromKeyword],
         [SyntaxKind.StringLiteral, moduleSpecifier],
         [SyntaxKind.SemicolonToken],
