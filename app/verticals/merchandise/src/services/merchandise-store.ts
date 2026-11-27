@@ -1453,7 +1453,13 @@ export interface WorkingSetRequest {
   readonly productCategoryMemberships?: boolean;
   readonly productIds?: readonly string[];
   /** Products that could collide with a new SKU or storefront slug (case-insensitive). */
-  readonly productKeys?: { readonly sku?: string; readonly slug?: string; readonly slugPrefix?: string };
+  readonly productKeys?: {
+    readonly sku?: string;
+    /** Every product whose own SKU or one of whose variant SKUs is one of these (case-insensitive). */
+    readonly skus?: readonly string[];
+    readonly slug?: string;
+    readonly slugPrefix?: string;
+  };
   readonly sourceCatalog?: boolean;
 }
 
@@ -1527,6 +1533,15 @@ const productKeyFilters = (keys: WorkingSetRequest['productKeys']): SQL[] => {
   const filters: SQL[] = [];
   if (keys?.sku !== undefined) {
     filters.push(eq(products.skuKey, skuKeyOf(keys.sku)));
+  }
+  if (keys?.skus !== undefined && keys.skus.length > 0) {
+    const skuKeys = [...new Set(keys.skus.map(skuKeyOf))];
+    filters.push(inArray(products.skuKey, skuKeys));
+    filters.push(sql`exists (select 1 from ${productVariants}
+      where ${productVariants.tenantId} = ${products.tenantId}
+        and ${productVariants.legalEntityId} = ${products.legalEntityId}
+        and ${productVariants.productId} = ${products.id}
+        and ${inArray(sql`lower(trim(${productVariants.sku}))`, skuKeys)})`);
   }
   if (keys?.slug !== undefined) {
     filters.push(sql`lower(${products.slug}) = ${keys.slug.trim().toLowerCase()}`);

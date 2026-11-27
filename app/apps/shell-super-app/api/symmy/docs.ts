@@ -62,8 +62,8 @@ just to retry an unfinished request.
 
 1. \`POST /products/batch\` with one product. The answer is \`202\` with a \`jobId\`.
 2. \`GET /jobs/{id}\` until \`status\` starts with \`completed\`. A job can read \`indeterminate\` for a few seconds first.
-3. Look at the result: \`GET /admin/products\`, or the shop page
-   [ontos-stage-akros.web-revolution.cz/cs/novinky-z-erp](https://ontos-stage-akros.web-revolution.cz/cs/novinky-z-erp).
+3. Look at the result: \`GET /admin/products\`, or search the product's name or code in the shop
+   [ontos-stage-akros.web-revolution.cz](https://ontos-stage-akros.web-revolution.cz/cs/vyhledavani).
 4. Send stock with \`POST /inventory/stock/batch\` and a new price by sending the product again.
 
 ## 3. Reading a result
@@ -103,7 +103,8 @@ Every refusal is \`application/problem+json\` with \`title\`, \`status\` and \`d
 
 New ERP SKUs do not need a manual per-SKU price or stock grant. The enrolled source policy still controls the
 company, warehouse, unit and commercial dimensions, without a preseeded SKU allowlist.
-The two product models are separate; sending an engineered Catalog product does not create its native Merchandise copy.
+Products, prices and stock you send through Symmy appear as ordinary products in OntOS "Produkty" and on the shop,
+marked as imported through Symmy. You do not need to send them a second time.
 
 For native storefront writes, read the current catalog revision with \`GET /catalog/revision\` first.
 Copy its \`revision\` into the write's \`expectedRevision\`, then use the returned \`revision\` for your next write.

@@ -51,6 +51,8 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'AiDecideChanges',
   'AiRevertBatch',
 ]);
+/** Commands only the source-catalog import Action runs; they write server-owned provenance, so no person sends them. */
+const sourceImportOnlyCommands: ReadonlySet<string> = new Set(['UpsertSourceProduct']);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 
 export const assertCommandAllowed = (
@@ -99,7 +101,15 @@ export const withCommandGuard =
     handler: (payload: Payload, context: Context) => Effect.Effect<Success, Failure, Requirements>,
   ) =>
   (payload: Payload, context: Context): Effect.Effect<Success, Failure | MerchandisePermissionDenied, Requirements> =>
-    assertCommandAllowed(
-      principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag),
-      payload.command._tag,
+    (sourceImportOnlyCommands.has(payload.command._tag)
+      ? Effect.fail(
+          new MerchandisePermissionDenied({
+            code: 'merchandise_permission_denied',
+            reason: `Merchandise command ${payload.command._tag} is reserved for the source-catalog import`,
+          }),
+        )
+      : assertCommandAllowed(
+          principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag),
+          payload.command._tag,
+        )
     ).pipe(Effect.flatMap(() => handler(payload, context)));

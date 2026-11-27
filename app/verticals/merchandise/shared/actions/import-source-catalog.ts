@@ -4,13 +4,14 @@ import { ImportImageUrlSchema } from '../domain/import-image-url.ts';
 import {
   ApplyCommandPayloadSchema,
   ApplyCreateCategoryCommandSchema,
+  ApplyUpsertSourceProductCommandSchema,
   ChangeProductImagesPayloadSchema,
   MerchandiseCommandPayloadSchema,
 } from './apply-command.ts';
 
 /**
  * Separate from human catalog management and storefront checkout. A caller must hold the dedicated import
- * capability in the selected company. It cannot edit orders, prices, an existing gallery, or existing products.
+ * capability in the selected company. It cannot edit orders, an existing gallery, or products it did not import.
  */
 export const ImportSourceCatalogPayloadSchema = Schema.Struct({
   command: Schema.Union([
@@ -20,6 +21,8 @@ export const ImportSourceCatalogPayloadSchema = Schema.Struct({
       imageSrc: Schema.optionalKey(ImportImageUrlSchema),
     }),
     ApplyCreateCategoryCommandSchema,
+    /** Symmy products: one idempotent upsert per accepted import (product, price-only, stock-only) and the backfill. */
+    ApplyUpsertSourceProductCommandSchema,
     Schema.TaggedStruct('ChangeProductImages', {
       change: Schema.TaggedStruct('Upload', { image: MediaImageUploadSchema }),
       id: ChangeProductImagesPayloadSchema.fields.command.fields.id,

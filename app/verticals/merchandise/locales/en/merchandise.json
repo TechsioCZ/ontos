@@ -259,11 +259,6 @@
         "title": "New Page"
       },
       "products": {
-        "sources": {
-          "label": "Product source",
-          "own": "Assortment",
-          "erp": "From ERP"
-        },
         "actions": {
           "newProduct": "New product",
           "receipt": "Goods receipt"
@@ -485,6 +480,11 @@
           "openOrders": "Open orders",
           "products": "Products",
           "stockValue": "Stock value"
+        },
+        "symmy": {
+          "badge": "Imported via Symmy",
+          "erpCode": "ERP code",
+          "writeThrough": "The price and stock of this product are also written to the ERP."
         },
         "status": {
           "active": "Active",
