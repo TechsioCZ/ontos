@@ -150,7 +150,6 @@ jobs:
       name: stage-edge
       deployment: false
     outputs:
-      run_attempt: ${{ github.run_attempt }}
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
       shop: ${{ steps.plan.outputs.shop }}
@@ -463,27 +462,13 @@ jobs:
           overwrite: true
           retention-days: 3
 
-  # Refuse failed-jobs-only retries outside the delivery queue, even for stale no-service plans. Entering
-  # zerops-stage just to fail would replace a pending lint-green delivery. Re-run all jobs to replan instead.
-  stale_plan:
-    name: Refuse a stale delivery plan
-    needs: [deliver]
-    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.deliver.outputs.run_attempt != github.run_attempt }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 1
-    permissions: {}
-    steps:
-      - name: Refuse a delivery planned in another run attempt
-        run: |
-          echo "::error::This delivery's plan belongs to another run attempt. Re-run all jobs: gh run rerun $GITHUB_RUN_ID (without --failed), or dispatch the workflow on the current head."
-          exit 1
-
-  # The only delivery, with earlier units or this run's builds. A current-attempt plan selecting services and lint
-  # success are required before entering the queue. Red, cancelled or skipped lint blocks every mutation.
+  # The only delivery, with earlier units or this run's builds. A plan selecting services and lint success
+  # are required before entering the queue. Red, cancelled or skipped lint blocks every mutation.
+  # A failed lint job can be re-run on its own; the run then delivers with its existing plan.
   deliver_app:
     name: Deliver and verify lint-proven stage
     needs: [deliver, build, lint]
-    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.lint.result == 'success' && needs.deliver.outputs.any == 'true' && needs.deliver.outputs.run_attempt == github.run_attempt && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.lint.result == 'success' && needs.deliver.outputs.any == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     concurrency:
       group: zerops-stage
       cancel-in-progress: false
