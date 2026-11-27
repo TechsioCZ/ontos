@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { Duration, Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { connectSeedClient } from './seed-client.mts';
-import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
+import { RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
@@ -135,7 +135,8 @@ const makeClient = (label, connect) => {
       run((c) => c.call('merchandise', path, enc(schema), payload, enc(result), true), true),
     read: (view) =>
       run((c) =>
-        c.call('merchandise', '/reads/records', enc(RecordsRequestSchema), { view }, enc(RecordsResponseSchema)),
+        // The stable release may lag the repo, so its reads are not held to this checkout's response schema.
+        c.call('merchandise', '/reads/records', enc(RecordsRequestSchema), { view }, Schema.Unknown),
       ),
   };
 };
