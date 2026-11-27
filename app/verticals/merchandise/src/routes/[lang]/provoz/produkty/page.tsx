@@ -382,7 +382,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
   return (
     <>
       <UltramodernRouteHead />
-      <div className="flex w-full min-w-0 flex-col gap-250 outline-[7px] outline-transparent">
+      <div className="flex w-full min-w-0 flex-col gap-250">
         <PageHeader
           actions={
             canWrite ? (
