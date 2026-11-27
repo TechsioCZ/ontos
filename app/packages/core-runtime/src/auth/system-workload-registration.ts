@@ -39,6 +39,14 @@ export const registerSystemWorkload = (input: {
   return Object.freeze(registration);
 };
 
+/**
+ * Why a system workload key does not belong to the module, if it does not: the key starts with the module's own id and
+ * a dot, so `commerce.catalog` never declares `commerce.pricing.source-write` and one key names one owning module.
+ * The manifest definition, the published-contract decoder and the enrollment Action all hold a key to this rule.
+ */
+export const systemWorkloadKeyIssue = (workloadKey: string, moduleId: string): string | undefined =>
+  workloadKey.startsWith(`${moduleId}.`) ? undefined : `system workload ${workloadKey} must start with ${moduleId}.`;
+
 /** Whether `registerSystemWorkload` created this registration, never a look-alike object of the same shape. */
 export const isRegisteredSystemWorkload = (registration: SystemWorkloadRegistration): boolean =>
   registration[registrationProvenance] === true;

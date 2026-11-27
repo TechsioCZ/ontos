@@ -165,7 +165,7 @@ It has CONNECT, USAGE on `trust`, and EXECUTE on `trust.register_gateway_scope_g
 - It can only read `core.outbox_delivery_resolutions`, the operator ledger of dead-delivery redrives and releases. The migration administrator writes it.
 - `TEMPORARY` is revoked from PUBLIC on the application database and granted back to `ontos_runtime` only.
 - The new Core RLS gives it one `FOR ALL ... USING (true) WITH CHECK (true)` policy per table, so its behaviour does not change.
-- `auth.gateway_assertion_redemptions` (migration `20261120130017`, approved for D20 Core Media decision 4) is a Shell-private table of the `auth` schema: one row per redeemed gateway assertion `(issuer, audience, jti)`, kept until it expires. It holds no tenant data and no secret, has no RLS, and is covered by the existing `auth` blanket bootstrap of `ontos_runtime`; no grant, role or manifest entry was added and no other deployment can read it. It is the Shell's own sibling of the per-vertical `gateway_assertion_redemptions` tables.
+- `auth.gateway_assertion_redemptions` (migration `20261120130017`, approved during the D20 implementation, see [Core Media, Recorded decisions](CORE_MEDIA.md#recorded-decisions)) is a Shell-private table of the `auth` schema: one row per redeemed gateway assertion `(issuer, audience, jti)`, kept until it expires. It holds no tenant data and no secret, has no RLS, and is covered by the existing `auth` blanket bootstrap of `ontos_runtime`; no grant, role or manifest entry was added and no other deployment can read it. It is the Shell's own sibling of the per-vertical `gateway_assertion_redemptions` tables.
 
 ## Trusted tenant context
 

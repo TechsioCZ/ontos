@@ -310,6 +310,18 @@ it.effect('allows the same declared workload in two tenants when each names its 
   }),
 );
 
+it.effect('refuses the integrity key: only an enrollment makes the system principal the Shell resolves for it', () =>
+  Effect.gen(function* refusesEnrolledOnlyKey() {
+    const [first, second] = validFile.tenants;
+    const principalId = first?.accounts[0]?.principalId;
+    const reason = yield* rejectionReason({
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId, workloadKey: 'core.media.integrity' }] }, second],
+    });
+    expect(reason).toContain('core.identity.change-system-workload-enrollment');
+  }),
+);
+
 it.effect('refuses another active file tenant principal with the value-free own-tenant error', () =>
   Effect.gen(function* refusesCrossTenantWorkloadPrincipal() {
     const first = tenant('a');

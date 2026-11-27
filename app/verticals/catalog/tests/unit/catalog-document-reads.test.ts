@@ -167,7 +167,7 @@ describe('Catalog private document reads', () => {
       });
       const result = Option.getOrThrow(
         yield* serviceWith([[set]], [[document]]).service.current(productRef, [
-          { current, kind: 'AVAILABLE', resourceRef },
+          { evidence: { current, kind: 'AVAILABLE', resourceRef }, requested: resourceRef },
         ]),
       );
       expect(result.assignments[0]).toMatchObject({ current: { revision: 2 }, kind: 'AVAILABLE' });
@@ -187,19 +187,28 @@ describe('Catalog private document reads', () => {
       } as const;
       const mismatched = Option.getOrThrow(
         yield* serviceWith([[set]], [[document]]).service.current(productRef, [
-          { kind: 'ABSENT', resourceRef: foreignResource },
+          { evidence: { kind: 'ABSENT', resourceRef: foreignResource }, requested: foreignResource },
         ]),
       );
+      // An answer about a Resource that is not assigned says nothing about the assigned one.
       expect(mismatched.assignments[0]?.kind).toBe('OWNER_CHECK_REQUIRED');
+      const assignedResource = {
+        moduleId: document.ownerModuleId,
+        resourceId: document.ownerResourceId,
+        resourceType: document.ownerResourceType,
+        tenantId,
+      } as const;
+      const swapped = Option.getOrThrow(
+        yield* serviceWith([[set]], [[document]]).service.current(productRef, [
+          { evidence: { kind: 'ABSENT', resourceRef: foreignResource }, requested: assignedResource },
+        ]),
+      );
+      expect(swapped.assignments[0]?.kind).toBe('RESOURCE_MISMATCH');
       for (const kind of ['ABSENT', 'FORBIDDEN', 'UNAVAILABLE', 'CURRENT_UNVERIFIED'] as const) {
-        const resourceRef = {
-          moduleId: document.ownerModuleId,
-          resourceId: document.ownerResourceId,
-          resourceType: document.ownerResourceType,
-          tenantId,
-        } as const;
         const observed = Option.getOrThrow(
-          yield* serviceWith([[set]], [[document]]).service.current(productRef, [{ kind, resourceRef }]),
+          yield* serviceWith([[set]], [[document]]).service.current(productRef, [
+            { evidence: { kind, resourceRef: assignedResource }, requested: assignedResource },
+          ]),
         );
         expect(observed.assignments[0]?.kind).toBe(kind);
       }

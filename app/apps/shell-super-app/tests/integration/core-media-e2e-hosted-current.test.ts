@@ -33,6 +33,8 @@ import {
  * redeems it once in PostgreSQL. The receiver then runs `core.media.asset-current.read` as the REQUESTER over the real
  * gate, SpiceDB and the real S3 adapter on an S3-compatible EMULATOR (MinIO, NOT R2).
  *
+ * The SDK module-call route and a consumer read in front of this receiver run in `core-media-e2e-catalog-handoff`.
+ *
  * NOT exercised here (NOT VERIFIED): Catalog's own assignments, its read runtime and the SDK module call route that
  * would carry this request from the Catalog Worker. The module is represented by its `act` claim and by the installed
  * contract that declares the hosted requirement; the Catalog deployment itself does not run in this world.

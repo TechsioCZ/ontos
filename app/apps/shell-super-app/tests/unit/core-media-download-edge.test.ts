@@ -92,7 +92,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       expect(handler).not.toMatch(/range|if-none-match|if-modified-since|if-range|etag/iu);
       expect(handler).not.toMatch(/redirect|presign|signedUrl|x-amz/iu);
       expect(handler).toContain('downloadResponseHeaders(authorization)');
-      // A HEAD request is answered after its own decision and never opens the provider.
+      // A HEAD request is answered after its own decision, from a stat that opens no body.
+      expect(handler.indexOf('checkConfirmedBytes')).toBeGreaterThan(handler.indexOf("request.method === 'HEAD'"));
       expect(handler.indexOf("request.method === 'HEAD'")).toBeGreaterThan(handler.indexOf('assetDownloadRead'));
       expect(handler.indexOf("request.method === 'HEAD'")).toBeLessThan(handler.indexOf('streamConfirmedBytes'));
     }),

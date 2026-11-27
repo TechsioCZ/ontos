@@ -804,8 +804,8 @@ it('declares the modules activation installs with it, carried into the deploymen
   ).toThrow(/installsWith/u);
 });
 
-it('declares the system workloads its own code registers: genuine registrations, once each, in its own namespace', () => {
-  const registration = registerSystemWorkload({ jobKey: 'property.registry-job' });
+it('declares the system workloads its own code registers: genuine registrations, once each, under its own id', () => {
+  const registration = registerSystemWorkload({ jobKey: 'property.registry.archive-job' });
   const declared = defineOntosModuleManifest({ ...emptyManifestInput(), systemWorkloads: [registration] });
   expect(declared.systemWorkloads).toEqual([registration]);
   expect(Object.isFrozen(declared.systemWorkloads)).toBe(true);
@@ -813,16 +813,20 @@ it('declares the system workloads its own code registers: genuine registrations,
     (systemWorkloads: NonNullable<Parameters<typeof defineOntosModuleManifest>[0]['systemWorkloads']>) => () =>
       defineOntosModuleManifest({ ...emptyManifestInput(), systemWorkloads });
   // A look-alike object is not the module's registration.
-  expect(refused([{ allowServicePrincipal: false, jobKey: 'property.registry-job' }])).toThrow(
+  expect(refused([{ allowServicePrincipal: false, jobKey: 'property.registry.archive-job' }])).toThrow(
     /registerSystemWorkload/u,
   );
-  expect(refused([registerSystemWorkload({ jobKey: 'commerce.catalog-job' })])).toThrow(/must belong/u);
+  // The key starts with the module's own id and a dot: another module's key, or one that only shares the root
+  // segment of the id, is refused.
+  for (const jobKey of ['commerce.catalog.archive-job', 'property.registry-job', 'property.other.archive-job']) {
+    expect(refused([registerSystemWorkload({ jobKey })])).toThrow(/must start with property\.registry\./u);
+  }
   expect(refused([registerSystemWorkload({ jobKey: 'property_registry_job' })])).toThrow();
-  expect(refused([registration, registerSystemWorkload({ jobKey: 'property.registry-job' })])).toThrow();
+  expect(refused([registration, registerSystemWorkload({ jobKey: 'property.registry.archive-job' })])).toThrow();
   // Core enrolls only a Principal of kind system for a declared workload.
-  expect(refused([registerSystemWorkload({ allowServicePrincipal: true, jobKey: 'property.registry-job' })])).toThrow(
-    /only a system Principal/u,
-  );
+  expect(
+    refused([registerSystemWorkload({ allowServicePrincipal: true, jobKey: 'property.registry.archive-job' })]),
+  ).toThrow(/only a system Principal/u);
 });
 
 it('declares the internal workloads its own server runs as: once each, in its own namespace, never a system workload', () => {
@@ -836,12 +840,12 @@ it('declares the internal workloads its own server runs as: once each, in its ow
     defineOntosModuleManifest({
       ...emptyManifestInput(),
       internalWorkloads,
-      systemWorkloads: [registerSystemWorkload({ jobKey: 'property.registry-job' })],
+      systemWorkloads: [registerSystemWorkload({ jobKey: 'property.registry.archive-job' })],
     });
   expect(refused(['commerce.catalog-read'])).toThrow(/must belong/u);
   expect(refused(['property_registry_read'])).toThrow();
   expect(refused(['property.registry-read', 'property.registry-read'])).toThrow();
-  expect(refused(['property.registry-job'])).toThrow(/not also be a system workload/u);
+  expect(refused(['property.registry.archive-job'])).toThrow(/not also be a system workload/u);
 });
 
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
