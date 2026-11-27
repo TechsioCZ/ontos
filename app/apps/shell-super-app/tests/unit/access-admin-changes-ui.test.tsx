@@ -15,6 +15,7 @@ import { changeItemView, liveChangesClient } from '../../src/routes/access-admin
 import { loadChangesPageModel } from '../../src/routes/[lang]/access/changes/changes-page-model.ts';
 import { routeMeta } from '../../src/routes/[lang]/access/changes/route.meta.ts';
 import type { AuthenticatedHomePageModel } from '../../src/routes/[lang]/home-page-model.ts';
+import { businessShellTheme } from '../../src/routes/tenant-theme.ts';
 import { ChangesClientFailure } from '../../src/routes/access-admin/changes/changes-client.ts';
 import type { ChangesClient } from '../../src/routes/access-admin/changes/changes-client.ts';
 import { ChangeRoleDiff } from '../../src/routes/access-admin/changes/changes-diff.tsx';
@@ -484,6 +485,7 @@ const tenantShell: AuthenticatedHomePageModel = {
   navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
   state: 'authenticated',
   tenants: { items: [], state: 'available' },
+  theme: businessShellTheme,
 };
 
 it.effect('loads tenant administration without requiring a selected company', () =>

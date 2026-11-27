@@ -1192,6 +1192,8 @@ export const ShellDocumentContextSchema = Schema.Struct({
   /** Present when the tenant-context switcher check could not answer; `legalEntities` then says "not available". */
   tenantContextUnavailable: Schema.optionalKey(Schema.Literal(true)),
   tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
+  /** The signed-in tenant's effective theme; absent for a signed-out document or when it could not be read. */
+  theme: Schema.optionalKey(TenantThemeResponseSchema),
 });
 export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
 /** A byte upload that did not state its exact Content-Length: no body is read for it. */

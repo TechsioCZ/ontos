@@ -22,6 +22,7 @@ import type {
   ShellSearchResult,
 } from '../../../../shared/browser-api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
 import type { SearchFilterPlan, SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
 import { shellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
@@ -122,6 +123,7 @@ const authenticatedShell = (): HomePageModel => ({
     items: [{ name: 'Alpha tenant', tenantId }],
     state: 'available',
   },
+  theme: businessShellTheme,
 });
 
 /** A generic owner hit as the Shell receives it, scoped to the trusted selected company. */

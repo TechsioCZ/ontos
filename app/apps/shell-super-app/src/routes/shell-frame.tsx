@@ -15,6 +15,7 @@ import { useDocumentTitle } from '@app/admin-ui';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
+import { useAppTheme } from '@techsio/ui-kit/theme/theme-provider';
 import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import { Effect, Schema } from 'effect';
@@ -24,7 +25,6 @@ import type { Atom } from 'effect/reactivity';
 import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
-import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import { AccessAdministrationPageSchema } from '../../shared/access-admin-api.ts';
@@ -645,6 +645,40 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => (
   </div>
 );
 
+const ModeSettingSchema = Schema.Literals(['light', 'dark', 'system']);
+const isModeSetting = Schema.is(ModeSettingSchema);
+
+/** The light/dark switch, offered only when the tenant's theme ships both modes. */
+const DashboardAppearance = () => {
+  const { t } = useModernI18n();
+  const { availableModes, mode, mounted, setMode } = useAppTheme();
+  if (availableModes.length < 2) {
+    return null;
+  }
+  const items: MenuItem[] = availableModes.map((value) => ({
+    checked: mounted && value === mode,
+    label: t(`shell.dashboard.appearance.${value}`),
+    name: 'appearance',
+    type: 'radio',
+    value,
+  }));
+  return (
+    <Header.ActionItem>
+      <Menu
+        aria-label={t('shell.dashboard.appearance.label')}
+        items={items}
+        onSelect={({ value }) => {
+          if (isModeSetting(value)) {
+            setMode(value);
+          }
+        }}
+        size="sm"
+        triggerText={t('shell.dashboard.appearance.label')}
+      />
+    </Header.ActionItem>
+  );
+};
+
 const DashboardAccountMenu = ({
   identity,
   logoutPending,
@@ -1157,10 +1191,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
 
   return (
     <StaffRoutePreloadContext value={preload}>
-      {/* The selected workspace's theme wins over the neutral one of the document layout. The `light` class is repeated
-          here because the shell's own calm admin tokens are keyed on `:root.light[data-theme]`; the frame must keep the
-          tokens working even when it is the only head source left after a route or layout transition. */}
-      <Helmet htmlAttributes={staffDocumentTheme(props.currentTenantId, props.currentLegalEntityId)}>
+      <Helmet>
         <title>{`${recordTitle ?? frameTitle(props.title, model, t)} | OntOS`}</title>
       </Helmet>
       {props.compositionRevision === undefined ? null : (
@@ -1212,6 +1243,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                   </HeaderButtonTooltip>
                 </Header.ActionItem>
               )}
+              <DashboardAppearance />
               <Header.ActionItem data-hydrated={hydrated}>
                 <DashboardAccountMenu
                   identity={props.identity}

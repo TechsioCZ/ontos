@@ -5,6 +5,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { RouterContextProvider } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AppThemeProvider } from '@techsio/ui-kit/theme/theme-provider';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
@@ -16,7 +17,7 @@ import { resetSessionScope } from '../../src/routes/session-scope.ts';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout, buildShellNavigation, shellSearchScopeKey } from '../../src/routes/shell-frame';
-import { staffThemeFor } from '../../src/routes/staff-brand';
+import { businessShellTheme } from '../../src/routes/tenant-theme.ts';
 import { ShellI18n, shellTestCopy } from '../support/shell-i18n.tsx';
 import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 import type { ShellRouter } from '../support/shell-router.tsx';
@@ -64,10 +65,14 @@ const copy = shellTestCopy('en', {
   'shell.modules.discovery.unavailable': 'Module deployment unavailable',
   'shell.profile.menu': 'Profile',
 });
-/** The Shell's real i18n context over this file's English copy, under the router the dashboard frame reads. */
+/**
+ * The Shell's real i18n context over this file's English copy, in the theme the Shell layout provides, under the router
+ * the dashboard frame reads. */
 const ShellContext = ({ children, router }: { readonly children: ReactNode; readonly router: ShellRouter }) => (
   <ShellI18n translations={copy}>
-    <RouterContextProvider router={router}>{children}</RouterContextProvider>
+    <AppThemeProvider brand={businessShellTheme.brand.key} brands={[businessShellTheme.brand]}>
+      <RouterContextProvider router={router}>{children}</RouterContextProvider>
+    </AppThemeProvider>
   </ShellI18n>
 );
 /**
@@ -81,9 +86,14 @@ const renderCopy = (ui: Parameters<typeof render>[0]) => {
   );
   return { ...render(ui, { wrapper: DashboardContext }), router };
 };
+/** The text a person perceives in the document body: everything but the theme's pre-paint script. */
+const perceivableBodyText = () => {
+  const scripts = [...document.body.querySelectorAll('script')].map((script) => script.textContent).join('');
+  return document.body.textContent?.replace(scripts, '').trim();
+};
 /** Puts the test document on the page the dashboard is rendered for, as the browser would be. */
 const visit = (path: string) => window.history.replaceState(null, '', path);
-/** The theme the document's html element wears once the head manager applied every mounted head. */
+/** The theme the theme provider put on the document's html element. */
 const documentTheme = () =>
   Effect.promise(() =>
     waitFor(() => {
@@ -171,56 +181,12 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it.effect('selects the neutral light ui-kit theme on the server-rendered html element', () =>
-  Effect.gen(function* neutralTheme() {
+it.effect('renders a page without a session in the light Business theme', () =>
+  Effect.gen(function* businessTheme() {
     yield* renderLayout();
     yield* Effect.promise(() => screen.findByRole('main'));
 
     expect(yield* documentTheme()).toBe('business');
-  }),
-);
-
-const akrosPlaygroundTenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
-const akrosCompanyId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
-const demoTenantId = '70000000-0000-4000-8000-000000000020';
-const demoShopCompanyId = '71000000-0000-4000-8000-000000000024';
-
-test('wears the AKROS theme only for the real AKROS company or its own tenant workspace', () => {
-  expect(staffThemeFor(akrosPlaygroundTenantId)).toBe('akros');
-  expect(staffThemeFor(akrosPlaygroundTenantId, akrosCompanyId)).toBe('akros');
-  // Only the trusted tenant+company pair is branded: a missing or different tenant must not paint AKROS.
-  expect(staffThemeFor(undefined, akrosCompanyId)).toBe('business');
-  expect(staffThemeFor(demoTenantId, akrosCompanyId)).toBe('business');
-  // Another company inside the AKROS tenant never inherits the tenant brand.
-  expect(staffThemeFor(akrosPlaygroundTenantId, demoShopCompanyId)).toBe('business');
-  expect(staffThemeFor(demoTenantId, demoShopCompanyId)).toBe('business');
-  expect(staffThemeFor(demoTenantId)).toBe('business');
-  expect(staffThemeFor(akrosPlaygroundTenantId, 'company-without-brand')).toBe('business');
-  expect(staffThemeFor('tenant-without-brand')).toBe('business');
-});
-
-it.effect.each([
-  { legalEntityId: akrosCompanyId, tenantId: akrosPlaygroundTenantId, theme: 'akros' },
-  { legalEntityId: demoShopCompanyId, tenantId: demoTenantId, theme: 'business' },
-])('sets the $theme theme on the html element of the $tenantId dashboard', ({ legalEntityId, tenantId, theme }) =>
-  Effect.gen(function* dashboardTheme() {
-    renderCopy(
-      <AuthenticatedDashboardLayout
-        {...tenantProps}
-        currentLegalEntityId={legalEntityId}
-        currentTenantId={tenantId}
-        identity={identity}
-        logoutPending={false}
-        navigation={navigation}
-        onLogout={noopLogout}
-      >
-        <section>Page-specific content</section>
-      </AuthenticatedDashboardLayout>,
-    );
-
-    // The frame repeats the `light` class the shell's calm admin tokens are keyed on.
-    yield* Effect.promise(() => waitFor(() => expect(document.documentElement.dataset['theme']).toBe(theme)));
-    expect(yield* documentTheme()).toBe(theme);
   }),
 );
 
@@ -230,7 +196,7 @@ it.effect('leaves route content free of global user-perceivable UI', () =>
 
     expect((yield* Effect.promise(() => screen.findByRole('main'))).textContent).toBe('Current route');
     expect(screen.queryByRole('region')).toBeNull();
-    expect(document.body.textContent?.trim()).toBe('Current route');
+    expect(perceivableBodyText()).toBe('Current route');
   }),
 );
 
