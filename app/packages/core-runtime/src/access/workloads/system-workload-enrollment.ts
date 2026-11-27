@@ -207,7 +207,7 @@ const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'iden
  * Serializes every enrollment change of one Tenant, and each with that Tenant's module state changes, which lock the
  * same row for update. It does not block a write that only references the Tenant. Requires the Tenant to be active.
  */
-export const lockActiveTenantForEnrollment = (
+const lockActiveTenantForEnrollment = (
   transaction: ScopedTransactionExecutor,
 ): Effect.Effect<void, IdentityPersistenceUnavailableError | IdentityTargetInvalidError> =>
   transaction
@@ -225,7 +225,7 @@ export const lockActiveTenantForEnrollment = (
     );
 
 /** The modules active for the Tenant: a module is active only while its stored state is `active`. */
-export const readActiveTenantModuleKeys = (
+const readActiveTenantModuleKeys = (
   transaction: ScopedTransactionExecutor,
 ): Effect.Effect<ReadonlySet<string>, IdentityPersistenceUnavailableError> =>
   transaction
@@ -241,7 +241,7 @@ export const readActiveTenantModuleKeys = (
  * The Tenant's system Principals that are not archived and hold an active binding of the workload; two are enough to
  * refuse. A disabled one still holds the enrollment, so an enrollment never creates a second beside it.
  */
-export const readSystemWorkloadEnrollmentHolders = (
+const readSystemWorkloadEnrollmentHolders = (
   transaction: ScopedTransactionExecutor,
   workloadKey: string,
 ): Effect.Effect<readonly SystemWorkloadEnrollmentHolder[], IdentityPersistenceUnavailableError> =>
@@ -283,7 +283,7 @@ export interface SystemWorkloadBinding {
 }
 
 /** Every active binding the enrollment's system Principal holds, by workload key. */
-export const readSystemWorkloadPrincipalBindings = (
+const readSystemWorkloadPrincipalBindings = (
   transaction: ScopedTransactionExecutor,
   principalId: string,
 ): Effect.Effect<readonly SystemWorkloadBinding[], IdentityPersistenceUnavailableError> =>
@@ -301,7 +301,7 @@ export const readSystemWorkloadPrincipalBindings = (
     .pipe(Effect.mapError(enrollmentUnavailable));
 
 /** Core's only writer of a Principal of kind `system`: one per enrollment, named after its workload. */
-export const insertSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.insertSystemWorkloadPrincipal')(
+const insertSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.insertSystemWorkloadPrincipal')(
   function* insertSystemWorkloadPrincipal(transaction: ScopedTransactionExecutor, workloadKey: string) {
     const [created] = yield* transaction
       .insert(principals)
@@ -363,7 +363,7 @@ export const bindSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.b
 );
 
 /** Revokes every active binding the enrollment's system Principal holds and names each one. */
-export const revokeSystemWorkloadPrincipalBindings = Effect.fn(
+const revokeSystemWorkloadPrincipalBindings = Effect.fn(
   'SystemWorkloadEnrollment.revokeSystemWorkloadPrincipalBindings',
 )(function* revokeSystemWorkloadPrincipalBindings(transaction: ScopedTransactionExecutor, principalId: string) {
   const revoked: readonly SystemWorkloadBinding[] = yield* transaction
@@ -385,7 +385,7 @@ export const revokeSystemWorkloadPrincipalBindings = Effect.fn(
  * Archives the ended enrollment's system Principal, active or disabled. Archived is final in Core's Principal
  * lifecycle, so a later enrollment creates a new Principal and this one never holds a workload again.
  */
-export const archiveSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.archiveSystemWorkloadPrincipal')(
+const archiveSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.archiveSystemWorkloadPrincipal')(
   function* archiveSystemWorkloadPrincipal(transaction: ScopedTransactionExecutor, principalId: string) {
     const [archived] = yield* transaction
       .update(principals)
@@ -409,3 +409,20 @@ export const archiveSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollmen
     return yield* Effect.void;
   },
 );
+
+/**
+ * What an enrollment change reads and writes, each operation closed over the one transaction it is made for: the
+ * Action's handler is given these and never the executor.
+ */
+export const systemWorkloadEnrollmentRepositoryFromTransaction = (transaction: ScopedTransactionExecutor) =>
+  Object.freeze({
+    archivePrincipal: (principalId: string) => archiveSystemWorkloadPrincipal(transaction, principalId),
+    bindPrincipal: (principalId: string, bindings: readonly NewSystemWorkloadBinding[]) =>
+      bindSystemWorkloadPrincipal(transaction, principalId, bindings),
+    insertPrincipal: (workloadKey: string) => insertSystemWorkloadPrincipal(transaction, workloadKey),
+    lockActiveTenant: () => lockActiveTenantForEnrollment(transaction),
+    readActiveModuleKeys: () => readActiveTenantModuleKeys(transaction),
+    readHolders: (workloadKey: string) => readSystemWorkloadEnrollmentHolders(transaction, workloadKey),
+    readPrincipalBindings: (principalId: string) => readSystemWorkloadPrincipalBindings(transaction, principalId),
+    revokePrincipalBindings: (principalId: string) => revokeSystemWorkloadPrincipalBindings(transaction, principalId),
+  });
