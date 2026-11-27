@@ -17,6 +17,7 @@ interface QuoteLineIssue {
   variantId?: string;
   code: string;
   message: string;
+  belowPackage?: { stockOnHand: number; firstOrderableQuantity: number; unit: string };
 }
 interface QuoteTotals {
   totalMinor: number;

@@ -21,12 +21,23 @@ import { useDictionary, useMoney } from "@/ontos/market-context";
 import type { Dictionary } from "@/i18n";
 import { stockStatusLabel } from "@/lib/product-stock";
 
+type QuoteLineIssueBelowPackage = {
+  stockOnHand: number;
+  firstOrderableQuantity: number;
+  unit: string;
+};
+
 /** A blocked line in the shop's stock words where the issue is a stock state, else the issue's own short name. */
-const blockedLabel = (cs: Dictionary, code: string) =>
+const blockedLabel = (
+  cs: Dictionary,
+  { code, belowPackage }: { code: string; belowPackage?: QuoteLineIssueBelowPackage },
+) =>
   code === "AVAILABILITY_UNKNOWN"
     ? stockStatusLabel(cs, "unknown")
     : code === "OUT_OF_STOCK"
-      ? stockStatusLabel(cs, "out-of-stock")
+      ? belowPackage === undefined
+        ? stockStatusLabel(cs, "out-of-stock")
+        : stockStatusLabel(cs, "below-package", belowPackage, belowPackage.unit)
       : code in cs.cart.issue
         ? cs.cart.issue[code as keyof Dictionary["cart"]["issue"]]
         : cs.cart.lineState.blocked;
@@ -55,7 +66,7 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
         data-sf-line-state="blocked"
         title={issue.message}
       >
-        {blockedLabel(cs, issue.code)}
+        {blockedLabel(cs, issue)}
       </span>
     );
   return (

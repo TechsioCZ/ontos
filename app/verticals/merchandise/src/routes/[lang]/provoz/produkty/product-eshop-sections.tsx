@@ -75,7 +75,7 @@ export const PublicationSection = ({ canWrite, form, onFormChange, takenSlug }: 
           name="stockTracked"
           onCheckedChange={(checked: boolean) => onFormChange({ stockTracked: checked })}
         >
-          Sklad je evidovaný (vypnuto = zákazník uvidí „dostupnost nyní nelze ověřit“ a nemůže objednat)
+          Sklad je evidovaný (vypnuto = zákazník uvidí „Dostupnost nelze ověřit“ a nemůže objednat)
         </Switch>
       </div>
     </SectionCard>

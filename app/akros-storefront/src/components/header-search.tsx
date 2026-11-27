@@ -97,8 +97,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   const [searchAttempt, setSearchAttempt] = useState(0);
   // Answers already seen in this page: repeated or backspaced queries show at once.
   const seen = useRef(new Map<string, typeof remote>());
-  // Terms whose answer came before its ERP part was ready: each is asked once more, a second later.
-  const askedAgain = useRef(new Set<string>());
+  // Terms whose answer came before its ERP part was ready: each is asked again a second later, a few times at most.
+  const askedAgain = useRef(new Map<string, number>());
   useEffect(() => {
     if (!ready || idle) return;
     const held = seen.current.get(trimmedQuery);
@@ -139,8 +139,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
           };
           // An answer without its ERP part is shown, never kept: the ERP products fill in when it is asked again.
           if (body.erpPartial !== true) seen.current.set(trimmedQuery, next);
-          else if (!askedAgain.current.has(trimmedQuery)) {
-            askedAgain.current.add(trimmedQuery);
+          else if ((askedAgain.current.get(trimmedQuery) ?? 0) < 5) {
+            askedAgain.current.set(trimmedQuery, (askedAgain.current.get(trimmedQuery) ?? 0) + 1);
             again = window.setTimeout(() => setSearchAttempt((attempt) => attempt + 1), 1_000);
           }
           setRemote(next);

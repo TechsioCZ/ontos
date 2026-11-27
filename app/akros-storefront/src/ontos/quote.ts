@@ -57,6 +57,8 @@ interface QuoteLineIssue {
     | "MARKET_UNAVAILABLE"
     | "OWNER_REJECTED";
   message: string;
+  /** OUT_OF_STOCK held below one first order: the cart line names it as the product page does. */
+  belowPackage?: { stockOnHand: number; firstOrderableQuantity: number; unit: string };
 }
 
 /** Totals computed by OntOS itself (PlaceStorefrontOrder dry run): the browser never recomputes VAT. */
@@ -224,15 +226,21 @@ export async function quoteCart(
           ...ids,
           code: "OUT_OF_STOCK",
           // Stock held below one first order is named, never sold: the product page's words.
-          message:
-            item.belowPackage?.firstOrderableQuantity === undefined
-              ? messages.outOfStock(label)
-              : messages.belowPackage(
+          ...(item.belowPackage?.firstOrderableQuantity === undefined
+            ? { message: messages.outOfStock(label) }
+            : {
+                message: messages.belowPackage(
                   label,
                   item.belowPackage.stockOnHand,
                   item.belowPackage.firstOrderableQuantity,
                   item.unit,
                 ),
+                belowPackage: {
+                  stockOnHand: item.belowPackage.stockOnHand,
+                  firstOrderableQuantity: item.belowPackage.firstOrderableQuantity,
+                  unit: item.unit,
+                },
+              }),
         });
       else if (line.quantity > item.stockCount)
         lineIssues.push({
