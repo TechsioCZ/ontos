@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "checkJs": true,
     "composite": true,
     "customConditions": [
       "node"
@@ -14,10 +15,19 @@
     "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__core-runtime.tsbuildinfo"
   },
+  "files": [
+    "src/environment/workspace-environment-bootstrap.cjs"
+  ],
   "include": [
     "src",
     "scripts",
     "tests",
-    "drizzle.config.ts"
+    "drizzle.config.ts",
+    "*.config.ts"
+  ],
+  "references": [
+    {
+      "path": "../../scripts/ci/tsconfig.rstest-report.json"
+    }
   ]
 }

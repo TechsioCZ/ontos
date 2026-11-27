@@ -70,7 +70,9 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | CI and stage delivery                   | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
-Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
+Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. Run `mise exec -- pnpm typecheck` for the Effect-patched tsrs build. For a single project, use `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project <tsconfig>`. `mise exec -- pnpm lint` runs Oxlint’s type-aware rules on tsrs, then checks Effect diagnostics and UltraModern semantic rules.
+
+The `typescript` dependency in the root and delivery units is not a second typecheck command: the installed `@modern-js/ultramodern-app-tools` declares it as an exact peer, and `rsbuild-plugin-dts` resolves its version from the build project. Fresh UltraModern scaffolds additionally use `@typescript/native/unstable/{ast,sync}` in the generator’s architecture validation. tsrs exposes `tsrs/{ast,sync}`, not those package identities; do not alias the peer or remove the scaffold validation.
 
 ## Private-first routes and public output
 

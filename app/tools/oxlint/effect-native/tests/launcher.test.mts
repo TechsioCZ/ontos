@@ -40,7 +40,7 @@ appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');
           nodePath.dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
           'dist/effect-tsgo.cjs',
         ),
-        '--tsrs-lint',
+        '--tsrs-lint=7.1.0-beta.tsrs3',
         'oxlint',
       ]);
       expect(args?.includes(input)).toBe(true);

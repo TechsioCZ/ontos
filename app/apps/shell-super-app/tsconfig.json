@@ -24,7 +24,11 @@
     "shared",
     "shared/ultramodern-build.json",
     "server",
-    "api"
+    "api",
+    "*.config.ts"
+  ],
+  "files": [
+    "../../topology/reference-topology.json"
   ],
   "references": [
     {
@@ -68,6 +72,12 @@
     },
     {
       "path": "../../verticals/payment"
+    },
+    {
+      "path": "../../tsconfig.federation-shared.json"
+    },
+    {
+      "path": "../../scripts/ci/tsconfig.rstest-report.json"
     }
   ]
 }

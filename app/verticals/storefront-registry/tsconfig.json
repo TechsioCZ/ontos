@@ -20,7 +20,8 @@
     "src",
     "tests",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "*.config.ts"
   ],
   "references": [
     { "path": "../../packages/core-runtime" },

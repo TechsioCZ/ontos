@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "./node_modules/.cache/tsgo/declarations/workspace__federation-shared",
+    "tsBuildInfoFile": "./node_modules/.cache/tsgo/workspace__federation-shared.tsbuildinfo"
+  },
+  "files": ["module-federation.shared.ts"],
+  "references": [{ "path": "./packages/core-runtime" }]
+}

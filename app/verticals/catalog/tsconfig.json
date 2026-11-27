@@ -20,7 +20,8 @@
     "api",
     "vertical.manifest.ts",
     "vertical.registration.ts",
-    "vertical.runtime-declaration.ts"
+    "vertical.runtime-declaration.ts",
+    "*.config.ts"
   ],
   "references": [
     {

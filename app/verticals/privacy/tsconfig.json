@@ -31,7 +31,8 @@
     "tests/support/organization-business-source-native.ts",
     "tests/support/organization-business-profile-native.ts",
     "tests/support/organization-business-party-native.ts",
-    "tests/support/measure-execution-native.ts"
+    "tests/support/measure-execution-native.ts",
+    "*.config.ts"
   ],
   "references": [
     {
@@ -45,6 +46,12 @@
     },
     {
       "path": "../../packages/party-registry-contracts"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
+    },
+    {
+      "path": "../../tsconfig.federation-shared.json"
     },
     {
       "path": "../../packages/privacy-contracts"

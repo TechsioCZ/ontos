@@ -12,8 +12,7 @@ export const oxlintEntryPoint = join(
   dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
   'bin/oxlint',
 );
-// Rule fixtures run Oxlint through `effect-tsgo --tsrs-lint`: each fixture workspace is one small program, so tsrs'
-// whole-program type-check scope is exactly the listed files. Production lint uses Effect's tsgolint (package.json).
+// Exercise the same Effect-patched tsrs backend and version as the hook and production lint.
 const effectTsgoEntryPoint = join(
   dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
   'dist/effect-tsgo.cjs',
@@ -99,7 +98,7 @@ export function runOxlint(configPath: string, paths: readonly string[], cwd: str
     process.execPath,
     [
       effectTsgoEntryPoint,
-      '--tsrs-lint',
+      '--tsrs-lint=7.1.0-beta.tsrs3',
       'oxlint',
       '-c',
       configPath,

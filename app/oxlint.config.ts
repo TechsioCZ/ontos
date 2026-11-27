@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 
+import { semanticLintOxlintRules } from '@modern-js/ultramodern-create/semantic-lint';
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -46,7 +47,18 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
   'effect-native/no-async-script-program': 'error',
-  'effect-native/no-bare-effect-run': 'error',
+  'effect-native/no-bare-effect-run': [
+    'error',
+    {
+      adapterFiles: [
+        'apps/*/api/index.ts',
+        'verticals/*/api/index.ts',
+        'packages/core-runtime/src/outbox/process.ts',
+        // Modern's native development middleware is a Connect-to-Effect adapter.
+        'packages/shared-contracts/tooling/modern-config.ts',
+      ],
+    },
+  ],
   'effect-native/no-console-in-scripts': 'error',
   'effect-native/no-dependency-parameters': 'error',
   'effect-native/no-direct-node-io-in-scripts': 'error',
@@ -70,6 +82,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
+        // The development-server adapter owns its Node FileSystem layer.
+        'packages/shared-contracts/tooling/modern-config.ts',
         'packages/core-runtime/src/db/client.ts',
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
@@ -108,6 +122,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       seamPaths: [
         '**/http-error-seam.ts',
         '**/http-error-seam.tsx',
+        // Forward the development middleware's native Effect exit to Connect's error handler.
+        'packages/shared-contracts/tooling/modern-config.ts',
         // CCC ingress transaction settlement: only native SqlError becomes typed unavailability;
         // every unrelated defect and caller interruption remains unchanged (#1231, approved boundary).
         'verticals/commerce-customer-context/src/auth/gateway-assertion-redemption-runtime.ts',
@@ -1373,12 +1389,26 @@ export default defineConfig({
     'import/export': 'error',
     'import/no-namespace': ['error', { ignore: ['effect/*'] }],
     'no-console': 'error',
+    // Sonar also rejects nesting through call arguments and template expressions.
+    'no-nested-ternary': 'off',
+    'sonarjs/no-nested-conditional': 'error',
     'perfectionist/sort-enums': ['error', { partitionByComment: true, sortByValue: 'always' }],
     'perfectionist/sort-heritage-clauses': 'error',
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
     'perfectionist/sort-object-types': 'error',
-    'perfectionist/sort-objects': ['error', { partitionByComment: true }],
+    // Ultracite groups shorthand members at an edge in mixed literals. Perfectionist 5 has no
+    // shorthand member selector, so alphabetical order owns patterns and homogeneous literals.
+    'perfectionist/sort-objects': [
+      'error',
+      {
+        type: 'unsorted',
+        useConfigurationIf: {
+          matchesAstSelector: 'ObjectExpression:has(> Property[shorthand=true]):has(> Property[shorthand=false])',
+        },
+      },
+      { partitionByComment: true },
+    ],
     'react/no-unknown-property': 'error',
     // The base rule conflicts with the type-aware promise-function-async rule:
     // removing `async` immediately recreates the type-aware diagnostic.
@@ -1392,7 +1422,6 @@ export default defineConfig({
     // Keep one authoritative rule for each concern instead of emitting duplicate diagnostics.
     'sonarjs/cognitive-complexity': 'off',
     'sonarjs/expression-complexity': 'off',
-    'sonarjs/no-nested-conditional': 'off',
     'sonarjs/no-redundant-jump': 'off',
     'sonarjs/no-unused-vars': 'off',
     'typescript/no-require-imports': ['error', { allow: [String.raw`/package\.json$`] }],
@@ -1410,6 +1439,7 @@ export default defineConfig({
     ...antiSlopRules,
     ...antiSlopEffectRules,
     ...effectNativeRules,
+    ...semanticLintOxlintRules,
     ...uiKitRules,
   },
   settings: jsPluginSettings,

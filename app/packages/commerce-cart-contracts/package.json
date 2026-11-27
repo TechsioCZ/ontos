@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.7",
+    "effect": "4.1.4",
     "@app/catalog-selection-contracts": "workspace:*"
   },
   "ontosContractOwner": {

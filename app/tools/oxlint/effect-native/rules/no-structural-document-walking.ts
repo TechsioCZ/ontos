@@ -519,13 +519,14 @@ export const rule = defineRule({
         {},
         (current) => {
           if (current !== fn && ['FunctionDeclaration', 'FunctionExpression'].includes(current.type)) return false;
-          if (current.type !== 'CallExpression') return;
+          if (current.type !== 'CallExpression') return true;
           const callee = unwrap(current.callee);
           if (callee.type === 'Identifier' && resolveVariable(context, callee.name, callee) === binding)
             recursive = true;
           if (['values', 'entries', 'keys'].some((method) => isGlobalMethod(callee, 'Object', method)))
             genericKeys = true;
           if (isGlobalMethod(callee, 'Array', 'isArray')) array = true;
+          return true;
         },
         false,
       );

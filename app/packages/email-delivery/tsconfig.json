@@ -12,5 +12,5 @@
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__email-delivery.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "*.config.ts"]
 }

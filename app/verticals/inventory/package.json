@@ -85,9 +85,9 @@
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@effect/opentelemetry": "4.0.7",
-    "@effect/platform-node": "4.0.7",
-    "@effect/sql-pg": "4.0.7",
+    "@effect/opentelemetry": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/effect-opentelemetry-4.1.4.tgz",
+    "@effect/platform-node": "4.1.4",
+    "@effect/sql-pg": "4.1.4",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -97,38 +97,39 @@
     "@modern-js/plugin-i18n": "catalog:ultramodern",
     "@modern-js/plugin-tanstack": "catalog:ultramodern",
     "@modern-js/runtime": "catalog:ultramodern",
-    "@modern-js/runtime-extensions": "catalog:ultramodern",
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
-    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
-    "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
+    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.6",
+    "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.5",
     "@noble/hashes": "2.2.0",
-    "@tanstack/react-router": "1.170.39",
+    "@tanstack/react-router": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/tanstack-react-router-1.170.46.tgz",
+    "@tanstack/router-core": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/tanstack-router-core-1.171.39.tgz",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.7",
+    "effect": "4.1.4",
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.69.0",
+    "@effect/tsgo": "0.73.2",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
-    "@rstest/core": "0.12.6",
+    "@rstest/core": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/rstest-core-0.12.6.tgz",
+    "@tanstack/router-core": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/tanstack-router-core-1.171.39.tgz",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@typescript/native": "npm:typescript@7.0.2",
     "cross-env": "10.1.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "1.0.0",
+    "rsbuild-plugin-dts": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/rsbuild-plugin-dts-1.0.7.tgz",
+    "tsrs": "7.1.0-beta.tsrs3",
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
-    "zephyr-rspack-plugin": "1.2.4",
-    "tsrs": "0.25.0-ts7.1.0-beta"
+    "zephyr-rspack-plugin": "1.2.4"
   },
   "modernjs": {
     "preset": "presetUltramodern",
@@ -142,7 +143,196 @@
       "moduleId": "commerce.inventory",
       "registration": "./vertical.registration.ts",
       "schemaVersion": 2
+    },
+    "backendFederation": {
+      "containerMinify": "whitespace-syntax"
     }
   },
-  "zephyr:dependencies": {}
+  "zephyr:dependencies": {},
+  "ultramodern": {
+    "supportArtifacts": {
+      "manifest": {
+        "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/support-artifacts.json",
+        "integrity": "sha512-SSimDkN7jOUvBPM849NG4NrqitzkIvduLdAbQOwCUC0YEHZ6nd1suwCgk4iyMg53Q9bVbrM9uBP7Afr0C60oug=="
+      },
+      "packages": {
+        "@rstest/core": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/rstest-core-0.12.6.tgz",
+          "version": "0.12.6",
+          "upstream": {
+            "kind": "authenticated-npm-source",
+            "request": "https://registry.npmjs.org/@rstest/core/-/core-0.12.6.tgz",
+            "integrity": "sha512-pOOij4Gj7h9fOJiRhcQ7zmVK+l3wSINpocwlsgq34ri60UOl9FACf5qyu7LMS2A3P4feqPdKmwS7QAT3vPk5ww==",
+            "archiveRoot": "package",
+            "licensePath": "LICENSE.md",
+            "licenseSha256": "7c7a74e7c463c4e747bd5c2de625beb088c55a42d58169b3fdb703691f03df55",
+            "sourceArchiveIntegrity": "sha512-pOOij4Gj7h9fOJiRhcQ7zmVK+l3wSINpocwlsgq34ri60UOl9FACf5qyu7LMS2A3P4feqPdKmwS7QAT3vPk5ww=="
+          },
+          "integrity": "sha512-eNAi0XHVaK4xszz622KgNCem2JMBLEyET6owEqzqeTIFlfoNH0ENpkAx+FYWklykfTG0bA22IHYGPPgzkuhdGA==",
+          "patchSha256": "9128c18e017b2dfaa4f92adeb799964b628302d4add5240b244edb31c8d6bacd"
+        },
+        "ioredis-mock": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/ioredis-mock-8.13.1.tgz",
+          "version": "8.13.1",
+          "upstream": {
+            "kind": "authenticated-npm-source",
+            "request": "https://registry.npmjs.org/ioredis-mock/-/ioredis-mock-8.13.1.tgz",
+            "integrity": "sha512-Wsi50AU+cMiI32nAgfwpUaJVBtb4iQdVsOHl9M6R3tePCO/8vGsToCVIG82XWAxN4Se55TZoOzVseu+QngFLyw==",
+            "archiveRoot": "package",
+            "licensePath": "LICENSE",
+            "licenseSha256": "62b9f69bb4ccf131e7e4cc8ce6ec5b4acf3d9848f0ac73c3c2f285d716ff1b5c",
+            "sourceArchiveIntegrity": "sha512-Wsi50AU+cMiI32nAgfwpUaJVBtb4iQdVsOHl9M6R3tePCO/8vGsToCVIG82XWAxN4Se55TZoOzVseu+QngFLyw=="
+          },
+          "integrity": "sha512-PxNq8ZR0ERihJ8Q0zilv2scRisnrfftBD+Kwn2H8Ph3Vc39nDadJufLaGmgBghTkUoHCkONZCKsgQQo0l68a5A==",
+          "patchSha256": "d3648d6077fc2ed2ce8e9de3cca0abbe49160abf882a9ec2c4e7d6e4bdc171f6"
+        },
+        "rsbuild-plugin-dts": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/rsbuild-plugin-dts-1.0.7.tgz",
+          "version": "1.0.7",
+          "upstream": {
+            "kind": "authenticated-npm-source",
+            "request": "https://registry.npmjs.org/rsbuild-plugin-dts/-/rsbuild-plugin-dts-1.0.7.tgz",
+            "integrity": "sha512-r9+bGoY0EmOB5Jisxd7qFQNTTcMTtB0Ke0oDZDYEEAvrpzTCvjWH2UtsscUnOwyPeUauXR2fBME+Vny8aVD66w==",
+            "archiveRoot": "package",
+            "licensePath": "LICENSE",
+            "licenseSha256": "9d26ef3ec511840e10eeaaf1e1b211e196c838823baf6bf9033761f27ab349ce",
+            "sourceArchiveIntegrity": "sha512-r9+bGoY0EmOB5Jisxd7qFQNTTcMTtB0Ke0oDZDYEEAvrpzTCvjWH2UtsscUnOwyPeUauXR2fBME+Vny8aVD66w=="
+          },
+          "integrity": "sha512-iVDi8+9rd2rcU1M+VBnVeLp8xHw6dg6Lb7MNqU4AhzcxkA0qqlj9tYUOS30RPXcOPv4FOssjW0aeOZvL7LvWXA==",
+          "patchSha256": "bd0c8f1b4c4681eeb0d1ea0123c252ad41b17f01be1ca171bd8c42ca2d652e44"
+        },
+        "@types/ioredis-mock": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/types-ioredis-mock-8.2.8.tgz",
+          "version": "8.2.8",
+          "upstream": {
+            "kind": "authenticated-npm-source",
+            "request": "https://registry.npmjs.org/@types/ioredis-mock/-/ioredis-mock-8.2.8.tgz",
+            "integrity": "sha512-Nxr1CXk8NtGVzWQ8WoGCOyo+HARd4CFc/Nt2+ITt3WWLNlj1InW38SzZwOJNqzA38iplrpBFp6Ny4KjPfeI+bA==",
+            "archiveRoot": "ioredis-mock",
+            "licensePath": "LICENSE",
+            "licenseSha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+            "sourceArchiveIntegrity": "sha512-Nxr1CXk8NtGVzWQ8WoGCOyo+HARd4CFc/Nt2+ITt3WWLNlj1InW38SzZwOJNqzA38iplrpBFp6Ny4KjPfeI+bA=="
+          },
+          "integrity": "sha512-dvblb9YJYPaDWkHdAFsOrS48uQbUzQtKYc/FRRoIPlpCWFVQOWoLJo6Nt6niZemoWQEFq+do6OnqXwPhKwbQqQ==",
+          "patchSha256": "9e5c9ac3e6082364a423e8f997433022986336b213b07f7ab683e0336a1eb0d0"
+        },
+        "@effect/opentelemetry": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/effect-opentelemetry-4.1.4.tgz",
+          "version": "4.1.4",
+          "upstream": {
+            "kind": "authenticated-npm-source",
+            "request": "https://registry.npmjs.org/@effect/opentelemetry/-/opentelemetry-4.1.4.tgz",
+            "integrity": "sha512-VJnookNrIWk0ZHl51DYMTRHXZrogR13kSSOJzcDxGhyUNDHvgWg217OY4R6bOrtdgM3mrPQiLRGNZ0a7bGyAJg==",
+            "archiveRoot": "package",
+            "licensePath": "LICENSE",
+            "licenseSha256": "774c3bc5924ad8ae6c5a75f1c53db13feb238ade15989625c513d07b60dedf30",
+            "sourceArchiveIntegrity": "sha512-VJnookNrIWk0ZHl51DYMTRHXZrogR13kSSOJzcDxGhyUNDHvgWg217OY4R6bOrtdgM3mrPQiLRGNZ0a7bGyAJg=="
+          },
+          "integrity": "sha512-PR6ZoYhufvmTJCTRgtEDhlJimW9sm9sPv2Fw42nLAzPJRK1v8KnfkCQVR5GocrwdR39JzS45pygUKdY/gfy5Aw==",
+          "patchSha256": "41d00660534734d73420fe8f6ca1c8df6689445babba3adea61a417d3a20b804"
+        },
+        "@tanstack/react-router": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1/tanstack-react-router-1.170.46.tgz",
+          "version": "1.170.46",
+          "upstream": {
+            "kind": "git-source",
+            "commit": "6b9fe6d29552270836c511bc9b343d73541f4424",
+            "request": "https://registry.npmjs.org/@tanstack/react-router/-/react-router-1.170.46.tgz",
+            "integrity": "sha512-ez1iNIhsPjGlaDHg3BXWs67EWVIYzB2tbopEHYDESdkO7owgkGb5de52+5Kv2v1fxdkggcNzo35bdk4arTVGQw==",
+            "repository": "TanStack/router",
+            "archiveRoot": "package",
+            "licensePath": "LICENSE",
+            "licenseSha256": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7",
+            "sourceArchiveIntegrity": "sha512-Ng/f9xHhLhmtYZL4/yy29bn1RA5kkAp5lnW4pWj1MNp9+HrtIdLGCsVb9jdkwt/0AJDys97c7QL67qymftHkzA=="
+          },
+          "integrity": "sha512-BsG4WmzfgPUgboR/IdQBGkvQauDMAAXUcorqritojyWv8tjIZaJh1aLvDOZ8ryLUsd4ZEQlEoTpMLFm9lkVyrg==",
+          "patchSha256": "186e54be20a0d481731091924921ec409a15968fa13de5bfc3888a0ddbaf18d9"
+        }
+      },
+      "producer": {
+        "tag": "support-artifacts-bea0d22f405070b9beccba0cf6f1a7b3d5767784-44174451205-1",
+        "runId": 44174451205,
+        "source": "bea0d22f405070b9beccba0cf6f1a7b3d5767784",
+        "workflow": ".github/workflows/support-artifacts.yml",
+        "repository": "ultramodernjs/ultramodern.js",
+        "runAttempt": 1,
+        "repositoryId": 1151231350
+      },
+      "protocol": "ultramodern.support-artifacts.v4"
+    },
+    "nativeArtifacts": {
+      "manifest": {
+        "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/native-artifacts.json",
+        "integrity": "sha512-M5b9CEg7L+AzuL1IQbhmWtHTGDpc1h31U69GCCH/BrIZmL1h6oNVMkDtbwEX+XZG4qYjbE5jPY+3U2lPWi+saQ=="
+      },
+      "packages": {
+        "octane": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/octane-0.20.0.tgz",
+          "version": "0.20.0",
+          "upstream": {
+            "commit": "1cdd9d2027bef63e6cec601952795e9ed84e1344",
+            "request": "https://registry.npmjs.org/octane/-/octane-0.20.0.tgz",
+            "integrity": "sha512-a69zurcQrUce2BbS+yYt0+qF3UzpM4gFriK4DA274FY23dzuvuMUbHM+uYZHhgmaNsLbPAOmnnsKSRJHvIC1gg==",
+            "repository": "octanejs/octane",
+            "licenseSha256": "fe9a7b24f2d1540df1a4d273ba9b4b081844ecd1142839def5b7f242a13203b8",
+            "sourceArchiveIntegrity": "sha512-f5Eco2XWSLcSn4WkMCdmYZrESS7/FrWxCMzREEKrSMWqFN9Z0L6o/8zYb/PbxOiMjH8Jb7j/EvO6O1fkzRlNJA=="
+          },
+          "integrity": "sha512-O4Fmzb07Roo8t/ChG1OMUyEqhplgxCM4aWdj70aySQrsuPIb5dZGreOdu6PvllH8Y5d8GM3ZYDtpmoJOS2GYhA==",
+          "patchSha256": "b8130841d8fbda74f63395fce4b0f7a32d6b78bee600b4e8896f8f3152718512"
+        },
+        "@tanstack/router-core": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/tanstack-router-core-1.171.39.tgz",
+          "version": "1.171.39",
+          "upstream": {
+            "commit": "6b9fe6d29552270836c511bc9b343d73541f4424",
+            "request": "https://registry.npmjs.org/@tanstack/router-core/-/router-core-1.171.39.tgz",
+            "integrity": "sha512-qUhoJ0meuSUqGYQbHbcJYdASr06YtK+bulbj6vtrhKYFkLgkSsZ6tXmMyym7sFxiSJSPYgasgozrL01LyyR/6A==",
+            "repository": "TanStack/router",
+            "licenseSha256": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7",
+            "sourceArchiveIntegrity": "sha512-2kt6Ugd5Dbc8kNtlUk6R7xo3u+kqgO/N+4VH30wUUvs3p4mpQwj0AhYJXMv/zqZ3wNZAuYzwEA+GmNz5yNQMmA=="
+          },
+          "integrity": "sha512-HnEYUMJ5JL6EXJtn475DByUz75fRJIL6Zkmq8yw8pbH7qFaj+5JRflm8gL3DcIpEJOY4fpxX/UUtxfDmpgPZsQ==",
+          "patchSha256": "6a2ebee5cc73df367ba768b9a950dee2a57ec0c93122ded77e5342ca8640df24"
+        },
+        "@octanejs/rspack-plugin": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/octanejs-rspack-plugin-0.2.12.tgz",
+          "version": "0.2.12",
+          "upstream": {
+            "commit": "1cdd9d2027bef63e6cec601952795e9ed84e1344",
+            "request": "https://registry.npmjs.org/@octanejs/rspack-plugin/-/rspack-plugin-0.2.12.tgz",
+            "integrity": "sha512-llWu/p9Atm+SNGATDAYLTAh3Cbg+DSnYGRmbjA7tUkxC6gBCvHe6C1vc8letvMdk+VhHEIhv7MLMyEgJARutkQ==",
+            "repository": "octanejs/octane",
+            "licenseSha256": "4b83c082bc5305628aceda4130f495f30a6b992389b8d19229d508d38bc09a36",
+            "sourceArchiveIntegrity": "sha512-f5Eco2XWSLcSn4WkMCdmYZrESS7/FrWxCMzREEKrSMWqFN9Z0L6o/8zYb/PbxOiMjH8Jb7j/EvO6O1fkzRlNJA=="
+          },
+          "integrity": "sha512-s2q3z+KYoh84wrf/Fte/LMNFU9igh8Xoze8wOUKp6PX1lwDgZEm5rao+DvYKibmUjt5VGbHxTBQUiIbKi/TTcw==",
+          "patchSha256": "bd448e034c50f526e9a580e4595ab73417cf19273ddf9fc1254cdfe71b51fcfb"
+        },
+        "@octanejs/tanstack-router": {
+          "request": "https://github.com/ultramodernjs/ultramodern.js/releases/download/native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1/octanejs-tanstack-router-0.3.6.tgz",
+          "version": "0.3.6",
+          "upstream": {
+            "commit": "1cdd9d2027bef63e6cec601952795e9ed84e1344",
+            "request": "https://registry.npmjs.org/@octanejs/tanstack-router/-/tanstack-router-0.3.6.tgz",
+            "integrity": "sha512-wn14do+ZPIQrSmG0mfFB/70nkmEsnByWKt1UApnXsx5ZSd6mf3kkSEHoEtshUIWWwdlK8gFdjjaKzyhCggblZQ==",
+            "repository": "octanejs/octane",
+            "licenseSha256": "4b83c082bc5305628aceda4130f495f30a6b992389b8d19229d508d38bc09a36",
+            "sourceArchiveIntegrity": "sha512-f5Eco2XWSLcSn4WkMCdmYZrESS7/FrWxCMzREEKrSMWqFN9Z0L6o/8zYb/PbxOiMjH8Jb7j/EvO6O1fkzRlNJA=="
+          },
+          "integrity": "sha512-Ee4qGeV7KZZkB1TAgjak/vf8jC7Bokw/BrTzCtLu2Xj0p6S18N1Qf5yVVWozyhMGUu2VQ3+9iZqxbJgMgcU4yw==",
+          "patchSha256": "91bcdd98a1f5c45bff8e495541570b646719bdef2d8b7861fc98d4f3a49643ea"
+        }
+      },
+      "producer": {
+        "tag": "native-renderers-0b3f7ad610d8acc0b939402ba9a87d094c8576ff-44553146814-1",
+        "runId": 44553146814,
+        "source": "0b3f7ad610d8acc0b939402ba9a87d094c8576ff",
+        "workflow": ".github/workflows/native-renderer-artifacts.yml",
+        "repository": "ultramodernjs/ultramodern.js",
+        "runAttempt": 1,
+        "repositoryId": 1151231350
+      },
+      "protocol": "ultramodern.native-artifacts.v1"
+    }
+  }
 }

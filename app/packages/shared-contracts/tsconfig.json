@@ -14,7 +14,9 @@
     ]
   },
   "include": [
-    "src"
+    "src",
+    "*.config.ts",
+    "tooling"
   ],
   "references": [
     {
