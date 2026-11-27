@@ -384,7 +384,7 @@ oprávnění › Role.
 | Login                       | Role                                                             | Can do                                                                                                     |
 | --------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `admin@akros.playground`    | Tenant owner (Plný přístup)                                      | everything, including roles and people                                                                     |
-| `eshop@akros.playground`    | Správce e-shopu AKROS: AKROS access administrator, Plný přístup  | the whole catalogue (Nový produkt, product edits, Kategorie e-shopu, Příjem zboží), orders, e-shops, roles |
+| `eshop@akros.playground`    | Access administrator, Plný přístup bez obnovy ukázkových dat     | the whole catalogue (Nový produkt, product edits, Kategorie e-shopu, Příjem zboží), orders, e-shops, roles |
 | `eshop@akros.demo`          | Správce e-shopu, Směrování modulů, AKROS E-shopy registry reader | customers, orders, products and their edits, ERP products, e-shops, tasks, employees, tags, contacts       |
 | `expedice@akros.demo`       | Expedice, Směrování modulů                                       | orders and their status, products and stock read only, stock movements (Příjem, Výdej, Korekce)            |
 | `expedice@akros.playground` | Expedice                                                         | same as `expedice@akros.demo`                                                                              |
@@ -392,6 +392,17 @@ oprávnění › Role.
 Two people can work on the catalogue at once: `eshop@akros.demo` and `eshop@akros.playground` both edit products.
 Expedice never edits a product, price, image or market. Správa oprávnění shows only the pages the gate lets a person
 open, so the two staff logins without access administration do not see it.
+
+#### Demo reset and DEMO order cleanup on stage
+
+„Obnovit ukázková data“ (ŠroubShop, company 0024 only) and „Odstranit DEMO objednávku“ both need
+`demo.merchandise.demo.cleanup`. On stage only the tenant owners hold it, through „Plný přístup“: `obchod@demo.ontos`,
+`admin@akros.playground` and `admin@n1.ontos.demo`. The shop operators `eshop@sroubarna.demo` (in Šroubárna) and
+`eshop@akros.playground` (in AKROS) hold the company role „Plný přístup bez obnovy ukázkových dat“ instead of the
+„Plný přístup“ the stage accounts file gave them: every cell of „Plný přístup“ except that capability, so the button
+is absent and the Action answers 403. Unlike „Plný přístup“, that role does not follow a release by itself: a new
+release lists its new capabilities under Novinky v oprávněních, and the owner adds those the operators need to the role
+in Správa oprávnění › Role.
 
 ### Nájempark CRM: entrusted contacts (S00)
 
