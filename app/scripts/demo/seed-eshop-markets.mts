@@ -142,7 +142,7 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
           locale: 'cs',
           offerMode: 'WHOLE_CATALOGUE',
           purpose: 'Velkoobchod pro firemní zákazníky v Česku',
-          roundingMinor: 100,
+          roundingMinor: 1,
         },
         akrosStorefront,
       ),

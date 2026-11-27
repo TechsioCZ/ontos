@@ -349,12 +349,13 @@ const copyStorefrontAndMarkets = (client: CopyClient, snapshot: CopySnapshot) =>
     return yield* Effect.void;
   });
 
+// Czech crown prices are kept to the haléř: the frozen source rounded CZK to whole crowns, the copy does not.
 const settingsFields = (market: CopySnapshot['marketOffers'][number]['settings']) => ({
   currency: market.currency,
   exchangeRate: market.exchangeRate,
   marketCode: market.marketCode,
   offerMode: market.offerMode,
-  roundingMinor: market.roundingMinor,
+  roundingMinor: market.currency === 'CZK' ? 1 : market.roundingMinor,
 });
 const copyOffers = (client: CopyClient, snapshot: CopySnapshot) =>
   Effect.gen(function* copyFrozenPriceListsAndOffers() {
