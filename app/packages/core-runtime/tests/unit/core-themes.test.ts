@@ -2,6 +2,7 @@ import { businessBrand } from '@techsio/ui-kit/theme/built-in-brands';
 import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Layer, Schema, Struct } from 'effect';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -16,6 +17,7 @@ import { attachTenantThemeAction, coreActionCatalog, saveTenantThemeAction } fro
 import { isGenuineCoreOperation } from '../../src/modules/module-operation-execution.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
+import { ReadHandlerUnavailable } from '../../src/reads/errors.ts';
 import { AttachTenantThemePayloadSchema } from '../../src/themes/contract.ts';
 import type { TenantThemeDefinition } from '../../src/themes/contract.ts';
 import { TenantThemeKit, tenantThemeRevision } from '../../src/themes/definition.ts';
@@ -204,6 +206,29 @@ it.layer(TenantThemeKitLive)('with the kit bound as the Shell binds it', (suite)
     }),
   );
 
+  // PostgreSQL stores no NUL character, so a theme with one must fail as invalid before the store, not as an outage.
+  suite.effect('rejects a NUL character in any stored string as invalid and stores nothing', () =>
+    Effect.gen(function* saveNul() {
+      const store = memoryThemes();
+      const failure = yield* save(
+        {
+          ...acme,
+          defaults: {
+            components: { 'but\u0000ton': { size: 'sm' }, input: { appearance: 'out\u0000line', size: 'lg' } },
+          },
+          label: 'Ac\u0000me',
+        },
+        store.repository,
+      ).pipe(Effect.flip);
+      expect(Schema.is(TenantThemeInvalid)(failure) ? failure.issues : []).toEqual([
+        'label: must not contain a NUL character',
+        'defaults.components: a name must not contain a NUL character',
+        'defaults.components.input.appearance: must not contain a NUL character',
+      ]);
+      expect(store.themes.size).toBe(0);
+    }),
+  );
+
   /*
    * Both Actions through the real Action runtime, as the Shell calls them for an administrator who has a company
    * selected. They are tenant-wide (`forbidden` company scope), so the runtime refuses a principal that carries one:
@@ -296,6 +321,29 @@ it.layer(Layer.merge(NodeCrypto.layer, TenantThemeKitLive))('the tenant theme re
       });
       expect(answer).toEqual({ revision: yield* tenantThemeRevision(businessBrand), theme: businessBrand });
       expect(harness.snapshot().ownerQueries.map((query) => query.scope.tenantId)).toEqual([tenantId]);
+    }),
+  );
+
+  // A store that cannot answer is an outage, never "no theme attached": the member must not get the Business brand.
+  suite.effect('fails as unavailable when the theme store query fails', () =>
+    Effect.gen(function* storeOutage() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () =>
+          Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled outage' }) })),
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-11-27T09:00:00.000Z'))),
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const failure = yield* harness.runtime
+        .runRead({
+          input: {},
+          principal: Struct.omit(scope, ['correlationId']),
+          registration: tenantThemeRead,
+          transport: { correlationId: 'core-themes' },
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
     }),
   );
 });

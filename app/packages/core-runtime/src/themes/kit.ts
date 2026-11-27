@@ -2,7 +2,7 @@ import { Effect, Function as Fn, Layer, Schema } from 'effect';
 
 import { TenantThemeDefinitionSchema } from './contract.ts';
 import type { TenantThemeDefinition } from './contract.ts';
-import { TenantThemeKit } from './definition.ts';
+import { TenantThemeKit, tenantThemeStorageIssues } from './definition.ts';
 import { TenantThemeInvalid } from './errors.ts';
 
 /*
@@ -37,10 +37,14 @@ export const TenantThemeKitLive = Layer.effect(
     Effect.map(([{ validateBrand }, { businessBrand }]) => ({
       defaultTheme: businessBrand,
       validate: (input: TenantThemeDefinition) => {
+        const storageIssues = tenantThemeStorageIssues(input);
         const validation = validateBrand(input);
-        return validation.ok
-          ? decodeTheme(validation.brand).pipe(Effect.mapError((decodeFailure) => invalid([decodeFailure.message])))
-          : Effect.fail(invalid(validation.errors));
+        if (!validation.ok) {
+          return Effect.fail(invalid([...storageIssues, ...validation.errors]));
+        }
+        return storageIssues.length > 0
+          ? Effect.fail(invalid(storageIssues))
+          : decodeTheme(validation.brand).pipe(Effect.mapError((decodeFailure) => invalid([decodeFailure.message])));
       },
     })),
   ),
