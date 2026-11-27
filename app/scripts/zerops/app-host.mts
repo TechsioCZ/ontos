@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import {
@@ -125,6 +126,7 @@ import {
   Match,
   Option,
   Order,
+  Predicate,
   Redacted,
   Queue,
   Ref,
@@ -2473,6 +2475,13 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
             onNone: () => 'unclassified',
             onSome: compositionFailureReasons,
           })}`,
+        ),
+      ),
+      // A defect has no typed reason, and the stop line then only says "unclassified" (run 45840223941 failed its
+      // publication in 195 ms with no typed reason logged and looped until the deploy failed): name its kind and SQLSTATE, never its text.
+      Effect.tapDefect((defect) =>
+        Console.error(
+          `[app-host] composition publication died: ${Predicate.hasProperty(defect, '_tag') ? String(defect._tag) : 'untagged'} sqlstate=${Option.match(findPostgresFailure(defect), { onNone: () => 'none', onSome: ({ code }) => code })}`,
         ),
       ),
       observeRuntimeJob('composition-publish'),
