@@ -10,7 +10,8 @@ import { createCatalog } from "./catalog-model";
 import { getConfig } from "./config";
 import { readRecords } from "./gateway";
 import { freshRead } from "./fresh-read";
-import { sharedRead } from "./shared-read";
+import { MERCHANDISE_OWNERS } from "./live-changes";
+import { renewSharedReads, sharedRead } from "./shared-read";
 import {
   projectCategories,
   projectProducts,
@@ -115,9 +116,11 @@ const marketIdOf = async (operation: Operation) =>
 
 // Merchandise advances the company's catalogue revision with every write (product, category, listing policy, stock).
 // Shared answers belong to the revision they were read at, so a visit never gets an answer of an older revision than
-// the one its check found. The check is one head read the process shares: a visit takes a revision whose read started
-// at most REVISION_TIMING.maxAgeMs ago, so an admin save shows on every visit 1.5 s after it, and while visitors come
-// the head read repeats in the background, so a warm visit does not wait for it.
+// the one its check found. The check is one head read the process shares, current until the Shell's change stream names
+// merchandise (fresh-read.ts, live-changes.ts; without the stream, while its read started at most
+// REVISION_TIMING.maxAgeMs ago). The head is read again in the background at each merchandise change, and a newer
+// revision reads the answers visitors used lately again at once (renewSharedReads), so an admin save shows on the first
+// visit a second after it and a warm visit waits for no owner.
 // A visit waits at most OWNER_WAIT_MS for a revision read that is not young, and for the first product or tree read of a
 // new revision, then takes the newest answer (up to 10 minutes old): an owner that answers in time still shows a save
 // on the first visit, and a slow owner (stage: 1-5 s per read under load) never holds a page or a search for seconds.
@@ -127,8 +130,11 @@ const REVISION_TIMING = {
   intervalMs: 500,
   keepAliveMs: 10 * 60_000,
   waitMs: OWNER_WAIT_MS,
+  owners: MERCHANDISE_OWNERS,
 };
 
+// The newest revision this process has read.
+let newestRevision = 0;
 const loadRevision = async (operation: Operation): Promise<number> => {
   // Without a market id merchandise reads only the company's head: no market, product or category rows.
   const body = await readCatalog(
@@ -136,7 +142,12 @@ const loadRevision = async (operation: Operation): Promise<number> => {
     { mode: "categories", includeCategories: false },
     operation,
   );
-  return typeof body.revision === "number" ? body.revision : 0;
+  const revision = typeof body.revision === "number" ? body.revision : 0;
+  if (revision > newestRevision) {
+    newestRevision = revision;
+    renewSharedReads(revision);
+  }
+  return revision;
 };
 // One revision per operation, so every shared answer of one render belongs to the same revision.
 const revisions = new WeakMap<Operation, Promise<number>>();

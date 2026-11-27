@@ -1749,47 +1749,6 @@ export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')
 });
 
 /**
- * What one live-changes connection may hear about: the session's tenant and selected legal entity, and the module
- * APIs its composition admits (the same gateway audiences the document gets). Resolved once per connection; the
- * connection ends after its maximum age, so a revoked permission stops reaching the browser within minutes.
- */
-const resolveLiveChangeScopeOrProblem = Effect.fn('Shell.resolveLiveChangeScope')(
-  function* resolveLiveChangeScopeEffect(request: RequestWithHeaders) {
-    const session = yield* requireAuthenticatedShellContext(request.headers);
-    const { principal } = session;
-    if (!hasCompanyScope(principal)) {
-      return Option.none<LiveScope>();
-    }
-    const catalog = yield* captureShellRelease();
-    const governedReads = yield* ShellGovernedReads;
-    const composition = yield* governedReads
-      .composition({ correlationId: correlationFromRequest(request), principal })
-      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
-    if (composition.state !== 'available') {
-      return Option.none<LiveScope>();
-    }
-    return Option.some<LiveScope>({
-      allowedApps: new Set([...composition.gatewayAudiences, SHELL_APP]),
-      legalEntityId: principal.legalEntityId,
-      moduleApps: new Map(
-        catalog.contracts.map((contract) => [contract.manifest.module.id, contract.deployment.appId]),
-      ),
-      principalId: principal.principalId,
-      tenantId: principal.tenantId,
-    });
-  },
-);
-
-const liveScopeFailure = (error: { readonly _tag: string }) =>
-  new LiveScopeUnavailable({ status: Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ? 401 : 503 });
-
-/** No company context or no available composition: nothing to subscribe to. */
-const liveScopeOrRefusal = Option.match({
-  onNone: () => Effect.fail(new LiveScopeUnavailable({ status: 409 })),
-  onSome: (scope: LiveScope) => Effect.succeed(scope),
-});
-
-/**
  * A module page document's target: the same governed read `resolveModuleTargetHandler` runs for the same principal
  * (`tenantModuleTarget` for a tenant session), against the document's captured release. Its problem is its own
  * outcome, never the document's, exactly as the separate request answered it.
@@ -2870,6 +2829,112 @@ const resolveApiKeyGatewayPrincipal = Effect.fn('ShellGateway.resolveApiKeyPrinc
     );
   }
   return { principal, principalKind: identity.principalKind };
+});
+
+const LIVE_LEGAL_ENTITY_HEADER = 'x-ontos-legal-entity-id';
+const LIVE_AUDIENCES_HEADER = 'x-ontos-live-audiences';
+const LIVE_AUDIENCE = /^[a-z][a-z0-9-]{0,99}$/u;
+const MAX_LIVE_AUDIENCES = 8;
+
+/**
+ * What a storefront server's live-changes connection may hear about: its integration API key (`x-api-key`) acting for
+ * its company (`x-ontos-legal-entity-id`), and each owner API it names (`x-ontos-live-audiences`) that the key obtains a
+ * gateway context for, exactly as the API-key read relay admits it. An audience the issuer refuses is left out; an
+ * issuer that is unavailable refuses the connection, so the storefront connects again instead of missing that owner.
+ */
+const resolveApiKeyLiveChangeScope = Effect.fn('Shell.resolveApiKeyLiveChangeScope')(
+  function* resolveApiKeyLiveChangeScopeEffect(rawKey: string, headers: RequestHeaders) {
+    const legalEntityId = headerValue(headers, LIVE_LEGAL_ENTITY_HEADER);
+    const audiences = [...new Set((headerValue(headers, LIVE_AUDIENCES_HEADER) ?? '').split(','))].filter((audience) =>
+      LIVE_AUDIENCE.test(audience),
+    );
+    if (legalEntityId === undefined || audiences.length === 0 || audiences.length > MAX_LIVE_AUDIENCES) {
+      return Option.none<LiveScope>();
+    }
+    const [catalog, { principal }] = yield* Effect.all(
+      [captureShellRelease(), resolveApiKeyGatewayPrincipal(rawKey, legalEntityId)],
+      { concurrency: 2 },
+    );
+    const admitted = yield* Effect.forEach(
+      audiences,
+      (audience) =>
+        issueGatewayContextAssertion({ audience, compositionRevision: catalog.composition.revision, principal }).pipe(
+          Effect.as([audience]),
+          Effect.catchTag('GatewayIssuerError', (error) =>
+            error.code === 'gateway_issuer_unavailable' ? Effect.fail(error) : Effect.succeed([]),
+          ),
+        ),
+      { concurrency: MAX_LIVE_AUDIENCES },
+    );
+    const allowedApps = new Set(admitted.flat());
+    if (allowedApps.size === 0) {
+      return Option.none<LiveScope>();
+    }
+    return Option.some<LiveScope>({
+      allowedApps,
+      legalEntityId,
+      moduleApps: new Map(
+        catalog.contracts.map((contract) => [contract.manifest.module.id, contract.deployment.appId]),
+      ),
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    });
+  },
+);
+
+/**
+ * What one live-changes connection may hear about: the session's tenant and selected legal entity, and the module
+ * APIs its composition admits (the same gateway audiences the document gets); a storefront server's API key instead
+ * hears the owner APIs it names (`resolveApiKeyLiveChangeScope`). Resolved once per connection; the connection ends
+ * after its maximum age, so a revoked permission stops reaching the browser within minutes.
+ */
+const resolveLiveChangeScopeOrProblem = Effect.fn('Shell.resolveLiveChangeScope')(
+  function* resolveLiveChangeScopeEffect(request: RequestWithHeaders) {
+    const rawKey = headerValue(request.headers, 'x-api-key');
+    if (rawKey !== undefined) {
+      return yield* resolveApiKeyLiveChangeScope(rawKey, request.headers);
+    }
+    const session = yield* requireAuthenticatedShellContext(request.headers);
+    const { principal } = session;
+    if (!hasCompanyScope(principal)) {
+      return Option.none<LiveScope>();
+    }
+    const catalog = yield* captureShellRelease();
+    const governedReads = yield* ShellGovernedReads;
+    const composition = yield* governedReads
+      .composition({ correlationId: correlationFromRequest(request), principal })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    if (composition.state !== 'available') {
+      return Option.none<LiveScope>();
+    }
+    return Option.some<LiveScope>({
+      allowedApps: new Set([...composition.gatewayAudiences, SHELL_APP]),
+      legalEntityId: principal.legalEntityId,
+      moduleApps: new Map(
+        catalog.contracts.map((contract) => [contract.manifest.module.id, contract.deployment.appId]),
+      ),
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    });
+  },
+);
+
+const liveScopeStatus = (error: { readonly _tag: string }): LiveScopeUnavailable['status'] => {
+  if (
+    Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ||
+    Predicate.isTagged(error, 'GatewayAuthenticationRequiredProblem')
+  ) {
+    return 401;
+  }
+  return Predicate.isTagged(error, 'GatewayForbiddenProblem') ? 403 : 503;
+};
+const liveScopeFailure = (error: { readonly _tag: string }) =>
+  new LiveScopeUnavailable({ status: liveScopeStatus(error) });
+
+/** No company context or no available composition: nothing to subscribe to. */
+const liveScopeOrRefusal = Option.match({
+  onNone: () => Effect.fail(new LiveScopeUnavailable({ status: 409 })),
+  onSome: (scope: LiveScope) => Effect.succeed(scope),
 });
 
 /** Mints a subject's gateway context for an integration API key; a module credential is never such a key. */

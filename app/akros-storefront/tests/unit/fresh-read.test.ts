@@ -2,6 +2,13 @@ import { Effect } from "effect";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createOperation } from "@ontos/storefront-runtime";
 import { clearFreshReads, freshRead, latestFreshRead } from "@/ontos/fresh-read";
+import {
+  applyLiveFrame,
+  ERP_OWNERS,
+  MERCHANDISE_OWNERS,
+  resetLiveChanges,
+  setLiveConnected,
+} from "@/ontos/live-changes";
 
 // The owner's state, changed by an "admin save"; every load records when it ran.
 let owner = "N";
@@ -18,6 +25,7 @@ const read = (loader: () => Promise<string> = load, t = timing) =>
 
 beforeEach(() => {
   clearFreshReads();
+  resetLiveChanges();
   owner = "N";
   loads = 0;
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -105,4 +113,55 @@ it("repeats the read in the background while visits come, so a later visit gets 
   const stopped = loads;
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(loads).toBe(stopped);
+});
+
+it("with the change stream open, serves the answer without an owner read until its owner changes, then reads again at once", async () => {
+  vi.useRealTimers();
+  const streamed = { maxAgeMs: 50, intervalMs: 20, keepAliveMs: 2_000, owners: MERCHANDISE_OWNERS };
+  setLiveConnected(true, Date.now() - 1);
+  expect(await read(load, streamed)).toBe("N");
+  // Older than maxAgeMs, yet no merchandise change: no owner read, no background repeat.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  owner = "unsaved";
+  expect(await read(load, streamed)).toBe("N");
+  expect(loads).toBe(1);
+  // Another owner's change keeps the answer.
+  applyLiveFrame("event: change\ndata: catalog");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(await read(load, streamed)).toBe("N");
+  expect(loads).toBe(1);
+  // An admin save: the background read repeats at the change, so the next visit takes the new state at once.
+  owner = "N+1";
+  applyLiveFrame("event: change\ndata: merchandise,shell");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(loads).toBe(2);
+  expect(await read(load, streamed)).toBe("N+1");
+  expect(loads).toBe(2);
+});
+
+it("with the stream open, never serves an answer whose read started before its owner's change", async () => {
+  const streamed = { ...timing, owners: ERP_OWNERS };
+  setLiveConnected(true, Date.now() - 1);
+  let finish: (value: string) => void = () => undefined;
+  const running = read(() => new Promise<string>((resolve) => (finish = resolve)), streamed);
+  vi.advanceTimersByTime(1);
+  applyLiveFrame("event: change\ndata: pricing");
+  finish("N");
+  // The visit that waited gets its own read.
+  expect(await running).toBe("N");
+  owner = "N+1";
+  // Only 1 ms old, but read before the price change: read again.
+  expect(await read(load, streamed)).toBe("N+1");
+  // A stream that opens again counts as a change of every owner.
+  owner = "N+2";
+  vi.advanceTimersByTime(1);
+  setLiveConnected(true);
+  vi.advanceTimersByTime(1);
+  expect(await read(load, streamed)).toBe("N+2");
+  // Without the stream the time bound applies again.
+  owner = "N+3";
+  setLiveConnected(false);
+  expect(await read(load, streamed)).toBe("N+2");
+  vi.advanceTimersByTime(2_000);
+  expect(await read(load, streamed)).toBe("N+3");
 });

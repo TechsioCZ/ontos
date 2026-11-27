@@ -2,15 +2,20 @@ import "server-only";
 import { Effect } from "effect";
 import { createOperation } from "@ontos/storefront-runtime";
 import type { Operation } from "@ontos/storefront-runtime";
+import { isCurrent, liveConnected, nextLiveChange, startLiveChanges } from "./live-changes";
 import { joined, MAX_STALE_MS } from "./shared-read";
 
-// An owner read whose answer every visitor shares while that answer is young: it never serves an answer whose read
-// started more than `maxAgeMs` ago, so a state saved in the admin shows on every visit that `maxAgeMs` after the save.
+// An owner read whose answer every visitor shares while that answer is young. With `owners`, an answer is young until
+// the Shell's change stream (live-changes.ts) names one of those owners after its read started, for at most a minute:
+// the stream reports an admin save within about 300 ms of its commit and the read repeats at once, so the save shows on
+// every visit a second later and a visit between saves reads no owner at all. Without the stream (or `owners`) an answer
+// is young only while its read started at most `maxAgeMs` ago, so a save shows on every visit that `maxAgeMs` after it.
 // While visitors keep coming, and for `keepAliveMs` after the last one, the read repeats in the background, one at a
-// time and at most every `intervalMs`, so a visit takes the newest answer at once instead of waiting for the owner.
-// A visit after a longer quiet waits for its own read. When a read fails, visits keep the newest answer for up to
-// 10 minutes, as during an owner outage; a caller that cannot wait for a slow read takes that answer too
-// (`latestFreshRead`, or `waitMs`) while the read goes on for the visits after it.
+// time: at each change of its owners (and every 30 s) while the stream is open, otherwise at most every `intervalMs`, so
+// a visit takes the newest answer at once instead of waiting for the owner. A visit after a longer quiet waits for its
+// own read. When a read fails, visits keep the newest answer for up to 10 minutes, as during an owner outage; a caller
+// that cannot wait for a slow read takes that answer too (`latestFreshRead`, or `waitMs`) while the read goes on for the
+// visits after it.
 interface Answer<A> {
   startedAt: number;
   value: A;
@@ -35,7 +40,18 @@ export interface FreshReadTiming {
    * old): an owner that answers in time still shows a save on the first visit, a slow one never holds the visit.
    */
   waitMs?: number;
+  /** The owner app ids whose committed changes change the answer (`MERCHANDISE_OWNERS`, `ERP_OWNERS`). */
+  owners?: readonly string[];
 }
+/** An answer the change stream keeps current is still read again this often, and never trusted longer than a minute. */
+const STREAM_REREAD_MS = 30_000;
+const STREAM_TRUST_MS = 60_000;
+
+/** The answer of a read that started at `startedAt` may still be served at `now`: the stream decides while it is open. */
+const holds = (timing: FreshReadTiming, startedAt: number, now: number) =>
+  timing.owners !== undefined && liveConnected()
+    ? isCurrent(startedAt, timing.owners) && now - startedAt <= STREAM_TRUST_MS
+    : now - startedAt <= timing.maxAgeMs;
 const states = new Map<string, State<unknown>>();
 let epoch = 0;
 
@@ -73,9 +89,27 @@ const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) 
   state.polling = true;
   try {
     while (owner === epoch && Date.now() - state.demandAt < timing.keepAliveMs) {
-      const begun = Date.now();
-      await (state.pending ?? start(state)).answer.catch(() => undefined);
-      await pause(Math.max(0, timing.intervalMs - (Date.now() - begun)));
+      const streamed = timing.owners !== undefined && liveConnected();
+      const latest = state.latest;
+      if (
+        streamed &&
+        state.pending === undefined &&
+        latest !== undefined &&
+        isCurrent(latest.startedAt, timing.owners ?? []) &&
+        Date.now() - latest.startedAt < STREAM_REREAD_MS
+      ) {
+        // Current: read again at the next change of its owners (or to renew its trust).
+        await nextLiveChange(STREAM_REREAD_MS - (Date.now() - latest.startedAt));
+        continue;
+      }
+      const pending = state.pending ?? start(state);
+      const answered = await pending.answer.then(
+        () => true,
+        () => false,
+      );
+      // With the stream, an answer outdated by a change during its read is read again at once; a failed read waits.
+      if (!streamed || !answered)
+        await pause(Math.max(0, timing.intervalMs - (Date.now() - pending.startedAt)));
     }
   } finally {
     state.polling = false;
@@ -121,8 +155,9 @@ export function freshRead<A>(
   state.load = load;
   const now = Date.now();
   state.demandAt = now;
+  if (timing.owners !== undefined) startLiveChanges();
   void poll(state, timing, epoch);
-  const young = (startedAt: number) => now - startedAt <= timing.maxAgeMs;
+  const young = (startedAt: number) => holds(timing, startedAt, now);
   if (state.latest !== undefined && young(state.latest.startedAt))
     return Promise.resolve(state.latest.value);
   const pending =

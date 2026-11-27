@@ -4,4 +4,5 @@ import { afterEach } from "vitest";
 // test used, also after vi.resetModules).
 afterEach(async () => {
   (await import("@/ontos/fresh-read")).clearFreshReads();
+  (await import("@/ontos/live-changes")).resetLiveChanges();
 });
