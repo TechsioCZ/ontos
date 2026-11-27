@@ -615,7 +615,8 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
   const customers = yield* Effect.forEach(
     page.items,
     (item) => projectCustomer(item, scope, query.fields, admission, newRequestIdentifier),
-    { concurrency: 1 },
+    // Independent owner reads; one at a time a page of 25 customers outlives the 30 s owner-call budget.
+    { concurrency: 6 },
   );
   return {
     contractVersion: 'INTERNAL_C14',
