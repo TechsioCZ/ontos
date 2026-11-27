@@ -3,6 +3,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { FormInput, Switch } from '@app/admin-ui/form-controls';
 import { SectionCard, formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
@@ -90,11 +91,15 @@ interface ArchiveSectionProps {
   readonly revision: number;
 }
 
-/** Archives the product with a reason, after a confirmation that names it; it takes the product off the e-shop. */
+/**
+ * Archives the product with a reason, after a confirmation that names it; it takes the product off the e-shop. It
+ * names the product version on screen, so only a change of this product refuses it, not a write elsewhere.
+ */
 export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, revision }: ArchiveSectionProps) => {
   const { t } = useModernI18n();
   const k = useProductLabel();
   const failure = useCommandFailure();
+  const toaster = useToast();
   const [reason, setReason] = useState('');
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -102,10 +107,23 @@ export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, rev
   const handleConfirm = () => {
     setAsking(false);
     setBusy(true);
-    runCommand({ _tag: 'ArchiveProduct', id: product.id, reason: reason.trim() }, revision, (outcome) => {
+    const command = {
+      _tag: 'ArchiveProduct',
+      expectedUpdatedAt: product.updatedAt,
+      id: product.id,
+      reason: reason.trim(),
+    } as const;
+    runCommand(command, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setError(failure(outcome.reason, onReload, outcome.proposal));
+        // A refusal is said twice: under the button and as a toast, so it is seen even when the page reloads the product.
+        const said = failure(outcome.reason, onReload, outcome.proposal);
+        const message =
+          outcome.reason === 'conflict' && outcome.proposal === undefined
+            ? 'Produkt se mezitím změnil, proto se nearchivoval. Načetli jsme jeho aktuální stav, zkontrolujte ho a archivaci potvrďte znovu.'
+            : said;
+        setError(message);
+        toaster.create({ title: message, type: 'error' });
         return;
       }
       onCommitted('Produkt archivován. Najdete ho pod filtrem Archivované.');
@@ -167,7 +185,7 @@ export const RestoreSection = ({
   const archive = product.demoArchive;
   const handleRestore = () => {
     setBusy(true);
-    runCommand({ _tag: 'RestoreProduct', id: product.id }, revision, (outcome) => {
+    runCommand({ _tag: 'RestoreProduct', expectedUpdatedAt: product.updatedAt, id: product.id }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
         setError(failure(outcome.reason, onReload, outcome.proposal));
