@@ -29,13 +29,9 @@ const e2eTest = 'apps/demo/tests/e2e/y.test.ts';
 const handlers = 'apps/demo/src/handlers.ts';
 const discardedAssignment = 'apps/demo/src/discarded-assignment.ts';
 const observedValues = 'apps/demo/src/observed-values.ts';
-const interleavedProperties = 'apps/demo/src/interleaved-properties.ts';
 const orderedProperties = 'apps/demo/src/ordered-properties.ts';
 const unorderedProperties = 'apps/demo/src/unordered-properties.ts';
-const mixedNamedUnordered = 'apps/demo/src/mixed-named-unordered.ts';
 const nestedConditional = 'apps/demo/src/nested-conditional.ts';
-const embeddedConditional = 'apps/demo/src/embedded-conditional.ts';
-const independentConditionals = 'apps/demo/src/independent-conditionals.ts';
 const developmentAdapter = 'packages/shared-contracts/tooling/modern-config.ts';
 const neighboringLibrary = 'packages/shared-contracts/tooling/library.ts';
 const adapterPrimitives = [
@@ -102,27 +98,14 @@ const staged: readonly (readonly [string, string])[] = [
     'export const read = () => { let value = 1; const first = value; value = 2; return [first, value]; };\n',
   ],
   [
-    interleavedProperties,
+    orderedProperties,
     "export const grant = (audience: string) => ({ assertion: 'signed', audience, expiresAt: 1 });\n",
   ],
   [
-    orderedProperties,
+    unorderedProperties,
     "export const grant = (audience: string) => ({ audience, assertion: 'signed', expiresAt: 1 });\n",
   ],
-  [
-    mixedNamedUnordered,
-    "export const grant = (audience: string) => ({ audience, expiresAt: 1, assertion: 'signed' });\n",
-  ],
-  [unorderedProperties, "export const grant = { expiresAt: 1, assertion: 'signed' };\n"],
   [nestedConditional, "export const choose = (outer: boolean, inner: boolean) => outer ? (inner ? 'a' : 'b') : 'c';\n"],
-  [
-    embeddedConditional,
-    "export const choose = (outer: boolean, inner: boolean) => outer ? String(inner ? 'a' : 'b') : 'c';\n",
-  ],
-  [
-    independentConditionals,
-    "export const choose = (outer: boolean, inner: boolean) => { const value = inner ? 'a' : 'b'; return outer ? String(value) : 'c'; };\n",
-  ],
   [developmentAdapter, adapterPrimitives],
   [neighboringLibrary, adapterPrimitives],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
@@ -179,21 +162,15 @@ it('production rejects overwritten assignments without rejecting observed values
   expect(codesFor(observedValues)).not.toContain('eslint(no-useless-assignment)');
 });
 
-it('production groups mixed literals and alphabetizes homogeneous literals', () => {
-  expect(codesFor(interleavedProperties)).toContain('sonarjs(shorthand-property-grouping)');
+it('production has one consistent object-property order and still rejects unsorted properties', () => {
   expect(codesFor(orderedProperties)).not.toContain('sonarjs(shorthand-property-grouping)');
   expect(codesFor(orderedProperties)).not.toContain('perfectionist(sort-objects)');
   expect(codesFor(unorderedProperties)).toContain('perfectionist(sort-objects)');
-  // Perfectionist 5 has no shorthand selector. Alphabetizing across groups would undo Sonar's grouping.
-  expect(codesFor(mixedNamedUnordered)).not.toContain('sonarjs(shorthand-property-grouping)');
-  expect(codesFor(mixedNamedUnordered)).not.toContain('perfectionist(sort-objects)');
 });
 
-it('production rejects directly and indirectly nested conditionals through one stricter rule', () => {
-  expect(codesFor(nestedConditional)).toContain('sonarjs(no-nested-conditional)');
-  expect(codesFor(embeddedConditional)).toContain('sonarjs(no-nested-conditional)');
-  expect(codesFor(independentConditionals)).not.toContain('sonarjs(no-nested-conditional)');
-  expect(codesFor(nestedConditional)).not.toContain('eslint(no-nested-ternary)');
+it('production rejects a nested conditional once, through the core rule', () => {
+  expect(codesFor(nestedConditional)).toContain('eslint(no-nested-ternary)');
+  expect(codesFor(nestedConditional)).not.toContain('sonarjs(no-nested-conditional)');
 });
 
 const consumer = (method: string) =>

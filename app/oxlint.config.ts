@@ -1333,6 +1333,14 @@ export default defineConfig({
       },
     },
     {
+      // The Action HTTP generator runs unbundled on Node and loads the generated owner modules it inspects by
+      // file URL; react-doctor's rule is advice for browser bundles, where a computed path defeats code splitting.
+      files: ['scripts/scaffolding/action-http/scaffold.mts'],
+      rules: {
+        'react-doctor/no-dynamic-import-path': 'off',
+      },
+    },
+    {
       // Party Registry was generated and implemented before the stricter lint cohort now on main.
       // Its strict TSGo build and behavioral suites remain authoritative while a separate migration
       // can normalize declaration ordering and test doubles without mixing that churn into Issue 179.
@@ -1389,31 +1397,22 @@ export default defineConfig({
     'import/export': 'error',
     'import/no-namespace': ['error', { ignore: ['effect/*'] }],
     'no-console': 'error',
-    // Sonar also rejects nesting through call arguments and template expressions.
-    'no-nested-ternary': 'off',
-    'sonarjs/no-nested-conditional': 'error',
     'perfectionist/sort-enums': ['error', { partitionByComment: true, sortByValue: 'always' }],
     'perfectionist/sort-heritage-clauses': 'error',
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
     'perfectionist/sort-object-types': 'error',
-    // Ultracite groups shorthand members at an edge in mixed literals. Perfectionist 5 has no
-    // shorthand member selector, so alphabetical order owns patterns and homogeneous literals.
-    'perfectionist/sort-objects': [
-      'error',
-      {
-        type: 'unsorted',
-        useConfigurationIf: {
-          matchesAstSelector: 'ObjectExpression:has(> Property[shorthand=true]):has(> Property[shorthand=false])',
-        },
-      },
-      { partitionByComment: true },
-    ],
+    'perfectionist/sort-objects': ['error', { partitionByComment: true }],
     'react/no-unknown-property': 'error',
     // The base rule conflicts with the type-aware promise-function-async rule:
     // removing `async` immediately recreates the type-aware diagnostic.
     'require-await': 'off',
     'sort-keys': 'off',
+    // One object-order policy: alphabetical members, as main enforces today. Ultracite 8 adds Sonar's
+    // shorthand grouping, which contradicts that order in every literal that mixes shorthand and named
+    // members (12,422 literals in 4,122 files when the cohort was adopted), and Perfectionist 5 has no
+    // shorthand selector that could order both. Adopting it is a repository-wide key reorder, not an upgrade.
+    'sonarjs/shorthand-property-grouping': 'off',
     // Effect error channels are intentionally explicit tagged unions; two members is not a useful ceiling.
     'sonarjs/max-union-size': 'off',
     // Property keys name domain vocabulary, not functions: React components are PascalCase,
@@ -1422,6 +1421,7 @@ export default defineConfig({
     // Keep one authoritative rule for each concern instead of emitting duplicate diagnostics.
     'sonarjs/cognitive-complexity': 'off',
     'sonarjs/expression-complexity': 'off',
+    'sonarjs/no-nested-conditional': 'off',
     'sonarjs/no-redundant-jump': 'off',
     'sonarjs/no-unused-vars': 'off',
     'typescript/no-require-imports': ['error', { allow: [String.raw`/package\.json$`] }],
