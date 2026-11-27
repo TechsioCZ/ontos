@@ -644,28 +644,16 @@ const renderVariantPriceTiers = (
   );
 };
 
-const USED_VARIANT_PHOTOS = 'ontos.merchandise.used-variant-photos.';
-
-/** Every variant photo this browser has seen on the product, kept so a photo switched away stays selectable. */
-const rememberVariantPhotos = (productId: string, seen: readonly string[]): readonly string[] => {
-  if (typeof window === 'undefined') {
-    return seen;
-  }
-  let stored: readonly string[] = [];
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(USED_VARIANT_PHOTOS + productId) ?? '[]');
-    stored = Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
-  } catch {
-    stored = [];
-  }
-  const merged = [...new Set([...stored, ...seen])];
-  try {
-    window.localStorage.setItem(USED_VARIANT_PHOTOS + productId, JSON.stringify(merged.slice(-100)));
-  } catch {
-    // Storage full or blocked: the photos stay selectable for this page view.
-  }
-  return merged;
-};
+/** The gallery, then every photo the product has shown as the server keeps it, then photos unsaved drafts picked. */
+const variantImageChoicesOf = (product: ProductRecord, drafts: readonly { readonly imageSrc?: string }[]) => [
+  ...new Set([
+    ...(product.images ?? []),
+    ...(product.photoLibrary ?? []),
+    ...[...(product.variantRecords ?? []), ...drafts].flatMap((variant) =>
+      variant.imageSrc === undefined || variant.imageSrc === '' ? [] : [variant.imageSrc],
+    ),
+  ]),
+];
 
 export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
   const { t } = useModernI18n();
@@ -692,21 +680,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
     visibleDrafts,
   } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
-  // Photos the variants show or showed: a photo outside the gallery stays selectable after switching it away.
-  const savedVariantPhotosKey = [
-    ...new Set(
-      [...(product.variantRecords ?? []), ...drafts].flatMap((variant) =>
-        variant.imageSrc === undefined || variant.imageSrc === '' ? [] : [variant.imageSrc],
-      ),
-    ),
-  ].join('\n');
-  const [usedVariantPhotos, setUsedVariantPhotos] = useState<readonly string[]>([]);
-  useEffect(() => {
-    setUsedVariantPhotos(
-      rememberVariantPhotos(product.id, savedVariantPhotosKey === '' ? [] : savedVariantPhotosKey.split('\n')),
-    );
-  }, [product.id, savedVariantPhotosKey]);
-  const variantImageChoices = [...new Set([...(product.images ?? []), ...usedVariantPhotos])];
+  const variantImageChoices = variantImageChoicesOf(product, drafts);
   const taxLabels = useTaxLabels();
   // The product's classification with the rate Tax gives it today; it names the gross preview of an edited price.
   // Staff records always name the classification; only storefront records omit it.
@@ -930,6 +904,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             idPrefix={`variant-${draft.key}`}
                             images={variantImageChoices}
                             onChange={(next) => patchDraft(draft.key, next)}
+                            productId={product.id}
                             vatRate={vatRate}
                           />
                         </Table.Cell>

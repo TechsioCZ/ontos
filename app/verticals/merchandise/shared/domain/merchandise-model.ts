@@ -6,6 +6,7 @@ import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-clas
 import { Option, Schema } from 'effect';
 import { currencyOf, MarketCurrencySchema, OrderMarketSchema } from './market-offers.ts';
 import type { MarketCurrency } from './market-offers.ts';
+import { PRODUCT_PHOTO_LIBRARY_LIMIT } from './product-images.ts';
 import { StorefrontVisibilitySchema } from './storefront-visibility.ts';
 
 const identifierLengthChecks = [Schema.isMinLength(1), Schema.isMaxLength(300)] as const;
@@ -285,6 +286,11 @@ export const ProductSchema = Schema.Struct({
   ),
   /** Catalog-content audit (name, descriptions, images, category, parameters, labels…), oldest first, max 50. */
   contentHistory: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
+  /**
+   * Server-kept: every photo the gallery, the main image or a variant has shown (`photoLibraryAfter`), so staff can
+   * give a variant an earlier photo again. Never part of a patch; storefront reads drop it.
+   */
+  photoLibrary: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(PRODUCT_PHOTO_LIBRARY_LIMIT))),
   ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),
@@ -338,6 +344,8 @@ export type VariantRecord = typeof VariantRecordSchema.Type;
 
 export const VariantSummarySchema = Schema.Struct({
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** The smallest first orderable quantity among the variants (minimum rounded up to whole packages); null without any. */
+  firstOrderableQuantity: Schema.NullOr(Schema.Finite),
   minGrossPriceMinor: Schema.OptionFromNullOr(MinorAmountSchema),
   stockOnHand: Schema.Finite,
   units: Schema.Array(Schema.String),

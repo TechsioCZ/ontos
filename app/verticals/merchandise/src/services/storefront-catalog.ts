@@ -19,11 +19,12 @@ export const normalizeSearchText = (value: string) =>
     .replaceAll(/[\u0300-\u036F]/gu, '')
     .toLocaleLowerCase('cs')
     .trim();
-/** Public shape of one product: no raw variants/price history/content history; derived paragraphs + gallery. */
+/** Public shape of one product: no raw variants/price, content or photo history; derived paragraphs + gallery. */
 export const toStorefrontProduct = (record: ProductRecord, fields: 'card' | 'full'): ProductRecord => {
-  const { contentHistory: _history, variants: _rawVariants, ...rest } = record;
+  const { contentHistory: _history, photoLibrary: _library, variants: _rawVariants, ...rest } = record;
   void _rawVariants;
   void _history;
+  void _library;
   let gallery: string[] = [];
   if (record.images !== undefined && record.images.length > 0) {
     gallery = [...record.images];

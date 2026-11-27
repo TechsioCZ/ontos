@@ -1,6 +1,7 @@
-// Product gallery references and the pure rules of a gallery change. A gallery is an ordered list of image references;
-// the first one is the main image the storefront shows. Uploaded images are Core Media Assets (`media:<asset>`);
-// imported catalog images stay the source system's own https addresses. Neither form is ever shown to a person.
+// Product gallery references, the photo library and the pure rules of a gallery change. A gallery is an ordered list of
+// image references; the first one is the main image the storefront shows. Uploaded images are Core Media Assets
+// (`media:<asset>`); imported catalog images stay the source system's own https addresses. Neither form is ever shown to
+// a person.
 import { Option, Schema } from 'effect';
 
 const MEDIA_REFERENCE_PREFIX = 'media:';
@@ -10,6 +11,40 @@ export const MediaImageReferenceSchema = Schema.String.check(
 
 /** At most this many images per product (the model's gallery limit). */
 export const PRODUCT_GALLERY_LIMIT = 20;
+
+/** At most this many references in a product's photo library; the longest-unused ones leave first. */
+export const PRODUCT_PHOTO_LIBRARY_LIMIT = 200;
+
+interface PhotoHolder {
+  readonly images?: readonly string[];
+  readonly imageSrc?: string;
+  readonly photoLibrary?: readonly string[];
+  readonly variants?: readonly { readonly imageSrc?: string }[];
+}
+
+/** The photos the product shows now: its gallery, its main image and every variant's image, each once. */
+export const shownPhotosOf = (product: PhotoHolder): readonly string[] => [
+  ...new Set(
+    [
+      ...(product.images ?? []),
+      product.imageSrc ?? '',
+      ...(product.variants ?? []).map((variant) => variant.imageSrc ?? ''),
+    ].filter((reference) => reference.trim() !== ''),
+  ),
+];
+
+/**
+ * The server-kept photo library of a product after a write: every photo it showed before or shows now, so any
+ * operator can give a variant an earlier photo again. Photos no longer shown come first, the shown ones last.
+ */
+export const photoLibraryAfter = (before: PhotoHolder | undefined, after: PhotoHolder): readonly string[] => {
+  const shown = shownPhotosOf(after);
+  const current = new Set(shown);
+  const earlier = [...(before?.photoLibrary ?? []), ...(before === undefined ? [] : shownPhotosOf(before))];
+  return [...new Set([...earlier.filter((reference) => !current.has(reference)), ...shown])].slice(
+    -PRODUCT_PHOTO_LIBRARY_LIMIT,
+  );
+};
 
 /** Link kind of a product gallery image in Core Media. */
 export const PRODUCT_IMAGE_LINK = { linkKind: 'gallery_image', moduleKey: 'demo.merchandise', resourceType: 'product' };

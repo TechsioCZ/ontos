@@ -137,22 +137,23 @@ type VariantSummaryEncoded = typeof VariantSummarySchema.Encoded;
 
 /**
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
- * is bound as parameters: an unqualified outer column would resolve to the variant row itself.
+ * is bound as parameters: an unqualified outer column would resolve to the variant row itself. `stockOnHand` is the
+ * stock they hold; whether any of it can be bought is the product's `availability` (every variant against its own first
+ * order, `availabilityOf`, so partial packages of two variants never add up to one). `firstOrderableQuantity` is the
+ * smallest first order among them, which the storefront names below one package („Skladem 6 ks, prodej po 10 ks“).
  */
-// A positive ledger balance is not available stock when it cannot cover one mandatory package.
-// Match order-quantity and the detail purchase constraints, per variant (never pool partial packages).
-const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric,
-  (${sql.raw('"products"."document"')}->>'minimumQuantity')::numeric, 1)`;
-const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric,
-  (${sql.raw('"products"."document"')}->>'packageQuantity')::numeric)`;
-const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
+// firstOrderableQuantity in SQL: the variant's own minimum (1 when not stated) rounded up to its own package, as
+// checkout reads them (never the product's).
+const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric, 1)`;
+const variantPackageSql = sql`(v.document->>'packageQuantity')::numeric`;
+const variantFirstOrderSql = sql`case when ${variantPackageSql} > 0
   then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
   else ${variantMinimumSql} end`;
 const variantSummarySql = (scope: StoreScope) => sql<VariantSummaryEncoded>`(select json_build_object(
     'count', count(*)::int,
+    'firstOrderableQuantity', min(${variantFirstOrderSql}),
     'minGrossPriceMinor', min(v.gross_price_minor),
-    'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
-      then v.stock_on_hand else 0 end), 0),
+    'stockOnHand', coalesce(sum(v.stock_on_hand), 0),
     'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
   from ${productVariants} v
   where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
@@ -467,7 +468,7 @@ const staffProductOrder = (sort: RecordsView['productSort']): SQL[] =>
     Match.orElse(() => [asc(products.ordinal)]),
   );
 
-/** Staff (and plain storefront) product page; customers never see price or content history. */
+/** Staff (and plain storefront) product page; customers never see price, content or photo history. */
 export const staffProducts = (
   db: MerchandiseDb,
   scope: StoreScope,
@@ -491,17 +492,19 @@ export const staffProducts = (
       ...page,
       products: page.products.map((record): ProductRecord => {
         if (view.summary === true) {
-          const { contentHistory: _history, ...summary } = record;
+          const { contentHistory: _history, photoLibrary: _library, ...summary } = record;
           void _history;
+          void _library;
           const row = { ...summary, priceHistory: [] };
           return storefront ? withStorefrontVat(row, page.rates, page.held) : withStaffVat(row, page.rates, page.held);
         }
         if (!storefront) {
           return withStaffVat(record, page.rates, page.held);
         }
-        const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
+        const { contentHistory: _content, photoLibrary: _library, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
+        void _library;
         const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, page.rates, page.held);
         return record.variantRecords === undefined
           ? projected

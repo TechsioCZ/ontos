@@ -160,7 +160,7 @@ import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-class
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
-import { isMediaImageReference, mediaImageReference } from '../../shared/domain/product-images.ts';
+import { isMediaImageReference, mediaImageReference, photoLibraryAfter } from '../../shared/domain/product-images.ts';
 import { galleryAfterChange, readProductImage } from './product-media.ts';
 import {
   convertGrossMinor,
@@ -462,9 +462,15 @@ const findProduct = Effect.fn('Merchandise.findProduct')(function* findProduct(
   return product;
 });
 
+/** The product with its server-kept photo library: every photo it showed before this write or shows after it. */
+const withPhotoLibrary = (before: Product | undefined, after: Product): Product => {
+  const photoLibrary = photoLibraryAfter(before, after);
+  return photoLibrary.length === 0 ? after : { ...after, photoLibrary };
+};
+
 const withProduct = (state: MerchandiseState, updated: Product): MerchandiseState => ({
   ...state,
-  products: state.products.map((entry) => (entry.id === updated.id ? updated : entry)),
+  products: state.products.map((entry) => (entry.id === updated.id ? withPhotoLibrary(entry, updated) : entry)),
 });
 
 /** Whole-CZK percent change: the minor amount scaled, then rounded half-up to the nearest 100 minor units. */
@@ -802,7 +808,10 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
       ? categorized
       : { ...categorized, variants: yield* normalizeVariants(categorized, variants, input) };
   const entity = yield* entityIdOf(id);
-  return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
+  return {
+    entityIds: [entity],
+    state: { ...state, products: [...state.products, withPhotoLibrary(undefined, product)] },
+  };
 });
 
 const requireReconciledVariantStock = Effect.fn('Merchandise.requireReconciledVariantStock')(
