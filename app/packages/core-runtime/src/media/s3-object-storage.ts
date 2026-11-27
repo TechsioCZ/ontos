@@ -473,7 +473,7 @@ const completeUpload = Effect.fn('S3ObjectStorage.completeUpload')(function* com
   );
 });
 
-/** Best effort: an unfinished multipart upload is never readable, and the provider expires it in time. */
+/** Best effort: an unfinished multipart upload is never readable. No lifecycle rule that would expire one is verified. */
 const abortUpload = (wiring: Wiring, key: MediaStorageKey, uploadId: string) =>
   send(wiring, {
     method: 'DELETE',
@@ -575,6 +575,7 @@ export const makeS3ObjectStorage = Effect.fn('S3ObjectStorage.make')(function* m
   const wiring: Wiring = { client: yield* HttpClient.HttpClient, config, crypto: yield* Crypto.Crypto };
   const service: ObjectStorageService = {
     get: (key) => get(wiring, key),
+    maximumObjectBytes: S3_MAXIMUM_PARTS * S3_MAXIMUM_PART_BYTES,
     providerId: config.providerId,
     put: (request) => put(wiring, request),
     stat: (key) => stat(wiring, key),

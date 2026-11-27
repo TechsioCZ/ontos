@@ -1,0 +1,164 @@
+import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Effect, FileSystem } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import {
+  coreSystemWorkloadRegistrationIssues,
+  registeredSystemWorkloadKeys,
+  systemWorkloadRegistrationIssues,
+} from '../system-workload-registrations.mts';
+
+const appRoot = path.resolve(import.meta.dirname, '../..');
+const symmyIdentity = 'src/services/symmy-worker-identity.service.ts';
+const jobKey = 'integration.symmy.execute-symmy-job';
+const otherJob = 'integration.symmy.job';
+const importsRegistration = "import { registerSystemWorkload } from '@app/core-runtime';\n";
+const importsNamespace = "import * as core from '@app/core-runtime';\n";
+const notACall = 'other than by a direct call';
+const unreadKey = 'whose jobKey is not';
+const issuesOf = (declared: readonly string[], ...contents: readonly string[]) =>
+  systemWorkloadRegistrationIssues({
+    appId: 'symmy-integration',
+    declared,
+    files: contents.map((content, index) => ({ content, path: `src/file-${String(index)}.ts` })),
+  });
+const reports = (issues: readonly string[], fragment: string) => issues.some((issue) => issue.includes(fragment));
+const unregistered = (key: string) =>
+  `symmy-integration manifest declares system workload ${key}, which no source of the module registers`;
+
+it.layer(NodeServices.layer)('the system workload registration reading', (suite) => {
+  suite.effect('reads the system workload the Symmy worker registers, which its manifest declares', () =>
+    Effect.gen(function* readsSymmy() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const content = yield* fileSystem.readFileString(
+        path.join(appRoot, 'verticals/symmy-integration', symmyIdentity),
+      );
+      expect(registeredSystemWorkloadKeys({ content, path: symmyIdentity })).toEqual({ issues: [], keys: [jobKey] });
+      expect(
+        systemWorkloadRegistrationIssues({
+          appId: 'symmy-integration',
+          declared: [jobKey],
+          files: [{ content, path: symmyIdentity }],
+        }),
+      ).toEqual([]);
+    }),
+  );
+});
+
+it('compares both ways: an undeclared registration and a declared key no source registers', () => {
+  const registers = `${importsRegistration}export const registration = registerSystemWorkload({ jobKey: '${jobKey}' });`;
+  expect(issuesOf([jobKey], registers)).toEqual([]);
+  expect(issuesOf([], registers)).toEqual([
+    `symmy-integration src/file-0.ts registers system workload ${jobKey}, which its manifest does not declare in systemWorkloads`,
+  ]);
+  expect(issuesOf([jobKey])).toEqual([unregistered(jobKey)]);
+  // A file that only names the function in a comment registers nothing.
+  expect(issuesOf([jobKey], '// registerSystemWorkload is called by the worker identity')).toEqual([
+    unregistered(jobKey),
+  ]);
+});
+
+it('follows the import binding: an aliased import and a namespace import register like the plain one', () => {
+  const aliased = `import { registerSystemWorkload as register } from '@app/core-runtime';
+const key = 'integration.symmy.aliased-job';
+export const registration = register({ jobKey: key });`;
+  expect(issuesOf(['integration.symmy.aliased-job'], aliased)).toEqual([]);
+  expect(issuesOf([], aliased)).toEqual([
+    'symmy-integration src/file-0.ts registers system workload integration.symmy.aliased-job, which its manifest does not declare in systemWorkloads',
+  ]);
+  const namespaced = `${importsNamespace}export const make = () => core.registerSystemWorkload({ jobKey: \`integration.symmy.nested-job\` });`;
+  expect(issuesOf(['integration.symmy.nested-job'], namespaced)).toEqual([]);
+  expect(issuesOf([], namespaced)).toHaveLength(1);
+});
+
+it('fails closed on every use whose key it cannot read', () => {
+  for (const [source, issue] of [
+    [`let key = "${otherJob}";\nregisterSystemWorkload({ jobKey: key });`, unreadKey],
+    [`const key = "${otherJob}";\nconst read = (key: string) => registerSystemWorkload({ jobKey: key });`, unreadKey],
+    ['registerSystemWorkload({ jobKey: makeKey() });', unreadKey],
+    [`registerSystemWorkload({ ...base, jobKey: "${otherJob}" });`, unreadKey],
+    ['registerSystemWorkload(options);', unreadKey],
+    [`const register = registerSystemWorkload;\nregister({ jobKey: "${otherJob}" });`, notACall],
+    ['export { registerSystemWorkload };', notACall],
+  ] as const) {
+    expect(reports(issuesOf([otherJob], importsRegistration + source), issue)).toBe(true);
+  }
+  expect(
+    reports(issuesOf([], "export { registerSystemWorkload as register } from '@app/core-runtime';"), notACall),
+  ).toBe(true);
+  expect(reports(issuesOf([], `${importsNamespace}const { registerSystemWorkload: register } = core;`), notACall)).toBe(
+    true,
+  );
+  expect(
+    reports(issuesOf([], `${importsNamespace}core['registerSystemWorkload']({ jobKey: "${otherJob}" });`), notACall),
+  ).toBe(true);
+});
+
+it('holds a core registration to the core declaration: an undeclared key and an unreadable use are issues, a declared key is not', () => {
+  const declared = ['core.media.integrity'];
+  const issues = (...contents: readonly string[]) =>
+    coreSystemWorkloadRegistrationIssues({
+      declared,
+      files: contents.map((content, index) => ({ content, path: `api/file-${String(index)}.ts` })),
+    });
+  const registers = (key: string) =>
+    `${importsRegistration}export const registration = registerSystemWorkload({ jobKey: '${key}' });`;
+  expect(issues(registers('core.media.integrity'))).toEqual([]);
+  // A core module's key is a core registration; it needs no manifest and is not required to be registered here.
+  expect(issues()).toEqual([]);
+  expect(issues(registers('core.media.other'))).toEqual([
+    'core api/file-0.ts registers system workload core.media.other, which Core does not declare in core-system-workloads.ts',
+  ]);
+  // An app module's key is no core key: it is held to its manifest, not registered from core source.
+  expect(issues(registers(jobKey))).toEqual([
+    `core api/file-0.ts registers system workload ${jobKey}, which Core does not declare in core-system-workloads.ts`,
+  ]);
+  expect(reports(issues(`${importsRegistration}registerSystemWorkload(options);`), unreadKey)).toBe(true);
+  expect(reports(issues('export { registerSystemWorkload };'), notACall)).toBe(true);
+});
+
+/** Local code that only shares a name with the factory: a function calling its own parameter. */
+const probe = (name: string) =>
+  `export function probe(${name}: (input: { jobKey: string }) => string) { return ${name}({ jobKey: 'integration.symmy.other' }); }`;
+
+it('resolves the factory and a constant key by lexical scope, never by name alone', () => {
+  const key = 'integration.symmy.primary';
+  const constant = `${importsRegistration}const key = '${key}';\nexport const primary = registerSystemWorkload({ jobKey: key });\n`;
+  // A destructured parameter shadows the constant, so the key it registers is not the constant's.
+  for (const shadowing of [
+    'export const make = ({ key }: { key: string }) => registerSystemWorkload({ jobKey: key });',
+    'export const make = ([key]: string[]) => registerSystemWorkload({ jobKey: key });',
+    'export function make() { const { key } = options; return registerSystemWorkload({ jobKey: key }); }',
+  ]) {
+    const issues = issuesOf([key], constant + shadowing);
+    expect(issues).toHaveLength(1);
+    expect(reports(issues, unreadKey)).toBe(true);
+  }
+  // A same-named binding of another scope shadows nothing.
+  expect(issuesOf([key], `${constant}export const other = (key: string) => key;`)).toEqual([]);
+  expect(
+    issuesOf(
+      [key],
+      `${importsRegistration}const jobKey = '${key}';\nexport const primary = registerSystemWorkload({ jobKey });`,
+    ),
+  ).toEqual([]);
+  // A local function or parameter that only shares the import's name registers nothing and hands nothing on.
+  const aliased = `import { registerSystemWorkload as register } from '@app/core-runtime';\nexport const primary = register({ jobKey: '${key}' });\n`;
+  expect(issuesOf([key], aliased + probe('register'))).toEqual([]);
+  expect(issuesOf([key], aliased + probe('registerSystemWorkload'))).toEqual([]);
+  // The nearby invalid control: handing the imported factory to that function is not a direct call.
+  expect(reports(issuesOf([key], `${aliased}${probe('register')}\nprobe(register);`), notACall)).toBe(true);
+});
+
+it('reads a file by its extension and fails closed on one that does not parse', () => {
+  const component = `${importsRegistration}export const View = () => <div />;\nexport const primary = registerSystemWorkload({ jobKey: '${jobKey}' });`;
+  expect(registeredSystemWorkloadKeys({ content: component, path: 'src/view.tsx' })).toEqual({
+    issues: [],
+    keys: [jobKey],
+  });
+  const unparsed = registeredSystemWorkloadKeys({ content: component, path: 'src/view.ts' });
+  expect(unparsed.keys).toEqual([]);
+  expect(reports(unparsed.issues, 'does not parse')).toBe(true);
+});

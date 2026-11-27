@@ -95,6 +95,7 @@ import {
   ShellNativeSystemWorkloadEnrollmentCommandSchema,
   ShellNativeRefusalProblemSchema,
   ShellNativeRefusalSchema,
+  ShellNativeHumanSessionCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
   ShellNativeModuleAppIdSchema,
@@ -703,6 +704,13 @@ const serve = Effect.scoped(
         secret: Redacted.value(issued.secret),
       });
     });
+    const humanSession = Effect.fn('ShellNativeChild.humanSession')(function* humanSession() {
+      const cookie = yield* Ref.get(sessionCookie);
+      if (!productionGate || !(yield* Ref.get(mounted)) || Option.isNone(cookie)) {
+        return yield* unavailable();
+      }
+      return yield* sendPrivate(writer, { _tag: 'human-session', cookie: cookie.value, origin: configuration.baseUrl });
+    });
     const readiness = Option.isNone(readerUser)
       ? { baseUrl, providerUserId }
       : { baseUrl, providerUserId, readerProviderUserId: readerUser.value.providerUserId };
@@ -779,6 +787,9 @@ const serve = Effect.scoped(
           }
           if (Schema.is(ShellNativeSystemWorkloadEnrollmentCommandSchema)(command)) {
             return yield* changeSystemWorkloadEnrollment(command);
+          }
+          if (Schema.is(ShellNativeHumanSessionCommandSchema)(command)) {
+            return yield* humanSession();
           }
           if (Schema.is(ShellNativeModuleSourceProvisionCommandSchema)(command)) {
             return yield* provisionModuleSource(command);

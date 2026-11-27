@@ -404,7 +404,13 @@ for (const provider of s3Providers) {
           );
           expect((yield* S3ProviderUnderTest).anonymousStatuses).toContain(anonymousRead.status);
           // The port exposes no URL, no signing and no listing: a credential holder behind it cannot mint one either.
-          expect(Object.keys(storage).toSorted()).toStrictEqual(['get', 'providerId', 'put', 'stat']);
+          expect(Object.keys(storage).toSorted()).toStrictEqual([
+            'get',
+            'maximumObjectBytes',
+            'providerId',
+            'put',
+            'stat',
+          ]);
         }),
       );
 

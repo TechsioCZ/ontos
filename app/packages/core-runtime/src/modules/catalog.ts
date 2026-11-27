@@ -8,6 +8,7 @@ import type {
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
 import { decodeOntosModuleDeploymentContract } from './manifest.ts';
+import { coreSystemWorkloadKeys, isCoreSystemModule } from './core-system-workloads.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
@@ -108,6 +109,14 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   }
   if (contract.manifest.module.kind !== 'business_module') {
     throw invalid('V0 deployments may claim only one business module');
+  }
+  // A core system module is declared by Core itself (`core-system-workloads.ts`) and is always active: no deployment
+  // claims its id or a system workload key it declares, so one owner stands behind each.
+  if (isCoreSystemModule(contract.manifest.module.id)) {
+    throw invalid('a deployment may not claim the module ID of a core system module');
+  }
+  if ((contract.manifest.systemWorkloads ?? []).some((key) => coreSystemWorkloadKeys.has(key))) {
+    throw invalid('a deployment may not declare a system workload key a core system module declares');
   }
   const { publicSurface } = contract.manifest;
   try {
@@ -251,6 +260,16 @@ export const buildInstalledModuleCatalog = (
       workerKeys.add(workerKey);
     }
   }
+  // `core.identity.change-system-workload-enrollment` relies on one owning module per system workload key.
+  const systemWorkloadKeys = new Set<string>();
+  for (const contract of byModuleId.values()) {
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      if (systemWorkloadKeys.has(workloadKey)) {
+        throw invalid('a system workload key may be declared by only one module in the installed catalog');
+      }
+      systemWorkloadKeys.add(workloadKey);
+    }
+  }
   return assembleInstalledModuleCatalog(
     [...byModuleId.values()],
     [...byAppId.values()].map((contract) => ({
@@ -269,6 +288,7 @@ const findConflictingDeploymentAppIds = (
   const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
   const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
   const byCookieRealm = new Map<string, OntosModuleDeploymentContract[]>();
+  const bySystemWorkloadKey = new Map<string, OntosModuleDeploymentContract[]>();
   for (const contract of candidates) {
     const {
       deployment: { appId },
@@ -284,12 +304,16 @@ const findConflictingDeploymentAppIds = (
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
       byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
     }
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      bySystemWorkloadKey.set(workloadKey, [...(bySystemWorkloadKey.get(workloadKey) ?? []), contract]);
+    }
   }
   for (const conflicts of [
     ...byAppId.values(),
     ...byModuleId.values(),
     ...byWorkerKey.values(),
     ...byCookieRealm.values(),
+    ...bySystemWorkloadKey.values(),
   ]) {
     if (conflicts.length > 1) {
       for (const contract of conflicts) {

@@ -7,7 +7,11 @@ import {
   evaluateCatalogCurrentUse,
   sameCatalogDocumentResourceRef,
 } from '../../shared/domain/catalog-media-assignment.ts';
-import type { CatalogCurrentUse, CatalogDocumentAvailability } from '../../shared/domain/catalog-media-assignment.ts';
+import type {
+  CatalogCurrentUse,
+  CatalogDocumentAvailability,
+  CatalogDocumentResourceRef,
+} from '../../shared/domain/catalog-media-assignment.ts';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { catalogMediaAssignments, catalogMediaAssignmentSets, productVariants, products } from '../database/schema.ts';
@@ -24,14 +28,21 @@ interface CatalogDocumentReadResult {
   readonly setRevision: number;
 }
 
+/** What the owner answered where one exact Resource was asked; the evidence may name another Resource. */
+export interface CatalogDocumentOwnerAnswer {
+  readonly evidence: CatalogDocumentAvailability;
+  readonly requested: CatalogDocumentResourceRef;
+}
+
 export interface CatalogDocumentReads {
   /**
-   * `ownerAvailability` is Documents Center evidence for exact Resources. When omitted or absent for
-   * an assignment, the projection stays OWNER_CHECK_REQUIRED and never resolves Current or access.
+   * `ownerAnswers` is the owner's evidence per exact asked Resource. When omitted or absent for an
+   * assignment, the projection stays OWNER_CHECK_REQUIRED and never resolves Current or access;
+   * evidence naming another Resource is RESOURCE_MISMATCH.
    */
   readonly current: (
     target: Target,
-    ownerAvailability?: readonly CatalogDocumentAvailability[],
+    ownerAnswers?: readonly CatalogDocumentOwnerAnswer[],
   ) => Effect.Effect<Option.Option<CatalogDocumentReadResult>, CatalogPersistenceUnavailable>;
 }
 
@@ -59,7 +70,7 @@ const decodeAssignments = Effect.fn('CatalogDocumentReads.decodeAssignments')(fu
   rows: readonly AssignmentRow[],
   set: SetRow,
   target: Target,
-  ownerAvailability: readonly CatalogDocumentAvailability[],
+  ownerAnswers: readonly CatalogDocumentOwnerAnswer[],
 ) {
   if (
     rows.some(
@@ -87,10 +98,10 @@ const decodeAssignments = Effect.fn('CatalogDocumentReads.decodeAssignments')(fu
         resourceType: row.ownerResourceType,
         tenantId: row.ownerTenantId,
       };
-      // Evidence is matched by full owner identity; an unmatched Resource never substitutes.
-      const evidence = ownerAvailability.find((candidate) =>
-        sameCatalogDocumentResourceRef(candidate.resourceRef, resourceRef),
-      );
+      // An answer belongs to the Resource that was asked, by full owner identity; what it names is judged below.
+      const evidence = ownerAnswers.find((answer) =>
+        sameCatalogDocumentResourceRef(answer.requested, resourceRef),
+      )?.evidence;
       return Schema.decodeEffect(CatalogMediaAssignmentSchema)({
         assignmentId: row.assignmentId,
         assignmentRevision: row.currentRevision,
@@ -115,7 +126,7 @@ export const catalogDocumentReadsForScope = (
   const { tenantId } = scope;
   const current: CatalogDocumentReads['current'] = Effect.fn('CatalogDocumentReads.current')(function* current(
     target,
-    ownerAvailability = [],
+    ownerAnswers = [],
   ) {
     if (!validTarget(target, tenantId)) {
       return yield* unavailable();
@@ -183,7 +194,7 @@ export const catalogDocumentReadsForScope = (
       )
       .pipe(Effect.mapError(unavailable));
     return Option.some({
-      assignments: yield* decodeAssignments(rows, set, target, ownerAvailability),
+      assignments: yield* decodeAssignments(rows, set, target, ownerAnswers),
       setRevision: set.currentRevision,
     });
   });

@@ -5,8 +5,8 @@ import { Effect, Option, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { MediaAssetIdSchema, MediaTenantIdSchema, mediaAssetRefFor } from '../../media/identity.ts';
-import { MediaForbidden, MediaUnavailable, mediaUnavailable } from '../../media/errors.ts';
-import { ObjectStorage } from '../../media/object-storage.ts';
+import { MediaForbidden, MediaTooLarge, MediaUnavailable, mediaUnavailable } from '../../media/errors.ts';
+import { ObjectStorage, unconfiguredObjectStorage } from '../../media/object-storage.ts';
 import { isOriginConsistentWithPrincipalKind } from '../../media/origin.ts';
 import { mediaAssetRepositoryFromTransaction } from '../../media/repository.ts';
 import { UploadAssetPayloadSchema, UploadAssetResultSchema } from '../../media/upload-contract.ts';
@@ -24,13 +24,14 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  */
 
 interface UploadAssetServices {
+  readonly maximumObjectBytes: number | undefined;
   readonly providerId: string;
   readonly repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>;
 }
 
 type UploadAssetContext = ActionHandlerContext<Record<never, never>, UploadAssetServices>;
 
-const MediaUploadFailureSchema = Schema.Union([MediaForbidden, MediaUnavailable]);
+const MediaUploadFailureSchema = Schema.Union([MediaForbidden, MediaTooLarge, MediaUnavailable]);
 
 const handleUploadAsset = Effect.fn('UploadAssetAction.handle')(function* handleUploadAsset(
   payload: typeof UploadAssetPayloadSchema.Type,
@@ -42,6 +43,10 @@ const handleUploadAsset = Effect.fn('UploadAssetAction.handle')(function* handle
   const tenantId = yield* Schema.decodeUnknownEffect(MediaTenantIdSchema)(context.scope.tenantId).pipe(
     Effect.mapError((cause) => mediaUnavailable('The trusted tenant is not a tenant id', cause)),
   );
+  // A row records the provider every later step must match, so a row reserved on no store could never complete.
+  if (context.services.providerId === unconfiguredObjectStorage.providerId) {
+    return yield* mediaUnavailable('No object store is configured');
+  }
   // BR-06 (#1430): the stated origin must not contradict the principal that uploads. Refused before the row exists.
   const kind = yield* context.services.repository.principalKind(context.scope.principalId);
   if (Option.isNone(kind)) {
@@ -51,6 +56,14 @@ const handleUploadAsset = Effect.fn('UploadAssetAction.handle')(function* handle
     return yield* new MediaForbidden({
       code: 'media_forbidden',
       reason: 'The stated ingestion source does not match the kind of principal that uploads',
+    });
+  }
+  // A row for a size the provider can never write would stay `uploaded` while every byte PUT answers 503.
+  const { maximumObjectBytes } = context.services;
+  if (maximumObjectBytes !== undefined && payload.declaredByteSize > maximumObjectBytes) {
+    return yield* new MediaTooLarge({
+      code: 'media_too_large',
+      reason: 'The declared size is more than the object store can write',
     });
   }
   yield* context.services.repository.reserve({
@@ -115,6 +128,10 @@ export const uploadAssetAction = defineAction(
   handleUploadAsset,
   Effect.fn('UploadAssetAction.services')(function* makeServices(transaction) {
     const storage = yield* ObjectStorage;
-    return { providerId: storage.providerId, repository: mediaAssetRepositoryFromTransaction(transaction) };
+    return {
+      maximumObjectBytes: storage.maximumObjectBytes,
+      providerId: storage.providerId,
+      repository: mediaAssetRepositoryFromTransaction(transaction),
+    };
   }),
 );

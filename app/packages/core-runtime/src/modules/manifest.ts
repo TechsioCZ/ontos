@@ -12,7 +12,7 @@ import {
   accessCarrierIssue,
   workloadKeyBelongsToModule,
 } from '../authorization/access-declaration.ts';
-import { isRegisteredSystemWorkload } from '../auth/system-workload-registration.ts';
+import { isRegisteredSystemWorkload, systemWorkloadKeyIssue } from '../auth/system-workload-registration.ts';
 import type { SystemWorkloadRegistration } from '../auth/system-workload-registration.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
@@ -320,8 +320,10 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
   /**
    * The system workloads this module's own code runs as (absent: none), each the key under which Core resolves the
-   * Tenant's one enrolled system Principal for that work. `core.identity.change-system-workload-enrollment` enrolls a
-   * Tenant's system Principal only for a key the active module declares here.
+   * Tenant's one enrolled system Principal for that work, and each starting with this module's own id and a dot.
+   * `core.identity.change-system-workload-enrollment` enrolls a Tenant's system Principal only for a key the active
+   * module declares here (a core system module declares its keys in `core-system-workloads.ts`); an installed catalog refuses
+   * two modules declaring one key.
    */
   systemWorkloads: Schema.optionalKey(Schema.Array(WorkloadKeySchema).check(Schema.isUnique())),
 }).check(
@@ -344,6 +346,11 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
       })
     );
   }),
+  Schema.makeFilter((manifest) =>
+    (manifest.systemWorkloads ?? [])
+      .map((workloadKey) => systemWorkloadKeyIssue(workloadKey, manifest.module.id))
+      .find((issue) => issue !== undefined),
+  ),
 );
 
 export const OntosDeploymentIdentitySchema = Schema.Struct({
@@ -730,9 +737,9 @@ const declaredSystemWorkloads = (
     if (registration.allowServicePrincipal) {
       throw invalidManifest(`system workload ${registration.jobKey} must admit only a system Principal`);
     }
-    const key = exactDecode(WorkloadKeySchema, registration.jobKey);
-    if (!workloadKeyBelongsToModule(key, moduleId)) {
-      throw invalidManifest(`system workload ${key} must belong to module ${moduleId}`);
+    const issue = systemWorkloadKeyIssue(exactDecode(WorkloadKeySchema, registration.jobKey), moduleId);
+    if (issue !== undefined) {
+      throw invalidManifest(issue);
     }
     return registration;
   });

@@ -11,6 +11,7 @@ import {
   MediaIntegrityFailed,
   MediaLengthRequired,
   MediaNotReady,
+  MediaTooLarge,
   MediaUnavailable,
   isMediaFailure,
   mediaAssetNotFound,
@@ -29,6 +30,7 @@ const everyFailure = {
   MediaIntegrityFailed: new MediaIntegrityFailed({ code: 'media_integrity_failed', reason }),
   MediaLengthRequired: new MediaLengthRequired({ code: 'media_length_required', reason }),
   MediaNotReady: new MediaNotReady({ code: 'media_not_ready', reason }),
+  MediaTooLarge: new MediaTooLarge({ code: 'media_too_large', reason }),
   MediaUnavailable: new MediaUnavailable({ code: 'media_unavailable', reason }),
 } satisfies Record<MediaFailure['_tag'], MediaFailure>;
 
@@ -50,6 +52,7 @@ it('maps every media failure to exactly one declared HTTP status, exhaustively',
     MediaIntegrityFailed: 422,
     MediaLengthRequired: 411,
     MediaNotReady: 409,
+    MediaTooLarge: 422,
     MediaUnavailable: 503,
   });
 });

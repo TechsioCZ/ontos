@@ -44,19 +44,20 @@ const variantNoun = (count: number) => {
 /**
  * Product table columns over summary rows (no variants, only their `variantCount`). VAT, the active flag and the
  * variants themselves live in the detail.
- * Numbers are end-aligned, fixed widths.
+ * Numbers are end-aligned. Every column but „Název“ is as wide as its content needs (long SKUs and categories truncate
+ * with the full value in a title) and „Název“ takes the rest, so the table fits a 1280 px window without scrolling.
  */
 export const productColumns = (label: (path: string) => string, tagsOf: TagsOf): ColumnDef<ProductRecord>[] => [
   {
     accessorKey: 'sku',
     cell: (info) => (
       <span className="flex min-w-0 flex-col">
-        <span className="whitespace-nowrap">{info.getValue<string>()}</span>
+        <span className="block truncate" title={info.getValue<string>()}>{info.getValue<string>()}</span>
         <ErpCodeLine product={info.row.original} />
       </span>
     ),
     header: label('columns.sku'),
-    meta: { type: 'string', width: 120 },
+    meta: { type: 'string', width: 100 },
   },
   {
     accessorKey: 'name',
@@ -83,62 +84,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       );
     },
     header: label('columns.name'),
-    meta: { type: 'string', width: 240 },
-  },
-  {
-    accessorFn: (product) =>
-      product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
-    cell: (info) => <StorefrontStatusCell product={info.row.original} />,
-    enableSorting: false,
-    header: 'E-shop',
-    id: 'storefront',
-    meta: { align: 'center', type: 'string', width: 72 },
-  },
-  { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
-  {
-    accessorKey: 'currentPriceMinor',
-    cell: (info) => {
-      const price = listPriceOf(info.row.original);
-      const amount = formatMoney(price.minor);
-      return (
-        <span className="flex flex-col items-end tabular-nums">
-          <span>{price.fromVariants ? `${label('columns.priceFrom')} ${amount}` : amount}</span>
-          <span className="text-fg-secondary text-xs">
-            {label(price.withVat ? 'columns.priceWithVat' : 'columns.priceWithoutVat')}
-          </span>
-        </span>
-      );
-    },
-    header: label('columns.price'),
-    meta: { align: 'end', type: 'number', width: 100 },
-  },
-  {
-    accessorKey: 'stockOnHand',
-    cell: (info) => (
-      <span className="flex items-center justify-end gap-100 whitespace-nowrap">
-        {info.row.original.lowStock && (
-          <Badge severity="warning" size="sm">
-            {label('status.lowStock')}
-          </Badge>
-        )}
-        <span className="tabular-nums">{formatNumber(info.getValue<number>())}</span>
-      </span>
-    ),
-    header: label('columns.onHand'),
-    meta: { align: 'end', type: 'number', width: 180 },
-  },
-  {
-    accessorFn: (product) => product.availability ?? 'UNKNOWN',
-    cell: (info) => <AvailabilityBadge value={info.row.original.availability} />,
-    header: 'Dostupnost',
-    id: 'availability',
-    meta: { type: 'string', width: 120 },
-  },
-  {
-    accessorKey: 'stockValueMinor',
-    cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
-    header: label('columns.stockValue'),
-    meta: { align: 'end', type: 'number', width: 140 },
+    meta: { type: 'string', minWidth: 120 },
   },
   // Always present: a Symmy mark shows here even for a role that may not read tags (`tagsOf` is `null`).
   {
@@ -155,6 +101,69 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     enableSorting: false,
     header: label('columns.tags'),
     id: 'tags',
-    meta: { width: 280 },
+    meta: { width: 174 },
+  },
+  {
+    accessorFn: (product) =>
+      product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
+    cell: (info) => <StorefrontStatusCell product={info.row.original} />,
+    enableSorting: false,
+    header: 'E-shop',
+    id: 'storefront',
+    meta: { align: 'center', type: 'string', width: 72 },
+  },
+  {
+    accessorKey: 'category',
+    cell: (info) => (
+      <span className="block truncate" title={info.getValue<string>()}>
+        {info.getValue<string>()}
+      </span>
+    ),
+    header: label('columns.category'),
+    meta: { type: 'string', width: 90 },
+  },
+  {
+    accessorKey: 'currentPriceMinor',
+    cell: (info) => {
+      const price = listPriceOf(info.row.original);
+      const amount = formatMoney(price.minor);
+      return (
+        <span className="flex flex-col items-end tabular-nums">
+          <span className="whitespace-nowrap">{price.fromVariants ? `${label('columns.priceFrom')} ${amount}` : amount}</span>
+          <span className="text-fg-secondary text-xs">
+            {label(price.withVat ? 'columns.priceWithVat' : 'columns.priceWithoutVat')}
+          </span>
+        </span>
+      );
+    },
+    header: label('columns.price'),
+    meta: { align: 'end', type: 'number', width: 136 },
+  },
+  {
+    accessorKey: 'stockOnHand',
+    // The number on its own line keeps the numbers of all rows ending at one x; the stock flags sit under it, so the
+    // column is only as wide as its widest flag.
+    cell: (info) => (
+      <span className="flex flex-col items-end gap-50">
+        <span className="whitespace-nowrap tabular-nums">{formatNumber(info.getValue<number>())}</span>
+        <span className="flex flex-wrap justify-end gap-50 whitespace-nowrap">
+          {info.row.original.lowStock && (
+            <Badge severity="warning" size="sm">
+              {label('status.lowStock')}
+            </Badge>
+          )}
+          <AvailabilityBadge value={info.row.original.availability} />
+        </span>
+      </span>
+    ),
+    header: label('columns.onHand'),
+    meta: { align: 'end', type: 'number', width: 110 },
+  },
+  {
+    accessorKey: 'stockValueMinor',
+    cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
+    // Two header lines: the label is wider than any stock value.
+    header: () => <span className="whitespace-normal text-end">{label('columns.stockValue')}</span>,
+    meta: { align: 'end', type: 'number', width: 112 },
   },
 ];

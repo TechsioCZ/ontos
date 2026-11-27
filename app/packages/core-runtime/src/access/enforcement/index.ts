@@ -124,7 +124,10 @@ export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspect
 export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
 
 export { readScopedWorkloadEnrollment } from '../workloads/system-enrollment.ts';
-export { readSystemWorkloadEnrollmentHolders } from '../workloads/system-workload-enrollment.ts';
+export {
+  readSystemPrincipalWorkloadHolders,
+  readSystemWorkloadEnrollmentHolders,
+} from '../workloads/system-workload-enrollment.ts';
 export type { SystemWorkloadEnrollmentHolder } from '../workloads/system-workload-enrollment.ts';
 export { readWorkerWorkloadPrincipalEligibility } from '../../outbox/workload-principal-eligibility.ts';
 export { readActiveWorkloadBindingHolders } from '../workloads/binding-holders.ts';

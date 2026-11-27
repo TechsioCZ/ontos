@@ -322,7 +322,7 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
     });
   }).pipe(Effect.scoped);
 
-/** The four real Core Media declarations, taken from the real descriptors, as the pinned artifact carries them. */
+/** A release's Core Media module: the real upload, confirm, rename and metadata read declarations. */
 const mediaModule: AccessCatalogModule = {
   descriptors: [
     uploadAssetAction.descriptor,
@@ -366,7 +366,7 @@ const mediaStates = (stage: Stage, tenantId: string) =>
 
 it.layer(NodeServices.layer)('core media on tenants bootstrapped before it', (suite) => {
   suite.effect(
-    'a first bootstrap that already carries Core Media derives the installation and gives the owner all four capabilities',
+    'a first bootstrap that already carries Core Media derives the installation and lets the owner upload and rename',
     () =>
       withStage((stage) =>
         Effect.gen(function* freshEnvironment() {

@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 /*
- * The only operational log line Core Media recovery, verified reads and cleanup checks emit. It carries a
+ * The only operational log line Core Media recovery, and verified reads emit. It carries a
  * redacted correlation reference, a closed operation and category vocabulary and, for a provider failure, the
  * stable failure code. There is no free-text field: no byte, digest, credential, URL (signed or raw), token, file
  * name, storage key or provider message can be written through it, because the type has nowhere to put them.
@@ -12,10 +12,10 @@ import { Hex } from 'effect/encoding';
  */
 
 const RECOVERY_REF_DOMAIN = 'core.media.recovery.ref';
-/** Sixteen hex characters: enough to correlate a retry with its cleanup, far too few to recover the locator. */
+/** Sixteen hex characters: enough to correlate a retry with the attempt before it, far too few to recover the locator. */
 const RECOVERY_REF_LENGTH = 16;
 
-const MediaRecoveryOperationSchema = Schema.Literals(['verified_read', 'reconcile', 'integrity', 'cleanup_check']);
+const MediaRecoveryOperationSchema = Schema.Literals(['verified_read', 'reconcile', 'integrity']);
 type MediaRecoveryOperation = typeof MediaRecoveryOperationSchema.Type;
 
 const MediaRecoveryCategorySchema = Schema.Literals([
@@ -27,8 +27,6 @@ const MediaRecoveryCategorySchema = Schema.Literals([
   'missing_object',
   'inconsistent_metadata',
   'integrity_failed',
-  'eligible',
-  'refused',
 ]);
 type MediaRecoveryCategory = typeof MediaRecoveryCategorySchema.Type;
 
@@ -45,7 +43,7 @@ export interface MediaRecoveryEvent {
 export const mediaRecoveryRef = (storageKey: string): string =>
   Hex.encode(sha256(utf8ToBytes(`${RECOVERY_REF_DOMAIN}\0${storageKey}`))).slice(0, RECOVERY_REF_LENGTH);
 
-/** Only proven corruption is worth a warning; every other category, a cleanup refusal included, is routine. */
+/** Only proven corruption is worth a warning; every other category is routine. */
 const isWarning = (category: MediaRecoveryCategory): boolean => category === 'integrity_failed';
 
 export const logMediaRecovery = (event: MediaRecoveryEvent): Effect.Effect<void> => {

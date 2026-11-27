@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Match, Predicate, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { PrincipalIdSchema } from '../../src/access/ids.ts';
@@ -69,6 +69,8 @@ const workerModule = 'enrollment.worker';
 const dormantModule = 'enrollment.dormant';
 const workerKey = 'enrollment.worker.execute-job';
 const dormantKey = 'enrollment.dormant.execute-job';
+/** An owner workload another writer (Symmy's route enabling, a bootstrap) binds to an enrolled system Principal. */
+const ownerWorkload = 'enrollment.receiver.write-record';
 const reason = 'The Tenant runs this module job';
 const enroll = { _tag: 'ENROLL', moduleKey: workerModule, workloadKey: workerKey } as const;
 const end = { _tag: 'END', moduleKey: workerModule, workloadKey: workerKey } as const;
@@ -232,6 +234,34 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
               eq(accessWorkloadBindings.status, 'active'),
             ),
           );
+      const principalBindings = (principalId: string) =>
+        admin
+          .select({ status: accessWorkloadBindings.status, workloadKey: accessWorkloadBindings.workloadKey })
+          .from(accessWorkloadBindings)
+          .where(
+            and(eq(accessWorkloadBindings.tenantId, tenantId), eq(accessWorkloadBindings.principalId, principalId)),
+          )
+          .orderBy(accessWorkloadBindings.workloadKey);
+      const principalStatus = (principalId: string) =>
+        admin
+          .select({ status: principals.status })
+          .from(principals)
+          .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)));
+      // A binding written past the enrollment, as Symmy's route enabling, a bootstrap or an earlier composition left it.
+      const leftBinding = Effect.fn('SystemWorkloadEnrollmentTest.leftBinding')(function* insertBinding(
+        principalId: string,
+        workloadKey: string,
+      ) {
+        yield* admin.insert(accessWorkloadBindings).values({
+          bindingId: yield* nextUuid,
+          createdAt: DateTime.toDateUtc(yield* DateTime.now),
+          incarnation: yield* nextUuid,
+          principalId,
+          status: 'active',
+          tenantId,
+          workloadKey,
+        });
+      });
 
       const spiceDbRelationships = [
         ...people.map((person) => relationship('tenant', person.tenantId, 'member', person.principalId)),
@@ -310,10 +340,20 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(Predicate.isTagged(firstAnswer, 'ENROLLED')).toBe(true);
       const first = yield* enrollmentOf(firstAnswer);
       const [created] = yield* admin
-        .select({ displayName: principals.displayName, kind: principals.kind, status: principals.status })
+        .select({
+          displayName: principals.displayName,
+          kind: principals.kind,
+          status: principals.status,
+          systemWorkloadKey: principals.systemWorkloadKey,
+        })
         .from(principals)
         .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, first.principalId)));
-      expect(created).toEqual({ displayName: `System workload ${workerKey}`, kind: 'system', status: 'active' });
+      expect(created).toEqual({
+        displayName: `System workload ${workerKey}`,
+        kind: 'system',
+        status: 'active',
+        systemWorkloadKey: workerKey,
+      });
       const firstBindings = yield* admin
         .select({ workloadKey: accessWorkloadBindings.workloadKey })
         .from(accessWorkloadBindings)
@@ -321,6 +361,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
           and(eq(accessWorkloadBindings.tenantId, tenantId), eq(accessWorkloadBindings.principalId, first.principalId)),
         );
       expect(firstBindings).toEqual([{ workloadKey: workerKey }]);
+      // The database itself refuses a second live Principal recorded for the same workload.
+      const second = yield* Effect.flip(
+        admin.insert(principals).values({
+          displayName: 'Second holder',
+          kind: 'system',
+          status: 'disabled',
+          systemWorkloadKey: workerKey,
+          tenantId,
+        }),
+      );
+      expect(second).toBeDefined();
       // The worker's own reader now finds exactly this Principal.
       expect((yield* workerIdentity(tenantId)).principalId).toBe(first.principalId);
 
@@ -359,10 +410,18 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       for (const refused of [
         { ...enroll, workloadKey: 'enrollment.worker.other-job' },
         { _tag: 'ENROLL', moduleKey: dormantModule, workloadKey: dormantKey },
-        { _tag: 'ENROLL', moduleKey: 'enrollment.absent', workloadKey: workerKey },
+        { _tag: 'ENROLL', moduleKey: 'enrollment.absent', workloadKey: 'enrollment.absent.execute-job' },
       ] as const) {
         const refusal = yield* Effect.flip(change(yield* sessionOf(administrator), refused));
         expect(Predicate.isTagged(refusal, 'IdentityTargetInvalidError')).toBe(true);
+      }
+      // A key outside the named module's own id never reaches the handler, for an end as for an enrollment.
+      for (const foreignKey of [
+        { ...enroll, workloadKey: dormantKey },
+        { ...end, workloadKey: dormantKey },
+      ]) {
+        const refusal = yield* Effect.flip(change(yield* sessionOf(administrator), foreignKey));
+        expect(Predicate.isTagged(refusal, 'ActionPayloadValidationError')).toBe(true);
       }
       expect(yield* activeHolders(tenantId)).toEqual([{ principalId: first.principalId }]);
 
@@ -371,7 +430,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(foreign.principalId).not.toBe(first.principalId);
       expect((yield* workerIdentity(tenantId)).principalId).toBe(first.principalId);
 
-      // The end revokes the binding and archives the Principal; the worker then finds none in this Tenant only.
+      // An owner workload bound to the Principal since (as Symmy's route enabling binds one) ends with it too.
+      yield* leftBinding(first.principalId, ownerWorkload);
+      // The end revokes every binding and archives the Principal; the worker then finds none in this Tenant only.
       const ended = yield* change(yield* sessionOf(administrator), end);
       expect(Predicate.isTagged(ended, 'ENDED')).toBe(true);
       expect(ended).toMatchObject({
@@ -388,6 +449,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
         .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, first.principalId)));
       expect(archived).toEqual({ status: 'archived' });
       expect(yield* activeHolders(tenantId)).toEqual([]);
+      expect(yield* principalBindings(first.principalId)).toEqual([
+        { status: 'revoked', workloadKey: ownerWorkload },
+        { status: 'revoked', workloadKey: workerKey },
+      ]);
+      const endAudits = yield* admin
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
+      expect(endAudits).toContainEqual({
+        evidence: expect.objectContaining({ change: 'ENDED', workloads: [ownerWorkload, workerKey] }),
+      });
       const noWorker = yield* Effect.flip(workerIdentity(tenantId));
       expect(Predicate.isTagged(noWorker, 'SystemPrincipalContextDeniedError')).toBe(true);
       expect((yield* workerIdentity(foreignTenantId)).principalId).toBe(foreign.principalId);
@@ -406,6 +478,95 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(leftEnrollment.principalId).not.toBe(first.principalId);
       expect(yield* activeHolders(tenantId)).toEqual([{ principalId: leftEnrollment.principalId }]);
       expect((yield* workerIdentity(tenantId)).principalId).toBe(leftEnrollment.principalId);
+
+      // A binding of another module's system workload key on the worker's Principal never makes it that module's
+      // enrollment. Demo line: that module's enrollment leaves the key with it, as an executor holds the owner workloads
+      // its routes need (MERGING.md V52).
+      yield* admin
+        .update(tenantModuleStates)
+        .set({ state: 'active' })
+        .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, dormantModule)));
+      const borrower = leftEnrollment.principalId;
+      yield* leftBinding(borrower, dormantKey);
+      const owner = { moduleKey: dormantModule, workloadKey: dormantKey };
+      const ownerIdentity = Effect.fn('SystemWorkloadEnrollmentTest.ownerIdentity')(function* resolveOwner() {
+        return yield* enrolled.resolveEnrolled({
+          registration: registerSystemWorkload({ jobKey: dormantKey }),
+          runReference: yield* nextUuid,
+          tenantId,
+        });
+      });
+      const unresolved = yield* Effect.flip(ownerIdentity());
+      expect(Predicate.isTagged(unresolved, 'SystemPrincipalContextDeniedError')).toBe(true);
+      const nothingToEnd = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(nothingToEnd, 'NOT_ENROLLED')).toBe(true);
+      const ownAnswer = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'ENROLL' });
+      expect(Predicate.isTagged(ownAnswer, 'ENROLLED')).toBe(true);
+      const own = yield* enrollmentOf(ownAnswer);
+      expect(own.principalId).not.toBe(borrower);
+      expect((yield* ownerIdentity()).principalId).toBe(own.principalId);
+      expect(yield* principalBindings(borrower)).toEqual([
+        { status: 'active', workloadKey: dormantKey },
+        { status: 'active', workloadKey: workerKey },
+      ]);
+      const reclaimAudits = yield* admin
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
+      expect(reclaimAudits).not.toContainEqual({
+        evidence: expect.objectContaining({ reclaimedFrom: [borrower] }),
+      });
+
+      // A system Principal with no recorded workload, as one made before the record existed: END never ends it and
+      // ENROLL never adopts it, but ENROLL takes the key from it and leaves its other bindings.
+      const ownEnded = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(ownEnded, 'ENDED')).toBe(true);
+      const unrecorded = yield* nextUuid;
+      yield* admin.insert(principals).values({
+        displayName: 'Unrecorded system principal',
+        kind: 'system',
+        principalId: unrecorded,
+        status: 'active',
+        tenantId,
+      });
+      yield* leftBinding(unrecorded, dormantKey);
+      yield* leftBinding(unrecorded, ownerWorkload);
+      expect((yield* ownerIdentity()).principalId).toBe(unrecorded);
+      const notEnded = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(notEnded, 'NOT_ENROLLED')).toBe(true);
+      expect(yield* principalStatus(unrecorded)).toEqual([{ status: 'active' }]);
+      const replacing = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'ENROLL' });
+      expect(Predicate.isTagged(replacing, 'ENROLLED')).toBe(true);
+      const replacement = yield* enrollmentOf(replacing);
+      expect(replacement.principalId).not.toBe(unrecorded);
+      expect((yield* ownerIdentity()).principalId).toBe(replacement.principalId);
+      expect(yield* principalBindings(unrecorded)).toEqual([
+        { status: 'revoked', workloadKey: dormantKey },
+        { status: 'active', workloadKey: ownerWorkload },
+      ]);
+      expect(yield* principalStatus(unrecorded)).toEqual([{ status: 'active' }]);
+
+      // A core system module needs no installed contract and no Tenant module state; only a key Core declares for it
+      // is enrolled, and the key always starts with the module's own id.
+      const integrity = yield* change(yield* sessionOf(administrator), {
+        _tag: 'ENROLL',
+        moduleKey: 'core.media',
+        workloadKey: 'core.media.integrity',
+      });
+      expect(Predicate.isTagged(integrity, 'ENROLLED')).toBe(true);
+      for (const refused of [
+        { _tag: 'ENROLL', moduleKey: 'core.media', workloadKey: 'core.media.other-job' },
+        { _tag: 'ENROLL', moduleKey: workerModule, workloadKey: 'core.media.integrity' },
+      ] as const) {
+        expect(yield* Effect.flip(change(yield* sessionOf(administrator), refused))).toBeDefined();
+      }
+      const integrityEnded = yield* change(yield* sessionOf(administrator), {
+        _tag: 'END',
+        moduleKey: 'core.media',
+        workloadKey: 'core.media.integrity',
+      });
+      expect(Predicate.isTagged(integrityEnded, 'ENDED')).toBe(true);
+      expect(integrityEnded).toMatchObject({ stoppedCalls: [] });
     }),
   );
 });

@@ -45,6 +45,7 @@ import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-r
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { privacyManifest } from '../../vertical.manifest.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 const compositionDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
 const appRoot = new URL('../../../../', import.meta.url).pathname;
@@ -86,7 +87,7 @@ export const readPrivacyFixtureShellObservation = Effect.fn('PrivacyTests.readSh
       ),
     )(shellFederationDocument).pipe(Effect.mapError(compositionUnavailable));
     const sharedSingletons = yield* Effect.forEach(
-      shellFederation.shared.filter(({ singleton }) => singleton === true),
+      sharedPackagesOf(shellFederation.shared).filter(({ singleton }) => singleton === true),
       (entry) =>
         entry.requiredVersion === undefined
           ? Effect.fail(compositionUnavailable('Published Shell singleton has no version'))
