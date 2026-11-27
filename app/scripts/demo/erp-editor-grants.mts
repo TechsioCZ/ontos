@@ -21,7 +21,12 @@
  *   company, made through Core's people commands (`assignRole`);
  * - the authority made by hand before this step owned these grants (`RETIRED_ERP_AUTHORITY`) ends through the same
  *   commands once the editor roles are held: the operators' assignments of the retired tenant role (`unassignRole`),
- *   and the retired modules' cells of the company role they were added to (`writeRoleRevision`).
+ *   and the retired modules' cells of the company role they were added to (`writeRoleRevision`);
+ * - each operator keeps its company's customers in Zákazníci (/cs/prodej/zakaznici and a customer's detail) through a
+ *   second tenant role this step owns, "Zákazníci e-shopu", with exactly `CUSTOMER_REGISTER_TENANT_CAPABILITIES`,
+ *   made and assigned in the tenant context the same way, whether or not Catalog is active. The customer list, a new
+ *   customer's onboarding and the pages are decided in the company, where the operator's company role "Správce
+ *   e-shopu" already holds them.
  *
  * A second run writes nothing. An operator it cannot grant fails the run (exit 1), so the app host's boot line
  * `host.erp-editor-grants` says `failed`. Any other operator must already be a member of its tenant and a company: its
@@ -233,6 +238,49 @@ export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
   'commerce.inventory.stock-position.issue',
 ];
 
+export const CUSTOMER_REGISTER_ROLE_NAME = 'Zákazníci e-shopu';
+
+/**
+ * What Zákazníci (verticals/party-registry/src/routes/[lang]/prodej/zakaznici) and a customer's detail call that Core
+ * decides in the tenant context (`legalEntityScope: 'optional'`), each as a run cell on all records. The operator's
+ * company role "Správce e-shopu" holds the same keys, but a company role is no authority in the tenant context, so
+ * without these every detail read answers 403 while the list, decided in the company, loads.
+ */
+export const CUSTOMER_REGISTER_TENANT_CAPABILITIES: readonly string[] = [
+  // customers-data.ts loadCustomerDetail: the Counterparty, the Party's identity, its contacts and its identifiers.
+  'party.registry.counterparty.read',
+  'party.registry.counterparty-identity.read',
+  'party.registry.party.read',
+  'party.registry.party-identity.read',
+  'party.registry.contact-point.list',
+  'party.registry.contact-point-value.list',
+  'party.registry.official-identifier.read-history',
+  'party.registry.official-identifier-value.read-history',
+  // party-command-client.ts: the outcome of a write whose answer was lost.
+  'party.registry.owned-command-result.read',
+  // customers-data.ts saveCustomerFact and the bulk edit: name, archive, contacts and identifiers.
+  'party.registry.party.update',
+  'party.registry.party-fact.correct',
+  'party.registry.party.archive',
+  'party.registry.party.unarchive',
+  'party.registry.contact-point.add',
+  'party.registry.contact-point.update',
+  'party.registry.contact-point.end',
+  'party.registry.official-identifier.add',
+  'party.registry.official-identifier.end',
+  // customer-create-dialog.tsx: "Nový zákazník" and its ARES prefill.
+  'party.registry.party.create',
+  'party.registry.ares-subject.lookup',
+  // customer-identity-review-panel.tsx: "Kontrola identit".
+  'party.registry.duplicate-candidate.list',
+  'party.registry.duplicate-candidate.read',
+  'party.registry.identity-review-evidence.read',
+  'party.registry.duplicate-candidate.dismiss',
+  'party.registry.duplicate-candidate.request-evidence',
+  'party.registry.duplicate-candidate.resolve-create',
+  'party.registry.duplicate-candidate.resolve-match',
+];
+
 export class ErpEditorGrantsFailure extends Schema.TaggedError<ErpEditorGrantsFailure>()('ErpEditorGrantsFailure', {
   message: Schema.String,
 }) {}
@@ -413,8 +461,14 @@ const reviseRole = Effect.fn('ErpEditorGrants.reviseRole')(function* reviseRole(
   });
 });
 
+/** A role this step owns: its name, and the seed of its stable id. */
+interface OwnedRole {
+  readonly idSeed: string;
+  readonly name: string;
+}
+
 /**
- * The ERP editor role of the tenant context (no company) or of one company, by its stable id: created empty when
+ * A role this step owns, of the tenant context (no company) or of one company, by its stable id: created empty when
  * absent, then revised to exactly `wanted`.
  */
 const reconcileRole = Effect.fn('ErpEditorGrants.reconcileRole')(function* reconcileRole(
@@ -422,16 +476,11 @@ const reconcileRole = Effect.fn('ErpEditorGrants.reconcileRole')(function* recon
   catalog: CatalogSnapshot,
   wanted: readonly Cell[],
   legalEntityId: LegalEntityId | undefined,
+  owned: OwnedRole,
 ) {
   const store = yield* AccessChangesStore;
-  const roleId = RoleIdSchema.make(
-    stableUuid(
-      legalEntityId === undefined
-        ? `ontos.erp-editor-grants.role:${scope.tenantId}`
-        : `ontos.erp-editor-grants.company-role:${scope.tenantId}:${legalEntityId}`,
-    ),
-  );
-  const label = `tenant ${scope.tenantId}${legalEntityId === undefined ? '' : ` company ${legalEntityId}`}: role "${ERP_EDITOR_ROLE_NAME}" (${roleId})`;
+  const roleId = RoleIdSchema.make(stableUuid(owned.idSeed));
+  const label = `tenant ${scope.tenantId}${legalEntityId === undefined ? '' : ` company ${legalEntityId}`}: role "${owned.name}" (${roleId})`;
   const load = store.loadTenantChanges(scope).pipe(
     Effect.mapError(() => failure(`${label} could not be read`)),
     Effect.map(({ roles }) => Option.fromUndefinedOr(roles.find(({ role }) => role.id === roleId))),
@@ -449,7 +498,7 @@ const reconcileRole = Effect.fn('ErpEditorGrants.reconcileRole')(function* recon
       catalogSnapshotId: CatalogSnapshotIdSchema.make(catalog.id),
       cells: [],
       decidedAt: yield* DateTime.nowAsDate,
-      name: ERP_EDITOR_ROLE_NAME,
+      name: owned.name,
       scope,
       targetRevisionId: RoleRevisionIdSchema.make(
         stableUuid(`ontos.erp-editor-grants.role-revision:${roleId}:created`),
@@ -862,17 +911,18 @@ const retireAuthority = Effect.fn('ErpEditorGrants.retireAuthority')(function* r
   );
 });
 
-/** One tenant with ERP products: its owner authors the role, and every operator who is not an owner is assigned it. */
-const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTenant(
+/**
+ * The tenant owner's scope, which authors this step's roles, and the operators who are not owners: an owner already
+ * holds everything, so it gets nothing. None when no operator is left.
+ */
+const ownerAuthoring = Effect.fn('ErpEditorGrants.ownerAuthoring')(function* ownerAuthoring(
   tenantId: string,
   operators: readonly Operator[],
-  catalog: CatalogSnapshot,
-  wanted: { readonly company: readonly Cell[]; readonly tenant: readonly Cell[] },
 ) {
   const loader = yield* TenantIntentLoader;
   const [first] = operators;
   if (first === undefined) {
-    return yield* Effect.void;
+    return Option.none<{ readonly members: readonly Operator[]; readonly scope: Scope }>();
   }
   const intent = yield* loader
     .loadProjection(yield* scopeOf(tenantId, first.principalId))
@@ -880,18 +930,32 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
   const owners = new Set(intent.owners.map(String));
   const [owner] = intent.owners;
   if (owner === undefined) {
-    return yield* failure(`tenant ${tenantId} has no owner to author the ERP editor role`);
+    return yield* failure(`tenant ${tenantId} has no owner to author the roles of this step`);
   }
   yield* Effect.forEach(
     operators.filter(({ principalId }) => owners.has(principalId)),
     ({ email }) => Console.log(`${LOG} tenant ${tenantId}: ${email} is an owner; nothing to grant`),
     { discard: true },
   );
-  const editors = operators.filter(({ principalId }) => !owners.has(principalId));
-  if (editors.length === 0) {
+  const members = operators.filter(({ principalId }) => !owners.has(principalId));
+  if (members.length === 0) {
+    return Option.none<{ readonly members: readonly Operator[]; readonly scope: Scope }>();
+  }
+  return Option.some({ members, scope: yield* scopeOf(tenantId, String(owner)) });
+});
+
+/** One tenant with ERP products: its owner authors the role, and every operator who is not an owner is assigned it. */
+const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTenant(
+  tenantId: string,
+  operators: readonly Operator[],
+  catalog: CatalogSnapshot,
+  wanted: { readonly company: readonly Cell[]; readonly tenant: readonly Cell[] },
+) {
+  const authoring = yield* ownerAuthoring(tenantId, operators);
+  if (Option.isNone(authoring)) {
     return yield* Effect.void;
   }
-  const scope = yield* scopeOf(tenantId, String(owner));
+  const { members: editors, scope } = authoring.value;
   const admissions = yield* Effect.forEach(
     editors,
     (operator) =>
@@ -901,7 +965,10 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
     { concurrency: 1 },
   );
   const admittedTo = new Map(admissions.flatMap(Option.toArray));
-  const roleId = yield* reconcileRole(scope, catalog, wanted.tenant, undefined);
+  const roleId = yield* reconcileRole(scope, catalog, wanted.tenant, undefined, {
+    idSeed: `ontos.erp-editor-grants.role:${tenantId}`,
+    name: ERP_EDITOR_ROLE_NAME,
+  });
   yield* Effect.forEach(
     editors,
     (operator) => assignOperator(scope, roleId, operator, undefined, admittedTo.has(operator.principalId)),
@@ -933,7 +1000,10 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
     reached,
     ({ legalEntityId, scopeId }) =>
       Effect.gen(function* grantCompany() {
-        const companyRoleId = yield* reconcileRole(scope, catalog, wanted.company, legalEntityId);
+        const companyRoleId = yield* reconcileRole(scope, catalog, wanted.company, legalEntityId, {
+          idSeed: `ontos.erp-editor-grants.company-role:${tenantId}:${legalEntityId}`,
+          name: ERP_EDITOR_ROLE_NAME,
+        });
         yield* Effect.forEach(
           editors.filter((operator) => companiesOf(operator).some((company) => company.scopeId === scopeId)),
           (operator) =>
@@ -945,6 +1015,30 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
   );
   // The editor roles are held now, so the authority they replace can end.
   return yield* retireAuthority(scope, catalog, editors);
+});
+
+/**
+ * One tenant's shop operators keep its customers: its owner authors "Zákazníci e-shopu", and every operator who is not
+ * an owner holds it in the tenant context. It runs after the ERP editors, whose step admits the operators it names.
+ */
+const grantCustomerRegister = Effect.fn('ErpEditorGrants.grantCustomerRegister')(function* grantCustomerRegister(
+  tenantId: string,
+  operators: readonly Operator[],
+  catalog: CatalogSnapshot,
+  wanted: readonly Cell[],
+) {
+  const authoring = yield* ownerAuthoring(tenantId, operators);
+  if (Option.isNone(authoring)) {
+    return yield* Effect.void;
+  }
+  const { members, scope } = authoring.value;
+  const roleId = yield* reconcileRole(scope, catalog, wanted, undefined, {
+    idSeed: `ontos.customer-register-grants.role:${tenantId}`,
+    name: CUSTOMER_REGISTER_ROLE_NAME,
+  });
+  return yield* Effect.forEach(members, (operator) => assignOperator(scope, roleId, operator, undefined, false), {
+    discard: true,
+  });
 });
 
 export const grantErpEditors = Effect.gen(function* grantErpEditors() {
@@ -963,8 +1057,9 @@ export const grantErpEditors = Effect.gen(function* grantErpEditors() {
     company: yield* erpEditorCells(catalog, ERP_EDITOR_COMPANY_CAPABILITIES),
     tenant: yield* erpEditorCells(catalog, ERP_EDITOR_TENANT_CAPABILITIES),
   };
+  const customerRegister = yield* erpEditorCells(catalog, CUSTOMER_REGISTER_TENANT_CAPABILITIES);
   yield* Console.log(
-    `${LOG} catalog ${catalog.id}: ${String(wanted.tenant.length)} tenant and ${String(wanted.company.length)} company ERP editor cells`,
+    `${LOG} catalog ${catalog.id}: ${String(wanted.tenant.length)} tenant and ${String(wanted.company.length)} company ERP editor cells, ${String(customerRegister.length)} customer register cells`,
   );
   const operators = yield* findOperators;
   yield* Effect.forEach(
@@ -988,9 +1083,21 @@ export const grantErpEditors = Effect.gen(function* grantErpEditors() {
       Effect.exit,
     ),
   );
+  // Every shop operator keeps its company's customers, whether or not its tenant has ERP products.
+  const registerOutcomes = yield* Effect.forEach(
+    [...Map.groupBy(operators, ({ tenantId }) => tenantId)],
+    ([tenantId, members]) =>
+      grantCustomerRegister(tenantId, members, catalog, customerRegister).pipe(
+        Effect.tapError(({ message }) => Console.error(`${LOG} FAILED ${message}`)),
+        Effect.exit,
+      ),
+  );
   const failed = outcomes.filter(Exit.isFailure).length;
-  if (failed > 0) {
-    return yield* failure(`${String(failed)} of ${String(outcomes.length)} tenants with ERP products were not granted`);
+  const failedRegisters = registerOutcomes.filter(Exit.isFailure).length;
+  if (failed > 0 || failedRegisters > 0) {
+    return yield* failure(
+      `${String(failed)} of ${String(outcomes.length)} tenants with ERP products and ${String(failedRegisters)} of ${String(registerOutcomes.length)} tenants with shop operators were not granted`,
+    );
   }
   return yield* Console.log(`${LOG} done`);
 });

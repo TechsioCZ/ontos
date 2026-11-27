@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -5,8 +7,11 @@ import { AccessScopeIdSchema, LegalEntityIdSchema } from '../../packages/core-ru
 import { AccessMembershipSchema } from '../../packages/core-runtime/src/access/intent/memberships.ts';
 import { AssignmentSchema, RoleRevisionSchema, RoleSchema } from '../../packages/core-runtime/src/access/model.ts';
 import {
+  CUSTOMER_REGISTER_TENANT_CAPABILITIES,
   ERP_EDITOR_ADMISSIONS,
+  ERP_EDITOR_COMPANY_CAPABILITIES,
   ERP_EDITOR_LOGINS,
+  ERP_EDITOR_TENANT_CAPABILITIES,
   planAdmission,
   planRetirement,
   RETIRED_ERP_AUTHORITY,
@@ -54,6 +59,45 @@ const admissionView = (memberships: readonly ReturnType<typeof member>[]) => ({
 
 const admit = (memberships: readonly ReturnType<typeof member>[], directory?: DirectoryEntry) =>
   planAdmission(admissionView(memberships), ESHOP, AKROS.legalEntityId, directory, ESHOP_EMAIL);
+
+const DeclarationSchema = Schema.Struct({ key: Schema.String, modes: Schema.Array(Schema.String) });
+const CatalogArtifactSchema = Schema.fromJsonString(
+  Schema.Struct({
+    modules: Schema.Array(
+      Schema.Struct({
+        descriptors: Schema.Array(
+          Schema.Struct({
+            accessDeclaration: DeclarationSchema,
+            accessFieldGroups: Schema.optional(Schema.Array(DeclarationSchema)),
+          }),
+        ),
+      }),
+    ),
+  }),
+);
+
+it('every cell the step grants is a run capability this release publishes, so no boot fails on one', () => {
+  const artifact = Schema.decodeUnknownSync(CatalogArtifactSchema)(
+    readFileSync(new URL('../../topology/authorization-catalog.json', import.meta.url), 'utf-8'),
+  );
+  const published = new Set(
+    artifact.modules
+      .flatMap(({ descriptors }) =>
+        descriptors.flatMap(({ accessDeclaration, accessFieldGroups }) => [
+          accessDeclaration,
+          ...(accessFieldGroups ?? []),
+        ]),
+      )
+      .filter(({ modes }) => modes.includes('run'))
+      .map(({ key }) => key),
+  );
+  const granted = [
+    ...ERP_EDITOR_TENANT_CAPABILITIES,
+    ...ERP_EDITOR_COMPANY_CAPABILITIES,
+    ...CUSTOMER_REGISTER_TENANT_CAPABILITIES,
+  ];
+  expect(granted.filter((key) => !published.has(key))).toEqual([]);
+});
 
 it('the AKROS login the stage bootstrap only attaches is admitted to the AKROS seller', () => {
   expect(ERP_EDITOR_ADMISSIONS).toEqual([{ email: ESHOP_EMAIL, ...AKROS }]);
