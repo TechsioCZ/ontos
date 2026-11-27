@@ -1,4 +1,6 @@
-import { Config, Crypto, DateTime, Effect, Option, Redacted } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -30,20 +32,15 @@ const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
 );
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-const recoveryCrypto = Crypto.make({
-  digest: (algorithm, data) =>
-    Effect.sync(() => {
-      const nodeAlgorithm = algorithm.toLowerCase().replace('-', '');
-      return new Uint8Array(createHash(nodeAlgorithm).update(data).digest());
-    }),
-  randomBytes: (size) => new Uint8Array(randomBytes(size)),
+const recoveryCrypto = SecureRandom.make((size) => new Uint8Array(randomBytes(size)));
+const recoveryDigest = CommerceAuthSha256.of({
+  hash: (text) => Effect.sync(() => new Uint8Array(createHash('sha256').update(text, 'utf-8').digest())),
 });
 
-const identifierDigestFor = (email: string) =>
-  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(email)).pipe(Effect.map(bytesToHex));
+const identifierDigestFor = (email: string) => recoveryDigest.hash(email).pipe(Effect.map(bytesToHex));
 
 const tokenDigestFor = (token: Redacted.Redacted) =>
-  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(token))).pipe(Effect.map(bytesToHex));
+  recoveryDigest.hash(Redacted.value(token)).pipe(Effect.map(bytesToHex));
 
 /** A store instance plus the raw database, for tests that exercise the password-reset ledger directly. */
 const makeResetLedgerHarness = Effect.fn('CommercePortalAuthRecoveryIntegration.makeResetLedgerHarness')(
@@ -60,7 +57,8 @@ const makeResetLedgerHarness = Effect.fn('CommercePortalAuthRecoveryIntegration.
     });
     const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
     const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
-      Effect.provideService(Crypto.Crypto, recoveryCrypto),
+      Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+      Effect.provideService(CommerceAuthSha256, recoveryDigest),
     );
     return { database, store };
   },
@@ -115,7 +113,8 @@ const makeReconciliationFixture = Effect.fn('CommercePortalAuthRecoveryReconcili
     });
 
     const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
-      Effect.provideService(Crypto.Crypto, recoveryCrypto),
+      Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+      Effect.provideService(CommerceAuthSha256, recoveryDigest),
     );
     const token = Redacted.make(`recon-${caseName}-token-${randomUUID()}`);
     const registered = yield* store.registerPasswordResetToken({
@@ -144,9 +143,7 @@ const makeReconciliationFixture = Effect.fn('CommercePortalAuthRecoveryReconcili
     };
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* cleanup() {
-        const identifierDigest = yield* recoveryCrypto
-          .digest('SHA-256', new TextEncoder().encode(originalEmail))
-          .pipe(Effect.map(bytesToHex));
+        const identifierDigest = yield* recoveryDigest.hash(originalEmail).pipe(Effect.map(bytesToHex));
         yield* database.executor
           .delete(recoveryResetLedger)
           .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
@@ -165,7 +162,8 @@ it.live('proves a conflicting reset leaves the account untouched, sessions uncha
     Effect.gen(function* postgresRebindDetection() {
       const fixture = yield* makeReconciliationFixture('rebind');
       const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-        Effect.provideService(Crypto.Crypto, recoveryCrypto),
+        Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+        Effect.provideService(CommerceAuthSha256, recoveryDigest),
       );
       const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
         Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
@@ -228,7 +226,8 @@ it.live('proves a stale ledger subject is detected without touching any account 
     Effect.gen(function* postgresStaleSubjectDetection() {
       const fixture = yield* makeReconciliationFixture('stale');
       const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-        Effect.provideService(Crypto.Crypto, recoveryCrypto),
+        Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+        Effect.provideService(CommerceAuthSha256, recoveryDigest),
       );
       const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
         Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
@@ -494,7 +493,7 @@ it.live(
         const registerToken = store.registerPasswordResetToken;
         const peekLedger = store.peekPasswordResetLedger;
 
-        const registered = yield* registerToken({ email, expiresAt: alreadyExpired, providerSubjectId, token });
+        const registered = yield* registerToken({ expiresAt: alreadyExpired, email, providerSubjectId, token });
         expect(registered).toBe(true);
 
         // #8: an expired row is excluded from lookups immediately, whether or not a sweep has run

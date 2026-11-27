@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
-const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
+const effectCompilerPath = path.join(appRoot, 'node_modules', '.bin', 'effect-tsgo');
 const verticalName = 'property-registry';
 const moduleId = 'property.registry';
 const resourceName = 'rental-unit';
@@ -340,20 +340,20 @@ it.live(
           generatedModule.RentalUnitRefSchema.ast,
         );
         const reference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
-          moduleId,
           resourceId: 'unit-42',
+          moduleId,
           resourceType,
           tenantId,
         });
         expect(reference).toEqual({
-          moduleId,
           resourceId: 'unit-42',
+          moduleId,
           resourceType,
           tenantId,
         });
         const invalidReference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
-          moduleId,
           resourceId: '',
+          moduleId,
           resourceType,
           tenantId,
         }).pipe(Effect.flip);
@@ -379,7 +379,7 @@ it.live(
             include: ['verticals/property-registry/shared/resources/**/*.ts', verticalManifestPath],
           }),
         );
-        const compilation = spawnSync(tscPath, ['-p', fixtureTsconfig], {
+        const compilation = spawnSync(effectCompilerPath, ['tsrs@7.1.0-beta.tsrs3', '-p', fixtureTsconfig], {
           cwd: root,
           encoding: 'utf-8',
         });

@@ -1,6 +1,7 @@
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Exit, Layer } from 'effect';
+import { DateTime, Effect, Exit, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -27,7 +28,9 @@ interface AdmissionFact {
   readonly status: 'running' | 'succeeded';
 }
 
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 
 it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation TEST fault', (suite) => {
   suite.effect(
@@ -48,11 +51,11 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             });
             const client = yield* makeTestPgClient(ownedDatabase.connections.admin.connectionString);
             const database = yield* makeTestDatabaseFromClient(client, coreRelations);
-            const crypto = yield* Crypto.Crypto;
-            const tenantId = yield* crypto.randomUUIDv4();
-            const integrationId = yield* crypto.randomUUIDv4();
-            const humanId = yield* crypto.randomUUIDv4();
-            const legalEntityId = yield* crypto.randomUUIDv4();
+            const crypto = yield* SecureRandom.SecureRandom;
+            const tenantId = yield* crypto.uuidV4();
+            const integrationId = yield* crypto.uuidV4();
+            const humanId = yield* crypto.uuidV4();
+            const legalEntityId = yield* crypto.uuidV4();
             const now = DateTime.toDateUtc(yield* DateTime.now);
             yield* database.insert(tenants).values({
               defaultLocale: 'cs',
@@ -73,17 +76,17 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             ]);
             yield* database.insert(legalEntities).values({
               legalEntityId,
+              tenantId,
               legalName: 'Internal company',
               registrationCountry: 'CZ',
               registrationNumber: 'INTERNAL_SYNC_FAULT',
               status: 'active',
-              tenantId,
             });
             // Native Core fact fixtures test the helper. The application conformance test supplies actual admitted Sync facts.
             const seedAdmission = Effect.fn('OwnedSyncFault.seedCoreFacts')(function* seedCoreFacts(
               fact: AdmissionFact,
             ) {
-              const admissionId = yield* crypto.randomUUIDv4();
+              const admissionId = yield* crypto.uuidV4();
               yield* database.insert(actionInvocations).values({
                 actionInvocationId: admissionId,
                 actionKey: fact.actionKey,
@@ -109,11 +112,11 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             });
             const input: OwnedSyncAdmissionFenceFaultInput = {
               admissionId,
+              ownedDatabase,
+              tenantId,
               expectedLegalEntityId: null,
               expectedOriginalIntegrationPrincipalId: integrationId,
-              ownedDatabase,
               purpose: 'implementation-1096-registered-workload-gateway',
-              tenantId,
             };
             const running = yield* seedAdmission({
               actionKey,
@@ -135,9 +138,9 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             });
             const invalid = [
               { ...input, admissionId: 'invalid-uuid' },
-              { ...input, tenantId: yield* crypto.randomUUIDv4() },
+              { ...input, tenantId: yield* crypto.uuidV4() },
               { ...input, expectedOriginalIntegrationPrincipalId: humanId },
-              { ...input, admissionId: yield* crypto.randomUUIDv4() },
+              { ...input, admissionId: yield* crypto.uuidV4() },
               { ...input, expectedLegalEntityId: legalEntityId },
               { ...input, admissionId: running },
               { ...input, admissionId: otherAction },

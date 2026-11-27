@@ -147,8 +147,8 @@ const main = Effect.scoped(
         const result = yield* runtime.runAction({
           audience: OWNER_AUDIENCE,
           payload: request.parameters,
-          principal,
           registration: createMarketAction,
+          principal,
           transport,
         });
         return yield* Schema.encodeEffect(
@@ -160,8 +160,8 @@ const main = Effect.scoped(
       const result = yield* runtime.runAction({
         audience: OWNER_AUDIENCE,
         payload: request.parameters,
-        principal,
         registration: associateStorefrontAction,
+        principal,
         transport,
       });
       return yield* Schema.encodeEffect(
@@ -181,7 +181,7 @@ const main = Effect.scoped(
     Effect.sync(() =>
       process.stderr.write(
         `owner-producer-cause: ${Cause.pretty(cause)
-          .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+          .replaceAll(/(?<!\w)(?<scheme>\w+:\/\/)(?=[^\s/@][^\s/@]*:[^\s/@])[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
           .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[REDACTED]')
           .replaceAll(/(?<field>Bearer\s+)\S+/gu, '$<field>[REDACTED]')
           .slice(0, 6144)}\n`,
@@ -190,6 +190,6 @@ const main = Effect.scoped(
   ),
   Effect.mapError(unavailable),
 );
-NodeRuntime.runMain(main.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([])))), {
+NodeRuntime.runMain(main.pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, Logger.layer([])))), {
   disableErrorReporting: true,
 });

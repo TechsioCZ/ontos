@@ -10,7 +10,8 @@ import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gatew
 import { deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Redacted } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert } from 'effect-rstest';
@@ -42,7 +43,7 @@ import { executePartyContactPointsWithAuthorization } from '../../src/api/party-
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { PartyReconciliationGateway } from './party-reconciliation-native.fixture.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 const declared = {
   authoritative: false,
@@ -174,7 +175,7 @@ export const makeGovernedContactFixture = Effect.fn('GovernedContactFixture.make
     ) {
       return yield* runHttp(
         addContactPointWithAuthorization(
-          { contactPoint, partyRef, privacyClassification: 'BUSINESS_SENSITIVE', provenance, validFrom },
+          { contactPoint, partyRef, provenance, validFrom, privacyClassification: 'BUSINESS_SENSITIVE' },
           yield* authorization,
           yield* commandOptions,
         ),
@@ -187,9 +188,9 @@ export const makeGovernedContactFixture = Effect.fn('GovernedContactFixture.make
       return yield* runHttp(
         updateContactPointWithAuthorization(
           {
+            change,
             contactPointRef: contactPoint.contactPointRef,
             expectedRevision: contactPoint.revision,
-            change,
             provenance: declared,
           },
           yield* authorization,

@@ -9,7 +9,8 @@ import {
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 import {
   acquireOwnerGatewayConnection,
@@ -52,12 +53,12 @@ const recovery = Schema.decodeSync(RegisteredGatewayRecoverySchema)({
 const sourceScope = (recovering: boolean) =>
   Effect.gen(function* makeSourceScope() {
     const baseWorkload = {
+      legalEntityId,
       admissionInvocationId: 'e1400000-0000-4000-8000-000000000007',
       bindingIncarnation: 'e1400000-0000-4000-8000-000000000008',
       declarationKey: 'commerce.pricing.price.define',
       entrypointKey: 'commerce.pricing.define-price',
       jobKey: 'internal-c14-pricing',
-      legalEntityId,
       legalEntityScope: 'required',
       originalOwnerBindingIncarnation: 'e1400000-0000-4000-8000-000000000009',
       originalPrincipalId: principalId,
@@ -229,7 +230,7 @@ it.layer(
   suite.effect('refuses registered delegation without the genuine current factory lease', () =>
     Effect.gen(function* noLease() {
       const scope = yield* sourceScope(false);
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const failure = yield* acquireOwnerGatewayConnection(request(scope), crypto).pipe(Effect.flip);
       expect(Schema.is(GatewayDelegationSourceError)(failure.cause)).toBe(true);
       expect(failure.cause).toMatchObject({

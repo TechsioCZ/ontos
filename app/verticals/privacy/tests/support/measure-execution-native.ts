@@ -3,7 +3,8 @@ import { configureDatabasePool, parseDatabaseConnectionPair } from '@app/core-ru
 import { PgClient } from '@effect/sql-pg';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import {
   OwnerExecutionOutcomeSchema,
@@ -202,8 +203,8 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
   transaction: PrivacyTransaction,
   seed: Seed,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const id = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const id = yield* crypto.uuidV4();
   const now = yield* DateTime.now;
   const from = DateTime.formatIso(DateTime.subtract(now, { days: 4 }));
   const start = DateTime.formatIso(DateTime.subtract(now, { days: 3 }));
@@ -216,9 +217,9 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
   const decisionRef = `internal:measure-decision:${id}`;
   const evidenceRefs = [`internal:explicit-fixture-governance:${id}`];
   const common = {
-    controllerRef: seed.legalEntityId,
     evidenceRefs,
     policyRef,
+    controllerRef: seed.legalEntityId,
     policyVersion: 1,
     provenanceRef: `internal:measure-provenance:${id}`,
   };
@@ -261,7 +262,7 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
     ruleVersionId: rule.ruleVersionId,
     source: 'PERIODIC',
     status: 'READY',
-    workerEvaluation: { ...evaluation, messageId: yield* crypto.randomUUIDv4() },
+    workerEvaluation: { ...evaluation, messageId: yield* crypto.uuidV4() },
     workRef,
   });
   const decision = yield* Schema.decodeUnknownEffect(PrivacyDispositionDecisionSchema)({
@@ -302,7 +303,7 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
   });
   yield* transaction.insert(retentionRules).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     contentScopeRef: seed.contentScopeRef,
     effectiveFrom: asDate(from),
     ruleRecord: yield* Schema.encodeEffect(AuthoritativePrivacyRetentionRuleVersionSchema)(rule),
@@ -329,7 +330,7 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
     ruleRef,
     ruleVersion: 1,
   });
-  return { handoff, holdRef: `internal:measure-hold:${id}`, policyRef };
+  return { handoff, policyRef, holdRef: `internal:measure-hold:${id}` };
 });
 type Identity = Effect.Success<ReturnType<typeof prepare>>;
 const changeHold = Effect.fn('PrivacyMeasureNativeFixture.setHold')(function* changeHold(
@@ -369,7 +370,7 @@ const changeHold = Effect.fn('PrivacyMeasureNativeFixture.setHold')(function* ch
     return yield* unavailable();
   }
   const at = DateTime.formatIso(now);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const release = active
     ? {
         releaseConditionRef: null,
@@ -410,7 +411,7 @@ const changeHold = Effect.fn('PrivacyMeasureNativeFixture.setHold')(function* ch
   });
   yield* transaction.insert(legalHolds).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     effectiveFrom: asDate(record.effectiveFrom),
     effectiveTo: asDate(record.effectiveTo),
     holdRecord: yield* Schema.encodeEffect(PrivacyLegalHoldSchema)(record),

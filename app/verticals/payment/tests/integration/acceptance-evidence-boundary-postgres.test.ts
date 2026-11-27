@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -60,7 +61,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
  * Permission and context access are opened: their matrix is the #1153 acceptance suites' subject.
  */
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 /** The exact GoPay account binding of `GATEWAY_BINDING` as the provider presents itself. */
@@ -76,7 +77,7 @@ const makeRuntimes = Effect.fn('AcceptanceEvidenceBoundary.makeRuntimes')(functi
   database: EvidenceNativeDatabase,
   compositionRevision: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions = makeActionRuntime(
     { executor: database.database },
@@ -108,11 +109,11 @@ const makeRuntimes = Effect.fn('AcceptanceEvidenceBoundary.makeRuntimes')(functi
 
 /** The exact Order Commitment Attempt binding a prepaid proof is issued and validated for. */
 const bindingFor = (payment: PaymentRecord, orderCommitmentTime: DateTime.Utc): PaymentAuthorizationBinding => ({
+  orderCommitmentTime,
   amount: payment.amount,
   executionBinding: payment.executionBinding,
   method: payment.method,
   orderCommitmentAttemptId: `attempt-${randomUUID()}`,
-  orderCommitmentTime,
   paymentId: payment.paymentId,
   paymentTermRef: payment.paymentTermRef,
   purchaseCorrelationId: payment.purchaseCorrelationId,
@@ -134,6 +135,7 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
   const principal = principalOf(scope);
 
   const configureGatewayAuthority = r1.actions.runAction({
+    principal,
     payload: {
       factFamily: 'GATEWAY_OUTCOME',
       method: 'ONLINE_GATEWAY',
@@ -143,15 +145,14 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
       status: 'ACTIVE',
       submitterPrincipalIds: [scope.principalId],
     },
-    principal,
     registration: configurePaymentSourceAuthorityAction,
     transport: { correlationId: 'payment-boundary-configure', idempotencyKey: randomUUID() },
   });
 
   const accept = (statement: Statement, runtimes = r1) =>
     runtimes.actions.runAction({
-      payload: statement,
       principal,
+      payload: statement,
       registration: acceptPaymentObservationAction,
       transport: { correlationId: 'payment-boundary-accept', idempotencyKey: randomUUID() },
     });

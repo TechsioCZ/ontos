@@ -6,7 +6,8 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Clock, ConfigProvider, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -55,8 +56,8 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
     const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
-        compositionRevision: compositionSnapshot.composition.revision,
         principal,
+        compositionRevision: compositionSnapshot.composition.revision,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
         ver: 1,
       })
@@ -77,11 +78,11 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
         Effect.gen(function* executeDeferredManufacturerAction() {
           const context = yield* Effect.context();
           expect(Context.getOrUndefined(context, ReadRuntime)).toBe(readRuntime);
-          const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+          const crypto = yield* Effect.serviceOption(SecureRandom.SecureRandom);
           if (Option.isNone(crypto)) {
             return yield* Effect.die('HTTP execution context has no native Crypto');
           }
-          const generatedId = yield* crypto.value.randomUUIDv4().pipe(Effect.orDie);
+          const generatedId = yield* crypto.value.uuidV4().pipe(Effect.orDie);
           expect(Schema.is(Schema.String.check(Schema.isUUID(4)))(generatedId)).toBe(true);
           actionCalls += 1;
           return yield* Effect.die('stopped after runtime composition proof');

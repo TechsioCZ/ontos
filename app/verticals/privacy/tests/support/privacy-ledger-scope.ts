@@ -1,6 +1,7 @@
 import { DatabaseConfigLive, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { CoreDatabase, CoreDatabaseLive } from '@app/core-runtime/testing/owner-evidence';
-import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 
@@ -13,16 +14,16 @@ import { installOperationalScope } from '../../../../packages/core-runtime/src/d
 export const freshPrivacyLedgerScope = Effect.fn('PrivacyTests.freshLedgerScope')(function* freshLedgerScope(
   authMethod: 'api_key' | 'session' = 'session',
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const [tenantId, legalEntityId, principalId, authBindingId] = yield* Effect.all(
-    [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
+    [crypto.uuidV4(), crypto.uuidV4(), crypto.uuidV4(), crypto.uuidV4()],
     { concurrency: 1 },
   );
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
-    authBindingId,
     authContextRef: `fixture:privacy-ledger:${principalId}`,
     authenticationNamespaceId: 'core.staff',
     authMethod,
+    authBindingId,
     legalEntityId,
     principalId,
     tenantId,

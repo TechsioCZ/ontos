@@ -16,7 +16,8 @@ import {
 } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { CreatePrivacyNoticeVersionInput } from '../../shared/domain/privacy-notice-version.ts';
@@ -28,7 +29,7 @@ import { privacyOperationRepositoryForScope } from '../../src/persistence/privac
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
 import { makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -111,8 +112,8 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
     noticeId?: string,
   ) {
     return yield* runAction({
-      payload: { input, noticeId: noticeId ?? (yield* nextId) },
       principal,
+      payload: { input, noticeId: noticeId ?? (yield* nextId) },
       registration: createNoticeVersionAction,
       transport: { correlationId: yield* nextId, idempotencyKey: yield* nextId, targetModuleKey: 'privacy.core' },
     }).pipe(Effect.provideContext(context));

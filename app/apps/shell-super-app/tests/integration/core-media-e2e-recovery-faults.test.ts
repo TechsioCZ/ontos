@@ -188,7 +188,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const retried = yield* putBytes(edge, uploader, id, declared);
               expect(retried.status).toBe(200);
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(declared);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),
@@ -308,8 +308,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const renameCode = yield* failureCodeOf(
                 world.withStorage(
                   world.actions.runAction({
-                    payload: { displayFilename: 'renamed-by-workload.pdf', mediaAssetRef: ref },
                     principal,
+                    payload: { displayFilename: 'renamed-by-workload.pdf', mediaAssetRef: ref },
                     registration: renameDisplayFilenameAction,
                     transport: { correlationId: 'e2e-workload-rename', idempotencyKey: 'workload-rename' },
                   }),
@@ -320,8 +320,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 yield* failureTagOf(
                   world.withStorage(
                     world.reads.runRead({
-                      input: { mediaAssetRefs: [ref] },
                       principal,
+                      input: { mediaAssetRefs: [ref] },
                       registration: assetCurrentRead,
                       transport: { correlationId: 'e2e-workload-current' },
                     }),
@@ -433,7 +433,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const retried = yield* putBytes(edge, uploader, id, bytes);
               expect(retried.status).toBe(200);
               expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(bytes);
             }),
           ),
@@ -471,7 +471,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               yield* world.grant(uploader, uploaderCapabilities);
               expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(bytes);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),
@@ -509,7 +509,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 expect([200, 409, 503]).toContain(answer.status);
               }
               expect(answers.some(({ status }) => status === 200)).toBe(true);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(bytes);
             }),

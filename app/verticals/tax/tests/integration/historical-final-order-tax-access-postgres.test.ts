@@ -33,7 +33,8 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { Config, ConfigProvider, Context, Crypto, Data, Effect, Layer, Schema, pipe } from 'effect';
+import { Config, ConfigProvider, Context, Data, Effect, Layer, Schema, pipe } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
@@ -103,8 +104,8 @@ interface HistoricalFixtureDatabaseResult {
  * Foreign purchase inputs remain the named CALLER_SUPPLIED_UNVERIFIED receiving doubles; no owner integration is claimed.
  */
 const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect() {
-  const crypto = yield* Crypto.Crypto;
-  const nextUuid = crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const nextUuid = crypto.uuidV4();
   const transport = Effect.all({ correlationId: nextUuid, idempotencyKey: nextUuid });
   const adminUrl = yield* requiredEnvironment('DATABASE_ADMIN_URL');
   const runtimeUrl = yield* requiredEnvironment('DATABASE_URL');
@@ -226,8 +227,8 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     ]);
   }
   const actorScopes = [
-    { authBindingId, legalEntityId: sellerId, principalId, tenantId },
-    { authBindingId, legalEntityId: otherSellerId, principalId, tenantId },
+    { legalEntityId: sellerId, authBindingId, principalId, tenantId },
+    { legalEntityId: otherSellerId, authBindingId, principalId, tenantId },
     {
       authBindingId: foreignAuthBindingId,
       legalEntityId: foreignSellerId,
@@ -358,6 +359,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   }
   yield* actions
     .runAction({
+      principal,
       audience: 'tax',
       payload: {
         effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -365,7 +367,6 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
         reason: 'Disposable historical-access declaration',
         regime: 'NON_PAYER',
       },
-      principal,
       registration: declareSellerVatRegimeAction,
       transport: yield* transport,
     })
@@ -388,9 +389,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   };
   const final = yield* actions
     .runAction({
-      audience: 'tax',
       payload,
       principal,
+      audience: 'tax',
       registration: finalizeOrderTaxAction,
       transport: yield* transport,
     })
@@ -414,7 +415,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   const evaluate = () =>
     transport.pipe(
       Effect.flatMap((readTransport) =>
-        reads.runRead({ audience: 'tax', input, principal, registration: taxEvaluationRead, transport: readTransport }),
+        reads.runRead({ input, principal, audience: 'tax', registration: taxEvaluationRead, transport: readTransport }),
       ),
       Effect.provide(context),
     );
@@ -422,9 +423,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     transport.pipe(
       Effect.flatMap((actionTransport) =>
         actions.runAction({
-          audience: 'tax',
           payload,
           principal,
+          audience: 'tax',
           registration: finalizeOrderTaxAction,
           transport: actionTransport,
         }),
@@ -446,9 +447,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   }
   const grant = relationship('context_permission', permissionId, 'grantee', 'principal', principalId);
   return {
+    compositionRevision: snapshot.composition.revision,
     accessGate,
     changeRelationships,
-    compositionRevision: snapshot.composition.revision,
     evaluate,
     final,
     grant,

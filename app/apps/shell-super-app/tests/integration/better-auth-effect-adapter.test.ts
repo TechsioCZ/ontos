@@ -60,7 +60,7 @@ const authFixture = Effect.gen(function* authFixture() {
 
 const createUser = (adapter: DBAdapter, name: string, email: string) =>
   Effect.promise(() =>
-    adapter.create<Omit<UserRow, 'id'>, UserRow>({ data: { email, emailVerified: false, name }, model: 'user' }),
+    adapter.create<Omit<UserRow, 'id'>, UserRow>({ data: { email, name, emailVerified: false }, model: 'user' }),
   );
 
 const findUser = (adapter: DBAdapter, where: Where[]) =>
@@ -120,8 +120,8 @@ describe('Better Auth adapter on the native Effect executor', () => {
           ])).map((row) => row.name),
         ).toEqual(['Alpha', 'Beta']);
         expect(
-          (yield* namesWhere([{ field: 'name', operator: 'starts_with', value: 'Gam' }, ownedBySuffix])).length,
-        ).toBe(1);
+          yield* namesWhere([{ field: 'name', operator: 'starts_with', value: 'Gam' }, ownedBySuffix]),
+        ).toHaveLength(1);
         // LIKE metacharacters in a value are literals, not wildcards.
         expect(yield* namesWhere([ownedBySuffix, { field: 'name', operator: 'contains', value: '%' }])).toEqual([]);
 
@@ -165,8 +165,8 @@ describe('Better Auth adapter on the native Effect executor', () => {
         yield* Effect.promise(() =>
           adapter.create({
             data: {
-              expiresAt: fixtureExpiresAt,
               identifier,
+              expiresAt: fixtureExpiresAt,
               value: 'secret',
             },
             model: 'verification',

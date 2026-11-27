@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, FileSystem, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Match, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -252,9 +253,9 @@ const replaceDatabase = (configuration: DatabaseConfigValue, database: string): 
 /** A database of this run's own, with the migration applied as the first thing that ever touches it. */
 const enforcementDatabase = Effect.gen(function* enforcementDatabaseEffect() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_enforcement_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_enforcement_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -286,16 +287,16 @@ const scopeFor = (
   Schema.decodeEffect(TrustedPrincipalContextSchema)(
     legalEntityId === undefined
       ? {
+          principalId,
           authContextRef: 'job:access-enforcement-intent:run:1',
           authMethod: 'system',
-          principalId,
           tenantId: TENANT_A,
         }
       : {
-          authContextRef: 'job:access-enforcement-intent:run:1',
-          authMethod: 'system',
           legalEntityId,
           principalId,
+          authContextRef: 'job:access-enforcement-intent:run:1',
+          authMethod: 'system',
           tenantId: TENANT_A,
         },
   ).pipe(
@@ -303,7 +304,9 @@ const scopeFor = (
     Effect.orDie,
   );
 
-it.layer(NodeServices.layer)('access enforcement intent reader', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('access enforcement intent reader', (suite) => {
   suite.effect('reads the scope of one context with the membership that bounds it', () =>
     Effect.gen(function* readsScope() {
       const intent = yield* enforcementDatabase;
