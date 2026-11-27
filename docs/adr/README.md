@@ -36,6 +36,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0029](0029-tax-launch-seller-regime-and-shipping-basis.md) | TAX Launch seller regime and shipping basis | Accepted |
 | [0030](0030-granular-authorization.md) | Granular authorization behind simple product layers | Accepted |
 | [0031](0031-core-media-launch-single-version-current.md) | Core Media Launch: one Current V1 per Media Asset | Accepted |
+| [0032](0032-one-coresdk-for-platform-and-tenant-modules.md) | One CoreSDK for Platform and Tenant Modules | Proposed |
 
 ## Status meanings
 
