@@ -74,6 +74,23 @@ The Shell also provides the kit's JavaScript: every kit subpath is a Module Fede
 
 Keep domain-specific presentation inside its feature.
 
+### Tenant themes
+
+A theme is runtime data: a kit `BrandDefinition` (`key`, `label`, `modes`, `tokens`, optional `defaults`). Core owns each tenant's themes (`core.tenant_themes`) and the one it uses (`core.tenant_theme_attachments`). A tenant without an attachment uses the kit's Business brand. Adding or switching a theme needs no kit release, Shell rebuild or deploy.
+
+A tenant administrator saves a theme, then attaches it. Both are Shell Actions with an `Idempotency-Key` header, for the signed-in tenant:
+
+```http
+POST /core/actions/save-tenant-theme
+{ "key": "acme", "label": "Acme", "modes": ["light", "dark"],
+  "tokens": { "--color-primary": "var(--color-primary-700)" } }
+
+POST /core/actions/attach-tenant-theme
+{ "themeKey": "acme" }
+```
+
+Saving runs the kit's brand validator in Core. A theme with an unknown token, an unsafe value or a failed WCAG AA pair is refused with `422` and every issue. Saving a theme under the same key replaces it. `{ "themeKey": null }` detaches the theme, so the tenant returns to Business. An unknown key is `404`.
+
 ## Internationalization
 
 Always use the application internationalization (i18n) runtime for user-facing text. Never hardcode user-facing strings in TypeScript, TSX, route metadata, or configuration.
