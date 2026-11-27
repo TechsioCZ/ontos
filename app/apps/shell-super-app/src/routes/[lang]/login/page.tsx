@@ -290,13 +290,17 @@ const LoginPage = () => {
             <h1 className="text-2xl font-bold" hidden={opening}>
               {t('shell.login.title')}
             </h1>
+            {/* POST to the sign-in path: a browser that submits before hydration never puts credentials in a URL,
+                and the server answers such a submission with a redirect (server/credential-submission.ts). */}
             <FormRoot
+              action={`/${language}/login`}
               blocked={opening}
               className="mt-200 flex flex-col gap-200"
               data-hydrated={hydrated}
               defaultValues={{ email: '', locale: language, password: '' }}
               form={loginForm}
               key={language}
+              method="post"
               translateMessage={(message) => t(message, { defaultValue: t(internalErrorMessageKey) })}
             >
               <div hidden={opening}>
