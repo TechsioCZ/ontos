@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Match, Predicate, Ref, Schema } from 'effect';
+import { Effect, Match, Predicate, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { PrincipalIdSchema } from '../../src/access/ids.ts';
@@ -61,7 +62,7 @@ const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
     trustedAttesterPrincipalIds: [],
   }),
 ]);
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const capability = 'core.identity.system-workload-enrollment.change';
 const coreModule = 'core.media';
 const integrity = 'core.media.integrity';
@@ -151,7 +152,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core system workload 
         const authority = makeAuthority(identityAuthority);
         const actionRuntime = makeActionRuntime(
           { executor: runtimeDatabase },
-          makeActionRepository(yield* Crypto.Crypto),
+          makeActionRepository(yield* SecureRandom.SecureRandom),
           makeActionPermissionService(permissionClient),
           operationalScope,
           {
@@ -173,8 +174,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core system workload 
         ) {
           return yield* actionRuntime
             .runAction({
-              payload: { ...payload, reason },
               principal,
+              payload: { ...payload, reason },
               registration: changeSystemWorkloadEnrollmentAction,
               savedReply: 'answer',
               transport: { correlationId: yield* nextUuid, idempotencyKey: idempotencyKey ?? (yield* nextUuid) },

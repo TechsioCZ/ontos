@@ -16,7 +16,8 @@ import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/se
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -84,7 +85,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const deniedAccess = makePartyDeniedAccess();
         const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
         const runtime = yield* ReadRuntime.pipe(Effect.provideContext(context));
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(fixture.manager);
         // Only the real verifier may attach the registered assertion's private database-scope provenance.
         const verifyPrincipal = Effect.fn('TenantPartyReadTest.verifyPrincipal')(function* verifyPrincipal(
@@ -95,7 +96,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           }>`select floor(extract(epoch from clock_timestamp()))::int as "nowSeconds"`;
           const issuedAt = yield* Schema.decodeUnknownEffect(Schema.Number)(databaseClock?.nowSeconds);
           const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
-          const jti = yield* crypto.randomUUIDv4();
+          const jti = yield* crypto.uuidV4();
           const encoded = yield* Schema.encodeEffect(TrustedPrincipalContextSchema)(actor);
           const assertion = Redacted.make(
             yield* Effect.tryPromise(() =>
@@ -117,9 +118,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const registration = {
             assertion,
+            jti,
             audience: 'party-registry',
             expiresAtEpochSeconds: expiresAt,
-            jti,
             principalId: actor.principalId,
             tenantId: actor.tenantId,
           };
@@ -155,7 +156,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   basis: 'REVIEWED_DOCUMENT',
                   evidenceRef: 'review/tenant-party',
                   observedSubject: 'ORGANIZATION',
-                  subjectKey: yield* crypto.randomUUIDv4(),
+                  subjectKey: yield* crypto.uuidV4(),
                   statement: 'Reviewed the concrete external organization',
                 },
               ],
@@ -166,8 +167,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           principal: yield* verifyPrincipal(principal),
           transport: {
-            correlationId: yield* crypto.randomUUIDv4(),
-            idempotencyKey: yield* crypto.randomUUIDv4(),
+            correlationId: yield* crypto.uuidV4(),
+            idempotencyKey: yield* crypto.uuidV4(),
             targetModuleKey: 'party.registry',
           },
         }).pipe(Effect.provideContext(context));

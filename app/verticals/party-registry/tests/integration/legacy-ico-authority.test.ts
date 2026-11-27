@@ -1,7 +1,8 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
@@ -251,13 +252,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
   suite.effect('issues exact native home proofs and verifies retained foreign proof without disclosing its Party', () =>
     Effect.gen(function* twoHomeCorrelation() {
-      const crypto = yield* Crypto.Crypto;
-      const tenant = yield* crypto.randomUUIDv4();
-      const homeA = yield* crypto.randomUUIDv4();
-      const homeB = yield* crypto.randomUUIDv4();
-      const party = yield* crypto.randomUUIDv4();
-      const counterpartyA = yield* crypto.randomUUIDv4();
-      const counterpartyB = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenant = yield* crypto.uuidV4();
+      const homeA = yield* crypto.uuidV4();
+      const homeB = yield* crypto.uuidV4();
+      const party = yield* crypto.uuidV4();
+      const counterpartyA = yield* crypto.uuidV4();
+      const counterpartyB = yield* crypto.uuidV4();
       const clients = yield* openPartyBoundaryClients();
       const { admin, runtime } = yield* openBoundaryDatabases(
         (client) => makeTestDatabaseFromClient(client, partyRelations),
@@ -317,17 +318,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       );
       const scopeFor = (home: string) =>
         Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+          principalId,
           tenantId: tenant,
           legalEntityId: home,
-          principalId,
           authMethod: 'session',
           authBindingId: principalId,
           authContextRef: 'session:internal-two-home-ico-fixture',
         }).pipe(Effect.map((scope) => ({ ...scope, correlationId: 'internal-two-home-ico-fixture' })));
       const ref = (resourceId: string) => ({
+        resourceId,
         moduleId: 'party.registry' as const,
         resourceType: 'party.registry.counterparty' as const,
-        resourceId,
         tenantId: tenant,
       });
       const allowed = { authorize: () => Effect.succeed('ALLOWED' as const) };

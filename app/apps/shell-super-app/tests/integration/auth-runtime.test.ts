@@ -41,23 +41,11 @@ import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import {
-  Config,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Option,
-  Predicate,
-  Redacted,
-  Result,
-  Schema,
-  Stream,
-} from 'effect';
+import { Config, Context, DateTime, Effect, Layer, Option, Predicate, Redacted, Result, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
@@ -170,7 +158,10 @@ const makeShellRuntimeForDatabase =
     );
   };
 const makeShellAuthenticationApiRuntime = makeShellRuntimeForDatabase();
-const shellAuthFixtureServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const shellAuthFixtureServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
+);
 const fixtureSnapshotForRevision = (revision: string) => {
   const snapshot = fixtureSnapshots.get(revision);
   return snapshot === undefined
@@ -589,8 +580,8 @@ it.live(
     yield* coreDatabase.insert(principals).values({
       displayName: 'Runtime fixture',
       kind: 'human',
-      principalId,
       status: 'active',
+      principalId,
       tenantId,
     });
     yield* coreDatabase.insert(principals).values({
@@ -611,11 +602,11 @@ it.live(
     yield* coreDatabase.insert(principalAuthBindings).values({
       authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
-      principalId,
       provider: 'better_auth',
       providerSubjectId: betterAuthUserId,
       status: 'active',
       subjectType: 'user',
+      principalId,
       tenantId,
     });
     yield* coreDatabase.insert(tenantModuleStates).values([
@@ -728,7 +719,7 @@ it.live(
     const signedInCookies = signInResponse.headers.getSetCookie();
     expect(signedIn.identity.email).toBe(email);
     expect(signedIn.identity.principalId).toBe(principalId);
-    expect(signedInCookies.length > 0).toBe(true);
+    expect(signedInCookies.length).toBeGreaterThan(0);
     const authenticatedHeaders = new Headers({
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
@@ -754,7 +745,7 @@ it.live(
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(authenticationContextLayer));
     assertOptionalField(current.identity, 'tenantId', tenantId);
-    expect(current.identity).not.toBe(undefined);
+    expect(current.identity).toBeDefined();
     let moduleResourcePermissionCalls = 0;
     let providerCalls = 0;
     let authenticationContextCalls = 0;
@@ -1634,8 +1625,8 @@ it.live(
         expiresAt: partyRegistryClaims.payload.exp,
         jti: partyRegistryClaims.payload.jti,
         legalEntityId: fixtureLegalEntityId,
-        principalId,
         registeredBy: 'shell_gateway_issuer',
+        principalId,
         tenantId,
       },
     ]);
@@ -1728,7 +1719,7 @@ it.live(
     );
     expect(signOutResponse.status).toBe(200);
     const signedOutCookies = signOutResponse.headers.getSetCookie();
-    expect(signedOutCookies.length >= 3).toBe(true);
+    expect(signedOutCookies.length).toBeGreaterThanOrEqual(3);
     expect(signedOutCookies.every((header) => !header.includes(password))).toBe(true);
     const anonymous = yield* authentication
       .currentSession(
@@ -1738,7 +1729,7 @@ it.live(
         }),
       )
       .pipe(Effect.provide(authenticationContextLayer));
-    expect(anonymous.identity).toBe(null);
+    expect(anonymous.identity).toBeNull();
     const expiredModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {
@@ -2451,8 +2442,12 @@ const PartyGatewayDetailResponseSchema = Schema.Struct({
 const tenantPartyServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
 );
-const tenantPartyArtifactServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const tenantPartyArtifactServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
+);
 
 const readFixtureReleaseIdentity = Effect.fn('TenantPartyGatewayTest.releaseIdentity')(
   function* readFixtureReleaseIdentity(directory: string) {
@@ -2517,8 +2512,8 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
     });
     const partyContractSha256 = contentDigest(partyDocument);
     const shellRuntimeSha256 = contentDigest(shellRuntimeDocument);
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
     const artifact = path.join(appRoot, 'verticals/party-registry/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
     yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
     const bundle = yield* ChildProcess.make(
@@ -2644,8 +2639,8 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
     shellRuntimeSha256,
     toolchainEnvironment,
   } = yield* TenantPartyArtifacts;
-  const crypto = yield* Crypto.Crypto;
-  const suffix = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const suffix = yield* crypto.uuidV4();
   const snapshot = yield* makeCompositionSnapshot([partyDocument], 3_600_000, {
     document: shellRuntimeDocument,
     receiverDeployment: shellReceiverDeployment,
@@ -2736,7 +2731,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   };
   const sourceConfiguration = yield* loadAuthConfig({ envPath: '/dev/null' });
   const configuration = { ...sourceConfiguration, connectionString: isolated.connections.runtime.connectionString };
-  expect(new URL(configuration.connectionString).pathname === `/${isolated.connections.runtime.database}`).toBe(true);
+  expect(new URL(configuration.connectionString).pathname).toBe(`/${isolated.connections.runtime.database}`);
   const authPersistence = yield* makeAuthDatabase(configuration);
   const resolverContext = yield* Layer.build(
     PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
@@ -3045,7 +3040,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
     );
     const pending = yield* keys.issue(sessionHeaders, {
       issuerPrincipalId: resolved.principal.principalId,
-      lifecycleOperationId: yield* crypto.randomUUIDv4(),
+      lifecycleOperationId: yield* crypto.uuidV4(),
       name: 'Tenant Party gateway proof',
       tenantId: fixture.tenantId,
     });
@@ -3056,8 +3051,8 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       principal: resolved.principal,
       registration: bindSelfApiKeyAction,
       transport: {
-        correlationId: yield* crypto.randomUUIDv4(),
-        idempotencyKey: yield* crypto.randomUUIDv4(),
+        correlationId: yield* crypto.uuidV4(),
+        idempotencyKey: yield* crypto.uuidV4(),
         targetModuleKey: 'core.identity',
       },
     }).pipe(Effect.provideContext(runtimeContext));
@@ -3065,7 +3060,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
     if (quotaOnly) {
       for (let verification = 0; verification < 12; verification += 1) {
         const verified = yield* keys.verify(Redacted.value(pending.secret));
-        expect(verified.providerKeyId === pending.providerKeyId).toBe(true);
+        expect(verified.providerKeyId).toBe(pending.providerKeyId);
       }
       const invalid = yield* keys.verify(`invalid-${suffix}`).pipe(Effect.result);
       expect(Result.isFailure(invalid) && invalid.failure.code === 'api_key_invalid').toBe(true);
@@ -3240,8 +3235,8 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         principal: resolved.principal,
         registration: changeTenantModuleStateAction,
         transport: {
-          correlationId: yield* crypto.randomUUIDv4(),
-          idempotencyKey: yield* crypto.randomUUIDv4(),
+          correlationId: yield* crypto.uuidV4(),
+          idempotencyKey: yield* crypto.uuidV4(),
           targetModuleKey: 'core.modules',
         },
       }).pipe(

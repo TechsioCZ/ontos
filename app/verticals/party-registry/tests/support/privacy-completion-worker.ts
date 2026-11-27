@@ -134,8 +134,8 @@ const failureReasonCode = (cause: unknown) =>
     ? ('native-claim-admission' as const)
     : ('other' as const);
 const declaredFailureSchema = Schema.Struct({
-  _tag: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u)),
-  code: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u))),
+  _tag: Schema.String.check(Schema.isPattern(/^[A-Za-z]\w{0,95}$/u)),
+  code: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z]\w{0,95}$/u))),
   reason: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(Schema.Unknown),
 });
@@ -164,7 +164,7 @@ const failureDiagnostic = (cause: unknown) => {
       code: code ?? 'not-declared',
       // Only declared machine reasons and these exact public constants may leave the child.
       reason:
-        reason !== undefined && (publicFailureReasons.has(reason) || /^[A-Za-z][A-Za-z0-9_]{0,95}$/u.test(reason))
+        reason !== undefined && (publicFailureReasons.has(reason) || /^[A-Za-z]\w{0,95}$/u.test(reason))
           ? reason
           : 'redacted-unclassified-reason',
     });
@@ -427,9 +427,9 @@ const run = Effect.scoped(
 
 const program = process.argv.includes('--describe')
   ? Schema.decodeUnknownEffect(workerMessageSchema)({
+      subscriptions,
       marker: ultramodernApiMarker,
       originatorActions: partyRegistryManifest.originatorActions,
-      subscriptions,
       runtime: runtimeDescription,
     }).pipe(Effect.flatMap(writeWorkerMessage))
   : run.pipe(
@@ -454,7 +454,7 @@ const program = process.argv.includes('--describe')
 NodeRuntime.runMain(
   Effect.scoped(
     Effect.gen(function* completionWorkerEntry() {
-      const services = yield* Layer.build(NodeServices.layer);
+      const services = yield* Layer.build(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom));
       return yield* program.pipe(Effect.provideContext(services));
     }),
   ),

@@ -6,7 +6,8 @@ import { PgClient } from '@effect/sql-pg';
 import { OrganizationIcoFieldContractVersion } from '@app/party-registry/apis/organization-ico-facts';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import {
   OrganizationIcoApplicabilityContextSchema,
@@ -240,10 +241,10 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
   transaction: PrivacyTransaction,
   seed: Seed,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const fixtureId = yield* crypto.randomUUIDv4();
-  const purposeId = yield* crypto.randomUUIDv4();
-  const versionId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const fixtureId = yield* crypto.uuidV4();
+  const purposeId = yield* crypto.uuidV4();
+  const versionId = yield* crypto.uuidV4();
   const now = yield* DateTime.now;
   const from = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
   const until = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
@@ -371,7 +372,7 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
   });
   yield* transaction.insert(purposeVersions).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     effectiveFrom: asDate(from),
     effectiveTo: asDate(until),
     meaning: 'INTERNAL ONLY explicit organization ICO classification',
@@ -382,7 +383,7 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
   });
   yield* transaction.insert(responsibilityAssignments).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     assignmentRecord: yield* Schema.encodeEffect(PrivacyResponsibilityAssignmentSchema)(responsibility),
     assignmentRef: responsibility.assignmentRef.resourceId,
     effectiveFrom: asDate(from),
@@ -392,7 +393,7 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
   });
   yield* transaction.insert(applicabilityPolicies).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     effectiveFrom: asDate(from),
     effectiveTo: asDate(until),
     policyKey: policy.policyKey,
@@ -401,11 +402,11 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
     scopeKey: policy.scopeKey,
   });
   return {
+    holdRef: `internal:organization-ico-hold:${fixtureId}`,
+    policyRef: policy.policyKey,
     authority,
     decisionRef,
-    holdRef: `internal:organization-ico-hold:${fixtureId}`,
     organizationContexts,
-    policyRef: policy.policyKey,
     processingScopeRef,
     profileContexts,
     recordPayload,
@@ -449,7 +450,7 @@ const changeHold = Effect.fn('PrivacyOrganizationIcoNativeFixture.setHold')(func
     return yield* unavailable();
   }
   const at = DateTime.formatIso(now);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const release = active
     ? {
         releaseConditionRef: null,
@@ -490,7 +491,7 @@ const changeHold = Effect.fn('PrivacyOrganizationIcoNativeFixture.setHold')(func
   });
   yield* transaction.insert(legalHolds).values({
     ...scope,
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     effectiveFrom: asDate(record.effectiveFrom),
     effectiveTo: asDate(record.effectiveTo),
     holdRecord: yield* Schema.encodeEffect(PrivacyLegalHoldSchema)(record),

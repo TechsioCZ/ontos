@@ -10,7 +10,8 @@ import {
 } from '@app/commerce-cart-contracts/open-selection-population';
 import { executeOpenSelectionPopulationWithAuthorization } from '@app/commerce-cart-contracts/open-selection-population/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 
 import {
   CartOpenSelectionPopulationEvidenceSchema,
@@ -37,7 +38,8 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
   CartOpenSelectionPopulationService,
   Effect.gen(function* makeCartOpenSelectionPopulation() {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const messageDigest = yield* Digest.Digest;
     return {
       read: Effect.fn('CatalogCartOpenSelectionPopulation.read')(function* read(input: {
         readonly scope: OperationalScope;
@@ -49,16 +51,14 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         const snapshot = yield* loadActiveApplicationComposition(composition).pipe(
           Effect.mapError(unavailableBecause('The active Cart population composition is unavailable')),
         );
-        const requestCorrelation = yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError(unavailableBecause('The Cart population request identity is unavailable')));
+        const requestCorrelation = yield* crypto.uuidV4();
         // This Tenant-wide read forbids Legal Entity scope, so no legal entity is requested. The Shell
         // verifies the subject's assertion; the receiving Cart owner checks the calling module (Catalog).
         const credential = yield* acquireDelegatedGatewayContext(
           {
+            requestCorrelation,
             audience: 'commerce-cart',
             legalEntityScope: 'tenant',
-            requestCorrelation,
             subject: { _tag: 'Assertion', scope: input.scope },
           },
           crypto,
@@ -93,9 +93,7 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         if (bytes.length > 2_097_152) {
           return yield* unavailable('The Cart population exceeds its declared V1 material limit');
         }
-        const hashed = yield* crypto
-          .digest('SHA-256', bytes)
-          .pipe(Effect.mapError(unavailableBecause('The Cart population material could not be verified')));
+        const hashed = yield* messageDigest.digest(Digest.sha256, bytes);
         const digest = hexadecimalDigest(new Uint8Array(hashed));
         if (
           population.digest !== digest ||

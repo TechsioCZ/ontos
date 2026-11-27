@@ -59,8 +59,8 @@ const scopeFields = {
   authContextRef: 'better-auth-session:price-group-production-wiring',
   authMethod: 'session',
   correlationId: 'price-group-production-wiring',
-  legalEntityId,
   principalId: '40000000-0000-4000-8000-000000000001',
+  legalEntityId,
   tenantId,
 } as const;
 // SAFETY: the fixed UUID and session fields satisfy the trusted test-context contract.
@@ -71,14 +71,7 @@ const routineInvoker = {
 };
 // SAFETY: Price Group persistence consumes only `invoke`; this fake supplies that exact test seam.
 const priceGroupInvoker = routineInvoker as PriceGroupRoutineInvoker;
-const scopeWithoutLegalEntity: OperationalScope = {
-  authBindingId: scope.authBindingId,
-  authContextRef: scope.authContextRef,
-  authMethod: scope.authMethod,
-  correlationId: scope.correlationId,
-  principalId: scope.principalId,
-  tenantId: scope.tenantId,
-};
+const { legalEntityId: _legalEntityId, ...scopeWithoutLegalEntity } = scope;
 
 // Construction must not acquire delegated context: with no delegated configuration at all, wiring still succeeds.
 const constructionWithoutDelegation = Layer.mergeAll(
@@ -252,8 +245,8 @@ const makeMissingPriceGroupComposition = Effect.fn('Test.missingPriceGroupCompos
   const digest = Hex.encode(sha256(utf8ToBytes(contractDocument)));
   const coreCapabilities = owner.requirements?.coreCapabilities ?? [];
   const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    contributionAbi: base.composition.shell.contributionAbi,
     coreCapabilities,
+    contributionAbi: base.composition.shell.contributionAbi,
     deployment: base.composition.shell.deployment,
     schemaVersion: '2',
   });

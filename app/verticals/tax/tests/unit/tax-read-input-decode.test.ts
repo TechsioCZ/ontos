@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Result, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ApplicableTaxRuleSetRequestSchema } from '../../shared/apis/applicable-tax-rule-set.ts';
@@ -25,9 +26,9 @@ import { evaluate, evaluationRequest, evaluationRequestInput, evaluationTime } f
  * already-decoded `DateTime.Utc` on the second pass. The wire contract stays as strict as the plain contract.
  */
 const makeTaxRuleRef = Effect.gen(function* makeTaxRuleRef() {
-  const crypto = yield* Crypto.Crypto;
-  const [resourceId, tenantId] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
-  return { moduleId: 'commerce.tax', resourceId, resourceType: 'commerce.tax.tax-rule', tenantId } as const;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const [resourceId, tenantId] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4()]);
+  return { moduleId: 'commerce.tax', resourceType: 'commerce.tax.tax-rule', resourceId, tenantId } as const;
 });
 
 const readRuntimeAccepts = <Value>(inputSchema: Schema.Decoder<Value>, httpDecoded: Value) =>

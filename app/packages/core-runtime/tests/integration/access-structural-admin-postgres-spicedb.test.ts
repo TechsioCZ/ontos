@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, FileSystem, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -196,9 +197,9 @@ const seed = (admin: PgClient.PgClient) =>
 /** A database of this run's own, its migration applied, and the loader reading it as `ontos_runtime`. */
 const structuralIntent = Effect.gen(function* structuralIntentEffect() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: `${import.meta.filename}.no-environment-file` });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_structural_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_structural_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -227,16 +228,18 @@ const structuralIntent = Effect.gen(function* structuralIntentEffect() {
  */
 const scopeFor = (principalId: PrincipalId): Effect.Effect<OperationalScope> =>
   Schema.decodeEffect(TrustedPrincipalContextSchema)({
+    principalId,
     authContextRef: 'job:access-structural:run:1',
     authMethod: 'system',
-    principalId,
     tenantId: TENANT,
   }).pipe(
     Effect.map((context) => ({ ...context, correlationId: 'access-structural' })),
     Effect.orDie,
   );
 
-it.layer(NodeServices.layer, { excludeTestServices: true })(
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })(
   'access structural admin on PostgreSQL and SpiceDB',
   (suite) => {
     suite.effect('answers the admin key from live configure bases, never from adoption', () =>
@@ -376,8 +379,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
           ),
           check,
           {
-            actor: { actor: { _tag: 'Principal', principalId: OWNER }, tenantId: TENANT },
             now,
+            actor: { actor: { _tag: 'Principal', principalId: OWNER }, tenantId: TENANT },
             request: { capability: policy, mode: 'run' },
           },
         );

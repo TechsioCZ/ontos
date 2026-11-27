@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -33,7 +34,7 @@ import {
 } from './evidence-native-support.ts';
 import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const nativeDatabase = Effect.gen(function* cancellationNativeDatabase() {
@@ -47,7 +48,7 @@ const makeRuntimes = Effect.fn('CancellationContradiction.makeRuntimes')(functio
   database: EvidenceNativeDatabase,
   compositionRevision: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions = makeActionRuntime(
     { executor: database.database },
@@ -137,8 +138,8 @@ const requestCancel = (ctx: CancellationScenario, paymentId: string, targetOpera
       payload: {
         operationKey,
         paymentId,
-        reason: 'Customer abandoned the checkout',
         targetOperationId,
+        reason: 'Customer abandoned the checkout',
       },
       principal: principalOf(ctx.scope),
       registration: requestPaymentCancellationAction,
