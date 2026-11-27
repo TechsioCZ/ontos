@@ -3,7 +3,7 @@ import {
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
-import { authenticationRequestId } from './auth/observability.ts';
+import { authenticationRequestId, isValidRequestId } from './auth/observability.ts';
 import { withShellGatewayReleaseDiagnostic } from './auth/gateway-release-diagnostic.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
 import {
@@ -17,6 +17,7 @@ import {
   acquireSymmyRouteScopeProof,
   issueSymmyRouteScopeAssertion,
   readSymmyRouteScope,
+  requireSymmyRouteWorkload,
 } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -190,6 +191,7 @@ import {
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import {
+  admitSymmyCaller,
   SymmyHostMount,
   SymmyHostMountLive,
   SymmyIngress,
@@ -198,6 +200,8 @@ import {
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
 import { symmyUnavailableProblem } from './symmy/contract.ts';
+import { SymmyAdmittedCaller } from './symmy/admitted-caller.ts';
+import { SymmyAuthentication } from './symmy/authentication.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
   PaymentGatewayHostMountLive,
@@ -2092,10 +2096,29 @@ const resolveApiKeyGatewayPrincipal = Effect.fn('ShellGateway.resolveApiKeyPrinc
   return { principal, principalKind: identity.principalKind };
 });
 
+/** Forward the caller’s safe correlation ID to the owner; defect logs prefer the edge request ID. */
+const symmyCorrelationId = Effect.fn('SymmyIngress.correlationId')(function* symmyCorrelation(
+  request: HttpServerRequest.HttpServerRequest,
+  destination: 'owner' | 'log',
+) {
+  const rawKey = request.headers['x-api-key']?.trim();
+  const containsKey = (value: string) => rawKey !== undefined && rawKey.length > 0 && value.includes(rawKey);
+  const callerId = request.headers['x-correlation-id'];
+  if (destination === 'owner' && callerId !== undefined && isValidRequestId(callerId) && !containsKey(callerId)) {
+    return callerId;
+  }
+  const requestId = authenticationRequestId(new Headers(request.headers));
+  const span = Option.getOrUndefined(yield* Effect.option(Effect.currentSpan));
+  const traceId = span?.traceId;
+  const safeTraceId = traceId !== undefined && !containsKey(traceId) ? traceId : undefined;
+  return requestId === 'missing' || requestId === 'invalid' || containsKey(requestId) ? safeTraceId : requestId;
+});
+
 const acquireSymmyOwnerAssertion = Effect.fn('ShellGateway.acquireSymmyOwnerAssertion')(function* acquireSymmyOwner(
   rawKey: string,
   request: HttpServerRequest.HttpServerRequest,
-  input: { readonly audience: string; readonly legalEntityId?: string },
+  /** `route` names the Symmy endpoint being admitted, whose tenant-local workload is checked before decoding. */
+  input: { readonly audience: string; readonly legalEntityId?: string; readonly route?: string },
   compositionRevision?: string,
   routeProof?: SymmyRouteScopeProof,
 ) {
@@ -2107,6 +2130,13 @@ const acquireSymmyOwnerAssertion = Effect.fn('ShellGateway.acquireSymmyOwnerAsse
   const { principalKind } = identity;
   if (principalKind !== 'integration') {
     return yield* Effect.fail(gatewayForbiddenProblem());
+  }
+  if (input.route !== undefined) {
+    yield* requireSymmyRouteWorkload(identity.principal, input.route).pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
+      ),
+    );
   }
   const revision = yield* requireGatewayRelease(compositionRevision).pipe(
     Effect.catchTags({
@@ -2169,11 +2199,8 @@ const acquireSymmyIngressRouteProof = Effect.fn('ShellGateway.acquireSymmyIngres
   return yield* acquireSymmyRouteScopeProof({
     compositionRevision,
     principal,
-    requestCorrelation: correlationFromRequest(request),
+    requestCorrelation: (yield* symmyCorrelationId(request, 'owner')) ?? 'missing',
     routeRequest,
-    sourcePurpose: ['adminCustomers', 'adminProducts', 'adminRegions', 'priceLists'].includes(routeRequest.routeKey)
-      ? 'read'
-      : 'admit',
   }).pipe(
     Effect.catchTag('GatewayDelegationError', (error) =>
       Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
@@ -2181,11 +2208,15 @@ const acquireSymmyIngressRouteProof = Effect.fn('ShellGateway.acquireSymmyIngres
   );
 });
 
-const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* admitSymmyIngressEffect(
+export const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* admitSymmyIngressEffect(
   rawKey: string,
   request: HttpServerRequest.HttpServerRequest,
+  endpoint: string,
 ) {
-  const admission = yield* acquireSymmyOwnerAssertion(rawKey, request, { audience: 'symmy-integration' });
+  const admission = yield* acquireSymmyOwnerAssertion(rawKey, request, {
+    audience: 'symmy-integration',
+    route: endpoint,
+  });
   const context =
     yield* Effect.context<
       Effect.Services<ReturnType<typeof acquireSymmyOwnerAssertion> | ReturnType<typeof acquireSymmyIngressRouteProof>>
@@ -2234,21 +2265,27 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
   };
 });
 
+/** Every Symmy handler receives its admitted caller from here, before any part of its request is decoded. */
+export const SymmyIngressAuthenticationLive = Layer.effect(
+  SymmyAuthentication,
+  Effect.gen(function* configureSymmyAuthentication() {
+    const ingress = yield* SymmyIngress;
+    return {
+      apiKey: (httpEffect, { credential, endpoint }) =>
+        httpEffect.pipe(
+          Effect.provideServiceEffect(SymmyAdmittedCaller, admitSymmyCaller(ingress, credential, endpoint.identifier)),
+        ),
+    };
+  }),
+);
+
 export const SymmyIngressDefectLive = Layer.succeed(
   SymmyDefectBoundary,
   Effect.fn('SymmyIngress.sanitizeDefect')(function* sanitizeSymmyIngressDefect(operation) {
     if (!(yield* SymmyHostMount)) {
       return yield* Effect.fail(symmyRouteNotFoundProblem);
     }
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const requestId = authenticationRequestId(new Headers(request.headers));
-    const span = Option.getOrUndefined(yield* Effect.option(Effect.currentSpan));
-    const rawKey = request.headers['x-api-key']?.trim();
-    const containsKey = (value: string) => rawKey !== undefined && rawKey.length > 0 && value.includes(rawKey);
-    const traceId = span?.traceId;
-    const safeTraceId = traceId !== undefined && !containsKey(traceId) ? traceId : undefined;
-    const correlationId =
-      requestId === 'missing' || requestId === 'invalid' || containsKey(requestId) ? safeTraceId : requestId;
+    const correlationId = yield* symmyCorrelationId(yield* HttpServerRequest.HttpServerRequest, 'log');
     return yield* recoverUnexpectedDefect(
       { headers: { 'x-correlation-id': correlationId } },
       'Unexpected Symmy ingress defect',
@@ -3659,7 +3696,7 @@ export const makeShellAuthenticationApiRuntime = (
           Exclude<Effect.Services<ReturnType<typeof admitSymmyIngress>>, HttpServerRequest.HttpServerRequest>
         >();
       return {
-        admit: (rawKey, request) => admitSymmyIngress(rawKey, request).pipe(Effect.provide(context)),
+        admit: (rawKey, request, route) => admitSymmyIngress(rawKey, request, route).pipe(Effect.provide(context)),
         dispatch: yield* SymmyGovernedDispatch,
       };
     }),
@@ -3733,12 +3770,13 @@ export const makeShellAuthenticationApiRuntime = (
     SymmyIngressHandlersLive.pipe(
       Layer.provide(
         Layer.mergeAll(
-          symmyIngressLive,
+          SymmyIngressAuthenticationLive,
           SymmyIngressSchemaErrorLive,
           SymmyIngressDefectLive,
           symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),
         ),
       ),
+      Layer.provide(symmyIngressLive),
     ),
     paymentGatewayHandlersLive.pipe(
       Layer.provide(
