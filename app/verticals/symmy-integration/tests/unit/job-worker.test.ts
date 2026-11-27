@@ -4,8 +4,9 @@ import { NodeCrypto } from '@effect/platform-node';
 import type { OutboxWorkerHandlerContext, ScopedRoutineInvoker } from '@app/core-runtime';
 import { trustResolvedSystemPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
 import { SymmyJobNotification, SymmyJobNotificationError } from '../../src/services/symmy-job-notification.service.ts';
 import { SymmyJobNotificationStore } from '../../src/services/symmy-job-notification-store.ts';
 import { describe, expect, it } from 'effect-rstest';
@@ -516,6 +517,55 @@ describe('Symmy durable execution and original-effect recovery', () => {
       expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
       expect(fixture.recovered).toEqual([initialJob.effects[1]?.effect]);
       expect(fixture.job().effects.map(({ state }) => state)).toEqual(['settled', 'settled']);
+    }),
+  );
+
+  it.effect('settles a retry from the result the owner committed under the same key after the caller timed out', () =>
+    Effect.gen(function* ownerCommittedCallerTimedOut() {
+      const fixture = harness();
+      // The owner keeps each committed result under the caller's idempotency key, the effect id.
+      const committed = new Map<string, { readonly changed: boolean }>();
+      const ownerCommitted = yield* Deferred.make<string>();
+      fixture.execute((effect, pin) =>
+        pinOriginalRequest(pin).pipe(
+          Effect.andThen(Effect.sync(() => committed.set(effect.ref.effectId, { changed: false }))),
+          Effect.andThen(Deferred.succeed(ownerCommitted, effect.ref.effectId)),
+          // The owner has committed; its reply never reaches the caller before the attempt's time limit.
+          Effect.andThen(Effect.never),
+          Effect.timeoutOrElse({ duration: '20 millis', orElse: () => Effect.fail(unavailable()) }),
+        ),
+      );
+      fixture.recover((effect) => {
+        const result = committed.get(effect.ref.effectId);
+        return Effect.succeed(
+          result === undefined
+            ? { status: 'not_committed' as const }
+            : {
+                outcome: {
+                  effectId: effect.ref.effectId,
+                  owner: effect.ref.operation.moduleId,
+                  status: result.changed ? ('accepted_change' as const) : ('accepted_no_change' as const),
+                },
+                status: 'settled' as const,
+              },
+        );
+      });
+      const worker = yield* fixture.makeWorker();
+      const timedOut = yield* Effect.flip(worker.execute({ jobId }, context)).pipe(Effect.forkChild);
+      yield* Deferred.await(ownerCommitted);
+      yield* TestClock.adjust('20 millis');
+      expect(yield* Fiber.join(timedOut)).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+      expect(fixture.job().effects[1]?.state).toBe('indeterminate');
+      yield* worker.execute({ jobId }, context);
+      expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+      expect(fixture.recovered.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+      expect(fixture.job().effects[1]?.state).toBe('settled');
+      expect(Option.getOrUndefined(fixture.job().effects[1]?.outcome ?? Option.none())).toEqual({
+        effectId,
+        owner: 'integration.symmy',
+        status: 'accepted_no_change',
+      });
+      expect((yield* projectSymmyExecutionJob(fixture.job())).phase).toBe('completed_all');
     }),
   );
 

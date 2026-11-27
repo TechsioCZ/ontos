@@ -2,7 +2,8 @@
 /**
  * Settles what is left of a Symmy job whose execution delivery an operator released (outbox-dead-delivery release):
  * the worker never runs such a job again. Defaults to a complete native transaction followed by ROLLBACK; --apply
- * cancels the job's admission fence and settles every unfinished effect for good.
+ * cancels the job's admission fence and settles every unfinished effect for good, one whose owner call committed from
+ * the owner's committed reply.
  *
  *   node scripts/ops/settle-released-symmy-job.mts --tenant-id <id> --job-id <id> --message-id <job outbox message> \
  *     --operator <name> --reason <why> [--apply]
@@ -41,9 +42,9 @@ const command = Command.make(
           }).pipe(
             Effect.tap((settled) =>
               Console.log(
-                `[symmy-released-job-settlement] job ${settled.jobId}: ${String(settled.denied)} denied, ` +
-                  `${String(settled.unsupported)} unsupported; ${String(settled.uncommittedInvocations)} uncommitted ` +
-                  'owner invocation(s) fenced',
+                `[symmy-released-job-settlement] job ${settled.jobId}: ${String(settled.reconciled)} reconciled from ` +
+                  `a committed owner call, ${String(settled.denied)} denied, ${String(settled.unsupported)} unsupported; ` +
+                  `${String(settled.uncommittedInvocations)} uncommitted owner invocation(s) fenced`,
               ),
             ),
             Effect.flatMap(() => (flags.apply ? Effect.succeed('APPLIED') : Effect.fail(new SettlementDryRun()))),

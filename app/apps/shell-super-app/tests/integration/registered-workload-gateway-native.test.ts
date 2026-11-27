@@ -2622,6 +2622,49 @@ it.live(
             yield* Effect.exit(issue({ ...tenantRecovery, source: { ...tenantRecovery.source, legalEntityId } })),
           ),
         ).toBe(true);
+        // An optional-company original (Catalog's variant confirmation, which Symmy calls tenant-only from a company job)
+        // is recovered in the scope it ran in, never under the admission's company; one that ran under the company is
+        // not a tenant-only original.
+        const optionalOriginal = replacing('party-registry', (contract) => ({
+          manifest: {
+            ...contract.manifest,
+            publicSurface: {
+              ...contract.manifest.publicSurface,
+              actions: contract.manifest.publicSurface.actions.map((action) =>
+                action.actionKey === originalTenantWriteKey
+                  ? { ...action, legalEntityScope: 'optional' as const }
+                  : action,
+              ),
+            },
+          },
+        }));
+        expect(yield* refusalOf(issue(tenantRecovery, 'party-registry', providerKey, 'tenant', optionalOriginal))).toBe(
+          'issued',
+        );
+        yield* insert(sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_context_ref,action_key,idempotency_key,status,request_hash,completed_at) values
+          (${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${machinePrincipal}::uuid,'system',${admissionOwnerContextRef},${originalTenantWriteKey},'native-original-company-command','succeeded',${originalRequestHash},now())`);
+        expect(
+          yield* refusalOf(
+            issue(
+              { ...tenantRecovery, originalIdempotencyKey: 'native-original-company-command' },
+              'party-registry',
+              providerKey,
+              'tenant',
+              optionalOriginal,
+            ),
+          ),
+        ).toBe('recovery_original_unmatched');
+        expect(
+          yield* refusalOf(
+            issue(
+              { ...tenantRecovery, source: { ...tenantRecovery.source, legalEntityId } },
+              'party-registry',
+              providerKey,
+              'subject',
+              optionalOriginal,
+            ),
+          ),
+        ).not.toBe('issued');
         yield* insert(
           sql`update core.outbox_deliveries set status='processing',claimed_by='native-claim',claim_expires_at=now()+interval '60 seconds' where outbox_delivery_id=${deliveryId}::uuid`,
         );

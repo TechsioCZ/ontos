@@ -1220,7 +1220,13 @@ const makeAdmitRecovery = (database: CoreDatabase['Service']) => {
           ) {
             return yield* delegationForbidden('conditional_requirement_refused')();
           }
-          const ownerLegalEntityId = Option.getOrUndefined(originalCompanyOf(originalAction, admission));
+          // An optional-company Action ran in the scope its caller chose, and the caller states that same scope for its
+          // recovery (already held to the admission's company or none above): a tenant-only original is never looked
+          // up under the admission's company.
+          const ownerLegalEntityId =
+            originalAction.legalEntityScope === 'optional'
+              ? proof.legalEntityId
+              : Option.getOrUndefined(originalCompanyOf(originalAction, admission));
           const originalAuthContextRef = `job:${recoveryOf.jobKey}:run:${runReference}`;
           const originals = yield* transaction
             .execute(
