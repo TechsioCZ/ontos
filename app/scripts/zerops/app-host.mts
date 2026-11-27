@@ -769,8 +769,8 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
   Effect.tapError(({ reason }) => Console.error(`[app-host] ${reason}`)),
 );
 
-/** The settings the AKROS ERP editor grants step reads (`scripts/demo/akros-erp-staff-grants.mts`). */
-const AKROS_ERP_GRANTS_SETTINGS = [
+/** The settings the ERP editor grants step reads (`scripts/demo/erp-editor-grants.mts`). */
+const ERP_EDITOR_GRANTS_SETTINGS = [
   'DATABASE_URL',
   'SPICEDB_CA_CERT',
   'SPICEDB_ENDPOINT',
@@ -779,30 +779,33 @@ const AKROS_ERP_GRANTS_SETTINGS = [
 ] as const;
 
 /**
- * Hotfix: on every boot of the deployment with the demo fixtures, the AKROS e-shop operator's two roles get every
- * ERP editor cell of this release (Catalog, Pricing, Inventory), additively. A failure is one loud line and never
- * holds the boot.
+ * On every boot of every deployment (stage and stable, demo fixtures or not), each shop operator of a tenant with ERP
+ * products holds that tenant's "Úpravy produktů z ERP" role with exactly the cells the ERP editor calls
+ * (`scripts/demo/erp-editor-grants.mts`). It never holds the boot: it answers whether it succeeded, so its boot timing
+ * line says `failed` when it did not.
  */
-export const bootstrapStageAkrosErpGrants = Effect.gen(function* bootstrapStageAkrosErpGrants() {
-  if (!(yield* demoFixturesEnabled)) {
-    return;
-  }
+export const reconcileErpEditorGrants = Effect.gen(function* reconcileErpEditorGrants() {
   const settings: ChildEnvironment = {};
-  for (const key of AKROS_ERP_GRANTS_SETTINGS) {
+  for (const key of ERP_EDITOR_GRANTS_SETTINGS) {
     const value = yield* Config.option(Config.String(key));
     if (Option.isSome(value)) {
       settings[key] = value.value;
     }
   }
   yield* runChild(
-    'akros-erp-staff-grants',
+    'erp-editor-grants',
     process.execPath,
-    ['scripts/demo/akros-erp-staff-grants.mts'],
+    ['scripts/demo/erp-editor-grants.mts'],
     workspaceRoot,
     settings,
     false,
   );
-}).pipe(Effect.catchCause(() => Console.error('[app-host] AKROS ERP editor grants failed; publishing anyway')));
+  return true;
+}).pipe(
+  Effect.catchCause(() =>
+    Console.error('[app-host] ERP EDITOR GRANTS FAILED; publishing anyway').pipe(Effect.as(false)),
+  ),
+);
 
 /**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
@@ -2545,7 +2548,7 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       timedBootStage('host.symmy-demo-bootstrap'),
       Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
     );
-    yield* bootstrapStageAkrosErpGrants.pipe(timedBootStage('host.akros-erp-grants'));
+    yield* reconcileErpEditorGrants.pipe(timedBootStageJudged('host.erp-editor-grants', (granted: boolean) => granted));
     const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
