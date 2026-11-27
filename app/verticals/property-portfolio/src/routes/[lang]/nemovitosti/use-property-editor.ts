@@ -10,6 +10,7 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@app/core-runtime/ui/form';
+import type { Field } from '@app/core-runtime/ui/form';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
@@ -278,12 +279,34 @@ export const withResponsibleEmployees = (draft: PropertyDraft, value: string | s
  * field whose entries the form marks with that verdict. Uložit sends the draft through the save bar; the form's own
  * submit (Enter) only asks for that save.
  */
+const RecordTextsSchema = Schema.Record(Schema.String, Schema.String);
+const EmployeeChoicesSchema = Schema.Array(Schema.String);
 const recordFormBuilder = FormBuilder.empty
   .addField('lifecycleState', Schema.String)
   .addField('note', Schema.String)
-  .addField('responsibleEmployeeIds', Schema.Array(Schema.String))
-  .addField('text', Schema.Record(Schema.String, Schema.String));
-const makeRecordForm = () =>
+  .addField('responsibleEmployeeIds', EmployeeChoicesSchema)
+  .addField('text', RecordTextsSchema);
+
+/**
+ * The fields of the building or unit form, named so the module's declarations can refer to them. A field record has
+ * to be indexable, which an interface is not.
+ */
+type RecordFields = Readonly<{
+  readonly lifecycleState: Field.FieldDef<'lifecycleState', typeof Schema.String>;
+  readonly note: Field.FieldDef<'note', typeof Schema.String>;
+  readonly responsibleEmployeeIds: Field.FieldDef<'responsibleEmployeeIds', typeof EmployeeChoicesSchema>;
+  readonly text: Field.FieldDef<'text', typeof RecordTextsSchema>;
+}>;
+interface RecordControls {
+  readonly lifecycleState: typeof ComboboxField;
+  readonly note: typeof TextAreaField;
+  readonly responsibleEmployeeIds: typeof MultiComboboxField;
+  readonly text: typeof EntryTextField;
+}
+export type RecordForm = FormReact.BuiltForm<RecordFields, never, void, never, void, RecordControls>;
+export type RecordValues = Field.EncodedFromFields<RecordFields>;
+
+const makeRecordForm = (): RecordForm =>
   FormReact.make(recordFormBuilder, {
     fields: {
       lifecycleState: ComboboxField,
@@ -295,11 +318,9 @@ const makeRecordForm = () =>
     runtime: browserAtomRuntime,
   });
 /** The new building or unit. */
-export const createRecordForm = makeRecordForm();
+export const createRecordForm: RecordForm = makeRecordForm();
 /** The existing building or unit open in the edit dialog. */
-export const editRecordForm = makeRecordForm();
-export type RecordForm = typeof createRecordForm;
-export type RecordValues = typeof createRecordForm.schema.Encoded;
+export const editRecordForm: RecordForm = makeRecordForm();
 
 /** The texts of a draft that are one entry each of the form's `text` field. */
 const textEntries = ['address', 'code', 'name', 'propertyType'] as const;
@@ -312,7 +333,7 @@ export const recordValuesOf = (draft: PropertyDraft): RecordValues => ({
   responsibleEmployeeIds: draft.responsibleEmployeeIds,
   text: { address: draft.address, code: draft.code, name: draft.name, propertyType: draft.propertyType },
 });
-export const emptyRecordValues = recordValuesOf(emptyDraft);
+export const emptyRecordValues: RecordValues = recordValuesOf(emptyDraft);
 
 /** The draft the form's values make of `base`: a unit keeps its code, an unknown state or employee id is left out. */
 export const draftOfValues = (base: PropertyDraft, values: RecordValues): PropertyDraft => {
