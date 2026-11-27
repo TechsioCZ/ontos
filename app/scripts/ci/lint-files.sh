@@ -105,6 +105,7 @@ if [[ -s "$work/batch" ]]; then run_batch; fi
 # The shell-ui-candidates global generates ignored output and fails on invalid utilities. Its success does not
 # prove a committed projection was fresh: no projection is committed. The diff below covers tracked files only.
 # --fix can make a failing finding disappear from the tool's exit status. Print every resulting diff even when
-# another batch/job failed, and compare both the worktree and index with the exact checked-out commit.
+# another batch/job failed. The final diff proves tracked content equals HEAD, not that the checkout is clean:
+# untracked files are not checked.
 git diff --exit-code HEAD || failed=1
 exit "$failed"

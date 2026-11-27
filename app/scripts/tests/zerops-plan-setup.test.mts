@@ -63,7 +63,7 @@ const fixtureName = (route: string) => route.replaceAll(/[^A-Za-z0-9]/gu, '_');
 
 // Hotfix delivery (0fcf2ae30d, 5b13f3af9b): the planning job holds no delivery group, so a newer push plans and
 // builds while an older one still delivers; deliveries take turns in deliver_app, which no newer run cancels.
-// Planning, builds and delivery do not refuse a superseded branch tip. Admitted lint finishes as well.
+// No job refuses a superseded branch tip. Lint has no cross-run group that can replace a pending shard.
 it.effect('plans and builds every push at once, and lets deliveries alone take turns, none cancelled', () =>
   Effect.gen(function* deliveriesTakeTurns() {
     const fs = yield* FileSystem.FileSystem;
@@ -94,15 +94,9 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
     expect(workflow.jobs.deliver?.concurrency).toBeUndefined();
     expect(workflow.jobs.deliver_app?.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
     expect(workflow.jobs.build?.concurrency?.['cancel-in-progress']).toBe(false);
-    expect(workflow.jobs.lint?.concurrency).toEqual({
-      'cancel-in-progress': false,
-      group: `zerops-stage-lint-\${{ github.ref }}-\${{ matrix.shard }}`,
-    });
+    expect(workflow.jobs.lint?.concurrency).toBeUndefined();
     expect(workflow.jobs['lint-plan']?.concurrency).toBeUndefined();
     for (const [name, job] of Object.entries(workflow.jobs)) {
-      if (name.startsWith('lint')) {
-        continue;
-      }
       for (const step of job.steps) {
         expect(step.run ?? '', `${name}: ${step.name}`).not.toContain('ls-remote');
       }
@@ -122,64 +116,6 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
         steps.some((step) => step.uses === './.github/actions/deliver-stage'),
         name,
       ).toBe(delivers);
-    }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect('rejects stale lint only at admission, never after installation or in the delivery queue', () =>
-  Effect.gen(function* lintAdmission() {
-    const fs = yield* FileSystem.FileSystem;
-    const workflow = Schema.decodeUnknownSync(
-      Schema.Struct({
-        jobs: Schema.Record(
-          Schema.String,
-          Schema.Struct({
-            steps: Schema.Array(
-              Schema.Struct({
-                name: Schema.String,
-                run: Schema.optionalKey(Schema.String),
-                uses: Schema.optionalKey(Schema.String),
-              }),
-            ),
-          }),
-        ),
-      }),
-    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
-    const directory = yield* fs.makeTempDirectoryScoped();
-    const git = path.join(directory, 'git');
-    yield* fs.writeFileString(
-      git,
-      `#!/usr/bin/env bash
-set -euo pipefail
-[ "$*" = 'ls-remote origin refs/heads/demo/sales-crm' ] || exit 9
-[ "$REMOTE_HEAD" != unavailable ] || exit 1
-printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
-`,
-    );
-    yield* fs.chmod(git, 0o700);
-    for (const name of ['lint-plan', 'lint']) {
-      const steps = workflow.jobs[name]?.steps ?? [];
-      expect(steps[0]?.uses).toContain('actions/checkout@');
-      expect(steps[1]?.name).toBe('Refuse a superseded lint head before preparation');
-      expect(steps.filter(({ run: command }) => command?.includes('ls-remote') === true)).toHaveLength(1);
-      const command = steps[1]?.run;
-      if (command === undefined) {
-        expect.fail('Missing lint admission checkpoint');
-      }
-      for (const head of [HEAD, BASE, '', 'unavailable']) {
-        const result = yield* collectToolingProcess(
-          ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', command], {
-            env: {
-              GITHUB_REF: 'refs/heads/demo/sales-crm',
-              GITHUB_SHA: HEAD,
-              PATH: `${directory}:${yield* Config.String('PATH')}`,
-              REMOTE_HEAD: head,
-            },
-            extendEnv: true,
-          }),
-        );
-        expect(result.status === 0, `${name}: ${head}`).toBe(head === HEAD);
-      }
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -519,6 +455,59 @@ for (const jobName of ['deliver_app']) {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 }
+
+it.effect('admits stale no-service plans to the attempt guard but skips current no-service plans', () =>
+  Effect.gen(function* noServiceRetryCondition() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({ jobs: Schema.Struct({ deliver_app: Schema.Struct({ if: Schema.String }) }) }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    // Run the actual job condition's boolean/comparison subset in bash, with the GitHub context substituted.
+    // This catches a skip before the attempt guard, not just a failure inside that guard's shell body.
+    const currentNoService = {
+      any: 'false',
+      build: 'skipped',
+      cancelled: false,
+      deliver: 'success',
+      lint: 'success',
+      planned: '2',
+    };
+    const staleNoService = { ...currentNoService, planned: '1' };
+    const withService = { ...currentNoService, any: 'true', build: 'success' };
+    for (const { admitted, name, ...values } of [
+      { ...currentNoService, admitted: false, name: 'current no-service plan' },
+      { ...staleNoService, admitted: true, name: 'stale no-service plan' },
+      { ...staleNoService, admitted: true, name: 'missing plan attempt', planned: '' },
+      { ...withService, admitted: true, name: 'current service plan' },
+      { ...withService, admitted: true, name: 'stale service plan', planned: '1' },
+      { ...withService, admitted: true, build: 'skipped', name: 'reused unit builds' },
+      ...[staleNoService, withService].flatMap((plan) => [
+        { ...plan, admitted: false, lint: 'failure', name: 'failed lint' },
+        { ...plan, admitted: false, lint: 'cancelled', name: 'cancelled lint' },
+        { ...plan, admitted: false, lint: 'skipped', name: 'skipped lint' },
+        { ...plan, admitted: false, build: 'failure', name: 'failed build' },
+        { ...plan, admitted: false, deliver: 'failure', name: 'failed planner' },
+        { ...plan, admitted: false, cancelled: true, name: 'cancelled run' },
+      ]),
+    ]) {
+      const context = {
+        '!cancelled()': values.cancelled ? "'true' == 'false'" : "'false' == 'false'",
+        'github.run_attempt': "'2'",
+        'needs.build.result': `'${values.build}'`,
+        'needs.deliver.outputs.any': `'${values.any}'`,
+        'needs.deliver.outputs.run_attempt': `'${values.planned}'`,
+        'needs.deliver.result': `'${values.deliver}'`,
+        'needs.lint.result': `'${values.lint}'`,
+      };
+      let condition = workflow.jobs.deliver_app.if.replaceAll(/^\$\{\{\s*|\s*\}\}$/gu, '');
+      for (const [key, value] of Object.entries(context)) {
+        condition = condition.replaceAll(key, value);
+      }
+      const result = yield* collectToolingProcess(ChildProcess.make('bash', ['-c', `[[ ${condition} ]]`]));
+      expect(result.status, `${name}: ${JSON.stringify(values)}`).toBe(admitted ? 0 : 1);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live('replans a full rerun as a retry: a storefront-only first attempt becomes every service', () =>
   Effect.gen(function* fullRerun() {
