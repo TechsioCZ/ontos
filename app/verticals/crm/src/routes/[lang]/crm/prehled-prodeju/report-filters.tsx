@@ -210,11 +210,11 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
       </div>
       {active && (
         <Button
+          appearance="ghost"
           icon="icon-[mdi--filter-remove-outline]"
           onClick={() => onChange({ client: ALL, period: ALL, salesperson: ALL, status: ALL })}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           Zrušit filtry
         </Button>

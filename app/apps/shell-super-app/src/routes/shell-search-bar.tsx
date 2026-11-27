@@ -258,13 +258,13 @@ export const ShellSearchBar = ({
         ) : null}
         {suggestions.status === 'ready' && suggestions.groups.length > 0 ? (
           <Button
+            appearance="ghost"
             block
             onBlur={handleBlur}
             onClick={handleSubmit}
             onMouseDown={keepFieldFocus}
+            severity="secondary"
             size="sm"
-            theme="borderless"
-            variant="secondary"
           >
             {t('shell.search.suggestions.all', { query: suggestions.query })}
           </Button>

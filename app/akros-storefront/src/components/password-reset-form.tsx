@@ -55,7 +55,7 @@ export function PasswordRequestForm() {
         size="sm"
         type="email"
       />
-      <Button block disabled={pending || sent} size="md" type="submit" variant="primary">
+      <Button block disabled={pending || sent} size="md" type="submit" severity="primary">
         {pending ? copy.sendingResetLink : copy.sendResetLink}
       </Button>
       {error && <p role="alert">{error}</p>}
@@ -123,7 +123,7 @@ export function PasswordResetForm() {
         size="sm"
         type="password"
       />
-      <Button block disabled={pending || done} size="md" type="submit" variant="primary">
+      <Button block disabled={pending || done} size="md" type="submit" severity="primary">
         {pending ? copy.savingPassword : copy.savePassword}
       </Button>
       {error && <p role="alert">{error}</p>}

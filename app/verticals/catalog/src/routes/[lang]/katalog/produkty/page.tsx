@@ -89,7 +89,7 @@ const lifecycleVariant = (lifecycle: string) => {
   if (lifecycle === 'ACTIVE') {
     return 'success' as const;
   }
-  return lifecycle === 'RETIRED' ? ('outline' as const) : ('warning' as const);
+  return lifecycle === 'RETIRED' ? ('neutral' as const) : ('warning' as const);
 };
 
 const StockText = ({ cell }: { readonly cell: StockCell }) => {
@@ -125,7 +125,7 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
   }
   const rows = variantRows(input.item, figures.value);
   return (
-    <Table size="sm" variant="line">
+    <Table appearance="line" size="sm">
       <Table.Caption>{t(`${key}.variants.caption`)}</Table.Caption>
       <Table.Header>
         <Table.Row>
@@ -143,7 +143,7 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
             <Table.Cell>{row.sku ?? t(`${key}.variants.noSku`)}</Table.Cell>
             <Table.Cell>{row.options === '' ? (row.name ?? '—') : row.options}</Table.Cell>
             <Table.Cell>
-              <Badge size="sm" variant={lifecycleVariant(row.lifecycle)}>
+              <Badge severity={lifecycleVariant(row.lifecycle)} size="sm">
                 {t(`${key}.variantLifecycle.${row.lifecycle}`)}
               </Badge>
             </Table.Cell>
@@ -156,11 +156,11 @@ const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
             <Table.Cell>
               {Option.isSome(input.offer) && (
                 <Button
+                  appearance="outline"
                   onClick={() => setEditing(row.variantId)}
+                  severity="secondary"
                   size="sm"
-                  theme="outlined"
                   type="button"
-                  variant="secondary"
                 >
                   Cena a sklad
                 </Button>
@@ -218,7 +218,7 @@ const ProductRows = ({
             ))}
         </Table.Cell>
         <Table.Cell>
-          <Badge size="sm" variant={lifecycleVariant(item.lifecycle)}>
+          <Badge severity={lifecycleVariant(item.lifecycle)} size="sm">
             {t(`${key}.lifecycle.${item.lifecycle}`)}
           </Badge>
         </Table.Cell>
@@ -233,7 +233,7 @@ const ProductRows = ({
                 title={[...status.reasons.map((reason) => `${reason.why} ${reason.fix}`), ...status.notes].join('\n')}
               >
                 <span className="flex items-center gap-100">
-                  <Badge size="sm" variant={status.visible ? 'success' : 'warning'}>
+                  <Badge severity={status.visible ? 'success' : 'warning'} size="sm">
                     {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
                   </Badge>
                   {status.href !== undefined && (
@@ -252,10 +252,10 @@ const ProductRows = ({
           })}
         </Table.Cell>
         <Table.Cell>
-          <Button aria-expanded={open} onClick={toggle} size="sm" theme="borderless" type="button" variant="secondary">
+          <Button appearance="ghost" aria-expanded={open} onClick={toggle} severity="secondary" size="sm" type="button">
             {t(open ? `${key}.hideVariants` : `${key}.showVariants`)}
           </Button>
-          <Button onClick={() => setEditing(true)} size="sm" theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={() => setEditing(true)} severity="secondary" size="sm" type="button">
             Upravit
           </Button>
           {editing && (
@@ -308,7 +308,7 @@ const ProductsList = ({
     ).values(),
   ];
   return (
-    <Table size="sm" variant="line">
+    <Table appearance="line" size="sm">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader>{t(`${key}.columns.name`)}</Table.ColumnHeader>
@@ -356,22 +356,22 @@ const Pager = ({
       </span>
       <div className="flex gap-100">
         <Button
+          appearance="outline"
           disabled={input.offset === 0}
           onClick={previous}
+          severity="secondary"
           size="sm"
-          theme="outlined"
           type="button"
-          variant="secondary"
         >
           {t(`${key}.previous`)}
         </Button>
         <Button
+          appearance="outline"
           disabled={input.offset + shown >= count}
           onClick={next}
+          severity="secondary"
           size="sm"
-          theme="outlined"
           type="button"
-          variant="secondary"
         >
           {t(`${key}.next`)}
         </Button>
@@ -440,7 +440,7 @@ const ProductsPageContent = (props: ProductsPageProps) => {
             size="sm"
             value={draft}
           />
-          <Button size="sm" theme="outlined" type="submit" variant="secondary">
+          <Button appearance="outline" severity="secondary" size="sm" type="submit">
             {t(`${key}.searchSubmit`)}
           </Button>
         </form>

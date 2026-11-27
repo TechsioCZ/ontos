@@ -349,11 +349,11 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
         actions={
           <>
             <Button
+              appearance="outline"
               disabled={record.status === 'saving'}
               onClick={() => guard.request(close)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {t('tagging.tags.form.cancel')}
             </Button>

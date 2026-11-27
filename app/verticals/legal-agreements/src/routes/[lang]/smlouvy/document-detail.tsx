@@ -146,11 +146,11 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
     <>
       <div>
         <LinkButton
+          appearance="ghost"
           href={`/${language}/smlouvy`}
           icon="icon-[mdi--arrow-left]"
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {labels.back}
         </LinkButton>
@@ -199,11 +199,11 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
         <div className="legalagreements:min-w-0 legalagreements:space-y-6">
           <SectionCard title={labels.status}>
             <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
-              <Badge size="sm" variant={document.lifecycleState === 'ARCHIVED' ? 'outline' : 'success'}>
+              <Badge severity={document.lifecycleState === 'ARCHIVED' ? 'neutral' : 'success'} size="sm">
                 {labels.documentLifecycle[document.lifecycleState]}
               </Badge>
               {archived && (
-                <Badge size="sm" variant="warning">
+                <Badge severity="warning" size="sm">
                   {labels.archived}
                 </Badge>
               )}
@@ -235,11 +235,11 @@ export const AgreementDocumentStatus = ({ language, state }: AgreementDocumentSt
     <>
       <div>
         <LinkButton
+          appearance="ghost"
           href={`/${language}/smlouvy`}
           icon="icon-[mdi--arrow-left]"
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {labels.back}
         </LinkButton>

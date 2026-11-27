@@ -164,7 +164,7 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
               />
             ))}
             <div>
-              <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" icon="icon-[mdi--plus]" onClick={addLine} severity="secondary" size="sm">
                 Přidat položku
               </Button>
             </div>

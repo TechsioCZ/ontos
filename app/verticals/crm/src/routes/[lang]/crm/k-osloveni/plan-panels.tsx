@@ -176,11 +176,11 @@ export const PlanContactPanel = ({
         <div className="flex flex-wrap gap-100">
           {quickDays.map((entry) => (
             <Button
+              appearance="outline"
               key={entry.days}
               onClick={() => patch({ dueDate: shiftDay(today, entry.days) })}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {entry.label}
             </Button>

@@ -99,10 +99,10 @@ const IncidentCard = ({
           <span className="text-fg-secondary text-xs">{formatDate(incident.occurredOn)}</span>
         </div>
         <div className="flex flex-wrap gap-50">
-          <Badge size="sm" variant={severityVariant(incident.severity)}>
+          <Badge severity={severityVariant(incident.severity)} size="sm">
             {k(`severity.${incident.severity}`)}
           </Badge>
-          <Badge size="sm" variant={incidentStateVariant(incident.state)}>
+          <Badge severity={incidentStateVariant(incident.state)} size="sm">
             {k(`incidentState.${incident.state}`)}
           </Badge>
         </div>
@@ -125,7 +125,7 @@ const IncidentCard = ({
           <>
             <span className="text-fg-secondary">{k('detail.taskMissing')}</span>
             {canWrite && (
-              <Button disabled={busy} onClick={onCreateTask} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" disabled={busy} onClick={onCreateTask} severity="secondary" size="sm">
                 {k('actions.createTask')}
               </Button>
             )}
@@ -144,27 +144,27 @@ const IncidentCard = ({
         <div className="flex flex-wrap gap-100">
           {incident.state === 'reported' && (
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => onChangeState('in_progress')}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {k('actions.startWork')}
             </Button>
           )}
           {incident.state !== 'resolved' && (
-            <Button disabled={busy} onClick={onResolve} size="sm" variant="primary">
+            <Button disabled={busy} onClick={onResolve} severity="primary" size="sm">
               {k('actions.resolve')}
             </Button>
           )}
           {incident.state === 'resolved' && (
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => onChangeState('in_progress')}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {k('actions.reopen')}
             </Button>
@@ -235,12 +235,12 @@ const DeviceAttachments = ({
               type="file"
             />
             <Button
+              appearance="outline"
               disabled={busy}
               icon="icon-[mdi--paperclip]"
               onClick={() => fileInput.current?.click()}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {k('actions.upload')}
             </Button>
@@ -266,13 +266,13 @@ const DeviceAttachments = ({
                 </div>
               </div>
               <Button
+                appearance="outline"
                 icon="icon-[mdi--download]"
                 onClick={() => {
                   onDownload(attachment.file.id);
                 }}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('actions.download')}
               </Button>
@@ -532,18 +532,18 @@ export const DeviceDetailPanel = ({
     <SidePanel
       description={
         <span className="flex flex-wrap items-center gap-100">
-          <Badge size="sm" variant="outline">
+          <Badge appearance="outline" severity="neutral" size="sm">
             {k(`deviceType.${device.deviceType}`)}
           </Badge>
-          <Badge size="sm" variant={deviceStateVariant(device.state)}>
+          <Badge severity={deviceStateVariant(device.state)} size="sm">
             {k(`state.${device.state}`)}
           </Badge>
           {overdue && (
-            <Badge size="sm" variant="danger">
+            <Badge severity="danger" size="sm">
               {k('stats.overdue')}
             </Badge>
           )}
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             {k('evidenceOnly')}
           </Badge>
         </span>
@@ -562,20 +562,26 @@ export const DeviceDetailPanel = ({
         {canWrite && (
           <div className="flex flex-wrap gap-100">
             {device.state !== 'decommissioned' && (
-              <Button icon="icon-[mdi--alert-outline]" onClick={onReport} size="sm" variant="primary">
+              <Button icon="icon-[mdi--alert-outline]" onClick={onReport} severity="primary" size="sm">
                 {k('actions.reportFault')}
               </Button>
             )}
             <Button
+              appearance="outline"
               icon="icon-[mdi--clipboard-check-outline]"
               onClick={onInspection}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {k('actions.inspection')}
             </Button>
-            <Button icon="icon-[mdi--pencil-outline]" onClick={onEdit} size="sm" theme="outlined" variant="secondary">
+            <Button
+              appearance="outline"
+              icon="icon-[mdi--pencil-outline]"
+              onClick={onEdit}
+              severity="secondary"
+              size="sm"
+            >
               {k('actions.edit')}
             </Button>
           </div>

@@ -115,10 +115,10 @@ const OpportunityEditPanel = ({
         actions={
           <>
             <Button
+              appearance="outline"
               onClick={() => guard.request(() => onOpenChange(false))}
-              theme="outlined"
+              severity="secondary"
               type="button"
-              variant="secondary"
             >
               {t(`${K}.edit.close`)}
             </Button>
@@ -249,7 +249,7 @@ export const StageDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={close} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={close} severity="secondary" type="button">
             {t(`${K}.stageDialog.cancel`)}
           </Button>
           <Button
@@ -257,8 +257,8 @@ export const StageDialog = ({
             form={formId}
             isLoading={busy}
             loadingText={t(`${K}.stageDialog.submitting`)}
+            severity="primary"
             type="submit"
-            variant="primary"
           >
             {t(`${K}.stageDialog.submit`)}
           </Button>
@@ -377,15 +377,15 @@ export const OwnerDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={() => onOpenChange(false)} severity="secondary" type="button">
             {t(`${K}.owner.cancel`)}
           </Button>
           <Button
             form={formId}
             isLoading={busy}
             loadingText={t(`${K}.owner.submitting`)}
+            severity="primary"
             type="submit"
-            variant="primary"
           >
             {t(`${K}.owner.submit`)}
           </Button>

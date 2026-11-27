@@ -75,7 +75,7 @@ export const RowActionsMenu = <R,>({ actions, label, row }: RowActionsMenuProps<
     <Menu
       aria-label={label}
       customTrigger={
-        <Button aria-label={label} icon="icon-[mdi--dots-vertical]" size="sm" theme="borderless" variant="secondary" />
+        <Button appearance="ghost" aria-label={label} icon="icon-[mdi--dots-vertical]" severity="secondary" size="sm" />
       }
       items={rowActionMenuItems(actions, row)}
       onSelect={({ value }) => runRowAction(actions, row, value)}

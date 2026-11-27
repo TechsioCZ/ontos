@@ -714,7 +714,7 @@ const stateBadge = {
   CANCELLED: 'danger',
   COMPLETED: 'secondary',
   CONFIRMED: 'info',
-  DRAFT: 'outline',
+  DRAFT: 'neutral',
 } as const;
 type PageState = ReturnType<typeof useRecordsPage>;
 /** Tells the person their last change was parked for approval and has not been applied. */
@@ -786,7 +786,7 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
     <SidePanel
       actions={
         <>
-          <Button onClick={close} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={close} severity="secondary">
             {t(LABEL_CLOSE)}
           </Button>
           <SaveBar
@@ -914,11 +914,11 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
       <DocumentTitle title={`${unitName(selected.unitRef.resourceId)}${tenantSuffix}`} />
       <div>
         <LinkButton
+          appearance="ghost"
           href={`/${language}/najmy`}
           icon="icon-[mdi--arrow-left]"
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {t('property-leasing.detail.back')}
         </LinkButton>
@@ -934,7 +934,7 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
           .filter((part) => part !== undefined)
           .join(' · ')}
         meta={
-          <Badge size="sm" variant={stateBadge[selected.state]}>
+          <Badge severity={stateBadge[selected.state]} size="sm">
             {t(`property-leasing.demo.stateLabels.${selected.state}`)}
           </Badge>
         }
@@ -1035,11 +1035,11 @@ const OccupancyOverview = ({ model, state }: OccupancyDetailProps) => {
           action={
             canEditRent ? (
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() => state.openRentEditor()}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(selected.rentTerms === undefined ? 'property-leasing.rent.set' : 'property-leasing.rent.edit')}
               </Button>
@@ -1198,13 +1198,13 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
     <>
       <SectionCard title={t('property-leasing.demo.state')}>
         <div>
-          <Badge size="sm" variant={stateBadge[selected.state]}>
+          <Badge severity={stateBadge[selected.state]} size="sm">
             {t(`property-leasing.demo.stateLabels.${selected.state}`)}
           </Badge>
         </div>
         <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2" hidden={!state.canWrite}>
           {selected.state === 'DRAFT' && (
-            <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" disabled={busy} onClick={editDraft} severity="secondary" size="sm">
               {t(LABEL_EDIT_DRAFT)}
             </Button>
           )}
@@ -1212,8 +1212,8 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
             <Button
               disabled={busy}
               onClick={() => runCommand({ _tag: 'Confirm', occupancyRef: selected.occupancyRef })}
+              severity="warning"
               size="sm"
-              variant="warning"
             >
               {t('property-leasing.demo.confirm')}
             </Button>
@@ -1228,7 +1228,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
                   {t('property-leasing.demo.contract')}
                 </a>
               )}
-              <Button disabled={busy} onClick={() => activate(selected)} size="sm" variant="warning">
+              <Button disabled={busy} onClick={() => activate(selected)} severity="warning" size="sm">
                 {t('property-leasing.demo.activate')}
               </Button>
             </>
@@ -1237,19 +1237,19 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
             <Button
               disabled={busy}
               onClick={() => runCommand({ _tag: 'Complete', occupancyRef: selected.occupancyRef })}
+              severity="warning"
               size="sm"
-              variant="warning"
             >
               {t('property-leasing.demo.complete')}
             </Button>
           )}
           {(selected.state === 'DRAFT' || selected.state === 'CONFIRMED') && (
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => runCommand({ _tag: 'Cancel', occupancyRef: selected.occupancyRef })}
+              severity="danger"
               size="sm"
-              theme="outlined"
-              variant="danger"
             >
               {t('property-leasing.demo.cancel')}
             </Button>
@@ -1434,7 +1434,7 @@ const RetryAfterFailure = ({
   readonly onRetry: () => void;
 }) =>
   feedback === 'unavailable' || feedback === 'forbidden' || feedback === 'signedOut' ? (
-    <Button disabled={busy} onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+    <Button appearance="outline" disabled={busy} onClick={onRetry} severity="secondary" size="sm">
       {label}
     </Button>
   ) : null;
@@ -1487,19 +1487,19 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 state.canWrite && (
                   <>
                     <Button
+                      appearance="outline"
                       disabled={busy || snapshot === undefined}
                       onClick={() => state.newDraft('stay')}
+                      severity="secondary"
                       size="sm"
-                      theme="outlined"
-                      variant="secondary"
                     >
                       {t('property-leasing.demo.newBooking')}
                     </Button>
                     <Button
                       disabled={busy || snapshot === undefined}
                       onClick={() => state.newDraft()}
+                      severity="primary"
                       size="sm"
-                      variant="primary"
                     >
                       {t('property-leasing.demo.newLease')}
                     </Button>
@@ -1512,8 +1512,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 feedback !== 'ready' && (
                   <output aria-live="polite">
                     <Badge
-                      size="sm"
-                      variant={
+                      severity={
                         (
                           {
                             conflict: 'warning',
@@ -1526,6 +1525,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                           } as const
                         )[feedback]
                       }
+                      size="sm"
                     >
                       {t(`property-leasing.demo.feedback.${feedback}`)}
                     </Badge>
@@ -1545,14 +1545,14 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               />
             )}
             <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
-              <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">
+              <LinkButton appearance="outline" href="#tenants" severity="secondary" size="sm">
                 Nájemci, zájemci a kontaktní osoby ↓
               </LinkButton>
               <LinkButton
+                appearance="outline"
                 href={`/${state.language}/nemovitosti/prehled`}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 Kalendář a přehled nemovitostí →
               </LinkButton>
@@ -1561,12 +1561,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
                   <Button
+                    appearance="ghost"
                     aria-pressed={kindFilter === kind}
                     key={kind}
                     onClick={() => setKindFilter(kind)}
+                    severity={kindFilter === kind ? 'warning' : 'secondary'}
                     size="sm"
-                    theme="borderless"
-                    variant={kindFilter === kind ? 'warning' : 'secondary'}
                   >
                     {t(`property-leasing.demo.kind.${kind}`)}
                   </Button>
@@ -1599,7 +1599,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               </p>
             )}
             <div className="propertyleasing:overflow-x-auto">
-              <Table size="sm" variant="line">
+              <Table appearance="line" size="sm">
                 <Table.Caption>{t('property-leasing.demo.list')}</Table.Caption>
                 <Table.Header>
                   <Table.Row>
@@ -1635,18 +1635,18 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                       <Table.Cell>
                         <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
                           <Badge
-                            size="sm"
-                            variant={
+                            severity={
                               (
                                 {
                                   ACTIVE: 'success',
                                   CANCELLED: 'danger',
                                   COMPLETED: 'secondary',
                                   CONFIRMED: 'info',
-                                  DRAFT: 'outline',
+                                  DRAFT: 'neutral',
                                 } as const
                               )[record.state]
                             }
+                            size="sm"
                           >
                             {t(`property-leasing.demo.stateLabels.${record.state}`)}
                           </Badge>
@@ -1657,10 +1657,10 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                       </Table.Cell>
                       <Table.Cell>
                         <LinkButton
+                          appearance="outline"
                           href={`/${state.language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
+                          severity="secondary"
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
                         >
                           {t(LABEL_DETAIL)}
                         </LinkButton>

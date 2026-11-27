@@ -143,10 +143,10 @@ export const InvoicePaymentForm = ({
         />
         <div className="flex gap-100">
           <Button
+            appearance="ghost"
             onClick={() => setDraft((current) => ({ ...current, amount: String(remaining / 100).replace('.', ',') }))}
+            severity="secondary"
             size="sm"
-            theme="borderless"
-            variant="secondary"
           >
             Celý zbytek
           </Button>

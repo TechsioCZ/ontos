@@ -645,9 +645,9 @@ const DashboardAccountMenu = ({
             aria-label={identity.displayName}
             className="hover:bg-overlay"
             icon="icon-[mdi--account-circle-outline]"
+            severity="secondary"
             size="sm"
-            theme="unstyled"
-            variant="secondary"
+            unstyled
           >
             <span className="hidden lg:inline">{identity.displayName}</span>
           </Button>
@@ -719,7 +719,7 @@ const DashboardNavigationLink = ({
   const { t } = useModernI18n();
   const badge =
     link.state === 'read_only' || link.state === 'deprecated' ? (
-      <Badge size="sm" variant="warning">
+      <Badge severity="warning" size="sm">
         {t(link.state === 'read_only' ? 'shell.modules.state.readOnly' : 'shell.modules.state.deprecated')}
       </Badge>
     ) : null;
@@ -736,9 +736,9 @@ const DashboardNavigationLink = ({
             // Below the breakpoint the navigation is a drawer; choosing a destination dismisses it.
             onClick={() => sidebar.closeMobile()}
             size="sm"
-            theme={link.current ? 'light' : 'unstyled'}
+            {...(link.current ? { appearance: 'subtle' as const } : { unstyled: true })}
+            severity={link.current ? 'primary' : 'secondary'}
             to={link.href}
-            variant={link.current ? 'primary' : 'secondary'}
           >
             <Sidebar.Label className="min-w-0 flex-1 truncate text-start">{link.label}</Sidebar.Label>
           </LinkButton>

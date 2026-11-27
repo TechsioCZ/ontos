@@ -42,12 +42,12 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
   if (result.state === 'decision') {
     const { decision, query } = result;
     return (
-      <section aria-label={t('shell.accessAdmin.outcome.label')} className="shell:grid shell:gap-4">
+      <section aria-label={t('shell.accessAdmin.outcome.label')} className="grid gap-200">
         <Badge
           aria-label={t('shell.accessAdmin.accessible.outcomeBadge', {
             outcome: t(`shell.accessAdmin.outcome.${decision.outcome}`),
           })}
-          variant={outcomeVariants[decision.outcome]}
+          severity={outcomeVariants[decision.outcome]}
         >
           {t(`shell.accessAdmin.outcome.${decision.outcome}`)}
         </Badge>
@@ -56,7 +56,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
             ? t('shell.accessAdmin.why.currentPersonChoice')
             : t('shell.accessAdmin.why.checkingPerson', { name: decision.subjectName })}
         </p>
-        <dl className="shell:grid shell:gap-2 shell:break-words">
+        <dl className="grid gap-150 break-words">
           <div>
             <dt>{t('shell.accessAdmin.why.capabilityKey')}</dt>
             <dd>{query.capabilityKey}</dd>
@@ -99,14 +99,14 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
           )}
         </dl>
         {query.minor === '' ? null : <p>{t('shell.accessAdmin.why.amountCaveat')}</p>}
-        <ul aria-label={t('shell.accessAdmin.accessible.reasonList')} className="shell:grid shell:gap-2">
+        <ul aria-label={t('shell.accessAdmin.accessible.reasonList')} className="grid gap-150">
           {decision.reasonKeys.map((key) => (
             <li key={key}>{t(key)}</li>
           ))}
         </ul>
         {decision.authorityMetadata !== 'withheld' && decision.authority.length > 0 ? (
-          <section aria-label={t('shell.accessAdmin.why.authority')} className="shell:grid shell:gap-2">
-            <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.authority')}</h3>
+          <section aria-label={t('shell.accessAdmin.why.authority')} className="grid gap-150">
+            <h3 className="text-lg">{t('shell.accessAdmin.why.authority')}</h3>
             <ul>
               {decision.authority.map((role) => (
                 <li key={role.id}>
@@ -121,8 +121,8 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
         ) : null}
         {decision.authorityMetadata === 'included' ? (
           decision.grantableBy.length > 0 ? (
-            <section aria-label={t('shell.accessAdmin.why.grantableBy')} className="shell:grid shell:gap-2">
-              <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.grantableBy')}</h3>
+            <section aria-label={t('shell.accessAdmin.why.grantableBy')} className="grid gap-150">
+              <h3 className="text-lg">{t('shell.accessAdmin.why.grantableBy')}</h3>
               <ul>
                 {decision.grantableBy.map((person) => (
                   <li key={person.id}>{person.name}</li>
@@ -140,7 +140,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
           </StatusText>
         )}
         {decision.authorityMetadata === 'unavailable' ? (
-          <Button onClick={onRetry} variant="secondary">
+          <Button onClick={onRetry} severity="secondary">
             {t('shell.accessAdmin.common.retry')}
           </Button>
         ) : null}
@@ -149,15 +149,17 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
     );
   }
   return (
-    <div className="shell:grid shell:gap-3">
+    <div className="grid gap-150">
       {result.state === 'unavailable' ? (
-        <Badge variant="outline">{t('shell.accessAdmin.outcome.unavailable')}</Badge>
+        <Badge appearance="outline" severity="neutral">
+          {t('shell.accessAdmin.outcome.unavailable')}
+        </Badge>
       ) : null}
       <StatusText showIcon status={result.state === 'idle' ? 'default' : 'error'}>
         {t(stateKeys[result.state])}
       </StatusText>
       {result.state === 'unavailable' || result.state === 'conflict' ? (
-        <Button onClick={onRetry} variant="secondary">
+        <Button onClick={onRetry} severity="secondary">
           {t('shell.accessAdmin.common.retry')}
         </Button>
       ) : null}
@@ -186,10 +188,7 @@ export const WhyView = ({
   const [draft, setDraft] = useState(() => initialDraft);
   const modes = (['run', 'propose'] as const).map((value) => ({ label: t(`shell.accessAdmin.mode.${value}`), value }));
   return (
-    <section
-      aria-label={t('shell.accessAdmin.why.title')}
-      className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
-    >
+    <section aria-label={t('shell.accessAdmin.why.title')} className="grid w-full max-w-5xl gap-300">
       <p>{t('shell.accessAdmin.why.description')}</p>
       <p>{t('shell.accessAdmin.why.currentPerson')}</p>
       <form
@@ -199,10 +198,10 @@ export const WhyView = ({
           onCheck(Option.getOrElse(Schema.decodeOption(WhyFormSchema)(data), () => emptyWhySearch));
         }}
         aria-busy={pending}
-        className="shell:grid shell:gap-4"
+        className="grid gap-200"
       >
-        <fieldset className="shell:grid shell:gap-4 shell:md:grid-cols-2" disabled={pending}>
-          <legend className="shell:sr-only">{t('shell.accessAdmin.common.search')}</legend>
+        <fieldset className="grid gap-200 md:grid-cols-2" disabled={pending}>
+          <legend className="sr-only">{t('shell.accessAdmin.common.search')}</legend>
           <WhySubjectPicker
             onChange={(subject) => setDraft((previous) => ({ ...previous, subject }))}
             onMore={onMorePeople}
@@ -265,8 +264,8 @@ export const WhyView = ({
           disabled={pending}
           isLoading={pending}
           loadingText={t('shell.accessAdmin.common.loading')}
+          severity="primary"
           type="submit"
-          variant="primary"
         >
           {t('shell.accessAdmin.why.submit')}
         </Button>
@@ -278,8 +277,8 @@ export const WhyView = ({
           <WhyResult onRetry={onRetry} result={result} />
         )}
       </div>
-      <div className="shell:grid shell:gap-2">
-        <Button aria-describedby="why-request-unavailable" disabled type="button" variant="secondary">
+      <div className="grid gap-150">
+        <Button aria-describedby="why-request-unavailable" disabled severity="secondary" type="button">
           {t('shell.accessAdmin.why.requestAccess')}
         </Button>
         <p id="why-request-unavailable">{t('shell.accessAdmin.why.requestAccessUnavailable')}</p>

@@ -352,9 +352,9 @@ const AuthForm = ({
           pending || (mode === "register" && attemptedInvalid && Object.keys(errors).length > 0)
         }
         size="sm"
-        theme="solid"
+        appearance="solid"
         type="submit"
-        variant="secondary"
+        severity="secondary"
       >
         {
           {
@@ -705,9 +705,9 @@ export const AuthContent = ({
                   edit();
                 }}
                 size="sm"
-                theme="solid"
+                appearance="solid"
                 type="button"
-                variant="secondary"
+                severity="secondary"
               >
                 {d.auth.mfa.methods[available]}
               </Button>
@@ -730,9 +730,9 @@ export const AuthContent = ({
                   disabled={pending}
                   onClick={requestOtp}
                   size="sm"
-                  theme="solid"
+                  appearance="solid"
                   type="button"
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {d.auth.mfa.sendOtp}
                 </Button>
@@ -755,9 +755,9 @@ export const AuthContent = ({
                 block
                 disabled={pending}
                 size="sm"
-                theme="solid"
+                appearance="solid"
                 type="submit"
-                variant="primary"
+                severity="primary"
               >
                 {d.auth.mfa.verify}
               </Button>
@@ -776,9 +776,9 @@ export const AuthContent = ({
             disabled={pending}
             onClick={() => run(logoutPortal())}
             size="sm"
-            theme="solid"
+            appearance="solid"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             {d.auth.signOut}
           </Button>
@@ -804,9 +804,9 @@ export const AuthContent = ({
               disabled={pending}
               onClick={() => run(resumePortalEnrollment())}
               size="sm"
-              theme="solid"
+              appearance="solid"
               type="button"
-              variant="primary"
+              severity="primary"
             >
               {pending ? d.auth.continuing : d.auth.continueEnrollment}
             </Button>
@@ -815,9 +815,9 @@ export const AuthContent = ({
             disabled={pending}
             onClick={() => run(readPortalCurrent())}
             size="sm"
-            theme="solid"
+            appearance="solid"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             {pending ? d.auth.checking : d.auth.checkSession}
           </Button>

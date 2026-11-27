@@ -389,15 +389,15 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               <div className="flex flex-wrap items-center gap-100">
                 <CategoryAdminButton onCommitted={onCategoriesCommitted} />
                 <Button
+                  appearance="outline"
                   icon="icon-[mdi--package-down]"
                   onClick={() => openDialog('receipt')}
+                  severity="secondary"
                   size="sm"
-                  theme="outlined"
-                  variant="secondary"
                 >
                   {k('actions.receipt')}
                 </Button>
-                <Button icon="icon-[mdi--plus]" onClick={() => openDialog('create')} size="sm" variant="primary">
+                <Button icon="icon-[mdi--plus]" onClick={() => openDialog('create')} severity="primary" size="sm">
                   {k('actions.newProduct')}
                 </Button>
               </div>
@@ -534,7 +534,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
             <StatusText showIcon status="warning">
               {k('states.reloadRequired')}
             </StatusText>
-            <Button onClick={() => window.location.reload()} variant="secondary">
+            <Button onClick={() => window.location.reload()} severity="secondary">
               {k('common.reloadPage')}
             </Button>
           </div>

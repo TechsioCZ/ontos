@@ -244,21 +244,21 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
           {pdf !== undefined && (
             <div className="mt-100 flex items-center justify-between gap-100 text-fg-secondary text-xs">
               <Button
+                appearance="ghost"
                 disabled={page <= 1 || rendering}
                 onClick={() => setDocument((current) => ({ ...current, page: current.page - 1 }))}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               >
                 {t(`${k}.pdfPrevious`)}
               </Button>
               <span aria-live="polite">{t(`${k}.pdfPage`, { count: pdf.numPages, page })}</span>
               <Button
+                appearance="ghost"
                 disabled={page >= pdf.numPages || rendering}
                 onClick={() => setDocument((current) => ({ ...current, page: current.page + 1 }))}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               >
                 {t(`${k}.pdfNext`)}
               </Button>

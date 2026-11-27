@@ -134,14 +134,20 @@ const CreateIntegrationDialog = ({
     <Dialog
       actions={
         <>
-          <Button disabled={state === 'saving'} onClick={onClose} theme="outlined" type="button" variant="secondary">
+          <Button
+            appearance="outline"
+            disabled={state === 'saving'}
+            onClick={onClose}
+            severity="secondary"
+            type="button"
+          >
             {t(`${keysCopyKey}.cancel`)}
           </Button>
           <Button
             disabled={state === 'saving' || name.trim().length === 0}
             onClick={save}
+            severity="primary"
             type="button"
-            variant="primary"
           >
             {t(`${copyKey}.create`)}
           </Button>
@@ -233,10 +239,10 @@ const IntegrationCard = ({
     <li className="flex min-w-0 flex-col gap-100 rounded-md border border-border-primary/60 p-200">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
         <span className="font-medium [overflow-wrap:anywhere]">{entry.displayName ?? t(`${copyKey}.unnamed`)}</span>
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {partner === null ? t(`${copyKey}.genericPartner`) : partner.label}
         </Badge>
-        <Badge size="sm" variant={entry.principalStatus === 'active' ? 'success' : 'outline'}>
+        <Badge severity={entry.principalStatus === 'active' ? 'success' : 'neutral'} size="sm">
           {t(`${copyKey}.status.${entry.principalStatus}`)}
         </Badge>
       </div>
@@ -282,9 +288,9 @@ export const IntegrationsSection = ({ offers }: { readonly offers: IntegrationCo
           <Button
             disabled={entries === null}
             onClick={() => setCreating(true)}
+            severity="primary"
             size="sm"
             type="button"
-            variant="primary"
           >
             {t(`${copyKey}.create`)}
           </Button>
@@ -298,7 +304,7 @@ export const IntegrationsSection = ({ offers }: { readonly offers: IntegrationCo
       )}
       {failure === 'failed' && (
         <div>
-          <Button onClick={load} size="sm" theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={load} severity="secondary" size="sm" type="button">
             {t(`${keysCopyKey}.retry`)}
           </Button>
         </div>

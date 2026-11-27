@@ -48,7 +48,7 @@ const CopyButton = ({
   };
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-150">
-      <Button icon="icon-[mdi--content-copy]" onClick={copy} size="sm" variant="secondary">
+      <Button icon="icon-[mdi--content-copy]" onClick={copy} severity="secondary" size="sm">
         {copyState.status === 'copied' ? copiedLabel : idleLabel}
       </Button>
       <span aria-live="polite" className="sr-only">

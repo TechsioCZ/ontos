@@ -184,7 +184,7 @@ export function CartRevalidation() {
         <div role="alert" className="grid gap-3 border-l-4 border-(--color-danger) pl-3">
           <p className="font-bold">{cs.cart.quote.errorTitle}</p>
           <p>{cs.cart.quote.errorHint(error)}</p>
-          <Button type="button" size="sm" variant="primary" className="w-fit" onClick={retry}>
+          <Button type="button" size="sm" severity="primary" className="w-fit" onClick={retry}>
             {cs.cart.quote.retry}
           </Button>
         </div>
@@ -253,7 +253,7 @@ export function CartRevalidation() {
           ) : !quote!.issues.length ? (
             <div role="alert" className="grid gap-3">
               <p>{cs.cart.quote.notConfirmed(error)}</p>
-              <Button type="button" size="sm" variant="primary" className="w-fit" onClick={retry}>
+              <Button type="button" size="sm" severity="primary" className="w-fit" onClick={retry}>
                 {cs.cart.quote.retry}
               </Button>
             </div>

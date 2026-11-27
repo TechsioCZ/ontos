@@ -110,7 +110,7 @@ export function DeliveryPaymentStep() {
         <LinkButton
           as={StoreLink}
           href="/kosik"
-          variant="secondary"
+          severity="secondary"
           size="sm"
           data-sf-checkout-action
           className="sf-checkout-back"
@@ -121,7 +121,7 @@ export function DeliveryPaymentStep() {
         <div className="sf-checkout-next">
           <Button
             type="submit"
-            variant="primary"
+            severity="primary"
             size="sm"
             data-sf-checkout-action
             uppercase

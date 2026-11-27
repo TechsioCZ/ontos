@@ -13,7 +13,7 @@ describe('statusPresentation', () => {
   });
 
   it('does not expose an unknown wire enum or inherited property as a label', () => {
-    expect(statusPresentation('task', 'MYSTERY')).toEqual({ label: '—', variant: 'outline' });
-    expect(statusPresentation('task', 'constructor')).toEqual({ label: '—', variant: 'outline' });
+    expect(statusPresentation('task', 'MYSTERY')).toEqual({ label: '—', variant: 'neutral' });
+    expect(statusPresentation('task', 'constructor')).toEqual({ label: '—', variant: 'neutral' });
   });
 });

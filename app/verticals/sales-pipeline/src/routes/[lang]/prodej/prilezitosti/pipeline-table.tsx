@@ -233,7 +233,7 @@ export const PipelineEmptyState = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
             {t(`${K}.retry`)}
           </Button>
         }
@@ -249,7 +249,7 @@ export const PipelineEmptyState = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onClearFilters} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onClearFilters} severity="secondary" size="sm">
             {t(`${K}.clearFilters`)}
           </Button>
         }
@@ -262,7 +262,7 @@ export const PipelineEmptyState = ({
     <EmptyState
       action={
         canWrite ? (
-          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onCreate} severity="secondary" size="sm">
             {t(`${K}.newOpportunity`)}
           </Button>
         ) : undefined

@@ -105,13 +105,13 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
           {formatMoney(line.quantity * line.unitPriceMinor)}
         </span>
         <Button
+          appearance="ghost"
           aria-label={t(`${K}.create.removeLine`)}
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
+          severity="secondary"
           size="sm"
-          theme="borderless"
           type="button"
-          variant="secondary"
         />
       </div>
       {invalidAmount === true && (
@@ -329,7 +329,14 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             })}
         </p>
         {/* Never disabled: a click without a product explains what is missing instead of doing nothing. */}
-        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" type="button" variant="secondary">
+        <Button
+          appearance="outline"
+          icon="icon-[mdi--plus]"
+          onClick={addLine}
+          severity="secondary"
+          size="sm"
+          type="button"
+        >
           {t(`${K}.create.addLine`)}
         </Button>
       </div>

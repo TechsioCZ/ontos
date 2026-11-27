@@ -65,12 +65,7 @@ export const MiniLogin = ({
       shadow={false}
       size="sm"
     >
-      <Popover.Trigger
-        aria-label={dictionary.account}
-        size="current"
-        theme="unstyled"
-        variant="tertiary"
-      >
+      <Popover.Trigger aria-label={dictionary.account} size="current" unstyled severity="tertiary">
         {accountIcon}
       </Popover.Trigger>
       <Popover.Positioner>

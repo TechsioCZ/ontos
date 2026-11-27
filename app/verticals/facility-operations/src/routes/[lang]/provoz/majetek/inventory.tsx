@@ -25,7 +25,7 @@ const useK = () => {
   return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
-const resultVariants = { difference: 'warning', found: 'success', missing: 'danger', pending: 'outline' } as const;
+const resultVariants = { difference: 'warning', found: 'success', missing: 'danger', pending: 'neutral' } as const;
 export const resultVariant = (result: InventoryResult) => resultVariants[result];
 
 const markVariants = { difference: 'warning', found: 'secondary', missing: 'danger' } as const;
@@ -70,23 +70,24 @@ const ItemActions = ({
           .filter((result) => result !== item.result)
           .map((result) => (
             <Button
+              appearance="outline"
               disabled={busy}
               key={result}
               onClick={() => mark(result)}
+              severity={markVariants[result]}
               size="sm"
-              theme="outlined"
-              variant={markVariants[result]}
             >
               {k(`inventory.mark.${result}`)}
             </Button>
           ))}
       {isDifference && item.followUp === undefined && (
-        <Button disabled={busy} onClick={() => onFollowUp(item)} size="sm" variant="primary">
+        <Button disabled={busy} onClick={() => onFollowUp(item)} severity="primary" size="sm">
           {k('inventory.createFollowUp')}
         </Button>
       )}
       {item.followUp?.status === 'open' && (
         <Button
+          appearance="outline"
           disabled={busy}
           onClick={() => {
             void browserRuntime.runPromise(
@@ -96,9 +97,8 @@ const ItemActions = ({
               ),
             );
           }}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {k('inventory.resolveFollowUp')}
         </Button>
@@ -141,7 +141,7 @@ export const InventoryTab = ({
       <EmptyState
         action={
           canWrite ? (
-            <Button onClick={onNew} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={onNew} severity="secondary" size="sm">
               {k('actions.newInventory')}
             </Button>
           ) : undefined
@@ -171,7 +171,7 @@ export const InventoryTab = ({
             >
               <span className="flex items-center justify-between gap-100">
                 <span className="font-medium text-sm">{inventory.title}</span>
-                <Badge size="sm" variant={inventory.status === 'open' ? 'info' : 'outline'}>
+                <Badge severity={inventory.status === 'open' ? 'info' : 'neutral'} size="sm">
                   {k(`inventory.status.${inventory.status}`)}
                 </Badge>
               </span>
@@ -195,10 +195,10 @@ export const InventoryTab = ({
           actions={
             <>
               <Button
+                appearance={differencesOnly ? 'solid' : 'outline'}
                 onClick={() => setDifferencesOnly((value) => !value)}
+                severity="secondary"
                 size="sm"
-                theme={differencesOnly ? 'solid' : 'outlined'}
-                variant="secondary"
               >
                 {k('inventory.differencesOnly', { count: stats.differences })}
               </Button>
@@ -210,8 +210,8 @@ export const InventoryTab = ({
                       onSubmit({ _tag: 'AssetInventoryClose', inventoryId: selected.id }, 'messages.inventoryClosed'),
                     );
                   }}
+                  severity="primary"
                   size="sm"
-                  variant="primary"
                 >
                   {k('inventory.close')}
                 </Button>
@@ -221,7 +221,7 @@ export const InventoryTab = ({
           title={
             <span className="flex flex-wrap items-center gap-100">
               {selected.title}
-              <Badge size="sm" variant={selected.status === 'open' ? 'info' : 'outline'}>
+              <Badge severity={selected.status === 'open' ? 'info' : 'neutral'} size="sm">
                 {k(`inventory.status.${selected.status}`)}
               </Badge>
             </span>
@@ -242,7 +242,7 @@ export const InventoryTab = ({
           {selected.status === 'open' && stats.pending > 0 && canWrite && (
             <p className="text-fg-secondary text-xs">{k('inventory.closeHint')}</p>
           )}
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('columns.asset')}</Table.ColumnHeader>
@@ -276,7 +276,7 @@ export const InventoryTab = ({
                     </Table.Cell>
                     <Table.Cell>
                       <span className="flex flex-col items-start gap-50">
-                        <Badge size="sm" variant={resultVariant(item.result)}>
+                        <Badge severity={resultVariant(item.result)} size="sm">
                           {k(`inventory.results.${item.result}`)}
                         </Badge>
                         {item.note !== undefined && <span className="text-fg-secondary text-xs">{item.note}</span>}
@@ -290,11 +290,11 @@ export const InventoryTab = ({
                           <span>{item.followUp.title}</span>
                           <span className="flex flex-wrap items-center gap-50 text-fg-secondary text-xs">
                             {item.followUp.status === 'done' ? (
-                              <Badge size="sm" variant="success">
+                              <Badge severity="success" size="sm">
                                 {k('inventory.followUpDone')}
                               </Badge>
                             ) : (
-                              <Badge size="sm" variant={dueBadgeVariant(dueState(item.followUp.dueDate, today))}>
+                              <Badge severity={dueBadgeVariant(dueState(item.followUp.dueDate, today))} size="sm">
                                 {k('inventory.followUpDue', { date: isoDateLabel(item.followUp.dueDate) })}
                               </Badge>
                             )}

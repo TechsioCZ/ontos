@@ -78,12 +78,12 @@ export const IncomingFileField = ({
       />
       {file !== null && (
         <Button
+          appearance="ghost"
           className="self-start"
           icon="icon-[mdi--close]"
           onClick={() => onChange(null)}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           Odebrat soubor
         </Button>

@@ -536,7 +536,7 @@ const EmployeeEditPanel = ({
       <SidePanel
         actions={
           <div className="workforce-employee-form-actions">
-            <Button onClick={handleClose} theme="outlined" type="button" variant="secondary">
+            <Button appearance="outline" onClick={handleClose} severity="secondary" type="button">
               {t(`${key}.form.close`)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -660,7 +660,7 @@ const EmployeeCreateDialog = ({
       <SidePanel
         actions={
           <div className="workforce-employee-form-actions">
-            <Button onClick={() => guard.request(onClose)} theme="outlined" type="button" variant="secondary">
+            <Button appearance="outline" onClick={() => guard.request(onClose)} severity="secondary" type="button">
               {t(`${key}.form.cancel`)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={noopChange} onSave={handleSave} status={create.status} />
@@ -732,7 +732,7 @@ const EmployeeReadOnlyPanel = ({
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onClose} severity="secondary">
           {t(`${key}.form.close`)}
         </Button>
       }
@@ -888,7 +888,7 @@ export const BulkDepartmentDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => bulk.guard.request(onClose)} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => bulk.guard.request(onClose)} severity="secondary">
             {t(`${key}.form.cancel`)}
           </Button>
           <SaveBar
@@ -963,7 +963,7 @@ export const BulkRoleDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => bulk.guard.request(onClose)} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => bulk.guard.request(onClose)} severity="secondary">
             {t(`${key}.form.cancel`)}
           </Button>
           <SaveBar

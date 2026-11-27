@@ -558,23 +558,23 @@ export const CalendarView = ({
       <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:justify-between facilityoperations:gap-3">
         <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2">
           <Button
+            appearance="outline"
             aria-label={t(`${k}.calendar.previous`)}
             onClick={() => step(-1)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             <Icon name="chevronLeft" size={18} />
           </Button>
-          <Button onClick={() => setCursor(today)} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => setCursor(today)} severity="secondary" size="sm">
             {t(`${k}.calendar.today`)}
           </Button>
           <Button
+            appearance="outline"
             aria-label={t(`${k}.calendar.next`)}
             onClick={() => step(1)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             <Icon name="chevronRight" size={18} />
           </Button>
@@ -608,7 +608,7 @@ export const CalendarView = ({
               </button>
             ))}
           </fieldset>
-          <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={csv} severity="secondary" size="sm">
             {t(`${k}.export.csv`)}
           </Button>
         </div>

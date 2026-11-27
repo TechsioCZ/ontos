@@ -48,15 +48,15 @@ const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
   LOW_STOCK: { label: 'Poslední kusy', variant: 'warning' },
   OUT_OF_STOCK: { label: 'Nedostupné', variant: 'danger' },
-  UNKNOWN: { label: 'Nelze ověřit', variant: 'outline' },
+  UNKNOWN: { label: 'Nelze ověřit', variant: 'neutral' },
 } as const satisfies Readonly<
-  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
+  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'neutral' | 'success' | 'warning' }>
 >;
 
 export const AvailabilityBadge = ({ value }: { readonly value: Availability | undefined }) => {
   const presentation = availabilityPresentation[value ?? 'UNKNOWN'];
   return (
-    <Badge size="sm" variant={presentation.variant}>
+    <Badge severity={presentation.variant} size="sm">
       {presentation.label}
     </Badge>
   );
@@ -290,12 +290,12 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           </NumericInput.Control>
         </FormNumericInput>
         <Button
+          appearance="outline"
           isLoading={busy}
           loadingText="Zapisuji…"
           onClick={submit}
-          theme="outlined"
+          severity="secondary"
           type="button"
-          variant="secondary"
         >
           Zapsat pohyb
         </Button>
@@ -316,7 +316,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
       <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
-        <Table size="sm" variant="line">
+        <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Platí od</Table.ColumnHeader>
@@ -750,10 +750,10 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           value={variantSearch}
         />
         <Button
+          appearance="outline"
           disabled={currentPage === 0}
           onClick={() => setVariantPage(currentPage - 1)}
-          theme="outlined"
-          variant="secondary"
+          severity="secondary"
         >
           Předchozí
         </Button>
@@ -761,10 +761,10 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant
         </span>
         <Button
+          appearance="outline"
           disabled={currentPage + 1 >= pageCount}
           onClick={() => setVariantPage(currentPage + 1)}
-          theme="outlined"
-          variant="secondary"
+          severity="secondary"
         >
           Další
         </Button>
@@ -777,7 +777,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           </p>
         ) : (
           <ScrollRegion label={t('merchandise.ui.variantsScrollLabel')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Název a vlastnosti</Table.ColumnHeader>
@@ -818,7 +818,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             {...variantFieldError(submitted, 'Zadejte název', error?.name)}
                           />
                           {draft.key === selectedKey ? (
-                            <Badge size="sm" variant="info">
+                            <Badge severity="info" size="sm">
                               {t('merchandise.pages.products.detail.variantSelected')}
                             </Badge>
                           ) : null}
@@ -905,7 +905,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             <span className="sr-only">Aktivní</span>
                           </Switch>
                         ) : (
-                          <Badge size="sm" variant={draft.active ? 'success' : 'outline'}>
+                          <Badge severity={draft.active ? 'success' : 'neutral'} size="sm">
                             {draft.active ? 'Aktivní' : 'Neaktivní'}
                           </Badge>
                         )}
@@ -941,7 +941,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
       )}
       {canWrite && (
         <div className="flex flex-wrap items-center justify-between gap-150">
-          <Button icon="icon-[mdi--plus]" onClick={addDraft} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" icon="icon-[mdi--plus]" onClick={addDraft} severity="secondary" type="button">
             Přidat variantu
           </Button>
           <ProductTabSaveBar active={props.active ?? true} save={save} />

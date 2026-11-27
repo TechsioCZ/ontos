@@ -81,6 +81,7 @@ export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => {
   const { t } = useModernI18n();
   return (
     <Button
+      appearance={open ? 'solid' : 'subtle'}
       aria-controls={demoGuidePanelId}
       aria-expanded={open}
       aria-label={t(guideTitleKey)}
@@ -88,9 +89,8 @@ export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => {
       onClick={() => {
         setDemoGuideOpen(!open);
       }}
+      severity="primary"
       size="sm"
-      theme={open ? 'solid' : 'light'}
-      variant="primary"
     >
       <span className="hidden md:inline">{t(guideTitleKey)}</span>
     </Button>
@@ -163,8 +163,8 @@ const ResizeHandle = () => {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      severity="neutral"
       size="sm"
-      tone="neutral"
     />
   );
 };
@@ -187,11 +187,11 @@ const PersonaLine = ({
       <span className="font-medium text-fg-primary">{persona.role}</span>
       <span className="break-all text-fg-secondary">{persona.email}</span>
       {signedIn ? (
-        <Badge size="sm" variant="success">
+        <Badge severity="success" size="sm">
           Jste přihlášeni
         </Badge>
       ) : (
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           Přihlaste se jako tato persona
         </Badge>
       )}
@@ -205,14 +205,14 @@ const StepLink = ({ step }: { readonly step: DemoGuideStep }) => {
   if (target.kind === 'external') {
     return (
       <LinkButton
+        appearance="outline"
         className="justify-self-start"
         href={target.url}
         icon="icon-[mdi--open-in-new]"
         rel="noreferrer"
+        severity="primary"
         size="sm"
         target="_blank"
-        theme="outlined"
-        variant="primary"
       >
         {`Otevřít ${target.label}`}
       </LinkButton>
@@ -232,13 +232,13 @@ const StepLink = ({ step }: { readonly step: DemoGuideStep }) => {
   };
   return (
     <LinkButton
+      appearance="outline"
       className="justify-self-start"
       href={href}
       icon="icon-[mdi--arrow-right]"
       onClick={open}
+      severity="primary"
       size="sm"
-      theme="outlined"
-      variant="primary"
     >
       Otevřít obrazovku
     </LinkButton>
@@ -273,7 +273,7 @@ const StepCard = ({
           {step.title}
         </label>
         {isNext ? (
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             Další krok
           </Badge>
         ) : null}
@@ -387,8 +387,8 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           onClick={() => {
             setDemoGuideOpen(false);
           }}
+          severity="neutral"
           size="md"
-          tone="neutral"
         />
       </header>
       <div
@@ -407,14 +407,14 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           <div className="flex items-center justify-between gap-150">
             <span className="font-medium text-fg-primary text-sm">{`Hotovo ${summary.done} z ${summary.total} kroků`}</span>
             <Button
+              appearance="ghost"
               disabled={summary.done === 0}
               icon="icon-[mdi--restart]"
               onClick={() => {
                 resetDemoGuideProgress(guide.id);
               }}
+              severity="secondary"
               size="sm"
-              theme="borderless"
-              variant="secondary"
             >
               Začít znovu
             </Button>
@@ -427,6 +427,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           />
           {guide.boundaries === undefined ? null : (
             <Button
+              appearance="ghost"
               className="justify-self-start"
               icon="icon-[mdi--information-outline]"
               onClick={() => {
@@ -434,9 +435,8 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
                   .querySelector('#demo-guide-boundaries')
                   ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
+              severity="secondary"
               size="sm"
-              theme="borderless"
-              variant="secondary"
             >
               Jak fungují propojené služby
             </Button>
@@ -458,7 +458,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
                   <h3 className="font-semibold text-fg-primary text-sm" id={headingId}>
                     {`${chapterIndex + 1}. ${chapter.title}`}
                   </h3>
-                  <Badge size="sm" variant={chapterDone === chapter.steps.length ? 'success' : 'outline'}>
+                  <Badge severity={chapterDone === chapter.steps.length ? 'success' : 'neutral'} size="sm">
                     {`${chapterDone}/${chapter.steps.length}`}
                   </Badge>
                 </div>

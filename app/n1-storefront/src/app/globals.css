@@ -1,8 +1,6 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "../tokens/figma/n1.css";
 @import "../tokens/storefront.css";
-/* Kit 0.57.0 needs consumer source registration; newer reference skills assume it is bundled. */
-@source '../../node_modules/@techsio/ui-kit/dist';
 
 /* App composition only. Component appearance comes from canonical N1 and kit aliases. */
 @theme static {

@@ -33,22 +33,22 @@ const ResourceDetails = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <div className="shell:grid shell:w-full shell:max-w-5xl shell:gap-8">
-      <section aria-labelledby="resource-title" className="shell:grid shell:gap-4">
-        <h2 className="shell:text-title-lg" id="resource-title">
+    <div className="grid w-full max-w-5xl gap-400">
+      <section aria-labelledby="resource-title" className="grid gap-200">
+        <h2 className="text-2xl" id="resource-title">
           {model.resource.detail.title}
         </h2>
-        <dl className="shell:grid shell:gap-3">
+        <dl className="grid gap-150">
           {model.resource.detail.fields.map((field) => (
-            <div className="shell:grid shell:gap-1" key={field.label}>
-              <dt className="shell:font-semibold">{field.label}</dt>
+            <div className="grid gap-100" key={field.label}>
+              <dt className="font-semibold">{field.label}</dt>
               <dd>{field.value}</dd>
             </div>
           ))}
         </dl>
       </section>
-      <section aria-labelledby="resource-media" className="shell:grid shell:gap-3">
-        <h2 className="shell:text-title-md" id="resource-media">
+      <section aria-labelledby="resource-media" className="grid gap-150">
+        <h2 className="text-xl" id="resource-media">
           {t('shell.resource.media.title')}
         </h2>
         <Button
@@ -69,8 +69,8 @@ const ResourceDetails = ({
           </StatusText>
         ) : null}
       </section>
-      <section aria-labelledby="resource-timeline" className="shell:grid shell:gap-3">
-        <h2 className="shell:text-title-md" id="resource-timeline">
+      <section aria-labelledby="resource-timeline" className="grid gap-150">
+        <h2 className="text-xl" id="resource-timeline">
           {t('shell.resource.timeline.title')}
         </h2>
         {model.resource.projectionLagging ? (
@@ -81,7 +81,7 @@ const ResourceDetails = ({
         {model.resource.timeline.length === 0 ? (
           <StatusText status="default">{t('shell.resource.timeline.empty')}</StatusText>
         ) : (
-          <ol className="shell:grid shell:gap-3">
+          <ol className="grid gap-150">
             {model.resource.timeline.map((entry) => {
               const occurredAt = DateTime.formatIso(entry.occurredAt);
               return (
@@ -139,10 +139,10 @@ const OwningAgendaLinks = ({
               block
               className="justify-start hover:bg-overlay"
               icon={link.icon}
+              severity="secondary"
               size="sm"
-              theme="unstyled"
               to={link.href ?? '/'}
-              variant="secondary"
+              unstyled
             >
               {link.label}
             </LinkButton>
@@ -171,7 +171,14 @@ const UnsupportedDetail = ({
     <>
       <section className="ontos-card flex w-full max-w-2xl flex-col items-start gap-200 rounded-lg border border-border-primary/60 bg-base p-300">
         <p className="text-sm">{t('shell.resource.detail_not_supported')}</p>
-        <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
+        <LinkButton
+          appearance="solid"
+          as={LocalizedLink}
+          icon="icon-[mdi--home-outline]"
+          severity="primary"
+          size="sm"
+          to="/"
+        >
           {t('shell.recovery.home')}
         </LinkButton>
       </section>
@@ -221,7 +228,7 @@ const ResourcePage = () => {
     attachmentReloadRequired
   ) {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <ShellStatusPanel messageKey="shell.moduleTarget.reload_required" status="unavailable" />
       </main>
     );
@@ -231,14 +238,14 @@ const ResourcePage = () => {
   }
   if (model.shell.state === 'unavailable') {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <ShellStatusPanel messageKey="shell.dashboard.unavailable" status="unavailable" />
       </main>
     );
   }
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" showIcon status="error">
           {t('shell.resource.selection_required')}
         </StatusText>

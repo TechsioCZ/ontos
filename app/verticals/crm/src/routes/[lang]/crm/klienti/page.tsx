@@ -213,11 +213,11 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
         </div>
         {active && (
           <Button
+            appearance="ghost"
             icon="icon-[mdi--filter-remove-outline]"
             onClick={onReset}
+            severity="secondary"
             size="sm"
-            theme="borderless"
-            variant="secondary"
           >
             {t('crm.clientFilters.filters.reset')}
           </Button>
@@ -302,29 +302,29 @@ const ClientsList = ({
         actions={
           <div className="flex flex-wrap gap-100">
             <Button
+              appearance="outline"
               disabled={visibleCount === 0}
               icon="icon-[mdi--download]"
               onClick={() => downloadCsv(exportCsv, `kontakty-${DateTime.formatIsoDateUtc(records.now)}.csv`)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
               title={t('crm.ciClientsVisits.clients.exportDescription')}
-              variant="secondary"
             >
               {t('crm.clientFilters.actions.export')}
             </Button>
             {records.viewer.assign && (
               <Button
+                appearance="outline"
                 icon="icon-[mdi--account-group-outline]"
                 onClick={() => setTeamOpen(true)}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t('crm.clientFilters.actions.team')}
               </Button>
             )}
             {canCreate && (
-              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} severity="primary" size="sm">
                 {t('crm.clientFilters.actions.create')}
               </Button>
             )}
@@ -342,6 +342,7 @@ const ClientsList = ({
             Systém je založí nebo dohledá podle IČO a názvu a propojí.
           </p>
           <Button
+            appearance="outline"
             disabled={busy}
             icon="icon-[mdi--link-variant]"
             onClick={() => {
@@ -363,9 +364,8 @@ const ClientsList = ({
                 ),
               );
             }}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Propojit s evidencí zákazníků
           </Button>

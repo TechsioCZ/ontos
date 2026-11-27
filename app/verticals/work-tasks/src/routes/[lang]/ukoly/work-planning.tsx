@@ -217,7 +217,7 @@ export const ProjectEditor = ({
       <SidePanel
         actions={
           <>
-            <Button disabled={busy} onClick={() => guard.request(close)} theme="outlined" variant="secondary">
+            <Button appearance="outline" disabled={busy} onClick={() => guard.request(close)} severity="secondary">
               Zrušit
             </Button>
             <SaveBar
@@ -323,8 +323,8 @@ export const ProjectEditor = ({
                   ],
                 });
               }}
+              severity="secondary"
               size="sm"
-              variant="secondary"
             >
               Přidat milník
             </Button>
@@ -378,8 +378,8 @@ export const ProjectEditor = ({
               <Button
                 disabled={busy}
                 onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
+                severity="secondary"
                 size="sm"
-                variant="secondary"
               >
                 Odebrat milník
               </Button>
@@ -453,7 +453,7 @@ export const WorkPlanning = ({
       <SectionCard
         actions={
           records.canWrite && (
-            <Button onClick={() => setEditor({})} size="sm" variant="primary">
+            <Button onClick={() => setEditor({})} severity="primary" size="sm">
               Nový projekt
             </Button>
           )
@@ -489,7 +489,12 @@ export const WorkPlanning = ({
                   <div className="flex items-center gap-150">
                     <span>{states[project.state]}</span>
                     {records.canWrite && (
-                      <Button onClick={() => setEditor({ project })} size="sm" theme="outlined" variant="secondary">
+                      <Button
+                        appearance="outline"
+                        onClick={() => setEditor({ project })}
+                        severity="secondary"
+                        size="sm"
+                      >
                         Upravit projekt
                       </Button>
                     )}

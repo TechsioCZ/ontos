@@ -11,7 +11,7 @@ export const TagsCell = ({ tags }: { tags: readonly Tag[] }) => {
       {visible.map((tag) => (
         <TagChip key={tag.id} tag={tag} />
       ))}
-      {hiddenCount > 0 && <Badge size="sm" variant="outline">{`+${hiddenCount}`}</Badge>}
+      {hiddenCount > 0 && <Badge appearance="outline" severity="neutral" size="sm">{`+${hiddenCount}`}</Badge>}
     </span>
   );
 };

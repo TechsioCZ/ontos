@@ -340,7 +340,7 @@ export const StorefrontsSection = ({
     <SectionCard
       actions={
         editable && choices.length > 0 ? (
-          <Button onClick={() => setEditing({ kind: 'associate' })} size="sm" theme="solid" variant="primary">
+          <Button appearance="solid" onClick={() => setEditing({ kind: 'associate' })} severity="primary" size="sm">
             {text('detail.storefronts.associate')}
           </Button>
         ) : undefined
@@ -373,18 +373,18 @@ export const StorefrontsSection = ({
               {editable && (
                 <div className="flex gap-100">
                   <Button
+                    appearance="outline"
                     onClick={() => setEditing({ association, kind: 'revise' })}
+                    severity="secondary"
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
                   >
                     {text('detail.storefronts.revise')}
                   </Button>
                   <Button
+                    appearance="outline"
                     onClick={() => setEditing({ association, kind: 'remove' })}
+                    severity="danger"
                     size="sm"
-                    theme="outlined"
-                    variant="danger"
                   >
                     {text('detail.storefronts.remove')}
                   </Button>

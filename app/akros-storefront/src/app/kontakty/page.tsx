@@ -76,8 +76,8 @@ export default async function ContactsPage({
               <ContentLink
                 href={`#${branch.id}`}
                 key={branch.id}
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
                 size="sm"
                 className="block"
               >
@@ -86,8 +86,8 @@ export default async function ContactsPage({
             ))}
             <ContentLink
               href="#primy-kontakt"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
               size="sm"
               className="block"
             >

@@ -52,10 +52,10 @@ const itemBadgeVariants = {
   applied: 'success',
   failed: 'danger',
   pending: 'warning',
-  rejected: 'outline',
+  rejected: 'neutral',
   revert_failed: 'danger',
-  reverted: 'outline',
-} satisfies Readonly<Record<AgentQueueItem['status'], ComponentProps<typeof Badge>['variant']>>;
+  reverted: 'neutral',
+} satisfies Readonly<Record<AgentQueueItem['status'], ComponentProps<typeof Badge>['severity']>>;
 const queueFailureText = (httpStatus: number): string => {
   if (httpStatus === 401) {
     return 'Přihlaste se prosím znovu.';
@@ -161,7 +161,7 @@ const ChangeHistory = ({ item }: { readonly item: AgentQueueItem }) => (
       </p>
     )}
     {(item.status === 'applied' || item.status === 'pending') && item.revertUnavailableReason !== undefined && (
-      <Badge title={item.revertUnavailableReason} variant="outline">
+      <Badge appearance="outline" severity="neutral" title={item.revertUnavailableReason}>
         {item.status === 'pending' ? 'Po schválení nelze automaticky vrátit' : 'Nelze automaticky vrátit'}
       </Badge>
     )}
@@ -191,7 +191,7 @@ const ChangeCard = ({
         {item.targetLabel !== item.summary && <p className="text-fg-secondary text-sm">{item.targetLabel}</p>}
       </div>
       <div className="ai-review-actions">
-        <Badge variant={itemBadgeVariants[item.status]}>{agentItemStatusLabel[item.status]}</Badge>
+        <Badge severity={itemBadgeVariants[item.status]}>{agentItemStatusLabel[item.status]}</Badge>
         <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
         <span className="text-fg-secondary text-xs">{item.moduleLabel}</span>
       </div>
@@ -207,11 +207,11 @@ const ChangeCard = ({
     {item.status === 'pending' && item.canDecide && (
       <div className="ai-review-actions ai-review-end">
         <Button
+          appearance="outline"
           disabled={busy}
           onClick={() => decide([item.key], 'reject')}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           Zamítnout změnu
         </Button>
@@ -231,16 +231,24 @@ const ChangeCard = ({
 
 const BatchStatus = ({ batch }: { readonly batch: AgentQueueBatch }) => {
   if (batch.revertedAt !== undefined) {
-    return <Badge variant="outline">Dávka vrácena</Badge>;
+    return (
+      <Badge appearance="outline" severity="neutral">
+        Dávka vrácena
+      </Badge>
+    );
   }
   const pending = batch.items.filter((item) => item.status === 'pending');
   if (pending.length > 0) {
-    return <Badge variant="warning">{`${pending.length} ke schválení`}</Badge>;
+    return <Badge severity="warning">{`${pending.length} ke schválení`}</Badge>;
   }
   if (batch.items.some((item) => item.status === 'applied')) {
-    return <Badge variant="success">Změny provedeny</Badge>;
+    return <Badge severity="success">Změny provedeny</Badge>;
   }
-  return <Badge variant="outline">Vyřízeno</Badge>;
+  return (
+    <Badge appearance="outline" severity="neutral">
+      Vyřízeno
+    </Badge>
+  );
 };
 
 const BatchCard = ({
@@ -281,12 +289,12 @@ const BatchCard = ({
             <h2 className="ai-review-instruction">{batch.instruction}</h2>
             <div className="ai-review-actions">
               {batch.moduleLabels.map((label) => (
-                <Badge key={label} size="sm" variant="outline">
+                <Badge appearance="outline" key={label} severity="neutral" size="sm">
                   {label}
                 </Badge>
               ))}
               {modulePage !== undefined && (
-                <LinkButton as={LocalizedLink} size="sm" theme="outlined" to={modulePage.path} variant="primary">
+                <LinkButton appearance="outline" as={LocalizedLink} severity="primary" size="sm" to={modulePage.path}>
                   {modulePage.label.cs}
                 </LinkButton>
               )}
@@ -318,6 +326,7 @@ const BatchCard = ({
                 {`Schválit dávku (${decidable.length})`}
               </Button>
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() =>
                   decide(
@@ -325,9 +334,8 @@ const BatchCard = ({
                     'reject',
                   )
                 }
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 Zamítnout dávku
               </Button>
@@ -337,11 +345,11 @@ const BatchCard = ({
         {batch.canRevertAll && (
           <div className="ai-review-revert">
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               Vrátit vše
             </Button>
@@ -362,7 +370,7 @@ const BatchCard = ({
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
+                  <Button appearance="outline" onClick={() => setConfirmRevert(false)} severity="secondary" size="sm">
                     Zrušit
                   </Button>
                 </div>
@@ -525,7 +533,7 @@ const ReviewStatus = ({ actions }: { readonly actions: ReviewActions }) => (
       </StatusText>
     )}
     {actions.retryIntent !== undefined && (
-      <Button disabled={actions.busy} onClick={actions.handleRetry} size="sm" theme="outlined" variant="secondary">
+      <Button appearance="outline" disabled={actions.busy} onClick={actions.handleRetry} severity="secondary" size="sm">
         Zopakovat původní požadavek
       </Button>
     )}
@@ -618,20 +626,20 @@ const QueueFilters = ({
   return (
     <fieldset aria-label={t('shell.agentPlatform.approvals.filters')} className="ai-review-actions agent-filters">
       <Button
+        appearance={filter === 'pending' ? 'solid' : 'outline'}
         aria-pressed={filter === 'pending'}
         onClick={() => onFilter('pending')}
+        severity={filter === 'pending' ? 'primary' : 'secondary'}
         size="sm"
-        theme={filter === 'pending' ? 'solid' : 'outlined'}
-        variant={filter === 'pending' ? 'primary' : 'secondary'}
       >
         Čeká na schválení
       </Button>
       <Button
+        appearance={filter === 'all' ? 'solid' : 'outline'}
         aria-pressed={filter === 'all'}
         onClick={() => onFilter('all')}
+        severity={filter === 'all' ? 'primary' : 'secondary'}
         size="sm"
-        theme={filter === 'all' ? 'solid' : 'outlined'}
-        variant={filter === 'all' ? 'primary' : 'secondary'}
       >
         Všechny dávky
       </Button>
@@ -701,7 +709,7 @@ const ApprovalsQueue = ({
           {queueFailureText(queue.error.httpStatus)}
         </StatusText>
         {queue.error.httpStatus !== 401 && queue.error.httpStatus !== 403 && (
-          <Button onClick={refresh} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={refresh} severity="secondary" size="sm">
             Zkusit znovu
           </Button>
         )}
@@ -736,7 +744,7 @@ const ApprovalsQueue = ({
           <StatusText aria-live="polite" showIcon status="warning">
             {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst.`}
           </StatusText>
-          <Button disabled={actions.busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" disabled={actions.busy} onClick={refresh} severity="secondary" size="sm">
             Zkusit znovu
           </Button>
         </div>
@@ -766,21 +774,21 @@ const ApprovalsQueue = ({
       />
       {response.nextCursor !== undefined && (
         <Button
+          appearance="outline"
           disabled={actions.busy}
           onClick={() => {
             if (response.nextCursor !== undefined) {
               setPage({ cursor: response.nextCursor, filter: filterKey });
             }
           }}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           Načíst další
         </Button>
       )}
       <div>
-        <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/aktivita-agentu" variant="primary">
+        <LinkButton appearance="outline" as={LocalizedLink} severity="primary" size="sm" to="/sprava/aktivita-agentu">
           Zobrazit aktivitu agentů
         </LinkButton>
       </div>

@@ -86,7 +86,7 @@ export const GalleryTile = ({
         )}
         {index === 0 && (
           <span className="absolute top-100 left-100">
-            <Badge size="sm" variant="info">
+            <Badge severity="info" size="sm">
               {t('merchandise.pages.products.gallery.main')}
             </Badge>
           </span>
@@ -96,48 +96,48 @@ export const GalleryTile = ({
         <div className="flex flex-wrap items-center gap-50">
           {index > 0 && (
             <Button
+              appearance="ghost"
               aria-label={t('merchandise.pages.products.gallery.setMainLabel', { position })}
               icon="icon-[mdi--star-outline]"
               onClick={() => onMove(index, 0)}
+              severity="secondary"
               size="sm"
-              theme="borderless"
               title={t('merchandise.pages.products.gallery.setMain')}
               type="button"
-              variant="secondary"
             />
           )}
           <Button
+            appearance="ghost"
             aria-label={t('merchandise.pages.products.gallery.moveEarlierLabel', { position })}
             disabled={index === 0}
             icon="icon-[mdi--arrow-left]"
             onClick={() => onMove(index, index - 1)}
+            severity="secondary"
             size="sm"
-            theme="borderless"
             title={t('merchandise.pages.products.gallery.moveEarlier')}
             type="button"
-            variant="secondary"
           />
           <Button
+            appearance="ghost"
             aria-label={t('merchandise.pages.products.gallery.moveLaterLabel', { position })}
             disabled={index === count - 1}
             icon="icon-[mdi--arrow-right]"
             onClick={() => onMove(index, index + 1)}
+            severity="secondary"
             size="sm"
-            theme="borderless"
             title={t('merchandise.pages.products.gallery.moveLater')}
             type="button"
-            variant="secondary"
           />
           <Button
+            appearance="ghost"
             aria-label={t('merchandise.pages.products.gallery.removeLabel', { position })}
             className="ml-auto"
             icon="icon-[mdi--delete-outline]"
             onClick={() => onRemove(image)}
+            severity="secondary"
             size="sm"
-            theme="borderless"
             title={t('merchandise.pages.products.gallery.remove')}
             type="button"
-            variant="secondary"
           />
         </div>
       )}
@@ -185,10 +185,10 @@ export const UploadTile = ({
       </span>
       {upload.phase === 'failed' && (
         <div className="flex gap-50">
-          <Button onClick={() => onRetry(upload.key)} size="sm" theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={() => onRetry(upload.key)} severity="secondary" size="sm" type="button">
             {t('merchandise.pages.products.gallery.retry')}
           </Button>
-          <Button onClick={() => onDismiss(upload.key)} size="sm" theme="borderless" type="button" variant="secondary">
+          <Button appearance="ghost" onClick={() => onDismiss(upload.key)} severity="secondary" size="sm" type="button">
             {t('merchandise.pages.products.gallery.dismiss')}
           </Button>
         </div>

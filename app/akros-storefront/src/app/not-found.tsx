@@ -60,8 +60,8 @@ export default function NotFoundPage() {
               as={StoreLink}
               href="/kategorie/srouby"
               size="sm"
-              theme="outlined"
-              variant="primary"
+              appearance="outline"
+              severity="primary"
             >
               {copy.screws}
             </LinkButton>
@@ -69,8 +69,8 @@ export default function NotFoundPage() {
               as={StoreLink}
               href="/kategorie/matice"
               size="sm"
-              theme="outlined"
-              variant="primary"
+              appearance="outline"
+              severity="primary"
             >
               {copy.nuts}
             </LinkButton>
@@ -78,14 +78,14 @@ export default function NotFoundPage() {
               as={StoreLink}
               href="/zavitove-tyce"
               size="sm"
-              theme="outlined"
-              variant="primary"
+              appearance="outline"
+              severity="primary"
             >
               {copy.threadedRods}
             </LinkButton>
           </div>
         </div>
-        <LinkButton as={StoreLink} href="/" size="md" theme="solid" variant="primary">
+        <LinkButton as={StoreLink} href="/" size="md" appearance="solid" severity="primary">
           {copy.backHome}
         </LinkButton>
       </section>

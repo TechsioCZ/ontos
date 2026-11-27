@@ -713,7 +713,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
   // The one way out of the form and its one Save button, in the host's footer or the form's own.
   const actions = (
     <>
-      <Button onClick={leave} theme="outlined" type="button" variant="secondary">
+      <Button appearance="outline" onClick={leave} severity="secondary" type="button">
         {t('merchandise.pages.orders.detail.backToDetail')}
       </Button>
       <SaveBar labels={labels} onReloadLatest={reloadLatest} onSave={handleSave} status={record.status} />
@@ -740,7 +740,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
         </p>
         <SectionCard flush title={t('merchandise.ui.items')}>
           <ScrollRegion label={t('merchandise.ui.orderItems')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Položka</Table.ColumnHeader>
@@ -832,14 +832,14 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                     </Table.Cell>
                     <Table.Cell align="end">
                       <Button
+                        appearance="ghost"
                         aria-label={`Odebrat ${line.name}`}
                         disabled={draft.lines.length <= 1}
                         icon="icon-[mdi--delete-outline]"
                         onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
+                        severity="secondary"
                         size="sm"
-                        theme="borderless"
                         type="button"
-                        variant="secondary"
                       />
                     </Table.Cell>
                   </Table.Row>
@@ -862,12 +862,12 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 selected={pick?.product ?? null}
               />
               <Button
+                appearance="outline"
                 disabled={unit === undefined || pickedPriceMissing}
                 icon="icon-[mdi--plus]"
                 onClick={addLine}
-                theme="outlined"
+                severity="secondary"
                 type="button"
-                variant="secondary"
               >
                 Přidat
               </Button>

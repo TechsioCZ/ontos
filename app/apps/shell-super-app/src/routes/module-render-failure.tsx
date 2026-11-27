@@ -9,11 +9,11 @@ interface ModuleRenderFailureProps {
 export const ModuleRenderFailure = ({ onReload }: ModuleRenderFailureProps) => {
   const { t } = useModernI18n();
   return (
-    <div className="shell:grid shell:justify-items-start shell:gap-4">
-      <StatusText aria-live="polite" role="alert" showIcon status="error">
+    <div className="grid justify-items-start gap-200">
+      <StatusText aria-live="polite" showIcon status="error">
         {t('shell.moduleTarget.render_failed')}
       </StatusText>
-      <Button onClick={onReload} size="md" theme="outlined" type="button" variant="secondary">
+      <Button appearance="outline" onClick={onReload} severity="secondary" size="md" type="button">
         {t('shell.moduleTarget.reload_page')}
       </Button>
     </div>

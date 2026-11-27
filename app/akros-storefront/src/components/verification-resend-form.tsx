@@ -51,7 +51,7 @@ export function VerificationResendForm() {
         size="sm"
         type="email"
       />
-      <Button disabled={pending} size="md" type="submit" variant="secondary">
+      <Button disabled={pending} size="md" type="submit" severity="secondary">
         {pending ? copy.sending : copy.submit}
       </Button>
       {error && <p role="alert">{error}</p>}

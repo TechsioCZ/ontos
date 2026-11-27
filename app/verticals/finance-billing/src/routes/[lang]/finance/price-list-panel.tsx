@@ -186,7 +186,7 @@ const PriceItemEditDialog = ({
       <Dialog
         actions={
           <>
-            <Button onClick={close} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={close} severity="secondary">
               {t('finance-billing.financeUi.priceList.close')}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -267,7 +267,7 @@ const PriceItemCreateDialog = ({
       <Dialog
         actions={
           <>
-            <Button onClick={close} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={close} severity="secondary">
               {t('finance-billing.financeUi.priceList.cancel')}
             </Button>
             <SaveBar
@@ -369,8 +369,8 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
               onClick={() => {
                 setDraft(emptyItem(defaultLineVatChoice('OUTGOING')));
               }}
+              severity="primary"
               size="sm"
-              variant="primary"
             >
               {t('finance-billing.financeUi.priceList.addTitle')}
             </Button>
@@ -392,7 +392,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
           </div>
         ) : (
           <FinanceTableScroll label={t('finance-billing.financeUi.priceList.title')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Položka</Table.ColumnHeader>
@@ -420,7 +420,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                       <VatLabel line={item} />
                     </Table.Cell>
                     <Table.Cell>
-                      <Badge size="sm" variant={item.active ? 'success' : 'warning'}>
+                      <Badge severity={item.active ? 'success' : 'warning'} size="sm">
                         {item.active ? 'V nabídce' : 'Vyřazeno'}
                       </Badge>
                     </Table.Cell>
@@ -428,19 +428,19 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                       {vm.canWrite && (
                         <span className="flex justify-end gap-50">
                           <Button
+                            appearance="ghost"
                             aria-label={`Upravit ${item.name}`}
                             icon="icon-[mdi--pencil-outline]"
                             onClick={() => setEditingId(item.id)}
+                            severity="secondary"
                             size="sm"
-                            theme="borderless"
-                            variant="secondary"
                           />
                           <Button
+                            appearance="ghost"
                             className="whitespace-nowrap"
                             onClick={() => toggle(item)}
+                            severity="secondary"
                             size="sm"
-                            theme="borderless"
-                            variant="secondary"
                           >
                             {item.active ? 'Vyřadit' : 'Obnovit'}
                           </Button>
@@ -459,7 +459,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
           <p className="px-250 pb-250 text-fg-secondary text-sm">Zatím žádný doklad nemá schválenou slevu.</p>
         ) : (
           <FinanceTableScroll label={t('finance-billing.financeUi.priceList.approvedDiscounts')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Doklad</Table.ColumnHeader>

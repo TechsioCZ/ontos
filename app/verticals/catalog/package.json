@@ -116,6 +116,8 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog-selection-contracts": "workspace:*",
+    "@app/commerce-cart-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
@@ -144,8 +146,6 @@
     "i18next": "26.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "@app/catalog-selection-contracts": "workspace:*",
-    "@app/commerce-cart-contracts": "workspace:*",
     "@app/inventory": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@techsio/ui-kit": "catalog:"

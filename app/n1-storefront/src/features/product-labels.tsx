@@ -23,7 +23,7 @@ export const ProductLabels = ({
     <ul aria-label={d.productLabels.title} className={`flex flex-wrap gap-2 ${className ?? ""}`}>
       {labels.map((label) => (
         <li key={label}>
-          <Badge size="sm" variant={labelVariant[label]}>
+          <Badge size="sm" severity={labelVariant[label]}>
             {d.productLabels[label]}
           </Badge>
         </li>

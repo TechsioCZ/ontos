@@ -19,15 +19,15 @@ export default async function AccountClaimsPage() {
             href="/historie-objednavek"
             data-account-action
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {claims.openOrders}
           </AccountLink>
         </AccountPanel>
         <AccountPanel title={claims.contactSupport}>
           <p className="mb-(--dimension-24)">{claims.contactSupportText}</p>
-          <AccountLink href="/kontakty" data-account-action size="sm" variant="primary">
+          <AccountLink href="/kontakty" data-account-action size="sm" severity="primary">
             {claims.goToContacts}
           </AccountLink>
         </AccountPanel>

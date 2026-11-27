@@ -24,11 +24,11 @@ export const WhySubjectPicker = ({
   }
   if (options.state === 'unavailable') {
     return (
-      <div className="shell:grid shell:gap-2">
+      <div className="grid gap-150">
         <StatusText aria-live="polite" status="default">
           {t('shell.accessAdmin.why.subjectPickerUnavailable')}
         </StatusText>
-        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" variant="secondary">
+        <Button disabled={pending || onMore === undefined} onClick={onMore} severity="secondary" type="button">
           {t('shell.accessAdmin.common.retry')}
         </Button>
       </div>
@@ -36,7 +36,7 @@ export const WhySubjectPicker = ({
   }
   const items = [{ label: t('shell.accessAdmin.why.currentPersonChoice'), value: '' }, ...options.people];
   return (
-    <div className="shell:grid shell:gap-2">
+    <div className="grid gap-150">
       <Select
         disabled={pending}
         items={items}
@@ -67,7 +67,7 @@ export const WhySubjectPicker = ({
         </Select.Positioner>
       </Select>
       {options.nextCursor === null ? null : (
-        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" variant="secondary">
+        <Button disabled={pending || onMore === undefined} onClick={onMore} severity="secondary" type="button">
           {t('shell.accessAdmin.why.morePeople')}
         </Button>
       )}

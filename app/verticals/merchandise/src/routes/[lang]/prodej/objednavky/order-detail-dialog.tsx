@@ -45,7 +45,7 @@ const OrderLoadingPanel = ({
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onClose} severity="secondary" size="sm">
           {t('merchandise.pages.orders.detail.close')}
         </Button>
       }

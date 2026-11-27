@@ -53,9 +53,9 @@ export const CatalogState = ({
             isLoading
             loadingText={d.notifications.loading}
             size="md"
-            theme="solid"
+            appearance="solid"
             type="button"
-            variant="primary"
+            severity="primary"
           >
             {d.notifications.loading}
           </Button>
@@ -78,7 +78,13 @@ export const CatalogState = ({
         </div>
       )}
       {!pending && (
-        <Button block onClick={() => router.refresh()} size="md" theme="solid" variant="primary">
+        <Button
+          block
+          onClick={() => router.refresh()}
+          size="md"
+          appearance="solid"
+          severity="primary"
+        >
           {d.retry}
         </Button>
       )}

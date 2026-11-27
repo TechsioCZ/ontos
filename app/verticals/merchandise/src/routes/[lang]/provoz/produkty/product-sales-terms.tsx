@@ -97,13 +97,13 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
             />
             {disabled ? null : (
               <Button
+                appearance="ghost"
                 aria-label={`Odebrat množstevní cenu ${index + 1}`}
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => onChange(tiers.filter((entry) => entry.key !== tier.key))}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
                 type="button"
-                variant="secondary"
               />
             )}
           </div>
@@ -112,6 +112,7 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
       {disabled ? null : (
         <div>
           <Button
+            appearance="outline"
             icon="icon-[mdi--plus]"
             onClick={() =>
               onChange([
@@ -119,10 +120,9 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
                 { grossText: '', key: nextKey, minimumText: String((minimum ?? 1) * 10), netText: '' },
               ])
             }
+            severity="secondary"
             size="sm"
-            theme="outlined"
             type="button"
-            variant="secondary"
           >
             Přidat množstevní cenu
           </Button>

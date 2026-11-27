@@ -283,7 +283,7 @@ export const CreateEventPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={() => guard.request(onClose)} severity="secondary">
               {t('facility-operations.common.cancel')}
             </Button>
             <SaveBar
@@ -414,7 +414,7 @@ const EventEditPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onDone)} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={() => guard.request(onDone)} severity="secondary">
               {t('facility-operations.common.cancel')}
             </Button>
             <SaveBar
@@ -550,40 +550,40 @@ const renderDeadlineActions = ({
         <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
         {status === 'PLANNED' && (
           <Button
+            appearance="ghost"
             isLoading={busy}
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' }, true);
             }}
-            theme="borderless"
-            variant="danger"
+            severity="danger"
           >
             {t(`${k}.event.cancel`)}
           </Button>
         )}
         {status === 'PLANNED' ? (
           <Button
+            appearance="outline"
             isLoading={busy}
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' });
             }}
-            theme="outlined"
-            variant="secondary"
+            severity="secondary"
           >
             {t(`${k}.event.done`)}
           </Button>
         ) : (
           <Button
+            appearance="outline"
             isLoading={busy}
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' });
             }}
-            theme="outlined"
-            variant="secondary"
+            severity="secondary"
           >
             {t(`${k}.event.reopen`)}
           </Button>
         )}
-        <Button onClick={() => setEditing(true)} variant="primary">
+        <Button onClick={() => setEditing(true)} severity="primary">
           {t(`${k}.event.edit`)}
         </Button>
       </div>

@@ -61,12 +61,12 @@ export const ConsumptionByPlace = ({
           >
             {media.map((entry) => (
               <Button
+                appearance={entry === medium ? 'solid' : 'ghost'}
                 aria-pressed={entry === medium}
                 key={entry}
                 onClick={() => setChosenMedium(entry)}
+                severity={entry === medium ? 'primary' : 'secondary'}
                 size="sm"
-                theme={entry === medium ? 'solid' : 'borderless'}
-                variant={entry === medium ? 'primary' : 'secondary'}
               >
                 {t(`${k}.medium.${entry}`)}
               </Button>
@@ -113,7 +113,7 @@ export const ConsumptionByPlace = ({
             <p className="pt-100 text-fg-secondary text-xs">{t(`${k}.byUnit.meters`, { count: counted })}</p>
           </div>
           <div className="overflow-x-auto">
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{t(`${k}.byUnit.month`)}</Table.ColumnHeader>
@@ -128,7 +128,7 @@ export const ConsumptionByPlace = ({
                       <div className="flex flex-wrap items-center gap-100">
                         <span className="capitalize">{monthLongLabel(point.month, language)}</span>
                         {point.anomaly && (
-                          <Badge size="sm" variant="danger">
+                          <Badge severity="danger" size="sm">
                             {t(`${k}.detail.series.anomaly`)}
                           </Badge>
                         )}

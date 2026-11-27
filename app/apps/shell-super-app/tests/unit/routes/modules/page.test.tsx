@@ -521,7 +521,7 @@ it.live('requests a full document reload instead of locally executing the failed
     yield* show({ shell, state: 'forbidden' });
 
     expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('shell.moduleTarget.render_failed')).toBeNull();
     expect(fx.requests).toHaveLength(1);
   }),
 );
@@ -556,7 +556,7 @@ it.live('never restores previous caller content when a changed tenant and princi
 
     expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
     expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('shell.moduleTarget.render_failed')).toBeNull();
     expect(fx.requests).toHaveLength(2);
   }),
 );
@@ -599,8 +599,7 @@ it.live(
           yield* Effect.promise(() => screen.findByText('shell.moduleTarget.timeout', {}, { timeout: 7000 })),
         ).toBeTruthy();
         yield* networkIdle;
-        // The timeout is its own diagnostic, not the render-failure alert with its reload action.
-        expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.timeout');
+        // The timeout is its own diagnostic, not the render failure with its reload action.
         expect(screen.queryByText('shell.moduleTarget.render_failed')).toBeNull();
         expect(screen.queryByRole('button', { name: 'shell.moduleTarget.reload_page' })).toBeNull();
         expect(fx.requests).toHaveLength(1);

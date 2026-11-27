@@ -51,7 +51,7 @@ const RegimeRow = ({ period }: { readonly period: RegimePeriod }) => {
       </span>
       <span className="font-medium">{t(`${ns}.regime.${period.regime}`)}</span>
       {period.state !== 'past' && (
-        <Badge size="sm" variant={period.state === 'current' ? 'success' : 'info'}>
+        <Badge severity={period.state === 'current' ? 'success' : 'info'} size="sm">
           {t(`${ns}.state.${period.state}`)}
         </Badge>
       )}
@@ -67,11 +67,11 @@ const RegimeCard = ({ canDeclare, regime }: { readonly canDeclare: boolean; read
       actions={
         canDeclare && (
           <Button
+            appearance="outline"
             icon="icon-[mdi--pencil-outline]"
             onClick={() => setOpen(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {t(`${ns}.regimeChange`)}
           </Button>
@@ -111,7 +111,7 @@ const RateRow = ({
       </span>
       <span className="font-medium tabular-nums">{t(`${ns}.rate`, { rate: revision.ratePercent })}</span>
       {onWithdraw !== undefined && (
-        <Button onClick={onWithdraw} size="sm" theme="borderless" variant="secondary">
+        <Button appearance="ghost" onClick={onWithdraw} severity="secondary" size="sm">
           {t(`${ns}.withdraw`)}
         </Button>
       )}
@@ -167,7 +167,7 @@ const ReadyClassificationCard = ({
         // A new rate ends the one it follows, so planning needs both changes.
         rights.createRevision &&
         rights.endRevision && (
-          <Button icon="icon-[mdi--calendar-plus]" onClick={() => setPlanning(true)} size="sm" variant="primary">
+          <Button icon="icon-[mdi--calendar-plus]" onClick={() => setPlanning(true)} severity="primary" size="sm">
             {t(`${ns}.plan`)}
           </Button>
         )
@@ -226,7 +226,7 @@ const MissingClassificationCard = ({
       <EmptyState
         action={
           canCreate ? (
-            <Button icon="icon-[mdi--plus]" onClick={() => setOpen(true)} size="sm" variant="primary">
+            <Button icon="icon-[mdi--plus]" onClick={() => setOpen(true)} severity="primary" size="sm">
               {t(`${ns}.firstRate`)}
             </Button>
           ) : undefined

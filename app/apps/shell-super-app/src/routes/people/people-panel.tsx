@@ -110,7 +110,7 @@ const PeopleEditor = ({
       <Dialog
         actions={
           <>
-            <Button onClick={requestClose} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={requestClose} severity="secondary">
               Zavřít
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -237,21 +237,21 @@ const PersonDetail = ({
             onEdit({ kind: 'role', person });
             onClose();
           }}
+          severity="primary"
           size="current"
-          variant="primary"
         >
           Spravovat role
         </Button>
         {scope === 'company' ? (
           <Button
+            appearance="outline"
             className="w-full rounded-button-md p-button-md text-button-md whitespace-normal sm:w-auto"
             onClick={() => {
               onEdit({ kind: 'membership', person });
               onClose();
             }}
+            severity="secondary"
             size="current"
-            theme="outlined"
-            variant="secondary"
           >
             Upravit členství
           </Button>

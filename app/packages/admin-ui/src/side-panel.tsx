@@ -292,8 +292,8 @@ export const SidePanel = ({
           className="absolute end-dialog-close-trigger-offset top-dialog-close-trigger-offset"
           icon="token-icon-dialog-close"
           onClick={requestClose}
+          severity="neutral"
           size="md"
-          tone="neutral"
         />
         <ActionIcon
           {...resize.handleProps}
@@ -301,8 +301,8 @@ export const SidePanel = ({
           aria-label={resizeLabel}
           className="absolute inset-y-0 left-0 hidden h-full w-200 touch-none cursor-col-resize select-none rounded-none sm:flex"
           icon="icon-[mdi--drag-vertical]"
+          severity="neutral"
           size="sm"
-          tone="neutral"
         />
         {/* Above the scrolling body, so the notice stays visible however far the form is scrolled. */}
         {draftKept && (
@@ -310,7 +310,7 @@ export const SidePanel = ({
             <StatusText showIcon size="sm" status="warning">
               {keptDraftLabels.message}
             </StatusText>
-            <Button onClick={requestClose} size="sm" theme="borderless" variant="secondary">
+            <Button appearance="ghost" onClick={requestClose} severity="secondary" size="sm">
               {keptDraftLabels.close}
             </Button>
           </div>

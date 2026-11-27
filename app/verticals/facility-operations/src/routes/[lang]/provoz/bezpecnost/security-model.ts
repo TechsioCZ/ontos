@@ -34,10 +34,10 @@ export const addDays = (iso: string, days: number) =>
   DateTime.makeUnsafe(`${iso}T12:00:00Z`).pipe(DateTime.add({ days }), DateTime.formatIsoDateUtc);
 
 export const severityVariant = (severity: SecuritySeverity) =>
-  (({ critical: 'danger', high: 'danger', low: 'outline', medium: 'warning' }) as const)[severity];
+  (({ critical: 'danger', high: 'danger', low: 'neutral', medium: 'warning' }) as const)[severity];
 
 export const deviceStateVariant = (state: SecurityDevice['state']) =>
-  (({ decommissioned: 'outline', fault: 'danger', in_operation: 'success', in_service: 'warning' }) as const)[state];
+  (({ decommissioned: 'neutral', fault: 'danger', in_operation: 'success', in_service: 'warning' }) as const)[state];
 
 export const incidentStateVariant = (state: SecurityIncident['state']) =>
   (({ in_progress: 'info', reported: 'warning', resolved: 'success' }) as const)[state];

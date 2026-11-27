@@ -58,7 +58,7 @@ const PageNotice = ({ onBack, status }: { readonly onBack: () => void; readonly 
           {t(noticeKey(status))}
         </StatusText>
         <div className="flex flex-wrap gap-100">
-          <Button onClick={onBack} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onBack} severity="secondary" size="sm">
             {t(`${PARTY_IDENTITY_KEY}.backToSearch`)}
           </Button>
         </div>
@@ -86,7 +86,7 @@ const SectionNotice = ({
         {t(sectionNoticeKey(section, status))}
       </StatusText>
       {status === UNAVAILABLE && (
-        <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
           {t(`${PARTY_IDENTITY_KEY}.reload`)}
         </Button>
       )}
@@ -288,11 +288,11 @@ export const PartyIdentityPageView = ({ input, onBack, onReload, read }: PartyId
         actions={
           <>
             {reloadable && (
-              <Button onClick={onReload} theme="outlined" variant="secondary">
+              <Button appearance="outline" onClick={onReload} severity="secondary">
                 {t(`${PARTY_IDENTITY_KEY}.reload`)}
               </Button>
             )}
-            <Button onClick={onBack} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={onBack} severity="secondary">
               {t(`${PARTY_IDENTITY_KEY}.backToSearch`)}
             </Button>
           </>

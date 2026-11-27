@@ -9,16 +9,13 @@ const CommerceMarketCatalogHome = (): ReactElement => {
   const { language, supportedLanguages, t } = useModernI18n();
 
   return (
-    <main className="commercemarketcatalog:min-h-screen commercemarketcatalog:bg-um-canvas commercemarketcatalog:px-4 commercemarketcatalog:py-6 commercemarketcatalog:text-um-foreground commercemarketcatalog:sm:px-8">
+    <main className="min-h-screen bg-base px-200 py-300 text-fg-primary sm:px-400">
       <UltramodernRouteHead />
-      <nav
-        aria-label={t('commerce-market-catalog.language.switcher')}
-        className="commercemarketcatalog:flex commercemarketcatalog:gap-3"
-      >
+      <nav aria-label={t('commerce-market-catalog.language.switcher')} className="flex gap-150">
         {supportedLanguages.map((code) => (
           <Link
             aria-current={language === code ? 'page' : undefined}
-            className="commercemarketcatalog:rounded-full commercemarketcatalog:border commercemarketcatalog:border-stone-900/15 commercemarketcatalog:bg-white commercemarketcatalog:px-4 commercemarketcatalog:py-2 commercemarketcatalog:text-sm commercemarketcatalog:font-bold commercemarketcatalog:text-stone-950 commercemarketcatalog:no-underline"
+            className="rounded-full border border-border-primary bg-surface px-200 py-150 text-sm font-bold text-fg-primary no-underline"
             key={code}
             params={{ lang: code }}
             to="/$lang/"
@@ -27,20 +24,11 @@ const CommerceMarketCatalogHome = (): ReactElement => {
           </Link>
         ))}
       </nav>
-      <h1 className="commercemarketcatalog:mt-10 commercemarketcatalog:text-5xl commercemarketcatalog:font-black">
-        {t('commerce-market-catalog.title')}
-      </h1>
-      <p
-        className="commercemarketcatalog:mt-3 commercemarketcatalog:text-lg commercemarketcatalog:text-stone-600"
-        data-modern-mf-role="vertical"
-      >
+      <h1 className="mt-450 text-4xl font-bold">{t('commerce-market-catalog.title')}</h1>
+      <p className="mt-150 text-lg text-fg-secondary" data-modern-mf-role="vertical">
         {t('commerce-market-catalog.role')}
       </p>
-      <p
-        className="commercemarketcatalog:sr-only"
-        data-build-marker={ultramodernUiMarker.build}
-        data-testid="ultramodern-ui-marker"
-      >
+      <p className="sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
     </main>

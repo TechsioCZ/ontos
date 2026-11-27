@@ -82,7 +82,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{change.target.label}</p>
       </div>
       <div className="ai-review-actions">
-        <Badge variant={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
+        <Badge severity={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
@@ -127,11 +127,11 @@ const ChangeCard = ({
     {change.status === 'pending' && (
       <div className="ai-review-actions ai-review-end">
         <Button
+          appearance="outline"
           disabled={busy}
           onClick={() => decide([change.id], 'reject')}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           Zamítnout změnu
         </Button>
@@ -201,7 +201,7 @@ const BatchCard = ({
             </p>
             <h2 className="ai-review-instruction">{batch.instruction}</h2>
           </div>
-          <Badge variant={status.variant}>{status.label}</Badge>
+          <Badge severity={status.variant}>{status.label}</Badge>
         </div>
         {pending.length > 0 && (
           <>
@@ -226,6 +226,7 @@ const BatchCard = ({
                 Schválit dávku ({pending.length})
               </Button>
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() =>
                   decide(
@@ -233,9 +234,8 @@ const BatchCard = ({
                     'reject',
                   )
                 }
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 Zamítnout dávku
               </Button>
@@ -245,11 +245,11 @@ const BatchCard = ({
         {applied.length > 0 && batch.revertedAt === undefined && (
           <div className="ai-review-revert">
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               Vrátit vše
             </Button>
@@ -289,7 +289,7 @@ const BatchCard = ({
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
+                  <Button appearance="outline" onClick={() => setConfirmRevert(false)} severity="secondary" size="sm">
                     Zrušit
                   </Button>
                 </div>
@@ -322,7 +322,7 @@ const AiApprovalsContent = () => {
     <>
       <PageHeader
         description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
-        meta={<Badge variant="secondary">Úroveň C</Badge>}
+        meta={<Badge severity="secondary">Úroveň C</Badge>}
         title={t('crm.pages.ai.title')}
       />
       <CrmStateGate onRetry={load} state={state}>
@@ -354,20 +354,20 @@ const AiApprovalsContent = () => {
               </div>
               <fieldset aria-label={t('crm.ciWorkflow.batchView')} className="ai-review-actions">
                 <Button
+                  appearance={filter === 'pending' ? 'solid' : 'outline'}
                   aria-pressed={filter === 'pending'}
                   onClick={() => setFilter('pending')}
+                  severity={filter === 'pending' ? 'primary' : 'secondary'}
                   size="sm"
-                  theme={filter === 'pending' ? 'solid' : 'outlined'}
-                  variant={filter === 'pending' ? 'primary' : 'secondary'}
                 >
                   Ke schválení
                 </Button>
                 <Button
+                  appearance={filter === 'all' ? 'solid' : 'outline'}
                   aria-pressed={filter === 'all'}
                   onClick={() => setFilter('all')}
+                  severity={filter === 'all' ? 'primary' : 'secondary'}
                   size="sm"
-                  theme={filter === 'all' ? 'solid' : 'outlined'}
-                  variant={filter === 'all' ? 'primary' : 'secondary'}
                 >
                   Všechny dávky
                 </Button>
@@ -448,7 +448,12 @@ const AiApprovalsContent = () => {
                   </ol>
                 )}
                 {slice.log.length > 8 && (
-                  <Button onClick={() => setShowFullLog(!showFullLog)} size="sm" theme="outlined" variant="secondary">
+                  <Button
+                    appearance="outline"
+                    onClick={() => setShowFullLog(!showFullLog)}
+                    severity="secondary"
+                    size="sm"
+                  >
                     {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${slice.log.length})`}
                   </Button>
                 )}

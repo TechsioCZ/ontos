@@ -34,7 +34,7 @@ const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT
 const movementVariant = {
   ADJUSTMENT: 'warning',
   ISSUE: 'info',
-  ORDER: 'outline',
+  ORDER: 'neutral',
   RECEIPT: 'success',
 } as const;
 
@@ -99,7 +99,7 @@ export const MovementsTable = ({
   }
   return (
     <div className="flex flex-col gap-200">
-      <Table size="sm" variant="line">
+      <Table appearance="line" size="sm">
         <Table.Header>
           <Table.Row>
             <Table.ColumnHeader>{k('movements.columnDate')}</Table.ColumnHeader>
@@ -115,7 +115,7 @@ export const MovementsTable = ({
             <Table.Row key={movement.id}>
               <Table.Cell>{formatDateTime(DateTime.formatIso(movement.at))}</Table.Cell>
               <Table.Cell>
-                <Badge size="sm" variant={movementVariant[movement.reason]}>
+                <Badge severity={movementVariant[movement.reason]} size="sm">
                   {k(`movementType.${movement.reason}`)}
                 </Badge>
               </Table.Cell>
@@ -148,13 +148,13 @@ export const MovementsTable = ({
       {moreOlder && (
         <div className="flex justify-center">
           <Button
+            appearance="outline"
             isLoading={loading}
             loadingText={k('movements.loadOlder')}
             onClick={loadOlder}
+            severity="secondary"
             size="sm"
-            theme="outlined"
             type="button"
-            variant="secondary"
           >
             {k('movements.loadOlder')}
           </Button>
@@ -350,12 +350,12 @@ export const MovementForm = ({
       />
       <div className="flex justify-end">
         <Button
+          appearance="outline"
           isLoading={busy}
           loadingText={k('movements.submit')}
           onClick={submit}
-          theme="outlined"
+          severity="secondary"
           type="button"
-          variant="secondary"
         >
           {k('movements.submit')}
         </Button>

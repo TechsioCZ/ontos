@@ -329,10 +329,16 @@ const OneTimeSecret = ({
         value={Redacted.value(secret)}
       />
       <div className="flex flex-wrap gap-100">
-        <Button onClick={() => field.current?.select()} size="sm" theme="outlined" type="button" variant="secondary">
+        <Button
+          appearance="outline"
+          onClick={() => field.current?.select()}
+          severity="secondary"
+          size="sm"
+          type="button"
+        >
           {t(`${copyKey}.selectSecret`)}
         </Button>
-        <Button onClick={onDismiss} size="sm" type="button" variant="primary">
+        <Button onClick={onDismiss} severity="primary" size="sm" type="button">
           {t(`${copyKey}.hideSecret`)}
         </Button>
       </div>
@@ -356,7 +362,7 @@ const ManagedKeyRow = ({
     <li className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-b py-150 last:border-b-0">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
         <span className="font-medium text-sm [overflow-wrap:anywhere]">{item.name ?? t(`${copyKey}.unnamed`)}</span>
-        <Badge size="sm" variant={item.bindingStatus === 'active' ? 'success' : 'outline'}>
+        <Badge severity={item.bindingStatus === 'active' ? 'success' : 'neutral'} size="sm">
           {t(`${copyKey}.status.${item.bindingStatus}`)}
         </Badge>
         {item.start !== null && <code className="text-fg-secondary text-xs">{item.start}…</code>}
@@ -369,32 +375,32 @@ const ManagedKeyRow = ({
       <div className="flex flex-wrap gap-100">
         {item.bindingStatus === 'active' && (
           <Button
+            appearance="outline"
             disabled={locked}
             onClick={() => onCommand({ key: item, kind: 'rotate' })}
+            severity="secondary"
             size="sm"
-            theme="outlined"
             type="button"
-            variant="secondary"
           >
             {t(`${copyKey}.rotate`)}
           </Button>
         )}
         <Button
+          appearance="outline"
           disabled={locked}
           onClick={() => onCommand({ key: item, kind: item.bindingStatus === 'active' ? 'disable' : 'enable' })}
+          severity="secondary"
           size="sm"
-          theme="outlined"
           type="button"
-          variant="secondary"
         >
           {t(item.bindingStatus === 'active' ? `${copyKey}.disable` : `${copyKey}.enable`)}
         </Button>
         <Button
           disabled={locked}
           onClick={() => onCommand({ key: item, kind: 'revoke' })}
+          severity="danger"
           size="sm"
           type="button"
-          variant="danger"
         >
           {t(`${copyKey}.revoke`)}
         </Button>
@@ -425,9 +431,9 @@ export const ManagedKeyDetail = ({
         <Button
           disabled={locked || state.keys === null}
           onClick={() => setCommand({ kind: 'issue' })}
+          severity="primary"
           size="sm"
           type="button"
-          variant="primary"
         >
           {t(`${copyKey}.issue`)}
         </Button>
@@ -444,7 +450,7 @@ export const ManagedKeyDetail = ({
       )}
       {(state.failure !== null || state.needsRefresh) && !state.busy && (
         <div>
-          <Button onClick={() => state.load()} size="sm" theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={() => state.load()} severity="secondary" size="sm" type="button">
             {t(`${copyKey}.retry`)}
           </Button>
         </div>
@@ -472,16 +478,16 @@ export const ManagedKeyDetail = ({
       </ul>
       {state.nextOffset !== null && (
         <Button
+          appearance="outline"
           disabled={state.busy}
           onClick={() => {
             if (state.nextOffset !== null) {
               state.load(state.nextOffset);
             }
           }}
+          severity="secondary"
           size="sm"
-          theme="outlined"
           type="button"
-          variant="secondary"
         >
           {t(`${copyKey}.more`)}
         </Button>

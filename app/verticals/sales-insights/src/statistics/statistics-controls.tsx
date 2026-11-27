@@ -253,12 +253,12 @@ export const StatisticsControls = ({ invertedRange, isForbidden, onChange, query
             const active = currentPreset === preset;
             return (
               <Button
+                appearance={active ? 'solid' : 'ghost'}
                 aria-pressed={active}
                 key={preset}
                 onClick={() => commitRange(presetRange(preset, today))}
+                severity={active ? 'primary' : 'secondary'}
                 size="sm"
-                theme={active ? 'solid' : 'borderless'}
-                variant={active ? 'primary' : 'secondary'}
               >
                 {t(`${key}.presets.${preset}`)}
               </Button>

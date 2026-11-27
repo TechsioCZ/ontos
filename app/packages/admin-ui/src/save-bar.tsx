@@ -14,13 +14,13 @@ export interface SaveBarProps {
   readonly error?: string | null | undefined;
   /** Wording for the current language (`saveLabelsFor(language)`); Czech by default. */
   readonly labels?: SaveLabels;
-  /** Conflict only: discard the local draft and load the version someone else saved. */
-  readonly onReloadLatest: () => void;
   /**
    * `reload-required` only: reload the page into the new release and restore the unsaved drafts of the page
    * (`reloadKeepingDrafts` of `@app/shared-contracts`). Without it the state is only described.
    */
   readonly onReloadKeepingDrafts?: (() => void) | undefined;
+  /** Conflict only: discard the local draft and load the version someone else saved. */
+  readonly onReloadLatest: () => void;
   /** The one click that sends the whole draft (`DraftSave.save`). */
   readonly onSave: () => void;
   /** Matches the buttons next to it; `md` by default. */
@@ -59,7 +59,7 @@ const SaveStatus = ({ error, labels, onReloadKeepingDrafts, onReloadLatest, size
         <StatusText showIcon size="sm" status="warning">
           {labels.conflict}
         </StatusText>
-        <Button onClick={onReloadLatest} size={size} theme="outlined" type="button" variant="secondary">
+        <Button appearance="outline" onClick={onReloadLatest} severity="secondary" size={size} type="button">
           {labels.reloadLatest}
         </Button>
       </>
@@ -71,7 +71,7 @@ const SaveStatus = ({ error, labels, onReloadKeepingDrafts, onReloadLatest, size
           {labels.reloadRequired}
         </StatusText>
         {onReloadKeepingDrafts !== undefined && (
-          <Button onClick={onReloadKeepingDrafts} size={size} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={onReloadKeepingDrafts} severity="secondary" size={size} type="button">
             {labels.reloadKeepingDrafts}
           </Button>
         )}
@@ -113,9 +113,9 @@ export const SaveBar = ({
       isLoading={status === 'saving'}
       loadingText={labels.saving}
       onClick={onSave}
+      severity="primary"
       size={size}
       type="button"
-      variant="primary"
     >
       {labels.save}
     </Button>

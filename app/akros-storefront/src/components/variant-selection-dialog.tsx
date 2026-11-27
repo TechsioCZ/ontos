@@ -173,12 +173,12 @@ export function VariantSelectionDialog({
       actions={
         <>
           <span className="sf-favorites-total">{cs.variants.selectedTotal(selected.size)}</span>
-          <Button size="md" theme="outlined" variant="secondary" onClick={onClose}>
+          <Button size="md" appearance="outline" severity="secondary" onClick={onClose}>
             {cs.variants.cancel}
           </Button>
           <Button
             size="md"
-            variant="primary"
+            severity="primary"
             disabled={
               !catalog ||
               submitting ||
@@ -208,8 +208,8 @@ export function VariantSelectionDialog({
           {!catalog && (
             <Button
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
               onClick={() => {
                 setError("");
                 setAttempt((value) => value + 1);
@@ -269,7 +269,7 @@ export function VariantSelectionDialog({
             data={filtered}
             columns={columns}
             getRowId={(item) => item.id}
-            variant="line"
+            appearance="line"
             size="sm"
             enableSorting={false}
             enablePagination={false}

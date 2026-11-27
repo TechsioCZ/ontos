@@ -38,7 +38,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     return (
       <>
         <UltramodernRouteHead />
-        <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
+        <main className="flex min-h-screen items-center justify-center bg-base p-200">
           <StatusText aria-live="polite" showIcon status="error">
             {t(
               model.state === 'reload_required' || controls.reloadRequired
@@ -90,7 +90,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         title={t('shell.dashboard.home.title')}
         unavailableDeployments={model.navigation.unavailableDeployments}
       >
-        <section className="shell:flex shell:w-full shell:flex-col shell:gap-4">
+        <section className="flex w-full flex-col gap-200">
           <DemoGuideHomeCard legalEntityId={model.selectedLegalEntityId} />
           {Match.value(model.homeContribution).pipe(
             Match.when({ state: 'ready' }, (contribution) => (

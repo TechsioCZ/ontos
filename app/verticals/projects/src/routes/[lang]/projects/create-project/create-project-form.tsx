@@ -228,8 +228,8 @@ export const CreateProjectForm = () => {
         disabled={busy || !Schema.is(ProjectPrefixInputSchema)(draft.prefix)}
         isLoading={lookup === 'loading'}
         onClick={handleFindOwners}
+        severity="secondary"
         type="button"
-        variant="secondary"
       >
         {t(`${formKey}.findOwners`)}
       </Button>

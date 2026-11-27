@@ -61,13 +61,13 @@ const AdditionalCategories = ({ canWrite, extras, hasPrimaryCategory, onChange }
             <span className="min-w-0 flex-1 break-words">{category.trail}</span>
             {canWrite ? (
               <Button
+                appearance="ghost"
                 aria-label={`Odebrat kategorii ${category.trail}`}
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => remove(category.id)}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
                 type="button"
-                variant="secondary"
               />
             ) : null}
           </li>
@@ -139,33 +139,33 @@ const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasS
             {canWrite ? (
               <>
                 <Button
+                  appearance="ghost"
                   aria-label="Posunout nahoru"
                   disabled={index === 0}
                   icon="icon-[mdi--arrow-up]"
                   onClick={() => update(moved(extras.related, index, -1))}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
                   type="button"
-                  variant="secondary"
                 />
                 <Button
+                  appearance="ghost"
                   aria-label="Posunout dolů"
                   disabled={index === extras.related.length - 1}
                   icon="icon-[mdi--arrow-down]"
                   onClick={() => update(moved(extras.related, index, 1))}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
                   type="button"
-                  variant="secondary"
                 />
                 <Button
+                  appearance="ghost"
                   aria-label={`Odebrat ${relatedLabelOf(labels, entry)}`}
                   icon="icon-[mdi--delete-outline]"
                   onClick={() => update(extras.related.filter((other) => other !== entry))}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
                   type="button"
-                  variant="secondary"
                 />
               </>
             ) : null}
@@ -235,13 +235,13 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
             />
             {canWrite ? (
               <Button
+                appearance="ghost"
                 aria-label={`Odebrat dokument ${index + 1}`}
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => remove(document.key)}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
                 type="button"
-                variant="secondary"
               />
             ) : null}
           </div>
@@ -250,6 +250,7 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
       {canWrite && extras.documents.length < 20 ? (
         <div className="mt-100">
           <Button
+            appearance="outline"
             icon="icon-[mdi--plus]"
             onClick={() =>
               onChange((current) => ({
@@ -257,10 +258,9 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
                 documents: [...current.documents, { key: nextKey, label: '', url: '' }],
               }))
             }
+            severity="secondary"
             size="sm"
-            theme="outlined"
             type="button"
-            variant="secondary"
           >
             Přidat dokument
           </Button>

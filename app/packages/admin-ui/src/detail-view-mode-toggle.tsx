@@ -21,15 +21,15 @@ export const DetailViewModeToggle = ({
     const active = value === mode;
     return (
       <Button
+        appearance="outline"
         aria-pressed={active}
         onClick={() => {
           if (!active) {
             onChange(mode);
           }
         }}
+        severity={active ? 'primary' : 'secondary'}
         size="sm"
-        theme="outlined"
-        variant={active ? 'primary' : 'secondary'}
       >
         {label}
       </Button>

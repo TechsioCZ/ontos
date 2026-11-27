@@ -258,13 +258,13 @@ export const CatalogContentPanel = ({
                 />
                 {canWrite ? (
                   <Button
+                    appearance="ghost"
                     aria-label={`Odebrat parametr ${index + 1}`}
                     icon="icon-[mdi--delete-outline]"
                     onClick={() => removeParameter(parameter.key)}
+                    severity="secondary"
                     size="sm"
-                    theme="borderless"
                     type="button"
-                    variant="secondary"
                   />
                 ) : null}
               </div>
@@ -279,16 +279,16 @@ export const CatalogContentPanel = ({
         {canWrite ? (
           <div className="mt-100">
             <Button
+              appearance="outline"
               icon="icon-[mdi--plus]"
               onClick={() => {
                 const key = nextKey.current;
                 nextKey.current += 1;
                 setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
               }}
+              severity="secondary"
               size="sm"
-              theme="outlined"
               type="button"
-              variant="secondary"
             >
               Přidat parametr
             </Button>
@@ -327,7 +327,7 @@ export const CatalogContentPanel = ({
           <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
         ) : (
           <ScrollRegion label={t('merchandise.ui.contentChangeHistory')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Kdy</Table.ColumnHeader>

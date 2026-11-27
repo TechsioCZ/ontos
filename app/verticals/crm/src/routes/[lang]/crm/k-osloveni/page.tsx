@@ -116,7 +116,7 @@ const PlanRow = ({
           {tone === 'plain' ? (
             <span className="text-fg-secondary text-xs">{relativeDay(item.dueDate, today)}</span>
           ) : (
-            <Badge size="sm" variant={tone}>
+            <Badge severity={tone} size="sm">
               {relativeDay(item.dueDate, today)}
             </Badge>
           )}
@@ -134,10 +134,10 @@ const PlanRow = ({
       </div>
       {canWrite && (
         <div className="flex shrink-0 gap-100">
-          <Button onClick={() => onReschedule(item)} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => onReschedule(item)} severity="secondary" size="sm">
             Přeplánovat
           </Button>
-          <Button icon="icon-[mdi--check]" onClick={() => onComplete(item)} size="sm" variant="primary">
+          <Button icon="icon-[mdi--check]" onClick={() => onComplete(item)} severity="primary" size="sm">
             Vyřídit
           </Button>
         </div>
@@ -290,7 +290,7 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
                     >
                       {clientLabel(records, item.clientId)}
                     </a>
-                    <Badge size="sm" variant="success">
+                    <Badge severity="success" size="sm">
                       Vyřízeno
                     </Badge>
                     <span className="text-fg-secondary text-xs">{`· ${salespersonLabel(records, item.salespersonId)}`}</span>
@@ -382,8 +382,8 @@ const PlanContent = () => {
                   <Button
                     icon="icon-[mdi--calendar-plus]"
                     onClick={() => setCreating(true)}
+                    severity="primary"
                     size="sm"
-                    variant="primary"
                   >
                     Naplánovat kontakt
                   </Button>
@@ -427,7 +427,7 @@ const PlanContent = () => {
             <CrmScopeNote records={records} />
 
             <div className="flex flex-wrap items-end justify-between gap-150">
-              <Tabs onValueChange={setTab} value={activeTab} variant="line">
+              <Tabs appearance="line" onValueChange={setTab} value={activeTab}>
                 <Tabs.List>
                   {own !== undefined && <Tabs.Trigger value="mine">{`Můj plán (${String(mine.length)})`}</Tabs.Trigger>}
                   {lead && <Tabs.Trigger value="team">{`Tým (${String(open.length)})`}</Tabs.Trigger>}

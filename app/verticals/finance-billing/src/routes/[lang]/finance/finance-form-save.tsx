@@ -167,7 +167,7 @@ export const FinanceSaveActions = ({
   const handleReloadLatest = form.reloadLatest;
   return (
     <>
-      <Button onClick={handleClose} size={size} theme="outlined" variant="secondary">
+      <Button appearance="outline" onClick={handleClose} severity="secondary" size={size}>
         {t('finance-billing.financeUi.common.cancel')}
       </Button>
       <SaveBar

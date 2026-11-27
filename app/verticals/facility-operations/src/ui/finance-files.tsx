@@ -135,6 +135,7 @@ const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {
   const [busy, setBusy] = useState(false);
   return (
     <Button
+      appearance="outline"
       isLoading={busy}
       onClick={() => {
         setBusy(true);
@@ -153,9 +154,8 @@ const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {
           ),
         );
       }}
+      severity="secondary"
       size="sm"
-      theme="outlined"
-      variant="secondary"
     >
       Stáhnout
     </Button>
@@ -199,7 +199,7 @@ export const FinanceFilesList = ({
             <span className="truncate text-fg-secondary text-xs">{invoice.counterpartyName}</span>
           )}
         </span>
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {invoice?.direction === 'OUTGOING' ? 'Vydaná faktura' : 'Přijatá faktura'}
         </Badge>
         <FinanceFileDownload file={file} />

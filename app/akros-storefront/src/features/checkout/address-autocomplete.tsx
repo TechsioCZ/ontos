@@ -134,7 +134,7 @@ export function AddressAutocomplete({
             <Button
               type="button"
               size="sm"
-              variant="secondary"
+              severity="secondary"
               onClick={() => {
                 setOpen(true);
                 setAttempt((v) => v + 1);

@@ -97,7 +97,7 @@ export const ConnectedAppsEditPanel = ({
       <Dialog
         actions={
           <>
-            <Button onClick={requestClose} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={requestClose} severity="secondary">
               Zavřít
             </Button>
             <SaveBar

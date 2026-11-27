@@ -105,12 +105,12 @@ const DocumentBack = ({ onBack }: { readonly onBack: () => void }) => {
   return (
     <div className="print:hidden">
       <Button
+        appearance="ghost"
         className="whitespace-nowrap"
         icon="icon-[mdi--arrow-left]"
         onClick={onBack}
+        severity="secondary"
         size="sm"
-        theme="borderless"
-        variant="secondary"
       >
         {t(`${ns}.back`)}
       </Button>
@@ -155,7 +155,7 @@ const ClosedDocument = ({
         </StatusText>
       )}
       {detail.state === 'missing' || detail.state === 'unavailable' ? (
-        <Button className="self-start" onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" className="self-start" onClick={onRetry} severity="secondary" size="sm">
           {t(`${ns}.retry`)}
         </Button>
       ) : null}
@@ -201,14 +201,14 @@ const DocumentActions = ({
   return (
     <div className="flex flex-wrap gap-100">
       <Button
+        appearance="outline"
         disabled={pending !== undefined || !previewable(mimeType)}
         icon="icon-[mdi--eye-outline]"
         isLoading={pending === 'preview'}
         loadingText={t(`${ns}.loadingFile`)}
         onClick={() => onLoad('preview')}
+        severity="secondary"
         size="sm"
-        theme="outlined"
-        variant="secondary"
       >
         {t(`${ns}.preview`)}
       </Button>
@@ -218,8 +218,8 @@ const DocumentActions = ({
         isLoading={pending === 'download'}
         loadingText={t(`${ns}.loadingFile`)}
         onClick={() => onLoad('download')}
+        severity="primary"
         size="sm"
-        variant="primary"
       >
         {t(`${ns}.download`)}
       </Button>

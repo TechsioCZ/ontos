@@ -34,19 +34,21 @@ const PersonDetails = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <li className="shell:grid shell:gap-4">
-      <h3 className="shell:text-title-md">{person.label}</h3>
-      {person.suspended ? <Badge variant="warning">{t(`${prefix}.status.suspended`)}</Badge> : null}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.companyMemberships`)}</h4>
+    <li className="grid gap-200">
+      <h3 className="text-xl">{person.label}</h3>
+      {person.suspended ? <Badge severity="warning">{t(`${prefix}.status.suspended`)}</Badge> : null}
+      <h4 className="text-lg">{t(`${prefix}.companyMemberships`)}</h4>
       {person.memberships.length === 0 ? (
         <p>{t(`${prefix}.noCompany`)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-2">
+        <ul className="grid gap-150">
           {person.memberships.map((membership) => (
-            <li className="shell:flex shell:flex-wrap shell:gap-2" key={membership.id}>
+            <li className="flex flex-wrap gap-150" key={membership.id}>
               <span>{membership.scope}</span>
-              <Badge variant="outline">{t(`${prefix}.kind.${membership.kind}`)}</Badge>
-              <Badge variant={membership.status === 'active' ? 'info' : 'warning'}>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.kind.${membership.kind}`)}
+              </Badge>
+              <Badge severity={membership.status === 'active' ? 'info' : 'warning'}>
                 {t(`${prefix}.status.${membership.status}`)}
               </Badge>
               <span>
@@ -70,8 +72,8 @@ const PersonDetails = ({
                       titleKey: `${prefix}.confirmEndMembership`,
                     })
                   }
+                  severity="secondary"
                   type="button"
-                  variant="secondary"
                 >
                   {t(`${prefix}.endMembership`)}
                 </Button>
@@ -93,17 +95,19 @@ const PersonDetails = ({
           <p>{t(`${prefix}.transferUnavailable`)}</p>
         </div>
       ) : null}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.roles`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.roles`)}</h4>
       {person.assignments.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-3">
+        <ul className="grid gap-150">
           {person.assignments.map((assignment) => (
-            <li className="shell:grid shell:gap-2" key={assignment.id}>
+            <li className="grid gap-150" key={assignment.id}>
               <p>
                 {assignment.role} · {assignment.scope}
               </p>
-              <Badge variant="outline">{t(`${prefix}.status.${assignment.status}`)}</Badge>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.status.${assignment.status}`)}
+              </Badge>
               <p>
                 {assignment.expiryLabel === null
                   ? t(`${prefix}.noExpiry`)
@@ -141,8 +145,8 @@ const PersonDetails = ({
                     titleKey: `${prefix}.confirmRemove`,
                   })
                 }
+                severity="secondary"
                 type="button"
-                variant="secondary"
               >
                 {t(`${prefix}.removeRole`)}
               </Button>
@@ -150,11 +154,11 @@ const PersonDetails = ({
           ))}
         </ul>
       )}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.teams`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.teams`)}</h4>
       {person.teams.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-3">
+        <ul className="grid gap-150">
           {person.teams.map((team) => (
             <li key={team.id}>
               <p>
@@ -169,8 +173,8 @@ const PersonDetails = ({
                     titleKey: `${prefix}.teamRemove`,
                   })
                 }
+                severity="secondary"
                 type="button"
-                variant="secondary"
               >
                 {t(`${prefix}.teamRemove`)}
               </Button>
@@ -178,14 +182,14 @@ const PersonDetails = ({
           ))}
         </ul>
       )}
-      <h4 className="shell:text-title-sm">{t(`${prefix}.delegation`)}</h4>
+      <h4 className="text-lg">{t(`${prefix}.delegation`)}</h4>
       {person.delegations.length === 0 ? (
         <p>{t(emptyLabel)}</p>
       ) : (
-        <ul className="shell:grid shell:gap-4">
+        <ul className="grid gap-200">
           {person.delegations.map((delegation) => (
-            <li className="shell:grid shell:gap-2" key={delegation.id}>
-              <dl className="shell:grid shell:gap-2">
+            <li className="grid gap-150" key={delegation.id}>
+              <dl className="grid gap-150">
                 <dt>{t(`${prefix}.delegatedManager`)}</dt>
                 <dd>{delegation.manager}</dd>
                 <dt>{t(`${prefix}.scope`)}</dt>
@@ -201,7 +205,9 @@ const PersonDetails = ({
                 <dt>{t(`${prefix}.endDate`)}</dt>
                 <dd>{delegation.expiryLabel}</dd>
               </dl>
-              <Badge variant="outline">{t(`${prefix}.status.${delegation.status}`)}</Badge>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.status.${delegation.status}`)}
+              </Badge>
               <p>{t(`${prefix}.delegationHelp`)}</p>
               <Button
                 disabled={busy || !delegation.canRevoke}
@@ -218,8 +224,8 @@ const PersonDetails = ({
                     titleKey: `${prefix}.delegationRevoke`,
                   })
                 }
+                severity="secondary"
                 type="button"
-                variant="secondary"
               >
                 {t(`${prefix}.delegationRevoke`)}
               </Button>
@@ -273,7 +279,7 @@ interface ReviewDialogProps {
 }
 
 const PendingFacts = ({ pending }: { readonly pending: PeoplePendingChange | null }) => (
-  <ul className="shell:grid shell:gap-2">
+  <ul className="grid gap-150">
     {pending?.facts.map((fact, index) => (
       <li key={`${index}-${fact}`}>{fact}</li>
     ))}
@@ -287,7 +293,7 @@ const ConfirmDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: R
     <Dialog
       actions={
         <>
-          <Button disabled={busy} onClick={onCancel} type="button" variant="secondary">
+          <Button disabled={busy} onClick={onCancel} severity="secondary" type="button">
             {t('shell.accessAdmin.common.cancel')}
           </Button>
           <Button disabled={blocked} onClick={onConfirm} type="button">
@@ -355,7 +361,7 @@ const EndMembershipDialog = ({
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={close} type="button" variant="secondary">
+            <Button disabled={busy} onClick={close} severity="secondary" type="button">
               {t('shell.accessAdmin.common.cancel')}
             </Button>
             <Button disabled={blocked} onClick={onConfirm} type="button">
@@ -447,7 +453,7 @@ export const PeopleView = ({
     stale,
   };
   return (
-    <section aria-label={t(`${prefix}.title`)} className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
+    <section aria-label={t(`${prefix}.title`)} className="grid w-full max-w-5xl gap-300">
       <p>{t(`${prefix}.description`)}</p>
       <p>{t('shell.accessAdmin.description')}</p>
       <StatusText showIcon status="default">
@@ -463,20 +469,20 @@ export const PeopleView = ({
           {t(feedbackKey(feedback))}
         </StatusText>
       )}
-      <Button disabled={busy} onClick={onRefresh} type="button" variant="secondary">
+      <Button disabled={busy} onClick={onRefresh} severity="secondary" type="button">
         {t('shell.accessAdmin.common.refresh')}
       </Button>
       {model.people.length === 0 ? (
         <StatusText>{t(`${prefix}.empty`)}</StatusText>
       ) : (
-        <ul aria-label={t('shell.accessAdmin.accessible.peopleList')} className="shell:grid shell:gap-6">
+        <ul aria-label={t('shell.accessAdmin.accessible.peopleList')} className="grid gap-300">
           {model.people.map((person) => (
             <PersonDetails busy={busy} key={person.id} onPreview={preview} person={person} />
           ))}
         </ul>
       )}
       {model.hasMore ? (
-        <Button disabled={busy} onClick={onNextPage} type="button" variant="secondary">
+        <Button disabled={busy} onClick={onNextPage} severity="secondary" type="button">
           {t(`${prefix}.nextPage`)}
         </Button>
       ) : null}

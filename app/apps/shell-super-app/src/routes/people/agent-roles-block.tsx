@@ -88,6 +88,7 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
             <li className="flex flex-wrap items-center justify-between gap-100" key={role.assignmentId}>
               <span className="text-sm">{role.name}</span>
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() =>
                   run(
@@ -100,9 +101,8 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
                     t(`${rolesKey}.removed`, { name: agent.displayName, role: role.name }),
                   )
                 }
+                severity="danger"
                 size="sm"
-                theme="outlined"
-                variant="danger"
               >
                 {t(`${rolesKey}.remove`)}
               </Button>
@@ -123,7 +123,7 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
             size="sm"
             value={chosen === null ? [] : [chosen]}
           />
-          <Button disabled={busy || chosen === null} onClick={assign} size="sm" variant="primary">
+          <Button disabled={busy || chosen === null} onClick={assign} severity="primary" size="sm">
             {t(`${rolesKey}.assign`)}
           </Button>
         </div>
@@ -143,12 +143,12 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
             <li className="flex flex-wrap items-center gap-100" key={module.moduleId}>
               <span className="text-sm">{module.label}</span>
               {module.reads && (
-                <Badge size="sm" variant="outline">
+                <Badge appearance="outline" severity="neutral" size="sm">
                   {t(`${rolesKey}.reads`)}
                 </Badge>
               )}
               {module.writes !== 'none' && (
-                <Badge size="sm" variant={module.writes === 'direct' ? 'info' : 'warning'}>
+                <Badge severity={module.writes === 'direct' ? 'info' : 'warning'} size="sm">
                   {t(`${rolesKey}.writes.${module.writes}`)}
                 </Badge>
               )}

@@ -70,7 +70,7 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button className="shrink-0 whitespace-nowrap" onClick={close} theme="outlined" variant="secondary">
+          <Button appearance="outline" className="shrink-0 whitespace-nowrap" onClick={close} severity="secondary">
             Zpět
           </Button>
           <Button
@@ -79,7 +79,7 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
             isLoading={busy}
             loadingText="Obnovuji…"
             onClick={submit}
-            variant="danger"
+            severity="danger"
           >
             Obnovit výchozí data
           </Button>

@@ -24,7 +24,7 @@ export const clientColumns = (
             <span className="flex min-w-0 items-center gap-100">
               <span className="truncate font-medium">{row.client.name}</span>
               {options.showStatus && row.client.status === 'archived' && (
-                <Badge size="sm" variant="outline">
+                <Badge appearance="outline" severity="neutral" size="sm">
                   {t('crm.clientFilters.table.archived')}
                 </Badge>
               )}
@@ -129,7 +129,7 @@ export const contactColumns = (t: ClientTranslation): ColumnDef<ContactRow>[] =>
             <span className="flex min-w-0 items-center gap-100">
               <span className="truncate font-medium">{row.contact.name}</span>
               {row.contact.primary === true && (
-                <Badge size="sm" variant="info">
+                <Badge severity="info" size="sm">
                   {t('crm.clientFilters.table.primary')}
                 </Badge>
               )}

@@ -31,8 +31,8 @@ export function ProductDetailActions({
         iconSize="sm"
         onClick={() => window.print()}
         size="sm"
-        theme="borderless"
-        variant="secondary"
+        appearance="ghost"
+        severity="secondary"
       >
         {cs.productActions.print}
       </Button>

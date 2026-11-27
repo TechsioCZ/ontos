@@ -308,11 +308,11 @@ export const MeterForm = ({
           {(guard) => (
             <div className="flex flex-wrap items-center justify-end gap-100">
               <Button
+                appearance="outline"
                 onClick={() => {
                   guard.request(onCancel);
                 }}
-                theme="outlined"
-                variant="secondary"
+                severity="secondary"
               >
                 {t('facility-operations.common.close')}
               </Button>
@@ -702,7 +702,7 @@ export const ReadingForm = ({
             type="file"
           />
           <div className="flex flex-wrap items-center gap-150">
-            <Button onClick={() => photoInput.current?.click()} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={() => photoInput.current?.click()} severity="secondary" size="sm">
               {t(`${k}.reading.photoPick`)}
             </Button>
             <span className="text-sm">
@@ -710,15 +710,15 @@ export const ReadingForm = ({
             </span>
             {photo !== undefined && (
               <Button
+                appearance="ghost"
                 onClick={() => {
                   setPhoto(undefined);
                   if (photoInput.current !== null) {
                     photoInput.current.value = '';
                   }
                 }}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               >
                 {t(CANCEL_LABEL)}
               </Button>

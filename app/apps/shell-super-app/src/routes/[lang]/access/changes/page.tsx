@@ -17,7 +17,7 @@ const ChangesPage = () => {
         ? 'shell.moduleTarget.reload_required'
         : `shell.accessAdmin.common.${model.notice ?? 'unavailable'}`;
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" status="error">
           {t(key)}
         </StatusText>

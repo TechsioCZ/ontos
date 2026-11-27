@@ -16,7 +16,7 @@ export const ReloadRequiredNotice = () => (
     <StatusText showIcon status="warning">
       {RELOAD_REQUIRED}
     </StatusText>
-    <Button onClick={reloadKeepingDrafts} size="sm" theme="outlined" type="button" variant="secondary">
+    <Button appearance="outline" onClick={reloadKeepingDrafts} severity="secondary" size="sm" type="button">
       Načíst novou verzi a obnovit úpravy
     </Button>
   </div>

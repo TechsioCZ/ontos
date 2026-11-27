@@ -32,14 +32,14 @@ const GuideCard = ({ guide }: { readonly guide: DemoGuide }) => {
         <p className="text-fg-secondary text-xs">{`Hotovo ${summary.done} z ${summary.total} kroků`}</p>
       </div>
       <Button
+        appearance="solid"
         className="shrink-0"
         icon="icon-[mdi--presentation-play]"
         onClick={() => {
           setDemoGuideOpen(true);
         }}
+        severity="primary"
         size="md"
-        theme="solid"
-        variant="primary"
       >
         {actionLabel(summary.done, summary.total)}
       </Button>

@@ -56,7 +56,7 @@ export const TeamPanel = ({
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onClose} severity="secondary">
           Zavřít
         </Button>
       }
@@ -86,7 +86,7 @@ export const TeamPanel = ({
                 <span className="flex min-w-0 flex-col">
                   <span className="flex items-center gap-100 font-medium">
                     {person.name}
-                    <Badge size="sm" variant={person.active ? 'success' : 'outline'}>
+                    <Badge severity={person.active ? 'success' : 'neutral'} size="sm">
                       {hasDeparted ? 'Odešel – přeřadit' : activeLabel}
                     </Badge>
                   </span>
@@ -103,6 +103,7 @@ export const TeamPanel = ({
                   </span>
                 </span>
                 <Button
+                  appearance="outline"
                   disabled={busy || (person.active && owned > 0) || (!person.active && hasDeparted)}
                   onClick={() =>
                     run(
@@ -110,10 +111,9 @@ export const TeamPanel = ({
                       person.active ? `${person.name} vyřazen z obchodníků` : `${person.name} je opět aktivní`,
                     )
                   }
+                  severity="secondary"
                   size="sm"
-                  theme="outlined"
                   title={person.active && owned > 0 ? 'Nejprve převeďte jeho klienty jinému obchodníkovi' : undefined}
-                  variant="secondary"
                 >
                   {person.active ? 'Vyřadit' : 'Vrátit mezi aktivní'}
                 </Button>
@@ -150,8 +150,8 @@ export const TeamPanel = ({
                     `${account.displayName} zařazen mezi obchodníky`,
                   )
                 }
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 Zařadit mezi obchodníky
               </Button>

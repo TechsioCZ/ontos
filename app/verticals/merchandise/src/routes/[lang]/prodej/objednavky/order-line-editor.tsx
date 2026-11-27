@@ -93,13 +93,13 @@ export const OrderLineEditor = ({
           </FormNumericInput>
         </div>
         <Button
+          appearance="ghost"
           aria-label={t(key('create.removeLine'))}
           disabled={!canRemove}
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         />
       </div>
       {variants.length > 0 && (

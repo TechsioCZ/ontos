@@ -148,7 +148,7 @@ const nameCell = (info: CellContext<Employee>) => (
 );
 const emailCell = (info: CellContext<Employee>) => <span className="block truncate">{info.row.original.email}</span>;
 const statusCell = (info: CellContext<Employee>) => (
-  <Badge size="sm" variant={info.row.original.active ? 'success' : 'outline'}>
+  <Badge severity={info.row.original.active ? 'success' : 'neutral'} size="sm">
     {info.getValue<string>()}
   </Badge>
 );
@@ -453,36 +453,36 @@ const EmployeeBulkBar = ({
     // The page background hides the rows scrolling under the bar's rounded corners.
     <div className="sticky top-(--spacing-700) z-10 bg-base">
       <BulkActionBar onClear={onClear} selectedCount={count}>
-        <Button disabled={busy} onClick={onDepartment} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" disabled={busy} onClick={onDepartment} severity="secondary" size="sm">
           {t(`${key}.bulk.department`)}
         </Button>
-        <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" disabled={busy} onClick={onRole} severity="secondary" size="sm">
           {t(`${key}.bulk.role`)}
         </Button>
         {onTags !== undefined && (
-          <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" disabled={busy} onClick={onTags} severity="secondary" size="sm">
             {t(`${key}.bulk.tags`)}
           </Button>
         )}
         <Button
+          appearance="outline"
           disabled={busy}
           onClick={() => {
             onSetActive(true);
           }}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {t(`${key}.bulk.activate`)}
         </Button>
         <Button
+          appearance="outline"
           disabled={busy}
           onClick={() => {
             onSetActive(false);
           }}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {t(`${key}.bulk.deactivate`)}
         </Button>
@@ -716,7 +716,7 @@ const EmployeeSearchNoticeBanner = ({
         {t(notice.labelKey)}
       </StatusText>
       {notice.retry && (
-        <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
           {t(`${key}.errors.retry`)}
         </Button>
       )}
@@ -860,7 +860,7 @@ const EmployeesEmptyState = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
             {t(`${key}.errors.retry`)}
           </Button>
         }
@@ -879,7 +879,7 @@ const EmployeesEmptyState = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onClear} severity="secondary" size="sm">
             {t(`${key}.filters.clear`)}
           </Button>
         }
@@ -891,7 +891,7 @@ const EmployeesEmptyState = ({
     <EmptyState
       action={
         canWrite ? (
-          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onCreate} severity="secondary" size="sm">
             {t(`${key}.create`)}
           </Button>
         ) : undefined
@@ -1067,7 +1067,7 @@ const EmployeesPageContent = ({
         <PageHeader
           actions={
             canWrite ? (
-              <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
+              <Button icon="icon-[mdi--plus]" onClick={openCreate} severity="primary" size="sm">
                 {t(`${key}.create`)}
               </Button>
             ) : undefined

@@ -226,11 +226,11 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
       actions={
         vm.canWrite ? (
           <Button
+            appearance="outline"
             icon="icon-[mdi--bank-check]"
             onClick={() => setOpeningOpen(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {opening === undefined ? 'Zadat počáteční stav' : 'Změnit počáteční stav'}
           </Button>
@@ -271,7 +271,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
           <div className="flex flex-col gap-100">
             <span className="font-medium text-sm">
               {t(`${chartKey}.balanceTitle`)}{' '}
-              <Badge size="sm" variant="warning">
+              <Badge severity="warning" size="sm">
                 {t(`${chartKey}.estimateBadge`)}
               </Badge>
             </span>
@@ -303,7 +303,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
         </div>
       )}
       <FinanceTableScroll label={t('finance-billing.financeUi.planning.monthlyCashFlow')}>
-        <Table size="sm" variant="line">
+        <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
@@ -321,7 +321,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
                 <Table.Cell className={month.month === currentMonth ? 'font-semibold' : ''}>
                   {monthLabel(month.month)}
                   {month.month === currentMonth && (
-                    <Badge className="ml-100" size="sm" variant="primary">
+                    <Badge className="ml-100" severity="primary" size="sm">
                       tento měsíc
                     </Badge>
                   )}
@@ -409,7 +409,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             />
           </div>
           {vm.canWrite && (
-            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} size="sm" variant="primary">
+            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} severity="primary" size="sm">
               Přidat položku
             </Button>
           )}
@@ -438,7 +438,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             }))}
           />
           <FinanceTableScroll label={t('finance-billing.financeUi.planning.budgetComparison')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
@@ -463,7 +463,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                         {objectSummary(vm.objects, budget) ?? 'Celá firma'}
                       </Table.Cell>
                       <Table.Cell>
-                        <Badge size="sm" variant={budget.kind === 'COST' ? 'warning' : 'success'}>
+                        <Badge severity={budget.kind === 'COST' ? 'warning' : 'success'} size="sm">
                           {budget.kind === 'COST' ? 'Výdaj' : 'Příjem'}
                         </Badge>
                       </Table.Cell>
@@ -491,7 +491,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                         {variance.percent === undefined ? (
                           <span className="text-fg-secondary text-xs">nelze vyhodnotit</span>
                         ) : (
-                          <Badge size="sm" variant={over ? 'danger' : 'success'}>
+                          <Badge severity={over ? 'danger' : 'success'} size="sm">
                             {percent(variance.percent)}
                           </Badge>
                         )}
@@ -501,20 +501,20 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                         {vm.canWrite && (
                           <span className="flex justify-end gap-50">
                             <Button
+                              appearance="ghost"
                               aria-label={t('finance-billing.financeUi.common.edit')}
                               icon="icon-[mdi--pencil-outline]"
                               onClick={() => setDraft(editBudgetDraft(budget))}
+                              severity="secondary"
                               size="sm"
-                              theme="borderless"
-                              variant="secondary"
                             />
                             <Button
+                              appearance="ghost"
                               aria-label={t('finance-billing.financeUi.common.delete')}
                               icon="icon-[mdi--delete-outline]"
                               onClick={() => setDeleteTarget(budget)}
+                              severity="secondary"
                               size="sm"
-                              theme="borderless"
-                              variant="secondary"
                             />
                           </span>
                         )}
@@ -538,7 +538,7 @@ const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
     <Dialog
       actions={
         <>
-          <Button onClick={() => setDeleteTarget(undefined)} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => setDeleteTarget(undefined)} severity="secondary">
             Zrušit
           </Button>
           <Button
@@ -550,7 +550,7 @@ const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
               }
               setDeleteTarget(undefined);
             }}
-            variant="danger"
+            severity="danger"
           >
             Smazat
           </Button>

@@ -117,6 +117,7 @@ export const DownloadButton = ({
   const [busy, setBusy] = useState(false);
   return (
     <Button
+      appearance="outline"
       isLoading={busy}
       onClick={() => {
         setBusy(true);
@@ -133,9 +134,8 @@ export const DownloadButton = ({
           ),
         );
       }}
+      severity="secondary"
       size={size}
-      theme="outlined"
-      variant="secondary"
     >
       {t(`${k}.download`)}
     </Button>
@@ -159,7 +159,7 @@ export const FilePreviewDialog = ({
         file === undefined ? undefined : (
           <>
             <DownloadButton file={file} />
-            <Button onClick={onClose} size="sm" variant="primary">
+            <Button onClick={onClose} severity="primary" size="sm">
               {t('facility-operations.common.close')}
             </Button>
           </>

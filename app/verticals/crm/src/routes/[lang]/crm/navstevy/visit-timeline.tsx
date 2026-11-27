@@ -59,12 +59,12 @@ const TimelineEntry = ({
           {showClient && <span className="font-medium text-fg-primary">{clientLabel(records, visit.clientId)}</span>}
           <span>{salesperson}</span>
           {visit.corrections.length > 0 && (
-            <Badge size="sm" variant="warning">
+            <Badge severity="warning" size="sm">
               {`Opraveno ${visit.corrections.length}×`}
             </Badge>
           )}
           {visit.planItemId !== undefined && (
-            <Badge size="sm" variant="info">
+            <Badge severity="info" size="sm">
               Z plánu
             </Badge>
           )}

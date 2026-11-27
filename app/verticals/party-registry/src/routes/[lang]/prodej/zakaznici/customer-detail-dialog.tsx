@@ -72,10 +72,10 @@ const CustomerDetailView = ({
       actions={
         <>
           <Button
+            appearance="outline"
             disabled={detail.commandBusy}
             onClick={() => detail.requestClose(false)}
-            theme="outlined"
-            variant="secondary"
+            severity="secondary"
           >
             {t(`${CUSTOMER_DETAIL_KEY}.cancel`)}
           </Button>

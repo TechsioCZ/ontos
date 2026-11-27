@@ -124,8 +124,8 @@ export const CreateRoleFeature = ({
   const labels = saveLabelsFor(language);
 
   return (
-    <form className="shell:grid shell:gap-4" onSubmit={(event) => event.preventDefault()}>
-      <h2 className="shell:text-title-md">{t('shell.accessAdmin.role.createBlank')}</h2>
+    <form className="grid gap-200" onSubmit={(event) => event.preventDefault()}>
+      <h2 className="text-xl">{t('shell.accessAdmin.role.createBlank')}</h2>
       <p>{t('shell.accessAdmin.role.createBlankHelp')}</p>
       <FormInput
         disabled={pending || !writesAvailable}

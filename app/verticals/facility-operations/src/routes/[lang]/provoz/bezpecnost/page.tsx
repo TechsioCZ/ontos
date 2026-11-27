@@ -95,7 +95,7 @@ const DeviceLocationCell = ({ row }: CellContext<SecurityDevice>) => {
 const DeviceStateCell = ({ row }: CellContext<SecurityDevice>) => {
   const k = useSecurityLabel();
   return (
-    <Badge size="sm" variant={deviceStateVariant(row.original.state)}>
+    <Badge severity={deviceStateVariant(row.original.state)} size="sm">
       {k(`state.${row.original.state}`)}
     </Badge>
   );
@@ -109,7 +109,7 @@ const DeviceIncidentsCell = ({ row }: CellContext<SecurityDevice>) => {
   return count === 0 ? (
     <span className="text-fg-secondary">0</span>
   ) : (
-    <Badge size="sm" variant="danger">
+    <Badge severity="danger" size="sm">
       {String(count)}
     </Badge>
   );
@@ -153,7 +153,7 @@ const IncidentTitleCell = ({ row }: CellContext<SecurityIncident>) => {
 const IncidentSeverityCell = ({ row }: CellContext<SecurityIncident>) => {
   const k = useSecurityLabel();
   return (
-    <Badge size="sm" variant={severityVariant(row.original.severity)}>
+    <Badge severity={severityVariant(row.original.severity)} size="sm">
       {k(`severity.${row.original.severity}`)}
     </Badge>
   );
@@ -162,7 +162,7 @@ const IncidentSeverityCell = ({ row }: CellContext<SecurityIncident>) => {
 const IncidentStateCell = ({ row }: CellContext<SecurityIncident>) => {
   const k = useSecurityLabel();
   return (
-    <Badge size="sm" variant={incidentStateVariant(row.original.state)}>
+    <Badge severity={incidentStateVariant(row.original.state)} size="sm">
       {k(`incidentState.${row.original.state}`)}
     </Badge>
   );
@@ -469,15 +469,15 @@ const SecurityView = () => {
           canWrite ? (
             <div className="flex flex-wrap items-center gap-100">
               <Button
+                appearance="outline"
                 icon="icon-[mdi--alert-outline]"
                 onClick={() => setPanel({ kind: 'report' })}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('actions.reportFault')}
               </Button>
-              <Button icon="icon-[mdi--plus]" onClick={() => setPanel({ kind: 'create' })} size="sm" variant="primary">
+              <Button icon="icon-[mdi--plus]" onClick={() => setPanel({ kind: 'create' })} severity="primary" size="sm">
                 {k('actions.newDevice')}
               </Button>
             </div>
@@ -495,7 +495,7 @@ const SecurityView = () => {
       >
         <div className={`${surfaceTileClassName} flex flex-wrap items-center gap-100 px-200 py-150 text-sm`}>
           <span aria-hidden className="icon-[mdi--shield-check-outline] size-5 text-fg-secondary" />
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             {k('evidenceOnly')}
           </Badge>
           <span className="text-fg-secondary">{k('evidenceOnlyHint')}</span>
@@ -516,7 +516,7 @@ const SecurityView = () => {
           <StatCard label={k('stats.faulty')} value={String(stats.faulty)} />
           <StatCard hint={k('stats.overdueHint')} label={k('stats.overdue')} value={String(stats.overdue)} />
         </StatRow>
-        <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
+        <Tabs appearance="line" onValueChange={setTab} size="sm" value={tab}>
           <Tabs.List>
             <Tabs.Trigger value="devices">
               {k('tabs.devices')} ({devices.length})
@@ -565,14 +565,14 @@ const SecurityView = () => {
               </div>
               {filtersActive && (
                 <Button
+                  appearance="ghost"
                   onClick={() => {
                     setSearch('');
                     setTypeFilter(ALL);
                     setStateFilter(ALL);
                   }}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
-                  variant="secondary"
                 >
                   {k('actions.clearFilters')}
                 </Button>

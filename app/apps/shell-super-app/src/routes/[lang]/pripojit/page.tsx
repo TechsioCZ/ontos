@@ -473,10 +473,10 @@ const ConnectPage = () => {
                 <div className="grid min-w-0 flex-1 gap-100">
                   <span className="break-words font-semibold">{options.client.name}</span>
                   <div className="flex flex-wrap gap-100">
-                    <Badge size="sm" variant="info">
+                    <Badge severity="info" size="sm">
                       {options.client.host}
                     </Badge>
-                    <Badge size="sm" variant={options.client.kind === 'loopback' ? 'warning' : 'success'}>
+                    <Badge severity={options.client.kind === 'loopback' ? 'warning' : 'success'} size="sm">
                       {t(
                         options.client.kind === 'loopback'
                           ? 'shell.connect.badge.loopback'
@@ -542,16 +542,23 @@ const ConnectPage = () => {
                     </StatusText>
                   )}
                   <div className="flex flex-wrap gap-150">
-                    <Button disabled={busy} onClick={submit} size="md" theme="solid" type="button" variant="primary">
+                    <Button
+                      appearance="solid"
+                      disabled={busy}
+                      onClick={submit}
+                      severity="primary"
+                      size="md"
+                      type="button"
+                    >
                       {t('shell.connect.continue')}
                     </Button>
                     <Button
+                      appearance="outline"
                       disabled={busy}
                       onClick={cancel}
+                      severity="secondary"
                       size="md"
-                      theme="outlined"
                       type="button"
-                      variant="secondary"
                     >
                       {t('shell.connect.cancel')}
                     </Button>

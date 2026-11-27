@@ -19,8 +19,8 @@ export default async function FavoritesPage() {
           href="/muj-ucet/prehled"
           data-account-action
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {cs.favorites.backToOverview}
         </AccountLink>

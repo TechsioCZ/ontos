@@ -125,7 +125,7 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
     return <p className="text-fg-secondary text-sm">{k('prices.empty')}</p>;
   }
   return (
-    <Table size="sm" variant="line">
+    <Table appearance="line" size="sm">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader align="end">{k('prices.columnPrice')}</Table.ColumnHeader>
@@ -408,12 +408,12 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
               />
               {canWrite && (
                 <Button
+                  appearance="outline"
                   onClick={() =>
                     onDraftChange({ variants: draft.variants.filter((current) => current.key !== variant.key) })
                   }
-                  theme="outlined"
+                  severity="secondary"
                   type="button"
-                  variant="secondary"
                 >
                   {k('detail.removeVariant')}
                 </Button>
@@ -422,6 +422,7 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
           ))}
           {canWrite && (
             <Button
+              appearance="outline"
               disabled={draft.variants.length >= 50}
               onClick={() =>
                 onDraftChange({
@@ -429,9 +430,8 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
                   variants: [...draft.variants, { attributes: '', key: draft.nextVariantId, name: '' }],
                 })
               }
-              theme="outlined"
+              severity="secondary"
               type="button"
-              variant="secondary"
             >
               {k('detail.addVariant')}
             </Button>
@@ -482,8 +482,7 @@ export const ProductDetailView = ({
     ...keptDraft<MovementDraft>(movementKeepKey),
   }));
   useEffect(
-    () =>
-      keepDraftOnReload(movementKeepKey, () => (isMovementDraftDirty(movementDraft) ? movementDraft : undefined)),
+    () => keepDraftOnReload(movementKeepKey, () => (isMovementDraftDirty(movementDraft) ? movementDraft : undefined)),
     [movementDraft, movementKeepKey],
   );
   const variantDestination = resolveProductVariantDestination(product, variantId);
@@ -521,10 +520,10 @@ export const ProductDetailView = ({
         <PageHeader
           actions={
             <Button
+              appearance="outline"
               className="shrink-0 whitespace-nowrap"
               onClick={() => onBack()}
-              theme="outlined"
-              variant="secondary"
+              severity="secondary"
             >
               {k('detail.back')}
             </Button>
@@ -543,13 +542,13 @@ export const ProductDetailView = ({
         />
         <StorefrontStatusPanel product={product} />
         <Tabs
+          appearance="line"
           onValueChange={(value) => {
             if (isProductDetailTab(value)) {
               onTabChange(value);
             }
           }}
           value={tab}
-          variant="line"
         >
           <div style={{ overflowX: 'auto' }}>
             <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>

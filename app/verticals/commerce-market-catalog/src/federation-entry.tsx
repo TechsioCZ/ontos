@@ -15,16 +15,12 @@ const CommerceMarketCatalogRouteContent = () => {
 
   return (
     <section
-      className="commercemarketcatalog:rounded-2xl commercemarketcatalog:bg-white/90 commercemarketcatalog:p-5 commercemarketcatalog:shadow-xl commercemarketcatalog:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-250 shadow-xl"
       data-modern-boundary-id="verticalCommerceMarketCatalog"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="commercemarketcatalog:text-2xl commercemarketcatalog:font-black">
-        {t('commerce-market-catalog.title')}
-      </h2>
-      <p className="commercemarketcatalog:mt-2 commercemarketcatalog:text-stone-600">
-        {t('commerce-market-catalog.routeSurface')}
-      </p>
+      <h2 className="text-2xl font-bold">{t('commerce-market-catalog.title')}</h2>
+      <p className="mt-150 text-fg-secondary">{t('commerce-market-catalog.routeSurface')}</p>
     </section>
   );
 };

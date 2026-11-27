@@ -1,5 +1,4 @@
 @import '@techsio/ui-kit/tokens-with-tailwind';
-@source '../../node_modules/@techsio/ui-kit/dist';
 /* Shell UI uses unprefixed ui-kit utilities too (home tiles, frame, selectors). */
 @source '..';
 @source '../../../../packages/admin-ui/src';

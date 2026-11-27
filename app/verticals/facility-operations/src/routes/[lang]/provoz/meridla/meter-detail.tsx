@@ -82,7 +82,7 @@ const ReadingConsumption = ({
   if (reading.voided !== undefined) {
     content = (
       <span>
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {t(`${k}.void.voided`)}
         </Badge>
       </span>
@@ -99,7 +99,7 @@ const ReadingConsumption = ({
         <span className="flex flex-wrap items-center gap-100">
           <strong>{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
           {row.anomaly && row.change !== undefined && (
-            <Badge size="sm" variant="danger">
+            <Badge severity="danger" size="sm">
               {t(`${k}.row.anomaly`, { change: formatChange(row.change) })}
             </Badge>
           )}
@@ -162,7 +162,7 @@ const MeterHistoryItem = ({
           </div>
         )}
         {canManage && voided === undefined && (
-          <Button onClick={() => onVoid(reading)} size="sm" theme="borderless" variant="danger">
+          <Button appearance="ghost" onClick={() => onVoid(reading)} severity="danger" size="sm">
             {t(`${k}.actions.void`)}
           </Button>
         )}
@@ -179,11 +179,11 @@ const MeterHistoryItem = ({
         </span>
         {canReadPhotos && reading.photo !== undefined && (
           <Button
+            appearance="ghost"
             isLoading={photoLoading === reading.id}
             onClick={() => onShowPhoto(reading)}
+            severity="secondary"
             size="sm"
-            theme="borderless"
-            variant="secondary"
           >
             {t(`${k}.actions.showPhoto`)}
           </Button>
@@ -454,14 +454,14 @@ export const MeterDetail = ({
   return (
     <div className="flex flex-col gap-250">
       <div className="flex flex-wrap items-center gap-100">
-        <Badge size="sm" variant={mediumVariant[meter.medium]}>
+        <Badge severity={mediumVariant[meter.medium]} size="sm">
           {t(`${k}.medium.${meter.medium}`)}
         </Badge>
-        <Badge size="sm" variant={meter.status === 'RETIRED' ? 'outline' : 'success'}>
+        <Badge severity={meter.status === 'RETIRED' ? 'neutral' : 'success'} size="sm">
           {t(`${k}.status.${meter.status ?? 'ACTIVE'}`)}
         </Badge>
         {anomaly?.change !== undefined && (
-          <Badge size="sm" variant="danger">
+          <Badge severity="danger" size="sm">
             {`${anomalySummary} · ${formatDate(anomaly.reading.date)}`}
           </Badge>
         )}
@@ -469,12 +469,12 @@ export const MeterDetail = ({
         {canWrite && (
           <>
             {canManage && (
-              <Button onClick={() => onModeChange('edit')} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" onClick={() => onModeChange('edit')} severity="secondary" size="sm">
                 {t(`${k}.actions.edit`)}
               </Button>
             )}
             {meter.status !== 'RETIRED' && (
-              <Button onClick={() => onModeChange('reading')} size="sm" variant="primary">
+              <Button onClick={() => onModeChange('reading')} severity="primary" size="sm">
                 {t(`${k}.actions.recordReading`)}
               </Button>
             )}
@@ -535,13 +535,13 @@ export const MeterDetail = ({
             />
             <div className="flex justify-end gap-100">
               <Button
+                appearance="outline"
                 onClick={() => {
                   setVoiding(undefined);
                   setVoidError(undefined);
                 }}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t('facility-operations.common.cancel')}
               </Button>
@@ -551,8 +551,8 @@ export const MeterDetail = ({
                 onClick={() => {
                   void browserRuntime.runPromise(confirmVoid());
                 }}
+                severity="danger"
                 size="sm"
-                variant="danger"
               >
                 {t(`${k}.void.submit`)}
               </Button>
@@ -593,7 +593,7 @@ export const MeterDetail = ({
             />
             <figcaption className="flex items-center justify-between text-fg-secondary text-xs">
               {photo.name}
-              <Button onClick={() => setPhoto(undefined)} size="sm" theme="borderless" variant="secondary">
+              <Button appearance="ghost" onClick={() => setPhoto(undefined)} severity="secondary" size="sm">
                 {t('facility-operations.common.close')}
               </Button>
             </figcaption>

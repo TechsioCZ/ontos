@@ -77,13 +77,13 @@ const AssignRoleForm = ({
   return (
     <form
       aria-label={t(`${prefix}.assignRole`)}
-      className="shell:grid shell:gap-4"
+      className="grid gap-200"
       onSubmit={(event) => {
         // Enter never sends: only Uložit opens the confirmation.
         event.preventDefault();
       }}
     >
-      <h3 className="shell:text-title-md">{t(`${prefix}.assignRole`)}</h3>
+      <h3 className="text-xl">{t(`${prefix}.assignRole`)}</h3>
       <PeopleChoiceField
         disabled={disabled}
         items={scope.roles}
@@ -143,8 +143,8 @@ const AdmitSection = ({
                     constVoid,
                   )
                 }
+                severity="secondary"
                 type="button"
-                variant="secondary"
               >
                 {t(`${prefix}.admitMember`)}
               </Button>
@@ -175,7 +175,7 @@ const ScopeEditor = ({
   const team = scope.teams.find((item) => item.id === teamId);
   const handleAdmitPreview = context.onPreview;
   return (
-    <div className="shell:grid shell:gap-6">
+    <div className="grid gap-300">
       {scope.id === 'tenant' ? null : (
         <AdmitSection disabled={busy || !writes.admit} onPreview={handleAdmitPreview} scope={scope} />
       )}
@@ -193,8 +193,8 @@ const ScopeEditor = ({
         onChange={setAssign}
         scope={scope}
       />
-      <div className="shell:grid shell:gap-4">
-        <h3 className="shell:text-title-md">{t(`${prefix}.teams`)}</h3>
+      <div className="grid gap-200">
+        <h3 className="text-xl">{t(`${prefix}.teams`)}</h3>
         <PeopleChoiceField
           disabled={busy || !writes.team}
           items={scope.teams}
@@ -243,7 +243,7 @@ export const PeopleEditor = ({
   const [scopeId, setScopeId] = useState('');
   const scope = model.scopes.find((item) => item.id === scopeId);
   return (
-    <section className="shell:grid shell:gap-4">
+    <section className="grid gap-200">
       <PeopleChoiceField
         disabled={busy}
         items={model.scopes}

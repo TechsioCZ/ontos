@@ -288,13 +288,13 @@ export const InvoiceLineEditor = ({
           )}
         </div>
         <Button
+          appearance="ghost"
           aria-label={t(`${ns}.form.removeLine`, { position })}
           disabled={!canRemove}
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         />
       </div>
       <div className="finance-invoice-line-values grid items-end gap-150">

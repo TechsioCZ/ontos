@@ -70,7 +70,7 @@ export const PriceListSetup = ({ editable, market, onAwaitingApproval, onDone, r
       <div className="flex flex-wrap items-center justify-between gap-150">
         <p className="text-sm">{text('detail.assortment.notConfigured')}</p>
         {editable && (
-          <Button data-testid="market-price-list-setup" onClick={handleAsk} size="sm" variant="secondary">
+          <Button data-testid="market-price-list-setup" onClick={handleAsk} severity="secondary" size="sm">
             {text('detail.assortment.configure')}
           </Button>
         )}

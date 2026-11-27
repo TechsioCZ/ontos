@@ -57,17 +57,17 @@ type PurchaseReceiveLine = Extract<
 
 const statusVariant = {
   approved: 'info',
-  cancelled: 'outline',
+  cancelled: 'neutral',
   completed: 'success',
-  draft: 'outline',
+  draft: 'neutral',
   ordered: 'info',
   partially_delivered: 'warning',
-} as const satisfies Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>>;
+} as const satisfies Readonly<Record<PurchaseOrder['status'], 'neutral' | 'info' | 'warning' | 'success' | 'danger'>>;
 
 export const OrderStatusBadge = ({ status }: { readonly status: PurchaseOrder['status'] }) => {
   const k = usePurchasingT();
   return (
-    <Badge size="sm" variant={statusVariant[status]}>
+    <Badge severity={statusVariant[status]} size="sm">
       {k(`orderStatus.${status}`)}
     </Badge>
   );
@@ -260,7 +260,7 @@ const NoteForm = ({
         value={note}
       />
       <div className="flex justify-end gap-100">
-        <Button onClick={onCancel} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onCancel} severity="secondary" size="sm">
           {t(cancelLabelKey)}
         </Button>
         <Button
@@ -272,8 +272,8 @@ const NoteForm = ({
             }
             onSubmit(note.trim());
           }}
+          severity="primary"
           size="sm"
-          variant="primary"
         >
           {submitLabel}
         </Button>
@@ -665,7 +665,7 @@ const OrderRecordSections = ({
     <>
       <SectionCard title={k('orders.lines')}>
         <div className="overflow-x-auto">
-          <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
+          <Table appearance="line" size="sm" style={{ minWidth: '40rem' }}>
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
@@ -780,7 +780,7 @@ const OrderRecordSections = ({
             className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-150 text-sm"
             key={invoice.resourceId}
           >
-            <Badge size="sm" variant="warning">
+            <Badge severity="warning" size="sm">
               Doklad z objednávky
             </Badge>
             <span>{invoice.number}</span>
@@ -986,7 +986,7 @@ export const OrderPanel = ({
             {formatAmount(orderTotalMinor(order), order.currency)}
           </span>
           {orderRemainingQuantity(order) > 0 && OPEN_ORDER_STATUSES.has(order.status) && (
-            <Badge size="sm" variant="warning">
+            <Badge severity="warning" size="sm">
               {k('orders.openValue', { value: formatAmount(orderOpenValueMinor(order), order.currency) })}
             </Badge>
           )}
@@ -1005,8 +1005,8 @@ export const OrderPanel = ({
                 onClick={() => {
                   browserRuntime.runFork(transition('approved'));
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('orders.approve')}
               </Button>
@@ -1018,8 +1018,8 @@ export const OrderPanel = ({
                 onClick={() => {
                   browserRuntime.runFork(transition('ordered'));
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('orders.markOrdered')}
               </Button>
@@ -1028,41 +1028,41 @@ export const OrderPanel = ({
               <Button
                 icon="icon-[mdi--truck-delivery]"
                 onClick={() => setAction('receive')}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('orders.receive')}
               </Button>
             )}
             {capabilities.invoiceDraftWritable && (
               <Button
+                appearance="outline"
                 icon="icon-[mdi--file-document-plus-outline]"
                 onClick={() => setAction(prepareInvoiceAction)}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 Připravit návrh faktury
               </Button>
             )}
             {capabilities.linkable && (
               <Button
+                appearance="outline"
                 icon="icon-[mdi--file-link]"
                 onClick={() => setAction('invoice')}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('orders.linkInvoice')}
               </Button>
             )}
             {order.status === 'partially_delivered' && (
-              <Button onClick={() => setAction('close')} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" onClick={() => setAction('close')} severity="secondary" size="sm">
                 {k('orders.close')}
               </Button>
             )}
             {capabilities.cancellable && (
-              <Button onClick={() => setAction('cancel')} size="sm" theme="borderless" variant="danger">
+              <Button appearance="ghost" onClick={() => setAction('cancel')} severity="danger" size="sm">
                 {k('orders.cancel')}
               </Button>
             )}

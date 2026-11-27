@@ -160,7 +160,7 @@ export const ShellSearchResultRow = ({
         {badges.length === 0 ? null : (
           <span className="flex flex-wrap gap-100 sm:justify-end">
             {badges.map((badge) => (
-              <Badge key={badge.key} size="sm" variant={badge.tone}>
+              <Badge key={badge.key} severity={badge.tone} size="sm">
                 {t(badge.labelKey)}
               </Badge>
             ))}

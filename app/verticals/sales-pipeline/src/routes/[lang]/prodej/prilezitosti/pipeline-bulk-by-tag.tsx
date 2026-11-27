@@ -149,10 +149,10 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
         actions={
           <>
             <Button
+              appearance="outline"
               onClick={() => guard.request(() => onOpenChange(false))}
-              theme="outlined"
+              severity="secondary"
               type="button"
-              variant="secondary"
             >
               {t(`${K}.bulkByTag.cancel`)}
             </Button>

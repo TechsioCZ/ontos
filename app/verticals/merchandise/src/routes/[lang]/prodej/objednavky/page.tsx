@@ -375,12 +375,12 @@ const renderOrdersPageHeader = ({
           <div className="flex flex-wrap items-center gap-100">
             {ready?.records.canResetDemo === true && (
               <Button
+                appearance="outline"
                 className="shrink-0 whitespace-nowrap"
                 icon="icon-[mdi--restore]"
                 onClick={() => setResetOpen(true)}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(key('actions.resetDemo'))}
               </Button>
@@ -390,8 +390,8 @@ const renderOrdersPageHeader = ({
                 className="shrink-0 whitespace-nowrap"
                 icon="icon-[mdi--plus]"
                 onClick={() => setCreateOpen(true)}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {t(key('create.title'))}
               </Button>
@@ -425,12 +425,12 @@ const renderOrderBulkActions = ({
       <BulkActionBar onClear={() => setSelectedOrders({})} selectedCount={selected.length}>
         {orderTags.canWrite && (
           <Button
+            appearance="outline"
             disabled={busy}
             icon="icon-[mdi--tag-multiple-outline]"
             onClick={() => setTagsOpen(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {t(key('bulk.tags'))}
           </Button>
@@ -479,7 +479,7 @@ const renderOrdersEmpty = ({
     return (
       <EmptyState
         action={
-          <Button onClick={load} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={load} severity="secondary" size="sm">
             {t(key('states.retry'))}
           </Button>
         }
@@ -496,15 +496,15 @@ const renderOrdersEmpty = ({
       <EmptyState
         action={
           <Button
+            appearance="outline"
             onClick={() => {
               setSearch('');
               setStatusFilter(null);
               tagFilter.setTagId(null);
               refilter();
             }}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {t(key('states.clearFilters'))}
           </Button>
@@ -517,7 +517,7 @@ const renderOrdersEmpty = ({
     <EmptyState
       action={
         canEditOrders ? (
-          <Button onClick={() => setCreateOpen(true)} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => setCreateOpen(true)} severity="secondary" size="sm">
             {t(key('create.title'))}
           </Button>
         ) : undefined

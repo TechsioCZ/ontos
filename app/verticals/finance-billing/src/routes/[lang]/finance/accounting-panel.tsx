@@ -42,7 +42,7 @@ const FORMAT_LABEL = {
 } satisfies Readonly<Record<AccountingExportFormat, string>>;
 
 const statusBadge = (entry: AccountingExport) => (
-  <Badge className="whitespace-nowrap" size="sm" variant={EXPORT_STATUS[entry.status].variant}>
+  <Badge className="whitespace-nowrap" severity={EXPORT_STATUS[entry.status].variant} size="sm">
     {EXPORT_STATUS[entry.status].label}
   </Badge>
 );
@@ -53,7 +53,7 @@ const authorText = (entry: AccountingExport) => entry.actorLabel ?? 'neznámý u
 const AccountingSetupValue = ({ field, value }: { readonly field: SetupKey; readonly value: string | undefined }) => {
   if (value === undefined) {
     return (
-      <Badge size="sm" variant="warning">
+      <Badge severity="warning" size="sm">
         ČEKÁ NA VSTUP
       </Badge>
     );
@@ -233,11 +233,11 @@ const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
       actions={
         vm.canWrite && !editing ? (
           <Button
+            appearance="outline"
             icon="icon-[mdi--pencil-outline]"
             onClick={() => setEditing(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Upravit
           </Button>
@@ -281,7 +281,7 @@ const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
                   <dt className="text-fg-secondary text-xs">{label}</dt>
                   <dd>
                     {setup[key] ?? (
-                      <Badge size="sm" variant="warning">
+                      <Badge severity="warning" size="sm">
                         ČEKÁ NA VSTUP
                       </Badge>
                     )}
@@ -345,8 +345,8 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
               onClick={() => {
                 createExport();
               }}
+              severity="primary"
               size="sm"
-              variant="primary"
             >
               Vytvořit balíček ({selected.size})
             </Button>
@@ -400,7 +400,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
         <p className="text-fg-secondary text-sm">Žádné potvrzené doklady k předání.</p>
       ) : (
         <div className="max-h-[22rem] overflow-auto">
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>
@@ -445,7 +445,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
                   </Table.Cell>
                   <Table.Cell>
                     {handedOver.has(invoice.ref.resourceId) ? (
-                      <Badge size="sm" variant="info">
+                      <Badge severity="info" size="sm">
                         Už předáno
                       </Badge>
                     ) : (
@@ -501,7 +501,7 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
         </div>
       ) : (
         <FinanceTableScroll label={t('finance-billing.financeUi.accounting.historyTable')}>
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>Balíček</Table.ColumnHeader>
@@ -581,49 +581,49 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                         <span className="text-fg-secondary text-xs">Soubor jen pro finance a účetní</span>
                       ) : (
                         <Button
+                          appearance="ghost"
                           className="whitespace-nowrap"
                           icon="icon-[mdi--download]"
                           onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
+                          severity="secondary"
                           size="sm"
-                          theme="borderless"
-                          variant="secondary"
                         >
                           Stáhnout
                         </Button>
                       )}
                       {vm.canWrite && entry.status === 'PREPARED' && (
                         <Button
+                          appearance="outline"
                           className="whitespace-nowrap"
                           disabled={vm.busy}
                           icon="icon-[mdi--send-check-outline]"
                           onClick={() => {
                             handOver(entry);
                           }}
+                          severity="secondary"
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
                         >
                           Předat účetní
                         </Button>
                       )}
                       {vm.canWrite && entry.status === 'HANDED_OVER' && (
                         <Button
+                          appearance="outline"
                           className="whitespace-nowrap"
                           onClick={() => setConfirmTarget(entry)}
+                          severity="secondary"
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
                         >
                           Potvrzení účetní
                         </Button>
                       )}
                       {vm.canWrite && (entry.status === 'PREPARED' || entry.status === 'HANDED_OVER') && (
                         <Button
+                          appearance="ghost"
                           className="whitespace-nowrap"
                           onClick={() => setFailTarget(entry)}
+                          severity="secondary"
                           size="sm"
-                          theme="borderless"
-                          variant="secondary"
                         >
                           Označit chybu
                         </Button>

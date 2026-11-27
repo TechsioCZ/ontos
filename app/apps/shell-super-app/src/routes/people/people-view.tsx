@@ -34,18 +34,18 @@ const PeopleWorkspace = ({
     <div className="grid gap-250">
       <fieldset aria-label={t('shell.people.tabs')} className="flex gap-100">
         <Button
+          appearance={tab === 'people' ? 'solid' : 'outline'}
           aria-pressed={tab === 'people'}
           onClick={() => setTab('people')}
-          theme={tab === 'people' ? 'solid' : 'outlined'}
-          variant="secondary"
+          severity="secondary"
         >
           Lidé a role
         </Button>
         <Button
+          appearance={tab === 'agents' ? 'solid' : 'outline'}
           aria-pressed={tab === 'agents'}
           onClick={() => setTab('agents')}
-          theme={tab === 'agents' ? 'solid' : 'outlined'}
-          variant="secondary"
+          severity="secondary"
         >
           AI agenti
         </Button>

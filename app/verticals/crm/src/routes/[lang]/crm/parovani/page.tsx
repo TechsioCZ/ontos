@@ -203,11 +203,11 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
     accessorKey: 'via',
     cell: (info) =>
       info.row.original.via === 'manual' ? (
-        <Badge size="sm" variant="info">
+        <Badge severity="info" size="sm">
           Ručně
         </Badge>
       ) : (
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           Schválená vazba
         </Badge>
       ),
@@ -386,11 +386,11 @@ const PairingContent = () => {
               actions={
                 canPair ? (
                   <Button
+                    appearance="outline"
                     icon="icon-[mdi--link-plus]"
                     onClick={() => setLinkOpen(true)}
+                    severity="secondary"
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
                   >
                     Nová schválená vazba
                   </Button>

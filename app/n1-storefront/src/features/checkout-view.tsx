@@ -89,7 +89,7 @@ const ReceiptHeader = ({
           {date !== null && <p className="text-sm leading-normal text-fg-secondary">{date}</p>}
         </div>
         {result.status !== null && (
-          <Badge size="md" variant={result.status === "CANCELLED" ? "danger" : "info"}>
+          <Badge size="md" severity={result.status === "CANCELLED" ? "danger" : "info"}>
             {d.checkout.statuses[result.status]}
           </Badge>
         )}
@@ -105,8 +105,8 @@ const ReceiptHeader = ({
             disabled={checkout.progress !== "idle"}
             onClick={() => checkout.recover()}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {d.checkout.loadReceipt}
           </Button>
@@ -147,8 +147,8 @@ const ConfirmedCheckoutActions = ({
           dismiss(() => router.push(home));
         }}
         size="md"
-        theme="solid"
-        variant="secondary"
+        appearance="solid"
+        severity="secondary"
       >
         {d.shopping.backHome}
       </LinkButton>
@@ -162,8 +162,8 @@ const ConfirmedCheckoutActions = ({
             dismiss(() => router.push(orders));
           }}
           size="md"
-          theme="solid"
-          variant="primary"
+          appearance="solid"
+          severity="primary"
         >
           {d.accountPage.myOrders}
         </LinkButton>
@@ -212,8 +212,8 @@ const ConfirmedCheckout = ({
               disabled={checkout.progress !== "idle"}
               onClick={() => checkout.dismiss()}
               size="md"
-              theme="solid"
-              variant="primary"
+              appearance="solid"
+              severity="primary"
             >
               {d.checkout.continueWithCart}
             </Button>
@@ -316,7 +316,7 @@ const CheckoutActions = ({
   return (
     <div className="grid grid-cols-2 gap-2">
       {pending ? (
-        <Button block disabled size="md" theme="solid" type="button" variant="secondary">
+        <Button block disabled size="md" appearance="solid" type="button" severity="secondary">
           {d.checkout.back}
         </Button>
       ) : (
@@ -325,8 +325,8 @@ const CheckoutActions = ({
           block
           href={`/${locale}/kosik`}
           size="md"
-          theme="solid"
-          variant="secondary"
+          appearance="solid"
+          severity="secondary"
         >
           {d.checkout.back}
         </LinkButton>
@@ -342,9 +342,9 @@ const CheckoutActions = ({
         }}
         ref={submit}
         size="md"
-        theme="solid"
+        appearance="solid"
         type="submit"
-        variant="secondary"
+        severity="secondary"
       >
         {pending && (
           <>
@@ -410,8 +410,8 @@ const ReadyCheckout = ({
           loadingText={d.checkout.checking}
           onClick={() => checkout.recover()}
           size="md"
-          theme="solid"
-          variant="secondary"
+          appearance="solid"
+          severity="secondary"
         >
           {d.checkout.checkResult}
         </Button>
@@ -522,8 +522,8 @@ const ReadyCheckout = ({
             as={NextLink}
             href={`/${locale}/kosik`}
             size="md"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {d.cart}
           </LinkButton>
@@ -553,15 +553,15 @@ export const CheckoutView = ({
     <article className="mx-auto flex max-w-n1-product-content flex-col items-start gap-5 p-5">
       <h1 className="text-2xl leading-normal font-bold">{d.checkout.heading}</h1>
       <output>{d.checkout.unavailable}</output>
-      <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
+      <Button onClick={() => router.refresh()} size="md" appearance="outline" severity="secondary">
         {d.contact.retry}
       </Button>
       <LinkButton
         as={NextLink}
         href={`/${locale}/kosik`}
         size="md"
-        theme="solid"
-        variant="secondary"
+        appearance="solid"
+        severity="secondary"
       >
         {d.checkout.back}
       </LinkButton>

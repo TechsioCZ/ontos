@@ -52,7 +52,7 @@ const copy = {
     },
     password: /^Heslo/u,
     signIn: 'Přihlásit se',
-    subject: /^Přihlašovací jméno/u,
+    subject: /^Přihlašovací jméno \(povinné\)$/u,
   },
   en: {
     approvalExecute: 'Approve and execute with my authority',
@@ -66,7 +66,7 @@ const copy = {
     },
     password: /^Password/u,
     signIn: 'Login',
-    subject: /^Login/u,
+    subject: /^Login \(required\)$/u,
   },
 } as const;
 

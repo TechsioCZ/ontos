@@ -190,7 +190,7 @@ const ContextPickerRequest = ({
       {(propertyState === 'failed' || contractState === 'failed') && (
         <div className="flex flex-wrap items-center gap-150">
           <StatusText status="warning">{t(`${key}.contextUnavailable`)}</StatusText>
-          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
             {t(`${key}.contextRetry`)}
           </Button>
         </div>

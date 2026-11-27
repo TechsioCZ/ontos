@@ -309,6 +309,7 @@ export const StatisticsResults = ({
       {showTable && (
         <div className="flex justify-end">
           <Button
+            appearance="outline"
             icon="icon-[mdi--download]"
             onClick={() => {
               const link = document.createElement('a');
@@ -318,9 +319,8 @@ export const StatisticsResults = ({
               link.download = `statistiky-${query.metric}-${query.from}-${query.to}.csv`;
               link.click();
             }}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {t(`${key}.exportCsv`)}
           </Button>

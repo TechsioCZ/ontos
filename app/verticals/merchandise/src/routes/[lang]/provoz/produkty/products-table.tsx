@@ -93,7 +93,7 @@ export const ProductsTable = ({
           return (
             <EmptyState
               action={
-                <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+                <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
                   {label('common.retry')}
                 </Button>
               }
@@ -106,7 +106,7 @@ export const ProductsTable = ({
           return (
             <EmptyState
               action={
-                <Button onClick={onClearFilters} size="sm" theme="outlined" variant="secondary">
+                <Button appearance="outline" onClick={onClearFilters} severity="secondary" size="sm">
                   {label('common.clearFilters')}
                 </Button>
               }
@@ -118,7 +118,7 @@ export const ProductsTable = ({
           <EmptyState
             action={
               canWrite ? (
-                <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+                <Button appearance="outline" onClick={onCreate} severity="secondary" size="sm">
                   {label('actions.newProduct')}
                 </Button>
               ) : undefined

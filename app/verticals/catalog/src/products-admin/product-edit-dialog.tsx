@@ -350,17 +350,19 @@ interface ProductEditDialogProps {
   /** Categories the page knows by name (the tenant's ACTIVE ones and the listed products'). */
   readonly categories: readonly CategoryName[];
   readonly item: ProductPageItem;
-  /** The signed-in company's ERP offer; its e-shop shows ERP products exactly when it has one. */
-  readonly offer: Option.Option<ErpOffer>;
   /** The locale the list reads, so the text revision the dialog sends matches. */
   readonly locale: string;
+  /** The signed-in company's ERP offer; its e-shop shows ERP products exactly when it has one. */
+  readonly offer: Option.Option<ErpOffer>;
   readonly onClose: () => void;
 }
 
 export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: ProductEditDialogProps) => {
   const keepKey = erpProductKeepKey(item);
   const [kept] = useState(() => keptDraft<KeptProductDraft>(keepKey));
-  const [draft, setDraft] = useState<Draft>(() => (kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept)));
+  const [draft, setDraft] = useState<Draft>(() =>
+    kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept),
+  );
   const [newCategory, setNewCategory] = useState('');
   const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>(() => kept?.created ?? []);
   useEffect(
@@ -473,10 +475,10 @@ export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: 
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button disabled={busy} onClick={onClose} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" disabled={busy} onClick={onClose} severity="secondary" type="button">
             Zrušit
           </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
+          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} severity="primary" type="button">
             Uložit
           </Button>
         </div>
@@ -583,14 +585,14 @@ export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: 
               value={newCategory}
             />
             <Button
+              appearance="outline"
               disabled={busy}
               isLoading={creating}
               loadingText="Vytvářím…"
               onClick={createCategory}
+              severity="secondary"
               size="sm"
-              theme="outlined"
               type="button"
-              variant="secondary"
             >
               Vytvořit a přidat
             </Button>

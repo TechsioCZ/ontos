@@ -196,7 +196,7 @@ const DossierContacts = ({
       <div className="sp-tenant-heading">
         <h3>Kontaktní osoby</h3>
         {canWrite && (
-          <Button onClick={toggleEditing} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={toggleEditing} severity="secondary" size="sm">
             {editing ? 'Zavřít úpravy' : editLabel}
           </Button>
         )}
@@ -266,7 +266,7 @@ const DossierContacts = ({
                     value={contact.phone}
                   />
                 </div>
-                <Button onClick={() => removeContact(contact.id)} size="sm" theme="borderless" variant="secondary">
+                <Button appearance="ghost" onClick={() => removeContact(contact.id)} severity="secondary" size="sm">
                   Odebrat kontakt
                 </Button>
               </fieldset>
@@ -274,15 +274,15 @@ const DossierContacts = ({
           })}
           <div className="sp-tenant-actions">
             <Button
+              appearance="outline"
               disabled={contacts.length >= 50}
               onClick={() => {
                 void browserRuntime.runPromiseExit(
                   newContactId.pipe(Effect.tap((id) => Effect.sync(() => appendContact(id)))),
                 );
               }}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               Přidat kontaktní osobu
             </Button>
@@ -441,18 +441,18 @@ const DossierCase = ({
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
       <div className="sp-tenant-actions">
         {contractHref !== undefined && (
-          <LinkButton href={contractHref} size="sm" theme="borderless" variant="secondary">
+          <LinkButton appearance="ghost" href={contractHref} severity="secondary" size="sm">
             Otevřít smlouvu případu →
           </LinkButton>
         )}
         {taskHref !== undefined && (
-          <LinkButton href={taskHref} size="sm" theme="borderless" variant="secondary">
+          <LinkButton appearance="ghost" href={taskHref} severity="secondary" size="sm">
             Otevřít úkol případu →
           </LinkButton>
         )}
       </div>
       {leaseHref !== undefined && (
-        <LinkButton href={leaseHref} size="sm" theme="borderless" variant="secondary">
+        <LinkButton appearance="ghost" href={leaseHref} severity="secondary" size="sm">
           Otevřít nájem a související smlouvu →
         </LinkButton>
       )}
@@ -499,7 +499,7 @@ export const TenantDossierCard = ({
     <div className="sp-tenant" id="tenant">
       <SectionCard
         actions={
-          <Badge size="sm" variant={dossier?.archived === true ? 'outline' : 'info'}>
+          <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
             {dossier?.archived === true ? 'Archivovaná protistrana' : 'Evidence protistrany'}
           </Badge>
         }
@@ -533,7 +533,7 @@ export const TenantDossierCard = ({
         {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
           <article className="sp-tenant-event" key={key}>
             <div className="sp-tenant-heading">
-              <Badge size="sm" variant="outline">
+              <Badge appearance="outline" severity="neutral" size="sm">
                 {activityLabels[entry.kind]}
               </Badge>
               <span className="sp-tenant-muted">
@@ -553,11 +553,11 @@ export const TenantDossierCard = ({
           </p>
           {canWrite && (
             <Button
+              appearance="outline"
               disabled={busy}
               onClick={() => onUpdate({ archived: dossier?.archived !== true })}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {dossier?.archived === true ? 'Obnovit evidenci protistrany' : 'Archivovat evidenci protistrany'}
             </Button>
@@ -618,7 +618,7 @@ export const TenantDirectory = ({
     <section className="sp-tenant" id="tenants">
       <SectionCard
         actions={
-          <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="outlined" variant="secondary">
+          <LinkButton appearance="outline" href={`/${language}/prodej/zakaznici`} severity="secondary" size="sm">
             Firemní registr zákazníků →
           </LinkButton>
         }
@@ -651,7 +651,7 @@ export const TenantDirectory = ({
               <a className="sp-tenant-contact" href={dossierHref(id)} key={id}>
                 <div className="sp-tenant-heading">
                   <strong>{entry.displayName ?? 'Protistrana'}</strong>
-                  <Badge size="sm" variant={dossier?.archived === true ? 'outline' : 'info'}>
+                  <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
                     {dossier?.archived === true ? 'Archivováno' : caseLabels[dossier?.caseState ?? 'NEW']}
                   </Badge>
                 </div>

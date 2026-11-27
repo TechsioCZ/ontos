@@ -59,14 +59,14 @@ export const ShellSearchFilters = ({
           return (
             <li className="shrink-0 snap-start" key={option.key}>
               <Button
+                appearance={pressed ? 'solid' : 'outline'}
                 aria-pressed={pressed}
                 disabled={disabled}
                 onBlur={onButtonBlur}
                 onClick={() => onChange(toggleShellSearchFamily(selected, option.key))}
                 onKeyDown={onButtonKeyDown}
+                severity={pressed ? 'primary' : 'secondary'}
                 size="sm"
-                theme={pressed ? 'solid' : 'outlined'}
-                variant={pressed ? 'primary' : 'secondary'}
               >
                 {option.label}
               </Button>
@@ -76,13 +76,13 @@ export const ShellSearchFilters = ({
         {selected.length === 0 || clearLabel === undefined ? null : (
           <li className="shrink-0 snap-start">
             <Button
+              appearance="ghost"
               disabled={disabled}
               onBlur={onButtonBlur}
               onClick={() => onChange([])}
               onKeyDown={onButtonKeyDown}
+              severity="secondary"
               size="sm"
-              theme="borderless"
-              variant="secondary"
             >
               {clearLabel}
             </Button>

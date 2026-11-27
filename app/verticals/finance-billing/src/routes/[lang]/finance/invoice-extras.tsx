@@ -152,24 +152,24 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
                   </span>
                 </span>
                 <Button
+                  appearance="ghost"
                   icon="icon-[mdi--eye-outline]"
                   onClick={() => {
                     load(document.id, 'preview');
                   }}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
-                  variant="secondary"
                 >
                   Náhled
                 </Button>
                 <Button
+                  appearance="ghost"
                   icon="icon-[mdi--download]"
                   onClick={() => {
                     load(document.id, 'download');
                   }}
+                  severity="secondary"
                   size="sm"
-                  theme="borderless"
-                  variant="secondary"
                 >
                   Stáhnout
                 </Button>
@@ -237,7 +237,7 @@ const PaymentSourceBadge = ({
 }) => {
   if (event.source === 'MANUAL') {
     return (
-      <Badge size="sm" variant="success">
+      <Badge severity="success" size="sm">
         Ručně potvrzeno
       </Badge>
     );
@@ -245,13 +245,13 @@ const PaymentSourceBadge = ({
   if (event.source === 'PRIOR') {
     return (
       <Badge
+        severity="info"
         size="sm"
-        variant="info"
       >{`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}</Badge>
     );
   }
   return (
-    <Badge size="sm" variant="outline">
+    <Badge appearance="outline" severity="neutral" size="sm">
       Převzato z importu
     </Badge>
   );
@@ -278,11 +278,11 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
       actions={
         canRecord ? (
           <Button
+            appearance="outline"
             icon="icon-[mdi--cash-plus]"
             onClick={() => setOpen(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Zaznamenat úhradu
           </Button>
@@ -426,11 +426,11 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
       actions={
         vm.canWrite && open && !editing ? (
           <Button
+            appearance="outline"
             icon="icon-[mdi--email-alert-outline]"
             onClick={() => setEditing(true)}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Připravit upomínku
           </Button>
@@ -459,7 +459,7 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
                 <span className="tabular-nums">{at(reminder.createdAt)}</span>
                 <span className="font-medium">{reminder.recipient}</span>
                 {isTestReminderRecipient(reminder.recipient) && (
-                  <Badge size="sm" variant="outline">
+                  <Badge appearance="outline" severity="neutral" size="sm">
                     Zkušební adresa – nejde o upomínku zákazníkovi
                   </Badge>
                 )}
@@ -471,12 +471,12 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
         )}
         {testCount > 0 && (
           <Button
+            appearance="ghost"
             className="self-start"
             data-finance-test-reminders={testCount}
             onClick={() => setShowTests((current) => !current)}
+            severity="secondary"
             size="sm"
-            theme="borderless"
-            variant="secondary"
           >
             {showTests
               ? 'Skrýt zkušební odeslání'
@@ -513,7 +513,7 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
         <p className="text-fg-secondary text-sm">Doklad zatím nebyl předán účetní.</p>
       ) : (
         <div className="flex flex-col gap-100 text-sm">
-          <Badge className="self-start" size="sm" variant={EXPORT_STATUS[latest.status].variant}>
+          <Badge className="self-start" severity={EXPORT_STATUS[latest.status].variant} size="sm">
             {EXPORT_STATUS[latest.status].label}
           </Badge>
           {latest.status === 'FAILED' && latest.failureReason !== undefined && (
@@ -548,7 +548,7 @@ const HistoryPaymentBadge = ({
 }) => {
   if (invoice.paymentState === 'PAID') {
     return (
-      <Badge size="sm" variant="success">
+      <Badge severity="success" size="sm">
         uhrazeno
       </Badge>
     );
@@ -561,7 +561,7 @@ const HistoryPaymentBadge = ({
     label = 'po splatnosti';
   }
   return (
-    <Badge size="sm" variant={overdue ? 'danger' : 'info'}>
+    <Badge severity={overdue ? 'danger' : 'info'} size="sm">
       {label}
     </Badge>
   );

@@ -335,8 +335,8 @@ const OpenCreateButton = () => {
       onClick={() => {
         void navigate({ search: {}, to: `/${language ?? 'cs'}/projects/create-project` });
       }}
+      severity="secondary"
       type="button"
-      variant="secondary"
     >
       {t(`${projectDetailKey}.openCreate`)}
     </Button>
@@ -396,7 +396,7 @@ const ProjectTargetMessage = ({
       {(notice.retry && onRetry !== undefined) || showOpenCreate ? (
         <div className="projects:mt-6 projects:flex projects:flex-wrap projects:gap-3">
           {notice.retry && onRetry !== undefined && (
-            <Button onClick={onRetry} type="button" variant="secondary">
+            <Button onClick={onRetry} severity="secondary" type="button">
               {t(`${projectDetailKey}.retry`)}
             </Button>
           )}
@@ -440,7 +440,7 @@ const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) =
             {t(`${projectDetailKey}.fields.prefix`)}: {project.prefix}
           </p>
         </div>
-        <Badge size="md" variant={archived ? 'warning' : 'success'}>
+        <Badge severity={archived ? 'warning' : 'success'} size="md">
           {t(`${projectDetailKey}.lifecycle.${project.lifecycleState}`)}
         </Badge>
       </div>
@@ -560,14 +560,8 @@ const CreateProjectPageContent = () => {
   const { t } = useModernI18n();
   const headingId = 'create-project-heading';
   return (
-    <section
-      aria-labelledby={headingId}
-      className="projects:mx-auto projects:w-full projects:max-w-5xl projects:px-4 projects:py-8 projects:sm:px-8 projects:lg:px-12"
-    >
-      <h1
-        className="projects:text-3xl projects:font-bold projects:text-(--color-page-fg) projects:sm:text-4xl"
-        id={headingId}
-      >
+    <section aria-labelledby={headingId} className="mx-auto w-full max-w-5xl px-200 py-400 sm:px-400 lg:px-550">
+      <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id={headingId}>
         {t('projects.pages.createProject.title')}
       </h1>
       <CreateProjectForm />

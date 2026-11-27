@@ -129,7 +129,7 @@ const MeterNumberCell = ({ row }: CellContext<Meter>) => {
 const MeterMediumCell = ({ row }: CellContext<Meter>) => {
   const { t } = useModernI18n();
   return (
-    <Badge size="sm" variant={mediumVariant[row.original.medium]}>
+    <Badge severity={mediumVariant[row.original.medium]} size="sm">
       {t(`${k}.medium.${row.original.medium}`)}
     </Badge>
   );
@@ -185,7 +185,7 @@ const MeterStateCell = ({ row }: CellContext<Meter>) => {
   const { t } = useModernI18n();
   if (row.original.status === 'RETIRED') {
     return (
-      <Badge size="sm" variant="outline">
+      <Badge appearance="outline" severity="neutral" size="sm">
         {t(`${k}.row.retired`)}
       </Badge>
     );
@@ -196,7 +196,7 @@ const MeterStateCell = ({ row }: CellContext<Meter>) => {
     return (
       <div className="flex flex-col items-start gap-50">
         <span className="whitespace-nowrap">
-          <Badge size="sm" variant="danger">
+          <Badge severity="danger" size="sm">
             {t(`${k}.row.anomaly`, { change: formatChange(anomaly.change) })}
           </Badge>
         </span>
@@ -209,11 +209,11 @@ const MeterStateCell = ({ row }: CellContext<Meter>) => {
   return (
     <span className="whitespace-nowrap">
       {last?.status === 'ok' ? (
-        <Badge size="sm" variant="success">
+        <Badge severity="success" size="sm">
           {t(`${k}.row.normal`)}
         </Badge>
       ) : (
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {t('facility-operations.common.noData')}
         </Badge>
       )}
@@ -542,18 +542,18 @@ const MetersView = () => {
     headerActions = (
       <>
         {canManage && (
-          <Button onClick={() => setCreating(true)} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => setCreating(true)} severity="secondary">
             {t(`${k}.actions.newMeter`)}
           </Button>
         )}
-        <Button onClick={() => setRecording(true)} variant="primary">
+        <Button onClick={() => setRecording(true)} severity="primary">
           {t(`${k}.actions.recordReading`)}
         </Button>
       </>
     );
   } else if (envelope !== undefined) {
     headerActions = (
-      <Badge size="sm" variant="outline">
+      <Badge appearance="outline" severity="neutral" size="sm">
         {t('facility-operations.common.readOnly')}
       </Badge>
     );
@@ -613,12 +613,12 @@ const MetersView = () => {
             {(['ALL', ...meterMedia.filter((entry) => meters.some((meter) => meter.medium === entry))] as const).map(
               (entry) => (
                 <Button
+                  appearance={entry === medium ? 'solid' : 'ghost'}
                   aria-pressed={entry === medium}
                   key={entry}
                   onClick={() => setMedium(entry)}
+                  severity={entry === medium ? 'primary' : 'secondary'}
                   size="sm"
-                  theme={entry === medium ? 'solid' : 'borderless'}
-                  variant={entry === medium ? 'primary' : 'secondary'}
                 >
                   {entry === 'ALL' ? t(`${k}.filters.all`) : t(`${k}.medium.${entry}`)}
                 </Button>
@@ -626,11 +626,11 @@ const MetersView = () => {
             )}
           </fieldset>
           <Button
+            appearance={anomaliesOnly ? 'solid' : 'outline'}
             aria-pressed={anomaliesOnly}
             onClick={() => setAnomaliesOnly((current) => !current)}
+            severity={anomaliesOnly ? 'danger' : 'secondary'}
             size="sm"
-            theme={anomaliesOnly ? 'solid' : 'outlined'}
-            variant={anomaliesOnly ? 'danger' : 'secondary'}
           >
             {t(`${k}.filters.anomaliesOnly`)}
             {anomalies.length > 0 ? ` (${anomalies.length})` : ''}

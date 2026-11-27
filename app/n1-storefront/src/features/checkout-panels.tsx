@@ -49,7 +49,7 @@ export const CheckoutShipping = ({
         required
         size="sm"
         value={value}
-        variant="outline"
+        appearance="outline"
       >
         <div className="sr-only">
           <RadioCardLabel>{d.checkout.shipping}</RadioCardLabel>

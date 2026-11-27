@@ -186,8 +186,8 @@ const ContactDraftFields = ({
           className="absolute end-100 top-100"
           icon="icon-[mdi--close]"
           onClick={() => onRemove(entry.key)}
+          severity="neutral"
           size="sm"
-          tone="neutral"
           type="button"
         />
       )}
@@ -396,7 +396,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
+          <Button appearance="outline" disabled={busy} onClick={close} severity="secondary">
             {mode === 'create' ? 'Zrušit' : 'Zavřít'}
           </Button>
           <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={status} />
@@ -568,12 +568,12 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
             <div className="flex items-center justify-between gap-100">
               <h3 className="font-semibold text-sm">Kontaktní osoby</h3>
               <Button
+                appearance="ghost"
                 icon="icon-[mdi--account-plus-outline]"
                 onClick={() => setContacts((current) => [...current, emptyContact((current.at(-1)?.key ?? 0) + 1)])}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
                 type="button"
-                variant="secondary"
               >
                 Další osoba
               </Button>

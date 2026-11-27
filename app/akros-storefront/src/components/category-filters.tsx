@@ -138,7 +138,7 @@ export function CategoryFilters({
           <Link as={StoreLink} href={pathname} size="current">
             {cs.filters.clear}
           </Link>
-          <Button type="submit" variant="primary" size="sm" uppercase>
+          <Button type="submit" severity="primary" size="sm" uppercase>
             {cs.filters.submit}
           </Button>
         </div>

@@ -152,8 +152,8 @@ export function PasswordChange({ changePassword }: { changePassword: ChangePassw
       <Button
         type="button"
         size="sm"
-        variant="secondary"
-        theme="outlined"
+        severity="secondary"
+        appearance="outline"
         onClick={submit}
         isLoading={pending}
         loadingText={cs.pending}

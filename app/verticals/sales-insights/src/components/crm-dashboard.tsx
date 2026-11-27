@@ -52,6 +52,7 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
                   </StatusText>
                 ) : (
                   <LinkButton
+                    appearance="ghost"
                     aria-label={t(`${key}.openSource`, { metric: t(`${key}.metric.${value.id}`) })}
                     as={LocalizedLink}
                     className="salesinsights:-ml-2"
@@ -60,10 +61,9 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
                     // The Shell already prepares these menu routes on render without polluting Home's replay list.
                     prefetch="none"
                     preload={false}
+                    severity="secondary"
                     size="sm"
-                    theme="borderless"
                     to={value.href}
-                    variant="secondary"
                   >
                     {t(`${key}.openRecords`)}
                   </LinkButton>

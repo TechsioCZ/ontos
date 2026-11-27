@@ -31,7 +31,7 @@ export const RevisionsSection = ({
             <span className="flex flex-wrap items-center gap-100 font-medium text-sm">
               {text('detail.revisions.revision', { revision: row.revision })}
               {row.revision === currentRevision && (
-                <Badge size="sm" variant="info">
+                <Badge severity="info" size="sm">
                   {text('detail.revisions.current')}
                 </Badge>
               )}

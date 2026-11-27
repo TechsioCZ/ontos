@@ -1275,6 +1275,9 @@
         "suppliedSecretInvalid": "The key value must be 32 to 256 characters of letters, digits and _ . ~ -."
       },
       "partnerComponentUnavailable": "The partner's panel for this integration could not be loaded."
+    },
+    "uiKit": {
+      "requiredLabel": "(required)"
     }
   }
 }

@@ -268,12 +268,12 @@ const CommentItem = ({
                 onClick={() => {
                   browserRuntime.runFork(saveEdit());
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {t(`${k}.save`)}
               </Button>
-              <Button onClick={() => edit.request(stopEditing)} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" onClick={() => edit.request(stopEditing)} severity="secondary" size="sm">
                 {t(`${k}.cancel`)}
               </Button>
             </div>
@@ -341,12 +341,12 @@ const CommentItem = ({
                   onClick={() => {
                     browserRuntime.runFork(retract());
                   }}
+                  severity="danger"
                   size="sm"
-                  variant="danger"
                 >
                   {t(`${k}.retract`)}
                 </Button>
-                <Button onClick={() => setConfirmRetract(false)} size="sm" theme="outlined" variant="secondary">
+                <Button appearance="outline" onClick={() => setConfirmRetract(false)} severity="secondary" size="sm">
                   {t(`${k}.cancel`)}
                 </Button>
               </span>
@@ -488,7 +488,7 @@ export const CommentThread = ({
       {title !== null && (
         <div className="flex items-center justify-between gap-100">
           <h3 className="font-semibold text-md">{heading}</h3>
-          <Badge size="sm" variant="outline">
+          <Badge appearance="outline" severity="neutral" size="sm">
             {t(`${k}.count`, { count: visibleCount })}
           </Badge>
         </div>
@@ -559,8 +559,8 @@ export const CommentThread = ({
               onClick={() => {
                 browserRuntime.runFork(submit());
               }}
+              severity="primary"
               size="sm"
-              variant="primary"
             >
               {variant === 'chat' ? t(`${k}.send`) : t(`${k}.submit`)}
             </Button>

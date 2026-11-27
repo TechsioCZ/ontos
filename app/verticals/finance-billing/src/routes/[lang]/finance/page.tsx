@@ -68,10 +68,10 @@ const FinanceConfirmations = ({ vm }: { readonly vm: ReturnType<typeof useFinanc
       <Dialog
         actions={
           <>
-            <Button onClick={cancelConfirm} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={cancelConfirm} severity="secondary">
               {t(`${ns}.cancel`)}
             </Button>
-            <Button disabled={busy} onClick={confirmPending} variant="primary">
+            <Button disabled={busy} onClick={confirmPending} severity="primary">
               {t(`${ns}.confirmAction`)}
             </Button>
           </>
@@ -93,10 +93,10 @@ const FinanceConfirmations = ({ vm }: { readonly vm: ReturnType<typeof useFinanc
       <Dialog
         actions={
           <>
-            <Button onClick={cancelVoid} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={cancelVoid} severity="secondary">
               {t(`${ns}.cancel`)}
             </Button>
-            <Button disabled={busy} onClick={confirmVoid} variant="danger">
+            <Button disabled={busy} onClick={confirmVoid} severity="danger">
               {t(`${ns}.voidConfirm`)}
             </Button>
           </>
@@ -152,12 +152,12 @@ const ClosedInvoiceDetail = ({
     <section className="flex min-w-0 flex-col gap-250">
       <div className="print:hidden">
         <Button
+          appearance="ghost"
           className="whitespace-nowrap"
           icon="icon-[mdi--arrow-left]"
           onClick={handleClose}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {t(`${ns}.back`)}
         </Button>
@@ -166,7 +166,7 @@ const ClosedInvoiceDetail = ({
         {t(closedInvoiceMessage[detail.state])}
       </StatusText>
       {detail.state === 'unavailable' ? (
-        <Button className="self-start" onClick={handleRetry} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" className="self-start" onClick={handleRetry} severity="secondary" size="sm">
           {t(`${ns}.retry`)}
         </Button>
       ) : null}
@@ -232,12 +232,12 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                 canWrite ? (
                   <div className="flex flex-wrap gap-100">
                     <Button
+                      appearance="outline"
                       className="whitespace-nowrap"
                       icon="icon-[mdi--file-download-outline]"
                       onClick={() => setIncomingOpen(true)}
+                      severity="secondary"
                       size="sm"
-                      theme="outlined"
-                      variant="secondary"
                     >
                       Přijatá faktura
                     </Button>
@@ -246,8 +246,8 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                       disabled={references.productsReadable === undefined}
                       icon="icon-[mdi--plus]"
                       onClick={() => setCreateOpen(true)}
+                      severity="primary"
                       size="sm"
-                      variant="primary"
                     >
                       {t(`${ns}.newInvoice`)}
                     </Button>
@@ -291,7 +291,7 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                 {t(`${ns}.referencesError`)}
               </StatusText>
             )}
-            <Tabs onValueChange={changeTab} size="sm" value={tab} variant="line">
+            <Tabs appearance="line" onValueChange={changeTab} size="sm" value={tab}>
               <Tabs.List>
                 <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
                 <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>

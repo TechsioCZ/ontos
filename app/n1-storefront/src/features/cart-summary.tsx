@@ -47,8 +47,8 @@ export const CartSummary = ({
                 disabled={invalid}
                 onClick={() => quote.verify()}
                 size="md"
-                theme="solid"
-                variant="secondary"
+                appearance="solid"
+                severity="secondary"
               >
                 {d.retry}
               </Button>
@@ -58,13 +58,13 @@ export const CartSummary = ({
                 as={NextLink}
                 href={`/${locale}/pokladna`}
                 size="md"
-                theme="solid"
-                variant="secondary"
+                appearance="solid"
+                severity="secondary"
               >
                 {d.shopping.checkout}
               </LinkButton>
             ) : (
-              <Button disabled size="md" theme="solid" type="button" variant="secondary">
+              <Button disabled size="md" appearance="solid" type="button" severity="secondary">
                 {d.shopping.checkout}
               </Button>
             )}

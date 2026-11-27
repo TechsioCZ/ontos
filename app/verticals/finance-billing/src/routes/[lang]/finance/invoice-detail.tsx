@@ -176,12 +176,12 @@ const InvoiceDetailHeading = (model: ReturnType<typeof useInvoiceDetailModel>) =
       <DocumentTitle title={number} />
       <div className="print:hidden">
         <Button
+          appearance="ghost"
           className="whitespace-nowrap"
           icon="icon-[mdi--arrow-left]"
           onClick={closeDetail}
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {t(`${ns}.back`)}
         </Button>
@@ -218,7 +218,7 @@ const InvoiceDetailHeading = (model: ReturnType<typeof useInvoiceDetailModel>) =
       )}
       {isDraft && (
         <div className="flex">
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             NÁVRH – nejde o odborně schválený účetní doklad
           </Badge>
         </div>
@@ -299,7 +299,7 @@ const InvoiceLines = (model: ReturnType<typeof useInvoiceDetailModel>) => {
         <p className="px-250 pb-250 text-fg-secondary text-sm">{t(`${ns}.noLines`)}</p>
       ) : (
         <FinanceTableScroll label={t(`${ns}.lines`)}>
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{t(`${ns}.colDescription`)}</Table.ColumnHeader>
@@ -383,7 +383,7 @@ const InvoiceTotals = (model: ReturnType<typeof useInvoiceDetailModel>) => {
           {vatRecap.length === 0 ? (
             <p className="text-fg-secondary text-sm">—</p>
           ) : (
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader align="end">{t(`${ns}.vatRate`)}</Table.ColumnHeader>
@@ -499,23 +499,23 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
           </div>
           <div className="flex flex-wrap items-center gap-100 print:hidden">
             <Button
+              appearance="outline"
               className="whitespace-nowrap"
               icon="icon-[mdi--printer-outline]"
               onClick={() => window.print()}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {isDraft ? 'Tisk / PDF (NÁVRH)' : t(`${ns}.print`)}
             </Button>
             {canWrite && isVoidable(invoice) && (
               <Button
+                appearance="outline"
                 className="whitespace-nowrap"
                 disabled={busy}
                 onClick={() => requestVoid(invoice)}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(`${ns}.void`)}
               </Button>
@@ -537,8 +537,8 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
                     vm.execute(markInvoicesPreparedCommand, 'Doklad připraven ke schválení'),
                   );
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 Připravit ke schválení
               </Button>
@@ -546,6 +546,7 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
             {canWrite && isDraft && invoice.reviewState === 'PREPARED' && (
               <>
                 <Button
+                  appearance="outline"
                   className="whitespace-nowrap"
                   disabled={busy}
                   icon="icon-[mdi--undo]"
@@ -554,9 +555,8 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
                       vm.execute({ _tag: 'ReturnInvoiceToDraft', invoiceRef: invoice.ref }, 'Doklad vrácen do návrhu'),
                     );
                   }}
+                  severity="secondary"
                   size="sm"
-                  theme="outlined"
-                  variant="secondary"
                 >
                   Vrátit do návrhu
                 </Button>
@@ -567,8 +567,8 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
                   isLoading={busy}
                   loadingText={t(`${ns}.confirming`)}
                   onClick={() => confirmInvoice(invoice)}
+                  severity="primary"
                   size="sm"
-                  variant="primary"
                 >
                   {t(`${ns}.confirmAction`)}
                 </Button>

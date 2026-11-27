@@ -78,18 +78,18 @@ const withVatKey = 'sales.withVat';
 const closeActionKey = 'sales.actions.close';
 
 const vatRates: readonly SalesVatRate[] = [21, 12, 10, 0];
-type Variant = NonNullable<BadgeProps['variant']>;
+type Variant = NonNullable<BadgeProps['severity']>;
 const quoteVariant = {
   accepted: 'success',
-  draft: 'outline',
+  draft: 'neutral',
   rejected: 'danger',
   sent: 'info',
 } as const satisfies Readonly<Record<SalesQuote['status'], Variant>>;
 const orderVariant = {
   approved: 'info',
-  cancelled: 'outline',
+  cancelled: 'neutral',
   completed: 'success',
-  draft: 'outline',
+  draft: 'neutral',
   ordered: 'info',
   partially_delivered: 'warning',
 } as const satisfies Readonly<Record<SalesOrder['status'], Variant>>;
@@ -173,7 +173,7 @@ export const SalesTab = ({
       <div className="flex flex-wrap items-start justify-between gap-150">
         <p className="max-w-[52rem] text-fg-secondary text-sm">{k('sales.intro')}</p>
         {canWrite && (
-          <Button icon="icon-[mdi--file-document-edit-outline]" onClick={onNewQuote} size="sm" variant="primary">
+          <Button icon="icon-[mdi--file-document-edit-outline]" onClick={onNewQuote} severity="primary" size="sm">
             {k('sales.newQuote')}
           </Button>
         )}
@@ -183,7 +183,7 @@ export const SalesTab = ({
           <EmptyState description={k('sales.noOrdersHint')} title={k('sales.noOrders')} />
         ) : (
           <div className="overflow-x-auto">
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{k('sales.columns.order')}</Table.ColumnHeader>
@@ -211,7 +211,7 @@ export const SalesTab = ({
                         </span>
                       </Table.Cell>
                       <Table.Cell>
-                        <Badge size="sm" variant={orderVariant[order.status]}>
+                        <Badge severity={orderVariant[order.status]} size="sm">
                           {k(`orderStatus.${order.status}`)}
                         </Badge>
                       </Table.Cell>
@@ -238,7 +238,7 @@ export const SalesTab = ({
           <EmptyState description={k('sales.noQuotesHint')} title={k('sales.noQuotes')} />
         ) : (
           <div className="overflow-x-auto">
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{k(quoteLabelKey)}</Table.ColumnHeader>
@@ -263,7 +263,7 @@ export const SalesTab = ({
                       </span>
                     </Table.Cell>
                     <Table.Cell>
-                      <Badge size="sm" variant={quoteVariant[quote.status]}>
+                      <Badge severity={quoteVariant[quote.status]} size="sm">
                         {k(`sales.quoteStatus.${quote.status}`)}
                       </Badge>
                     </Table.Cell>
@@ -427,11 +427,11 @@ const SalesQuoteLines = ({
           </div>
           <div className="flex justify-end">
             <Button
+              appearance="ghost"
               disabled={lines.length === 1}
               onClick={() => onRemoveLine(line.key)}
+              severity="secondary"
               size="sm"
-              theme="borderless"
-              variant="secondary"
             >
               {k('sales.form.removeLine')}
             </Button>
@@ -439,7 +439,7 @@ const SalesQuoteLines = ({
         </div>
       ))}
       <div className="flex flex-wrap items-center justify-between gap-100">
-        <Button onClick={onAddLine} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onAddLine} severity="secondary" size="sm">
           {k('sales.form.addLine')}
         </Button>
         {totals !== undefined && (
@@ -578,7 +578,7 @@ export const SalesQuoteFormPanel = ({
           <>
             {quote !== undefined && (
               <>
-                <Button onClick={close} theme="outlined" variant="secondary">
+                <Button appearance="outline" onClick={close} severity="secondary">
                   {t('facility-operations.common.close')}
                 </Button>
                 <SaveBar
@@ -726,7 +726,7 @@ const LinesTable = ({
   const k = usePurchasingT();
   return (
     <div className="overflow-x-auto">
-      <Table size="sm" variant="line">
+      <Table appearance="line" size="sm">
         <Table.Header>
           <Table.Row>
             <Table.ColumnHeader>{k('sales.fields.description')}</Table.ColumnHeader>
@@ -835,29 +835,29 @@ export const SalesQuotePanel = ({
     >
       <div className="flex flex-col gap-250 py-200">
         <div className="flex flex-wrap items-center gap-150">
-          <Badge size="sm" variant={quoteVariant[quote.status]}>
+          <Badge severity={quoteVariant[quote.status]} size="sm">
             {k(`sales.quoteStatus.${quote.status}`)}
           </Badge>
           <span className="font-semibold text-lg tabular-nums">{formatAmount(totals.baseMinor)}</span>
           <span className="text-fg-secondary text-sm">{k(withVatKey, { total: formatAmount(totals.totalMinor) })}</span>
           <span className="flex-1" />
           {canWrite && quote.status !== 'rejected' && (
-            <Button disabled={busy} onClick={() => onEdit(quote)} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" disabled={busy} onClick={() => onEdit(quote)} severity="secondary" size="sm">
               {k('sales.actions.editQuote')}
             </Button>
           )}
           {canWrite && (quote.status === 'draft' || quote.status === 'sent') && (
             <>
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() => {
                   browserRuntime.runFork(
                     act({ _tag: 'SalesQuoteReject', quoteId: quote.id }, 'sales.messages.rejected'),
                   );
                 }}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('sales.actions.reject')}
               </Button>
@@ -876,15 +876,15 @@ export const SalesQuotePanel = ({
                     ),
                   );
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('sales.actions.createOrder')}
               </Button>
             </>
           )}
           {order !== undefined && (
-            <Button onClick={() => onOpenOrder(order.id)} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={() => onOpenOrder(order.id)} severity="secondary" size="sm">
               {k('sales.actions.openOrder', { number: order.number })}
             </Button>
           )}
@@ -1188,7 +1188,7 @@ const SalesOrderDetails = ({ lang, onOpenQuote, order }: SalesOrderDetailsProps)
             {history.success.map(({ entry, key }) => (
               <li className="flex flex-col" key={key}>
                 <span className="flex flex-wrap items-center gap-100">
-                  <Badge size="sm" variant={orderVariant[entry.status]}>
+                  <Badge severity={orderVariant[entry.status]} size="sm">
                     {k(`orderStatus.${entry.status}`)}
                   </Badge>
                   <span className="font-medium">{k(`sales.event.${entry.event}`)}</span>
@@ -1336,13 +1336,13 @@ export const SalesOrderPanel = ({
     >
       <div className="flex flex-col gap-250 py-200">
         <div className="flex flex-wrap items-center gap-150">
-          <Badge size="sm" variant={orderVariant[order.status]}>
+          <Badge severity={orderVariant[order.status]} size="sm">
             {k(`orderStatus.${order.status}`)}
           </Badge>
           <span className="font-semibold text-lg tabular-nums">{formatAmount(totals.baseMinor)}</span>
           <span className="text-fg-secondary text-sm">{k(withVatKey, { total: formatAmount(totals.totalMinor) })}</span>
           {capabilities.hasRemaining && (
-            <Badge size="sm" variant="warning">
+            <Badge severity="warning" size="sm">
               {k('sales.remaining', { count: remainder.reduce((sum, entry) => sum + entry.remaining, 0) })}
             </Badge>
           )}
@@ -1366,8 +1366,8 @@ export const SalesOrderPanel = ({
                     ),
                   );
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('sales.actions.approve')}
               </Button>
@@ -1383,47 +1383,48 @@ export const SalesOrderPanel = ({
                     ),
                   );
                 }}
+                severity="primary"
                 size="sm"
-                variant="primary"
               >
                 {k('sales.actions.confirm')}
               </Button>
             )}
             {capabilities.deliverable && (
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() => setAction('deliver')}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('sales.actions.deliver')}
               </Button>
             )}
             {capabilities.invoiceWritable && (
               <Button
+                appearance="outline"
                 disabled={busy}
                 onClick={() => setAction('invoice')}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {k('sales.actions.invoice')}
               </Button>
             )}
             {order.status === 'partially_delivered' && (
               <Button
+                appearance="ghost"
                 disabled={busy}
                 onClick={() => setAction('close')}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               >
                 {k(closeActionKey)}
               </Button>
             )}
             {capabilities.cancellable && (
               <Button
+                appearance="ghost"
                 disabled={busy}
                 onClick={() => {
                   browserRuntime.runFork(
@@ -1433,9 +1434,8 @@ export const SalesOrderPanel = ({
                     ),
                   );
                 }}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               >
                 {k('sales.actions.cancel')}
               </Button>

@@ -137,8 +137,8 @@ export function AccountOrders({
             href={`/sledovani-zasilky?order=${encodeURIComponent(latest.id)}`}
             data-account-action
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {text.trackLatest}
           </LinkButton>
@@ -179,7 +179,7 @@ export function AccountOrders({
           {total > orders.length && ` · ${text.pageFiltersNote}`}
         </output>
         {filtered && (
-          <Button size="sm" theme="unstyled" onClick={clear} className="underline">
+          <Button size="sm" unstyled onClick={clear} className="underline">
             {text.clearFilters}
           </Button>
         )}
@@ -200,7 +200,7 @@ export function AccountOrders({
               data={visible}
               columns={columns}
               size="sm"
-              variant="line"
+              appearance="line"
               enableSorting
               translations={{ emptyTitle: text.noMatchTitle }}
             />
@@ -246,8 +246,8 @@ export function AccountOrders({
                     as={StoreLink}
                     href={orderHref(order)}
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
+                    appearance="outline"
+                    severity="secondary"
                     data-account-action
                   >
                     {text.detail}

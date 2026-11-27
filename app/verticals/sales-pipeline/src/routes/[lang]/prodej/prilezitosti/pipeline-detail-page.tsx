@@ -57,7 +57,7 @@ export const PipelineDetailPage = ({
         }
         breadcrumbs={
           <div>
-            <Button icon="icon-[mdi--arrow-left]" onClick={onBack} size="sm" theme="outlined" variant="secondary">
+            <Button appearance="outline" icon="icon-[mdi--arrow-left]" onClick={onBack} severity="secondary" size="sm">
               {t('sales-pipeline.detail.backToList')}
             </Button>
           </div>

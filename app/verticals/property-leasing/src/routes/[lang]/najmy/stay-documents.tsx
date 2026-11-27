@@ -42,7 +42,7 @@ export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly O
           timelineEntries(entries).map(({ entry, key }) => (
             <article className="sp-tenant-event" key={key}>
               <div className="sp-tenant-heading">
-                <Badge size="sm" variant={entry.kind === 'CANCELLED' ? 'danger' : 'outline'}>
+                <Badge severity={entry.kind === 'CANCELLED' ? 'danger' : 'neutral'} size="sm">
                   {historyLabels[entry.kind]}
                 </Badge>
                 <span className="sp-tenant-muted">
@@ -122,7 +122,7 @@ export const RegistrationSheetCard = ({
       <SectionCard
         actions={
           canWrite && allowed && !open ? (
-            <Button disabled={busy} onClick={() => setOpen(true)} size="sm" variant="primary">
+            <Button disabled={busy} onClick={() => setOpen(true)} severity="primary" size="sm">
               Založit evidenční list
             </Button>
           ) : undefined
@@ -146,7 +146,7 @@ export const RegistrationSheetCard = ({
           <article className="sp-tenant-contact" key={sheet.sheetId}>
             <div className="sp-tenant-heading">
               <strong>{sheet.number}</strong>
-              <Button onClick={() => printSheet(sheet, context)} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" onClick={() => printSheet(sheet, context)} severity="secondary" size="sm">
                 Vytisknout
               </Button>
             </div>
@@ -215,10 +215,10 @@ export const NoticeCard = ({
           <article className="sp-tenant-event" key={notice.noticeId}>
             <div className="sp-tenant-heading">
               <span className="sp-tenant-actions">
-                <Badge size="sm" variant="outline">
+                <Badge appearance="outline" severity="neutral" size="sm">
                   {channelLabels[notice.channel]}
                 </Badge>
-                <Badge size="sm" variant="warning">
+                <Badge severity="warning" size="sm">
                   Neodesláno
                 </Badge>
               </span>

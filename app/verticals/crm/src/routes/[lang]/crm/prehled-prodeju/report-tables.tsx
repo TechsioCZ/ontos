@@ -76,15 +76,15 @@ export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: Cr
   );
 
 const meaningVariant = {
-  cancelled: 'outline',
+  cancelled: 'neutral',
   fulfilled: 'success',
   open: 'info',
   paid: 'success',
   unmapped: 'warning',
-} satisfies Record<StatusMeaningOrUnmapped, 'outline' | 'info' | 'success' | 'warning' | 'danger'>;
+} satisfies Record<StatusMeaningOrUnmapped, 'neutral' | 'info' | 'success' | 'warning' | 'danger'>;
 
 export const MeaningBadge = ({ meaning }: { readonly meaning: StatusMeaningOrUnmapped }) => (
-  <Badge size="sm" variant={meaningVariant[meaning]}>
+  <Badge severity={meaningVariant[meaning]} size="sm">
     {statusMeaningLabels[meaning]}
   </Badge>
 );
@@ -165,24 +165,24 @@ export const SummaryTable = ({
           >
             {groupingKeys.map((key) => (
               <Button
+                appearance={key === grouping ? 'solid' : 'ghost'}
                 aria-pressed={key === grouping}
                 key={key}
                 onClick={() => onGroupingChange(key)}
+                severity={key === grouping ? 'primary' : 'secondary'}
                 size="sm"
-                theme={key === grouping ? 'solid' : 'borderless'}
-                variant={key === grouping ? 'primary' : 'secondary'}
               >
                 {groupingLabels[key]}
               </Button>
             ))}
           </fieldset>
           <Button
+            appearance="outline"
             disabled={groups.length === 0}
             icon="icon-[mdi--download]"
             onClick={onExport}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Export souhrnu (CSV)
           </Button>
@@ -371,7 +371,7 @@ const orderColumns = (
         <span>{orderStatusLabel(info.getValue<string>())}</span>
         {info.row.original.meaning !== 'unmapped' && <MeaningBadge meaning={info.row.original.meaning} />}
         {info.row.original.order.statusHistory.some((event) => event.review === true) && (
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             Sporná změna stavu
           </Badge>
         )}
@@ -426,14 +426,14 @@ export const OrdersTable = ({
             CSV obsahuje pouze aktuální stránku, ve zvoleném pořadí. Pro všechny řádky zvyšte počet na stránku.
           </span>
           <Button
+            appearance="outline"
             disabled={table.getRowModel().rows.length === 0}
             icon="icon-[mdi--download]"
             onClick={() =>
               downloadCsv(ordersCsv({ ...report, rows: table.getRowModel().rows.map((row) => row.original) }), fileName)
             }
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             Export objednávek (CSV)
           </Button>

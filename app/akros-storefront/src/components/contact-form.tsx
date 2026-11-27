@@ -149,7 +149,7 @@ export function ContactForm({
         />
         <p>{copy.privacyNote(brand.name)}</p>
         {kind === "COMPLAINT" && <p>{copy.complaintNote}</p>}
-        <Button size={compact ? "md" : undefined} type="submit" variant="primary">
+        <Button size={compact ? "md" : undefined} type="submit" severity="primary">
           {pending ? copy.sending : copy.submit}
         </Button>
       </fieldset>

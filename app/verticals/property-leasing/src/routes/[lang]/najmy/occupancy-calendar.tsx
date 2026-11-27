@@ -68,29 +68,29 @@ export const OccupancyCalendar = ({
         actions={
           <div className="sp-calendar-controls">
             <Button
+              appearance="outline"
               aria-label={t('property-leasing.calendar.previousMonth')}
               onClick={() => shift(-1)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               ←
             </Button>
             <strong>{monthFormat.format(DateTime.toEpochMillis(start))}</strong>
             <Button
+              appearance="outline"
               aria-label={t('property-leasing.calendar.nextMonth')}
               onClick={() => shift(1)}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               →
             </Button>
             <Button
+              appearance="ghost"
               onClick={() => onMonthChange(`${today.slice(0, 7)}-01`)}
+              severity="secondary"
               size="sm"
-              theme="borderless"
-              variant="secondary"
             >
               Dnes
             </Button>

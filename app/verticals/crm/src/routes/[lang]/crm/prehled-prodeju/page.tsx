@@ -81,11 +81,11 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
         description="Počty a hodnoty importovaných objednávek spárovaných s klienty, po obdobích, obchodnících, klientech a stavech. Každá měna zvlášť."
         meta={
           scopeAll ? (
-            <Badge size="sm" variant="info">
+            <Badge severity="info" size="sm">
               Všichni klienti firmy
             </Badge>
           ) : (
-            <Badge size="sm" variant="warning">
+            <Badge severity="warning" size="sm">
               Jen vaši klienti
             </Badge>
           )

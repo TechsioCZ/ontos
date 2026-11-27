@@ -123,6 +123,7 @@ const PurchasingTabs = ({
   const k = usePurchasingT();
   return (
     <Tabs
+      appearance="line"
       onValueChange={(value) => {
         const nextTab = tabs.find((candidate) => candidate === value);
         if (nextTab !== undefined) {
@@ -131,7 +132,6 @@ const PurchasingTabs = ({
       }}
       size="sm"
       value={tab}
-      variant="line"
     >
       <div className="max-w-full overflow-x-auto">
         <Tabs.List className="min-w-max">
@@ -140,7 +140,7 @@ const PurchasingTabs = ({
             <span className="flex items-center gap-100">
               {k('tabs.replenish')}
               {suggestions > 0 && (
-                <Badge size="sm" variant="warning">
+                <Badge severity="warning" size="sm">
                   {String(suggestions)}
                 </Badge>
               )}
@@ -373,40 +373,40 @@ const PurchasingView = () => {
       <div className="flex flex-wrap items-center gap-100">
         {tab === 'suppliers' && (
           <Button
+            appearance="outline"
             icon="icon-[mdi--plus]"
             onClick={() => setPanel({ kind: panelKinds.createSupplier })}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {k('actions.newSupplier')}
           </Button>
         )}
         {tab === 'stock' && (
           <Button
+            appearance="outline"
             icon="icon-[mdi--plus]"
             onClick={() => setPanel({ kind: panelKinds.createItem })}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {k('actions.newItem')}
           </Button>
         )}
         <Button
+          appearance="outline"
           icon="icon-[mdi--file-document-edit-outline]"
           onClick={() => setPanel({ kind: panelKinds.createQuote })}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {k('actions.newQuote')}
         </Button>
         <Button
           icon="icon-[mdi--cart-plus]"
           onClick={() => setPanel({ kind: panelKinds.createOrder })}
+          severity="primary"
           size="sm"
-          variant="primary"
         >
           {k('actions.newOrder')}
         </Button>

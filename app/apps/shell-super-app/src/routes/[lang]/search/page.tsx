@@ -238,10 +238,10 @@ const SearchAgendaFallback = ({ shell }: { readonly shell: AuthenticatedHomePage
               block
               className="justify-start hover:bg-overlay"
               icon={link.icon}
+              severity="secondary"
               size="sm"
-              theme="unstyled"
               to={link.href ?? '/'}
-              variant="secondary"
+              unstyled
             >
               {link.label}
             </LinkButton>
@@ -497,7 +497,7 @@ const SearchPage = () => {
   const { shell } = activeModel;
   if (activeModel.state === 'reload_required' || shell.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" showIcon status="error">
           {t('shell.moduleTarget.reload_required')}
         </StatusText>
@@ -509,7 +509,7 @@ const SearchPage = () => {
   }
   if (shell.state !== 'authenticated') {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" showIcon status="error">
           {t(shell.state === 'unavailable' ? 'shell.dashboard.unavailable' : 'shell.search.selection_required')}
         </StatusText>

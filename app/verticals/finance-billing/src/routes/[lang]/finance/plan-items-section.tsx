@@ -50,7 +50,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
     <SectionCard
       actions={
         vm.canWrite ? (
-          <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newPlanDraft(today))} size="sm" variant="primary">
+          <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newPlanDraft(today))} severity="primary" size="sm">
             Nová položka plánu
           </Button>
         ) : undefined
@@ -77,7 +77,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
             </span>
           </div>
           <FinanceTableScroll label={t('finance-billing.financeUi.plan.table')}>
-            <Table size="sm" variant="line">
+            <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Položka</Table.ColumnHeader>
@@ -100,7 +100,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
                       </span>
                     </Table.Cell>
                     <Table.Cell>
-                      <Badge size="sm" variant={item.kind === 'COST' ? 'warning' : 'success'}>
+                      <Badge severity={item.kind === 'COST' ? 'warning' : 'success'} size="sm">
                         {item.kind === 'COST' ? 'Výdaj' : 'Příjem'}
                       </Badge>
                     </Table.Cell>
@@ -119,20 +119,20 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
                       {vm.canWrite && (
                         <span className="flex justify-end gap-50">
                           <Button
+                            appearance="ghost"
                             aria-label={`Upravit ${item.title}`}
                             icon="icon-[mdi--pencil-outline]"
                             onClick={() => setDraft(editPlanItemDraft(item))}
+                            severity="secondary"
                             size="sm"
-                            theme="borderless"
-                            variant="secondary"
                           />
                           <Button
+                            appearance="ghost"
                             aria-label={`Smazat ${item.title}`}
                             icon="icon-[mdi--delete-outline]"
                             onClick={() => setDeleteTarget(item)}
+                            severity="secondary"
                             size="sm"
-                            theme="borderless"
-                            variant="secondary"
                           />
                         </span>
                       )}
@@ -148,7 +148,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
       <Dialog
         actions={
           <>
-            <Button onClick={() => setDeleteTarget(undefined)} theme="outlined" variant="secondary">
+            <Button appearance="outline" onClick={() => setDeleteTarget(undefined)} severity="secondary">
               Zrušit
             </Button>
             <Button
@@ -160,7 +160,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
                 }
                 setDeleteTarget(undefined);
               }}
-              variant="danger"
+              severity="danger"
             >
               Smazat
             </Button>

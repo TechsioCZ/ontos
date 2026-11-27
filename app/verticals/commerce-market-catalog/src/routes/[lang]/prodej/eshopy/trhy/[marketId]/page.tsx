@@ -144,7 +144,7 @@ const HeaderActions = ({
   return (
     <>
       {editable && (
-        <Button onClick={handleEdit} theme="solid" variant="primary">
+        <Button appearance="solid" onClick={handleEdit} severity="primary">
           {text('detail.edit')}
         </Button>
       )}
@@ -152,10 +152,10 @@ const HeaderActions = ({
         const handleClick = () => onOpen(action);
         return (
           <Button
+            appearance="outline"
             key={action}
             onClick={handleClick}
-            theme="outlined"
-            variant={action === 'retire' ? 'danger' : 'secondary'}
+            severity={action === 'retire' ? 'danger' : 'secondary'}
           >
             {text(action === 'retire' ? 'detail.retire.action' : `detail.${action}`)}
           </Button>
@@ -234,7 +234,7 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
   };
   const closeDialog = () => setDialog(null);
   const backButton = (
-    <Button onClick={handleBack} size="sm" theme="outlined" variant="secondary">
+    <Button appearance="outline" onClick={handleBack} severity="secondary" size="sm">
       {text('detail.back')}
     </Button>
   );

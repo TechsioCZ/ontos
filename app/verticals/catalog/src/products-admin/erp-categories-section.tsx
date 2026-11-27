@@ -194,7 +194,7 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
         {categories.length === 0 ? (
           <span className="text-fg-secondary text-sm">Žádné kategorie.</span>
         ) : (
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
@@ -222,19 +222,19 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                             isLoading={busy}
                             loadingText="Ukládám…"
                             onClick={() => saveName(category, renaming.name)}
+                            severity="primary"
                             size="sm"
                             type="button"
-                            variant="primary"
                           >
                             Uložit název
                           </Button>
                           <Button
+                            appearance="outline"
                             disabled={busy}
                             onClick={() => setRenaming(null)}
+                            severity="secondary"
                             size="sm"
-                            theme="outlined"
                             type="button"
-                            variant="secondary"
                           >
                             Zrušit
                           </Button>
@@ -249,16 +249,16 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                       <div className="flex flex-wrap items-center gap-100">
                         {renaming?.id !== id && confirming !== id && (
                           <Button
+                            appearance="ghost"
                             disabled={busy}
                             onClick={() => {
                               setRenaming({ id, name: category.name });
                               setConfirming(null);
                               setOutcome(null);
                             }}
+                            severity="secondary"
                             size="sm"
-                            theme="borderless"
                             type="button"
-                            variant="secondary"
                           >
                             Přejmenovat
                           </Button>
@@ -266,6 +266,7 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                         {!isEmpty(category) && <span className="text-fg-secondary text-xs">Není prázdná</span>}
                         {isEmpty(category) && confirming !== id && renaming?.id !== id && (
                           <Button
+                            appearance="outline"
                             disabled={busy}
                             onClick={() => {
                               setConfirming(id);
@@ -273,10 +274,9 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               setReason('');
                               setOutcome(null);
                             }}
+                            severity="secondary"
                             size="sm"
-                            theme="outlined"
                             type="button"
-                            variant="secondary"
                           >
                             Vyřadit
                           </Button>
@@ -295,19 +295,19 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               isLoading={busy}
                               loadingText="Vyřazuji…"
                               onClick={() => confirm(category)}
+                              severity="primary"
                               size="sm"
                               type="button"
-                              variant="primary"
                             >
                               Potvrdit vyřazení
                             </Button>
                             <Button
+                              appearance="outline"
                               disabled={busy}
                               onClick={() => setConfirming(null)}
+                              severity="secondary"
                               size="sm"
-                              theme="outlined"
                               type="button"
-                              variant="secondary"
                             >
                               Zrušit
                             </Button>

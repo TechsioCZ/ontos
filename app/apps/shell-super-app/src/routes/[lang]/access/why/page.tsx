@@ -45,7 +45,7 @@ const WhyPageContent = ({ model }: { readonly model: WhyPageModel }) => {
   const onCheck = (draft: WhySearchDraft) => startTransition(() => submit(draft));
   if (model.shell.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:p-6">
+      <main className="p-300">
         <StatusText showIcon status="error">
           {t('shell.moduleTarget.reload_required')}
         </StatusText>
@@ -74,7 +74,7 @@ const WhyPageContent = ({ model }: { readonly model: WhyPageModel }) => {
     );
   }
   return (
-    <main className="shell:p-6">
+    <main className="p-300">
       <StatusText showIcon status="error">
         {t(
           model.shell.state === 'anonymous'

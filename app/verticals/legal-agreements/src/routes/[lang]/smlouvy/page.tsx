@@ -96,11 +96,11 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
     return (
       <>
         <LinkButton
+          appearance="ghost"
           href={`/${language}/smlouvy`}
           icon="icon-[mdi--arrow-left]"
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {t('legal-agreements.detail.back')}
         </LinkButton>
@@ -116,11 +116,11 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       <DocumentTitle title={state.titleOf(selected)} />
       <div>
         <LinkButton
+          appearance="ghost"
           href={`/${language}/smlouvy`}
           icon="icon-[mdi--arrow-left]"
+          severity="secondary"
           size="sm"
-          theme="borderless"
-          variant="secondary"
         >
           {t('legal-agreements.detail.back')}
         </LinkButton>
@@ -187,7 +187,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                 key={record.documentRef.resourceId}
               >
                 {record.title} · {record.fileName} ·{' '}
-                <Badge size="sm" variant={record.lifecycleState === 'FINAL' ? 'success' : 'outline'}>
+                <Badge severity={record.lifecycleState === 'FINAL' ? 'success' : 'neutral'} size="sm">
                   {t(`legal-agreements.demo.documentLabels.${record.lifecycleState}`)}
                 </Badge>{' '}
                 <SignedDocumentReference
@@ -198,11 +198,11 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                 {record.signedOn === undefined ? '' : ` · ${formatDate(record.signedOn)}`}
                 {record.lifecycleState !== 'ARCHIVED' && (
                   <Button
+                    appearance="outline"
                     disabled={busy}
                     onClick={() => runCommand({ _tag: 'ArchiveDocument', documentRef: record.documentRef })}
+                    severity="secondary"
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
                   >
                     {t('legal-agreements.demo.archive')}
                   </Button>
@@ -223,22 +223,22 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           <SectionCard title={t('legal-agreements.detail.status')}>
             <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
               <Badge
-                size="sm"
-                variant={
-                  ({ ACTIVE: 'success', DRAFT: 'outline', EXPIRED: 'warning', TERMINATED: 'danger' } as const)[
+                severity={
+                  ({ ACTIVE: 'success', DRAFT: 'neutral', EXPIRED: 'warning', TERMINATED: 'danger' } as const)[
                     selected.lifecycleState
                   ]
                 }
+                size="sm"
               >
                 {t(`legal-agreements.demo.lifecycleLabels.${selected.lifecycleState}`)}
               </Badge>
               <Badge
-                size="sm"
-                variant={
-                  ({ DECLINED: 'danger', NOT_SENT: 'outline', SENT: 'info', SIGNED: 'success' } as const)[
+                severity={
+                  ({ DECLINED: 'danger', NOT_SENT: 'neutral', SENT: 'info', SIGNED: 'success' } as const)[
                     selected.signatureState
                   ]
                 }
+                size="sm"
               >
                 {t(`legal-agreements.demo.signatureLabels.${selected.signatureState}`)}
               </Badge>
@@ -248,10 +248,10 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           {selected.supersedesContractRef !== null && (
             <SectionCard title={t('legal-agreements.demo.supersedes')}>
               <LinkButton
+                appearance="outline"
                 href={`/${language}/smlouvy?resourceId=${selected.supersedesContractRef.resourceId}`}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(LABEL_DETAIL)}
               </LinkButton>
@@ -259,7 +259,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           )}
           <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
             {state.detailView.canEdit && (
-              <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" disabled={busy} onClick={editDraft} severity="secondary" size="sm">
                 {t('legal-agreements.demo.editDraft')}
               </Button>
             )}
@@ -267,8 +267,8 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               <Button
                 disabled={busy}
                 onClick={() => runCommand({ _tag: 'ActivateContract', contractRef: selected.contractRef })}
+                severity="warning"
                 size="sm"
-                variant="warning"
               >
                 {t('legal-agreements.demo.activate')}
               </Button>
@@ -278,17 +278,17 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                 <Button
                   disabled={busy || selected.hasSuccessorDraft}
                   onClick={() => renew(selected)}
+                  severity="warning"
                   size="sm"
-                  variant="warning"
                 >
                   {t('legal-agreements.demo.renew')}
                 </Button>
                 <Button
+                  appearance="outline"
                   disabled={busy}
                   onClick={() => runCommand({ _tag: 'TerminateContract', contractRef: selected.contractRef })}
+                  severity="danger"
                   size="sm"
-                  theme="outlined"
-                  variant="danger"
                 >
                   {t('legal-agreements.demo.terminate')}
                 </Button>
@@ -344,8 +344,8 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                 <Button
                   disabled={busy || snapshot === undefined}
                   onClick={() => state.resetDraftForm()}
+                  severity="primary"
                   size="sm"
-                  variant="primary"
                 >
                   {t('legal-agreements.detail.newContract')}
                 </Button>
@@ -354,8 +354,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               meta={
                 <output aria-live="polite">
                   <Badge
-                    size="sm"
-                    variant={
+                    severity={
                       (
                         {
                           conflict: 'warning',
@@ -368,6 +367,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                         } as const
                       )[feedback]
                     }
+                    size="sm"
                   >
                     {t(`legal-agreements.demo.feedback.${feedback}`)}
                   </Badge>
@@ -378,26 +378,26 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
             <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:justify-between legalagreements:gap-4 legalagreements:pb-4">
               <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
                 <Button
+                  appearance="ghost"
                   aria-pressed={!expiringOnly}
                   onClick={() => setExpiringOnly(false)}
+                  severity={expiringOnly ? 'secondary' : 'warning'}
                   size="sm"
-                  theme="borderless"
-                  variant={expiringOnly ? 'secondary' : 'warning'}
                 >
                   {t('legal-agreements.demo.all')}
                 </Button>
                 <Button
+                  appearance="ghost"
                   aria-pressed={expiringOnly}
                   onClick={() => setExpiringOnly(true)}
+                  severity={expiringOnly ? 'warning' : 'secondary'}
                   size="sm"
-                  theme="borderless"
-                  variant={expiringOnly ? 'warning' : 'secondary'}
                 >
                   {t('legal-agreements.demo.expiring')}
                 </Button>
               </div>
               {(feedback === 'unavailable' || feedback === 'forbidden') && (
-                <Button disabled={busy} onClick={retry} size="sm" theme="outlined" variant="secondary">
+                <Button appearance="outline" disabled={busy} onClick={retry} severity="secondary" size="sm">
                   {t('legal-agreements.demo.retry')}
                 </Button>
               )}
@@ -410,7 +410,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               </p>
             )}
             <div className="legalagreements:overflow-x-auto">
-              <Table size="sm" variant="line">
+              <Table appearance="line" size="sm">
                 <Table.Caption>{t('legal-agreements.demo.list')}</Table.Caption>
                 <Table.Header>
                   <Table.Row>
@@ -448,47 +448,47 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                       <Table.Cell>
                         <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
                           <Badge
-                            size="sm"
-                            variant={
+                            severity={
                               (
                                 {
                                   ACTIVE: 'success',
-                                  DRAFT: 'outline',
+                                  DRAFT: 'neutral',
                                   EXPIRED: 'warning',
                                   TERMINATED: 'danger',
                                 } as const
                               )[record.lifecycleState]
                             }
+                            size="sm"
                           >
                             {t(`legal-agreements.demo.lifecycleLabels.${record.lifecycleState}`)}
                           </Badge>
                           {record.expiringSoon && (
-                            <Badge variant="warning">{t('legal-agreements.demo.expiring')}</Badge>
+                            <Badge severity="warning">{t('legal-agreements.demo.expiring')}</Badge>
                           )}
                           {record.hasSuccessorDraft && (
-                            <Badge variant="info">{t('legal-agreements.demo.successorExists')}</Badge>
+                            <Badge severity="info">{t('legal-agreements.demo.successorExists')}</Badge>
                           )}
-                          {record.isExpired && <Badge variant="warning">{t('legal-agreements.demo.expired')}</Badge>}
+                          {record.isExpired && <Badge severity="warning">{t('legal-agreements.demo.expired')}</Badge>}
                         </div>
                       </Table.Cell>
                       <Table.Cell>
                         <Badge
-                          size="sm"
-                          variant={
-                            ({ DECLINED: 'danger', NOT_SENT: 'outline', SENT: 'info', SIGNED: 'success' } as const)[
+                          severity={
+                            ({ DECLINED: 'danger', NOT_SENT: 'neutral', SENT: 'info', SIGNED: 'success' } as const)[
                               record.signatureState
                             ]
                           }
+                          size="sm"
                         >
                           {t(`legal-agreements.demo.signatureLabels.${record.signatureState}`)}
                         </Badge>
                       </Table.Cell>
                       <Table.Cell>
                         <LinkButton
+                          appearance="outline"
                           href={`/${state.language}/smlouvy?resourceId=${record.contractRef.resourceId}`}
+                          severity="secondary"
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
                         >
                           {t(LABEL_DETAIL)}
                         </LinkButton>

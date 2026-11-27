@@ -163,8 +163,8 @@ export const CategoryView = ({
                 block
                 onClick={() => setBrowseOpen(!browseOpen)}
                 size="md"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {d.browseCategories}
               </Button>
@@ -184,8 +184,8 @@ export const CategoryView = ({
                         block
                         href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
                         size="md"
-                        theme="outlined"
-                        variant="secondary"
+                        appearance="outline"
+                        severity="secondary"
                       >
                         {category.name}
                       </LinkButton>

@@ -249,7 +249,7 @@ const LoginPage = () => {
               <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
             </span>
             <span className="flex-1 font-semibold text-xl">OntOS</span>
-            <Badge size="sm" variant="outline">
+            <Badge appearance="outline" severity="neutral" size="sm">
               DEMO
             </Badge>
           </div>
@@ -282,12 +282,12 @@ const LoginPage = () => {
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
           <div hidden={oauthError !== undefined}>
-            <h1 className="shell:text-2xl shell:font-bold" hidden={attempt === 'opening'}>
+            <h1 className="text-2xl font-bold" hidden={attempt === 'opening'}>
               {t('shell.login.title')}
             </h1>
             <form
               action={`/${language}/login`}
-              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              className="mt-200 flex flex-col gap-200"
               data-hydrated={hydrated}
               method="post"
               noValidate
@@ -335,14 +335,14 @@ const LoginPage = () => {
                 </div>
               )}
               <Button
+                appearance="solid"
                 block
                 disabled={submitDisabled(hydrated, attempt)}
                 isLoading={attempt !== 'idle'}
                 loadingText={t(attempt === 'opening' ? 'shell.login.opening' : 'shell.login.pending')}
+                severity="primary"
                 size="md"
-                theme="solid"
                 type="submit"
-                variant="primary"
               >
                 {t('shell.login.submit')}
               </Button>

@@ -279,12 +279,12 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
             ))}
             <div>
               <Button
+                appearance="outline"
                 icon="icon-[mdi--plus]"
                 id={ADD_LINE_BUTTON_ID}
                 onClick={addLine}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(`${ns}.form.addLine`)}
               </Button>

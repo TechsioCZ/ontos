@@ -23,6 +23,7 @@ const ReviewParty = ({
   return (
     <div className="flex flex-col gap-150" key={partyRef.resourceId}>
       <Button
+        appearance="outline"
         aria-pressed={review.selectedPartyId === partyRef.resourceId}
         disabled={
           !review.canResolve ||
@@ -31,9 +32,8 @@ const ReviewParty = ({
           Option.isSome(identity.value.party.archivedAt)
         }
         onClick={() => review.setSelectedPartyId(partyRef.resourceId)}
+        severity="secondary"
         size="sm"
-        theme="outlined"
-        variant="secondary"
       >
         {t(`${reviewKey}.selectParty`, {
           name:
@@ -148,35 +148,35 @@ const ReviewCaseDetail = ({
         <Button
           disabled={!review.canResolve || review.selectedPartyId === '' || review.reason.trim() === ''}
           onClick={() => review.resolve('MATCH_EXISTING')}
+          severity="primary"
           size="sm"
-          variant="primary"
         >
           {t(`${reviewKey}.match`)}
         </Button>
         <Button
+          appearance="outline"
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('CREATE_NEW')}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {t(`${reviewKey}.createNew`)}
         </Button>
         <Button
+          appearance="outline"
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('NEEDS_EVIDENCE')}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {t(`${reviewKey}.needsEvidence`)}
         </Button>
         <Button
+          appearance="outline"
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('DISMISSED_AS_NON_SUBJECT')}
+          severity="secondary"
           size="sm"
-          theme="outlined"
-          variant="secondary"
         >
           {t(`${reviewKey}.dismiss`)}
         </Button>
@@ -191,7 +191,12 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
   return (
     <SidePanel
       actions={
-        <Button disabled={review.busy} onClick={() => review.closeReview(false)} theme="outlined" variant="secondary">
+        <Button
+          appearance="outline"
+          disabled={review.busy}
+          onClick={() => review.closeReview(false)}
+          severity="secondary"
+        >
           {t(`${reviewKey}.close`)}
         </Button>
       }
@@ -211,15 +216,15 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
         {review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null && (
           <div className="flex flex-wrap gap-150">
             <Button
+              appearance="outline"
               disabled={review.busy || review.uncertain}
               onClick={() => {
                 if (review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null) {
                   review.loadQueue(review.queue.value.nextCaseRef);
                 }
               }}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {t(`${reviewKey}.next`)}
             </Button>
@@ -230,11 +235,11 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
           <div className="flex flex-wrap items-center gap-150">
             <StatusText status="error">{t(`${reviewKey}.${review.queue.failure}`)}</StatusText>
             <Button
+              appearance="outline"
               disabled={review.busy || review.uncertain}
               onClick={() => review.retryQueue()}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {t(`${reviewKey}.retryQueue`)}
             </Button>
@@ -245,13 +250,13 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
             {review.queue.value.items.length === 0 && <p>{t(`${reviewKey}.empty`)}</p>}
             {review.queue.value.items.map((item) => (
               <Button
+                appearance="outline"
                 aria-pressed={duplicate?.candidateCase.caseRef.resourceId === item.caseRef.resourceId}
                 disabled={review.busy || review.uncertain}
                 key={item.caseRef.resourceId}
                 onClick={() => review.selectCase(item.caseRef)}
+                severity="secondary"
                 size="sm"
-                theme="outlined"
-                variant="secondary"
               >
                 {t(`${reviewKey}.caseLabel`, {
                   name: item.displayName ?? t(`${reviewKey}.unnamed`),
@@ -268,11 +273,11 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
           <div className="flex flex-wrap items-center gap-150">
             <StatusText status="error">{t(`${reviewKey}.${review.detail.failure}`)}</StatusText>
             <Button
+              appearance="outline"
               disabled={review.busy || review.uncertain}
               onClick={() => review.retryDetail()}
+              severity="secondary"
               size="sm"
-              theme="outlined"
-              variant="secondary"
             >
               {t(`${reviewKey}.retryDetail`)}
             </Button>
@@ -282,11 +287,11 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
         {review.busy && <StatusText aria-live="polite">{t(`${reviewKey}.saving`)}</StatusText>}
         {review.uncertain && (
           <Button
+            appearance="outline"
             disabled={review.busy}
             onClick={() => review.checkStatus()}
+            severity="secondary"
             size="sm"
-            theme="outlined"
-            variant="secondary"
           >
             {t(`${reviewKey}.checkStatus`)}
           </Button>

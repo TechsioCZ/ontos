@@ -175,10 +175,10 @@ export const NotificationCenter = ({
           </div>
           {canWrite && (
             <>
-              <Button isLoading={busy} onClick={onCheck} size="sm" theme="outlined" variant="secondary">
+              <Button appearance="outline" isLoading={busy} onClick={onCheck} severity="secondary" size="sm">
                 {t(`${k}.notifications.check`)}
               </Button>
-              <Button disabled={unread.length === 0} onClick={onMarkAll} size="sm" variant="primary">
+              <Button disabled={unread.length === 0} onClick={onMarkAll} severity="primary" size="sm">
                 {t(`${k}.notifications.markAll`)}
               </Button>
             </>
@@ -268,7 +268,7 @@ export const NotificationCenter = ({
                     </a>
                   )}
                   {isUnread && canWrite && (
-                    <Button onClick={() => onMarkRead(entry.id)} size="sm" theme="borderless" variant="secondary">
+                    <Button appearance="ghost" onClick={() => onMarkRead(entry.id)} severity="secondary" size="sm">
                       {t(`${k}.notifications.markRead`)}
                     </Button>
                   )}

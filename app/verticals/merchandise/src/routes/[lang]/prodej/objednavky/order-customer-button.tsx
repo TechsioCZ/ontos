@@ -52,13 +52,13 @@ export const OrderCustomerButton = ({
   };
   return (
     <>
-      <Button onClick={() => setOpen(true)} size="sm" theme="outlined" variant="secondary">
+      <Button appearance="outline" onClick={() => setOpen(true)} severity="secondary" size="sm">
         Převést na zákazníka
       </Button>
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={() => setOpen(false)} theme="outlined" variant="secondary">
+            <Button appearance="outline" disabled={busy} onClick={() => setOpen(false)} severity="secondary">
               Zrušit
             </Button>
             <Button isLoading={busy} loadingText="Převádím…" onClick={convert}>

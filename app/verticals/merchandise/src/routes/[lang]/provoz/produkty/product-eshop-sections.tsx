@@ -127,12 +127,12 @@ export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, rev
         value={reason}
       />
       <Button
+        appearance="outline"
         data-testid="product-archive"
         disabled={busy || reason.trim().length < 5}
         isLoading={busy}
         onClick={() => setAsking(true)}
-        theme="outlined"
-        variant="danger"
+        severity="danger"
       >
         Archivovat produkt
       </Button>
@@ -191,7 +191,7 @@ export const RestoreSection = ({
         disabled={busy}
         isLoading={busy}
         onClick={handleRestore}
-        variant="secondary"
+        severity="secondary"
       >
         Obnovit produkt
       </Button>

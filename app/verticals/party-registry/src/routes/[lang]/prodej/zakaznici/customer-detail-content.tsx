@@ -56,7 +56,7 @@ export const CustomerDetailLoadNotice = ({
         {t(`${CUSTOMER_DETAIL_KEY}.${failure ?? 'loading'}`)}
       </StatusText>
       {failure === 'unavailable' && (
-        <Button onClick={onRetry} variant="secondary">
+        <Button onClick={onRetry} severity="secondary">
           {t(`${CUSTOMER_DETAIL_KEY}.reload`)}
         </Button>
       )}
@@ -140,10 +140,10 @@ const CustomerFacts = ({
               />
               {existing !== undefined && (
                 <Button
+                  appearance="outline"
                   disabled={detail.busy || detail.stale || !hasParty || detail.draft[key] !== undefined}
                   onClick={() => detail.runCommand({ existing, kind: 'endIdentifier' })}
-                  theme="outlined"
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {t(`${CUSTOMER_DETAIL_KEY}.endIdentifier`)}
                 </Button>
@@ -193,12 +193,12 @@ const CustomerFacts = ({
               )}
               {existing !== undefined && (
                 <Button
+                  appearance="outline"
                   disabled={
                     detail.busy || detail.stale || !editable || keys.some((key) => detail.draft[key] !== undefined)
                   }
                   onClick={() => detail.runCommand({ existing, kind: 'endContact' })}
-                  theme="outlined"
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {t(`${CUSTOMER_DETAIL_KEY}.endContact`)}
                 </Button>
@@ -307,7 +307,7 @@ export const CustomerDetailContent = ({
               />
             )}
             {stale && (
-              <Button disabled={busy} onClick={refresh} variant="secondary">
+              <Button disabled={busy} onClick={refresh} severity="secondary">
                 {t(`${CUSTOMER_DETAIL_KEY}.reload`)}
               </Button>
             )}
@@ -324,10 +324,10 @@ export const CustomerDetailContent = ({
                 />
                 <p className="text-fg-secondary text-sm">{t(`${CUSTOMER_DETAIL_KEY}.sharedIdentity`)}</p>
                 <Button
+                  appearance="outline"
                   disabled={busy || stale || dirty}
                   onClick={() => runCommand({ kind: 'lifecycle', party })}
-                  theme="outlined"
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {t(`${CUSTOMER_DETAIL_KEY}.${Option.isSome(party.archivedAt) ? 'restore' : 'archive'}`)}
                 </Button>

@@ -335,14 +335,14 @@ const RecordsConfirmation = ({
     <Dialog
       actions={
         <>
-          <Button onClick={onClose} theme="outlined" type="button" variant="secondary">
+          <Button appearance="outline" onClick={onClose} severity="secondary" type="button">
             {t(`${key}.editor.cancel`)}
           </Button>
           <Button
             disabled={view.editor.busy || (needsReason && reason.trim() === '')}
             onClick={confirm}
+            severity="danger"
             type="button"
-            variant="danger"
           >
             {needsReason ? t(`${key}.editor.archiveConfirm`) : t(`${key}.editor.retireConfirm`)}
           </Button>
@@ -546,7 +546,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
     <Dialog
       actions={
         <>
-          <Button onClick={close} theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={close} severity="secondary">
             {t(`${key}.editor.close`)}
           </Button>
           <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -620,7 +620,7 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
     <Dialog
       actions={
         <>
-          <Button disabled={editor.busy} onClick={close} theme="outlined" variant="secondary">
+          <Button appearance="outline" disabled={editor.busy} onClick={close} severity="secondary">
             {t(`${key}.editor.cancel`)}
           </Button>
           <SaveBar
@@ -691,7 +691,7 @@ const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; read
   }
   return (
     <div className={tableWrapperClass}>
-      <Table size="sm" variant="line">
+      <Table appearance="line" size="sm">
         <Table.Caption className="propertyportfolio:sr-only">{t(`${key}.${kind}`)}</Table.Caption>
         <Table.Header>
           <Table.Row>
@@ -706,11 +706,11 @@ const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; read
               <Table.Cell>{item.code}</Table.Cell>
               <Table.Cell>{item.name}</Table.Cell>
               <Table.Cell>
-                <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                <Badge severity={item.state === 'ACTIVE' ? 'success' : 'neutral'} size="sm">
                   {t(`${key}.states.${item.state}`)}
                 </Badge>
                 {item.archived && (
-                  <Badge size="sm" variant="secondary">
+                  <Badge severity="secondary" size="sm">
                     {t(`${key}.archived`)}
                   </Badge>
                 )}
@@ -718,11 +718,11 @@ const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; read
               </Table.Cell>
               <Table.Cell>
                 <Button
+                  appearance="outline"
                   disabled={editor.busy}
                   onClick={() => model.selectResource(item.id)}
+                  severity="secondary"
                   size="sm"
-                  theme="outlined"
-                  variant="secondary"
                 >
                   {t(`${key}.detail`)}
                 </Button>
@@ -746,33 +746,38 @@ const RecordsUnitActions = ({ view }: { readonly view: RecordsView }) => {
   return (
     <>
       {archived === undefined && (
-        <Button disabled={disabled} onClick={() => editor.beginUnitEdit(unit)} theme="outlined" variant="secondary">
+        <Button
+          appearance="outline"
+          disabled={disabled}
+          onClick={() => editor.beginUnitEdit(unit)}
+          severity="secondary"
+        >
           {t(`${key}.editor.editUnit`, { name: unit.name })}
         </Button>
       )}
       {unit.lifecycleState === 'RETIRED' && archived === undefined && (
         <Button
+          appearance="outline"
           disabled={disabled}
           onClick={() =>
             requestArchive(t(`${key}.unitLabel`, { code: unit.code }), (reason) => editor.archiveUnit(unit, reason))
           }
-          theme="outlined"
-          variant="danger"
+          severity="danger"
         >
           {t(`${key}.archiveUnit`)}
         </Button>
       )}
       {unit.archive !== undefined && model.property?.archive === undefined && (
-        <Button disabled={disabled} onClick={() => editor.restoreUnit(unit)} theme="outlined" variant="secondary">
+        <Button appearance="outline" disabled={disabled} onClick={() => editor.restoreUnit(unit)} severity="secondary">
           {t(`${key}.restore`)}
         </Button>
       )}
       {archived === undefined && unit.lifecycleState === 'ACTIVE' && (
         <Button
+          appearance="outline"
           disabled={disabled}
           onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
-          theme="outlined"
-          variant="secondary"
+          severity="secondary"
         >
           {t(`${key}.setOutOfService`)}
         </Button>
@@ -781,16 +786,16 @@ const RecordsUnitActions = ({ view }: { readonly view: RecordsView }) => {
         unit.lifecycleState === 'OUT_OF_SERVICE' &&
         model.property?.lifecycleState !== 'DISPOSED' && (
           <Button
+            appearance="outline"
             disabled={disabled}
             onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
-            theme="outlined"
-            variant="secondary"
+            severity="secondary"
           >
             {t(`${key}.returnToService`)}
           </Button>
         )}
       {archived === undefined && unit.lifecycleState !== 'RETIRED' && (
-        <Button disabled={disabled} onClick={() => requestRetire(unit)} theme="outlined" variant="danger">
+        <Button appearance="outline" disabled={disabled} onClick={() => requestRetire(unit)} severity="danger">
           {t(`${key}.retireUnit`)}
         </Button>
       )}
@@ -807,10 +812,10 @@ const RecordsPropertyActions = ({ view }: { readonly view: RecordsView }) => {
   if (property.archive !== undefined) {
     return (
       <Button
+        appearance="outline"
         disabled={editor.busy || editor.blocked}
         onClick={() => editor.restoreProperty(property)}
-        theme="outlined"
-        variant="secondary"
+        severity="secondary"
       >
         {t(`${key}.restore`)}
       </Button>
@@ -819,31 +824,31 @@ const RecordsPropertyActions = ({ view }: { readonly view: RecordsView }) => {
   return (
     <>
       <Button
+        appearance="outline"
         disabled={editor.busy || editor.blocked}
         onClick={() => editor.begin(property)}
-        theme="outlined"
-        variant="secondary"
+        severity="secondary"
       >
         {t(`${key}.editor.edit`)}
       </Button>
       <Button
+        appearance="outline"
         disabled={editor.busy || editor.blocked}
         onClick={() => editor.toggleLifecycle(property)}
-        theme="outlined"
-        variant="secondary"
+        severity="secondary"
       >
         {t(`${key}.editor.${property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
       </Button>
       {property.lifecycleState !== 'ACTIVE' && (
         <Button
+          appearance="outline"
           disabled={editor.busy || editor.blocked}
           onClick={() =>
             requestArchive(t(`${key}.propertyLabel`, { code: property.code }), (reason) =>
               editor.archiveProperty(property, reason),
             )
           }
-          theme="outlined"
-          variant="danger"
+          severity="danger"
         >
           {t(`${key}.archiveProperty`)}
         </Button>
@@ -918,7 +923,7 @@ const RecordsUnavailable = ({ failure, view }: { readonly failure: string; reado
     <div className="space-y-200">
       <output>{t(`${key}.${model.pending ? 'loading' : failure}`)}</output>
       {!model.pending && (
-        <Button onClick={() => model.loadSummary()} theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={() => model.loadSummary()} severity="secondary">
           {t(`${key}.retry`)}
         </Button>
       )}
@@ -1210,7 +1215,7 @@ const RecordsPageContent = (input: RecordsInput) => {
         <section>
           <output>{model.recordsLoading ? t(`${key}.loading`) : model.message}</output>
           {!model.recordsLoading && (
-            <Button onClick={() => model.refresh()} variant="secondary">
+            <Button onClick={() => model.refresh()} severity="secondary">
               {t(`${key}.retry`)}
             </Button>
           )}

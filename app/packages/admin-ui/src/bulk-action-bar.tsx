@@ -18,7 +18,7 @@ export const BulkActionBar = ({ children, onClear, selectedCount }: BulkActionBa
     <div className="flex flex-wrap items-center gap-150 rounded-lg bg-overlay p-150">
       <span className="font-medium text-sm tabular-nums">{`Vybráno: ${selectedCount}`}</span>
       <div className="flex flex-wrap items-center gap-100">{children}</div>
-      <Button className="ms-auto" onClick={onClear} size="sm" theme="borderless" variant="secondary">
+      <Button appearance="ghost" className="ms-auto" onClick={onClear} severity="secondary" size="sm">
         Zrušit výběr
       </Button>
     </div>

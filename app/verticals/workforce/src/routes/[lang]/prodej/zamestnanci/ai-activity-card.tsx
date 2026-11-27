@@ -10,7 +10,7 @@ import { aiActivityData } from './employees-data.ts';
 
 const key = 'workforce.pages.employees.aiActivity';
 
-type BadgeVariant = Exclude<NonNullable<ComponentProps<typeof Badge>['variant']>, 'dynamic'>;
+type BadgeVariant = Exclude<NonNullable<ComponentProps<typeof Badge>['severity']>, 'custom'>;
 
 const outcomeVariant = new Map<string, BadgeVariant>([
   ['allowed', 'info'],
@@ -73,10 +73,10 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
       actions={
         feed.state === 'ready' ? (
           <>
-            <Badge size="sm" variant="success">
+            <Badge severity="success" size="sm">
               {t(`${key}.executed`, { count: executed })}
             </Badge>
-            <Badge size="sm" variant="danger">
+            <Badge severity="danger" size="sm">
               {t(`${key}.denied`, { count: denied })}
             </Badge>
           </>
@@ -121,7 +121,7 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
                     <td className="px-150 py-100">
                       <span className="flex items-center gap-100">
                         {level !== undefined && (
-                          <Badge size="sm" variant={levelVariant[level]}>
+                          <Badge severity={levelVariant[level]} size="sm">
                             {t(`${key}.level`, { level })}
                           </Badge>
                         )}
@@ -130,7 +130,7 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
                     </td>
                     <td className="px-150 py-100">{actionLabel}</td>
                     <td className="px-150 py-100">
-                      <Badge size="sm" variant={outcomeVariant.get(entry.outcome) ?? 'outline'}>
+                      <Badge severity={outcomeVariant.get(entry.outcome) ?? 'neutral'} size="sm">
                         {label('outcomes', entry.outcome, t(`${key}.otherOutcome`))}
                       </Badge>
                     </td>

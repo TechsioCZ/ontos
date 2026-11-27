@@ -113,15 +113,15 @@ const labelClass = 'grid min-w-0 gap-50 text-sm';
 /** The stored status, except that an active grant whose live check does not pass now is not usable, not active. */
 const StatusBadge = ({ connection }: { readonly connection: ConnectionSummary }) =>
   connection.status === 'active' && !connection.live ? (
-    <Badge variant="warning">Teď nelze použít</Badge>
+    <Badge severity="warning">Teď nelze použít</Badge>
   ) : (
-    <Badge variant={statusBadge[connection.status]}>{statusLabel[connection.status]}</Badge>
+    <Badge severity={statusBadge[connection.status]}>{statusLabel[connection.status]}</Badge>
   );
 
 /** The effective write policy of a live grant; a dash while the grant is not usable, never a ceiling it does not have. */
 const WritePolicyCell = ({ connection }: { readonly connection: ConnectionSummary }) =>
   connection.live ? (
-    <Badge variant={writePolicyBadge[connection.writePolicy]}>{writePolicyLabel[connection.writePolicy]}</Badge>
+    <Badge severity={writePolicyBadge[connection.writePolicy]}>{writePolicyLabel[connection.writePolicy]}</Badge>
   ) : (
     '—'
   );
@@ -159,10 +159,10 @@ const ConnectionRevokeDialog = ({
   <Dialog
     actions={
       <>
-        <Button onClick={closeRevoke} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={closeRevoke} severity="secondary" size="sm">
           Zrušit
         </Button>
-        <Button disabled={busy} onClick={submitRevoke} size="sm" variant="danger">
+        <Button disabled={busy} onClick={submitRevoke} severity="danger" size="sm">
           Odpojit
         </Button>
       </>
@@ -416,7 +416,9 @@ export const ConnectionsAdminPanel = () => {
                   <tr className="border-border-primary/60 border-t" key={c.grantId}>
                     <td className="p-100">
                       <span className="font-semibold">{c.client.name}</span>{' '}
-                      <Badge variant="outline">{c.client.host}</Badge>
+                      <Badge appearance="outline" severity="neutral">
+                        {c.client.host}
+                      </Badge>
                     </td>
                     <td className="p-100">{c.user.displayName}</td>
                     <td className="p-100">{actingAdminLabel(c)}</td>
@@ -436,7 +438,7 @@ export const ConnectionsAdminPanel = () => {
                     <td className="whitespace-nowrap p-100">{formatWhen(c.lastUsedAt)}</td>
                     <td className="p-100">
                       {c.status === 'active' ? (
-                        <Button onClick={() => setTarget(c)} size="sm" variant="danger">
+                        <Button onClick={() => setTarget(c)} severity="danger" size="sm">
                           Odpojit
                         </Button>
                       ) : null}
@@ -453,7 +455,9 @@ export const ConnectionsAdminPanel = () => {
                 <div className="grid gap-100 text-sm">
                   <p>
                     <span className="font-semibold">{c.client.name}</span>{' '}
-                    <Badge variant="outline">{c.client.host}</Badge>
+                    <Badge appearance="outline" severity="neutral">
+                      {c.client.host}
+                    </Badge>
                   </p>
                   <p>Osoba: {c.user.displayName}</p>
                   <p>Jedná jako: {actingAdminLabel(c)}</p>
@@ -470,7 +474,7 @@ export const ConnectionsAdminPanel = () => {
                   <p>Připojeno: {formatWhen(c.createdAt)}</p>
                   <p>Naposledy použito: {formatWhen(c.lastUsedAt)}</p>
                   {c.status === 'active' ? (
-                    <Button onClick={() => setTarget(c)} size="sm" variant="danger">
+                    <Button onClick={() => setTarget(c)} severity="danger" size="sm">
                       Odpojit
                     </Button>
                   ) : null}

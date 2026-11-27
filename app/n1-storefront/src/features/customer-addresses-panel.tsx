@@ -68,7 +68,7 @@ const AddressCard = ({
           onClick={(event) => onAction({ address, operation: "update" }, event.currentTarget)}
           size="sm"
           type="button"
-          variant="secondary"
+          severity="secondary"
         >
           {d.accountPage.addressEditor.editAction}
         </Button>
@@ -77,7 +77,7 @@ const AddressCard = ({
           onClick={(event) => onAction({ address, operation: "remove" }, event.currentTarget)}
           size="sm"
           type="button"
-          variant="danger"
+          severity="danger"
         >
           {d.accountPage.addressEditor.removeAction}
         </Button>
@@ -212,13 +212,13 @@ const AddressBookEditor = ({
   let recover = null;
   if (failure === "unconfirmed") {
     recover = (
-      <Button onClick={retry} size="sm" type="button" variant="secondary">
+      <Button onClick={retry} size="sm" type="button" severity="secondary">
         {labels.retry}
       </Button>
     );
   } else if (reload) {
     recover = (
-      <Button onClick={refresh} size="sm" type="button" variant="secondary">
+      <Button onClick={refresh} size="sm" type="button" severity="secondary">
         {d.accountPage.reload}
       </Button>
     );
@@ -243,7 +243,7 @@ const AddressBookEditor = ({
         onClick={(event) => open({ operation: "add" }, event.currentTarget)}
         size="sm"
         type="button"
-        variant="secondary"
+        severity="secondary"
       >
         {labels.add}
       </Button>
@@ -273,7 +273,7 @@ const AddressBookEditor = ({
       <Dialog
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button disabled={blocked} onClick={close} size="sm" type="button" variant="secondary">
+            <Button disabled={blocked} onClick={close} size="sm" type="button" severity="secondary">
               {labels.cancel}
             </Button>
             {recover}
@@ -284,7 +284,7 @@ const AddressBookEditor = ({
               onClick={remove}
               size="sm"
               type="button"
-              variant="danger"
+              severity="danger"
             >
               {labels.remove}
             </Button>
@@ -380,7 +380,7 @@ export const CustomerAddressesPanel = ({
       <div className="col-span-full flex flex-col items-start gap-2">
         <output aria-live="polite">{message}</output>
         {state.state === "unavailable" && (
-          <Button onClick={refresh} size="sm" type="button" variant="secondary">
+          <Button onClick={refresh} size="sm" type="button" severity="secondary">
             {d.accountPage.reload}
           </Button>
         )}

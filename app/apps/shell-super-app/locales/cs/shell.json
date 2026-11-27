@@ -1289,6 +1289,9 @@
         "suppliedSecretInvalid": "Hodnota klíče musí mít 32 až 256 znaků z písmen, číslic a znaků _ . ~ -."
       },
       "partnerComponentUnavailable": "Panel partnera této integrace se nepodařilo načíst."
+    },
+    "uiKit": {
+      "requiredLabel": "(povinné)"
     }
   }
 }

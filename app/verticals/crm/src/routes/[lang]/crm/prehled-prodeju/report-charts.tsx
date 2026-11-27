@@ -130,12 +130,12 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               >
                 {report.currencies.map((entry) => (
                   <Button
+                    appearance={entry === currency ? 'solid' : 'ghost'}
                     aria-pressed={entry === currency}
                     key={entry}
                     onClick={() => setChosenCurrency(entry)}
+                    severity={entry === currency ? 'primary' : 'secondary'}
                     size="sm"
-                    theme={entry === currency ? 'solid' : 'borderless'}
-                    variant={entry === currency ? 'primary' : 'secondary'}
                   >
                     {entry}
                   </Button>

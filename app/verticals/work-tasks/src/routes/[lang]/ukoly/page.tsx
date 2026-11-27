@@ -330,7 +330,7 @@ const loadObjects = (setObjects: (objects: readonly ObjectOption[] | undefined) 
 };
 
 const EmptyActionButton = ({ label, onClick }: { readonly label: string; readonly onClick: () => void }) => (
-  <Button onClick={onClick} size="sm" theme="outlined" variant="secondary">
+  <Button appearance="outline" onClick={onClick} severity="secondary" size="sm">
     {label}
   </Button>
 );
@@ -1096,11 +1096,11 @@ const TaskWriteActions = ({
   return (
     <div className="flex flex-wrap gap-100">
       {canPlan && (
-        <Button onClick={onTogglePlanning} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" onClick={onTogglePlanning} severity="secondary" size="sm">
           {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
         </Button>
       )}
-      <Button onClick={onCreate} size="sm" variant="primary">
+      <Button onClick={onCreate} severity="primary" size="sm">
         {t(`${key}.newTask`)}
       </Button>
     </div>
@@ -1192,7 +1192,7 @@ const TasksPageContent = ({
         />
       </StatRow>
 
-      <Tabs onValueChange={model.handleChangeTab} value={model.tab} variant="line">
+      <Tabs appearance="line" onValueChange={model.handleChangeTab} value={model.tab}>
         <Tabs.List>
           <Tabs.Trigger value="mine">
             {model.mineName === undefined

@@ -38,7 +38,7 @@ export const MarketsPanelView = ({ canManage, footer, labels, markets, onToggle,
       <p className="px-200 py-200 text-fg-secondary text-sm">{labels.empty}</p>
     ) : (
       <ScrollRegion label={labels.title}>
-        <Table size="sm" variant="line">
+        <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>{labels.market}</Table.ColumnHeader>

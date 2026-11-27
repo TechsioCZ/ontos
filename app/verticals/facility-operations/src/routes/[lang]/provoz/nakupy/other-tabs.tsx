@@ -71,7 +71,7 @@ export const ReplenishTab = ({
   return (
     <div className="flex flex-col gap-200">
       <div className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-200 text-sm">
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           {k('replenish.ruleBadge')}
         </Badge>
         <span>{k('replenish.rule')}</span>
@@ -94,8 +94,8 @@ export const ReplenishTab = ({
                         plans.map((plan) => draftLine(plan.item.id, plan.item, plan.suggestedQuantity)),
                       )
                     }
+                    severity="primary"
                     size="sm"
-                    variant="primary"
                   >
                     {k('replenish.createOrder')}
                   </Button>
@@ -110,7 +110,7 @@ export const ReplenishTab = ({
                 </StatusText>
               )}
               <ScrollRegion label={t('facility-operations.ui.recommendedReplenishment')}>
-                <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
+                <Table appearance="line" size="sm" style={{ minWidth: '40rem' }}>
                   <Table.Header>
                     <Table.Row>
                       <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
@@ -263,12 +263,12 @@ export const MovementsTab = ({
 };
 
 // ── Nabídky dodavatelů ────────────────────────────────────────────────────────────────────────────────────────────
-const quoteVariant = { accepted: 'success', received: 'info', rejected: 'outline' } as const;
+const quoteVariant = { accepted: 'success', received: 'info', rejected: 'neutral' } as const;
 
 export const QuoteStatusBadge = ({ status }: { readonly status: SupplierQuote['status'] }) => {
   const k = usePurchasingT();
   return (
-    <Badge size="sm" variant={quoteVariant[status]}>
+    <Badge severity={quoteVariant[status]} size="sm">
       {k(`quoteStatus.${status}`)}
     </Badge>
   );
@@ -533,7 +533,7 @@ export const QuoteToOrderForm = ({
       {rejecting ? (
         <div className="flex flex-wrap justify-end gap-100">
           <span className="self-center text-sm">{k('quotes.rejectConfirm')}</span>
-          <Button onClick={() => setRejecting(false)} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" onClick={() => setRejecting(false)} severity="secondary" size="sm">
             {t('facility-operations.common.cancel')}
           </Button>
           <Button
@@ -541,8 +541,8 @@ export const QuoteToOrderForm = ({
             onClick={() => {
               browserRuntime.runFork(reject());
             }}
+            severity="danger"
             size="sm"
-            variant="danger"
           >
             {k('quotes.reject')}
           </Button>
@@ -551,7 +551,7 @@ export const QuoteToOrderForm = ({
         </div>
       ) : (
         <FormSaveFooter error={error} form={form}>
-          <Button onClick={() => setRejecting(true)} size="sm" theme="borderless" variant="danger">
+          <Button appearance="ghost" onClick={() => setRejecting(true)} severity="danger" size="sm">
             {k('quotes.reject')}
           </Button>
         </FormSaveFooter>
@@ -620,7 +620,7 @@ export const QuotePanel = ({
           />
         )}
         <SectionCard title={k('orders.lines')}>
-          <Table size="sm" variant="line">
+          <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>

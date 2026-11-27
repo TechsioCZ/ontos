@@ -122,20 +122,20 @@ const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount, tag
   const { t } = useModernI18n();
   return (
     <BulkActionBar onClear={onClear} selectedCount={selectedCount}>
-      <Button icon="icon-[mdi--swap-horizontal]" onClick={onStage} size="sm" theme="outlined" variant="secondary">
+      <Button appearance="outline" icon="icon-[mdi--swap-horizontal]" onClick={onStage} severity="secondary" size="sm">
         {t(`${K}.bulk.stage`)}
       </Button>
       <Button
+        appearance="outline"
         icon="icon-[mdi--account-arrow-right-outline]"
         onClick={onOwner}
+        severity="secondary"
         size="sm"
-        theme="outlined"
-        variant="secondary"
       >
         {t(`${K}.bulk.owner`)}
       </Button>
       {tagsShown && (
-        <Button icon="icon-[mdi--tag-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" icon="icon-[mdi--tag-outline]" onClick={onTags} severity="secondary" size="sm">
           {t(`${K}.bulk.tags`)}
         </Button>
       )}
@@ -500,10 +500,10 @@ const RecordsHeaderActions = ({
       />
       {canWrite && (
         <>
-          <Button disabled={loading} onClick={onBulkByTag} size="sm" theme="outlined" variant="secondary">
+          <Button appearance="outline" disabled={loading} onClick={onBulkByTag} severity="secondary" size="sm">
             {t(`${K}.bulkByTag.title`)}
           </Button>
-          <Button disabled={loading} icon="icon-[mdi--plus]" onClick={onCreate} size="sm" variant="primary">
+          <Button disabled={loading} icon="icon-[mdi--plus]" onClick={onCreate} severity="primary" size="sm">
             {t(`${K}.newOpportunity`)}
           </Button>
         </>

@@ -147,10 +147,10 @@ export const LinkedDocuments = ({
                 <CategoryBadge category={document.category} />
                 {version !== undefined && canPreview(version.file) && (
                   <Button
+                    appearance="ghost"
                     onClick={() => setPreview({ file: version.file, title: document.title })}
+                    severity="secondary"
                     size="sm"
-                    theme="borderless"
-                    variant="secondary"
                   >
                     {t(`${k}.preview`)}
                   </Button>

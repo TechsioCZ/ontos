@@ -148,7 +148,7 @@ const VariantImageTile = ({
       )}
       {main ? (
         <span className="absolute top-100 left-100">
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             Hlavní
           </Badge>
         </span>
@@ -217,11 +217,11 @@ export const VariantDetailsToggle = ({
   readonly open: boolean;
 }) => (
   <Button
+    appearance={invalid ? 'solid' : 'ghost'}
     onClick={onToggle}
+    severity={invalid ? 'danger' : 'secondary'}
     size="sm"
-    theme={invalid ? 'solid' : 'borderless'}
     type="button"
-    variant={invalid ? 'danger' : 'secondary'}
   >
     {open ? 'Skrýt podrobnosti' : 'Podrobnosti'}
   </Button>
@@ -287,15 +287,15 @@ export const VariantDetailEditor = ({
             />
             {disabled ? null : (
               <Button
+                appearance="ghost"
                 aria-label={`Odebrat parametr ${index + 1}`}
                 icon="icon-[mdi--delete-outline]"
                 onClick={() =>
                   onChange({ parameters: draft.parameters.filter((entry) => entry.key !== parameter.key) })
                 }
+                severity="secondary"
                 size="sm"
-                theme="borderless"
                 type="button"
-                variant="secondary"
               />
             )}
           </div>
@@ -303,16 +303,16 @@ export const VariantDetailEditor = ({
         {disabled ? null : (
           <div>
             <Button
+              appearance="outline"
               icon="icon-[mdi--plus]"
               onClick={() =>
                 onChange({
                   parameters: [...draft.parameters, { key: nextParameterKey, label: '', unit: '', value: '' }],
                 })
               }
+              severity="secondary"
               size="sm"
-              theme="outlined"
               type="button"
-              variant="secondary"
             >
               Přidat parametr
             </Button>

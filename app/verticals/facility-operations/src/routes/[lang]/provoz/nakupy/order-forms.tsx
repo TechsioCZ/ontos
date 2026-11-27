@@ -134,13 +134,13 @@ const LinesEditor = ({
             />
             <div className="flex items-end">
               <Button
+                appearance="ghost"
                 aria-label={k('lines.remove')}
                 disabled={lines.length === 1}
                 icon="icon-[mdi--close]"
                 onClick={() => onChange(lines.filter((entry) => entry.key !== line.key))}
+                severity="secondary"
                 size="sm"
-                theme="borderless"
-                variant="secondary"
               />
             </div>
           </div>
@@ -150,7 +150,7 @@ const LinesEditor = ({
         </div>
       ))}
       <div className="flex flex-wrap items-center justify-between gap-100">
-        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" variant="secondary">
+        <Button appearance="outline" icon="icon-[mdi--plus]" onClick={addLine} severity="secondary" size="sm">
           {k('lines.add')}
         </Button>
         <span className="font-semibold text-sm tabular-nums">{`${k('fields.total')}: ${formatAmount(total)}`}</span>
