@@ -36,6 +36,7 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
+import { verifySourceLedgerPlans } from './symmy-c14-privacy-ledger-plans.mts';
 import { customerItemSource, customerOccurrenceId, customersBody } from './symmy-c14-customer-public.mts';
 import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
 import {
@@ -986,6 +987,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     const roundTripSource = customerItemSource(sourceIdentity, roundTripKey, customerItemKey, recordId);
     // Recovery reads the real committed profile; it does not insert a Privacy subject or grant.
     if (scenario === 'readback') {
+      yield* verifySourceLedgerPlans(admin, tenantId, legalEntityId);
       const proofTransport = yield* acquireReceiptTransport();
       const proof = yield* executeCustomerProfileSourceWithAuthorization(
         proofTransport.request,
