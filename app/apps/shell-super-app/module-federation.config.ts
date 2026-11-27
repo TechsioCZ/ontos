@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import { String as StringSchema, Struct, decodeUnknownSync } from 'effect/Schema';
 
-import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -28,13 +28,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   filename: 'remoteEntry.js',
   name: 'shellSuperApp',
   remotes: {},
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': i18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': i18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'host', uiKit: resolveUiKitShare(import.meta.url) },
+  ),
 });
 
 export default moduleFederationConfig;
