@@ -71,16 +71,32 @@ const clientOf = (credential: string, requestCorrelation: string, baseUrl: strin
 
 type PriceGroupCatalogClient = Effect.Success<ReturnType<typeof clientOf>>;
 
+/** One request under its own Shell assertion: an assertion is single-use, so every page and every definition read
+ * acquires a fresh one. */
+const withClient = <Success, Failure>(
+  requestCorrelation: string,
+  call: (client: PriceGroupCatalogClient) => Effect.Effect<Success, Failure>,
+) =>
+  gateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    clientOf(credential, requestCorrelation, apiBaseUrl, compositionRevision).pipe(Effect.flatMap(call)),
+  );
+
 type PriceGroupRef = typeof PriceGroupRefSchema.Type;
+
+/** One page of the route's associations. */
+const readAssociationsPage = (requestCorrelation: string, source: (typeof priceGroupSources)[string], offset: number) =>
+  withClient(requestCorrelation, (client) =>
+    client.priceGroups.associations({ payload: { ...source, limit: pageSize, offset } }),
+  );
 
 /** Every Price Group the route's associations name, once each, in the order the catalog answers them; page by page. */
 const associatedGroups = (
-  client: PriceGroupCatalogClient,
+  requestCorrelation: string,
   source: (typeof priceGroupSources)[string],
   offset = 0,
   seen: ReadonlyMap<string, PriceGroupRef> = new Map(),
-): Effect.Effect<readonly PriceGroupRef[], Effect.Error<ReturnType<typeof client.priceGroups.associations>>> =>
-  client.priceGroups.associations({ payload: { ...source, limit: pageSize, offset } }).pipe(
+): Effect.Effect<readonly PriceGroupRef[], Effect.Error<ReturnType<typeof readAssociationsPage>>> =>
+  readAssociationsPage(requestCorrelation, source, offset).pipe(
     Effect.flatMap((page) => {
       const refs = new Map([
         ...seen,
@@ -88,24 +104,24 @@ const associatedGroups = (
       ]);
       return page.associations.length < pageSize || offset + pageSize >= page.count
         ? Effect.succeed([...refs.values()])
-        : associatedGroups(client, source, offset + pageSize, refs);
+        : associatedGroups(requestCorrelation, source, offset + pageSize, refs);
     }),
   );
 
 /** The groups that are active now, each by its current definition's name. */
-const namedGroups = (client: PriceGroupCatalogClient, refs: readonly PriceGroupRef[]) =>
+const namedGroups = (requestCorrelation: string, refs: readonly PriceGroupRef[]) =>
   Effect.gen(function* named() {
     const trustedOperationAt = DateTime.formatIso(yield* DateTime.now);
     const groups = yield* Effect.forEach(
       refs,
       (priceGroupRef) =>
-        client.priceGroups
-          .definition({ payload: { priceGroupRef, trustedOperationAt } })
-          .pipe(
-            Effect.map(({ definition, identity }): readonly ErpPriceGroup[] =>
-              identity.lifecycle.state === 'ACTIVE' ? [{ label: definition.displayName, priceGroupRef }] : [],
-            ),
+        withClient(requestCorrelation, (client) =>
+          client.priceGroups.definition({ payload: { priceGroupRef, trustedOperationAt } }),
+        ).pipe(
+          Effect.map(({ definition, identity }): readonly ErpPriceGroup[] =>
+            identity.lifecycle.state === 'ACTIVE' ? [{ label: definition.displayName, priceGroupRef }] : [],
           ),
+        ),
       { concurrency: 4 },
     );
     return groups.flat().toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
@@ -120,13 +136,8 @@ export const readErpPriceGroups = (offer: ErpOffer, requestCorrelation: string) 
   if (source === undefined) {
     return Effect.succeed<readonly ErpPriceGroup[]>([]);
   }
-  return gateway
-    .invoke((credential, { apiBaseUrl, compositionRevision }) =>
-      clientOf(credential, requestCorrelation, apiBaseUrl, compositionRevision).pipe(
-        Effect.flatMap((client) =>
-          associatedGroups(client, source).pipe(Effect.flatMap((refs) => namedGroups(client, refs))),
-        ),
-      ),
-    )
-    .pipe(Effect.mapError((problem) => `Cenové skupiny: ${problem._tag}`));
+  return associatedGroups(requestCorrelation, source).pipe(
+    Effect.flatMap((refs) => namedGroups(requestCorrelation, refs)),
+    Effect.mapError((problem) => `Cenové skupiny: ${problem._tag}`),
+  );
 };
