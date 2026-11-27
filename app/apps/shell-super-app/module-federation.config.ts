@@ -16,6 +16,8 @@ const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
 const reactDomVersion = packageVersion('react-dom');
 
+const uiKit = resolveUiKitShare(import.meta.url);
+
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
@@ -36,7 +38,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       react: reactVersion,
       'react-dom': reactDomVersion,
     },
-    { role: 'host', uiKit: resolveUiKitShare(import.meta.url) },
+    { role: 'host', uiKit },
   ),
 });
 
