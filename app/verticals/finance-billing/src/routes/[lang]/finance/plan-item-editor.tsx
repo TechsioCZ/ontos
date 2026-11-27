@@ -1,5 +1,5 @@
 // A new financial plan item, or an edit of one; mounted only while open and saved only on the shared Uložit.
-import { FormBuilder, FormReact, FormRoot, SelectField, TextField } from '@app/core-runtime/ui/form';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Schema } from 'effect';
@@ -26,7 +26,7 @@ const planItemForm = FormReact.make(
     fields: {
       amount: TextField,
       expectedDate: TextField,
-      kind: SelectField,
+      kind: SelectTemplateField,
       note: TextField,
       object: ObjectSelectionField,
       probability: TextField,

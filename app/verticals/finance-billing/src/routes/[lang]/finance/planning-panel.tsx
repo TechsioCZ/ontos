@@ -17,7 +17,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { FormBuilder, FormReact, FormRoot, SelectField } from '@app/core-runtime/ui/form';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField } from '@app/core-runtime/ui/form';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import type { BudgetLine, Invoice } from '../../../../shared/apis/records.ts';
@@ -112,7 +112,7 @@ const PlanActualBars = ({
 const budgetFilterForm = FormReact.make(
   FormBuilder.empty.addField('month', Schema.String).addField('object', Schema.String),
   {
-    fields: { month: SelectField, object: SelectField },
+    fields: { month: SelectTemplateField, object: SelectTemplateField },
     onSubmit: () => Effect.void,
     runtime: financeBrowserAtomRuntime,
   },

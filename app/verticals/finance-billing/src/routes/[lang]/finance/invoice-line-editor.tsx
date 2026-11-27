@@ -1,5 +1,5 @@
 import { formatMoney, matchesSearch, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
-import { ComboboxField, NumberField, SelectField, TextField } from '@app/core-runtime/ui/form';
+import { ComboboxField, NumericField, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import type { FormReact } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -99,7 +99,7 @@ const InvoiceLineDiscount = ({
   return (
     <>
       <div className="finance-invoice-line-discount grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
-        {createElement(SelectField, {
+        {createElement(SelectTemplateField, {
           field: fieldPart<readonly DraftLine[], string>(
             field,
             `${line.key}.discountKind`,
@@ -165,7 +165,7 @@ const PriceListPick = ({
   const { t } = useModernI18n();
   return (
     <div className="min-w-0">
-      {createElement(SelectField, {
+      {createElement(SelectTemplateField, {
         field: fieldPart(field, `${line.key}.priceListItemId`, line.priceListItemId ?? 'MANUAL', (value) => {
           const item = priceList.find((entry) => entry.id === value);
           onChange(
@@ -293,7 +293,7 @@ const InvoiceLineEditor = ({
     >
       <div className="finance-invoice-line-identity grid items-end gap-150">
         <div className="min-w-0">
-          {createElement(SelectField, {
+          {createElement(SelectTemplateField, {
             field: fieldPart<readonly DraftLine[], string>(field, `${line.key}.kind`, line.kind, (value) => {
               const kind = value === 'free' ? 'free' : 'product';
               if (kind !== line.kind) {
@@ -351,7 +351,7 @@ const InvoiceLineEditor = ({
       </div>
       <div className="finance-invoice-line-values grid items-end gap-150">
         <div className="min-w-0">
-          {createElement(NumberField, {
+          {createElement(NumericField, {
             field: fieldPart(field, `${line.key}.quantity`, line.quantity, (quantity) =>
               onChange({ ...line, quantity }),
             ),
@@ -370,7 +370,7 @@ const InvoiceLineEditor = ({
         </div>
         {line.kind === 'free' && (
           <div className="min-w-0">
-            {createElement(NumberField, {
+            {createElement(NumericField, {
               // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0; a NaN price
               // leaves the input uncontrolled, so the typed text stays visible next to the error.
               field: fieldPart(

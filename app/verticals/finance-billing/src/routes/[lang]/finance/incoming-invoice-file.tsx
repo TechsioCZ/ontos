@@ -58,28 +58,21 @@ export const IncomingFileField: FormReact.FieldComponent<IncomingFile | null> = 
           {error}
         </StatusText>
       )}
-      {createElement(FileField, {
-        // The native picker keeps no value of its own here: the field holds the file it read.
-        field: fieldPart<IncomingFile | null, File | null>(field, 'picked', null, pick),
-        props: {
-          accept: ACCEPTED_DOCUMENT_TYPES.join(','),
-          children: (
-            <>
-              <span aria-hidden className="icon-[mdi--file-upload-outline] size-6 text-fg-secondary" />
-              {file === null ? (
-                <span className="text-fg-secondary">Klikněte a vyberte soubor · PDF, PNG, JPEG · max. 3 MB</span>
-              ) : (
-                <span className="font-medium">
-                  {file.upload.fileName} · {formatBytes(file.size)}
-                </span>
-              )}
-            </>
-          ),
-          className:
-            'flex cursor-pointer flex-col items-center justify-center gap-100 rounded-md border border-border-primary border-dashed bg-surface-secondary px-300 py-300 text-center text-sm hover:bg-fill-hover',
-          id: 'incoming-file',
-        },
-      })}
+      <label className="flex cursor-pointer flex-col items-center justify-center gap-100 rounded-md border border-border-primary border-dashed bg-surface-secondary px-300 py-300 text-center text-sm hover:bg-fill-hover">
+        {createElement(FileField, {
+          // The native picker keeps no value of its own here: the field holds the file it read.
+          field: fieldPart<IncomingFile | null, File | null>(field, 'picked', null, pick),
+          props: { accept: ACCEPTED_DOCUMENT_TYPES.join(','), id: 'incoming-file' },
+        })}
+        <span aria-hidden className="icon-[mdi--file-upload-outline] size-6 text-fg-secondary" />
+        {file === null ? (
+          <span className="text-fg-secondary">Klikněte a vyberte soubor · PDF, PNG, JPEG · max. 3 MB</span>
+        ) : (
+          <span className="font-medium">
+            {file.upload.fileName} · {formatBytes(file.size)}
+          </span>
+        )}
+      </label>
       {file !== null && (
         <Button
           appearance="ghost"

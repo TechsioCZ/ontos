@@ -1,12 +1,13 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { pipe, Effect, Predicate } from 'effect';
+import { pipe, Effect, Option, Predicate, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { orderDateText } from '../../../../../shared/domain/imports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 
 import { useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
@@ -65,6 +66,18 @@ const batchStatus = (batch: AiBatch, pending: readonly AiChange[], applied: read
   }
   return { label: 'Vyřízeno', variant: 'secondary' } as const;
 };
+
+/**
+ * The approver's note of one batch: every batch card has its own, and the batch's decisions and its revert send it. It
+ * is never submitted.
+ */
+const batchNoteFormOf = Atom.family((_batchId: string) =>
+  FormReact.make(FormBuilder.empty.addField('note', Schema.String), {
+    fields: { note: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  }),
+);
 
 const ChangeCard = ({
   busy,
@@ -159,7 +172,8 @@ const BatchCard = ({
   readonly submit: Submit;
 }) => {
   const { t } = useModernI18n();
-  const [note, setNote] = useState('');
+  const noteForm = batchNoteFormOf(batch.id);
+  const note = Option.match(useAtomValue(noteForm.values), { onNone: () => '', onSome: (values) => values.note });
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = changes.filter((change) => change.status === 'pending');
   const applied = changes.filter((change) => change.status === 'applied');
@@ -205,13 +219,17 @@ const BatchCard = ({
         </div>
         {pending.length > 0 && (
           <>
-            <FormInput
-              id={`note-${batch.id}`}
-              label={t('crm.ciWorkflow.decisionNote')}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={t('crm.ciWorkflow.decisionNotePlaceholder')}
-              value={note}
-            />
+            <FormRoot
+              defaultValues={{ note: '' }}
+              form={noteForm}
+              translateMessage={(message) => t(message, { defaultValue: message })}
+            >
+              <noteForm.note
+                id={`note-${batch.id}`}
+                label={t('crm.ciWorkflow.decisionNote')}
+                placeholder={t('crm.ciWorkflow.decisionNotePlaceholder')}
+              />
+            </FormRoot>
             <div className="ai-review-actions">
               <Button
                 disabled={busy}

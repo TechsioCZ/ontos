@@ -2,7 +2,14 @@
 // its confirm button sends SetInvoiceDetails, once. Until then the picker keeps showing the saved kind.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
-import { FormBuilder, FormReact, FormRoot, SelectField, useAtomSet, useAtomSubscribe } from '@app/core-runtime/ui/form';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Effect, Option, Schema } from 'effect';
@@ -22,7 +29,7 @@ const KINDS: readonly DocumentKind[] = ['ADVANCE', 'FINAL', 'PARTIAL', 'RECURRIN
  * goes back to the saved kind.
  */
 const documentKindForm = FormReact.make(FormBuilder.empty.addField('kind', Schema.String), {
-  fields: { kind: SelectField },
+  fields: { kind: SelectTemplateField },
   onSubmit: () => Effect.void,
   runtime: financeBrowserAtomRuntime,
 });

@@ -204,15 +204,15 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
             form={documentUploadForm}
             translateMessage={t}
           >
-            <documentUploadForm.file
-              accept={ACCEPTED_DOCUMENT_TYPES.join(',')}
-              className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden"
-              disabled={uploading}
-              id={`attach-${invoice.ref.resourceId}`}
-            >
+            <label className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden">
+              <documentUploadForm.file
+                accept={ACCEPTED_DOCUMENT_TYPES.join(',')}
+                disabled={uploading}
+                id={`attach-${invoice.ref.resourceId}`}
+              />
               <span aria-hidden className="icon-[mdi--paperclip] size-4" />
               {uploading ? 'Nahrávám…' : 'Nahrát soubor'}
-            </documentUploadForm.file>
+            </label>
           </FormRoot>
         )}
       </div>

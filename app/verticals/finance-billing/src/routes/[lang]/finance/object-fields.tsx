@@ -1,4 +1,4 @@
-import { SelectField } from '@app/core-runtime/ui/form';
+import { SelectTemplateField } from '@app/core-runtime/ui/form';
 import type { FormReact } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Schema } from 'effect';
@@ -110,7 +110,7 @@ export const ObjectSelectionField: FormReact.FieldComponent<ObjectSelection, Obj
     <div className="grid grid-cols-1 gap-200 md:grid-cols-2" data-finance-object-fields={idPrefix}>
       {(objects.available || value.propertyId !== '') && (
         <>
-          {createElement(SelectField, {
+          {createElement(SelectTemplateField, {
             field: fieldPart(field, 'propertyId', shownId(value.propertyId), (id) =>
               onChange({ ...value, propertyId: pickedId(id), unitId: '' }),
             ),
@@ -134,7 +134,7 @@ export const ObjectSelectionField: FormReact.FieldComponent<ObjectSelection, Obj
               size: 'sm',
             },
           })}
-          {createElement(SelectField, {
+          {createElement(SelectTemplateField, {
             field: fieldPart(field, 'unitId', shownId(value.unitId), (id) =>
               onChange({ ...value, unitId: pickedId(id) }),
             ),
@@ -163,7 +163,7 @@ export const ObjectSelectionField: FormReact.FieldComponent<ObjectSelection, Obj
       )}
       {showContract &&
         (objects.contracts.length > 0 || value.contractId !== '') &&
-        createElement(SelectField, {
+        createElement(SelectTemplateField, {
           field: fieldPart(field, 'contractId', shownId(value.contractId), (id) =>
             onChange({ ...value, contractId: pickedId(id) }),
           ),
@@ -188,7 +188,7 @@ export const ObjectSelectionField: FormReact.FieldComponent<ObjectSelection, Obj
           },
         })}
       {showCostCenter &&
-        createElement(SelectField, {
+        createElement(SelectTemplateField, {
           field: fieldPart(field, 'costCenter', shownId(value.costCenter), (id) =>
             onChange({ ...value, costCenter: pickedId(id) }),
           ),

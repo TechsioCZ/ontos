@@ -1,4 +1,4 @@
-import { SelectField } from '@app/core-runtime/ui/form';
+import { SelectTemplateField } from '@app/core-runtime/ui/form';
 import type { FormReact } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -90,7 +90,7 @@ export const VatChoiceField: FormReact.FieldComponent<LineVatChoice, VatChoicePr
   ];
   return (
     <div className="flex min-w-0 flex-col gap-50">
-      {createElement(SelectField, {
+      {createElement(SelectTemplateField, {
         field: fieldPart(field, 'choice', choiceValue(choice), (picked) => {
           const code = czVatClassificationCodes.find((entry) => picked === `classification:${entry}`);
           if (code !== undefined) {

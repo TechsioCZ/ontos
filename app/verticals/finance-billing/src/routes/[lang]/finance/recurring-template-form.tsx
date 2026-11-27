@@ -1,7 +1,7 @@
 // A new recurring invoice template; mounted only while open and saved only on the shared Uložit.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { formatMoney, SidePanel, UnsavedChangesDialog } from '@app/admin-ui';
-import { FormBuilder, FormReact, FormRoot, SelectField, TextField } from '@app/core-runtime/ui/form';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import type { VatChoices } from '../../../../shared/apis/vat-choices.ts';
@@ -31,7 +31,7 @@ const templateForm = FormReact.make(
   {
     fields: {
       amount: TextField,
-      customerId: SelectField,
+      customerId: SelectTemplateField,
       description: TextField,
       dueDays: TextField,
       issueDay: TextField,

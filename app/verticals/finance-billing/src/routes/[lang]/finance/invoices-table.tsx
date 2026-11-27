@@ -6,7 +6,7 @@ import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { FormBuilder, FormReact, FormRoot, SelectField, TextField } from '@app/core-runtime/ui/form';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import { Effect, Schema } from 'effect';
 import { useFormDraft } from './finance-form-draft.tsx';
 import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
@@ -210,7 +210,7 @@ const invoiceFilterForm = FormReact.make(
     .addField('search', Schema.String)
     .addField('status', Schema.String),
   {
-    fields: { direction: SelectField, search: TextField, status: SelectField },
+    fields: { direction: SelectTemplateField, search: TextField, status: SelectTemplateField },
     onSubmit: () => Effect.void,
     runtime: financeBrowserAtomRuntime,
   },

@@ -25,7 +25,7 @@ interface ClearableChoiceProps {
   /** Hears the person choose an item, or clear the choice (`""`); a value put into the form is not a choice. */
   readonly onChoose?: (value: string) => void;
   readonly placeholder?: string;
-  /** Describes the select as a warning while there is no error. */
+  /** Describes the select as a warning while there is no error; `""` shows none. */
   readonly warning?: string | undefined;
 }
 
@@ -36,7 +36,10 @@ export const ClearableChoiceField: FormReact.FieldComponent<string, ClearableCho
   // The kit's hidden native option prints `displayValue`: the label is the name a person reads.
   const items = props.items.map((item) => ({ displayValue: item.label, label: item.label, value: item.value }));
   const chosen = items.find((item) => item.value === field.value);
-  const message = Option.match(field.error, { onNone: () => props.warning, onSome: translate });
+  const message = Option.match(field.error, {
+    onNone: () => (props.warning === '' ? undefined : props.warning),
+    onSome: translate,
+  });
   return jsx(Select, {
     children: createElement(
       Fragment,

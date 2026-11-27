@@ -1,7 +1,14 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { DetailList, formatMoney, requiredLabelFor, SidePanel, UnsavedChangesDialog } from '@app/admin-ui';
-import { FormBuilder, FormReact, FormRoot, SelectField, TextField, useAtomSet } from '@app/core-runtime/ui/form';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  TextField,
+  useAtomSet,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useRef } from 'react';
@@ -47,7 +54,7 @@ const incomingForm = FormReact.make(
     .addField('supplierName', Schema.String),
   {
     fields: {
-      category: SelectField,
+      category: SelectTemplateField,
       documentNumber: TextField,
       dueDate: TextField,
       file: IncomingFileField,

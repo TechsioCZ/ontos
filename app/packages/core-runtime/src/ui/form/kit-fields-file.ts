@@ -1,7 +1,8 @@
 /**
  * A file chosen with the browser's file picker, bound to one effect-form field that holds the chosen `File` (or
  * `null`). The picker itself is hidden: the module renders the visible control through `children`, which gets
- * `pick` to open it, or wraps the field in a `<label>`. A module hands it to `FormReact.make({ fields })`.
+ * `pick` to open it (such as a kit button), or wraps the field in a `<label>` whose content the person clicks. A
+ * module hands it to `FormReact.make({ fields })`.
  *
  * Core runtime is plain TypeScript that Node loads without a JSX transform, so this module builds
  * its elements with `createElement`.

@@ -1,7 +1,6 @@
-// Create an opportunity; the owner is chosen here. Typing changes only the draft; the shared Save button ("Uložit",
+// Create an opportunity; the owner is chosen here. Typing changes only the form; the shared Save button ("Uložit",
 // last in the footer) sends one CreateOpportunity, and leaving with unsaved input asks Uložit / Zahodit změny /
 // Zůstat. An untouched panel closes without asking.
-import { CalendarDateSchema } from '@app/shared-contracts';
 import {
   SaveBar,
   SidePanel,
@@ -14,47 +13,23 @@ import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option } from 'effect';
 import { constVoid } from 'effect/Function';
-import { useState } from 'react';
-import {
-  EmployeeIdSchema,
-  PartyIdSchema,
-} from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { useEffect } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { emptyDraft, sameOpportunityDraft } from './opportunity-draft.ts';
-import type { FormDraft } from './opportunity-draft.ts';
+import { createCommandOf, emptyDraft, sameOpportunityDraft } from './opportunity-draft.ts';
+import type { CreateCommand, FormDraft } from './opportunity-draft.ts';
 import {
   K,
-  OpportunityFields,
+  OpportunityForm,
   RESIZE_LABEL_KEY,
-  formClassName,
-  formErrors,
-  hasFormErrors,
+  useCheckOpportunity,
+  useOpportunityDraft,
 } from './opportunity-fields.tsx';
-import type { CreateCommand, OpportunityReferences, Translate } from './opportunity-fields.tsx';
+import type { OpportunityReferences } from './opportunity-fields.tsx';
 
 /** Sends one CreateOpportunity; `failed` keeps the draft and the host's message shows in the save bar. */
 export type OpportunityCreate = (command: CreateCommand) => Effect.Effect<SaveOutcome>;
-
-/** The CreateOpportunity of a complete, valid draft; none while a field is missing or invalid. */
-export const createCommandOf = (draft: FormDraft, t: Translate): Option.Option<CreateCommand> => {
-  const partyOption = draft.customerId === null ? Option.none() : Schema.decodeOption(PartyIdSchema)(draft.customerId);
-  const dateOption = Schema.decodeOption(CalendarDateSchema)(draft.closeText);
-  if (hasFormErrors(formErrors(draft, t)) || Option.isNone(partyOption) || Option.isNone(dateOption)) {
-    return Option.none();
-  }
-  const base: CreateCommand = {
-    _tag: 'CreateOpportunity',
-    expectedCloseDate: dateOption.value,
-    lines: draft.lines.map((entry) => entry.line),
-    note: draft.note.trim(),
-    partyId: partyOption.value,
-    title: draft.title.trim(),
-  };
-  const owner = draft.ownerId === null ? Option.none() : Schema.decodeOption(EmployeeIdSchema)(draft.ownerId);
-  return Option.some(Option.isSome(owner) ? { ...base, ownerEmployeeId: owner.value } : base);
-};
 
 interface CreatePanelProps extends OpportunityReferences {
   readonly onCreate: OpportunityCreate;
@@ -72,23 +47,30 @@ export const OpportunityCreatePanel = ({
   ...references
 }: CreatePanelProps) => {
   const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState<FormDraft>(emptyDraft);
+  const draft = useOpportunityDraft(emptyDraft);
+  const validate = useCheckOpportunity();
   const record = useDraftSave<FormDraft, never>({
     equals: sameOpportunityDraft,
     initial: emptyDraft,
-    isValid: (value) => Option.isSome(createCommandOf(value, t)),
+    isValid: (value) => Option.isSome(createCommandOf(value)),
     runtime: browserRuntime,
     save: (value) =>
-      Option.match(createCommandOf(value, t), {
+      Option.match(createCommandOf(value), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: onCreate,
       }),
     value: draft,
   });
+  // Field messages show once the draft is changed and invalid, the same moment the save bar says so.
+  const invalid = record.status === 'invalid';
+  useEffect(() => {
+    if (invalid) {
+      validate();
+    }
+  }, [invalid, validate]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: constVoid });
   const labels = saveLabelsFor(language);
-  const handleChange = (next: Partial<FormDraft>) => setDraft((current) => ({ ...current, ...next }));
   const handleReloadLatest = constVoid;
   const handleSave = () => {
     record.save();
@@ -132,16 +114,7 @@ export const OpportunityCreatePanel = ({
         size="xl"
         title={t(`${K}.create.title`)}
       >
-        {/* Enter never creates the opportunity: only Uložit does. */}
-        <form className={formClassName} noValidate onSubmit={(event) => event.preventDefault()}>
-          <OpportunityFields
-            {...references}
-            draft={draft}
-            isEdit={false}
-            onChange={handleChange}
-            showErrors={record.status === 'invalid'}
-          />
-        </form>
+        <OpportunityForm {...references} isEdit={false} opened={emptyDraft} />
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

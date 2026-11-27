@@ -12,7 +12,7 @@ import {
   FormBuilder,
   FormReact,
   FormRoot,
-  SelectField,
+  SelectTemplateField,
   useAtomSet,
 } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -69,11 +69,11 @@ const createInvoiceForm = FormReact.make(
   {
     fields: {
       customerId: ComboboxField,
-      documentKind: SelectField,
+      documentKind: SelectTemplateField,
       issueDate: DateField,
       lines: InvoiceLinesField,
       object: ObjectSelectionField,
-      paymentDays: SelectField,
+      paymentDays: SelectTemplateField,
     },
     onSubmit: () => Effect.void,
     runtime: financeBrowserAtomRuntime,
@@ -242,7 +242,7 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
               required
               requiredLabel={requiredLabelFor(language)}
               translations={comboboxTranslations}
-              {...(customerError === undefined ? {} : { error: customerError })}
+              {...(customerError === undefined ? {} : { helpText: customerError, invalid: true })}
             />
           </div>
           <createInvoiceForm.documentKind

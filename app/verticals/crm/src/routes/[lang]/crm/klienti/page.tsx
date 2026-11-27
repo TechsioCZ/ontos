@@ -2,17 +2,25 @@ import { DateTime, Effect, Schema, Option } from 'effect';
 import { PageHeader, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 import { uncorrelatedCustomerLinks } from '../../../../../shared/commands/clients.ts';
 import { toCsv } from '../../../../../shared/domain/reports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmStateGate, useCrmRouteSelection, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
@@ -105,27 +113,116 @@ interface FiltersBarProps {
   readonly records: RecordsResponse;
 }
 
+/**
+ * The filters of the client list as the toolbar edits them. The URL keeps them, so the form follows the URL and every
+ * change of the form goes to the URL: typing replaces the entry, a pick adds a history step. The toolbar is never
+ * submitted.
+ */
+const clientFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('owner', Schema.String)
+    .addField('recency', Schema.String)
+    .addField('registry', Schema.String)
+    .addField('search', Schema.String)
+    .addField('segment', Schema.String)
+    .addField('status', Schema.String),
+  {
+    fields: {
+      owner: SelectTemplateField,
+      recency: SelectTemplateField,
+      registry: SelectTemplateField,
+      search: TextField,
+      segment: SelectTemplateField,
+      status: SelectTemplateField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type ClientFilterValues = typeof clientFilterForm.schema.Encoded;
+
+const filterKeys = ['owner', 'recency', 'registry', 'search', 'segment', 'status'] as const;
+const showsFilters = (values: ClientFilterValues, filters: ClientFilters) =>
+  filterKeys.every((key) => values[key] === filters[key]);
+
+/** The filters a pick in the toolbar asks for; a value no filter knows keeps the filter as it is. */
+const pickedFilters = (values: ClientFilterValues, filters: ClientFilters): ClientFilters => ({
+  owner: values.owner === '' ? KPI_ALL : values.owner,
+  recency: clientRecencyOf(values.recency) ?? filters.recency,
+  registry: clientRegistryOf(values.registry) ?? filters.registry,
+  search: filters.search,
+  segment: clientSegmentOf(values.segment) ?? KPI_ALL,
+  status: clientStatusOf(values.status) ?? filters.status,
+});
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier visit left, so its values are read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
 const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: FiltersBarProps) => {
   const { t } = useModernI18n();
   const active = !sameClientFilters(filters, defaultClientFilters);
+  const [ready, setReady] = useState(false);
+  const values = Option.filter(useAtomValue(clientFilterForm.values), () => ready);
+  const setValues = useAtomSet(clientFilterForm.setValues);
+  useAtomSubscribe(
+    clientFilterForm.values,
+    (next) => {
+      if (!ready || Option.isNone(next)) {
+        return;
+      }
+      if (next.value.search !== filters.search) {
+        onChange({ search: next.value.search }, 'replace');
+        return;
+      }
+      const picked = pickedFilters(next.value, filters);
+      if (!sameClientFilters(picked, filters)) {
+        onChange(picked, 'push');
+      }
+    },
+    { immediate: false },
+  );
+  // The URL changes without the toolbar too (Back, a shortcut, Zrušit filtry): the toolbar then shows it.
+  const seen = useRef(filters);
+  useEffect(() => {
+    if (sameClientFilters(seen.current, filters)) {
+      return;
+    }
+    seen.current = filters;
+    if (Option.exists(values, (shown) => !showsFilters(shown, filters))) {
+      setValues({ ...filters });
+    }
+  }, [filters, setValues, values]);
   return (
-    <div className="flex flex-col gap-100">
+    <FormRoot
+      className="flex flex-col gap-100"
+      defaultValues={{ ...filters }}
+      form={clientFilterForm}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      <FormReady onReady={setReady} />
       <div className="flex flex-wrap items-end gap-150">
-        <Input
-          aria-label={t('crm.clientFilters.filters.search')}
-          className="w-full sm:w-80"
-          onChange={(event) => onChange({ search: event.target.value }, 'replace')}
-          placeholder={t(
-            entity === 'contact'
-              ? 'crm.clientFilters.table.searchContacts'
-              : 'crm.clientFilters.filters.searchPlaceholder',
-          )}
-          size="sm"
-          type="search"
-          value={filters.search}
-        />
+        <div className="w-full sm:w-80">
+          <clientFilterForm.search
+            aria-label={t('crm.clientFilters.filters.search')}
+            label={<span className="sr-only">{t('crm.clientFilters.filters.search')}</span>}
+            placeholder={t(
+              entity === 'contact'
+                ? 'crm.clientFilters.table.searchContacts'
+                : 'crm.clientFilters.filters.searchPlaceholder',
+            )}
+            size="sm"
+            type="search"
+          />
+        </div>
         <div className="w-full sm:w-44">
-          <SelectTemplate
+          <clientFilterForm.status
             items={[
               { label: t('crm.clientFilters.filters.statusActive'), value: 'active' },
               { label: t(statusArchivedKey), value: 'archived' },
@@ -133,19 +230,12 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
             ]}
             label={t('crm.clientFilters.filters.status')}
             name="status"
-            onValueChange={(details) => {
-              const next = clientStatusOf(details.value[0]);
-              if (next !== undefined) {
-                onChange({ status: next }, 'push');
-              }
-            }}
             size="sm"
-            value={[filters.status]}
           />
         </div>
         {manager && (
           <div className="w-full sm:w-52">
-            <SelectTemplate
+            <clientFilterForm.owner
               items={[
                 { label: t('crm.clientFilters.filters.ownerAll'), value: KPI_ALL },
                 ...salespersonOptions(records.state.salespeople),
@@ -153,15 +243,13 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
               ]}
               label={t('crm.clientFilters.filters.owner')}
               name="owner"
-              onValueChange={(details) => onChange({ owner: details.value[0] ?? KPI_ALL }, 'push')}
               size="sm"
-              value={[filters.owner]}
             />
           </div>
         )}
         {manager && (
           <div className="w-full sm:w-52">
-            <SelectTemplate
+            <clientFilterForm.registry
               items={[
                 { label: t('crm.clientFilters.filters.registryAll'), value: 'all' },
                 { label: t('crm.clientFilters.filters.registryLinked'), value: 'linked' },
@@ -169,46 +257,30 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
               ]}
               label={t('crm.clientFilters.filters.registry')}
               name="registry"
-              onValueChange={(details) => {
-                const next = clientRegistryOf(details.value[0]);
-                if (next !== undefined) {
-                  onChange({ registry: next }, 'push');
-                }
-              }}
               size="sm"
-              value={[filters.registry]}
             />
           </div>
         )}
         <div className="w-full sm:w-48">
-          <SelectTemplate
+          <clientFilterForm.recency
             items={[
               { label: t('crm.clientFilters.filters.recencyAll'), value: 'all' },
               { label: t('crm.clientFilters.filters.recency30'), value: 'recent30' },
             ]}
             label={t('crm.clientFilters.filters.recency')}
             name="recency"
-            onValueChange={(details) => {
-              const next = clientRecencyOf(details.value[0]);
-              if (next !== undefined) {
-                onChange({ recency: next }, 'push');
-              }
-            }}
             size="sm"
-            value={[filters.recency]}
           />
         </div>
         <div className="w-full sm:w-52">
-          <SelectTemplate
+          <clientFilterForm.segment
             items={[
               { label: t('crm.clientFilters.filters.segmentAll'), value: KPI_ALL },
               ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
             ]}
             label={t('crm.clientFilters.filters.segment')}
             name="segment"
-            onValueChange={(details) => onChange({ segment: clientSegmentOf(details.value[0]) ?? KPI_ALL }, 'push')}
             size="sm"
-            value={[filters.segment]}
           />
         </div>
         {active && (
@@ -223,7 +295,7 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
           </Button>
         )}
       </div>
-    </div>
+    </FormRoot>
   );
 };
 

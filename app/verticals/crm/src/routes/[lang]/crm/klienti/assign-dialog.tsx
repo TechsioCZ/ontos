@@ -5,26 +5,52 @@
 // and leaving with unsaved input asks Uložit / Zahodit změny / Zůstat.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  TextAreaField,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Option } from 'effect';
-import { useState } from 'react';
+import { Effect, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
 import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
 import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const NONE = 'none';
 
-interface AssignDraft {
-  readonly reason: string;
-  readonly target: string;
-}
+/**
+ * The new owner and the reason, as the dialog edits them. One dialog is open at a time, so the form holds one state;
+ * the reason is a textarea, so Enter never sends: only Uložit does.
+ */
+const assignForm = FormReact.make(
+  FormBuilder.empty.addField('reason', Schema.String).addField('target', Schema.String),
+  {
+    fields: { reason: TextAreaField, target: SelectTemplateField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type AssignDraft = typeof assignForm.schema.Encoded;
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier dialog left, so its values are read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
 
 /** AssignClient for a changed owner; none while the owner is unchanged or a transfer has no reason. */
 const assignCommandOf = (client: Client, draft: AssignDraft): Option.Option<CrmCommandInput> => {
@@ -60,7 +86,13 @@ export const AssignDialog = ({
   const { t } = useModernI18n();
   const toaster = useToast();
   const current = client.ownerSalespersonId ?? NONE;
-  const [draft, setDraft] = useState<AssignDraft>({ reason: '', target: current });
+  // The values the dialog opens with; the form reads them once, when it starts.
+  const opened: AssignDraft = { reason: '', target: current };
+  const [ready, setReady] = useState(false);
+  const draft = Option.getOrElse(
+    Option.filter(useAtomValue(assignForm.values), () => ready),
+    () => opened,
+  );
   const reassign = client.ownerSalespersonId !== undefined;
   const form = useCrmFormSave<AssignDraft>({
     command: (value) => assignCommandOf(client, value),
@@ -96,8 +128,14 @@ export const AssignDialog = ({
       size="md"
       title={reassign ? `Převést klienta ${client.name}` : `Přidělit klienta ${client.name}`}
     >
-      <div className="flex flex-col gap-200">
-        <SelectTemplate
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={assignForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
+      >
+        <FormReady onReady={setReady} />
+        <assignForm.target
           items={[
             ...assignableSalespeople(records).map((person) => ({
               label: person.id === client.ownerSalespersonId ? `${person.name} (současný)` : person.name,
@@ -107,24 +145,20 @@ export const AssignDialog = ({
           ]}
           label={t('crm.ciClientsVisits.clients.newSalesperson')}
           name="assign-target"
-          onValueChange={(details) => setDraft((value) => ({ ...value, target: details.value[0] ?? current }))}
-          value={[draft.target]}
         />
-        <FormTextarea
+        <assignForm.reason
           id="crm-assign-reason"
           label={reassign ? 'Důvod převodu (povinný)' : 'Poznámka k přidělení'}
           maxLength={4000}
-          onChange={(event) => setDraft((value) => ({ ...value, reason: event.target.value }))}
           placeholder={reassign ? 'např. Změna regionu, převzetí po kolegovi' : ''}
           rows={3}
-          value={draft.reason}
         />
         {reasonMissing && (
           <StatusText showIcon status="error">
             Uveďte důvod převodu, zapíše se do historie klienta.
           </StatusText>
         )}
-      </div>
+      </FormRoot>
     </Dialog>
   );
 };

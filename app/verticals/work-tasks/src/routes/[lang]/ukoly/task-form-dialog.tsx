@@ -16,7 +16,7 @@ import type { RevisionedSaveResult, SaveOutcome, UnsavedChangesGuard } from '@ap
 import {
   ChoiceLensField,
   ComboboxField,
-  DatePickerField,
+  DateField,
   FormReact,
   FormRoot,
   SubmitButton,
@@ -93,7 +93,7 @@ const taskForm = FormReact.make(
       // Each context picker reads and writes its own kind of reference.
       contextRefs: ChoiceLensField<readonly ContextRef[]>,
       description: TextAreaField,
-      dueDate: DatePickerField,
+      dueDate: DateField,
       opportunityId: ComboboxField,
       partyId: ComboboxField,
       plannedHours: TextField,
@@ -739,21 +739,21 @@ const TaskFormFields = ({
       {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
       <div onFocus={rememberListField}>
         <taskForm.dueDate
+          clearable
           contentClassName={datePickerContentClass}
           disabled={fieldsDisabled}
-          invalid={dueDateMessage !== undefined}
+          error={dueDateMessage}
           label={t(`${key}.dueDate`)}
           locale="cs-CZ"
           // No min/max here: the picker would show a clamped year (2000) while keeping the typed 0026, so the
           // field shows what was typed and the form explains the allowed years instead.
           onOpenChange={onListOpenChange}
-          parse={toCalendarDate}
           segmentsClassName={dateSegmentsClass}
           shouldForceLeadingZeros
           size="md"
+          toDateValue={toCalendarDate}
           translations={datePickerTranslations}
         />
-        {dueDateMessage !== undefined && <StatusText status="error">{dueDateMessage}</StatusText>}
       </div>
       <div onFocus={rememberListField}>
         <taskForm.priority

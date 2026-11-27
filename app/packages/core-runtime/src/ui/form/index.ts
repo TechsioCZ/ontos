@@ -24,31 +24,28 @@ export {
   TextField,
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
-export { ComboboxField, MultiComboboxField, SwitchField } from './kit-fields-combobox.ts';
-export { ChoiceLensField } from './kit-fields-choice-lens.ts';
-export { DatePickerField } from './kit-fields-date-picker.ts';
-export { CheckedTextField } from './kit-fields-checked-text.ts';
+export { ComboboxField, MultiComboboxField } from './kit-fields-combobox.ts';
+export { SwitchField } from './kit-fields-switch.ts';
+export { FileField } from './kit-fields-file.ts';
 export { ClearableChoiceField } from './kit-fields-clearable-select.ts';
-export { makeCheckboxGroupField } from './kit-fields-checkbox-group.ts';
 export { SelectTemplateField } from './kit-fields-select-template.ts';
+export { DateField, DateRangeField } from './kit-fields-date.ts';
+export type { DayRangeValue } from './kit-fields-date.ts';
+export { NumericField, makeItemNumericField } from './kit-fields-numeric.ts';
+export type { ItemNumber } from './kit-fields-numeric.ts';
+export { ChoiceLensField } from './kit-fields-choice-lens.ts';
+export { CheckedTextField } from './kit-fields-checked-text.ts';
+export { makeCheckboxGroupField } from './kit-fields-checkbox-group.ts';
 export { SuggestedTextAreaField, SuggestedTextField } from './kit-fields-suggested.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export { EntryTextAreaField } from './kit-fields-entry-textarea.ts';
 export { type FieldNotice, NoticedTextField } from './noticed-text-field.ts';
 export { CheckboxSettingField } from './checkbox-setting-field.ts';
 export { EntrySwitchField } from './entry-switch-field.ts';
 export { UpperCaseTextField } from './upper-case-text-field.ts';
 export { BareTextAreaField, BareTextField } from './kit-fields-bare.ts';
-export { FileField } from './kit-fields-file.ts';
 export { RuledTextAreaField, RuledTextField } from './kit-fields-ruled.ts';
-export { SwitchField } from './kit-fields-switch.ts';
 export { TemplateChoiceField } from './kit-fields-template-choice.ts';
-export {
-  ComboboxField,
-  DateField,
-  FileField,
-  FlaggedTextAreaField,
-  FlaggedTextField,
-  NumberField,
-  RowCheckboxField,
-  SelectField,
-} from './kit-fields-pickers.ts';
+export { RichRadioField } from './kit-fields-rich-radio.ts';
+export type { RichChoice } from './kit-fields-rich-radio.ts';
+export { FlaggedTextAreaField, FlaggedTextField, RowCheckboxField } from './kit-fields-pickers.ts';

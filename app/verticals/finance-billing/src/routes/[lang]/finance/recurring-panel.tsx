@@ -5,7 +5,7 @@ import {
   FormReact,
   FormRoot,
   RowCheckboxField,
-  SelectField,
+  SelectTemplateField,
   useAtomSet,
   useAtomValue,
 } from '@app/core-runtime/ui/form';
@@ -31,7 +31,7 @@ import { RecurringTemplateEditor } from './recurring-template-form.tsx';
 
 /** The month the next generation runs for; picking another one drops the result of the last run. */
 const periodForm = FormReact.make(FormBuilder.empty.addField('period', Schema.String), {
-  fields: { period: SelectField },
+  fields: { period: SelectTemplateField },
   onSubmit: () => Effect.void,
   runtime: financeBrowserAtomRuntime,
 });

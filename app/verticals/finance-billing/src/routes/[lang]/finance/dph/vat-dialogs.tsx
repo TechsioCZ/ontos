@@ -6,7 +6,7 @@ import {
   FormBuilder,
   FormReact,
   FormRoot,
-  SelectField,
+  SelectTemplateField,
   TextField,
 } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -55,7 +55,7 @@ const REGIMES = ['VAT_PAYER', 'NON_PAYER'] as const;
 const regimeForm = FormReact.make(
   FormBuilder.empty.addField('from', Schema.String).addField('reason', Schema.String).addField('regime', Schema.String),
   {
-    fields: { from: DateField, reason: TextField, regime: SelectField },
+    fields: { from: DateField, reason: TextField, regime: SelectTemplateField },
     onSubmit: () => Effect.void,
     runtime: financeBrowserAtomRuntime,
   },

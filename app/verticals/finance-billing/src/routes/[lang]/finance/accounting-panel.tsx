@@ -10,7 +10,7 @@ import {
   FormReact,
   FormRoot,
   RowCheckboxField,
-  SelectField,
+  SelectTemplateField,
   useAtomSet,
 } from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -42,7 +42,7 @@ const exportSelectionForm = FormReact.make(
     .addField('selected', Schema.Array(Schema.String)),
   {
     fields: {
-      format: SelectField,
+      format: SelectTemplateField,
       onlyNew: CheckboxField,
       selected: RowCheckboxField,
     },
