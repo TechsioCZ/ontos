@@ -479,8 +479,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(yield* activeHolders(tenantId)).toEqual([{ principalId: leftEnrollment.principalId }]);
       expect((yield* workerIdentity(tenantId)).principalId).toBe(leftEnrollment.principalId);
 
-      // A binding of another module's system workload key left on the worker's Principal never makes it that module's
-      // enrollment, and that module's enrollment takes the key back.
+      // A binding of another module's system workload key on the worker's Principal never makes it that module's
+      // enrollment. Demo line: that module's enrollment leaves the key with it, as an executor holds the owner workloads
+      // its routes need (MERGING.md V52).
       yield* admin
         .update(tenantModuleStates)
         .set({ state: 'active' })
@@ -505,15 +506,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(own.principalId).not.toBe(borrower);
       expect((yield* ownerIdentity()).principalId).toBe(own.principalId);
       expect(yield* principalBindings(borrower)).toEqual([
-        { status: 'revoked', workloadKey: dormantKey },
+        { status: 'active', workloadKey: dormantKey },
         { status: 'active', workloadKey: workerKey },
       ]);
       const reclaimAudits = yield* admin
         .select({ evidence: auditEvents.evidenceJson })
         .from(auditEvents)
         .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
-      expect(reclaimAudits).toContainEqual({
-        evidence: expect.objectContaining({ change: 'ENROLLED', reclaimedFrom: [borrower] }),
+      expect(reclaimAudits).not.toContainEqual({
+        evidence: expect.objectContaining({ reclaimedFrom: [borrower] }),
       });
 
       // A system Principal with no recorded workload, as one made before the record existed: END never ends it and

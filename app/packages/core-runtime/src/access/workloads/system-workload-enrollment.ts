@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Result } from 'effect';
 
 import {
@@ -338,9 +338,13 @@ const revokeSystemWorkloadPrincipalBindings = Effect.fn(
 });
 
 /**
- * Revokes the bindings of a system workload's key that system Principals not enrolled for it hold, and names those
- * Principals: one enrolled for another workload before the key's module declared it in the composition, or one with no
- * recorded workload. The key's own enrollment takes it back.
+ * Revokes the bindings of a system workload's key that system Principals with no recorded workload hold, and names
+ * those Principals: the key's own enrollment takes it back from a holder nothing accounts for.
+ *
+ * Demo line: a Principal enrolled for another workload keeps the key. An executor holds the owner workloads its routes
+ * need (the Symmy executor calls Inventory under `commerce.inventory.source-provision`, bound by route enabling), so
+ * main's revocation from every Principal not enrolled for the key would stop those calls on an administrator's ENROLL
+ * of the owner's workload, and route enabling could not bind it again. See MERGING.md V51 and V52.
  */
 const reclaimSystemWorkloadKey = Effect.fn('SystemWorkloadEnrollment.reclaimSystemWorkloadKey')(
   function* reclaimSystemWorkloadKey(transaction: ScopedTransactionExecutor, workloadKey: string) {
@@ -351,7 +355,7 @@ const reclaimSystemWorkloadKey = Effect.fn('SystemWorkloadEnrollment.reclaimSyst
         and(
           eq(principals.tenantId, transaction.scope.tenantId),
           eq(principals.kind, 'system'),
-          or(isNull(principals.systemWorkloadKey), ne(principals.systemWorkloadKey, workloadKey)),
+          isNull(principals.systemWorkloadKey),
         ),
       );
     const reclaimed = yield* transaction
