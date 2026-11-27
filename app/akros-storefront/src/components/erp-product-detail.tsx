@@ -9,11 +9,12 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import {
   erpCardSummary,
   erpCopy,
+  erpDetailStockLabel,
   erpPriceLabel,
-  erpVariantAvailability,
   isYourPrice,
   type ErpProduct,
 } from "@/lib/erp-catalogue";
+import { describeVariantAvailability } from "@/lib/variant-availability";
 import { useDictionary, useMoney } from "@/ontos/market-context";
 
 /** One ERP product in the shop's product-detail layout, with its variants' ERP prices and stock. No cart control. */
@@ -75,7 +76,7 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
             <p
               className={`sf-product-detail__stock sf-product-detail__stock--${summary.stockTone === "in-stock" ? "available" : summary.stockTone === "out-of-stock" ? "unavailable" : "limited"}`}
             >
-              {summary.stockLabel}
+              {erpDetailStockLabel(product, cs)}
             </p>
             <div className="sf-product-detail__buying">
               <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
@@ -128,7 +129,7 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
                     )}
                   </Table.Cell>
                   <Table.Cell data-sf-erp-stock="">
-                    <AvailabilityStatus {...erpVariantAvailability(cs, variant.stock)} />
+                    <AvailabilityStatus {...describeVariantAvailability(cs, variant.stock)} />
                   </Table.Cell>
                 </Table.Row>
               ))}

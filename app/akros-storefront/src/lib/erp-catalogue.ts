@@ -9,7 +9,6 @@
 import { Predicate } from "effect";
 import type { Dictionary } from "@/i18n";
 import { getProductStockStatus, productStockTone, stockStatusLabel } from "@/lib/product-stock";
-import { describeVariantAvailability } from "@/lib/variant-availability";
 import { imagePlaceholder } from "@/ontos/media-path";
 
 /** An owner resource reference (`{moduleId, resourceType, resourceId, tenantId}`). */
@@ -381,17 +380,32 @@ export const erpPriceLabel = (price: ErpPrice, locale: string): string =>
     ? `${formatErpAmount(price.amount, price.currencyCode, locale)} ${erpCopy.excludingVat}`
     : erpCopy.priceOnRequest;
 
-/** One ERP variant in the shop's words; in stock it names the quantity, as the shop's product page does. */
+/** One ERP variant's stock line on its detail page, in the words of the shop's product page for one unit. */
 export const erpStockLabel = (cs: Dictionary, stock: ErpStock): string => {
   const status = getProductStockStatus(stock);
-  return status === "in-stock"
-    ? cs.product.inStockCount(stock.stockCount, stock.unit)
-    : stockStatusLabel(cs, status, stock.belowPackage, stock.unit);
+  return status === "unknown"
+    ? cs.product.availabilityNowUnknown
+    : status === "in-stock"
+      ? cs.product.inStockCount(stock.stockCount, stock.unit)
+      : status === "below-package"
+        ? stockStatusLabel(cs, status, stock.belowPackage, stock.unit)
+        : cs.product.outOfStock;
 };
 
-/** The ui-kit AvailabilityStatus of one ERP variant: the shop's (`describeVariantAvailability`), with its quantity. */
-export const erpVariantAvailability = (cs: Dictionary, stock: ErpStock) =>
-  ({ ...describeVariantAvailability(cs, stock), label: erpStockLabel(cs, stock) }) as const;
+/** The stock line of an ERP detail page, in the words of the shop's product page (one unit, or a variant group). */
+export function erpDetailStockLabel(product: ErpProduct, cs: Dictionary): string {
+  const [only] = product.variants;
+  if (product.variants.length === 1 && only !== undefined) return erpStockLabel(cs, only.stock);
+  const statuses = product.variants.map(({ stock }) => getProductStockStatus(stock));
+  const available = statuses.filter((status) => status === "in-stock").length;
+  return available > 0
+    ? cs.product.variantsInStock(available, statuses.length)
+    : statuses.includes("unknown")
+      ? cs.product.variantsUnknown
+      : statuses.includes("below-package")
+        ? cs.product.stockStatus["below-package"]
+        : cs.product.variantsOutOfStock;
+}
 
 /**
  * Several variants, as the shop words a variant group: in stock when one is, unknown when one cannot be verified,
@@ -411,15 +425,11 @@ const groupStock = (variants: readonly ErpVariant[]): ErpStock => {
     : { stockCount: 0, unit: ERP_UNIT };
 };
 
-/** The stock line of an ERP card or header suggestion: one variant's own, several variants' as a group. */
+/** The stock line of an ERP card or header suggestion, as a shop card words it: one variant's own, else the group's. */
 export function erpStockSummary(product: ErpProduct, cs: Dictionary) {
   const [only] = product.variants;
-  if (product.variants.length === 1 && only !== undefined)
-    return {
-      stockLabel: erpStockLabel(cs, only.stock),
-      stockTone: productStockTone(getProductStockStatus(only.stock)),
-    };
-  const stock = groupStock(product.variants);
+  const stock =
+    product.variants.length === 1 && only !== undefined ? only.stock : groupStock(product.variants);
   const status = getProductStockStatus(stock);
   return {
     stockLabel: stockStatusLabel(cs, status, stock.belowPackage, stock.unit),

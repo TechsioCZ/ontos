@@ -113,10 +113,10 @@ describe("ERP product page model", () => {
     expect(rows).toEqual([
       ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem 42 ks"],
       ["ERP-2", "M2, 20 mm", "99,00\u00a0Kč bez DPH", "Není skladem"],
-      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
-      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
-      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
-      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
+      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
+      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
+      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
     ]);
     expect(erpCardSummary(product!, cs, "cs")).toEqual({
       priceLabel: "od 99,00\u00a0Kč bez DPH",
@@ -149,7 +149,7 @@ describe("ERP product page model", () => {
     );
     expect(erpCardSummary(single!, cs, "cs")).toEqual({
       priceLabel: "950,00\u00a0Kč bez DPH",
-      stockLabel: "Skladem 42 ks",
+      stockLabel: "Skladem",
       stockTone: "in-stock",
       yourPrice: true,
     });
@@ -248,7 +248,7 @@ describe("ERP product page model", () => {
     expect(products[1]!.variants[0]).not.toHaveProperty("sku");
     expect(erpCardSummary(products[0]!, cs, "cs")).toEqual({
       priceLabel: "1\u00a0234,50\u00a0Kč bez DPH",
-      stockLabel: "Skladem 42 ks",
+      stockLabel: "Skladem",
       stockTone: "in-stock",
       yourPrice: false,
     });

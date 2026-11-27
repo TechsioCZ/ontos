@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { cs } from "@/i18n/cs";
-import { erpStockLabel, toErpStock, type CatalogVariantOnHand } from "@/lib/erp-catalogue";
+import {
+  erpDetailStockLabel,
+  erpStockLabel,
+  erpStockSummary,
+  toErpStock,
+  type CatalogVariantOnHand,
+  type ErpProduct,
+} from "@/lib/erp-catalogue";
 import { getProductStockStatus, productStockTone, stockStatusLabel } from "@/lib/product-stock";
 import { projectProducts } from "@/ontos/catalog-projection";
 import { firstOrderableQuantity } from "@app/merchandise/domain/order-quantity";
@@ -199,8 +206,12 @@ describe("one stock rule: in stock only when stock covers one first order", () =
       label: "Není skladem",
       status: "out-of-stock",
     },
-    { onHand: { outcome: "ON_HAND_UNKNOWN" }, label: "Dostupnost nelze ověřit", status: "unknown" },
-    { onHand: undefined, label: "Dostupnost nelze ověřit", status: "unknown" },
+    {
+      onHand: { outcome: "ON_HAND_UNKNOWN" },
+      label: "Dostupnost nyní nelze ověřit",
+      status: "unknown",
+    },
+    { onHand: undefined, label: "Dostupnost nyní nelze ověřit", status: "unknown" },
   ])(
     "an ERP variant with $onHand.outcome $onHand.total.amount reads „$label“",
     ({ onHand, label, status }) => {
@@ -219,5 +230,43 @@ describe("one stock rule: in stock only when stock covers one first order", () =
       total: { amount: "0.5" },
     });
     expect(held.belowPackage?.firstOrderableQuantity).toBe(firstOrderableQuantity({}));
+  });
+
+  it("words an ERP card as a shop card and an ERP detail page as the shop's product page", () => {
+    const stock = (amount?: string) =>
+      toErpStock(
+        amount === undefined
+          ? undefined
+          : ({
+              outcome: "ON_HAND",
+              total: { amount },
+              variantRef: erpVariantRef,
+            } as CatalogVariantOnHand),
+      );
+    const product = (...amounts: (string | undefined)[]) =>
+      ({ variants: amounts.map((amount) => ({ stock: stock(amount) })) }) as unknown as ErpProduct;
+    const card = (item: ErpProduct) => erpStockSummary(item, cs);
+    expect(card(product("155"))).toEqual({ stockLabel: "Skladem", stockTone: "in-stock" });
+    expect(card(product("0.5"))).toEqual({
+      stockLabel: "Skladem 0,5 ks, prodej po 1 ks",
+      stockTone: "out-of-stock",
+    });
+    expect(card(product("0"))).toEqual({ stockLabel: "Není skladem", stockTone: "out-of-stock" });
+    expect(card(product(undefined))).toEqual({
+      stockLabel: "Dostupnost nelze ověřit",
+      stockTone: "limited-stock",
+    });
+    expect(card(product("0", "155"))).toEqual({ stockLabel: "Skladem", stockTone: "in-stock" });
+    expect(card(product("0.5", "0.5"))).toEqual({
+      stockLabel: "Skladem méně než balení",
+      stockTone: "out-of-stock",
+    });
+    expect(erpDetailStockLabel(product("155"), cs)).toBe("Skladem 155 ks");
+    expect(erpDetailStockLabel(product(undefined), cs)).toBe("Dostupnost nyní nelze ověřit");
+    expect(erpDetailStockLabel(product("0", "155"), cs)).toBe("Skladem 1 z 2 variant");
+    expect(erpDetailStockLabel(product("0.5", "0"), cs)).toBe("Skladem méně než balení");
+    expect(erpDetailStockLabel(product("0", "0"), cs)).toBe(
+      "Momentálně není skladem žádná varianta",
+    );
   });
 });
