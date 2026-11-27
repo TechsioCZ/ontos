@@ -24,6 +24,13 @@ release. V0 is close to complete; this decision shapes what follows it.
 
 ## Decision
 
+Tenant Modules come later, and the Product Owner does not settle their decisions fully now. Wherever
+a decision below concerns only Tenant Modules, it is direction, settled when Tenant Modules are
+designed: for example decisions 11 and 12, Module Replacement in decision 9, how a Tenant Module is
+handled in decision 16, and the Tenant administrator's part of decision 15. All other decisions are
+proposed for acceptance when the Product Owner confirms the complete design, except the parts listed
+under Open points.
+
 ### Authoring
 
 1. **One CoreSDK.** Platform Modules and Tenant Modules are authored against the same CoreSDK, the
@@ -86,11 +93,21 @@ release. V0 is close to complete; this decision shapes what follows it.
    Shell, such as a game with a minimal registration, declares a Module Audience: who may register,
    which details are collected, and which login methods are offered. Core runs registration, login,
    sessions, and account recovery for it on BetterAuth, so that the login methods BetterAuth offers
-   can be supported. Each Module Audience is isolated: its members are kept apart from staff and
-   from every other Module Audience and never gain staff access. The declaring Module receives
-   operations and interface primitives with which it can build a management interface for its
-   members when it needs one. The first CoreSDK version includes this capability, and it applies to
-   any Module. Commerce owns a separate realm for Commerce Portal Accounts today
+   can be supported.
+   - A Module Audience exists per Tenant and is isolated: its members are kept apart from staff and
+     from every other Module Audience and never gain staff access. The same e-mail address
+     registered in two Module Audiences is two separate accounts.
+   - Each member is a Principal, so authorization and audit run through the same Core checks as for
+     staff. A member never holds a staff Role.
+   - Core creates the storage of a Module Audience from one template when the Module is installed. A
+     Module writes no migration for it.
+   - The declaring Module receives operations and interface primitives with which it can build a
+     management interface for its members when it needs one.
+   - Accounts stay separate, but OntOS must be able to connect members of different Module Audiences
+     and analyse them. How is an open point.
+
+   The first CoreSDK version includes this capability, and it applies to any Module. Commerce owns a
+   separate realm for Commerce Portal Accounts today
    ([ADR-0017](0017-commerce-application-boundaries.md),
    [ADR-0014](0014-authenticated-principal-session.md)); it moves onto a Module Audience later.
 
@@ -133,6 +150,11 @@ release. V0 is close to complete; this decision shapes what follows it.
     - Each version states which database migrations it needs applied. Versions are live side by side
       only when they need the same migrations, and a version that needs a further migration replaces
       every older version.
+    - A switch can move a Module's server code as well as its browser code. The selection may change
+      between two live versions, in either direction, only when that is safe forwards and backwards:
+      no breaking change separates them and they need the same migrations. A version that needs a
+      further migration is not selected this way; it goes live by replacing every older version, as
+      the previous point says.
 16. **A Tenant Module never blocks a CoreSDK upgrade.** Every Platform Module builds and passes on a
     new CoreSDK version before an Environment moves to it. A Tenant Module that still fails after
     the automatic codemod does not hold the Environment back. Its Tenant receives a highly visible
@@ -162,27 +184,35 @@ release. V0 is close to complete; this decision shapes what follows it.
 
 21. **Three Modules move to the CoreSDK first and prove it before the others migrate.** They are
     chosen to differ as much as possible. `projects` is small and has an interface. `payment` has
-    the hardest server side: provider notifications, schedules, and recovery. The third is an open
-    point.
+    the hardest server side: provider notifications, schedules, and recovery. The third is a small
+    tagging module, for labels that staff put on other Modules' records. It proves the two extension
+    points of decision 10 and attaching to any Module's Resources by ResourceRef.
+
+### Package and migration
+
+22. **The CoreSDK is its own package, `@ontos/sdk`.** It has a small public surface for authoring,
+    interface, and testing, apart from Core's internals. A Module imports nothing else from Core,
+    and a lint rule enforces that. The package lives in this repository and is published to a
+    registry only when the first Module is built outside it.
+23. **Modules migrate one at a time.** A migrated Module and one not yet migrated keep talking over
+    the same wire contracts, so no Module waits for another. Each earlier form (the Action and
+    Outbox Worker definition forms and the generated manifest files) is deleted when its last user
+    has migrated. Migrating a Module also turns its direct imports of other Modules into declared
+    calls.
 
 ## Open points
 
 These are not decided yet. They are listed so that no reader takes the decisions above as complete.
 
-- The third Module of decision 21. A new tagging module was proposed and not accepted. What the
-  third Module must prove, and which Module it is, is asked again.
-- The names Module Audience and Interface Slot. They are proposed and the Product Owner has not
-  confirmed them.
-- What overriding the selection in decision 15 covers beyond an operator changing it, for example
-  one person previewing another version.
-- Where the source of a Tenant Module lives. The Product Owner leans towards files that OntOS itself
-  stores and versions.
-- Which module state a Tenant Module enters when it stops under decision 16.
+- How the selection in decision 15 is modelled and overridden.
+- How members of Module Audiences are connected and analysed (decision 8).
 - When the Commerce Portal realm moves onto a Module Audience.
 - Whether inference from one Module Definition stays fast and readable at the size of the largest
   module. It is measured before the current representations are deleted.
-- The exact shape of the Module Definition, how the CoreSDK is packaged for a Module built outside
-  this repository, and the migration order of the remaining Modules.
+- The exact shape of the Module Definition.
+- For Tenant Modules, later: where their source lives (the Product Owner leans towards files that
+  OntOS itself stores and versions), and which module state a Tenant Module enters when it stops
+  under decision 16.
 
 ## Considered options
 
@@ -229,11 +259,13 @@ possible.
   the CoreSDK. Confinement of a Tenant Module is the job of its Module Runtime.
 - The contract check stops comparing generated files with their source. It compares a candidate
   public contract with the released one and reports what changed.
-- Accepted decisions that the points above contradict need a superseding decision before those
-  points ship:
-  - [ADR-0020](0020-governed-application-composition.md) treats every module as first-party code in
-    one browser realm with no further trust tier, and one composition revision admits one build per
-    Module. Its strict shared-singleton rule already covers decision 14.
+- When the Product Owner confirms the complete design, this ADR is accepted for everything outside
+  the Tenant Module direction, and ADR-0004, ADR-0014, ADR-0017, and ADR-0020 are each marked
+  partially superseded by it, naming the exact point that changed. Until then those decisions stand:
+  - [ADR-0020](0020-governed-application-composition.md) admits one build per Module in one
+    composition revision; decision 15 changes that. It also treats every module as first-party code
+    in one browser realm with no further trust tier; that stays in force until Tenant Modules are
+    designed. Its strict shared-singleton rule already covers decision 14.
   - Decision 15 must be reconciled with ADR-0020, which rejects Tenant-pinned application versions,
     with [ADR-0017](0017-commerce-application-boundaries.md), which rejects customer-pinned product
     versions, and with the Build Revision term, which is not a customer-selectable product version.
