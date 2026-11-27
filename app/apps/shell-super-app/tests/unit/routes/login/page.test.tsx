@@ -26,6 +26,7 @@ const copy = {
   'shell.login.title': 'Login',
   'shell.login.toast.description': 'Fill in both required fields.',
   'shell.login.toast.title': 'Login details are incomplete',
+  'shell.uiKit.requiredLabel': '(required)',
 };
 
 const signedIn = Schema.decodeUnknownSync(SignInResponseSchema)({
