@@ -36,6 +36,16 @@ export { PrivacySubjectPartyCredentials } from './privacy-subject-party-credenti
 export class PrivacySubjectPartyOwner extends Context.Service<
   PrivacySubjectPartyOwner,
   {
+    /**
+     * The current PERSON Party the admitted source record identifies, when the exact contact point belongs to it.
+     * Party answers from its own committed receipt; the caller names no Party.
+     */
+    readonly contactPointParty: (
+      contactPointId: string,
+      admittedRecord: Omit<PrivacySourcePersonReference, 'occurrenceId'>,
+      scope: OperationalScope,
+      operationRequirementKey: PrivacyPartyOwnerRequirement,
+    ) => Effect.Effect<Option.Option<PartyRef>, PrivacyOperationPersistenceError>;
     readonly resolve: (
       partyRef: PartyRef,
       scope: OperationalScope,
@@ -48,6 +58,7 @@ export class PrivacySubjectPartyOwner extends Context.Service<
 >()('@app/privacy/persistence/privacy-subject-party-owner/PrivacySubjectPartyOwner') {}
 
 export const privacySubjectPartyOwnerUnavailable = PrivacySubjectPartyOwner.of({
+  contactPointParty: () => Effect.fail(unavailable()),
   resolve: () => Effect.fail(unavailable()),
 });
 
@@ -173,6 +184,39 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
       return yield* resolveSourcePersonOwnerEvidence(partyRef, scope, sourceReference, transport, contactPointId);
     });
     return PrivacySubjectPartyOwner.of({
+      contactPointParty: Effect.fn('PrivacySubjectPartyOwner.contactPointParty')(
+        function* contactPointParty(contactPointId, admittedRecord, scope, operationRequirementKey) {
+          const request = yield* Schema.decodeUnknownEffect(SourcePersonProofRequestSchema, {
+            onExcessProperty: 'error',
+          })({ admittedRecord, contactPointId }).pipe(Effect.mapError(unavailable));
+          const transport = yield* credentials.acquire(
+            scope,
+            'party.registry.source-person-admission.read',
+            operationRequirementKey,
+            readVerifiedGatewayRecovery(scope) === undefined ? undefined : computeCanonicalValueHash(request),
+          );
+          const result = yield* executeSourcePersonAdmissionWithAuthorization(
+            request,
+            Redacted.value(transport.authorization),
+            scope.correlationId,
+            { baseUrl: transport.baseUrl, compositionRevision: transport.compositionRevision },
+          ).pipe(
+            Effect.mapError(unavailable),
+            Effect.flatMap((value) =>
+              Schema.decodeUnknownEffect(SourcePersonAdmissionResponseSchema)(value).pipe(Effect.mapError(unavailable)),
+            ),
+          );
+          if (result.outcome === 'NOT_ADMISSIBLE') {
+            return Option.none<PartyRef>();
+          }
+          const partyRef = yield* Schema.decodeUnknownEffect(PartyRefSchema)(result.partyRef).pipe(
+            Effect.mapError(unavailable),
+          );
+          return partyRef.tenantId === scope.tenantId && result.sourceDecisionRef.tenantId === scope.tenantId
+            ? Option.some(partyRef)
+            : yield* unavailable();
+        },
+      ),
       resolve: Effect.fn('PrivacySubjectPartyOwner.resolve')(
         function* resolvePartyOwner(
           partyRef,

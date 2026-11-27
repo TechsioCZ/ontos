@@ -7,7 +7,7 @@ import type {
   SourcePersonProofRequest,
   SourcePersonAdmissionResponse,
 } from '../../shared/apis/source-person-admission.ts';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import {
@@ -145,7 +145,7 @@ const committedPersonReference = Effect.fn('SourcePersonAdmission.committedRefer
   scope: OperationalScope,
   request: Extract<SourcePersonProofRequest, { admittedRecord: unknown }>,
 ) {
-  if (request.partyRef.tenantId !== scope.tenantId || scope.legalEntityId === undefined) {
+  if (('partyRef' in request && request.partyRef.tenantId !== scope.tenantId) || scope.legalEntityId === undefined) {
     return;
   }
   const { source, recordId } = request.admittedRecord;
@@ -176,9 +176,16 @@ const committedPersonReference = Effect.fn('SourcePersonAdmission.committedRefer
     .limit(2)
     .pipe(Effect.mapError(unavailable));
   const [row] = rows;
-  if (rows.length !== 1 || row?.partyId !== request.partyRef.resourceId) {
+  // A named Party must be the one the receipt committed; a contact point request names none and gets that Party.
+  if (
+    rows.length !== 1 ||
+    row === undefined ||
+    row.partyId === null ||
+    ('partyRef' in request && row.partyId !== request.partyRef.resourceId)
+  ) {
     return;
   }
+  const { partyId } = row;
   const [decision] = yield* transaction
     .select({ evidence: partyMatchDecisions.evidenceEvaluation })
     .from(partyMatchDecisions)
@@ -199,9 +206,18 @@ const committedPersonReference = Effect.fn('SourcePersonAdmission.committedRefer
         : [],
     )
     .at(0);
-  return occurrence === undefined
-    ? undefined
-    : { partyRef: request.partyRef, sourceReference: { source, recordId, occurrenceId: occurrence } };
+  if (occurrence === undefined) {
+    return;
+  }
+  const sourceReference = { source, recordId, occurrenceId: occurrence };
+  if ('partyRef' in request) {
+    return { partyRef: request.partyRef, sourceReference };
+  }
+  return {
+    contactPointId: request.contactPointId,
+    partyRef: makePartyRef(scope.tenantId, partyId),
+    sourceReference,
+  };
 });
 
 /** Source pre-target Privacy runs before proof; no PARTY target Privacy call can create a circular admission. */

@@ -2977,6 +2977,8 @@ export const customerProfileSourceBindings = commerceCustomerContextSchema.table
       foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
       name: 'ccc_profile_source_binding_profile_fk',
     }).onDelete('restrict'),
+    // The owner proof of one profile reads every binding of that profile.
+    index('ccc_profile_source_bindings_profile_idx').on(table.tenantId, table.legalEntityId, table.customerProfileId),
     check('ccc_profile_source_binding_kind_ck', sql`${table.profileKind} in ('RETAIL','COUNTERPARTY')`),
     check('ccc_profile_source_binding_order_ck', sql`${table.sourceOrder} >= 0`),
     trimmed('ccc_profile_source_binding_issuer_ck', table.issuer),

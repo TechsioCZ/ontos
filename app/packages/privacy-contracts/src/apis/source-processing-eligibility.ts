@@ -66,6 +66,31 @@ const sourceRequestIssue = (request: SourceRequestUse) => {
     : generalRequestIssue(request);
 };
 
+interface DescribedSubjectUse {
+  readonly consumerModuleId: string;
+  readonly describedSubjectSource?: typeof PrivacySourceRecordIdentitySchema.Type;
+  readonly organizationBusinessUse?: string;
+  readonly source: typeof PrivacySourceRecordIdentitySchema.Type | null;
+}
+
+/** Only the personal Symmy intake states which customer record another record of the same route describes. */
+const describedSubjectIssue = ({
+  consumerModuleId,
+  describedSubjectSource: described,
+  organizationBusinessUse,
+  source,
+}: DescribedSubjectUse) =>
+  described === undefined ||
+  (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+    organizationBusinessUse === undefined &&
+    source !== null &&
+    described.issuer === source.issuer &&
+    described.namespace === source.namespace &&
+    described.routeRef === source.routeRef &&
+    (described.recordType !== source.recordType || described.recordId !== source.recordId))
+    ? undefined
+    : 'Only a personal Symmy intake names the customer record that a different record of the same route describes';
+
 export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
   consumerModuleId: Schema.Literals([
     'party.registry',
@@ -73,6 +98,12 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
     SymmyCustomerSourceIntakeConsumerModule,
     CommunicationsSourceProcessingConsumerModule,
   ]),
+  /**
+   * The customer record that the record of this use (a contact, an address) describes, while that binding is not
+   * committed yet. Privacy evaluates the use for that customer's subject; the intake commits the binding only after
+   * every check of its plan has passed. It locates a subject and carries no authority.
+   */
+  describedSubjectSource: Schema.optionalKey(PrivacySourceRecordIdentitySchema),
   operation: Ref,
   organizationBusinessUse: Schema.optionalKey(
     Schema.Literals(['COMPANY_ICO', 'COMPANY_NAME', 'GROUP_MEMBERSHIP', 'PRICE_GROUP_ASSIGNMENT']),
@@ -95,7 +126,7 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
       }),
     ),
   ),
-}).check(Schema.makeFilter(sourceRequestIssue));
+}).check(Schema.makeFilter(sourceRequestIssue), Schema.makeFilter(describedSubjectIssue));
 export type SourceProcessingEligibilityRequest = typeof SourceProcessingEligibilityRequestSchema.Type;
 
 /**

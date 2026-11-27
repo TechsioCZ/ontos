@@ -5,10 +5,14 @@ import { Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { SymmyPinnedJobPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import { SymmyJobStoreError } from '../../src/persistence/symmy-job-store.ts';
 import {
+  projectSymmyCustomerIntake,
   projectSymmyCustomerIntakeAdmissions,
   projectSymmyCustomerIntakeRequests,
+  settleSymmyCustomerIntake,
 } from '../../src/services/symmy-customer-intake-privacy.ts';
+import type { SymmyCustomerIntakePrivacyCalls } from '../../src/services/symmy-customer-intake-privacy.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '10000000-0000-4000-8000-000000000002';
@@ -239,5 +243,126 @@ it.effect('encodes only a membership record as a child, not a CUSTOMER containin
         entityKind === 'CUSTOMER' ? undefined : { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileRef.resourceId },
       );
     }
+  }),
+);
+
+/** A personal use of one source record: the item's own record is the subject evidence of its Party update. */
+const personalItem = (
+  index: number,
+  itemKey: string,
+  sourceRecordId: string,
+  dependsOn: readonly { readonly effectKey: string; readonly itemKey: string }[] = [],
+) => {
+  const item = admissionItem(index, itemKey, sourceRecordId, dependsOn);
+  return {
+    ...item,
+    effects: item.effects.map((effect) => ({
+      ...effect,
+      intent: {
+        _tag: 'PartyUpdate',
+        payload: {
+          expectedRevision: 1,
+          ...personalName,
+          partyRef,
+          provenanceMethod: 'CLIENT_SOURCE_ASSERTION',
+          provenanceSource: routeRef,
+          subjectEvidence: [
+            {
+              kind: 'CLIENT_SOURCE_ASSERTION',
+              observedSubject: 'PERSON',
+              occurrenceId: effect.ref.occurrence.occurrenceId,
+              recordId: sourceRecordId,
+              source,
+              sourceObservedAt: observedAt,
+              statement: OrganizationBusinessSourceStatement,
+              subjectKey: sourceRecordId,
+            },
+          ],
+          validFrom: observedAt,
+        },
+      },
+    })),
+  };
+};
+const customerWithContact = (customerRecordId: string) =>
+  Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
+    items: [
+      personalItem(1, 'customer-0', customerRecordId),
+      personalItem(2, 'contact-0-0', 'contact:one', [{ effectKey: 'party-update', itemKey: 'customer-0' }]),
+    ],
+  });
+
+it.effect('names the customer record a contact describes, so Privacy can check it before any binding exists', () =>
+  Effect.gen(function* describedCustomer() {
+    const { admissions, requests } = yield* projectSymmyCustomerIntake(
+      scope,
+      yield* customerWithContact('customer:one'),
+    );
+    expect(requests).toEqual([
+      {
+        consumerModuleId: 'integration.symmy',
+        operation: 'CUSTOMER_SOURCE_INTAKE',
+        source: { ...source, occurrenceId: '10000000-0000-4000-8000-000000000301', recordId: 'customer:one' },
+        target: { kind: 'PARTY', resourceId: partyRef.resourceId },
+      },
+      {
+        consumerModuleId: 'integration.symmy',
+        describedSubjectSource: sourceRecord('customer:one'),
+        operation: 'CUSTOMER_SOURCE_INTAKE',
+        source: { ...source, occurrenceId: '10000000-0000-4000-8000-000000000302', recordId: 'contact:one' },
+        target: { kind: 'PARTY', resourceId: partyRef.resourceId },
+      },
+    ]);
+    expect(admissions.map(({ payload }) => payload)).toEqual([
+      { childSources: [sourceRecord('contact:one')], source: sourceRecord('customer:one') },
+    ]);
+  }),
+);
+
+/** What Privacy holds after the calls of an intake: admitted subjects and the bindings of other records to them. */
+const recordingPrivacy = (refuses: (checkedRecordId: string) => boolean) => {
+  const bindings = new Map<string, string>();
+  const calls: string[] = [];
+  const subjects = new Set<string>();
+  const privacy: SymmyCustomerIntakePrivacyCalls = {
+    admit: (payload) =>
+      Effect.sync(() => {
+        subjects.add(payload.source.recordId);
+        for (const child of payload.childSources) {
+          bindings.set(child.recordId, payload.source.recordId);
+        }
+        calls.push(`admit:${payload.source.recordId}:${payload.childSources.length}`);
+      }),
+    check: (request) => {
+      const checked = request.source?.recordId ?? '';
+      calls.push(`check:${checked}`);
+      return refuses(checked) ? Effect.fail(new SymmyJobStoreError({ code: 'route_denied' })) : Effect.void;
+    },
+  };
+  return { bindings, calls, privacy, subjects };
+};
+
+it.effect('leaves no binding behind a refused plan, and binds the contact of the corrected plan', () =>
+  Effect.gen(function* refusedThenCorrected() {
+    const refused = recordingPrivacy((checked) => checked === 'contact:one');
+    const wrongCustomer = yield* projectSymmyCustomerIntake(scope, yield* customerWithContact('customer:wrong'));
+    expect(yield* settleSymmyCustomerIntake(wrongCustomer, refused.privacy).pipe(Effect.flip)).toMatchObject({
+      code: 'route_denied',
+    });
+    // Only the customer's own subject was admitted; the contact is bound to nobody.
+    expect(refused.calls).toEqual(['admit:customer:wrong:0', 'check:customer:wrong', 'check:contact:one']);
+    expect([...refused.bindings]).toEqual([]);
+
+    const allowed = recordingPrivacy(() => false);
+    const corrected = yield* projectSymmyCustomerIntake(scope, yield* customerWithContact('customer:one'));
+    yield* settleSymmyCustomerIntake(corrected, allowed.privacy);
+    // Subjects first, every use next, the immutable binding last.
+    expect(allowed.calls).toEqual([
+      'admit:customer:one:0',
+      'check:customer:one',
+      'check:contact:one',
+      'admit:customer:one:1',
+    ]);
+    expect([...allowed.bindings]).toEqual([['contact:one', 'customer:one']]);
   }),
 );

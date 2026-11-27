@@ -645,6 +645,50 @@ it.live(
           raw: boolean;
         }>`select has_table_privilege('ontos_runtime','commerce_customer_context.customer_profile_source_receipts','SELECT') raw,has_function_privilege('ontos_runtime','commerce_customer_context.customer_profile_source_item(uuid,uuid,jsonb)','EXECUTE') helper`;
         expect(evidence).toEqual({ helper: false, raw: false });
+
+        // The owner proof of a profile for Privacy. customer-001 and customer-002 are two source records of one person:
+        // two bindings of one retail profile that agree on its Party. One more valid binding must not break the proof.
+        const personRecord = (recordId: string) => JSON.stringify({ recordId, source: partySourceReference.source });
+        const profileSubject = (person: string | null) =>
+          adminSql.withTransaction(
+            Effect.gen(function* readProfileSubject() {
+              yield* adminSql`select set_config('ontos.tenant_id', ${fixture.tenantId}, true), set_config('ontos.legal_entity_id', ${fixture.legalEntityId}, true)`;
+              const rows = yield* adminSql<{
+                proof: {
+                  partyRef: { resourceId: string };
+                  profileRef: { resourceId: string };
+                  sourceReference: { recordId: string };
+                };
+              }>`select proof from commerce_customer_context.read_source_profile_subject(${fixture.tenantId}::uuid, ${fixture.legalEntityId}::uuid, ${original.profileRef.resourceId}::uuid, 'RETAIL', ${person}::jsonb)`;
+              return rows.map(({ proof }) => ({
+                partyId: proof.partyRef.resourceId,
+                personRecordId: proof.sourceReference.recordId,
+                profileId: proof.profileRef.resourceId,
+              }));
+            }),
+          );
+        const provenAs = (personRecordId: string) => [
+          { partyId, personRecordId, profileId: original.profileRef.resourceId },
+        ];
+        // Both bindings cite the same Party admission here; the proof of that person holds with or without its record.
+        expect(yield* profileSubject(personRecord('person-001'))).toEqual(provenAs('person-001'));
+        expect(yield* profileSubject(null)).toEqual(provenAs('person-001'));
+        // The second record was admitted by the Party owner under its own person record: each locator proves itself and
+        // a request that names none gets the canonical owner binding, the one recorded first.
+        yield* adminSql`update commerce_customer_context.customer_profile_source_bindings
+          set source_intent = jsonb_set(source_intent, '{partySourceReference,recordId}', '"person-002"'::jsonb)
+          where tenant_id = ${fixture.tenantId} and record_id = 'customer-002'`;
+        expect(yield* profileSubject(personRecord('person-001'))).toEqual(provenAs('person-001'));
+        expect(yield* profileSubject(personRecord('person-002'))).toEqual(provenAs('person-002'));
+        expect(yield* profileSubject(null)).toEqual(provenAs('person-001'));
+        expect(yield* profileSubject(personRecord('person-unknown'))).toEqual([]);
+        // A binding that names another Party than the profile's is a genuine conflict: nothing is proven for anybody.
+        yield* adminSql`update commerce_customer_context.customer_profile_source_bindings
+          set party_resource_id = ${randomUUID()}
+          where tenant_id = ${fixture.tenantId} and record_id = 'customer-002'`;
+        expect(yield* profileSubject(personRecord('person-001'))).toEqual([]);
+        expect(yield* profileSubject(personRecord('person-002'))).toEqual([]);
+        expect(yield* profileSubject(null)).toEqual([]);
       }),
     ).pipe(Effect.provide(platform)),
   { timeout: 180_000 },

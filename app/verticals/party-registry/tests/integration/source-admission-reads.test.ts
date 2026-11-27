@@ -161,21 +161,92 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   ),
                 ),
               ).toBe(true);
-              yield* transaction.insert(partyContactPoints).values({
-                tenantId,
-                partyId: created.partyRef.resourceId,
-                contactPointType: 'EMAIL',
-                displayValue: 'Fixture@example.test',
-                normalizedValue: 'fixture@example.test',
-                normalizationVersion: 'email.v1',
-                privacyClassification: 'PERSONAL',
-                validFrom: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-                provenanceSource: 'internal-fixture',
-                provenanceMethod: 'DECLARATION',
-                acceptedByActionInvocationId: invocationId,
-                acceptedByPrincipalId: principalId,
-                policyVersion: 'fixture',
+              const contactPointOf = (partyId: string, email: string, acceptedByActionInvocationId: string) =>
+                transaction
+                  .insert(partyContactPoints)
+                  .values({
+                    tenantId,
+                    partyId,
+                    contactPointType: 'EMAIL',
+                    displayValue: email,
+                    normalizedValue: email.toLowerCase(),
+                    normalizationVersion: 'email.v1',
+                    privacyClassification: 'PERSONAL',
+                    validFrom: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+                    provenanceSource: 'internal-fixture',
+                    provenanceMethod: 'DECLARATION',
+                    acceptedByActionInvocationId,
+                    acceptedByPrincipalId: principalId,
+                    policyVersion: 'fixture',
+                  })
+                  .returning({ contactPointId: partyContactPoints.contactPointId });
+              const [ownContact] = yield* contactPointOf(
+                created.partyRef.resourceId,
+                'Fixture@example.test',
+                invocationId,
+              );
+              assert.isOk(ownContact !== undefined);
+              // The admitted record alone names the person: Party returns its committed Party for that person's own
+              // contact point, so a first-contact customer can update or end it before Privacy reconciles a subject.
+              const ownContactProof = {
+                admittedRecord: standing.admittedRecord,
+                contactPointId: ownContact.contactPointId,
+              };
+              expect(yield* readSourcePersonAdmission(transaction, scope, ownContactProof)).toMatchObject({
+                outcome: 'SOURCE_PERSON_CURRENT',
+                partyRef: created.partyRef,
+                sourceDecisionRef: created.decisionRef,
               });
+              // A contact point of another Party is never the admitted person's, whoever asks.
+              const otherInvocation = 'df640000-0000-4000-8000-000000000003';
+              const other = yield* createOrMatchParty(transaction, {
+                actionInvocationId: otherInvocation,
+                candidate: yield* Schema.decodeUnknownEffect(PartyCandidateSchema)({
+                  partyType: 'PERSON',
+                  firstName: 'Unrelated fixture first',
+                  lastName: 'Unrelated fixture last',
+                  officialIdentifiers: [],
+                  evidenceRefs: [],
+                  provenance: { source: 'internal-fixture', method: 'CLIENT_SOURCE_ASSERTION' },
+                  validFrom: instant,
+                  subjectEvidence: [
+                    {
+                      kind: 'CLIENT_SOURCE_ASSERTION',
+                      observedSubject: 'PERSON',
+                      statement: 'Internal fixture source declares another person',
+                      subjectKey: 'fixture-other-person',
+                      source,
+                      recordId: 'other-person-record',
+                      occurrenceId: 'other-person-revision',
+                      sourceObservedAt: instant,
+                    },
+                  ],
+                }),
+                principalId,
+                sourceScope: scope,
+                legalEntityId,
+                tenantId,
+              });
+              assert.isOk(other.outcome === 'CREATED');
+              const [otherContact] = yield* contactPointOf(
+                other.partyRef.resourceId,
+                'Other.Fixture@example.test',
+                otherInvocation,
+              );
+              assert.isOk(otherContact !== undefined);
+              expect(
+                yield* readSourcePersonAdmission(transaction, scope, {
+                  ...ownContactProof,
+                  contactPointId: otherContact.contactPointId,
+                }),
+              ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
+              // An admitted record Party never committed proves no contact point at all.
+              expect(
+                yield* readSourcePersonAdmission(transaction, scope, {
+                  admittedRecord: { ...standing.admittedRecord, recordId: 'never-committed-record' },
+                  contactPointId: ownContact.contactPointId,
+                }),
+              ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
               const exported = yield* readSourceProfileExport(transaction, scope, request);
               assert.isOk(exported.outcome === 'AVAILABLE');
               expect(exported.firstName).toBe('Internal fixture first');

@@ -10,9 +10,13 @@ import {
   sourceSubjectMatchesRequest,
 } from '../../src/api/source-processing-eligibility.read.ts';
 import type { SourceProcessingEligibilityServices } from '../../src/api/source-processing-eligibility.read.ts';
-import { evaluatePrivacyEligibility } from '../../shared/domain/privacy-processing-eligibility.ts';
+import {
+  currentProcessingIntervention,
+  evaluatePrivacyEligibility,
+} from '../../shared/domain/privacy-processing-eligibility.ts';
 import type {
   IntendedProcessingScope,
+  PrivacyProcessingIntervention,
   ResolvePrivacyEligibilityInputsInput,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import {
@@ -89,6 +93,7 @@ const services = (
     Effect.succeed(
       Option.map(Option.fromNullishOr(admitted.get(request.source?.recordId ?? '')), (subjectId) => ({
         admittedAs: 'SUBJECT' as const,
+        otherSubjectIds: [],
         subjectId,
       })),
     ),
@@ -178,6 +183,65 @@ const protectionFor = (subjectRef: string, resourceRefs: readonly string[]) =>
     subjectRef,
     tenantId: ids.tenantId,
   });
+
+const assertedId = admitted.get('client:one') ?? '';
+const reconciledId = '20000000-0000-4000-8000-000000000009';
+const renewed = makeStandingSourceFixture({
+  ...ids,
+  authorizationId: '10000000-0000-4000-8000-000000000040',
+  basisId: '10000000-0000-4000-8000-000000000041',
+  responsibilityId: '10000000-0000-4000-8000-000000000042',
+});
+const refOf = (resourceId: string) => ({ ...subjectRefOne, resourceId });
+const restrictionFor = (
+  authorization: SourceProcessingAuthorization,
+  subjectId: string,
+): PrivacyProcessingIntervention => ({
+  currentness,
+  interventionRef: `fixture:restriction:${authorization.authorizationRef.resourceId}:${subjectId}`,
+  kind: 'RESTRICTION',
+  scope: sourceProcessingIntendedScope(authorization.scopeTemplate, refOf(subjectId)),
+  status: 'ACTIVE',
+});
+/** The real intervention resolution over the scopes the evaluator hands to the ledger, as PostgreSQL does. */
+const person = (
+  selected: string,
+  other: string,
+  interventions: readonly PrivacyProcessingIntervention[],
+  current = fixture,
+  history: readonly SourceProcessingAuthorization[] = [fixture.authorization],
+): SourceProcessingEligibilityServices => {
+  const base = services(history);
+  return {
+    ...base,
+    purposes: { get: () => Effect.succeed(Option.some(current.purpose)) },
+    repository: {
+      listApplicabilityDecisions: () => Effect.succeed([current.decision]),
+      listApplicabilityPolicies: () => Effect.succeed([current.policy]),
+      listResponsibilities: () => Effect.succeed([current.controller]),
+      resolveEligibilityInputs: (_tenant, _legalEntity, intended, asOf, _authority, priorScopes) => {
+        const restriction = currentProcessingIntervention(interventions, 'RESTRICTION', intended, asOf, priorScopes);
+        return Effect.succeed({
+          authoritativeReferences: [],
+          input: {
+            ...trustedInputs(intended),
+            applicability: current.decision,
+            applicabilityScope: current.decision.evaluatedScope,
+            restriction: {
+              currentness: restriction.currentness,
+              restrictionRef: restriction.interventionRef,
+              scope: restriction.scope,
+              status: restriction.status,
+            },
+          },
+          policyRevisions: [],
+        });
+      },
+    },
+    resolveSubject: () =>
+      Effect.succeed(Option.some({ admittedAs: 'SUBJECT' as const, otherSubjectIds: [other], subjectId: selected })),
+  };
+};
 
 describe('standing source processing authorization', () => {
   it.effect('checks both verified owner transports, rejecting ambiguous, missing or wrong provenance', () =>
@@ -364,7 +428,6 @@ describe('standing source processing authorization', () => {
         allowTargetless: false,
         consumerModuleId: 'commerce.customer-context',
         operation: 'PROFILE_CREATE',
-        organizationBusinessUses: [],
         targetAdmission: 'CURRENT_SOURCE_PERSON',
         targetKinds: ['PARTY'],
       });
@@ -591,5 +654,137 @@ describe('standing source processing authorization', () => {
     const contact = fixture.requestFor('contact:one', 'occurrence:contact');
     expect(sourceSubjectMatchesRequest(record, contact)).toBe(false);
     expect(sourceSubjectMatchesRequest(record, contact, undefined, 'CHILD')).toBe(true);
+  });
+
+  describe('one person behind two subject references', () => {
+    it.effect('keeps a restriction recorded for the asserted source after the person is reconciled', () =>
+      Effect.gen(function* acrossReferences() {
+        const recordedBeforeReconciliation = [restrictionFor(fixture.authorization, assertedId)];
+        // A targeted export resolves the reconciled Data Subject; a targetless use still resolves the asserted source.
+        expect(yield* run(person(reconciledId, assertedId, recordedBeforeReconciliation))).toMatchObject({
+          outcome: 'DENIED',
+          reason: 'PROCESSING_NOT_ALLOWED',
+        });
+        expect((yield* run(person(assertedId, reconciledId, recordedBeforeReconciliation))).outcome).toBe('DENIED');
+        // The reverse: recorded for the reconciled Data Subject, read by a use that resolves the asserted source.
+        expect(
+          (yield* run(person(assertedId, reconciledId, [restrictionFor(fixture.authorization, reconciledId)]))).outcome,
+        ).toBe('DENIED');
+        // Another person's restriction governs nobody else.
+        expect(
+          (yield* run(
+            person(reconciledId, assertedId, [restrictionFor(fixture.authorization, admitted.get('client:two') ?? '')]),
+          )).outcome,
+        ).toBe('ALLOWED');
+      }),
+    );
+    it.effect('keeps that restriction after the route authorization is renewed', () =>
+      Effect.gen(function* acrossRenewal() {
+        const history = [fixture.ended, renewed.authorization];
+        const recordedUnderEndedGrant = [restrictionFor(fixture.authorization, assertedId)];
+        for (const [selected, other] of [
+          [reconciledId, assertedId],
+          [assertedId, reconciledId],
+        ] as const) {
+          expect(
+            yield* run(person(selected, other, recordedUnderEndedGrant, renewed, history)),
+            `renewed grant, use resolved to ${selected}`,
+          ).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
+        }
+        expect((yield* run(person(reconciledId, assertedId, [], renewed, history))).outcome).toBe('ALLOWED');
+      }),
+    );
+  });
+
+  it.effect('keeps a canonical organization business intent on its exact context, whatever the route grants', () =>
+    Effect.gen(function* organizationIntent() {
+      const company = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema)({
+        consumerModuleId: 'integration.symmy',
+        operation: 'CUSTOMER_SOURCE_INTAKE',
+        organizationBusinessUse: 'COMPANY_NAME',
+        source: oneSource,
+        target: { kind: 'PARTY', resourceId: '20000000-0000-4000-8000-000000000025' },
+      });
+      let exactContextsRead = 0;
+      const exactOnly: SourceProcessingEligibilityServices = {
+        ...services(),
+        authorizations: () => Effect.die('An organization business intent never consults the route authorization'),
+        get contexts() {
+          exactContextsRead += 1;
+          return [];
+        },
+        resolveSubject: () => Effect.die('An organization business intent never resolves an admitted subject'),
+      };
+      expect(
+        yield* evaluateSourceProcessingEligibility(
+          company,
+          delegated('symmy-integration'),
+          exactOnly,
+          fixture.evaluatedAt,
+        ),
+      ).toMatchObject({ outcome: 'DENIED', reason: 'AUTHORITY_NOT_CURRENT' });
+      expect(exactContextsRead).toBe(1);
+      // The same signed personal intake is governed by the route and never by an exact context.
+      const { organizationBusinessUse: _use, ...personal } = company;
+      let personalContextsRead = 0;
+      const routeOnly: SourceProcessingEligibilityServices = {
+        ...services(),
+        get contexts() {
+          personalContextsRead += 1;
+          return [];
+        },
+      };
+      expect(
+        (yield* evaluateSourceProcessingEligibility(
+          personal,
+          delegated('symmy-integration'),
+          routeOnly,
+          fixture.evaluatedAt,
+        )).outcome,
+      ).toBe('DENIED');
+      expect(personalContextsRead).toBe(0);
+    }),
+  );
+  it('lets a first-contact customer name its own contact point, and only through its admission', () => {
+    const customer = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+      createdAt: fixture.from,
+      subject: { kind: 'SOURCE_ASSERTED', source: { ...fixture.route, recordId: 'client:one' } },
+      subjectRef: subjectRefOne,
+      updatedAt: fixture.from,
+    });
+    const contactUse = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema)({
+      consumerModuleId: 'integration.symmy',
+      describedSubjectSource: { ...fixture.route, recordId: 'client:one' },
+      operation: 'CUSTOMER_SOURCE_INTAKE',
+      source: { ...oneSource, recordId: 'contact:one' },
+      target: { kind: 'PARTY_CONTACT_POINT', resourceId: '20000000-0000-4000-8000-000000000031' },
+    });
+    // No reconciled Data Subject exists yet: the admitted customer is the subject and Party proves the contact point.
+    expect(sourceSubjectMatchesRequest(customer, contactUse, undefined, 'CHILD')).toBe(true);
+    expect(sourceSubjectMatchesRequest(customer, contactUse)).toBe(false);
+  });
+  it('accepts the described customer record only from a personal Symmy intake of the same route', () => {
+    const decode = Schema.decodeUnknownResult(SourceProcessingEligibilityRequestSchema);
+    const customer = { ...fixture.route, recordId: 'client:one' };
+    const contactUse = {
+      consumerModuleId: 'integration.symmy',
+      describedSubjectSource: customer,
+      operation: 'CUSTOMER_SOURCE_INTAKE',
+      source: { ...oneSource, recordId: 'contact:one' },
+      target: null,
+    };
+    expect(Result.isSuccess(decode(contactUse))).toBe(true);
+    for (const refused of [
+      { ...contactUse, describedSubjectSource: { ...customer, routeRef: 'route:other' } },
+      { ...contactUse, describedSubjectSource: { ...customer, recordId: 'contact:one' } },
+      { ...contactUse, consumerModuleId: 'party.registry', operation: 'CREATE' },
+      {
+        ...contactUse,
+        organizationBusinessUse: 'COMPANY_NAME',
+        target: { kind: 'PARTY', resourceId: '20000000-0000-4000-8000-000000000025' },
+      },
+    ]) {
+      expect(Result.isFailure(decode(refused))).toBe(true);
+    }
   });
 });

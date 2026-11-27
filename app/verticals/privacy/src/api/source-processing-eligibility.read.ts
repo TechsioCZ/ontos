@@ -55,7 +55,7 @@ import type {
 } from '../../shared/domain/privacy-source-processing-authorization.ts';
 import { currentScopeControllers } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
-import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
+import type { PrivacySourceRecordIdentity, PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import { antiResurrectionProtections, privacySubjects } from '../database/schema.ts';
 import {
   PrivacySubjectPartyOwner,
@@ -104,6 +104,12 @@ const unavailable = (cause?: unknown) => {
 /** The subject one source record resolves to under an authorization; a child record shares its parent's subject. */
 export interface ResolvedSourceSubject {
   readonly admittedAs: 'SUBJECT' | 'CHILD';
+  /**
+   * Every other Privacy subject reference of the same admitted person: the asserted source subject behind a reconciled
+   * Data Subject, or the Data Subject reconciled from the asserted one. An objection or restriction recorded for any
+   * of them governs this use.
+   */
+  readonly otherSubjectIds: readonly string[];
   readonly subjectId: string;
 }
 
@@ -251,7 +257,7 @@ const resolveStandingUse = Effect.fn('Privacy.resolveStandingUse')(function* sta
   if (Option.isNone(resolvedSubject)) {
     return missing('NO_CONTEXT');
   }
-  const { admittedAs, subjectId } = resolvedSubject.value;
+  const { admittedAs, otherSubjectIds, subjectId } = resolvedSubject.value;
   const template = authorization.scopeTemplate;
   const intendedScope = sourceProcessingIntendedScope(template, {
     moduleId: privacyModuleId,
@@ -278,8 +284,14 @@ const resolveStandingUse = Effect.fn('Privacy.resolveStandingUse')(function* sta
     authorityRevision: String(authorization.revision),
     contentScopeRefs: template.dataCategoryRefs,
     intendedScope,
+    // An objection or restriction follows the person, not the reference one use resolved. It is read for every other
+    // subject reference of the person under the current grant, and for all of them under each predecessor grant.
     priorInterventionScopes: active.flatMap((prior) =>
-      prior.lifecycle === 'ENDED' ? [sourceProcessingIntendedScope(prior.scopeTemplate, intendedScope.subjectRef)] : [],
+      [subjectId, ...otherSubjectIds].flatMap((id) =>
+        prior.lifecycle === 'ENDED' || id !== subjectId
+          ? [sourceProcessingIntendedScope(prior.scopeTemplate, { ...intendedScope.subjectRef, resourceId: id })]
+          : [],
+      ),
     ),
     resourceRefs: [subjectId],
     targetAdmission,
@@ -291,9 +303,16 @@ const resolveSourceUse = Effect.fn('Privacy.resolveSourceUse')(function* resolve
   services: SourceProcessingEligibilityServices,
   evaluatedAt: string,
 ) {
-  if (request.consumerModuleId !== CommunicationsSourceProcessingConsumerModule && request.source !== null) {
+  // A canonical organization business intent keeps its exact governed context and current owner proof: a route grant
+  // authorizes personal processing only and never stands in for an organization decision.
+  if (
+    request.organizationBusinessUse === undefined &&
+    request.consumerModuleId !== CommunicationsSourceProcessingConsumerModule &&
+    request.source !== null
+  ) {
     const active = yield* services.authorizations(request.source);
-    // A governed route remains governed after revocation. A signed Symmy call never consults exact contexts, even before the first grant.
+    // A governed route remains governed after revocation. A signed personal Symmy call never consults exact contexts,
+    // even before the first grant.
     if (
       active.length !== 0 ||
       request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule ||
@@ -713,7 +732,9 @@ const isStandingOwnerTarget = (
 ) =>
   role !== undefined &&
   subject.kind === 'SOURCE_ASSERTED' &&
-  (request.target?.kind === 'PARTY' || isProfileTarget(request.target));
+  (request.target?.kind === 'PARTY' ||
+    request.target?.kind === 'PARTY_CONTACT_POINT' ||
+    isProfileTarget(request.target));
 
 /** Party targets must be the actual local subject Party. Source subjects match a complete
  * source locator and remain distinct from anonymous session contexts and Party identity. */
@@ -806,36 +827,34 @@ const verifiedProfileSubject = Effect.fn('Privacy.verifiedProfileSubject')(funct
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
   crypto: Crypto.Crypto,
 ) {
+  // The person's own source record is known before Commerce is asked, so Commerce proves that exact binding and a
+  // second record of the same person on the profile cannot make the proof ambiguous.
+  let personalSource: PrivacySourceRecordIdentity | undefined;
+  if (subject.subject.kind === 'SOURCE_ASSERTED') {
+    personalSource = subject.subject.source;
+  } else if (subject.subject.kind === 'DATA_SUBJECT' && subject.subject.sourceAdmission !== undefined) {
+    const admitted = yield* repository
+      .resolveSourceSubjectReference(scope.tenantId, scope.legalEntityId ?? '', subject.subject.sourceAdmission)
+      .pipe(Effect.mapError(unavailable));
+    personalSource = { ...admitted.source, recordId: admitted.recordId };
+  }
+  if (personalSource === undefined) {
+    return false;
+  }
   const proof = yield* readProfileSubject(
     scope,
     target,
     'privacy.core.requirement.source-processing-profile-subject',
     crypto,
+    personalSource,
   ).pipe(Effect.mapError(unavailable));
   if (Option.isNone(proof)) {
     return false;
   }
   const { partyRef, sourceReference } = proof.value;
-  if (!(yield* partyIdentityAgrees(transaction, scope, partyRef.resourceId, subject))) {
-    return false;
-  }
-  let personalSource;
-  if (subject.subject.kind === 'SOURCE_ASSERTED') {
-    personalSource = subject.subject.source;
-  } else if (
-    subject.subject.kind === 'DATA_SUBJECT' &&
-    subject.subject.sourceAdmission !== undefined &&
-    subject.subject.partyRef.resourceId === partyRef.resourceId
-  ) {
-    personalSource = yield* repository
-      .resolveSourceSubjectReference(scope.tenantId, scope.legalEntityId ?? '', subject.subject.sourceAdmission)
-      .pipe(Effect.mapError(unavailable));
-  }
   if (
-    personalSource === undefined ||
-    privacySourceSubjectIdentityKey(
-      'source' in personalSource ? { ...personalSource.source, recordId: personalSource.recordId } : personalSource,
-    ) !== privacySourceSubjectIdentityKey({ ...sourceReference.source, recordId: sourceReference.recordId })
+    (subject.subject.kind === 'DATA_SUBJECT' && subject.subject.partyRef.resourceId !== partyRef.resourceId) ||
+    !(yield* partyIdentityAgrees(transaction, scope, partyRef.resourceId, subject))
   ) {
     return false;
   }
@@ -959,6 +978,20 @@ const verifyStandingSubject = Effect.fn('Privacy.verifyStandingSubject')(functio
   crypto: Crypto.Crypto,
   targetAdmission: TargetAdmission,
 ) {
+  // A first-contact customer has no reconciled Data Subject yet. Party attests, from its own committed receipt, that
+  // the exact contact point belongs to the person the admitted record identifies; a contact of another Party is denied.
+  if (request.target?.kind === 'PARTY_CONTACT_POINT' && subject.subject.kind === 'SOURCE_ASSERTED') {
+    yield* requireModuleOperation(sourcePersonRequirement).pipe(Effect.mapError(unavailable));
+    const { recordId, ...source } = subject.subject.source;
+    const owner = Option.getOrElse(
+      yield* Effect.serviceOption(PrivacySubjectPartyOwner),
+      () => privacySubjectPartyOwnerUnavailable,
+    );
+    const party = yield* owner
+      .contactPointParty(request.target.resourceId, { recordId, source }, scope, sourcePersonRequirement)
+      .pipe(Effect.mapError(unavailable));
+    return Option.isSome(party) && (yield* partyIdentityAgrees(transaction, scope, party.value.resourceId, subject));
+  }
   if (isProfileTarget(request.target)) {
     return yield* verifiedProfileSubject(transaction, request.target, subject, scope, repository, crypto);
   }
@@ -1022,22 +1055,82 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
     : yield* verifyStandingSubject(transaction, scope, subject, request, repository, crypto, targetAdmission);
 });
 
+interface UseAdmission {
+  readonly role: ResolvedSourceSubject['admittedAs'];
+  readonly subjectId: string;
+}
+type ProfileOwnerRecord = (
+  target: ProfileTarget,
+) => Effect.Effect<Option.Option<PrivacySourceRecordIdentity>, ReadHandlerUnavailable>;
+
+/**
+ * The admission one use is evaluated under: the committed admission of its source record, or the binding the use
+ * proposes for a child record that is not committed yet. A proposed child binding is only ever evaluated here; the
+ * intake commits it after every governing check and owner proof of its plan has passed, so a denied plan leaves no
+ * binding behind. The customer a contact or an address describes is stated by the signed intake; the customer of a
+ * membership is the one Commerce proves for the exact profile.
+ */
+const resolveUseAdmission = Effect.fn('Privacy.resolveUseAdmission')(function* resolveAdmission(
+  authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission' | 'sourceSubjectId'>,
+  request: SourceProcessingEligibilityRequest,
+  source: PrivacySourceRecordIdentity,
+  profileOwnerRecord: ProfileOwnerRecord,
+) {
+  const committed: Option.Option<UseAdmission> = yield* authorizations
+    .admission(source)
+    .pipe(Effect.mapError(unavailable));
+  const membershipProfile =
+    Option.isNone(committed) &&
+    request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+    source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' &&
+    isProfileTarget(request.target)
+      ? request.target
+      : undefined;
+  if (request.describedSubjectSource === undefined && membershipProfile === undefined) {
+    return committed;
+  }
+  const described =
+    request.describedSubjectSource !== undefined || membershipProfile === undefined
+      ? Option.fromUndefinedOr(request.describedSubjectSource)
+      : yield* profileOwnerRecord(membershipProfile);
+  if (Option.isNone(described)) {
+    return Option.none<UseAdmission>();
+  }
+  const root = yield* authorizations.admission(described.value).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(root) || root.value.role !== 'SUBJECT') {
+    return Option.none<UseAdmission>();
+  }
+  if (Option.isSome(committed)) {
+    // A committed binding is immutable: a use that describes another customer for the same record is refused.
+    return committed.value.role === 'CHILD' && committed.value.subjectId === root.value.subjectId
+      ? committed
+      : Option.none<UseAdmission>();
+  }
+  // A record that is a Privacy subject of its own can never become the child of another.
+  const own = yield* authorizations.sourceSubjectId(source).pipe(Effect.mapError(unavailable));
+  return Option.isSome(own)
+    ? Option.none<UseAdmission>()
+    : Option.some<UseAdmission>({ role: 'CHILD', subjectId: root.value.subjectId });
+});
+
 /**
  * Resolves the subject of the request's source record under one authorization: the admitted SOURCE_ASSERTED subject,
- * or the one Data Subject the Party owner reconciled from it when the request names that subject's Party.
+ * or the one Data Subject the Party owner reconciled from it when the request names that subject's Party. Both are
+ * references of one person, so the reference not selected is returned beside the selected one.
  */
 const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function* resolveSubject(
   transaction: SourceTransaction,
   scope: OperationalScope,
-  authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission'>,
+  authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission' | 'sourceSubjectId'>,
   request: SourceProcessingEligibilityRequest,
   targetAdmission: TargetAdmission,
+  profileOwnerRecord: ProfileOwnerRecord,
 ) {
   if (request.source === null) {
     return Option.none<ResolvedSourceSubject>();
   }
   const { occurrenceId: _occurrenceId, ...source } = request.source;
-  const admission = yield* authorizations.admission(source).pipe(Effect.mapError(unavailable));
+  const admission = yield* resolveUseAdmission(authorizations, request, source, profileOwnerRecord);
   if (Option.isNone(admission)) {
     return Option.none<ResolvedSourceSubject>();
   }
@@ -1082,18 +1175,24 @@ const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function*
     );
   const reconciled = matching('DATA_SUBJECT');
   const asserted = matching('SOURCE_ASSERTED');
+  const dataSubjects = records.filter(({ subject }) => subject.kind === 'DATA_SUBJECT');
   if (
     request.target?.kind === 'PARTY' &&
     targetAdmission === undefined &&
     reconciled.length === 0 &&
-    records.some((record) => record.subject.kind === 'DATA_SUBJECT')
+    dataSubjects.length > 0
   ) {
     return Option.none<ResolvedSourceSubject>();
   }
   const [selected] = reconciled.length > 0 ? reconciled : asserted;
-  return reconciled.length > 1 || asserted.length > 1 || selected === undefined
+  // One asserted source reconciles to at most one Data Subject; more than one is an identity conflict, never a choice.
+  return dataSubjects.length > 1 || asserted.length > 1 || selected === undefined
     ? Option.none<ResolvedSourceSubject>()
-    : Option.some<ResolvedSourceSubject>({ admittedAs, subjectId: selected.subjectRef.resourceId });
+    : Option.some<ResolvedSourceSubject>({
+        admittedAs,
+        otherSubjectIds: records.flatMap((record) => (record === selected ? [] : [record.subjectRef.resourceId])),
+        subjectId: selected.subjectRef.resourceId,
+      });
 });
 
 const sourceConfigurationUnavailable = (cause: unknown) =>
@@ -1159,6 +1258,52 @@ export const runSourceProcessingEligibility = Effect.fn('Privacy.runSourceProces
   },
 );
 
+/** The owner-local services of the governed Read: current ledgers, admissions and owner proofs of one transaction. */
+export const sourceProcessingEligibilityServices = Effect.fn('Privacy.sourceProcessingEligibilityServices')(
+  function* sourceServices(transaction: SourceTransaction, scope: OperationalScope) {
+    yield* traceSourceStage('services-entered');
+    const crypto = yield* Crypto.Crypto;
+    const contexts = yield* configuredContexts.pipe(
+      Effect.mapError(sourceConfigurationUnavailable),
+      Effect.tapError(() => traceSourceStage('configuration-unavailable')),
+    );
+    const { authorizations, purposes, repository } = yield* Effect.all(
+      {
+        authorizations: sourceProcessingAuthorizationRepositoryForScope(transaction, scope),
+        purposes: processingPurposeRepositoryForScope(transaction, scope),
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.tapError(() => traceSourceStage('repositories-unavailable')));
+    yield* traceSourceStage('services-ready');
+    const profileOwnerRecord = (target: ProfileTarget) =>
+      readProfileSubject(scope, target, 'privacy.core.requirement.source-processing-profile-subject', crypto).pipe(
+        Effect.map(
+          Option.map(({ sourceReference }) => ({ ...sourceReference.source, recordId: sourceReference.recordId })),
+        ),
+        Effect.mapError(unavailable),
+      );
+    return {
+      authorizations: (source: NonNullable<SourceProcessingEligibilityRequest['source']>) =>
+        authorizations.historyForRoute(source).pipe(Effect.mapError(unavailable)),
+      contexts,
+      protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
+        readSourceProtections(transaction, scope, subjectRef, request),
+      purposes,
+      repository,
+      resolveSubject: (request: SourceProcessingEligibilityRequest, targetAdmission: TargetAdmission) =>
+        resolveSourceSubject(transaction, scope, authorizations, request, targetAdmission, profileOwnerRecord),
+      subjectExists: (
+        subjectRef: string,
+        request: SourceProcessingEligibilityRequest,
+        targetAdmission: TargetAdmission,
+        admittedAs?: ResolvedSourceSubject['admittedAs'],
+      ) =>
+        sourceSubjectExists(transaction, scope, subjectRef, request, repository, crypto, targetAdmission, admittedAs),
+    };
+  },
+);
+
 const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -1208,39 +1353,5 @@ export const sourceProcessingEligibilityRead = defineRead(
   ) {
     return yield* runSourceProcessingEligibility(input, context);
   }),
-  Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(transaction, scope) {
-    yield* traceSourceStage('services-entered');
-    const crypto = yield* Crypto.Crypto;
-    const contexts = yield* configuredContexts.pipe(
-      Effect.mapError(sourceConfigurationUnavailable),
-      Effect.tapError(() => traceSourceStage('configuration-unavailable')),
-    );
-    const { authorizations, purposes, repository } = yield* Effect.all(
-      {
-        authorizations: sourceProcessingAuthorizationRepositoryForScope(transaction, scope),
-        purposes: processingPurposeRepositoryForScope(transaction, scope),
-        repository: privacyOperationRepositoryForScope(transaction, scope),
-      },
-      { concurrency: 2 },
-    ).pipe(Effect.tapError(() => traceSourceStage('repositories-unavailable')));
-    yield* traceSourceStage('services-ready');
-    return {
-      authorizations: (source: NonNullable<SourceProcessingEligibilityRequest['source']>) =>
-        authorizations.historyForRoute(source).pipe(Effect.mapError(unavailable)),
-      contexts,
-      protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
-        readSourceProtections(transaction, scope, subjectRef, request),
-      purposes,
-      repository,
-      resolveSubject: (request: SourceProcessingEligibilityRequest, targetAdmission: TargetAdmission) =>
-        resolveSourceSubject(transaction, scope, authorizations, request, targetAdmission),
-      subjectExists: (
-        subjectRef: string,
-        request: SourceProcessingEligibilityRequest,
-        targetAdmission: TargetAdmission,
-        admittedAs?: ResolvedSourceSubject['admittedAs'],
-      ) =>
-        sourceSubjectExists(transaction, scope, subjectRef, request, repository, crypto, targetAdmission, admittedAs),
-    };
-  }),
+  sourceProcessingEligibilityServices,
 );

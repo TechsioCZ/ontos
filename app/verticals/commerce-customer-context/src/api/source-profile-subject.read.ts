@@ -30,6 +30,7 @@ const subjectRoutine = defineScopedRoutine({
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'text' },
+    { source: 'input', type: 'jsonb' },
   ],
   resultSchema: Schema.Struct({
     proof: Schema.Struct({
@@ -111,7 +112,7 @@ export const sourceProfileSubjectRead = defineRead(
           return absent;
         }
         const [row] = yield* transaction
-          .invoke(subjectRoutine, [input.profileRef.resourceId, input.profileRef.kind])
+          .invoke(subjectRoutine, [input.profileRef.resourceId, input.profileRef.kind, input.personRecord ?? {}])
           .pipe(Effect.mapError(unavailable));
         if (row === undefined) {
           return absent;
