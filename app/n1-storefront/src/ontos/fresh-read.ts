@@ -62,7 +62,8 @@ const start = <A>(state: State<A>): Pending<A> => {
 
 const pause = (ms: number) =>
   new Promise<void>((resolve) => {
-    setTimeout(resolve, ms).unref();
+    // A test DOM may hand back a timer without unref.
+    setTimeout(resolve, ms).unref?.();
   });
 
 const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) => {
