@@ -259,7 +259,7 @@ const RecurringGeneration = (model: ReturnType<typeof useRecurringPanel>) => {
                 generate(active);
               }}
               size="sm"
-              severity="primary"
+              variant="primary"
             >
               Připravit návrhy za období ({active.length})
             </Button>
@@ -267,8 +267,8 @@ const RecurringGeneration = (model: ReturnType<typeof useRecurringPanel>) => {
               icon="icon-[mdi--plus]"
               onClick={() => setCreating(true)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               Nová šablona
             </Button>
@@ -323,7 +323,7 @@ const RecurringTemplates = (model: ReturnType<typeof useRecurringPanel>) => {
   ) : (
     <SectionCard flush>
       <FinanceTableScroll label={t('finance-billing.financeUi.recurring.templates')}>
-        <Table size="sm" appearance="line">
+        <Table size="sm" variant="line">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Šablona</Table.ColumnHeader>
@@ -365,14 +365,14 @@ const RecurringTemplates = (model: ReturnType<typeof useRecurringPanel>) => {
                       {periods.length === 0
                         ? '—'
                         : periods.map((value) => (
-                            <Badge key={value} size="sm" severity={value === period ? 'primary' : 'info'}>
+                            <Badge key={value} size="sm" variant={value === period ? 'primary' : 'info'}>
                               {value}
                             </Badge>
                           ))}
                     </span>
                   </Table.Cell>
                   <Table.Cell>
-                    <Badge size="sm" severity={template.active ? 'success' : 'warning'}>
+                    <Badge size="sm" variant={template.active ? 'success' : 'warning'}>
                       {template.active ? 'Aktivní' : 'Pozastavená'}
                     </Badge>
                   </Table.Cell>
@@ -387,8 +387,8 @@ const RecurringTemplates = (model: ReturnType<typeof useRecurringPanel>) => {
                               generate([template]);
                             }}
                             size="sm"
-                            appearance="outline"
-                            severity="secondary"
+                            theme="outlined"
+                            variant="secondary"
                           >
                             Připravit {period}
                           </Button>
@@ -407,8 +407,8 @@ const RecurringTemplates = (model: ReturnType<typeof useRecurringPanel>) => {
                             );
                           }}
                           size="sm"
-                          appearance="ghost"
-                          severity="secondary"
+                          theme="borderless"
+                          variant="secondary"
                         >
                           {template.active ? 'Pozastavit' : 'Obnovit'}
                         </Button>
@@ -449,7 +449,7 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
               prepareSelected();
             }}
             size="sm"
-            severity="primary"
+            variant="primary"
           >
             Přepnout vybrané k odsouhlasení ({selectedDrafts.length})
           </Button>
@@ -472,7 +472,7 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
         <p className="px-250 pb-250 text-fg-secondary text-sm">Žádné otevřené návrhy z opakovaných faktur.</p>
       ) : (
         <FinanceTableScroll label={t('finance-billing.financeUi.recurring.drafts')}>
-          <Table size="sm" appearance="line">
+          <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>
@@ -530,7 +530,7 @@ const RecurringDrafts = (model: ReturnType<typeof useRecurringPanel>) => {
                       {formatMoney(invoice.totalMinor)}
                     </Table.Cell>
                     <Table.Cell>
-                      <Badge className="whitespace-nowrap" size="sm" severity={presentation.variant}>
+                      <Badge className="whitespace-nowrap" size="sm" variant={presentation.variant}>
                         {presentation.label}
                       </Badge>
                     </Table.Cell>
@@ -555,8 +555,8 @@ const RecurringDuplicateDecision = (model: ReturnType<typeof useRecurringPanel>)
           <Button
             className="whitespace-nowrap"
             onClick={() => setDuplicateTarget(undefined)}
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             Nevytvářet
           </Button>
@@ -566,7 +566,7 @@ const RecurringDuplicateDecision = (model: ReturnType<typeof useRecurringPanel>)
             onClick={() => {
               generateDuplicate();
             }}
-            severity="danger"
+            variant="danger"
           >
             Přesto vytvořit druhý návrh
           </Button>

@@ -56,7 +56,7 @@ const kindsOf = (tag: TagWithCounts) => {
 const CancelButton = ({ onClick }: { onClick: () => void }) => {
   const { t } = useModernI18n();
   return (
-    <Button onClick={() => onClick()} appearance="outline" severity="secondary">
+    <Button onClick={() => onClick()} theme="outlined" variant="secondary">
       {t('tagging.tags.form.cancel')}
     </Button>
   );
@@ -137,7 +137,7 @@ const DeleteTagDialog = ({
             isLoading={busy}
             loadingText={t('tagging.tags.delete.busy')}
             onClick={() => confirm()}
-            severity="danger"
+            variant="danger"
           >
             {t('tagging.tags.delete.submit')}
           </Button>
@@ -318,7 +318,7 @@ const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
             }
             const kindLabel = t(`tagging.kinds.${kind}`);
             return [
-              <Badge key={kind} size="sm" appearance="outline" severity="neutral">
+              <Badge key={kind} size="sm" variant="outline">
                 {`${kindLabel} ${count}`}
               </Badge>,
             ];
@@ -355,7 +355,7 @@ const TagsPageContent = () => {
       <UltramodernRouteHead />
       <PageHeader
         actions={
-          <Button icon="icon-[mdi--plus]" onClick={() => setEditor({ tag: null })} size="sm" severity="primary">
+          <Button icon="icon-[mdi--plus]" onClick={() => setEditor({ tag: null })} size="sm" variant="primary">
             {t(newTagKey)}
           </Button>
         }
@@ -386,7 +386,7 @@ const TagsPageContent = () => {
             return (
               <EmptyState
                 action={
-                  <Button onClick={() => reload()} size="sm" appearance="outline" severity="secondary">
+                  <Button onClick={() => reload()} size="sm" theme="outlined" variant="secondary">
                     {t('tagging.tags.retry')}
                   </Button>
                 }
@@ -398,7 +398,7 @@ const TagsPageContent = () => {
             return (
               <EmptyState
                 action={
-                  <Button onClick={() => setGlobalFilter('')} size="sm" appearance="outline" severity="secondary">
+                  <Button onClick={() => setGlobalFilter('')} size="sm" theme="outlined" variant="secondary">
                     {t('tagging.tags.table.clearSearch')}
                   </Button>
                 }
@@ -413,8 +413,8 @@ const TagsPageContent = () => {
                   icon="icon-[mdi--plus]"
                   onClick={() => setEditor({ tag: null })}
                   size="sm"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 >
                   {t(newTagKey)}
                 </Button>
@@ -436,7 +436,7 @@ const TagsPageContent = () => {
             id: 'delete',
             label: t('tagging.tags.delete.submit'),
             onAction: (row) => setRemoving(row.original),
-            severity: 'danger',
+            tone: 'danger',
           },
         ]}
         size="sm"

@@ -24,7 +24,7 @@ export const OrderReloadNotice = ({
         {t('merchandise.pages.orders.states.reloadFailed')}
       </StatusText>
       {onRetry !== undefined && (
-        <Button onClick={onRetry} size="sm" appearance="outline" severity="secondary">
+        <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
           {t('merchandise.pages.orders.states.retry')}
         </Button>
       )}

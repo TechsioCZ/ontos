@@ -115,7 +115,7 @@ const SetPasswordPage = () => {
                   {error}
                 </StatusText>
               )}
-              <Button disabled={!hydrated || busy} type="submit" severity="primary">
+              <Button disabled={!hydrated || busy} type="submit" variant="primary">
                 {busy ? 'Nastavuji heslo…' : 'Nastavit heslo'}
               </Button>
             </form>

@@ -95,7 +95,7 @@ export const AccountView = ({
         orientation={desktop ? "vertical" : "horizontal"}
         size="sm"
         value={tab}
-        appearance="underline"
+        variant="default"
       >
         <div className="flex w-full min-w-0 flex-col items-start gap-4 md:flex-row">
           <div className="n1-account-navigation flex w-full shrink-0 flex-wrap items-start gap-0.5 md:w-auto md:flex-col md:flex-nowrap">
@@ -112,8 +112,8 @@ export const AccountView = ({
               loadingText={d.auth.checking}
               onClick={() => auth.run(logoutPortal())}
               size="sm"
-              appearance="solid"
-              severity="secondary"
+              theme="solid"
+              variant="secondary"
             >
               {d.auth.signOut}
             </Button>
@@ -139,8 +139,8 @@ export const AccountView = ({
                     <Button
                       onClick={() => router.refresh()}
                       size="md"
-                      appearance="outline"
-                      severity="secondary"
+                      theme="outlined"
+                      variant="secondary"
                     >
                       {d.accountPage.reload}
                     </Button>
@@ -165,8 +165,8 @@ export const AccountView = ({
           as={NextLink}
           href={`/${locale}/prihlaseni`}
           size="md"
-          appearance="solid"
-          severity="primary"
+          theme="solid"
+          variant="primary"
         >
           {d.accountPage.login}
         </LinkButton>
@@ -174,8 +174,8 @@ export const AccountView = ({
           disabled={auth.pending}
           onClick={() => router.refresh()}
           size="md"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           {d.accountPage.reload}
         </Button>

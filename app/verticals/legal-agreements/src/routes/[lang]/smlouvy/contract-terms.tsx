@@ -52,7 +52,7 @@ export const ContractTermsCard = ({ state }: { readonly state: PageState }) => {
     <SectionCard
       actions={
         state.detailView.canEditTerms ? (
-          <Button disabled={state.busy} onClick={handleOpenTerms} size="sm" appearance="outline" severity="secondary">
+          <Button disabled={state.busy} onClick={handleOpenTerms} size="sm" theme="outlined" variant="secondary">
             {t(`${P}.terms.edit`)}
           </Button>
         ) : undefined
@@ -158,14 +158,7 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
       )}
       <div className="legalagreements:flex legalagreements:flex-col legalagreements:items-start legalagreements:gap-2">
         {links.map((link) => (
-          <LinkButton
-            href={link.href}
-            icon={link.icon}
-            key={link.href}
-            size="sm"
-            appearance="outline"
-            severity="secondary"
-          >
+          <LinkButton href={link.href} icon={link.icon} key={link.href} size="sm" theme="outlined" variant="secondary">
             {link.label}
           </LinkButton>
         ))}
@@ -242,7 +235,7 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
     <SidePanel
       actions={
         <>
-          <Button onClick={requestClose} appearance="outline" severity="secondary">
+          <Button onClick={requestClose} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
           </Button>
           <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />

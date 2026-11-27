@@ -145,8 +145,8 @@ export const InvoicePaymentForm = ({
           <Button
             onClick={() => setDraft((current) => ({ ...current, amount: String(remaining / 100).replace('.', ',') }))}
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           >
             Celý zbytek
           </Button>

@@ -18,7 +18,6 @@ import { flow } from 'effect/Function';
 import type { i18n } from 'i18next';
 import type { ReactNode } from 'react';
 
-import { TenantThemeRoot } from '../../src/routes/tenant-theme-root.tsx';
 import { ShellI18n } from './shell-i18n.tsx';
 
 /** One page of the Shell under its language segment, served by a real route with a real loader. */
@@ -73,8 +72,8 @@ const Empty = () => null;
 
 /**
  * A real TanStack router over the Shell's language-prefixed route tree, started at `url` in memory
- * history. The page under test is the only route besides the localised home; `root` renders around every route,
- * inside the tenant theme the page model carries, as under the Shell's own layout.
+ * history. The page under test is the only route besides the localised home; `root` renders around
+ * every route, as the Shell's own layout does.
  */
 export const makeShellRouter = <LoaderData = undefined,>(options: {
   readonly page: ShellRoutePage<LoaderData>;
@@ -86,9 +85,7 @@ export const makeShellRouter = <LoaderData = undefined,>(options: {
   const root = createRootRoute({
     component: () => (
       <ShellNavigation>
-        <TenantThemeRoot>
-          <Root />
-        </TenantThemeRoot>
+        <Root />
       </ShellNavigation>
     ),
   });

@@ -72,10 +72,10 @@ const ChangeDialog = ({
     <Dialog
       actions={
         <>
-          <Button onClick={onClose} appearance="outline" severity="secondary">
+          <Button onClick={onClose} theme="outlined" variant="secondary">
             {t(`${ns}.cancel`)}
           </Button>
-          <Button disabled={busy} onClick={onSubmit} severity="primary">
+          <Button disabled={busy} onClick={onSubmit} variant="primary">
             {submitLabel}
           </Button>
         </>

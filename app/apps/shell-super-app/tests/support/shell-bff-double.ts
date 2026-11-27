@@ -23,7 +23,6 @@ import {
 import type { CurrentSession } from '../../shared/browser-api.ts';
 import { moduleTargetSourceHeader } from '../../shared/module-target-diagnostics.ts';
 import { browserNetwork, inProcessFetch } from '@app/shared-contracts/testing/http-double';
-import { businessShellTheme } from '../../src/routes/tenant-theme.ts';
 
 const contract = ShellAuthenticationApi.groups;
 
@@ -37,7 +36,6 @@ const ShellBffDoubleApi = HttpApi.make('shellBffDouble')
   .add(contract.tenants)
   .add(contract.resources)
   .add(ShellDocumentContextApiGroup)
-  .add(contract.coreReadTenantTheme)
   .add(accessAdminRolesGroup)
   .add(HttpApiGroup.make('accessAdminPeople').add(accessAdminPeopleGroup.endpoints.listAccessPeople))
   .add(accessAdminChangesGroup)
@@ -88,9 +86,6 @@ export interface ShellBffRequest {
   readonly targetSource: string | undefined;
   readonly url: string;
 }
-
-/** The tenant theme Core answers for a tenant without an attachment: the kit's Business brand. */
-export const businessThemeRead = { revision: businessShellTheme.revision, theme: businessShellTheme.brand };
 
 /** The composition revision every signed-in shell read pins, the same one the route fixtures carry. */
 export const shellCompositionRevision = '1'.repeat(64);
@@ -233,17 +228,6 @@ export const makeShellBff = (script: ShellBffScript) => {
         .handle('switchTenant', ({ payload, request }) =>
           answer('switchTenant', payload, request, script.switchTenant),
         ),
-    ),
-    // Every signed-in page reads its tenant's theme; unless a test scripts another, the tenant has none attached.
-    HttpApiBuilder.group(ShellBffDoubleApi, 'coreReadTenantTheme', (group) =>
-      group.handle('executeTenantTheme', ({ payload, request }) =>
-        answer(
-          'executeTenantTheme',
-          payload,
-          request,
-          script.executeTenantTheme ?? (() => Effect.succeed(businessThemeRead)),
-        ),
-      ),
     ),
     HttpApiBuilder.group(ShellBffDoubleApi, 'resources', (group) =>
       group

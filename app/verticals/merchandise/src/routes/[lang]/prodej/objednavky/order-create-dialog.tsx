@@ -229,7 +229,7 @@ export const OrderCreateDialog = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(leave)} appearance="outline" severity="secondary">
+            <Button onClick={() => guard.request(leave)} theme="outlined" variant="secondary">
               {t(key('create.cancel'))}
             </Button>
             <SaveBar
@@ -312,8 +312,8 @@ export const OrderCreateDialog = ({
                 icon="icon-[mdi--plus]"
                 onClick={() => setDraft((current) => ({ ...current, lines: [...current.lines, newLine()] }))}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 {t(key('create.addLine'))}
               </Button>

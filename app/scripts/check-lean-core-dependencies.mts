@@ -298,10 +298,6 @@ const allowedCoreExternalSpecifiers = new Set([
   'cloudflare:workers',
   'effect',
   'pg',
-  // Tenant themes: the UI kit's brand data, its validator and its types, never its components.
-  '@techsio/ui-kit/theme/brand-validator',
-  '@techsio/ui-kit/theme/built-in-brands',
-  '@techsio/ui-kit/theme/ui-provider',
 ]);
 
 // Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
@@ -582,7 +578,6 @@ const allowedCorePackageDependencies = new Set([
   '@effect/platform-node',
   '@effect/sql-pg',
   '@noble/hashes',
-  '@techsio/ui-kit',
   'drizzle-kit',
   'drizzle-orm',
   'effect',

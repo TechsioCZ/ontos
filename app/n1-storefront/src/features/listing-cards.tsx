@@ -73,8 +73,8 @@ export const ListingCards = ({
                 block
                 href={href}
                 size="md"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 {chooseVariant ? d.selectVariantListing : d.detail}
               </LinkButton>

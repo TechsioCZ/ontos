@@ -152,7 +152,7 @@ export const useFormSave = <V,>(options: FormSaveOptions<V>): FormSave<V> => {
 };
 
 const FormCancelButton = ({ label, onCancel }: { readonly label: string; readonly onCancel: () => void }) => (
-  <Button onClick={onCancel} appearance="outline" type="button" severity="secondary">
+  <Button onClick={onCancel} theme="outlined" type="button" variant="secondary">
     {label}
   </Button>
 );

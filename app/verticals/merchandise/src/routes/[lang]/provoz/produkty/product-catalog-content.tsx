@@ -260,9 +260,9 @@ export const CatalogContentPanel = ({
                     icon="icon-[mdi--delete-outline]"
                     onClick={() => removeParameter(parameter.key)}
                     size="sm"
-                    appearance="ghost"
+                    theme="borderless"
                     type="button"
-                    severity="secondary"
+                    variant="secondary"
                   />
                 ) : null}
               </div>
@@ -284,9 +284,9 @@ export const CatalogContentPanel = ({
                 setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
               }}
               size="sm"
-              appearance="outline"
+              theme="outlined"
               type="button"
-              severity="secondary"
+              variant="secondary"
             >
               Přidat parametr
             </Button>
@@ -325,7 +325,7 @@ export const CatalogContentPanel = ({
           <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
         ) : (
           <ScrollRegion label={t('merchandise.ui.contentChangeHistory')}>
-            <Table size="sm" appearance="line">
+            <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Kdy</Table.ColumnHeader>

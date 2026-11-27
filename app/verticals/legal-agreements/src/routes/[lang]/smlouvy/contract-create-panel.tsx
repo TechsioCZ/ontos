@@ -218,7 +218,7 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
     <SidePanel
       actions={
         <>
-          <Button onClick={requestClose} appearance="outline" severity="secondary">
+          <Button onClick={requestClose} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
           </Button>
           <SaveBar

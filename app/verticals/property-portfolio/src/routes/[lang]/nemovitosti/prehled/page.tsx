@@ -382,7 +382,7 @@ const OverviewSelection = ({
       <section aria-label={t('property-portfolio.pages.overview.sourceRecords')} className="sp-panel">
         <div className="sp-heading">
           <h2>{selectionTitle(selection)}</h2>
-          <Button onClick={() => setSelection('')} size="sm" appearance="ghost" severity="secondary">
+          <Button onClick={() => setSelection('')} size="sm" theme="borderless" variant="secondary">
             Zavřít
           </Button>
         </div>
@@ -424,7 +424,7 @@ const OverviewBuildings = ({ view }: { readonly view: OverviewView }) => {
                 </h3>
                 <p className="sp-muted">{building.address}</p>
               </div>
-              <Badge size="sm" severity={building.lifecycleState === 'ACTIVE' ? 'success' : 'neutral'}>
+              <Badge size="sm" variant={building.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
                 {building.lifecycleState === 'ACTIVE' ? 'Aktivní' : 'Archivováno'}
               </Badge>
             </div>
@@ -444,7 +444,7 @@ const OverviewBuildings = ({ view }: { readonly view: OverviewView }) => {
                 return [
                   <a className="sp-unit" href={href('nemovitosti', unitId)} key={unitId}>
                     <strong>{unit.code}</strong>
-                    <Badge size="sm" severity={occupancy === undefined ? 'neutral' : availabilityTone[state]}>
+                    <Badge size="sm" variant={occupancy === undefined ? 'outline' : availabilityTone[state]}>
                       {occupancy === undefined ? 'Bez dat' : availabilityLabel[state]}
                     </Badge>
                     <span className="sp-muted">
@@ -657,13 +657,13 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
               <aside className="sp-panel">
                 <div className="sp-heading">
                   <h2>Na co nezapomenout</h2>
-                  <Badge size="sm" appearance="outline" severity="neutral">
+                  <Badge size="sm" variant="outline">
                     Nejbližších 60 dní
                   </Badge>
                 </div>
                 {attention.slice(0, 6).map((item) => (
                   <a className="sp-attention" href={item.href} key={item.id}>
-                    <Badge size="sm" severity={item.tone}>
+                    <Badge size="sm" variant={item.tone}>
                       {item.kind}
                     </Badge>
                     <strong>{item.label}</strong>

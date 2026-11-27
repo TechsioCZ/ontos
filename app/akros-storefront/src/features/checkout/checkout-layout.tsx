@@ -127,7 +127,7 @@ export function CheckoutLayout({
       data-sf-checkout
       className="bg-(--color-fill-surface) px-(--sf-checkout-page-gutter) pt-(--sf-checkout-padding-top) pb-(--sf-checkout-padding-bottom) font-medium leading-(--sf-checkout-body-leading) text-(--sf-checkout-ink)"
     >
-      <Steps.RootProvider value={steps} size="md" appearance="subtle">
+      <Steps.RootProvider value={steps} size="md" variant="subtle">
         <div
           data-sf-checkout-body
           className="mx-auto grid w-full max-w-(--sf-checkout-content-width) items-start gap-(--dimension-24) 2xl:grid-cols-[minmax(0,1fr)_var(--sf-checkout-sidebar-width)]"
@@ -194,14 +194,14 @@ export function CheckoutLayout({
                       data-sf-checkout-action
                       size="sm"
                       uppercase
-                      severity="secondary"
+                      variant="secondary"
                     >
                       {cs.cart.backToShop}
                     </LinkButton>
                     <div className="sf-checkout-next">
                       <Button
                         type="button"
-                        severity="primary"
+                        variant="primary"
                         size="sm"
                         data-sf-checkout-action
                         uppercase

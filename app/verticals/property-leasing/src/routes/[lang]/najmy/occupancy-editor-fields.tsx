@@ -108,7 +108,7 @@ export const CustomerField = ({
         translations={comboboxTranslations}
         value={draft.customerId.length > 0 ? [draft.customerId] : []}
       />
-      <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" appearance="ghost" severity="secondary">
+      <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="borderless" variant="secondary">
         {t('property-leasing.demo.newCustomerInRegistry')}
       </LinkButton>
     </div>
@@ -207,7 +207,7 @@ export const StayFields = ({
             value={guests.query}
           />
         </div>
-        <Button disabled={guests.busy} onClick={handleSearch} size="sm" appearance="outline" severity="secondary">
+        <Button disabled={guests.busy} onClick={handleSearch} size="sm" theme="outlined" variant="secondary">
           {t('property-leasing.demo.search')}
         </Button>
       </div>

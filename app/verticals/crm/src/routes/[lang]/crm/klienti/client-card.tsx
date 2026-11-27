@@ -82,7 +82,7 @@ const NotVisible = ({ onClose }: { readonly onClose: () => void }) => {
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} appearance="outline" severity="secondary">
+        <Button onClick={onClose} theme="outlined" variant="secondary">
           Zavřít
         </Button>
       }
@@ -110,7 +110,7 @@ export const ContactUnavailable = ({ onClose }: { readonly onClose: () => void }
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} appearance="outline" severity="secondary">
+        <Button onClick={onClose} theme="outlined" variant="secondary">
           {t('crm.common.close')}
         </Button>
       }
@@ -291,32 +291,32 @@ const CardBody = ({
     <UnsavedChangesBoundary scope={scope}>
       <SidePanel
         actions={
-          <Button onClick={() => scope.request(onClose)} appearance="outline" severity="secondary">
+          <Button onClick={() => scope.request(onClose)} theme="outlined" variant="secondary">
             Zavřít
           </Button>
         }
         closeLabel={dialogCloseLabel}
         description={
           <span className="flex flex-wrap items-center gap-100">
-            <Badge size="sm" appearance="outline" severity="neutral">
+            <Badge size="sm" variant="outline">
               {kindLabels[client.kind]}
             </Badge>
             {segment !== undefined && (
-              <Badge size="sm" severity="info">
+              <Badge size="sm" variant="info">
                 {segment}
               </Badge>
             )}
             {archived ? (
-              <Badge size="sm" severity="warning">
+              <Badge size="sm" variant="warning">
                 {`Archivován ${pipe(client.archivedAt, orderDateText, formatDate)}`}
               </Badge>
             ) : (
-              <Badge size="sm" severity="success">
+              <Badge size="sm" variant="success">
                 Aktivní
               </Badge>
             )}
             {!writable && (
-              <Badge size="sm" severity="secondary">
+              <Badge size="sm" variant="secondary">
                 Jen pro čtení
               </Badge>
             )}
@@ -339,8 +339,8 @@ const CardBody = ({
                 icon="icon-[mdi--pencil-outline]"
                 onClick={() => scope.request(() => setEditing(true))}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 Upravit údaje
               </Button>
@@ -350,8 +350,8 @@ const CardBody = ({
                 icon="icon-[mdi--account-switch-outline]"
                 onClick={() => setAssigning(true)}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 {owner === undefined ? 'Přidělit obchodníkovi' : 'Změnit obchodníka'}
               </Button>
@@ -361,8 +361,8 @@ const CardBody = ({
                 icon="icon-[mdi--link-variant]"
                 onClick={() => setLinkingParty(true)}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 Propojit s evidencí zákazníků
               </Button>
@@ -376,8 +376,8 @@ const CardBody = ({
                     browserRuntime.runFork(run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu'));
                   }}
                   size="sm"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 >
                   Obnovit z archivu
                 </Button>
@@ -386,8 +386,8 @@ const CardBody = ({
                   icon="icon-[mdi--archive-outline]"
                   onClick={() => setArchiving(true)}
                   size="sm"
-                  appearance="ghost"
-                  severity="secondary"
+                  theme="borderless"
+                  variant="secondary"
                 >
                   Archivovat
                 </Button>
@@ -402,7 +402,7 @@ const CardBody = ({
             </div>
           )}
 
-          <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} appearance="line">
+          <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} variant="line">
             <Tabs.List>
               <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
               <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>
@@ -444,7 +444,7 @@ const CardBody = ({
         <Dialog
           actions={
             <>
-              <Button onClick={() => setArchiving(false)} appearance="outline" severity="secondary">
+              <Button onClick={() => setArchiving(false)} theme="outlined" variant="secondary">
                 Zrušit
               </Button>
               <Button
@@ -462,7 +462,7 @@ const CardBody = ({
                     ),
                   );
                 }}
-                severity="primary"
+                variant="primary"
               >
                 Archivovat
               </Button>

@@ -68,10 +68,10 @@ const FinanceConfirmations = ({ vm }: { readonly vm: ReturnType<typeof useFinanc
       <Dialog
         actions={
           <>
-            <Button onClick={cancelConfirm} appearance="outline" severity="secondary">
+            <Button onClick={cancelConfirm} theme="outlined" variant="secondary">
               {t(`${ns}.cancel`)}
             </Button>
-            <Button disabled={busy} onClick={confirmPending} severity="primary">
+            <Button disabled={busy} onClick={confirmPending} variant="primary">
               {t(`${ns}.confirmAction`)}
             </Button>
           </>
@@ -93,10 +93,10 @@ const FinanceConfirmations = ({ vm }: { readonly vm: ReturnType<typeof useFinanc
       <Dialog
         actions={
           <>
-            <Button onClick={cancelVoid} appearance="outline" severity="secondary">
+            <Button onClick={cancelVoid} theme="outlined" variant="secondary">
               {t(`${ns}.cancel`)}
             </Button>
-            <Button disabled={busy} onClick={confirmVoid} severity="danger">
+            <Button disabled={busy} onClick={confirmVoid} variant="danger">
               {t(`${ns}.voidConfirm`)}
             </Button>
           </>
@@ -156,8 +156,8 @@ const ClosedInvoiceDetail = ({
           icon="icon-[mdi--arrow-left]"
           onClick={handleClose}
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           {t(`${ns}.back`)}
         </Button>
@@ -166,7 +166,7 @@ const ClosedInvoiceDetail = ({
         {t(closedInvoiceMessage[detail.state])}
       </StatusText>
       {detail.state === 'unavailable' ? (
-        <Button className="self-start" onClick={handleRetry} size="sm" appearance="outline" severity="secondary">
+        <Button className="self-start" onClick={handleRetry} size="sm" theme="outlined" variant="secondary">
           {t(`${ns}.retry`)}
         </Button>
       ) : null}
@@ -236,8 +236,8 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                       icon="icon-[mdi--file-download-outline]"
                       onClick={() => setIncomingOpen(true)}
                       size="sm"
-                      appearance="outline"
-                      severity="secondary"
+                      theme="outlined"
+                      variant="secondary"
                     >
                       Přijatá faktura
                     </Button>
@@ -247,7 +247,7 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                       icon="icon-[mdi--plus]"
                       onClick={() => setCreateOpen(true)}
                       size="sm"
-                      severity="primary"
+                      variant="primary"
                     >
                       {t(`${ns}.newInvoice`)}
                     </Button>
@@ -291,7 +291,7 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
                 {t(`${ns}.referencesError`)}
               </StatusText>
             )}
-            <Tabs onValueChange={changeTab} size="sm" value={tab} appearance="line">
+            <Tabs onValueChange={changeTab} size="sm" value={tab} variant="line">
               <Tabs.List>
                 <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
                 <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>

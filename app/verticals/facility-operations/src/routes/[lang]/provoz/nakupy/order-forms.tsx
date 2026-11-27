@@ -139,8 +139,8 @@ const LinesEditor = ({
                 icon="icon-[mdi--close]"
                 onClick={() => onChange(lines.filter((entry) => entry.key !== line.key))}
                 size="sm"
-                appearance="ghost"
-                severity="secondary"
+                theme="borderless"
+                variant="secondary"
               />
             </div>
           </div>
@@ -150,7 +150,7 @@ const LinesEditor = ({
         </div>
       ))}
       <div className="flex flex-wrap items-center justify-between gap-100">
-        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" appearance="outline" severity="secondary">
+        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" variant="secondary">
           {k('lines.add')}
         </Button>
         <span className="font-semibold text-sm tabular-nums">{`${k('fields.total')}: ${formatAmount(total)}`}</span>

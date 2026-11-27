@@ -713,7 +713,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
   // The one way out of the form and its one Save button, in the host's footer or the form's own.
   const actions = (
     <>
-      <Button onClick={leave} appearance="outline" type="button" severity="secondary">
+      <Button onClick={leave} theme="outlined" type="button" variant="secondary">
         {t('merchandise.pages.orders.detail.backToDetail')}
       </Button>
       <SaveBar labels={labels} onReloadLatest={reloadLatest} onSave={handleSave} status={record.status} />
@@ -740,7 +740,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
         </p>
         <SectionCard flush title={t('merchandise.ui.items')}>
           <ScrollRegion label={t('merchandise.ui.orderItems')}>
-            <Table size="sm" appearance="line">
+            <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Položka</Table.ColumnHeader>
@@ -837,9 +837,9 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                         icon="icon-[mdi--delete-outline]"
                         onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
                         size="sm"
-                        appearance="ghost"
+                        theme="borderless"
                         type="button"
-                        severity="secondary"
+                        variant="secondary"
                       />
                     </Table.Cell>
                   </Table.Row>
@@ -865,9 +865,9 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 disabled={unit === undefined || pickedPriceMissing}
                 icon="icon-[mdi--plus]"
                 onClick={addLine}
-                appearance="outline"
+                theme="outlined"
                 type="button"
-                severity="secondary"
+                variant="secondary"
               >
                 Přidat
               </Button>

@@ -109,13 +109,13 @@ export const categoryVariant = (category: string) => {
   if (category === 'revision' || category === 'protocol') {
     return 'warning' as const;
   }
-  return 'neutral' as const;
+  return 'outline' as const;
 };
 
 export const CategoryBadge = ({ category }: { readonly category: string }) => {
   const label = useCategoryLabel();
   return (
-    <Badge size="sm" severity={categoryVariant(category)}>
+    <Badge size="sm" variant={categoryVariant(category)}>
       {label(category)}
     </Badge>
   );

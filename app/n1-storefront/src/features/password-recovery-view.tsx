@@ -258,9 +258,9 @@ export const PasswordRecoveryView = ({
                   isLoading={pending}
                   loadingText={mode === "request" ? text.requesting : text.resetting}
                   size="sm"
-                  appearance="solid"
+                  theme="solid"
                   type="submit"
-                  severity="primary"
+                  variant="primary"
                 >
                   {mode === "request" ? text.request : text.reset}
                 </Button>

@@ -292,9 +292,6 @@ export { assetCurrentRead } from './generated-reads/asset-current.ts';
 
 // @ontos-core-read asset-byte-source
 export { assetByteSourceRead } from './generated-reads/asset-byte-source.ts';
-
-// @ontos-core-read tenant-theme
-export { tenantThemeRead } from './generated-reads/tenant-theme.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
@@ -1258,7 +1255,6 @@ export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from '
 
 // <generated-core-action-exports>
 export { activatePrincipalBindingAction } from './modules/actions/activate-principal-binding.action.ts';
-export { attachTenantThemeAction } from './modules/actions/attach-tenant-theme.action.ts';
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
@@ -1274,7 +1270,6 @@ export { registerIntegrationWorkloadsAction } from './modules/actions/register-i
 export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
 export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
-export { saveTenantThemeAction } from './modules/actions/save-tenant-theme.action.ts';
 export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';

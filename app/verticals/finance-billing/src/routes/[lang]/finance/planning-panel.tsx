@@ -229,8 +229,8 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
             icon="icon-[mdi--bank-check]"
             onClick={() => setOpeningOpen(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {opening === undefined ? 'Zadat počáteční stav' : 'Změnit počáteční stav'}
           </Button>
@@ -271,7 +271,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
           <div className="flex flex-col gap-100">
             <span className="font-medium text-sm">
               {t(`${chartKey}.balanceTitle`)}{' '}
-              <Badge size="sm" severity="warning">
+              <Badge size="sm" variant="warning">
                 {t(`${chartKey}.estimateBadge`)}
               </Badge>
             </span>
@@ -303,7 +303,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
         </div>
       )}
       <FinanceTableScroll label={t('finance-billing.financeUi.planning.monthlyCashFlow')}>
-        <Table size="sm" appearance="line">
+        <Table size="sm" variant="line">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
@@ -321,7 +321,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
                 <Table.Cell className={month.month === currentMonth ? 'font-semibold' : ''}>
                   {monthLabel(month.month)}
                   {month.month === currentMonth && (
-                    <Badge className="ml-100" size="sm" severity="primary">
+                    <Badge className="ml-100" size="sm" variant="primary">
                       tento měsíc
                     </Badge>
                   )}
@@ -409,7 +409,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             />
           </div>
           {vm.canWrite && (
-            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} size="sm" severity="primary">
+            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} size="sm" variant="primary">
               Přidat položku
             </Button>
           )}
@@ -438,7 +438,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             }))}
           />
           <FinanceTableScroll label={t('finance-billing.financeUi.planning.budgetComparison')}>
-            <Table size="sm" appearance="line">
+            <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
@@ -463,7 +463,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                         {objectSummary(vm.objects, budget) ?? 'Celá firma'}
                       </Table.Cell>
                       <Table.Cell>
-                        <Badge size="sm" severity={budget.kind === 'COST' ? 'warning' : 'success'}>
+                        <Badge size="sm" variant={budget.kind === 'COST' ? 'warning' : 'success'}>
                           {budget.kind === 'COST' ? 'Výdaj' : 'Příjem'}
                         </Badge>
                       </Table.Cell>
@@ -491,7 +491,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                         {variance.percent === undefined ? (
                           <span className="text-fg-secondary text-xs">nelze vyhodnotit</span>
                         ) : (
-                          <Badge size="sm" severity={over ? 'danger' : 'success'}>
+                          <Badge size="sm" variant={over ? 'danger' : 'success'}>
                             {percent(variance.percent)}
                           </Badge>
                         )}
@@ -505,16 +505,16 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                               icon="icon-[mdi--pencil-outline]"
                               onClick={() => setDraft(editBudgetDraft(budget))}
                               size="sm"
-                              appearance="ghost"
-                              severity="secondary"
+                              theme="borderless"
+                              variant="secondary"
                             />
                             <Button
                               aria-label={t('finance-billing.financeUi.common.delete')}
                               icon="icon-[mdi--delete-outline]"
                               onClick={() => setDeleteTarget(budget)}
                               size="sm"
-                              appearance="ghost"
-                              severity="secondary"
+                              theme="borderless"
+                              variant="secondary"
                             />
                           </span>
                         )}
@@ -538,7 +538,7 @@ const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
     <Dialog
       actions={
         <>
-          <Button onClick={() => setDeleteTarget(undefined)} appearance="outline" severity="secondary">
+          <Button onClick={() => setDeleteTarget(undefined)} theme="outlined" variant="secondary">
             Zrušit
           </Button>
           <Button
@@ -550,7 +550,7 @@ const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
               }
               setDeleteTarget(undefined);
             }}
-            severity="danger"
+            variant="danger"
           >
             Smazat
           </Button>

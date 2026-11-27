@@ -66,7 +66,7 @@ export const CustomerDetailPageNotice = ({ customerName, onBack, onRetry, status
     <>
       <PageHeader
         actions={
-          <Button onClick={onBack} appearance="outline" severity="secondary">
+          <Button onClick={onBack} theme="outlined" variant="secondary">
             {t(`${CUSTOMER_DETAIL_KEY}.backToList`)}
           </Button>
         }
@@ -77,7 +77,7 @@ export const CustomerDetailPageNotice = ({ customerName, onBack, onRetry, status
           {t(messageKey)}
         </StatusText>
         {status === 'unavailable' && onRetry !== undefined && (
-          <Button onClick={onRetry} severity="secondary">
+          <Button onClick={onRetry} variant="secondary">
             {t(`${CUSTOMER_DETAIL_KEY}.reload`)}
           </Button>
         )}
@@ -167,7 +167,7 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
       <DocumentTitle title={subject.displayName} />
       <PageHeader
         actions={
-          <Button onClick={() => detail.requestNavigation(backHref)} appearance="outline" severity="secondary">
+          <Button onClick={() => detail.requestNavigation(backHref)} theme="outlined" variant="secondary">
             {t(`${CUSTOMER_DETAIL_KEY}.backToList`)}
           </Button>
         }

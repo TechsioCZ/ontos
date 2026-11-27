@@ -100,8 +100,8 @@ export const StorefrontSearch = ({
               iconSize="xs"
               onClick={() => setOpen(false)}
               size="md"
-              appearance="solid"
-              severity="secondary"
+              theme="solid"
+              variant="secondary"
             >
               {d.allResults}
             </LinkButton>

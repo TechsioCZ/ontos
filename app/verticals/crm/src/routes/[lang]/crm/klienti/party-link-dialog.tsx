@@ -100,7 +100,7 @@ export const PartyLinkDialog = ({
     <Dialog
       actions={
         <>
-          <Button onClick={onClose} appearance="outline" severity="secondary">
+          <Button onClick={onClose} theme="outlined" variant="secondary">
             Zrušit
           </Button>
           {/* A command, not a form: linking applies one pick from the registry, with nothing typed to keep. */}
@@ -114,7 +114,7 @@ export const PartyLinkDialog = ({
                 browserRuntime.runFork(link(chosen.link, chosen.displayName));
               }
             }}
-            severity="primary"
+            variant="primary"
           >
             Propojit vybraného
           </Button>

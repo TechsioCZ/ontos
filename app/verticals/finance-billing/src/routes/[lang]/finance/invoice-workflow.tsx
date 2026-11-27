@@ -85,7 +85,7 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
   const pendingPackage = handover?.status === 'PREPARED' ? handover.batchNumber : undefined;
   return (
     <div className="flex flex-col gap-150" data-finance-lifecycle={lifecycle}>
-      <Badge className="self-start" size="sm" severity={presentation.variant}>
+      <Badge className="self-start" size="sm" variant={presentation.variant}>
         {presentation.label}
       </Badge>
       {lifecycle !== 'VOIDED' && (
@@ -178,8 +178,8 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
             icon="icon-[mdi--link-variant-plus]"
             onClick={() => setOpen(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {settlement === undefined ? 'Zohlednit předchozí doklady' : 'Upravit'}
           </Button>
@@ -213,7 +213,7 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
               Zohledněno celkem <strong className="tabular-nums">{formatMoney(total)}</strong> · k úhradě po zohlednění{' '}
               <strong className="tabular-nums">{formatMoney(Math.max(0, invoice.totalMinor - total))}</strong>
             </span>
-            <Badge className="self-start whitespace-normal" size="sm" severity="success">
+            <Badge className="self-start whitespace-normal" size="sm" variant="success">
               {`Ručně potvrdil(a) ${settlement.confirmedByLabel ?? 'uživatel'} · ${at(settlement.confirmedAt)}`}
             </Badge>
             {settlement.note !== undefined && <span className="text-fg-secondary text-xs">{settlement.note}</span>}
@@ -319,7 +319,7 @@ const PaymentTermsDialog = ({
       <Dialog
         actions={
           <>
-            <Button onClick={close} appearance="outline" severity="secondary">
+            <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -401,8 +401,8 @@ export const PaymentTermsCard = (props: { readonly invoice: Invoice; readonly vm
             icon="icon-[mdi--pencil-outline]"
             onClick={() => setOpen(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {terms === undefined ? 'Doplnit' : 'Upravit'}
           </Button>

@@ -213,7 +213,7 @@ const RouteRow = ({
         {t(`${copyKey}.route.${route.routeKey}`)}
         {route.routeCode === undefined ? '' : ` · ${route.routeCode}`}
       </span>
-      <Badge size="sm" severity={route.active ? 'success' : 'neutral'}>
+      <Badge size="sm" variant={route.active ? 'success' : 'outline'}>
         {t(`${copyKey}.${route.active ? 'active' : 'inactive'}`)}
       </Badge>
       {route.retentionDays !== undefined && (
@@ -224,9 +224,9 @@ const RouteRow = ({
           disabled={saving}
           onClick={() => onDisable(route)}
           size="sm"
-          appearance="outline"
+          theme="outlined"
           type="button"
-          severity="secondary"
+          variant="secondary"
         >
           {t(`${copyKey}.disable`)}
         </Button>
@@ -257,10 +257,10 @@ const ConfirmPrerequisites = ({
         </ul>
       </StatusText>
       <div className="flex flex-wrap gap-100">
-        <Button onClick={onConfirm} size="sm" type="button" severity="primary">
+        <Button onClick={onConfirm} size="sm" type="button" variant="primary">
           {t(`${copyKey}.confirm`)}
         </Button>
-        <Button onClick={onCancel} size="sm" appearance="outline" type="button" severity="secondary">
+        <Button onClick={onCancel} size="sm" theme="outlined" type="button" variant="secondary">
           {t(`${copyKey}.cancel`)}
         </Button>
       </div>
@@ -461,7 +461,7 @@ export const SymmyRoutesPanel = ({
               onClick={enable}
               size="sm"
               type="button"
-              severity="primary"
+              variant="primary"
             >
               {t(`${copyKey}.${saving ? 'working' : 'enable'}`)}
             </Button>

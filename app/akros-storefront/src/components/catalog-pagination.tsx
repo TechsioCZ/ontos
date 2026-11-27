@@ -42,7 +42,7 @@ export function CatalogPagination({
         prevTriggerLabel: cs.pagination.previous,
         rootLabel: cs.pagination.label,
       }}
-      appearance="solid"
+      variant="filled"
     />
   );
 }

@@ -48,17 +48,17 @@ export const ContactCard = ({
             <span className="flex flex-wrap items-center gap-100">
               <span className="break-words font-medium">{contact.name}</span>
               {contact.primary === true && (
-                <Badge size="sm" severity="primary">
+                <Badge size="sm" variant="primary">
                   Hlavní kontakt
                 </Badge>
               )}
               {archived && (
-                <Badge size="sm" appearance="outline" severity="neutral">
+                <Badge size="sm" variant="outline">
                   {`Odebrán ${pipe(contact.archivedAt, orderDateText, formatDate)}`}
                 </Badge>
               )}
               {selected === true && (
-                <Badge size="sm" severity="info">
+                <Badge size="sm" variant="info">
                   {t('crm.ciClientsVisits.contacts.selected')}
                 </Badge>
               )}
@@ -73,14 +73,14 @@ export const ContactCard = ({
               icon="icon-[mdi--pencil-outline]"
               onClick={onEdit}
               size="sm"
-              severity="neutral"
+              tone="neutral"
             />
             <ActionIcon
               aria-label={`Odebrat ${contact.name}`}
               icon="icon-[mdi--account-remove-outline]"
               onClick={onRemove}
               size="sm"
-              severity="neutral"
+              tone="neutral"
             />
           </div>
         )}

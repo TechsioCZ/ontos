@@ -65,8 +65,8 @@ export const ShellSearchFilters = ({
                 onClick={() => onChange(toggleShellSearchFamily(selected, option.key))}
                 onKeyDown={onButtonKeyDown}
                 size="sm"
-                appearance={pressed ? 'solid' : 'outline'}
-                severity={pressed ? 'primary' : 'secondary'}
+                theme={pressed ? 'solid' : 'outlined'}
+                variant={pressed ? 'primary' : 'secondary'}
               >
                 {option.label}
               </Button>
@@ -81,8 +81,8 @@ export const ShellSearchFilters = ({
               onClick={() => onChange([])}
               onKeyDown={onButtonKeyDown}
               size="sm"
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
             >
               {clearLabel}
             </Button>

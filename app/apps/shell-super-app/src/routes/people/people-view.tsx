@@ -36,16 +36,16 @@ const PeopleWorkspace = ({
         <Button
           aria-pressed={tab === 'people'}
           onClick={() => setTab('people')}
-          appearance={tab === 'people' ? 'solid' : 'outline'}
-          severity="secondary"
+          theme={tab === 'people' ? 'solid' : 'outlined'}
+          variant="secondary"
         >
           Lidé a role
         </Button>
         <Button
           aria-pressed={tab === 'agents'}
           onClick={() => setTab('agents')}
-          appearance={tab === 'agents' ? 'solid' : 'outline'}
-          severity="secondary"
+          theme={tab === 'agents' ? 'solid' : 'outlined'}
+          variant="secondary"
         >
           AI agenti
         </Button>

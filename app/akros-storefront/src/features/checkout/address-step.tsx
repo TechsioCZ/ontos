@@ -159,8 +159,8 @@ export function AddressStep() {
           <Button
             type="button"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
             uppercase
             data-sf-checkout-action
             className="sf-checkout-address-action"
@@ -199,7 +199,7 @@ export function AddressStep() {
           href="/kosik/doprava-platba"
           data-sf-checkout-action
           className="sf-checkout-back"
-          severity="secondary"
+          variant="secondary"
           size="sm"
           uppercase
         >
@@ -208,7 +208,7 @@ export function AddressStep() {
         <div className="sf-checkout-next">
           <Button
             type="submit"
-            severity="primary"
+            variant="primary"
             size="sm"
             data-sf-checkout-action
             uppercase

@@ -22,7 +22,7 @@ export function CartContent() {
           as={StoreLink}
           href="/kategorie/nerezovy-spojovaci-material"
           size="sm"
-          severity="primary"
+          variant="primary"
         >
           {cs.actions.backToCatalog}
         </LinkButton>
@@ -49,7 +49,7 @@ export function CartNavigation() {
       <LinkButton
         as={StoreLink}
         href="/"
-        severity="secondary"
+        variant="secondary"
         size="sm"
         className="sf-checkout-back"
         data-sf-checkout-action
@@ -61,7 +61,7 @@ export function CartNavigation() {
         <div className="sf-checkout-next">
           <Button
             type="button"
-            severity="primary"
+            variant="primary"
             size="sm"
             data-sf-checkout-action
             uppercase
@@ -79,7 +79,7 @@ export function CartNavigation() {
           <LinkButton
             as={StoreLink}
             href="/kosik/doprava-platba"
-            severity="primary"
+            variant="primary"
             size="sm"
             data-sf-checkout-action
             uppercase

@@ -179,8 +179,8 @@ export const PlanContactPanel = ({
               key={entry.days}
               onClick={() => patch({ dueDate: shiftDay(today, entry.days) })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {entry.label}
             </Button>

@@ -75,7 +75,7 @@ const FavoriteRow = ({
     });
   };
   const removeButton = (
-    <Button onClick={remove} size="sm" appearance="outline" type="button" severity="secondary">
+    <Button onClick={remove} size="sm" theme="outlined" type="button" variant="secondary">
       {d.favoriteItems.remove}
     </Button>
   );
@@ -174,7 +174,7 @@ export const FavoritesView = ({
     body = (
       <div className="grid justify-items-start gap-4">
         <p>{d.favoriteItems.empty}</p>
-        <LinkButton as={NextLink} href={`/${locale}`} severity="primary">
+        <LinkButton as={NextLink} href={`/${locale}`} variant="primary">
           {d.favoriteItems.browse}
         </LinkButton>
       </div>
@@ -186,8 +186,8 @@ export const FavoritesView = ({
           <div>
             <Button
               onClick={() => setAttempt((value) => value + 1)}
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {d.favoriteItems.retry}
             </Button>

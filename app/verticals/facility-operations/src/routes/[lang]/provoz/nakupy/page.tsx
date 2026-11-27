@@ -131,7 +131,7 @@ const PurchasingTabs = ({
       }}
       size="sm"
       value={tab}
-      appearance="line"
+      variant="line"
     >
       <div className="max-w-full overflow-x-auto">
         <Tabs.List className="min-w-max">
@@ -140,7 +140,7 @@ const PurchasingTabs = ({
             <span className="flex items-center gap-100">
               {k('tabs.replenish')}
               {suggestions > 0 && (
-                <Badge size="sm" severity="warning">
+                <Badge size="sm" variant="warning">
                   {String(suggestions)}
                 </Badge>
               )}
@@ -376,8 +376,8 @@ const PurchasingView = () => {
             icon="icon-[mdi--plus]"
             onClick={() => setPanel({ kind: panelKinds.createSupplier })}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {k('actions.newSupplier')}
           </Button>
@@ -387,8 +387,8 @@ const PurchasingView = () => {
             icon="icon-[mdi--plus]"
             onClick={() => setPanel({ kind: panelKinds.createItem })}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {k('actions.newItem')}
           </Button>
@@ -397,8 +397,8 @@ const PurchasingView = () => {
           icon="icon-[mdi--file-document-edit-outline]"
           onClick={() => setPanel({ kind: panelKinds.createQuote })}
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           {k('actions.newQuote')}
         </Button>
@@ -406,7 +406,7 @@ const PurchasingView = () => {
           icon="icon-[mdi--cart-plus]"
           onClick={() => setPanel({ kind: panelKinds.createOrder })}
           size="sm"
-          severity="primary"
+          variant="primary"
         >
           {k('actions.newOrder')}
         </Button>

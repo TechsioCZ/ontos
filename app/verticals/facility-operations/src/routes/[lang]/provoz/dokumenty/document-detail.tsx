@@ -461,7 +461,7 @@ const DocumentAmendments = ({
     <SectionCard
       actions={
         canWrite && document.category === 'contract' ? (
-          <Button onClick={() => onAmend(document)} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={() => onAmend(document)} size="sm" theme="outlined" variant="secondary">
             {t(`${k}.contract.createAmendment`)}
           </Button>
         ) : undefined
@@ -530,12 +530,12 @@ const DocumentVersionHistory = ({
                     {t(`${k}.detail.versionLabel`, { version: version.version })}
                   </span>
                   {index === 0 && (
-                    <Badge size="sm" severity="info">
+                    <Badge size="sm" variant="info">
                       {t(`${k}.detail.current`)}
                     </Badge>
                   )}
                   {document.signature?.version === version.version && (
-                    <Badge size="sm" severity="success">
+                    <Badge size="sm" variant="success">
                       {t(`${k}.signature.signedVersion`)}
                     </Badge>
                   )}
@@ -552,7 +552,7 @@ const DocumentVersionHistory = ({
               </div>
               <span className="flex gap-100">
                 {canPreview(version.file) && (
-                  <Button onClick={() => onPreview(version.file)} size="sm" appearance="ghost" severity="secondary">
+                  <Button onClick={() => onPreview(version.file)} size="sm" theme="borderless" variant="secondary">
                     {t(`${k}.preview`)}
                   </Button>
                 )}
@@ -582,7 +582,7 @@ const DocumentSignatureCard = ({
     <SectionCard
       actions={
         canWrite && document.versions.length > 0 && !signing ? (
-          <Button onClick={() => setSigning(true)} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={() => setSigning(true)} size="sm" theme="outlined" variant="secondary">
             {t(`${k}.signature.record`)}
           </Button>
         ) : undefined
@@ -660,16 +660,16 @@ export const DocumentDetailPanel = ({
         actions={
           <div className="facility-documents-actions">
             {canWrite && (
-              <Button onClick={leaveTo(() => onEdit(document))} appearance="outline" severity="secondary">
+              <Button onClick={leaveTo(() => onEdit(document))} theme="outlined" variant="secondary">
                 {t(`${k}.detail.edit`)}
               </Button>
             )}
             {canWrite && document.category === 'contract' && (
-              <Button onClick={leaveTo(() => onAmend(document))} appearance="outline" severity="secondary">
+              <Button onClick={leaveTo(() => onAmend(document))} theme="outlined" variant="secondary">
                 {t(`${k}.contract.createAmendment`)}
               </Button>
             )}
-            <Button onClick={leaveTo(onClose)} severity="primary">
+            <Button onClick={leaveTo(onClose)} variant="primary">
               {t('facility-operations.common.close')}
             </Button>
           </div>
@@ -679,7 +679,7 @@ export const DocumentDetailPanel = ({
             <CategoryBadge category={document.category} />
             {contract !== undefined && <ContractStatusBadge status={contract.status} />}
             {document.signature !== undefined && (
-              <Badge size="sm" severity="success">
+              <Badge size="sm" variant="success">
                 {t(`${k}.signature.signed`, { date: formatIsoDate(document.signature.signedOn, notProvided) })}
               </Badge>
             )}

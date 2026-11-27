@@ -106,12 +106,12 @@ export const invoiceLifecycle = (invoice: Invoice, exports: readonly ExportLike[
 export const LIFECYCLE_PRESENTATION = {
   ACCOUNTANT_CONFIRMED: { label: 'Předáno · potvrdila účetní', variant: 'success' },
   APPROVED: { label: 'Schváleno', variant: 'info' },
-  DRAFT: { label: 'Návrh', variant: 'neutral' },
+  DRAFT: { label: 'Návrh', variant: 'outline' },
   HANDED_OVER: { label: 'Předáno do účetnictví', variant: 'success' },
   PREPARED: { label: 'Připraveno ke schválení', variant: 'warning' },
-  VOIDED: { label: 'Stornováno', variant: 'neutral' },
+  VOIDED: { label: 'Stornováno', variant: 'outline' },
 } satisfies Readonly<
-  Record<InvoiceLifecycle, { readonly label: string; readonly variant: 'info' | 'neutral' | 'success' | 'warning' }>
+  Record<InvoiceLifecycle, { readonly label: string; readonly variant: 'info' | 'outline' | 'success' | 'warning' }>
 >;
 
 /** Czech plural of "potvrzený doklad" (1 doklad, 2–4 doklady, 5+ dokladů). */

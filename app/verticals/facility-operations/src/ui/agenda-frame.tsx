@@ -58,7 +58,7 @@ export const AgendaGate = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onRetry} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
             {t('facility-operations.common.retry')}
           </Button>
         }

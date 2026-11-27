@@ -322,7 +322,7 @@ export const ProductView = ({
             <FavoriteToggle dictionary={d} product={product} variantId={variant?.id} />
             <div className="flex items-center gap-2">
               <div className="hidden md:block">
-                <Icon severity="secondary" icon="icon-[mdi--paw-outline]" size="md" />
+                <Icon color="secondary" icon="icon-[mdi--paw-outline]" size="md" />
               </div>
               <Link
                 aria-label={`${d.watchProduct}: ${d.featureUnavailable}`}
@@ -336,7 +336,7 @@ export const ProductView = ({
             </div>
             <div className="flex items-center gap-2">
               <div className="hidden md:block">
-                <Icon severity="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+                <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
               </div>
               <Link
                 as={NextLink}
@@ -348,7 +348,7 @@ export const ProductView = ({
             </div>
             <div className="flex items-center gap-2">
               <div className="hidden md:block">
-                <Icon severity="secondary" icon="icon-[mdi--email-outline]" size="md" />
+                <Icon color="secondary" icon="icon-[mdi--email-outline]" size="md" />
               </div>
               <Link aria-disabled={shareHref === null} href={shareHref ?? undefined}>
                 {d.sendToFriend}
@@ -358,7 +358,7 @@ export const ProductView = ({
         </div>
       </div>
       <div className="n1-product-information mt-8 md:mt-1">
-        <Tabs defaultValue="parameters" fitted={!desktop} size="md" appearance="line">
+        <Tabs defaultValue="parameters" fitted={!desktop} size="md" variant="line">
           <div className="overflow-x-auto md:n1-product-tabs">
             <Tabs.List>
               <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
@@ -381,7 +381,7 @@ export const ProductView = ({
                     {d.productParameters}
                   </h2>
                   <div className="n1-product-parameters">
-                    <Table aria-label={d.productParameters} size="sm" appearance="striped">
+                    <Table aria-label={d.productParameters} size="sm" variant="striped">
                       <Table.Body>
                         {parameters.map((parameter) => (
                           <Table.Row key={JSON.stringify(parameter)}>

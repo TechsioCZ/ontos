@@ -7,15 +7,15 @@ import { documentLinks } from '../../../../../shared/domain/documents.ts';
 
 const statusVariant = {
   active: 'success',
-  draft: 'neutral',
+  draft: 'outline',
   expired: 'danger',
   terminated: 'warning',
-} as const satisfies Readonly<Record<ContractStatus, 'neutral' | 'success' | 'warning' | 'danger'>>;
+} as const satisfies Readonly<Record<ContractStatus, 'outline' | 'success' | 'warning' | 'danger'>>;
 
 export const ContractStatusBadge = ({ status }: { readonly status: ContractStatus }) => {
   const { t } = useModernI18n();
   return (
-    <Badge size="sm" severity={statusVariant[status]}>
+    <Badge size="sm" variant={statusVariant[status]}>
       {t(`facility-operations.documents.contractStatus.${status}`)}
     </Badge>
   );

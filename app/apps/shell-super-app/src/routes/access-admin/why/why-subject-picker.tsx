@@ -28,7 +28,7 @@ export const WhySubjectPicker = ({
         <StatusText aria-live="polite" status="default">
           {t('shell.accessAdmin.why.subjectPickerUnavailable')}
         </StatusText>
-        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" severity="secondary">
+        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" variant="secondary">
           {t('shell.accessAdmin.common.retry')}
         </Button>
       </div>
@@ -67,7 +67,7 @@ export const WhySubjectPicker = ({
         </Select.Positioner>
       </Select>
       {options.nextCursor === null ? null : (
-        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" severity="secondary">
+        <Button disabled={pending || onMore === undefined} onClick={onMore} type="button" variant="secondary">
           {t('shell.accessAdmin.why.morePeople')}
         </Button>
       )}

@@ -154,8 +154,8 @@ const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {
         );
       }}
       size="sm"
-      appearance="outline"
-      severity="secondary"
+      theme="outlined"
+      variant="secondary"
     >
       Stáhnout
     </Button>
@@ -199,7 +199,7 @@ export const FinanceFilesList = ({
             <span className="truncate text-fg-secondary text-xs">{invoice.counterpartyName}</span>
           )}
         </span>
-        <Badge size="sm" appearance="outline" severity="neutral">
+        <Badge size="sm" variant="outline">
           {invoice?.direction === 'OUTGOING' ? 'Vydaná faktura' : 'Přijatá faktura'}
         </Badge>
         <FinanceFileDownload file={file} />

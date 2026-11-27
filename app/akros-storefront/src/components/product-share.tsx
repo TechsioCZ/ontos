@@ -102,8 +102,8 @@ export function ProductShare({
           icon="token-icon-sf-product-share"
           iconSize="sm"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
           onClick={async () => {
             setOpen(false);
             if (variantId) setOpen(await share([variantId]));
@@ -118,13 +118,13 @@ export function ProductShare({
           <Popover.Title>
             {variantId ? cs.productActions.shareVariant : cs.productActions.shareSelection}
           </Popover.Title>
-          <Button size="md" severity="secondary" appearance="outline" onClick={copy}>
+          <Button size="md" variant="secondary" theme="outlined" onClick={copy}>
             {cs.productActions.copyLink}
           </Button>
           <LinkButton
             size="md"
-            severity="secondary"
-            appearance="outline"
+            variant="secondary"
+            theme="outlined"
             href={`mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(url)}`}
           >
             {cs.productActions.email}
@@ -141,8 +141,8 @@ export function ProductShare({
           )}
           <Button
             size="sm"
-            severity="secondary"
-            appearance="ghost"
+            variant="secondary"
+            theme="borderless"
             onClick={() => {
               setOpen(false);
               trigger.current?.focus();

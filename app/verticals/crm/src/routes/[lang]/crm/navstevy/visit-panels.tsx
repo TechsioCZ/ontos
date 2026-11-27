@@ -509,11 +509,11 @@ export const VisitDetailPanel = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={onClose} appearance="outline" severity="secondary">
+          <Button onClick={onClose} theme="outlined" variant="secondary">
             Zavřít
           </Button>
           {canCorrect && (
-            <Button icon="icon-[mdi--pencil-outline]" onClick={() => onCorrect(visit)} severity="primary">
+            <Button icon="icon-[mdi--pencil-outline]" onClick={() => onCorrect(visit)} variant="primary">
               Opravit záznam
             </Button>
           )}
@@ -583,7 +583,7 @@ export const VisitDetailPanel = ({
         <section className="flex flex-col gap-150">
           <h3 className="flex items-center gap-100 font-semibold text-sm">
             Historie oprav
-            <Badge size="sm" severity={visit.corrections.length === 0 ? 'neutral' : 'warning'}>
+            <Badge size="sm" variant={visit.corrections.length === 0 ? 'outline' : 'warning'}>
               {String(visit.corrections.length)}
             </Badge>
           </h3>

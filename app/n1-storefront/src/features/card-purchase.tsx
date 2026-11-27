@@ -48,8 +48,8 @@ export const CardPurchase = ({
       iconPosition="left"
       onClick={addToCart}
       size={listing ? "md" : "sm"}
-      appearance="solid"
-      severity={listing ? "primary" : "secondary"}
+      theme="solid"
+      variant={listing ? "primary" : "secondary"}
     >
       {label}
     </Button>

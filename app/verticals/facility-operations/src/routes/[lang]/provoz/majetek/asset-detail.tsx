@@ -81,7 +81,7 @@ export type DetailMode =
   | { readonly kind: 'entry'; readonly planId: string };
 
 const ARCHIVE_LABEL = 'actions.archive';
-const kindVariants = { building: 'info', equipment: 'neutral', technology: 'secondary' } as const;
+const kindVariants = { building: 'info', equipment: 'outline', technology: 'secondary' } as const;
 const permitVariants = {
   expired: 'danger',
   granted: 'success',
@@ -100,7 +100,7 @@ export const KindBadge = ({ asset }: { readonly asset: Asset }) => {
   const k = useK();
   const kind = asset.kind ?? 'equipment';
   return (
-    <Badge size="sm" severity={kindVariants[kind]}>
+    <Badge size="sm" variant={kindVariants[kind]}>
       {k(`kind.${kind}`)}
     </Badge>
   );
@@ -109,11 +109,11 @@ export const KindBadge = ({ asset }: { readonly asset: Asset }) => {
 export const StatusBadge = ({ asset }: { readonly asset: Asset }) => {
   const k = useK();
   return assetStatusOf(asset) === 'active' ? (
-    <Badge size="sm" severity="success">
+    <Badge size="sm" variant="success">
       {k('status.active')}
     </Badge>
   ) : (
-    <Badge size="sm" appearance="outline" severity="neutral">
+    <Badge size="sm" variant="outline">
       {k(`disposal.${asset.disposal?.kind ?? 'retirement'}`)}
     </Badge>
   );
@@ -178,7 +178,7 @@ const ServiceResultBadge = ({ record }: { readonly record: ServiceRecord }) => {
   if (record.kind === 'permit') {
     const permitState = record.permitState ?? 'requested';
     return (
-      <Badge size="sm" severity={permitVariants[permitState]}>
+      <Badge size="sm" variant={permitVariants[permitState]}>
         {k(`permit.${permitState}`)}
       </Badge>
     );
@@ -187,7 +187,7 @@ const ServiceResultBadge = ({ record }: { readonly record: ServiceRecord }) => {
     return '—';
   }
   return (
-    <Badge size="sm" severity={serviceVariants[record.result]}>
+    <Badge size="sm" variant={serviceVariants[record.result]}>
       {k(`result.${record.result}`)}
     </Badge>
   );
@@ -211,7 +211,7 @@ const ServiceDue = ({
     return (
       <span className="flex flex-col items-start gap-50">
         <span>{isoDateLabel(record.nextDueOn)}</span>
-        <Badge size="sm" severity={dueBadgeVariant(due)}>
+        <Badge size="sm" variant={dueBadgeVariant(due)}>
           {k(`due.${due}`)}
         </Badge>
       </span>
@@ -231,7 +231,7 @@ const ServicesTable = ({ actor, asset }: { readonly actor: PrincipalRef | undefi
     return <p className="text-fg-secondary text-sm">{k('services.empty')}</p>;
   }
   return (
-    <Table size="sm" appearance="line">
+    <Table size="sm" variant="line">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader>{k('fields.serviceTitle')}</Table.ColumnHeader>
@@ -336,7 +336,7 @@ const BuildingContents = ({
                 {next?.nextDueOn === undefined ? (
                   <span className="text-fg-secondary text-xs">{k('due.none')}</span>
                 ) : (
-                  <Badge size="sm" severity={dueBadgeVariant(dueState(next.nextDueOn, today))}>
+                  <Badge size="sm" variant={dueBadgeVariant(dueState(next.nextDueOn, today))}>
                     {`${next.title} · ${isoDateLabel(next.nextDueOn)}`}
                   </Badge>
                 )}
@@ -373,7 +373,7 @@ const AssetLocation = ({
 
 const planVariant = (plan: DepreciationPlan | undefined) => {
   if (plan === undefined) {
-    return 'neutral' as const;
+    return 'outline' as const;
   }
   return plan.status === 'confirmed' ? ('success' as const) : ('warning' as const);
 };
@@ -453,7 +453,7 @@ const CardTab = ({
                   const label = k(`depreciation.${type}`);
                   const status = plan === undefined ? k('depreciation.none') : k(`planStatus.${plan.status}`);
                   return (
-                    <Badge key={type} size="sm" severity={planVariant(plan)}>
+                    <Badge key={type} size="sm" variant={planVariant(plan)}>
                       {`${label}: ${status}`}
                     </Badge>
                   );
@@ -632,7 +632,7 @@ const AssetDetailContent = ({
       ),
     ),
     Match.when({ kind: 'view' }, () => (
-      <Tabs onValueChange={setTab} value={tab} appearance="line">
+      <Tabs onValueChange={setTab} value={tab} variant="line">
         <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
           <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="card">
             {k('detail.tabs.card')}
@@ -657,10 +657,10 @@ const AssetDetailContent = ({
         <Tabs.Content className="flex flex-col gap-200 py-250" value="history">
           {canWrite && active && (
             <div className="flex flex-wrap gap-100">
-              <Button onClick={() => setMode({ kind: 'value' })} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={() => setMode({ kind: 'value' })} size="sm" theme="outlined" variant="secondary">
                 {k('actions.changeValue')}
               </Button>
-              <Button onClick={() => setMode({ kind: 'event' })} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={() => setMode({ kind: 'event' })} size="sm" theme="outlined" variant="secondary">
                 {k('actions.recordEvent')}
               </Button>
             </div>
@@ -670,7 +670,7 @@ const AssetDetailContent = ({
         <Tabs.Content className="flex flex-col gap-200 py-250" value="services">
           {canWrite && active && (
             <div>
-              <Button onClick={() => setMode({ kind: 'service' })} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={() => setMode({ kind: 'service' })} size="sm" theme="outlined" variant="secondary">
                 {k('actions.recordService')}
               </Button>
             </div>
@@ -707,7 +707,7 @@ const AssetDetailContent = ({
     if (mode.kind === 'view') {
       return (
         <>
-          <Button onClick={closePanel} appearance="outline" severity="secondary">
+          <Button onClick={closePanel} theme="outlined" variant="secondary">
             {k('actions.close')}
           </Button>
           {canWrite && !active && asset.archive === undefined && (
@@ -716,8 +716,8 @@ const AssetDetailContent = ({
               onClick={() => {
                 setMode({ kind: 'archive' });
               }}
-              appearance="outline"
-              severity="danger"
+              theme="outlined"
+              variant="danger"
             >
               {k(ARCHIVE_LABEL)}
             </Button>
@@ -730,18 +730,18 @@ const AssetDetailContent = ({
                   onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored'),
                 );
               }}
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.restoreArchived')}
             </Button>
           )}
           {canWrite && active && (
             <>
-              <Button onClick={() => setMode({ kind: 'dispose' })} appearance="outline" severity="danger">
+              <Button onClick={() => setMode({ kind: 'dispose' })} theme="outlined" variant="danger">
                 {k('actions.dispose')}
               </Button>
-              <Button onClick={() => setMode({ kind: 'edit' })} severity="primary">
+              <Button onClick={() => setMode({ kind: 'edit' })} variant="primary">
                 {k('actions.edit')}
               </Button>
             </>
@@ -758,8 +758,8 @@ const AssetDetailContent = ({
                 setMode({ kind: 'view' });
               });
             }}
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {k('actions.back')}
           </Button>
@@ -770,11 +770,7 @@ const AssetDetailContent = ({
     // An action form renders its Uložit into the slot, last in the footer.
     return (
       <>
-        <Button
-          onClick={() => scope.request(() => setMode({ kind: 'view' }))}
-          appearance="outline"
-          severity="secondary"
-        >
+        <Button onClick={() => scope.request(() => setMode({ kind: 'view' }))} theme="outlined" variant="secondary">
           {k('actions.back')}
         </Button>
         {footer.target}

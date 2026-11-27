@@ -49,8 +49,8 @@ export const CatalogView = ({
               as={NextLink}
               href={`/${locale}`}
               size="md"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {d.backHome}
             </LinkButton>
@@ -156,9 +156,9 @@ export const CatalogView = ({
                   density="compact"
                   href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
                   size="sm"
-                  appearance="solid"
+                  theme="solid"
                   uppercase
-                  severity="secondary"
+                  variant="secondary"
                 >
                   {d.detail}
                 </LinkButton>

@@ -194,7 +194,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
       <Table
         aria-label={cs.cart.itemsLabel}
         size="sm"
-        appearance="line"
+        variant="line"
         className="table-auto @max-sf-cart-wide/sf-cart:block @max-sf-cart-wide/sf-cart:[&_thead]:sr-only @max-sf-cart-wide/sf-cart:[&_tbody]:grid @max-sf-cart-wide/sf-cart:[&_td]:block @max-sf-cart-wide/sf-cart:[&_td]:w-auto! @max-sf-cart-wide/sf-cart:[&_td]:min-w-0 @max-sf-cart-wide/sf-cart:[&_td]:p-0! @max-sf-cart-wide/sf-cart:[&_td:first-child]:col-span-2 @max-sf-cart-wide/sf-cart:[&_td:last-child]:justify-self-end @max-sf-cart-narrow/sf-cart:[&_td:nth-child(2)]:col-span-2 @max-sf-cart-narrow/sf-cart:[&_td:nth-child(3)]:col-span-2 @max-sf-cart-narrow/sf-cart:[&_td:nth-child(3)]:justify-self-start"
       >
         <Table.Header

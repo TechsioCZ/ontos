@@ -61,7 +61,7 @@ export const TagEditPanel = ({ onClose, tag }: { readonly onClose: () => void; r
       <SidePanel
         actions={
           <>
-            <Button onClick={handleClose} appearance="outline" type="button" severity="secondary">
+            <Button onClick={handleClose} theme="outlined" type="button" variant="secondary">
               {t('tagging.tags.form.close')}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />

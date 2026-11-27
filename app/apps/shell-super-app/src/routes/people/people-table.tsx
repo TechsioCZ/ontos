@@ -66,7 +66,7 @@ export const RoleChips = ({ names }: { readonly names: readonly string[] }) => {
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-50">
       {shown.map((name) => (
-        <Badge key={name} size="sm" appearance="outline" severity="neutral">
+        <Badge key={name} size="sm" variant="outline">
           {name}
         </Badge>
       ))}
@@ -74,7 +74,7 @@ export const RoleChips = ({ names }: { readonly names: readonly string[] }) => {
         <Tooltip content={rest.join(', ')}>
           <span className="inline-flex">
             <span aria-hidden="true">
-              <Badge size="sm" appearance="outline" severity="neutral">{`+${rest.length}`}</Badge>
+              <Badge size="sm" variant="outline">{`+${rest.length}`}</Badge>
             </span>
             <span className="sr-only">{t('shell.people.table.moreRoles', { roles: rest.join(', ') })}</span>
           </span>
@@ -135,8 +135,8 @@ export const PersonActionsMenu = ({
             aria-label={actionsLabel}
             icon="icon-[mdi--dots-horizontal]"
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           />
         }
         items={actionItems(scope, t)}
@@ -262,8 +262,8 @@ export const PeopleToolbar = ({
           aria-label={t('shell.people.table.rolesHelpLabel')}
           icon="icon-[mdi--information-outline]"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         />
       </Tooltip>
       {actions}
@@ -342,8 +342,8 @@ const CompactPeopleList = ({
             className="flex min-w-0 flex-1 flex-col items-start justify-start gap-50 text-start"
             onClick={() => onOpen(person)}
             size="current"
-            unstyled
-            severity="secondary"
+            theme="unstyled"
+            variant="secondary"
           >
             <PersonName person={person} secondary={personKindLabel(person)} />
             <span className="flex flex-wrap items-center gap-100 text-sm">
@@ -385,7 +385,7 @@ export const PeopleTable = ({
     people.length > 0 ? (
       <EmptyState
         action={
-          <Button onClick={() => onFiltersChange(allPeopleFilters)} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={() => onFiltersChange(allPeopleFilters)} size="sm" theme="outlined" variant="secondary">
             {t('shell.people.table.clearFilters')}
           </Button>
         }

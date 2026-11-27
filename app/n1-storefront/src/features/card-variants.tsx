@@ -141,8 +141,8 @@ export const CardVariants = ({
         key={variant.id}
         prefetch={false}
         size="sm"
-        appearance="outline"
-        severity="tertiary"
+        theme="outlined"
+        variant="tertiary"
       >
         {variant.name}
       </LinkButton>
@@ -202,8 +202,8 @@ export const CardVariants = ({
                 }
               }}
               size="current"
-              unstyled
-              severity="tertiary"
+              theme="unstyled"
+              variant="tertiary"
             >
               <span className="text-xs font-normal text-fg-secondary">+{remaining}</span>
             </Popover.Trigger>

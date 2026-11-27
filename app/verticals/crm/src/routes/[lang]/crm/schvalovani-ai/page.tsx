@@ -82,7 +82,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{change.target.label}</p>
       </div>
       <div className="ai-review-actions">
-        <Badge severity={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
+        <Badge variant={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
@@ -130,8 +130,8 @@ const ChangeCard = ({
           disabled={busy}
           onClick={() => decide([change.id], 'reject')}
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           Zamítnout změnu
         </Button>
@@ -201,7 +201,7 @@ const BatchCard = ({
             </p>
             <h2 className="ai-review-instruction">{batch.instruction}</h2>
           </div>
-          <Badge severity={status.variant}>{status.label}</Badge>
+          <Badge variant={status.variant}>{status.label}</Badge>
         </div>
         {pending.length > 0 && (
           <>
@@ -234,8 +234,8 @@ const BatchCard = ({
                   )
                 }
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 Zamítnout dávku
               </Button>
@@ -248,8 +248,8 @@ const BatchCard = ({
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               Vrátit vše
             </Button>
@@ -289,7 +289,7 @@ const BatchCard = ({
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button onClick={() => setConfirmRevert(false)} size="sm" appearance="outline" severity="secondary">
+                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
                     Zrušit
                   </Button>
                 </div>
@@ -322,7 +322,7 @@ const AiApprovalsContent = () => {
     <>
       <PageHeader
         description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
-        meta={<Badge severity="secondary">Úroveň C</Badge>}
+        meta={<Badge variant="secondary">Úroveň C</Badge>}
         title={t('crm.pages.ai.title')}
       />
       <CrmStateGate onRetry={load} state={state}>
@@ -357,8 +357,8 @@ const AiApprovalsContent = () => {
                   aria-pressed={filter === 'pending'}
                   onClick={() => setFilter('pending')}
                   size="sm"
-                  appearance={filter === 'pending' ? 'solid' : 'outline'}
-                  severity={filter === 'pending' ? 'primary' : 'secondary'}
+                  theme={filter === 'pending' ? 'solid' : 'outlined'}
+                  variant={filter === 'pending' ? 'primary' : 'secondary'}
                 >
                   Ke schválení
                 </Button>
@@ -366,8 +366,8 @@ const AiApprovalsContent = () => {
                   aria-pressed={filter === 'all'}
                   onClick={() => setFilter('all')}
                   size="sm"
-                  appearance={filter === 'all' ? 'solid' : 'outline'}
-                  severity={filter === 'all' ? 'primary' : 'secondary'}
+                  theme={filter === 'all' ? 'solid' : 'outlined'}
+                  variant={filter === 'all' ? 'primary' : 'secondary'}
                 >
                   Všechny dávky
                 </Button>
@@ -448,12 +448,7 @@ const AiApprovalsContent = () => {
                   </ol>
                 )}
                 {slice.log.length > 8 && (
-                  <Button
-                    onClick={() => setShowFullLog(!showFullLog)}
-                    size="sm"
-                    appearance="outline"
-                    severity="secondary"
-                  >
+                  <Button onClick={() => setShowFullLog(!showFullLog)} size="sm" theme="outlined" variant="secondary">
                     {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${slice.log.length})`}
                   </Button>
                 )}

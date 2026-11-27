@@ -175,7 +175,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
           }
           breadcrumbs={
             <div>
-              <Button icon="icon-[mdi--arrow-left]" onClick={back} size="sm" appearance="outline" severity="secondary">
+              <Button icon="icon-[mdi--arrow-left]" onClick={back} size="sm" theme="outlined" variant="secondary">
                 {t(key('detail.backToList'))}
               </Button>
             </div>
@@ -203,7 +203,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
           <div className="flex flex-col gap-200">
             <OrderPendingBody customers={directory} detail={pending} />
             {detail.status === 'error' && (
-              <Button onClick={reload} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
                 {t(key('states.retry'))}
               </Button>
             )}

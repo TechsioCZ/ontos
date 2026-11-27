@@ -155,7 +155,7 @@ export function AccountProfilePage({
           value={values.contactEmail}
         />
         <p>{copy.storedNote}</p>
-        <Button disabled={pending !== null} size="sm" type="submit" severity="primary">
+        <Button disabled={pending !== null} size="sm" type="submit" variant="primary">
           {pending === "save" ? copy.saving : copy.save}
         </Button>
         <Button
@@ -163,7 +163,7 @@ export function AccountProfilePage({
           onClick={logout}
           size="sm"
           type="button"
-          severity="primary"
+          variant="primary"
         >
           {pending === "logout" ? copy.loggingOut : copy.logout}
         </Button>

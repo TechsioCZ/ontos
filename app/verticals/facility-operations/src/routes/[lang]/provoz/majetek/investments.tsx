@@ -37,14 +37,14 @@ const PRIORITY_LABEL = 'investments.fields.priority';
 const STATUS_LABEL = 'investments.fields.status';
 const ALL = 'all';
 
-const priorityVariants = { high: 'danger', low: 'neutral', medium: 'warning' } as const;
+const priorityVariants = { high: 'danger', low: 'outline', medium: 'warning' } as const;
 const priorityVariant = (priority: InvestmentPriority) => priorityVariants[priority];
 const statusVariants = {
   approved: 'info',
-  cancelled: 'neutral',
+  cancelled: 'outline',
   done: 'success',
   in_progress: 'info',
-  planned: 'neutral',
+  planned: 'outline',
 } as const;
 const statusVariant = (status: InvestmentStatus) => statusVariants[status];
 
@@ -327,7 +327,7 @@ export const InvestmentPlan = ({
       <div className="flex flex-wrap items-start justify-between gap-150">
         <p className="max-w-[48rem] text-fg-secondary text-sm">{k('investments.intro')}</p>
         {canWrite && (
-          <Button onClick={onNew} size="sm" severity="primary">
+          <Button onClick={onNew} size="sm" variant="primary">
             {k('investments.new')}
           </Button>
         )}
@@ -386,7 +386,7 @@ export const InvestmentPlan = ({
           <p className="p-250 text-fg-secondary text-sm">{k('investments.empty')}</p>
         ) : (
           <div className="overflow-x-auto">
-            <Table size="sm" appearance="line">
+            <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{k('investments.fields.title')}</Table.ColumnHeader>
@@ -416,7 +416,7 @@ export const InvestmentPlan = ({
                         </span>
                       </Table.Cell>
                       <Table.Cell>
-                        <Badge size="sm" severity={priorityVariant(investment.priority)}>
+                        <Badge size="sm" variant={priorityVariant(investment.priority)}>
                           {k(`investments.priority.${investment.priority}`)}
                         </Badge>
                       </Table.Cell>
@@ -437,7 +437,7 @@ export const InvestmentPlan = ({
                         {difference === undefined ? '—' : signedMoney(difference)}
                       </Table.Cell>
                       <Table.Cell>
-                        <Badge size="sm" severity={statusVariant(investment.status)}>
+                        <Badge size="sm" variant={statusVariant(investment.status)}>
                           {k(`investments.status.${investment.status}`)}
                         </Badge>
                       </Table.Cell>

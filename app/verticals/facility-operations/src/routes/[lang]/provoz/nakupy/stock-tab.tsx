@@ -86,14 +86,14 @@ const movementBadgeVariants = {
   adjustment: 'warning',
   issue: 'info',
   receipt: 'success',
-  transfer: 'neutral',
+  transfer: 'outline',
 } as const;
 
 export const LevelBadge = ({ level }: { readonly level: StockLevel }) => {
   const k = usePurchasingT();
   const variant = levelBadgeVariants[level];
   return (
-    <Badge size="sm" severity={variant}>
+    <Badge size="sm" variant={variant}>
       {k(`level.${level}`)}
     </Badge>
   );
@@ -103,7 +103,7 @@ export const MovementKindBadge = ({ movement }: { readonly movement: StockMoveme
   const k = usePurchasingT();
   const variant = movementBadgeVariants[movement.kind];
   return (
-    <Badge size="sm" severity={variant}>
+    <Badge size="sm" variant={variant}>
       {k(`movementKind.${movement.kind}`)}
     </Badge>
   );
@@ -119,7 +119,7 @@ export const RefList = ({ movement }: { readonly movement: Pick<StockMovement, '
       {movement.refs.map((ref) => {
         const kindLabel = k(`refKind.${ref.kind}`);
         return (
-          <Badge key={`${ref.kind}:${ref.id}`} size="sm" appearance="outline" severity="neutral">
+          <Badge key={`${ref.kind}:${ref.id}`} size="sm" variant="outline">
             {`${kindLabel}: ${ref.label}`}
           </Badge>
         );
@@ -352,7 +352,7 @@ export const MovementTable = ({
   const { t } = useModernI18n();
   const you = t('facility-operations.common.you');
   return (
-    <Table size="sm" appearance="line">
+    <Table size="sm" variant="line">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader>{k('fields.date')}</Table.ColumnHeader>
@@ -582,7 +582,7 @@ const ItemEditForm = ({
       />
       {input('note', t('facility-operations.common.note'))}
       <div className="flex flex-wrap items-center justify-end gap-100">
-        <Button onClick={() => guard.request(onDone)} size="sm" appearance="outline" severity="secondary">
+        <Button onClick={() => guard.request(onDone)} size="sm" theme="outlined" variant="secondary">
           {t('facility-operations.common.cancel')}
         </Button>
         <SaveBar
@@ -645,7 +645,7 @@ const ItemPlanSection = ({ canWrite, item, onIssuePlanned, plan, run, state }: I
       )}
       {plan.suggestedQuantity > 0 && (
         <p className="flex flex-wrap items-center gap-100 text-sm">
-          <Badge size="sm" severity="warning">
+          <Badge size="sm" variant="warning">
             {k('replenish.ruleBadge')}
           </Badge>
           {k('plan.suggest', { quantity: formatQuantity(plan.suggestedQuantity, item.unit) })}
@@ -666,7 +666,7 @@ const ItemPlanSection = ({ canWrite, item, onIssuePlanned, plan, run, state }: I
               </div>
               {canWrite && (
                 <div className="flex gap-50">
-                  <Button onClick={() => onIssuePlanned(entry)} size="sm" appearance="outline" severity="secondary">
+                  <Button onClick={() => onIssuePlanned(entry)} size="sm" theme="outlined" variant="secondary">
                     {k('actions.issuePlanned')}
                   </Button>
                   <Button
@@ -678,8 +678,8 @@ const ItemPlanSection = ({ canWrite, item, onIssuePlanned, plan, run, state }: I
                       );
                     }}
                     size="sm"
-                    appearance="ghost"
-                    severity="secondary"
+                    theme="borderless"
+                    variant="secondary"
                   >
                     {k('actions.cancelPlanned')}
                   </Button>
@@ -755,7 +755,7 @@ const StockItemDetails = ({ item, me, state }: StockItemDetailsProps) => {
             <span className="text-fg-secondary text-xs">{k('panel.batches')}</span>
             <div className="flex flex-wrap gap-50">
               {batches.map((entry) => (
-                <Badge key={`${entry.batch}-${entry.warehouseId}`} size="sm" appearance="outline" severity="neutral">
+                <Badge key={`${entry.batch}-${entry.warehouseId}`} size="sm" variant="outline">
                   {`${entry.batch} · ${formatQuantity(entry.quantity, item.unit)} · ${lookup.warehouse(entry.warehouseId)?.code ?? ''}`}
                 </Badge>
               ))}
@@ -770,7 +770,7 @@ const StockItemDetails = ({ item, me, state }: StockItemDetailsProps) => {
                 <span className="text-fg-secondary text-sm">{k('movement.noSerials')}</span>
               ) : (
                 serials.map(([serial, warehouseId]) => (
-                  <Badge key={serial} size="sm" severity="info">
+                  <Badge key={serial} size="sm" variant="info">
                     {`${serial} · ${lookup.warehouse(warehouseId)?.code ?? ''}`}
                   </Badge>
                 ))
@@ -829,7 +829,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
           <span className="font-semibold text-2xl tabular-nums">{formatQuantity(plan.onHand, item.unit)}</span>
           <LevelBadge level={plan.level} />
           {item.tracking !== 'none' && (
-            <Badge size="sm" severity="info">
+            <Badge size="sm" variant="info">
               {k(`tracking.${item.tracking}`)}
             </Badge>
           )}
@@ -840,8 +840,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--package-down]"
               onClick={() => setForm({ kind: 'receipt' })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.receipt')}
             </Button>
@@ -849,8 +849,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--package-up]"
               onClick={() => setForm({ kind: 'issue' })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.issue')}
             </Button>
@@ -858,8 +858,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--swap-horizontal]"
               onClick={() => setForm({ kind: 'transfer' })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.transfer')}
             </Button>
@@ -867,8 +867,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--scale-balance]"
               onClick={() => setForm({ kind: 'adjustment' })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.adjustment')}
             </Button>
@@ -876,8 +876,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--calendar-clock]"
               onClick={() => setForm({ kind: 'planned' })}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('actions.planned')}
             </Button>
@@ -885,8 +885,8 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               icon="icon-[mdi--pencil]"
               onClick={() => setEditing(true)}
               size="sm"
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
             >
               {k('actions.edit')}
             </Button>

@@ -79,10 +79,10 @@ const ReminderReview = ({
     <Dialog
       actions={
         <>
-          <Button disabled={sending} onClick={onBack} appearance="outline" severity="secondary">
+          <Button disabled={sending} onClick={onBack} theme="outlined" variant="secondary">
             {t(`${R}.reviewBack`)}
           </Button>
-          <Button disabled={sending} isLoading={sending} onClick={onConfirm} severity="primary">
+          <Button disabled={sending} isLoading={sending} onClick={onConfirm} variant="primary">
             {t(`${R}.reviewConfirm`)}
           </Button>
         </>
@@ -310,10 +310,10 @@ export const InvoiceReminderForm = ({
         value={draft.text}
       />
       <div className="flex flex-wrap items-center gap-100">
-        <Button icon="icon-[mdi--content-copy]" onClick={copy} size="sm" appearance="outline" severity="secondary">
+        <Button icon="icon-[mdi--content-copy]" onClick={copy} size="sm" theme="outlined" variant="secondary">
           Kopírovat text
         </Button>
-        <Button icon="icon-[mdi--download]" onClick={download} size="sm" appearance="outline" severity="secondary">
+        <Button icon="icon-[mdi--download]" onClick={download} size="sm" theme="outlined" variant="secondary">
           Stáhnout návrh
         </Button>
         <div className="ml-auto flex flex-wrap items-center gap-100">

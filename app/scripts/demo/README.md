@@ -163,17 +163,6 @@ Checks:
 Ledger: `select dedupe_key, status, sent_at from demo_email.deliveries order by created_at desc limit 20;`
 Restart only e-mail: `scripts/demo/email-dispatcher/restart.sh` (log `.scratch/demo-logs/email-dispatcher.log`).
 
-## Tenant themes
-
-A tenant's look is Core data, not Shell code or CSS. `scripts/demo/tenant-themes.mts` holds the demo themes: AKROS's tenant
-(`demoId('tenant', 'akros-playground')`) wears `akros`, the kit's AKROS brand in the calm admin look, and the shared demo
-tenant wears `ontos-demo`, the kit's Business brand in the same look. Every other tenant wears the default, Business.
-`mise exec -- pnpm demo:seed:themes` writes the selected tenant's theme through the Shell's `save-tenant-theme` and
-`attach-tenant-theme` Actions, signed in as a tenant administrator; without `--apply` it validates the theme with the
-kit's brand validator and shows the tenant's current theme. It reads the same `ONTOS_DEMO_SEED_*` variables as the rental
-seeder below (see the header of `seed-tenant-themes.mts` for AKROS on stage). An open Shell picks up the new theme
-within 15 seconds, without a reload.
-
 ## Portable rental data seeder
 
 Run `mise exec -- pnpm demo:seed:rental` from `app/` against a running local or server deployment.

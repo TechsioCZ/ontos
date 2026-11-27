@@ -49,7 +49,7 @@ const InlineVisitDetail = ({
           {`${visitKindMeta[visit.kind].label} · ${formatVisitTime(visit.occurredAt)} · ${salespersonLabel(records, visit.salespersonId)} · zapsal(a) ${principalLabel(records, visit.authorPrincipalId)}`}
         </span>
       </div>
-      <Button onClick={onClose} size="sm" appearance="ghost" severity="secondary">
+      <Button onClick={onClose} size="sm" theme="borderless" variant="secondary">
         Skrýt
       </Button>
     </div>
@@ -169,15 +169,15 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
 
       {canWrite && mode === 'none' && (
         <div className="flex flex-wrap gap-100">
-          <Button icon="icon-[mdi--plus]" onClick={() => setMode('visit')} size="sm" severity="primary">
+          <Button icon="icon-[mdi--plus]" onClick={() => setMode('visit')} size="sm" variant="primary">
             Zapsat návštěvu
           </Button>
           <Button
             icon="icon-[mdi--calendar-plus]"
             onClick={() => setMode('plan')}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             Naplánovat kontakt
           </Button>
@@ -206,7 +206,7 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
               >
                 <span aria-hidden="true" className="icon-[mdi--calendar-clock] size-200 text-fg-secondary" />
                 <span className="font-medium">{formatDay(item.dueDate)}</span>
-                <Badge size="sm" severity={item.dueDate < today ? 'danger' : 'neutral'}>
+                <Badge size="sm" variant={item.dueDate < today ? 'danger' : 'outline'}>
                   {relativeDay(item.dueDate, today)}
                 </Badge>
                 <span className="min-w-0 flex-1 truncate">{item.note ?? 'bez poznámky'}</span>

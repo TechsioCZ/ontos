@@ -22,8 +22,8 @@ export function AuthPageLink({ href, children }: { href: string; children: React
       as={StoreLink}
       href={href}
       data-sf-auth-link
-      appearance="ghost"
-      severity="secondary"
+      theme="borderless"
+      variant="secondary"
       size="current"
       className="inline"
     >
@@ -109,7 +109,7 @@ export function LoginForm() {
         <div className="sf-auth-form__row">
           <FormCheckbox name="rememberMe" label={copy.rememberMe} size="sm" />
         </div>
-        <Button block disabled={pending} size="md" type="submit" severity="primary">
+        <Button block disabled={pending} size="md" type="submit" variant="primary">
           {pending ? copy.loggingIn : copy.logIn}
         </Button>
         {error && <p role="alert">{error}</p>}
@@ -213,7 +213,7 @@ export function RegistrationForm() {
         />
       </div>
       <FormCheckbox name="privacyConsent" label={copy.consent} required size="sm" />
-      <Button disabled={pending || submitted} size="md" type="submit" severity="primary">
+      <Button disabled={pending || submitted} size="md" type="submit" variant="primary">
         {pending ? copy.creating : copy.create}
       </Button>
       {error && <p role="alert">{error}</p>}

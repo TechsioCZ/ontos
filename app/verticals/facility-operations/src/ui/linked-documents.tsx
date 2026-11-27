@@ -149,8 +149,8 @@ export const LinkedDocuments = ({
                   <Button
                     onClick={() => setPreview({ file: version.file, title: document.title })}
                     size="sm"
-                    appearance="ghost"
-                    severity="secondary"
+                    theme="borderless"
+                    variant="secondary"
                   >
                     {t(`${k}.preview`)}
                   </Button>

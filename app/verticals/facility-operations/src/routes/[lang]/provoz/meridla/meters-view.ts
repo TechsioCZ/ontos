@@ -13,9 +13,9 @@ export const mediumVariant = {
   ELECTRICITY: 'warning',
   GAS: 'danger',
   HEAT: 'success',
-  OTHER: 'neutral',
+  OTHER: 'outline',
   WATER: 'info',
-} as const satisfies Readonly<Record<MeterMedium, 'warning' | 'info' | 'danger' | 'success' | 'neutral'>>;
+} as const satisfies Readonly<Record<MeterMedium, 'warning' | 'info' | 'danger' | 'success' | 'outline'>>;
 
 export const defaultUnitOf = {
   ELECTRICITY: 'kWh',

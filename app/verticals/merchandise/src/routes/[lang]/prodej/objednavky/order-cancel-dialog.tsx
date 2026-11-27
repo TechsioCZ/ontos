@@ -30,7 +30,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button className="shrink-0 whitespace-nowrap" onClick={onDismiss} appearance="outline" severity="secondary">
+          <Button className="shrink-0 whitespace-nowrap" onClick={onDismiss} theme="outlined" variant="secondary">
             {t(key('confirm.back'))}
           </Button>
           <Button
@@ -42,7 +42,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
               setReason('');
             }}
             style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-            severity="danger"
+            variant="danger"
           >
             {single === undefined ? t(key('confirm.cancelBulkAction')) : t(key('confirm.cancelAction'))}
           </Button>

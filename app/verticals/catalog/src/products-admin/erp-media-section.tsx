@@ -252,9 +252,9 @@ export const ErpMediaSection = ({ item, reason }: ErpMediaSectionProps) => {
               isLoading={busy}
               onClick={() => run(removeMainImages(item, undefined, why))}
               size="sm"
-              appearance="outline"
+              theme="outlined"
               type="button"
-              severity="secondary"
+              variant="secondary"
             >
               Odebrat obrázek
             </Button>

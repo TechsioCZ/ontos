@@ -737,7 +737,7 @@ const TaskComments = ({
               setComment('');
             }}
             size="sm"
-            severity="secondary"
+            variant="secondary"
           >
             {t(`${key}.addComment`)}
           </Button>
@@ -758,8 +758,8 @@ const TaskArchiveControl = ({ busy, onArchive, task }: ResolvedTaskFormProps) =>
         disabled={busy}
         onClick={() => onArchive(task.archivedAt === undefined)}
         size="sm"
-        appearance="outline"
-        severity="secondary"
+        theme="outlined"
+        variant="secondary"
       >
         {t(task.archivedAt === undefined ? `${key}.archive` : `${key}.unarchive`)}
       </Button>
@@ -864,7 +864,7 @@ const TaskPanel = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={requestClose} appearance="outline" severity="secondary">
+          <Button onClick={requestClose} theme="outlined" variant="secondary">
             {t(isEdit || locked ? `${key}.close` : `${key}.cancel`)}
           </Button>
           {!locked && status}

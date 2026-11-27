@@ -110,14 +110,14 @@ const ReasonField = ({
 export const PairingStateBadge = ({ order }: { readonly order: ImportedOrder }) => {
   const meta = pairingMeta[orderQueueState(order)];
   return (
-    <Badge size="sm" severity={meta.variant}>
+    <Badge size="sm" variant={meta.variant}>
       {meta.label}
     </Badge>
   );
 };
 
 export const RawStatusBadge = ({ status }: { readonly status: string }) => (
-  <Badge size="sm" appearance="outline" severity="neutral">
+  <Badge size="sm" variant="outline">
     {orderStatusLabel(status)}
   </Badge>
 );
@@ -149,8 +149,8 @@ const DecisionForm = ({
               setReason('');
             }}
             size="sm"
-            appearance={action.primary === true ? 'solid' : 'outline'}
-            severity={action.primary === true ? 'primary' : 'secondary'}
+            theme={action.primary === true ? 'solid' : 'outlined'}
+            variant={action.primary === true ? 'primary' : 'secondary'}
           >
             {action.label}
           </Button>
@@ -199,17 +199,17 @@ const StatusTimeline = ({
                   : pipe(event.eventAt, orderDateText, formatDateTime)}
               </span>
               {current && (
-                <Badge size="sm" severity="success">
+                <Badge size="sm" variant="success">
                   Aktuální stav
                 </Badge>
               )}
               {open && (
-                <Badge size="sm" severity="warning">
+                <Badge size="sm" variant="warning">
                   Vyžaduje kontrolu
                 </Badge>
               )}
               {event.resolution !== undefined && (
-                <Badge size="sm" severity={event.resolution.decision === 'applied' ? 'info' : 'neutral'}>
+                <Badge size="sm" variant={event.resolution.decision === 'applied' ? 'info' : 'outline'}>
                   {event.resolution.decision === 'applied' ? 'Ručně použito' : 'Ručně ponecháno beze změny'}
                 </Badge>
               )}
@@ -323,7 +323,7 @@ const UnpairButton = ({
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <Button onClick={() => setOpen(true)} size="sm" appearance="ghost" severity="secondary">
+      <Button onClick={() => setOpen(true)} size="sm" theme="borderless" variant="secondary">
         Zrušit přiřazení
       </Button>
     );
@@ -367,16 +367,16 @@ const renderOrderFacts = (
         <PairingStateBadge order={order} />
         <RawStatusBadge status={order.rawStatus} />
         {isOpenDuplicate(order) && (
-          <Badge size="sm" severity="warning">
+          <Badge size="sm" variant="warning">
             Možná duplicita
           </Badge>
         )}
         {order.duplicateOf !== undefined && !isOpenDuplicate(order) && (
-          <Badge size="sm" appearance="outline" severity="neutral">
+          <Badge size="sm" variant="outline">
             Potvrzená duplicita – mimo souhrny
           </Badge>
         )}
-        <Badge size="sm" appearance="outline" severity="neutral">
+        <Badge size="sm" variant="outline">
           Importováno z CSV
         </Badge>
       </div>
@@ -433,7 +433,7 @@ export const OrderDetailPanel = ({
     <UnsavedChangesBoundary scope={scope}>
       <SidePanel
         actions={
-          <Button onClick={() => scope.request(onClose)} appearance="outline" severity="secondary">
+          <Button onClick={() => scope.request(onClose)} theme="outlined" variant="secondary">
             Zavřít
           </Button>
         }
@@ -540,7 +540,7 @@ export const OrderDetailPanel = ({
                   />
                 ) : (
                   <div className="flex flex-wrap gap-100">
-                    <Button onClick={() => setRepairOpen(true)} size="sm" appearance="outline" severity="secondary">
+                    <Button onClick={() => setRepairOpen(true)} size="sm" theme="outlined" variant="secondary">
                       Opravit přiřazení
                     </Button>
                     <UnpairButton busy={busy} order={order} run={run} />

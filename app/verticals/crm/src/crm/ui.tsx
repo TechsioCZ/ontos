@@ -80,7 +80,7 @@ export const CrmStateGate = ({
     return (
       <EmptyState
         action={
-          <Button onClick={onRetry} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
             {t('crm.common.retry')}
           </Button>
         }

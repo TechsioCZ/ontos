@@ -64,14 +64,14 @@ const MiniCartTrigger = ({
   <Popover.Trigger
     aria-label={state === "filled" ? `${title} (${count.label})` : title}
     size="current"
-    unstyled
-    severity="tertiary"
+    theme="unstyled"
+    variant="tertiary"
   >
     <span className="relative inline-flex">
       <Image alt="" as={NextImage} height={28} size="custom" src="/brand/cart.svg" width={28} />
       {state === "filled" && (
         <span className="n1-cart-count absolute -right-2 -top-2 grid min-h-5 min-w-5">
-          <Badge aria-hidden="true" size="sm" severity="primary">
+          <Badge aria-hidden="true" size="sm" variant="primary">
             {count.badge}
           </Badge>
         </span>
@@ -203,8 +203,8 @@ const MiniCartLine = ({
                   block
                   icon="token-icon-minus"
                   iconSize="md"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 />
               </div>
               <NumericInput.Control className="min-w-0 flex-1">
@@ -220,8 +220,8 @@ const MiniCartLine = ({
                   block
                   icon="token-icon-plus"
                   iconSize="md"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 />
               </div>
             </div>
@@ -235,8 +235,8 @@ const MiniCartLine = ({
             iconSize="sm"
             onClick={onRemove}
             size="current"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           />
         </div>
       </div>
@@ -310,8 +310,8 @@ const MiniCartCheckoutAction = ({
         href={`/${locale}/pokladna`}
         onClick={onContinue}
         size="md"
-        appearance="solid"
-        severity="secondary"
+        theme="solid"
+        variant="secondary"
       >
         {d.shopping.checkout}
       </LinkButton>
@@ -319,7 +319,7 @@ const MiniCartCheckoutAction = ({
   }
   if (unavailable) {
     return (
-      <Button block onClick={onRetry} size="md" appearance="solid" severity="secondary">
+      <Button block onClick={onRetry} size="md" theme="solid" variant="secondary">
         {d.retry}
       </Button>
     );
@@ -331,8 +331,8 @@ const MiniCartCheckoutAction = ({
       isLoading={pending}
       loadingText={d.loadingPrice}
       size="md"
-      appearance="solid"
-      severity="secondary"
+      theme="solid"
+      variant="secondary"
     >
       {d.shopping.checkout}
     </Button>
@@ -367,13 +367,13 @@ const MiniCartStatus = ({
     {state === "error" && (
       <>
         <p role="alert">{d.shopping.storageError}</p>
-        <Button onClick={onClear} size="sm" appearance="outline" severity="secondary">
+        <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
           {d.shopping.clear}
         </Button>
       </>
     )}
     {state === "unavailable" && (
-      <Button onClick={onRefresh} size="sm" appearance="outline" severity="secondary">
+      <Button onClick={onRefresh} size="sm" theme="outlined" variant="secondary">
         {d.contact.retry}
       </Button>
     )}
@@ -382,8 +382,8 @@ const MiniCartStatus = ({
       density="compact"
       onClick={onContinue}
       size="sm"
-      appearance="solid"
-      severity="secondary"
+      theme="solid"
+      variant="secondary"
     >
       {d.shopping.continueShopping}
     </Button>
@@ -485,8 +485,8 @@ export const MiniCart = ({
                   <Button
                     onClick={() => router.refresh()}
                     size="sm"
-                    appearance="outline"
-                    severity="secondary"
+                    theme="outlined"
+                    variant="secondary"
                   >
                     {d.contact.retry}
                   </Button>
@@ -513,8 +513,8 @@ export const MiniCart = ({
                     density="compact"
                     onClick={continueShopping}
                     size="sm"
-                    appearance="outline"
-                    severity="secondary"
+                    theme="outlined"
+                    variant="secondary"
                   >
                     {d.shopping.continueShopping}
                   </Button>

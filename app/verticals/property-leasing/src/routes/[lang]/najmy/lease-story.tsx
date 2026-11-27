@@ -75,16 +75,16 @@ export const leaseContract = (
     .toSorted((left, right) => right.startDate.localeCompare(left.startDate))[0];
 };
 
-const contractBadge = { ACTIVE: 'success', DRAFT: 'neutral', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
-const signatureBadge = { DECLINED: 'danger', NOT_SENT: 'neutral', SENT: 'info', SIGNED: 'success' } as const;
+const contractBadge = { ACTIVE: 'success', DRAFT: 'outline', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
+const signatureBadge = { DECLINED: 'danger', NOT_SENT: 'outline', SENT: 'info', SIGNED: 'success' } as const;
 const taskBadge = {
   CANCELLED: 'secondary',
   DONE: 'success',
   IN_PROGRESS: 'info',
-  NEW: 'neutral',
+  NEW: 'outline',
   WAITING: 'warning',
 } as const;
-const invoiceBadge = { CONFIRMED: 'success', DRAFT: 'neutral', VOIDED: 'danger' } as const;
+const invoiceBadge = { CONFIRMED: 'success', DRAFT: 'outline', VOIDED: 'danger' } as const;
 
 export interface StoryStep {
   readonly current?: boolean;
@@ -169,7 +169,7 @@ export const RentTermsCard = ({
             </span>
             <span className={mutedClass}>{t(`${P}.rent.monthlyTotal`)}</span>
             {contractTerms !== undefined && (
-              <Badge size="sm" severity={sameRentTerms(terms, contractTerms) ? 'success' : 'warning'}>
+              <Badge size="sm" variant={sameRentTerms(terms, contractTerms) ? 'success' : 'warning'}>
                 {sameRentTerms(terms, contractTerms)
                   ? t(`${P}.rent.contractMatches`)
                   : t(`${P}.rent.contractDiffers`, { amount: formatMoney(monthlyTotal(contractTerms)) })}
@@ -216,8 +216,8 @@ export const UnitCard = ({
           href={`/${language}/nemovitosti?resourceId=${unit.unitRef.resourceId}`}
           icon="icon-[mdi--door]"
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           {t(`${P}.related.openUnit`)}
         </LinkButton>
@@ -227,8 +227,8 @@ export const UnitCard = ({
           href={`/${language}/nemovitosti?resourceId=${property.propertyRef.resourceId}`}
           icon="icon-[mdi--office-building-outline]"
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           {t(`${P}.related.openProperty`)}
         </LinkButton>
@@ -274,8 +274,8 @@ export const TenantCard = ({
             href={`/${language}/ukoly?partyId=${tenant.partyId}`}
             icon="icon-[mdi--clipboard-check-outline]"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${P}.related.tenantTasks`)}
           </LinkButton>
@@ -283,8 +283,8 @@ export const TenantCard = ({
             href={`/${language}/finance?${invoiceParams}`}
             icon="icon-[mdi--receipt-text-outline]"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${P}.related.tenantInvoices`)}
           </LinkButton>
@@ -292,8 +292,8 @@ export const TenantCard = ({
             href={`/${language}/prodej/zakaznici`}
             icon="icon-[mdi--account-box-outline]"
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           >
             {t(`${P}.related.customers`)}
           </LinkButton>
@@ -321,8 +321,8 @@ export const ContractCard = ({
             href={`/${language}/smlouvy`}
             icon="icon-[mdi--file-document-outline]"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${P}.related.allContracts`)}
           </LinkButton>
@@ -331,10 +331,10 @@ export const ContractCard = ({
     ) : (
       <>
         <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
-          <Badge size="sm" severity={contractBadge[contract.lifecycleState]}>
+          <Badge size="sm" variant={contractBadge[contract.lifecycleState]}>
             {t(`${P}.related.contractStates.${contract.lifecycleState}`)}
           </Badge>
-          <Badge size="sm" severity={signatureBadge[contract.signatureState]}>
+          <Badge size="sm" variant={signatureBadge[contract.signatureState]}>
             {t(`${P}.related.signatureStates.${contract.signatureState}`)}
           </Badge>
         </div>
@@ -368,8 +368,8 @@ export const ContractCard = ({
             href={`/${language}/smlouvy?resourceId=${contract.contractRef.resourceId}`}
             icon="icon-[mdi--file-sign]"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${P}.related.openContract`)}
           </LinkButton>
@@ -397,8 +397,8 @@ export const TasksCard = ({
           href={`/${language}/ukoly`}
           icon="icon-[mdi--arrow-right]"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           {t(`${P}.related.openTasks`)}
         </LinkButton>
@@ -426,7 +426,7 @@ export const TasksCard = ({
                 {task.dueDate !== undefined && (
                   <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>
                 )}
-                <Badge size="sm" severity={taskBadge[task.state]}>
+                <Badge size="sm" variant={taskBadge[task.state]}>
                   {t(`${P}.related.taskStates.${task.state}`)}
                 </Badge>
               </span>
@@ -456,8 +456,8 @@ export const InvoicesCard = ({
           href={`/${language}/finance`}
           icon="icon-[mdi--arrow-right]"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           {t(`${P}.related.allInvoices`)}
         </LinkButton>
@@ -484,17 +484,17 @@ export const InvoicesCard = ({
                 </span>
               </span>
               <span className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
-                <Badge size="sm" severity={invoiceBadge[invoice.businessState]}>
+                <Badge size="sm" variant={invoiceBadge[invoice.businessState]}>
                   {t(`${P}.related.invoiceStates.${invoice.businessState}`)}
                 </Badge>
-                <Badge size="sm" severity={invoice.paymentState === 'PAID' ? 'success' : 'neutral'}>
+                <Badge size="sm" variant={invoice.paymentState === 'PAID' ? 'success' : 'outline'}>
                   {t(`${P}.related.paymentStates.${invoice.paymentState}`)}
                 </Badge>
                 <LinkButton
                   href={`/${language}/finance?resourceId=${invoice.ref.resourceId}`}
                   size="sm"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 >
                   {t(`${P}.related.openInvoice`)}
                 </LinkButton>

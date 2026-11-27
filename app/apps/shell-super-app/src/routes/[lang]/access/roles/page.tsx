@@ -109,7 +109,7 @@ const ReadyRoles = ({ model }: { readonly model: Extract<RolePageModel, { readon
             key={role.id}
             onClick={() => setSelectedId(role.id)}
             type="button"
-            severity="secondary"
+            variant="secondary"
           >
             {role.name}
           </Button>

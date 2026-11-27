@@ -117,7 +117,7 @@ export const PipelineDetailPanel = ({
       <SidePanel
         actions={
           <div className="flex w-full justify-end">
-            <Button className="shrink-0 whitespace-nowrap" onClick={onClose} appearance="outline" severity="secondary">
+            <Button className="shrink-0 whitespace-nowrap" onClick={onClose} theme="outlined" variant="secondary">
               {t('sales-pipeline.pages.records.edit.close')}
             </Button>
           </div>

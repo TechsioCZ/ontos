@@ -168,7 +168,7 @@ export function EnrollmentProgress() {
         onClick={() => {
           void refresh("read");
         }}
-        severity="primary"
+        variant="primary"
       >
         {pending ? copy.checking : copy.check}
       </Button>
@@ -178,7 +178,7 @@ export function EnrollmentProgress() {
           onClick={() => {
             void refresh("resume");
           }}
-          severity="secondary"
+          variant="secondary"
         >
           {copy.resume}
         </Button>
@@ -189,7 +189,7 @@ export function EnrollmentProgress() {
           onClick={() => {
             void refresh("restart");
           }}
-          severity="secondary"
+          variant="secondary"
         >
           {copy.restart}
         </Button>

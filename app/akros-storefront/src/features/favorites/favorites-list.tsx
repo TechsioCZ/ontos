@@ -91,7 +91,7 @@ export function FavoritesList() {
     return (
       <div data-favorites-empty>
         <p>{cs.favorites.empty}</p>
-        <LinkButton as={StoreLink} href="/" size="md" severity="primary">
+        <LinkButton as={StoreLink} href="/" size="md" variant="primary">
           {cs.favorites.browse}
         </LinkButton>
       </div>
@@ -106,8 +106,8 @@ export function FavoritesList() {
           <p>{cs.favorites.missingText}</p>
           <Button
             size="md"
-            severity="secondary"
-            appearance="outline"
+            variant="secondary"
+            theme="outlined"
             onClick={() => setAttempt((value) => value + 1)}
           >
             {cs.favorites.retry}
@@ -122,8 +122,8 @@ export function FavoritesList() {
               </span>
               <Button
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
                 onClick={() => {
                   try {
                     saveProductFavorites(

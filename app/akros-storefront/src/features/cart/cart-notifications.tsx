@@ -56,7 +56,7 @@ export function CartNotifications() {
               as={StoreLink}
               href="/kosik"
               size="sm"
-              severity="primary"
+              variant="primary"
               onClick={() => toaster.dismiss(feedbackId)}
             >
               {toast.viewCart}
@@ -94,7 +94,7 @@ export function CartNotifications() {
             <p>
               {formatQuantity(line.quantity)} {line.unit}
             </p>
-            <Button size="sm" severity="primary" onClick={() => undoRemove(id)}>
+            <Button size="sm" variant="primary" onClick={() => undoRemove(id)}>
               {toast.undo}
             </Button>
           </div>

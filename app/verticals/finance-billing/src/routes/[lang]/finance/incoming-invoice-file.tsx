@@ -82,8 +82,8 @@ export const IncomingFileField = ({
           icon="icon-[mdi--close]"
           onClick={() => onChange(null)}
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           Odebrat soubor
         </Button>

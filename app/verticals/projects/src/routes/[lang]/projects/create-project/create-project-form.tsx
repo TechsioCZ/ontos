@@ -229,7 +229,7 @@ export const CreateProjectForm = () => {
         isLoading={lookup === 'loading'}
         onClick={handleFindOwners}
         type="button"
-        severity="secondary"
+        variant="secondary"
       >
         {t(`${formKey}.findOwners`)}
       </Button>

@@ -129,7 +129,7 @@ export function ReviewStep() {
           href="/kosik/dodaci-udaje"
           data-sf-checkout-action
           className="sf-checkout-back"
-          severity="secondary"
+          variant="secondary"
           size="sm"
           uppercase
         >
@@ -144,7 +144,7 @@ export function ReviewStep() {
           <Button
             type="submit"
             data-sf-checkout-action
-            severity="primary"
+            variant="primary"
             size="sm"
             uppercase
             disabled={sending || submitted || !cart.lines.length || blocked}

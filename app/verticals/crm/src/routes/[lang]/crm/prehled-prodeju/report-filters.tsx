@@ -213,8 +213,8 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
           icon="icon-[mdi--filter-remove-outline]"
           onClick={() => onChange({ client: ALL, period: ALL, salesperson: ALL, status: ALL })}
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           Zrušit filtry
         </Button>

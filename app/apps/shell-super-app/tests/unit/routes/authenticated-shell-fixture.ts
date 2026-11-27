@@ -2,7 +2,6 @@ import { Schema } from 'effect';
 
 import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../../shared/browser-api.ts';
 import type { AuthenticatedHomePageModel } from '../../../src/routes/[lang]/home-page-model.ts';
-import { businessShellTheme } from '../../../src/routes/tenant-theme.ts';
 
 /** The authenticated shell every route page test renders its own model on top of. */
 export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
@@ -26,5 +25,4 @@ export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
   selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)('20000000-0000-4000-8000-000000000001'),
   state: 'authenticated',
   tenants: { items: [], state: 'available' },
-  theme: businessShellTheme,
 });

@@ -157,8 +157,8 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
                     load(document.id, 'preview');
                   }}
                   size="sm"
-                  appearance="ghost"
-                  severity="secondary"
+                  theme="borderless"
+                  variant="secondary"
                 >
                   Náhled
                 </Button>
@@ -168,8 +168,8 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
                     load(document.id, 'download');
                   }}
                   size="sm"
-                  appearance="ghost"
-                  severity="secondary"
+                  theme="borderless"
+                  variant="secondary"
                 >
                   Stáhnout
                 </Button>
@@ -237,7 +237,7 @@ const PaymentSourceBadge = ({
 }) => {
   if (event.source === 'MANUAL') {
     return (
-      <Badge size="sm" severity="success">
+      <Badge size="sm" variant="success">
         Ručně potvrzeno
       </Badge>
     );
@@ -246,12 +246,12 @@ const PaymentSourceBadge = ({
     return (
       <Badge
         size="sm"
-        severity="info"
+        variant="info"
       >{`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}</Badge>
     );
   }
   return (
-    <Badge size="sm" appearance="outline" severity="neutral">
+    <Badge size="sm" variant="outline">
       Převzato z importu
     </Badge>
   );
@@ -281,8 +281,8 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
             icon="icon-[mdi--cash-plus]"
             onClick={() => setOpen(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             Zaznamenat úhradu
           </Button>
@@ -429,8 +429,8 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
             icon="icon-[mdi--email-alert-outline]"
             onClick={() => setEditing(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             Připravit upomínku
           </Button>
@@ -459,7 +459,7 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
                 <span className="tabular-nums">{at(reminder.createdAt)}</span>
                 <span className="font-medium">{reminder.recipient}</span>
                 {isTestReminderRecipient(reminder.recipient) && (
-                  <Badge size="sm" appearance="outline" severity="neutral">
+                  <Badge size="sm" variant="outline">
                     Zkušební adresa – nejde o upomínku zákazníkovi
                   </Badge>
                 )}
@@ -475,8 +475,8 @@ const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
             data-finance-test-reminders={testCount}
             onClick={() => setShowTests((current) => !current)}
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           >
             {showTests
               ? 'Skrýt zkušební odeslání'
@@ -513,7 +513,7 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
         <p className="text-fg-secondary text-sm">Doklad zatím nebyl předán účetní.</p>
       ) : (
         <div className="flex flex-col gap-100 text-sm">
-          <Badge className="self-start" size="sm" severity={EXPORT_STATUS[latest.status].variant}>
+          <Badge className="self-start" size="sm" variant={EXPORT_STATUS[latest.status].variant}>
             {EXPORT_STATUS[latest.status].label}
           </Badge>
           {latest.status === 'FAILED' && latest.failureReason !== undefined && (
@@ -548,7 +548,7 @@ const HistoryPaymentBadge = ({
 }) => {
   if (invoice.paymentState === 'PAID') {
     return (
-      <Badge size="sm" severity="success">
+      <Badge size="sm" variant="success">
         uhrazeno
       </Badge>
     );
@@ -561,7 +561,7 @@ const HistoryPaymentBadge = ({
     label = 'po splatnosti';
   }
   return (
-    <Badge size="sm" severity={overdue ? 'danger' : 'info'}>
+    <Badge size="sm" variant={overdue ? 'danger' : 'info'}>
       {label}
     </Badge>
   );

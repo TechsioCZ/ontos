@@ -86,7 +86,7 @@ export const GalleryTile = ({
         )}
         {index === 0 && (
           <span className="absolute top-100 left-100">
-            <Badge size="sm" severity="info">
+            <Badge size="sm" variant="info">
               {t('merchandise.pages.products.gallery.main')}
             </Badge>
           </span>
@@ -100,10 +100,10 @@ export const GalleryTile = ({
               icon="icon-[mdi--star-outline]"
               onClick={() => onMove(index, 0)}
               size="sm"
-              appearance="ghost"
+              theme="borderless"
               title={t('merchandise.pages.products.gallery.setMain')}
               type="button"
-              severity="secondary"
+              variant="secondary"
             />
           )}
           <Button
@@ -112,10 +112,10 @@ export const GalleryTile = ({
             icon="icon-[mdi--arrow-left]"
             onClick={() => onMove(index, index - 1)}
             size="sm"
-            appearance="ghost"
+            theme="borderless"
             title={t('merchandise.pages.products.gallery.moveEarlier')}
             type="button"
-            severity="secondary"
+            variant="secondary"
           />
           <Button
             aria-label={t('merchandise.pages.products.gallery.moveLaterLabel', { position })}
@@ -123,10 +123,10 @@ export const GalleryTile = ({
             icon="icon-[mdi--arrow-right]"
             onClick={() => onMove(index, index + 1)}
             size="sm"
-            appearance="ghost"
+            theme="borderless"
             title={t('merchandise.pages.products.gallery.moveLater')}
             type="button"
-            severity="secondary"
+            variant="secondary"
           />
           <Button
             aria-label={t('merchandise.pages.products.gallery.removeLabel', { position })}
@@ -134,10 +134,10 @@ export const GalleryTile = ({
             icon="icon-[mdi--delete-outline]"
             onClick={() => onRemove(image)}
             size="sm"
-            appearance="ghost"
+            theme="borderless"
             title={t('merchandise.pages.products.gallery.remove')}
             type="button"
-            severity="secondary"
+            variant="secondary"
           />
         </div>
       )}
@@ -185,10 +185,10 @@ export const UploadTile = ({
       </span>
       {upload.phase === 'failed' && (
         <div className="flex gap-50">
-          <Button onClick={() => onRetry(upload.key)} size="sm" appearance="outline" type="button" severity="secondary">
+          <Button onClick={() => onRetry(upload.key)} size="sm" theme="outlined" type="button" variant="secondary">
             {t('merchandise.pages.products.gallery.retry')}
           </Button>
-          <Button onClick={() => onDismiss(upload.key)} size="sm" appearance="ghost" type="button" severity="secondary">
+          <Button onClick={() => onDismiss(upload.key)} size="sm" theme="borderless" type="button" variant="secondary">
             {t('merchandise.pages.products.gallery.dismiss')}
           </Button>
         </div>

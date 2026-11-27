@@ -202,7 +202,7 @@ export const ChangeHistory = ({
       )}
       {!showAll && entries.length > visible.length && (
         <div>
-          <Button onClick={() => setShowAll(true)} size="sm" appearance="ghost" severity="secondary">
+          <Button onClick={() => setShowAll(true)} size="sm" theme="borderless" variant="secondary">
             {t(`${k}.more`, { count: entries.length - visible.length })}
           </Button>
         </div>

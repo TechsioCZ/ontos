@@ -39,12 +39,12 @@ export const ordersColumns = (t: Translate, customers: CustomerDirectory, tagsOf
             <span className="truncate">{name}</span>
           )}
           {storefront && (
-            <Badge size="sm" severity="warning">
+            <Badge size="sm" variant="warning">
               E-shop DEMO
             </Badge>
           )}
           {info.row.original.market !== undefined && (
-            <Badge size="sm" appearance="outline" severity="neutral">
+            <Badge size="sm" variant="outline">
               {info.row.original.market.marketCode}
             </Badge>
           )}

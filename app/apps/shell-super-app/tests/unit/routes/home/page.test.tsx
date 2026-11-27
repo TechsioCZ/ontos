@@ -26,7 +26,6 @@ import {
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import type { ResolvedModuleTarget, ShellSearchResponse } from '../../../../shared/browser-api.ts';
 import type { AuthenticatedHomePageModel, HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
-import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
 import ShellHome from '../../../../src/routes/[lang]/page.tsx';
 import { registerSessionScopedReset } from '../../../../src/routes/session-scope.ts';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
@@ -140,7 +139,6 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Aut
     ],
     state: 'available',
   },
-  theme: businessShellTheme,
 });
 
 const emptyRouteComponent = () => null;

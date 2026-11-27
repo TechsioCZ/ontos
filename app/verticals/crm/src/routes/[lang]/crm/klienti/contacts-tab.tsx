@@ -71,7 +71,7 @@ export const ContactsTab = ({
             icon="icon-[mdi--account-plus-outline]"
             onClick={() => requestLeave(() => setEditing('new'))}
             size="sm"
-            severity="primary"
+            variant="primary"
           >
             Přidat kontaktní osobu
           </Button>
@@ -141,8 +141,8 @@ export const ContactsTab = ({
             icon={showRemoved ? 'icon-[mdi--chevron-up]' : 'icon-[mdi--chevron-down]'}
             onClick={() => setShowRemoved((value) => !value)}
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           >
             {showRemoved ? 'Skrýt odebrané osoby' : `Zobrazit odebrané osoby (${removed.length})`}
           </Button>
@@ -158,7 +158,7 @@ export const ContactsTab = ({
       <Dialog
         actions={
           <>
-            <Button onClick={() => setRemoving(undefined)} appearance="outline" severity="secondary">
+            <Button onClick={() => setRemoving(undefined)} theme="outlined" variant="secondary">
               Zrušit
             </Button>
             <Button
@@ -172,7 +172,7 @@ export const ContactsTab = ({
                   );
                 }
               }}
-              severity="primary"
+              variant="primary"
             >
               Odebrat
             </Button>

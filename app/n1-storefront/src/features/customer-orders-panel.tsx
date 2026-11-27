@@ -55,7 +55,7 @@ export const CustomerOrderStatus = ({
   <Badge
     className="shrink-0 whitespace-nowrap"
     size={size}
-    severity={status === "CANCELLED" ? "danger" : "info"}
+    variant={status === "CANCELLED" ? "danger" : "info"}
   >
     {d.checkout.statuses[status]}
   </Badge>
@@ -109,8 +109,8 @@ const DetailLink = ({
     className="shrink-0 whitespace-nowrap"
     href={`/${locale}/ucet/objednavky/${encodeURIComponent(order.id)}`}
     size="md"
-    appearance="solid"
-    severity="secondary"
+    theme="solid"
+    variant="secondary"
   >
     {d.detail}
   </LinkButton>
@@ -142,23 +142,17 @@ export const CustomerOrdersList = ({
     </p>
     {data.orders.length === 0 ? (
       <div className="flex flex-col items-center gap-2 rounded-xs border border-border-secondary p-4 text-center">
-        <Icon severity="secondary" icon="icon-[mdi--archive-outline]" size="2xl" />
+        <Icon color="secondary" icon="icon-[mdi--archive-outline]" size="2xl" />
         <h3 className="text-md font-medium">{d.accountPage.emptyOrdersHeading}</h3>
         <p className="text-sm leading-normal text-fg-secondary">{d.accountPage.emptyOrders}</p>
-        <LinkButton
-          as={NextLink}
-          href={`/${locale}`}
-          size="md"
-          appearance="solid"
-          severity="secondary"
-        >
+        <LinkButton as={NextLink} href={`/${locale}`} size="md" theme="solid" variant="secondary">
           {d.accountPage.startShopping}
         </LinkButton>
       </div>
     ) : (
       <>
         <div className="hidden min-w-0 overflow-x-auto lg:block">
-          <Table size="md" appearance="outline">
+          <Table size="md" variant="outline">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{d.accountPage.orderNumber}</Table.ColumnHeader>
@@ -298,8 +292,8 @@ export const CustomerOrdersPanel = ({
               disabled={offset === 0}
               onClick={() => readPage(Math.max(0, offset - state.data.pageSize))}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {d.accountPage.previous}
             </Button>
@@ -307,8 +301,8 @@ export const CustomerOrdersPanel = ({
               disabled={offset + state.data.pageSize >= state.data.total}
               onClick={() => readPage(offset + state.data.pageSize)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {d.accountPage.next}
             </Button>
@@ -324,7 +318,7 @@ export const CustomerOrdersPanel = ({
         <StatusText align="center" showIcon={false} size="md" status="error">
           {d.accountPage.ordersUnavailable}
         </StatusText>
-        <Button onClick={() => readPage(offset)} size="sm" appearance="solid" severity="secondary">
+        <Button onClick={() => readPage(offset)} size="sm" theme="solid" variant="secondary">
           {d.retry}
         </Button>
       </div>
@@ -334,12 +328,7 @@ export const CustomerOrdersPanel = ({
     body = (
       <div className="flex flex-col items-start gap-4">
         <output>{message}</output>
-        <Button
-          onClick={() => readPage(offset)}
-          size="md"
-          appearance="outline"
-          severity="secondary"
-        >
+        <Button onClick={() => readPage(offset)} size="md" theme="outlined" variant="secondary">
           {d.accountPage.reload}
         </Button>
       </div>

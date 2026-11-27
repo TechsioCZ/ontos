@@ -2,7 +2,7 @@ catalog:
   '@app/commerce-customer-context': workspace:*
   '@app/shared-contracts': workspace:*
   '@app/work-tasks': workspace:*
-  '@techsio/ui-kit': 0.67.0
+  '@techsio/ui-kit': 0.59.3
 catalogMode: strict
 
 catalogs:

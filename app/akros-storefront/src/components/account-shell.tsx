@@ -67,7 +67,7 @@ export function AccountShell({
                   disabled={!("href" in item)}
                   title={"href" in item ? undefined : labels.unavailableSection}
                   size="sm"
-                  unstyled
+                  theme="unstyled"
                   aria-current={item.key === parent ? "page" : undefined}
                   className="shrink-0 whitespace-nowrap hover:underline data-disabled:opacity-50 aria-[current=page]:border-b-(length:--sf-account-tab-border) aria-[current=page]:border-(--sf-account-accent)"
                 >

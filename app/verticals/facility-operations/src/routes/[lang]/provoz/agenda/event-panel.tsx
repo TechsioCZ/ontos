@@ -283,7 +283,7 @@ export const CreateEventPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onClose)} appearance="outline" severity="secondary">
+            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
               {t('facility-operations.common.cancel')}
             </Button>
             <SaveBar
@@ -414,7 +414,7 @@ const EventEditPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onDone)} appearance="outline" severity="secondary">
+            <Button onClick={() => guard.request(onDone)} theme="outlined" variant="secondary">
               {t('facility-operations.common.cancel')}
             </Button>
             <SaveBar
@@ -554,8 +554,8 @@ const renderDeadlineActions = ({
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' }, true);
             }}
-            appearance="ghost"
-            severity="danger"
+            theme="borderless"
+            variant="danger"
           >
             {t(`${k}.event.cancel`)}
           </Button>
@@ -566,8 +566,8 @@ const renderDeadlineActions = ({
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' });
             }}
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${k}.event.done`)}
           </Button>
@@ -577,13 +577,13 @@ const renderDeadlineActions = ({
             onClick={() => {
               run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' });
             }}
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(`${k}.event.reopen`)}
           </Button>
         )}
-        <Button onClick={() => setEditing(true)} severity="primary">
+        <Button onClick={() => setEditing(true)} variant="primary">
           {t(`${k}.event.edit`)}
         </Button>
       </div>

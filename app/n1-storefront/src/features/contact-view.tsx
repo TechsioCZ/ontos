@@ -301,9 +301,9 @@ export const ContactView = ({
                 isLoading={state === "pending"}
                 loadingText={d.contact.submitting}
                 size="md"
-                appearance="solid"
+                theme="solid"
                 type="submit"
-                severity="secondary"
+                variant="secondary"
               >
                 {state === "pending" || state === "unavailable"
                   ? buttonText[state]

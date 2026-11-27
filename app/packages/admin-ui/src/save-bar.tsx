@@ -59,7 +59,7 @@ const SaveStatus = ({ error, labels, onReloadKeepingDrafts, onReloadLatest, size
         <StatusText showIcon size="sm" status="warning">
           {labels.conflict}
         </StatusText>
-        <Button onClick={onReloadLatest} size={size} appearance="outline" type="button" severity="secondary">
+        <Button onClick={onReloadLatest} size={size} theme="outlined" type="button" variant="secondary">
           {labels.reloadLatest}
         </Button>
       </>
@@ -71,7 +71,7 @@ const SaveStatus = ({ error, labels, onReloadKeepingDrafts, onReloadLatest, size
           {labels.reloadRequired}
         </StatusText>
         {onReloadKeepingDrafts !== undefined && (
-          <Button onClick={onReloadKeepingDrafts} size={size} appearance="outline" type="button" severity="secondary">
+          <Button onClick={onReloadKeepingDrafts} size={size} theme="outlined" type="button" variant="secondary">
             {labels.reloadKeepingDrafts}
           </Button>
         )}
@@ -115,7 +115,7 @@ export const SaveBar = ({
       onClick={onSave}
       size={size}
       type="button"
-      severity="primary"
+      variant="primary"
     >
       {labels.save}
     </Button>

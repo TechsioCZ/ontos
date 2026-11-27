@@ -38,8 +38,8 @@ const GuideCard = ({ guide }: { readonly guide: DemoGuide }) => {
           setDemoGuideOpen(true);
         }}
         size="md"
-        appearance="solid"
-        severity="primary"
+        theme="solid"
+        variant="primary"
       >
         {actionLabel(summary.done, summary.total)}
       </Button>

@@ -110,7 +110,7 @@ const PeopleEditor = ({
       <Dialog
         actions={
           <>
-            <Button onClick={requestClose} appearance="outline" severity="secondary">
+            <Button onClick={requestClose} theme="outlined" variant="secondary">
               Zavřít
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -238,7 +238,7 @@ const PersonDetail = ({
             onClose();
           }}
           size="current"
-          severity="primary"
+          variant="primary"
         >
           Spravovat role
         </Button>
@@ -250,8 +250,8 @@ const PersonDetail = ({
               onClose();
             }}
             size="current"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             Upravit členství
           </Button>

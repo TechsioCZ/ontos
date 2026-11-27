@@ -64,7 +64,7 @@ export const CustomerOrderContent = ({
               (item) => item.productId === line.productId,
             );
             const image = product?.image ?? "";
-            const quantity = <Badge size="sm" severity="secondary">{`${line.quantity}×`}</Badge>;
+            const quantity = <Badge size="sm" variant="secondary">{`${line.quantity}×`}</Badge>;
             return (
               <ProductCard
                 key={`${line.productId}-${line.variantId ?? ""}-${line.sku}`}
@@ -243,8 +243,8 @@ export const CustomerOrderDetailView = ({
           as={NextLink}
           href={`/${locale}/prihlaseni`}
           size="md"
-          appearance="solid"
-          severity="primary"
+          theme="solid"
+          variant="primary"
         >
           {d.accountPage.login}
         </LinkButton>
@@ -266,12 +266,7 @@ export const CustomerOrderDetailView = ({
             ? d.accountPage.forbidden
             : d.accountPage.ordersUnavailable}
         </output>
-        <Button
-          onClick={() => router.refresh()}
-          size="md"
-          appearance="outline"
-          severity="secondary"
-        >
+        <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
           {d.accountPage.reload}
         </Button>
       </div>

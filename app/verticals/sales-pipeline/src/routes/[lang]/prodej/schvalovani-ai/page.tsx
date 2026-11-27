@@ -337,7 +337,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{targetLabel}</p>
       </div>
       <div className="sp-ai-review-actions">
-        <Badge severity={changeStatusVariant[change.status]}>{aiStatusLabel[change.status]}</Badge>
+        <Badge variant={changeStatusVariant[change.status]}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
@@ -379,8 +379,8 @@ const ChangeCard = ({
           disabled={busy}
           onClick={() => decide([change.id], 'reject')}
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           Zamítnout změnu
         </Button>
@@ -470,7 +470,7 @@ const RunCard = ({
             </p>
             <h2 className="sp-ai-review-instruction">{group.instruction}</h2>
           </div>
-          <Badge severity={batchVariant}>{batchLabel}</Badge>
+          <Badge variant={batchVariant}>{batchLabel}</Badge>
         </div>
         {pending.length > decidable.length && (
           <p className="text-fg-secondary text-sm">
@@ -498,8 +498,8 @@ const RunCard = ({
                 disabled={busy}
                 onClick={() => decideMany(decidable, 'reject')}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 Zamítnout dávku
               </Button>
@@ -512,8 +512,8 @@ const RunCard = ({
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               Vrátit vše
             </Button>
@@ -547,7 +547,7 @@ const RunCard = ({
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button onClick={() => setConfirmRevert(false)} size="sm" appearance="outline" severity="secondary">
+                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
                     Zrušit
                   </Button>
                 </div>
@@ -633,7 +633,7 @@ const AiApprovalLog = ({
         </ol>
       )}
       {log.length > 8 && (
-        <Button onClick={onToggle} size="sm" appearance="outline" severity="secondary">
+        <Button onClick={onToggle} size="sm" theme="outlined" variant="secondary">
           {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${log.length})`}
         </Button>
       )}
@@ -731,7 +731,7 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
       </Helmet>
       <PageHeader
         description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
-        meta={<Badge severity="secondary">Úroveň C</Badge>}
+        meta={<Badge variant="secondary">Úroveň C</Badge>}
         title={t('sales-pipeline.pages.ai.title')}
       />
       {loading ? <p className="text-fg-secondary text-sm">Načítám návrhy AI…</p> : null}
@@ -756,7 +756,7 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               <p className="text-sm">
                 Část návrhů se nepodařilo načíst ({opportunities.status === 'error' ? 'Příležitosti' : 'Objednávky'}).
               </p>
-              <Button disabled={busy} onClick={refresh} size="sm" appearance="outline" severity="secondary">
+              <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
                 Zkusit znovu
               </Button>
             </div>
@@ -766,8 +766,8 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               aria-pressed={filter === 'pending'}
               onClick={() => setFilter('pending')}
               size="sm"
-              appearance={filter === 'pending' ? 'solid' : 'outline'}
-              severity={filter === 'pending' ? 'primary' : 'secondary'}
+              theme={filter === 'pending' ? 'solid' : 'outlined'}
+              variant={filter === 'pending' ? 'primary' : 'secondary'}
             >
               Ke schválení
             </Button>
@@ -775,8 +775,8 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               aria-pressed={filter === 'all'}
               onClick={() => setFilter('all')}
               size="sm"
-              appearance={filter === 'all' ? 'solid' : 'outline'}
-              severity={filter === 'all' ? 'primary' : 'secondary'}
+              theme={filter === 'all' ? 'solid' : 'outlined'}
+              variant={filter === 'all' ? 'primary' : 'secondary'}
             >
               Všechny dávky
             </Button>

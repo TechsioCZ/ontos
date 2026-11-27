@@ -140,7 +140,7 @@ const ExceptionsPager = ({
   const handleNext = () => onOffset(offset + EXCEPTIONS_PAGE_SIZE);
   return (
     <div className="flex items-center gap-150 text-sm">
-      <Button disabled={offset === 0} onClick={handlePrevious} size="sm" appearance="outline" severity="secondary">
+      <Button disabled={offset === 0} onClick={handlePrevious} size="sm" theme="outlined" variant="secondary">
         {text('detail.assortment.exceptions.previous')}
       </Button>
       <span>
@@ -154,8 +154,8 @@ const ExceptionsPager = ({
         disabled={offset + EXCEPTIONS_PAGE_SIZE >= total}
         onClick={handleNext}
         size="sm"
-        appearance="outline"
-        severity="secondary"
+        theme="outlined"
+        variant="secondary"
       >
         {text('detail.assortment.exceptions.next')}
       </Button>
@@ -194,7 +194,7 @@ const ProductSearch = ({
             return (
               <li className="flex flex-wrap items-center justify-between gap-150 py-100" key={product.id}>
                 <ProductLabel name={product.name} sku={product.sku} />
-                <Button onClick={handleClick} size="sm" appearance="outline" severity="secondary">
+                <Button onClick={handleClick} size="sm" theme="outlined" variant="secondary">
                   {text(
                     offeredByDefault ? 'detail.assortment.exceptions.withdraw' : 'detail.assortment.exceptions.add',
                   )}

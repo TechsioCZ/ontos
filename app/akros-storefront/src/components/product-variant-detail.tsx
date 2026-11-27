@@ -104,7 +104,7 @@ export function ProductVariantDetail({
         </span>
       }
       actions={
-        <Button size="md" appearance="outline" severity="secondary" onClick={close}>
+        <Button size="md" theme="outlined" variant="secondary" onClick={close}>
           {cs.variants.close}
         </Button>
       }
@@ -240,7 +240,7 @@ export function ProductVariantDetail({
       ) : list.status === "failed" ? (
         <p role="alert">
           {cs.variants.loadFailed}{" "}
-          <Button size="sm" appearance="outline" severity="secondary" onClick={load}>
+          <Button size="sm" theme="outlined" variant="secondary" onClick={load}>
             {cs.variants.retry}
           </Button>
         </p>

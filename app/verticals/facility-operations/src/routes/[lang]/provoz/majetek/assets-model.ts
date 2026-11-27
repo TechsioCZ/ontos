@@ -58,7 +58,7 @@ export const dueState = (nextDueOn: string, today: string): DueState => {
   }
   return nextDueOn <= addDays(today, 30) ? 'soon' : 'planned';
 };
-const dueBadgeVariants = { overdue: 'danger', planned: 'neutral', soon: 'warning' } as const;
+const dueBadgeVariants = { overdue: 'danger', planned: 'outline', soon: 'warning' } as const;
 export const dueBadgeVariant = (state: DueState) => dueBadgeVariants[state];
 
 /** Earliest current next-due date of an asset (newest record per kind+title). */

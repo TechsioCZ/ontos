@@ -30,13 +30,7 @@ export const LiveShopConfirm = ({
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100 sm:flex-nowrap">
-          <Button
-            className="whitespace-nowrap"
-            onClick={onCancel}
-            appearance="outline"
-            type="button"
-            severity="secondary"
-          >
+          <Button className="whitespace-nowrap" onClick={onCancel} theme="outlined" type="button" variant="secondary">
             {k('common.cancel')}
           </Button>
           <Button
@@ -44,7 +38,7 @@ export const LiveShopConfirm = ({
             data-testid="live-shop-confirm"
             onClick={onConfirm}
             type="button"
-            severity={destructive ? 'danger' : 'primary'}
+            variant={destructive ? 'danger' : 'primary'}
           >
             {confirmLabel}
           </Button>

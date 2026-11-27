@@ -55,7 +55,7 @@ export function ErpProductGrid({ products }: { products: readonly ErpProduct[] }
                   {summary.stockLabel}
                 </ProductCard.Stock>
                 {product.variants.length > 1 && (
-                  <Badge className="whitespace-nowrap" size="sm" severity="secondary">
+                  <Badge className="whitespace-nowrap" size="sm" variant="secondary">
                     {`${erpCopy.variants}: ${product.variants.length}`}
                   </Badge>
                 )}

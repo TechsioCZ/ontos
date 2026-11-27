@@ -46,7 +46,7 @@ export const useCreateInvoiceFeedback = (vm: FinanceViewModel, onClose: () => vo
       description: (
         <div className="flex items-center justify-between gap-150">
           <span>{invoice.number ?? invoice.documentNumber}</span>
-          <Button onClick={prepare} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={prepare} size="sm" theme="outlined" variant="secondary">
             Připravit ke schválení
           </Button>
         </div>

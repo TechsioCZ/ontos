@@ -194,7 +194,7 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
         {categories.length === 0 ? (
           <span className="text-fg-secondary text-sm">Žádné kategorie.</span>
         ) : (
-          <Table size="sm" appearance="line">
+          <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
@@ -224,7 +224,7 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                             onClick={() => saveName(category, renaming.name)}
                             size="sm"
                             type="button"
-                            severity="primary"
+                            variant="primary"
                           >
                             Uložit název
                           </Button>
@@ -232,9 +232,9 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                             disabled={busy}
                             onClick={() => setRenaming(null)}
                             size="sm"
-                            appearance="outline"
+                            theme="outlined"
                             type="button"
-                            severity="secondary"
+                            variant="secondary"
                           >
                             Zrušit
                           </Button>
@@ -256,9 +256,9 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               setOutcome(null);
                             }}
                             size="sm"
-                            appearance="ghost"
+                            theme="borderless"
                             type="button"
-                            severity="secondary"
+                            variant="secondary"
                           >
                             Přejmenovat
                           </Button>
@@ -274,9 +274,9 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               setOutcome(null);
                             }}
                             size="sm"
-                            appearance="outline"
+                            theme="outlined"
                             type="button"
-                            severity="secondary"
+                            variant="secondary"
                           >
                             Vyřadit
                           </Button>
@@ -297,7 +297,7 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               onClick={() => confirm(category)}
                               size="sm"
                               type="button"
-                              severity="primary"
+                              variant="primary"
                             >
                               Potvrdit vyřazení
                             </Button>
@@ -305,9 +305,9 @@ export const ErpCategoriesSection = ({ categories }: { readonly categories: read
                               disabled={busy}
                               onClick={() => setConfirming(null)}
                               size="sm"
-                              appearance="outline"
+                              theme="outlined"
                               type="button"
-                              severity="secondary"
+                              variant="secondary"
                             >
                               Zrušit
                             </Button>

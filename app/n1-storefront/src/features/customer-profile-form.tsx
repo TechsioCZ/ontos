@@ -158,9 +158,9 @@ export const CustomerProfileForm = ({
           isLoading={pending}
           loadingText={d.accountPage.saving}
           size="md"
-          appearance="solid"
+          theme="solid"
           type="submit"
-          severity="secondary"
+          variant="secondary"
         >
           {d.accountPage.save}
         </Button>
@@ -171,9 +171,9 @@ export const CustomerProfileForm = ({
           <Button
             onClick={() => router.refresh()}
             size="md"
-            appearance="outline"
+            theme="outlined"
             type="button"
-            severity="secondary"
+            variant="secondary"
           >
             {d.accountPage.reload}
           </Button>

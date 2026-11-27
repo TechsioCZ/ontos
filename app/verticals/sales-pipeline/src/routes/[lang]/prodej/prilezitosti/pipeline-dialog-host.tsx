@@ -110,10 +110,10 @@ export const PipelineDialogHost = ({
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={onClose} appearance="outline" severity="secondary">
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
               {t(`${K}.create.cancel`)}
             </Button>
-            <Button disabled={busy} onClick={() => onArchiveSubmit(dialog.opportunity)} severity="danger">
+            <Button disabled={busy} onClick={() => onArchiveSubmit(dialog.opportunity)} variant="danger">
               {t(`${K}.actions.archive`)}
             </Button>
           </>

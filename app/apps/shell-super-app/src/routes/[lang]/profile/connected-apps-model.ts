@@ -22,8 +22,8 @@ export const writePolicyLabel = {
 export const writePolicyBadge = {
   approval: 'info',
   direct: 'warning',
-  read_only: 'neutral',
-} satisfies Record<AgentWritePolicy, 'info' | 'neutral' | 'warning'>;
+  read_only: 'outline',
+} satisfies Record<AgentWritePolicy, 'info' | 'outline' | 'warning'>;
 
 export const clientKindLabel = {
   cimd: 'Ověřená aplikace',
@@ -40,10 +40,10 @@ export const statusLabel = {
 
 export const statusBadge = {
   active: 'success',
-  denied: 'neutral',
-  revoked: 'neutral',
-  superseded: 'neutral',
-} satisfies Record<ConnectionStatus, 'neutral' | 'success'>;
+  denied: 'outline',
+  revoked: 'outline',
+  superseded: 'outline',
+} satisfies Record<ConnectionStatus, 'outline' | 'success'>;
 
 const revokeReasonLabel = new Map(
   Object.entries({

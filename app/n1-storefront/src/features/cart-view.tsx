@@ -190,8 +190,8 @@ const CartRow = ({
               label={d.shopping.remove}
               onClick={onRemove}
               size="md"
-              appearance="ghost"
-              severity="tertiary"
+              theme="borderless"
+              variant="tertiary"
             />
           </LineItem.Actions>
         </LineItem.Controls>
@@ -210,8 +210,8 @@ const CartRow = ({
               setSaveError(!accepted);
             }}
             size="md"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {d.shopping.acceptPrice}: {money(changedPrice, locale, cart?.scope?.currency)}
           </Button>
@@ -251,12 +251,7 @@ const CartContent = ({
     return (
       <>
         <p>{d.shopping.scopeUnavailable}</p>
-        <Button
-          onClick={() => router.refresh()}
-          size="md"
-          appearance="outline"
-          severity="secondary"
-        >
+        <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
           {d.contact.retry}
         </Button>
       </>
@@ -269,7 +264,7 @@ const CartContent = ({
     return (
       <>
         <p role="alert">{d.shopping.storageError}</p>
-        <Button onClick={() => cart.clear()} size="md" appearance="outline" severity="secondary">
+        <Button onClick={() => cart.clear()} size="md" theme="outlined" variant="secondary">
           {d.shopping.clear}
         </Button>
       </>
@@ -281,12 +276,7 @@ const CartContent = ({
       <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />
       {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
       {quote.state === "scope-mismatch" && (
-        <Button
-          onClick={() => router.refresh()}
-          size="md"
-          appearance="outline"
-          severity="secondary"
-        >
+        <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
           {d.contact.retry}
         </Button>
       )}

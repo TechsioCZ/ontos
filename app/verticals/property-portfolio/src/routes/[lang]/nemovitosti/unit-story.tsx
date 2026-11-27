@@ -27,14 +27,14 @@ const occupancyBadge = {
   CANCELLED: 'danger',
   COMPLETED: 'secondary',
   CONFIRMED: 'info',
-  DRAFT: 'neutral',
+  DRAFT: 'outline',
 } as const;
-const contractBadge = { ACTIVE: 'success', DRAFT: 'neutral', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
+const contractBadge = { ACTIVE: 'success', DRAFT: 'outline', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
 const taskBadge = {
   CANCELLED: 'secondary',
   DONE: 'success',
   IN_PROGRESS: 'info',
-  NEW: 'neutral',
+  NEW: 'outline',
   WAITING: 'warning',
 } as const;
 const money = new Intl.NumberFormat('cs-CZ', { currency: 'CZK', maximumFractionDigits: 0, style: 'currency' });
@@ -100,8 +100,8 @@ const LeaseSection = ({
           <LinkButton
             href={`/${language}/najmy?create=lease&unitId=${unit.unitRef.resourceId}`}
             size="sm"
-            appearance="ghost"
-            severity="secondary"
+            theme="borderless"
+            variant="secondary"
           >
             {t(`${K}.newLease`)}
           </LinkButton>
@@ -131,14 +131,14 @@ const LeaseSection = ({
             </span>
           </div>
           <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:gap-2">
-            <Badge size="sm" severity={occupancyBadge[item.state]}>
+            <Badge size="sm" variant={occupancyBadge[item.state]}>
               {t(`property-portfolio.pages.records.occupancyStates.${item.state}`)}
             </Badge>
             <LinkButton
               href={`/${language}/najmy?resourceId=${item.occupancyRef.resourceId}`}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {t(`${K}.openLease`)}
             </LinkButton>
@@ -183,19 +183,19 @@ const AgreementSection = ({
             </span>
           </div>
           <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:gap-2">
-            <Badge size="sm" severity={contractBadge[item.lifecycleState]}>
+            <Badge size="sm" variant={contractBadge[item.lifecycleState]}>
               {t(`property-portfolio.pages.records.agreementStates.${item.lifecycleState}`)}
             </Badge>
             {item.expiringSoon && (
-              <Badge size="sm" severity="warning">
+              <Badge size="sm" variant="warning">
                 {t(`${K}.expiring`)}
               </Badge>
             )}
             <LinkButton
               href={`/${language}/smlouvy?resourceId=${item.contractRef.resourceId}`}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {t(`${K}.openContract`)}
             </LinkButton>
@@ -232,7 +232,7 @@ const TaskSection = ({
         {showHeading && (
           <h3 className="propertyportfolio:text-sm propertyportfolio:font-semibold">{t(`${K}.tasks`)}</h3>
         )}
-        <LinkButton href={`/${language}/ukoly`} size="sm" appearance="ghost" severity="secondary">
+        <LinkButton href={`/${language}/ukoly`} size="sm" theme="borderless" variant="secondary">
           {t(`${K}.openTasks`)}
         </LinkButton>
       </div>
@@ -251,7 +251,7 @@ const TaskSection = ({
               <span className={mutedClass}>{t(`${K}.due`, { date: formatDay(task.dueDate) })}</span>
             )}
           </div>
-          <Badge size="sm" severity={taskBadge[task.state]}>
+          <Badge size="sm" variant={taskBadge[task.state]}>
             {t(`${K}.taskStates.${task.state}`)}
           </Badge>
         </div>

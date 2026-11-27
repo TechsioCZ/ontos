@@ -57,8 +57,8 @@ export function ProductVariantActions({
         icon="token-icon-sf-product-watch"
         iconSize="sm"
         size="sm"
-        appearance="ghost"
-        severity="secondary"
+        theme="borderless"
+        variant="secondary"
         onClick={() => {
           if (!variantId) {
             setAction("watch");
@@ -101,8 +101,8 @@ export function ProductVariantActions({
         icon="token-icon-sf-product-question"
         iconSize="sm"
         size="sm"
-        appearance="ghost"
-        severity="secondary"
+        theme="borderless"
+        variant="secondary"
         onClick={() =>
           variantId
             ? router.push(storeHref(buildProductQuestionHref(productId, [variantId])))

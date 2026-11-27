@@ -17,7 +17,7 @@ export function PrimaryLinkButton({
   uppercase?: boolean;
 }) {
   return (
-    <LinkButton as={StoreLink} href={href} size={size} uppercase={uppercase} severity="primary">
+    <LinkButton as={StoreLink} href={href} size={size} uppercase={uppercase} variant="primary">
       {children}
     </LinkButton>
   );

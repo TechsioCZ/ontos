@@ -67,7 +67,7 @@ export const MobileCategoryLinks = ({
   nodes,
   onNavigate,
 }: CategoryLinksProps) => (
-  <Accordion collapsible shadow="none" size="md" appearance="ghost">
+  <Accordion collapsible shadow="none" size="md" variant="borderless">
     {nodes.map((node) => {
       const slug = destinations.get(node.id);
       if (slug === undefined) {

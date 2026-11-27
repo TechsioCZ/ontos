@@ -89,8 +89,8 @@ export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => {
         setDemoGuideOpen(!open);
       }}
       size="sm"
-      appearance={open ? 'solid' : 'subtle'}
-      severity="primary"
+      theme={open ? 'solid' : 'light'}
+      variant="primary"
     >
       <span className="hidden md:inline">{t(guideTitleKey)}</span>
     </Button>
@@ -164,7 +164,7 @@ const ResizeHandle = () => {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       size="sm"
-      severity="neutral"
+      tone="neutral"
     />
   );
 };
@@ -187,11 +187,11 @@ const PersonaLine = ({
       <span className="font-medium text-fg-primary">{persona.role}</span>
       <span className="break-all text-fg-secondary">{persona.email}</span>
       {signedIn ? (
-        <Badge size="sm" severity="success">
+        <Badge size="sm" variant="success">
           Jste přihlášeni
         </Badge>
       ) : (
-        <Badge size="sm" severity="warning">
+        <Badge size="sm" variant="warning">
           Přihlaste se jako tato persona
         </Badge>
       )}
@@ -211,8 +211,8 @@ const StepLink = ({ step }: { readonly step: DemoGuideStep }) => {
         rel="noreferrer"
         size="sm"
         target="_blank"
-        appearance="outline"
-        severity="primary"
+        theme="outlined"
+        variant="primary"
       >
         {`Otevřít ${target.label}`}
       </LinkButton>
@@ -237,8 +237,8 @@ const StepLink = ({ step }: { readonly step: DemoGuideStep }) => {
       icon="icon-[mdi--arrow-right]"
       onClick={open}
       size="sm"
-      appearance="outline"
-      severity="primary"
+      theme="outlined"
+      variant="primary"
     >
       Otevřít obrazovku
     </LinkButton>
@@ -273,7 +273,7 @@ const StepCard = ({
           {step.title}
         </label>
         {isNext ? (
-          <Badge size="sm" severity="info">
+          <Badge size="sm" variant="info">
             Další krok
           </Badge>
         ) : null}
@@ -388,7 +388,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
             setDemoGuideOpen(false);
           }}
           size="md"
-          severity="neutral"
+          tone="neutral"
         />
       </header>
       <div
@@ -413,8 +413,8 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
                 resetDemoGuideProgress(guide.id);
               }}
               size="sm"
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
             >
               Začít znovu
             </Button>
@@ -435,8 +435,8 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
                   ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
               size="sm"
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
             >
               Jak fungují propojené služby
             </Button>
@@ -458,7 +458,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
                   <h3 className="font-semibold text-fg-primary text-sm" id={headingId}>
                     {`${chapterIndex + 1}. ${chapter.title}`}
                   </h3>
-                  <Badge size="sm" severity={chapterDone === chapter.steps.length ? 'success' : 'neutral'}>
+                  <Badge size="sm" variant={chapterDone === chapter.steps.length ? 'success' : 'outline'}>
                     {`${chapterDone}/${chapter.steps.length}`}
                   </Badge>
                 </div>

@@ -111,7 +111,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       <span className="flex items-center justify-end gap-100 tabular-nums">
         {formatNumber(info.getValue<number>())}
         {info.row.original.lowStock && (
-          <Badge size="sm" severity="warning">
+          <Badge size="sm" variant="warning">
             {label('status.lowStock')}
           </Badge>
         )}

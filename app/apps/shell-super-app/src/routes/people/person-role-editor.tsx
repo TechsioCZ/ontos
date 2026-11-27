@@ -188,7 +188,7 @@ export const PersonRoleEditor = ({
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={requestClose} appearance="outline" severity="secondary">
+            <Button disabled={busy} onClick={requestClose} theme="outlined" variant="secondary">
               Zrušit
             </Button>
             <SaveBar

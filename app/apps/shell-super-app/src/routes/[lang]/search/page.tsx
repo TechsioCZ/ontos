@@ -239,9 +239,9 @@ const SearchAgendaFallback = ({ shell }: { readonly shell: AuthenticatedHomePage
               className="justify-start hover:bg-overlay"
               icon={link.icon}
               size="sm"
-              unstyled
+              theme="unstyled"
               to={link.href ?? '/'}
-              severity="secondary"
+              variant="secondary"
             >
               {link.label}
             </LinkButton>

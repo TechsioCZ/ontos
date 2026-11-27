@@ -71,8 +71,8 @@ export const OccupancyCalendar = ({
               aria-label={t('property-leasing.calendar.previousMonth')}
               onClick={() => shift(-1)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               ←
             </Button>
@@ -81,16 +81,16 @@ export const OccupancyCalendar = ({
               aria-label={t('property-leasing.calendar.nextMonth')}
               onClick={() => shift(1)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               →
             </Button>
             <Button
               onClick={() => onMonthChange(`${today.slice(0, 7)}-01`)}
               size="sm"
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
             >
               Dnes
             </Button>

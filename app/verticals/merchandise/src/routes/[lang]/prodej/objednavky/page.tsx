@@ -379,8 +379,8 @@ const renderOrdersPageHeader = ({
                 icon="icon-[mdi--restore]"
                 onClick={() => setResetOpen(true)}
                 size="sm"
-                appearance="outline"
-                severity="secondary"
+                theme="outlined"
+                variant="secondary"
               >
                 {t(key('actions.resetDemo'))}
               </Button>
@@ -391,7 +391,7 @@ const renderOrdersPageHeader = ({
                 icon="icon-[mdi--plus]"
                 onClick={() => setCreateOpen(true)}
                 size="sm"
-                severity="primary"
+                variant="primary"
               >
                 {t(key('create.title'))}
               </Button>
@@ -429,8 +429,8 @@ const renderOrderBulkActions = ({
             icon="icon-[mdi--tag-multiple-outline]"
             onClick={() => setTagsOpen(true)}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(key('bulk.tags'))}
           </Button>
@@ -479,7 +479,7 @@ const renderOrdersEmpty = ({
     return (
       <EmptyState
         action={
-          <Button onClick={load} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={load} size="sm" theme="outlined" variant="secondary">
             {t(key('states.retry'))}
           </Button>
         }
@@ -503,8 +503,8 @@ const renderOrdersEmpty = ({
               refilter();
             }}
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {t(key('states.clearFilters'))}
           </Button>
@@ -517,7 +517,7 @@ const renderOrdersEmpty = ({
     <EmptyState
       action={
         canEditOrders ? (
-          <Button onClick={() => setCreateOpen(true)} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={() => setCreateOpen(true)} size="sm" theme="outlined" variant="secondary">
             {t(key('create.title'))}
           </Button>
         ) : undefined

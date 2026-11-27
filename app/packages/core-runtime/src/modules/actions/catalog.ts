@@ -4,7 +4,6 @@ import { invitePersonAction } from './invite-person.action.ts';
 import { requestPeopleSearchRebuildAction } from './request-people-search-rebuild.action.ts';
 // <generated-core-action-catalog-imports>
 import { activatePrincipalBindingAction } from './activate-principal-binding.action.ts';
-import { attachTenantThemeAction } from './attach-tenant-theme.action.ts';
 import { bindManagedApiKeyAction } from './bind-managed-api-key.action.ts';
 import { bindSelfApiKeyAction } from './bind-self-api-key.action.ts';
 import { changePrincipalBindingStatusAction } from './change-principal-binding-status.action.ts';
@@ -23,7 +22,6 @@ import { registerIntegrationWorkloadsAction } from './register-integration-workl
 import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
 import { replaceAgentOperatorsAction } from './replace-agent-operators.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
-import { saveTenantThemeAction } from './save-tenant-theme.action.ts';
 import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-status.action.ts';
@@ -35,7 +33,6 @@ export type CoreActionDescriptor = AnyActionRegistration['descriptor'];
 export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze([
   // <generated-core-action-catalog-values>
   activatePrincipalBindingAction.descriptor,
-  attachTenantThemeAction.descriptor,
   bindManagedApiKeyAction.descriptor,
   bindSelfApiKeyAction.descriptor,
   changePrincipalBindingStatusAction.descriptor,
@@ -54,7 +51,6 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   renameDisplayFilenameAction.descriptor,
   replaceAgentOperatorsAction.descriptor,
   reservePrincipalBindingAction.descriptor,
-  saveTenantThemeAction.descriptor,
   setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
   setSelfApiKeyBindingStatusAction.descriptor,

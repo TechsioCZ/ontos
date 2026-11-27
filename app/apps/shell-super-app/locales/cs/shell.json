@@ -502,12 +502,6 @@
       "account": {
         "label": "Nabídka účtu"
       },
-      "appearance": {
-        "dark": "Tmavý",
-        "label": "Vzhled",
-        "light": "Světlý",
-        "system": "Podle systému"
-      },
       "brand": "OntOS",
       "header": {
         "label": "Záhlaví přehledu"

@@ -18,7 +18,7 @@ export interface StatCardProps {
 
 const trendVariant = {
   down: 'danger',
-  flat: 'neutral',
+  flat: 'outline',
   up: 'success',
 } as const;
 
@@ -29,7 +29,7 @@ export const StatCard = ({ action, delta, hint, label, value }: StatCardProps) =
     <div className="flex flex-wrap items-baseline gap-150">
       <span className="font-semibold text-xl tabular-nums">{value}</span>
       {delta !== undefined && (
-        <Badge size="sm" severity={trendVariant[delta.trend]}>
+        <Badge size="sm" variant={trendVariant[delta.trend]}>
           {delta.value}
         </Badge>
       )}

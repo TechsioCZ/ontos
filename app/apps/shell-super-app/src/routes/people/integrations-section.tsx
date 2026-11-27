@@ -134,20 +134,14 @@ const CreateIntegrationDialog = ({
     <Dialog
       actions={
         <>
-          <Button
-            disabled={state === 'saving'}
-            onClick={onClose}
-            appearance="outline"
-            type="button"
-            severity="secondary"
-          >
+          <Button disabled={state === 'saving'} onClick={onClose} theme="outlined" type="button" variant="secondary">
             {t(`${keysCopyKey}.cancel`)}
           </Button>
           <Button
             disabled={state === 'saving' || name.trim().length === 0}
             onClick={save}
             type="button"
-            severity="primary"
+            variant="primary"
           >
             {t(`${copyKey}.create`)}
           </Button>
@@ -239,10 +233,10 @@ const IntegrationCard = ({
     <li className="flex min-w-0 flex-col gap-100 rounded-md border border-border-primary/60 p-200">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
         <span className="font-medium [overflow-wrap:anywhere]">{entry.displayName ?? t(`${copyKey}.unnamed`)}</span>
-        <Badge size="sm" appearance="outline" severity="neutral">
+        <Badge size="sm" variant="outline">
           {partner === null ? t(`${copyKey}.genericPartner`) : partner.label}
         </Badge>
-        <Badge size="sm" severity={entry.principalStatus === 'active' ? 'success' : 'neutral'}>
+        <Badge size="sm" variant={entry.principalStatus === 'active' ? 'success' : 'outline'}>
           {t(`${copyKey}.status.${entry.principalStatus}`)}
         </Badge>
       </div>
@@ -290,7 +284,7 @@ export const IntegrationsSection = ({ offers }: { readonly offers: IntegrationCo
             onClick={() => setCreating(true)}
             size="sm"
             type="button"
-            severity="primary"
+            variant="primary"
           >
             {t(`${copyKey}.create`)}
           </Button>
@@ -304,7 +298,7 @@ export const IntegrationsSection = ({ offers }: { readonly offers: IntegrationCo
       )}
       {failure === 'failed' && (
         <div>
-          <Button onClick={load} size="sm" appearance="outline" type="button" severity="secondary">
+          <Button onClick={load} size="sm" theme="outlined" type="button" variant="secondary">
             {t(`${keysCopyKey}.retry`)}
           </Button>
         </div>

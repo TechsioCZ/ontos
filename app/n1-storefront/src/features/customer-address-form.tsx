@@ -169,7 +169,7 @@ export const CustomerAddressForm = ({
       </fieldset>
       {error !== null && <output className="text-fg-secondary">{error}</output>}
       <div className="flex flex-wrap justify-end gap-2">
-        <Button disabled={pending} onClick={onCancel} size="sm" type="button" severity="secondary">
+        <Button disabled={pending} onClick={onCancel} size="sm" type="button" variant="secondary">
           {labels.cancel}
         </Button>
         <Button
@@ -178,7 +178,7 @@ export const CustomerAddressForm = ({
           loadingText={d.accountPage.saving}
           size="sm"
           type="submit"
-          severity="primary"
+          variant="primary"
         >
           {address === undefined ? labels.create : d.accountPage.save}
         </Button>

@@ -68,8 +68,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
           icon="icon-[mdi--menu]"
           iconSize="lg"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         />
         <Drawer.Portal>
           <Drawer.Backdrop />
@@ -108,8 +108,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                       className="justify-start"
                       href="/prihlaseni"
                       size="sm"
-                      appearance="ghost"
-                      severity="secondary"
+                      theme="borderless"
+                      variant="secondary"
                     >
                       {cs.header.login}
                     </LinkButton>
@@ -119,8 +119,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                       className="justify-start"
                       href="/muj-ucet"
                       size="sm"
-                      appearance="ghost"
-                      severity="secondary"
+                      theme="borderless"
+                      variant="secondary"
                     >
                       {cs.header.account}
                     </LinkButton>
@@ -130,8 +130,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                       className="justify-start"
                       href="/oblibene"
                       size="sm"
-                      appearance="ghost"
-                      severity="secondary"
+                      theme="borderless"
+                      variant="secondary"
                     >
                       {cs.header.favorites}
                     </LinkButton>
@@ -149,8 +149,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                         className="justify-start"
                         href={item.href}
                         size="sm"
-                        appearance="ghost"
-                        severity="secondary"
+                        theme="borderless"
+                        variant="secondary"
                       >
                         {item.label}
                       </LinkButton>
@@ -188,8 +188,8 @@ export function SiteHeader() {
                 className="leading-(--text-sm--line-height) underline"
                 href={item.href}
                 size="sm"
-                appearance="ghost"
-                severity="secondary"
+                theme="borderless"
+                variant="secondary"
               >
                 {item.label}
               </LinkButton>
@@ -203,7 +203,7 @@ export function SiteHeader() {
             icon="icon-[mdi--lock]"
             iconSize="sm"
             size="sm"
-            severity="secondary"
+            variant="secondary"
           >
             {cs.header.login}
           </LinkButton>
@@ -243,7 +243,7 @@ export function SiteHeader() {
                 icon="icon-[mdi-light--account]"
                 iconSize="xl"
                 size="md"
-                appearance="ghost"
+                theme="borderless"
               />
               <LinkButton
                 as={StoreLink}
@@ -253,7 +253,7 @@ export function SiteHeader() {
                 icon="icon-[mdi-light--heart]"
                 iconSize="xl"
                 size="md"
-                appearance="ghost"
+                theme="borderless"
               />
             </nav>
             <MiniCart />

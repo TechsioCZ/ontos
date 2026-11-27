@@ -187,7 +187,7 @@ const ContactDraftFields = ({
           icon="icon-[mdi--close]"
           onClick={() => onRemove(entry.key)}
           size="sm"
-          severity="neutral"
+          tone="neutral"
           type="button"
         />
       )}
@@ -396,7 +396,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={close} appearance="outline" severity="secondary">
+          <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
             {mode === 'create' ? 'Zrušit' : 'Zavřít'}
           </Button>
           <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={status} />
@@ -571,9 +571,9 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
                 icon="icon-[mdi--account-plus-outline]"
                 onClick={() => setContacts((current) => [...current, emptyContact((current.at(-1)?.key ?? 0) + 1)])}
                 size="sm"
-                appearance="ghost"
+                theme="borderless"
                 type="button"
-                severity="secondary"
+                variant="secondary"
               >
                 Další osoba
               </Button>

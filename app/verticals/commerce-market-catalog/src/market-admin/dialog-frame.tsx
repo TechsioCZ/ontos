@@ -39,10 +39,10 @@ export const DialogFrame = ({
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button disabled={busy} onClick={onClose} appearance="outline" severity="secondary">
+          <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
             {text('form.cancel')}
           </Button>
-          <Button isLoading={busy} loadingText={text('form.saving')} onClick={onConfirm} severity={confirmVariant}>
+          <Button isLoading={busy} loadingText={text('form.saving')} onClick={onConfirm} variant={confirmVariant}>
             {confirmLabel}
           </Button>
         </div>
@@ -110,7 +110,7 @@ export const FormDialogFrame = ({
       <Dialog
         actions={
           <div className="flex w-full flex-wrap items-center justify-end gap-150">
-            <Button onClick={requestClose} appearance="outline" type="button" severity="secondary">
+            <Button onClick={requestClose} theme="outlined" type="button" variant="secondary">
               {text('form.cancel')}
             </Button>
             {/* This dialog never reports a conflict; a refused save shows its failure text instead. */}

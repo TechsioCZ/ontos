@@ -84,17 +84,17 @@ export const FavoriteToggle = ({
         onClick={change}
         ref={trigger}
         size="current"
-        unstyled
+        theme="unstyled"
         title={available ? undefined : labels.storageUnavailable}
         type="button"
-        severity="secondary"
+        variant="secondary"
       >
         {actionLabel}
       </Button>
       {chosen === null && (
         <Dialog
           actions={
-            <Button onClick={saveSelection} type="button" severity="primary">
+            <Button onClick={saveSelection} type="button" variant="primary">
               {labels.saveSelection}
             </Button>
           }

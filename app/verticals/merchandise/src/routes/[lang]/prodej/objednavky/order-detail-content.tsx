@@ -218,7 +218,7 @@ const DemoOrderCleanup = ({
   return (
     <>
       <div>
-        <Button onClick={() => setOpen(true)} size="sm" appearance="outline" severity="danger">
+        <Button onClick={() => setOpen(true)} size="sm" theme="outlined" variant="danger">
           {demo
             ? t('merchandise.pages.orders.detail.cleanup.open')
             : t('merchandise.pages.orders.detail.cleanup.cancelled.open')}
@@ -227,7 +227,7 @@ const DemoOrderCleanup = ({
       <Dialog
         actions={
           <div style={{ display: 'grid', gap: 8, width: '100%' }}>
-            <Button disabled={busy} onClick={() => setOpen(false)} size="sm" appearance="outline" severity="secondary">
+            <Button disabled={busy} onClick={() => setOpen(false)} size="sm" theme="outlined" variant="secondary">
               {t('merchandise.pages.orders.detail.cleanup.keep')}
             </Button>
             <Button
@@ -236,7 +236,7 @@ const DemoOrderCleanup = ({
               loadingText={t('merchandise.pages.orders.detail.cleanup.busy')}
               onClick={remove}
               size="sm"
-              severity="danger"
+              variant="danger"
             >
               {demo
                 ? t('merchandise.pages.orders.detail.cleanup.confirm')
@@ -416,7 +416,7 @@ const renderOrderFields = ({
               label: t('merchandise.pages.orders.detail.market'),
               value: (
                 <span className="flex flex-wrap items-center gap-100">
-                  <Badge size="sm" appearance="outline" severity="neutral">
+                  <Badge size="sm" variant="outline">
                     {order.market.marketCode}
                   </Badge>
                   <span>{order.market.currency}</span>
@@ -475,12 +475,12 @@ export const OrderPendingBody = ({
       <div className="flex flex-wrap items-center gap-100">
         <StatusBadge kind="order" value={summary.order.status} />
         {isStorefrontOrder(summary.order) && (
-          <Badge size="sm" severity="info">
+          <Badge size="sm" variant="info">
             {t('merchandise.ui.storefrontBadge')}
           </Badge>
         )}
         {summary.order.demo === true && (
-          <Badge size="sm" severity="warning">
+          <Badge size="sm" variant="warning">
             {t('merchandise.ui.demoBadge')}
           </Badge>
         )}
@@ -538,7 +538,7 @@ export const OrderDetailActions = ({
   }
   return (
     <div className="flex flex-wrap items-center justify-end gap-100">
-      <Button onClick={onClose} size="sm" appearance="outline" severity="secondary">
+      <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
         {t('merchandise.pages.orders.detail.close')}
       </Button>
       {cancel && (
@@ -547,8 +547,8 @@ export const OrderDetailActions = ({
           disabled={busy}
           onClick={() => onStatus(order, 'CANCELLED')}
           size="sm"
-          appearance="outline"
-          severity="danger"
+          theme="outlined"
+          variant="danger"
         >
           {label('CANCELLED')}
         </Button>
@@ -656,12 +656,12 @@ export const OrderDetailContent = ({
       <div className="flex flex-wrap items-center gap-100">
         <StatusBadge kind="order" value={order.status} />
         {storefront && (
-          <Badge size="sm" severity="info">
+          <Badge size="sm" variant="info">
             {t('merchandise.ui.storefrontBadge')}
           </Badge>
         )}
         {order.demo === true && (
-          <Badge size="sm" severity="warning">
+          <Badge size="sm" variant="warning">
             {t('merchandise.ui.demoBadge')}
           </Badge>
         )}
@@ -672,8 +672,8 @@ export const OrderDetailContent = ({
               icon="icon-[mdi--pencil-outline]"
               onClick={() => onEditingChange(true)}
               size="sm"
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {t('merchandise.pages.orders.detail.editOrder')}
             </Button>
@@ -714,7 +714,7 @@ export const OrderDetailContent = ({
       <WorkflowSteps status={order.status} />
       {renderOrderFields({ brand, customers, opportunityHref, order, pickupBrand, storefront, t })}
       <SectionCard flush title={t('merchandise.pages.orders.detail.lines')}>
-        <Table size="sm" appearance="line">
+        <Table size="sm" variant="line">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>{t('merchandise.pages.orders.detail.lineName')}</Table.ColumnHeader>

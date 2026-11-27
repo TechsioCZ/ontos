@@ -25,7 +25,7 @@ const useK = () => {
   return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
-const resultVariants = { difference: 'warning', found: 'success', missing: 'danger', pending: 'neutral' } as const;
+const resultVariants = { difference: 'warning', found: 'success', missing: 'danger', pending: 'outline' } as const;
 export const resultVariant = (result: InventoryResult) => resultVariants[result];
 
 const markVariants = { difference: 'warning', found: 'secondary', missing: 'danger' } as const;
@@ -74,14 +74,14 @@ const ItemActions = ({
               key={result}
               onClick={() => mark(result)}
               size="sm"
-              appearance="outline"
-              severity={markVariants[result]}
+              theme="outlined"
+              variant={markVariants[result]}
             >
               {k(`inventory.mark.${result}`)}
             </Button>
           ))}
       {isDifference && item.followUp === undefined && (
-        <Button disabled={busy} onClick={() => onFollowUp(item)} size="sm" severity="primary">
+        <Button disabled={busy} onClick={() => onFollowUp(item)} size="sm" variant="primary">
           {k('inventory.createFollowUp')}
         </Button>
       )}
@@ -97,8 +97,8 @@ const ItemActions = ({
             );
           }}
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           {k('inventory.resolveFollowUp')}
         </Button>
@@ -141,7 +141,7 @@ export const InventoryTab = ({
       <EmptyState
         action={
           canWrite ? (
-            <Button onClick={onNew} size="sm" appearance="outline" severity="secondary">
+            <Button onClick={onNew} size="sm" theme="outlined" variant="secondary">
               {k('actions.newInventory')}
             </Button>
           ) : undefined
@@ -171,7 +171,7 @@ export const InventoryTab = ({
             >
               <span className="flex items-center justify-between gap-100">
                 <span className="font-medium text-sm">{inventory.title}</span>
-                <Badge size="sm" severity={inventory.status === 'open' ? 'info' : 'neutral'}>
+                <Badge size="sm" variant={inventory.status === 'open' ? 'info' : 'outline'}>
                   {k(`inventory.status.${inventory.status}`)}
                 </Badge>
               </span>
@@ -197,8 +197,8 @@ export const InventoryTab = ({
               <Button
                 onClick={() => setDifferencesOnly((value) => !value)}
                 size="sm"
-                appearance={differencesOnly ? 'solid' : 'outline'}
-                severity="secondary"
+                theme={differencesOnly ? 'solid' : 'outlined'}
+                variant="secondary"
               >
                 {k('inventory.differencesOnly', { count: stats.differences })}
               </Button>
@@ -211,7 +211,7 @@ export const InventoryTab = ({
                     );
                   }}
                   size="sm"
-                  severity="primary"
+                  variant="primary"
                 >
                   {k('inventory.close')}
                 </Button>
@@ -221,7 +221,7 @@ export const InventoryTab = ({
           title={
             <span className="flex flex-wrap items-center gap-100">
               {selected.title}
-              <Badge size="sm" severity={selected.status === 'open' ? 'info' : 'neutral'}>
+              <Badge size="sm" variant={selected.status === 'open' ? 'info' : 'outline'}>
                 {k(`inventory.status.${selected.status}`)}
               </Badge>
             </span>
@@ -242,7 +242,7 @@ export const InventoryTab = ({
           {selected.status === 'open' && stats.pending > 0 && canWrite && (
             <p className="text-fg-secondary text-xs">{k('inventory.closeHint')}</p>
           )}
-          <Table size="sm" appearance="line">
+          <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('columns.asset')}</Table.ColumnHeader>
@@ -276,7 +276,7 @@ export const InventoryTab = ({
                     </Table.Cell>
                     <Table.Cell>
                       <span className="flex flex-col items-start gap-50">
-                        <Badge size="sm" severity={resultVariant(item.result)}>
+                        <Badge size="sm" variant={resultVariant(item.result)}>
                           {k(`inventory.results.${item.result}`)}
                         </Badge>
                         {item.note !== undefined && <span className="text-fg-secondary text-xs">{item.note}</span>}
@@ -290,11 +290,11 @@ export const InventoryTab = ({
                           <span>{item.followUp.title}</span>
                           <span className="flex flex-wrap items-center gap-50 text-fg-secondary text-xs">
                             {item.followUp.status === 'done' ? (
-                              <Badge size="sm" severity="success">
+                              <Badge size="sm" variant="success">
                                 {k('inventory.followUpDone')}
                               </Badge>
                             ) : (
-                              <Badge size="sm" severity={dueBadgeVariant(dueState(item.followUp.dueDate, today))}>
+                              <Badge size="sm" variant={dueBadgeVariant(dueState(item.followUp.dueDate, today))}>
                                 {k('inventory.followUpDue', { date: isoDateLabel(item.followUp.dueDate) })}
                               </Badge>
                             )}

@@ -31,10 +31,8 @@ const ApprovalCard = ({
             {item.title}
           </h3>
           <div className="shell:flex shell:flex-wrap shell:gap-2">
-            <Badge appearance="outline" severity="neutral">
-              {t(`shell.accessAdmin.approvals.status.${item.status}`)}
-            </Badge>
-            <Badge severity={item.risk === 'routine' ? 'info' : 'warning'}>
+            <Badge variant="outline">{t(`shell.accessAdmin.approvals.status.${item.status}`)}</Badge>
+            <Badge variant={item.risk === 'routine' ? 'info' : 'warning'}>
               {t(`shell.accessAdmin.risk.${item.risk}`)}
             </Badge>
           </div>
@@ -141,7 +139,7 @@ const ApprovalCard = ({
             </Button>
           ) : null}
           {item.canReject ? (
-            <Button disabled={pending} onClick={() => onDecision(item.id, 'reject')} type="button" severity="secondary">
+            <Button disabled={pending} onClick={() => onDecision(item.id, 'reject')} type="button" variant="secondary">
               {t('shell.accessAdmin.approvals.actions.reject')}
             </Button>
           ) : null}
@@ -150,7 +148,7 @@ const ApprovalCard = ({
               disabled={pending}
               onClick={() => onDecision(item.id, 'withdraw')}
               type="button"
-              severity="secondary"
+              variant="secondary"
             >
               {t('shell.accessAdmin.approvals.actions.withdraw')}
             </Button>
@@ -225,12 +223,12 @@ export const ApprovalsInbox = ({
         </StatusText>
       )}
       {model.state === 'ready' && model.nextCursor !== null ? (
-        <Button disabled={pending} onClick={onNextPage} type="button" severity="secondary">
+        <Button disabled={pending} onClick={onNextPage} type="button" variant="secondary">
           {t('shell.accessAdmin.approvals.nextPage')}
         </Button>
       ) : null}
       {refreshable ? (
-        <Button disabled={pending} onClick={onRefresh} type="button" severity="secondary">
+        <Button disabled={pending} onClick={onRefresh} type="button" variant="secondary">
           {t('shell.accessAdmin.common.refresh')}
         </Button>
       ) : null}

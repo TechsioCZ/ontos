@@ -140,7 +140,7 @@ const VariantImageTile = ({
       )}
       {main ? (
         <span className="absolute top-100 left-100">
-          <Badge size="sm" severity="info">
+          <Badge size="sm" variant="info">
             Hlavní
           </Badge>
         </span>
@@ -211,9 +211,9 @@ export const VariantDetailsToggle = ({
   <Button
     onClick={onToggle}
     size="sm"
-    appearance={invalid ? 'solid' : 'ghost'}
+    theme={invalid ? 'solid' : 'borderless'}
     type="button"
-    severity={invalid ? 'danger' : 'secondary'}
+    variant={invalid ? 'danger' : 'secondary'}
   >
     {open ? 'Skrýt podrobnosti' : 'Podrobnosti'}
   </Button>
@@ -283,9 +283,9 @@ export const VariantDetailEditor = ({
                   onChange({ parameters: draft.parameters.filter((entry) => entry.key !== parameter.key) })
                 }
                 size="sm"
-                appearance="ghost"
+                theme="borderless"
                 type="button"
-                severity="secondary"
+                variant="secondary"
               />
             )}
           </div>
@@ -300,9 +300,9 @@ export const VariantDetailEditor = ({
                 })
               }
               size="sm"
-              appearance="outline"
+              theme="outlined"
               type="button"
-              severity="secondary"
+              variant="secondary"
             >
               Přidat parametr
             </Button>

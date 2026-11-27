@@ -676,7 +676,7 @@ const DocumentEditPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={close} appearance="outline" severity="secondary">
+            <Button onClick={close} theme="outlined" variant="secondary">
               {t(closeLabelKey)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />

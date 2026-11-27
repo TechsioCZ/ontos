@@ -199,7 +199,7 @@ export const TaskFilterBar = ({
           </label>
         )}
         {active && (
-          <Button onClick={onClear} size="sm" appearance="outline" severity="secondary">
+          <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
             {t(`${key}.filters.clear`)}
           </Button>
         )}

@@ -183,7 +183,7 @@ export function CatalogNavigation({
       maxIndentDepth={3}
       size="sm"
     >
-      <VerticalNavigation.Group appearance="subtle">
+      <VerticalNavigation.Group tone="subtle">
         <VerticalNavigation.List>
           <SpecialCategoriesNavigation navigationId={navigationId} expandRoots={expandRoots} />
           {topCategories.map((category) => (

@@ -84,8 +84,8 @@ export function CartSelector() {
         </RadioGroup.ItemGroup>
       </RadioGroup>
       <Button
-        severity="secondary"
-        appearance="outline"
+        variant="secondary"
+        theme="outlined"
         size="sm"
         block
         data-sf-checkout-action
@@ -116,11 +116,11 @@ export function CartSelector() {
         }
         actions={
           <>
-            <Button severity="secondary" appearance="outline" onClick={() => setDialog(null)}>
+            <Button variant="secondary" theme="outlined" onClick={() => setDialog(null)}>
               {cs.checkout.selector.cancel}
             </Button>
             <Button
-              severity={dialog === "create" ? "primary" : "danger"}
+              variant={dialog === "create" ? "primary" : "danger"}
               onClick={() => {
                 if (dialog === "create") create();
                 else if (dialog) {

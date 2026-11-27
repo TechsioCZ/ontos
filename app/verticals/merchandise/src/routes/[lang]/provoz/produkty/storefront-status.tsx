@@ -19,7 +19,7 @@ export const StorefrontStatusCell = ({ product }: { readonly product: ProductRec
       title={status.reasons.map((reason) => `${reason.why} ${reason.fix}`).join('\n')}
     >
       <span className="flex items-center gap-100">
-        <Badge size="sm" severity={status.visible ? 'success' : 'warning'}>
+        <Badge size="sm" variant={status.visible ? 'success' : 'warning'}>
           {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
         </Badge>
         {status.pageOpens && facts.href !== undefined && (
@@ -48,7 +48,7 @@ export const StorefrontStatusPanel = ({ product }: { readonly product: ProductRe
       data-storefront-status={status.visible ? 'visible' : 'hidden'}
     >
       <div className="flex flex-wrap items-center gap-150">
-        <Badge size="sm" severity={status.visible ? 'success' : 'warning'}>
+        <Badge size="sm" variant={status.visible ? 'success' : 'warning'}>
           {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
         </Badge>
         <span className="text-sm">

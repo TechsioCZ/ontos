@@ -77,10 +77,10 @@ const DialogActions = ({
   const label = useProductLabel();
   return (
     <>
-      <Button onClick={onCancel} appearance="outline" severity="secondary">
+      <Button onClick={onCancel} theme="outlined" variant="secondary">
         {label('common.cancel')}
       </Button>
-      <Button disabled={disabled} isLoading={busy} loadingText={submit} onClick={onSubmit} severity="primary">
+      <Button disabled={disabled} isLoading={busy} loadingText={submit} onClick={onSubmit} variant="primary">
         {submit}
       </Button>
     </>
@@ -225,7 +225,7 @@ const FormSaveActions = ({ form }: { readonly form: FormSave }) => {
   const label = useProductLabel();
   return (
     <>
-      <Button onClick={() => form.guard.request(form.leave)} appearance="outline" severity="secondary">
+      <Button onClick={() => form.guard.request(form.leave)} theme="outlined" variant="secondary">
         {label('common.cancel')}
       </Button>
       <SaveBar
@@ -619,7 +619,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
           />
           {selection.failed && (
             <div>
-              <Button onClick={selection.handleRetry} size="sm" appearance="outline" type="button" severity="secondary">
+              <Button onClick={selection.handleRetry} size="sm" theme="outlined" type="button" variant="secondary">
                 {k('common.retry')}
               </Button>
             </div>

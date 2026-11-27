@@ -11,7 +11,7 @@ export interface StatusBadgeProps {
 export const StatusBadge = ({ kind, value }: StatusBadgeProps) => {
   const { label, variant } = statusPresentation(kind, value);
   return (
-    <Badge size="sm" severity={variant}>
+    <Badge size="sm" variant={variant}>
       {label}
     </Badge>
   );

@@ -16,7 +16,7 @@ const statusKindSchema = Schema.Literals([
 ]);
 export type StatusKind = typeof statusKindSchema.Type;
 
-const statusVariantSchema = Schema.Literals(['neutral', 'info', 'warning', 'success', 'danger']);
+const statusVariantSchema = Schema.Literals(['outline', 'info', 'warning', 'success', 'danger']);
 export type StatusVariant = typeof statusVariantSchema.Type;
 
 export interface StatusPresentation {
@@ -27,11 +27,11 @@ export interface StatusPresentation {
 const vocabulary = {
   invoice: {
     CONFIRMED: { label: 'Vystavená', variant: 'info' },
-    DRAFT: { label: 'Koncept', variant: 'neutral' },
-    VOIDED: { label: 'Stornovaná', variant: 'neutral' },
+    DRAFT: { label: 'Koncept', variant: 'outline' },
+    VOIDED: { label: 'Stornovaná', variant: 'outline' },
   },
   opportunity: {
-    LEAD: { label: 'Nová', variant: 'neutral' },
+    LEAD: { label: 'Nová', variant: 'outline' },
     LOST: { label: 'Prohraná', variant: 'danger' },
     NEGOTIATION: { label: 'Vyjednávání', variant: 'warning' },
     PROPOSAL: { label: 'Nabídka', variant: 'info' },
@@ -39,7 +39,7 @@ const vocabulary = {
     WON: { label: 'Vyhraná', variant: 'success' },
   },
   order: {
-    CANCELLED: { label: 'Stornovaná', variant: 'neutral' },
+    CANCELLED: { label: 'Stornovaná', variant: 'outline' },
     CONFIRMED: { label: 'Zpracovává se', variant: 'info' },
     DELIVERED: { label: 'Dokončená', variant: 'success' },
     NEW: { label: 'Nová', variant: 'warning' },
@@ -54,20 +54,20 @@ const vocabulary = {
   },
   priority: {
     HIGH: { label: 'Vysoká', variant: 'danger' },
-    LOW: { label: 'Nízká', variant: 'neutral' },
-    NORMAL: { label: 'Normální', variant: 'neutral' },
+    LOW: { label: 'Nízká', variant: 'outline' },
+    NORMAL: { label: 'Normální', variant: 'outline' },
   },
   'stock-movement': {
     ADJUSTMENT: { label: 'Inventurní úprava', variant: 'warning' },
     ISSUE: { label: 'Výdej', variant: 'info' },
-    ORDER: { label: 'Objednávka', variant: 'neutral' },
+    ORDER: { label: 'Objednávka', variant: 'outline' },
     RECEIPT: { label: 'Příjem', variant: 'success' },
   },
   task: {
-    CANCELLED: { label: 'Zrušený', variant: 'neutral' },
+    CANCELLED: { label: 'Zrušený', variant: 'outline' },
     DONE: { label: 'Dokončený', variant: 'success' },
     IN_PROGRESS: { label: 'Rozpracovaný', variant: 'info' },
-    NEW: { label: 'Nový', variant: 'neutral' },
+    NEW: { label: 'Nový', variant: 'outline' },
     WAITING: { label: 'Čeká', variant: 'warning' },
   },
 } satisfies Record<StatusKind, Record<string, StatusPresentation>>;
@@ -77,7 +77,7 @@ const vocabulary = {
  * An unknown wire value has no user-facing meaning.
  */
 export const statusPresentation = (kind: StatusKind, value: string): StatusPresentation => {
-  const fallback: StatusPresentation = { label: '—', variant: 'neutral' };
+  const fallback: StatusPresentation = { label: '—', variant: 'outline' };
   const entries: Partial<Record<string, StatusPresentation>> = vocabulary[kind];
   return Object.hasOwn(entries, value) ? (entries[value] ?? fallback) : fallback;
 };

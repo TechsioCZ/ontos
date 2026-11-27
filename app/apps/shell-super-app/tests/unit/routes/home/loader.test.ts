@@ -17,8 +17,6 @@ import {
   TenantCapabilityUnavailableProblemSchema,
   TenantInternalProblemSchema,
 } from '../../../../shared/browser-api.ts';
-import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
-
 import type { CurrentSession, ShellComposition } from '../../../../shared/browser-api.ts';
 import {
   loadHomePageModel,
@@ -27,8 +25,7 @@ import {
 } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { endBrowserSession } from '../../../../src/routes/session-scope.ts';
-import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
-import { businessThemeRead, makeShellBff } from '../../../support/shell-bff-double.ts';
+import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffEndpoint, ShellBffScript } from '../../../support/shell-bff-double.ts';
 
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -183,7 +180,6 @@ it.effect('resolves trusted context before returning one serializable compositio
         ],
         state: 'available',
       },
-      theme: businessShellTheme,
     });
     // The session is read first; every other read waits for it.
     expect(endpoints(bff)[0]).toBe('currentSession');
@@ -191,29 +187,8 @@ it.effect('resolves trusted context before returning one serializable compositio
       'availableLegalEntities',
       'availableTenants',
       'demoAccountCapability',
-      'executeTenantTheme',
       'shellComposition',
     ]);
-  }),
-);
-it.effect("carries the tenant's attached theme and is unavailable while the theme cannot be read", () =>
-  Effect.gen(function* verifyTenantTheme() {
-    const acme = extendBrand(businessShellTheme.brand, { key: 'acme', label: 'Acme', modes: ['light', 'dark'] });
-    const attached = signedInBff({ executeTenantTheme: () => Effect.succeed({ revision: 'acme-1', theme: acme }) });
-    expect(yield* loadModel(attached)).toMatchObject({ theme: { brand: acme, revision: 'acme-1' } });
-
-    const unreadable = signedInBff({
-      executeTenantTheme: () =>
-        Effect.fail(
-          Schema.decodeUnknownSync(ShellCapabilityUnavailableProblemSchema)({
-            ...problem,
-            _tag: 'ShellCapabilityUnavailableProblem',
-            retryable: true,
-            status: 503,
-          }),
-        ),
-    });
-    expect(yield* loadModel(unreadable)).toMatchObject({ state: 'unavailable' });
   }),
 );
 
@@ -598,7 +573,6 @@ const documentContextOf = (overrides: Partial<typeof ShellDocumentContextSchema.
     legalEntities,
     session: { identity, state: 'authenticated' },
     tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId }] },
-    theme: businessThemeRead,
     ...overrides,
   });
 
@@ -619,7 +593,6 @@ const hydratedDocumentModel = () => {
       composition,
       legalEntities,
       tenants: { tenants: renderedTenants },
-      theme: businessShellTheme,
     },
     compositionRevision,
     contextState: 'authenticated',
@@ -641,7 +614,6 @@ const hydratedDocumentModel = () => {
     selectedLegalEntityId: signedIn.identity.legalEntityId,
     state: 'authenticated',
     tenants: { items: renderedTenants, state: 'available' },
-    theme: businessShellTheme,
   } satisfies Extract<HomePageModel, { readonly state: 'authenticated' }>;
 };
 
@@ -651,7 +623,6 @@ const primedShellReads = [
   'availableTenants',
   'availableLegalEntities',
   'demoAccountCapability',
-  'executeTenantTheme',
 ] as const;
 
 /**

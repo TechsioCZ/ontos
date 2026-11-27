@@ -12,7 +12,7 @@ const initials = (name: string) =>
 export const SalespersonChip = ({ name }: { readonly name: string | undefined }) => {
   if (name === undefined || name === '') {
     return (
-      <Badge size="sm" severity="warning">
+      <Badge size="sm" variant="warning">
         Bez obchodníka
       </Badge>
     );

@@ -32,7 +32,7 @@ export const EvidenceBanner = () => {
   const k = useK();
   return (
     <div className="flex flex-wrap items-center gap-100 rounded-lg bg-bg-light-warning-base px-200 py-150 text-sm">
-      <Badge size="sm" severity="warning">
+      <Badge size="sm" variant="warning">
         {k('depreciation.evidenceBadge')}
       </Badge>
       <span>{k('depreciation.evidenceNote')}</span>
@@ -43,7 +43,7 @@ export const EvidenceBanner = () => {
 export const PlanStatusBadge = ({ plan }: { readonly plan: DepreciationPlan }) => {
   const k = useK();
   return (
-    <Badge size="sm" severity={plan.status === 'confirmed' ? 'success' : 'neutral'}>
+    <Badge size="sm" variant={plan.status === 'confirmed' ? 'success' : 'outline'}>
       {k(`planStatus.${plan.status}`)}
     </Badge>
   );
@@ -53,11 +53,11 @@ export const PlanStatusBadge = ({ plan }: { readonly plan: DepreciationPlan }) =
 export const ConnectionBadge = ({ asset }: { readonly asset: Asset }) => {
   const k = useK();
   return asset.accountingProduct === undefined ? (
-    <Badge size="sm" appearance="outline" severity="neutral">
+    <Badge size="sm" variant="outline">
       {k('depreciation.notConnected')}
     </Badge>
   ) : (
-    <Badge size="sm" severity="info">
+    <Badge size="sm" variant="info">
       {k('depreciation.manualLink', { product: asset.accountingProduct })}
     </Badge>
   );
@@ -105,11 +105,11 @@ const PlanCard = ({
         canWrite && active ? (
           <>
             {plan.status === 'draft' && (
-              <Button onClick={() => onConfirm(plan)} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={() => onConfirm(plan)} size="sm" theme="outlined" variant="secondary">
                 {k('actions.confirmPlan')}
               </Button>
             )}
-            <Button onClick={() => onRecord(plan)} size="sm" severity="primary">
+            <Button onClick={() => onRecord(plan)} size="sm" variant="primary">
               {k('actions.recordEntry')}
             </Button>
           </>
@@ -158,7 +158,7 @@ const PlanCard = ({
       {plan.note !== undefined && <p className="text-fg-secondary text-sm">{plan.note}</p>}
       {/* Keep the audit's intrinsic width inside its own viewport, not the panel's prose and controls. */}
       <ScrollRegion label={k(`depreciation.${plan.type}Plan`)} style={auditViewport}>
-        <Table size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }} appearance="line">
+        <Table size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }} variant="line">
           <colgroup>
             <col style={{ width: 70 }} />
             <col style={{ width: 155 }} />
@@ -194,7 +194,7 @@ const PlanCard = ({
                     ) : (
                       <span className="inline-flex items-center gap-100">
                         {entry.partial === true && (
-                          <Badge size="sm" severity="warning">
+                          <Badge size="sm" variant="warning">
                             {k('depreciation.partial')}
                           </Badge>
                         )}
@@ -226,7 +226,7 @@ const PlanCard = ({
       >
         <span>{k('depreciation.indicativeNote')}</span>
         {(full || schedule.length > visible.length) && (
-          <Button onClick={() => setFull((value) => !value)} size="sm" appearance="ghost" severity="secondary">
+          <Button onClick={() => setFull((value) => !value)} size="sm" theme="borderless" variant="secondary">
             {full ? k('depreciation.collapse') : k('depreciation.showAll', { count: schedule.length })}
           </Button>
         )}
@@ -277,7 +277,7 @@ export const AssetDepreciation = ({
           <SectionCard
             actions={
               canWrite && isActiveAsset(asset) ? (
-                <Button onClick={() => onCreate(type)} size="sm" appearance="outline" severity="secondary">
+                <Button onClick={() => onCreate(type)} size="sm" theme="outlined" variant="secondary">
                   {k(`actions.createPlan.${type}`)}
                 </Button>
               ) : undefined
@@ -353,7 +353,7 @@ export const DepreciationOverview = ({
         </div>
       </div>
       <SectionCard flush title={k('depreciation.allPlans')}>
-        <Table size="sm" appearance="line">
+        <Table size="sm" variant="line">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>{k('columns.asset')}</Table.ColumnHeader>
@@ -406,7 +406,7 @@ export const DepreciationOverview = ({
       <SectionCard
         actions={
           canWrite ? (
-            <Button onClick={onNewTemplate} size="sm" appearance="outline" severity="secondary">
+            <Button onClick={onNewTemplate} size="sm" theme="outlined" variant="secondary">
               {k('actions.newTemplate')}
             </Button>
           ) : undefined

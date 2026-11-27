@@ -269,11 +269,11 @@ const CommentItem = ({
                   browserRuntime.runFork(saveEdit());
                 }}
                 size="sm"
-                severity="primary"
+                variant="primary"
               >
                 {t(`${k}.save`)}
               </Button>
-              <Button onClick={() => edit.request(stopEditing)} size="sm" appearance="outline" severity="secondary">
+              <Button onClick={() => edit.request(stopEditing)} size="sm" theme="outlined" variant="secondary">
                 {t(`${k}.cancel`)}
               </Button>
             </div>
@@ -342,11 +342,11 @@ const CommentItem = ({
                     browserRuntime.runFork(retract());
                   }}
                   size="sm"
-                  severity="danger"
+                  variant="danger"
                 >
                   {t(`${k}.retract`)}
                 </Button>
-                <Button onClick={() => setConfirmRetract(false)} size="sm" appearance="outline" severity="secondary">
+                <Button onClick={() => setConfirmRetract(false)} size="sm" theme="outlined" variant="secondary">
                   {t(`${k}.cancel`)}
                 </Button>
               </span>
@@ -488,7 +488,7 @@ export const CommentThread = ({
       {title !== null && (
         <div className="flex items-center justify-between gap-100">
           <h3 className="font-semibold text-md">{heading}</h3>
-          <Badge size="sm" appearance="outline" severity="neutral">
+          <Badge size="sm" variant="outline">
             {t(`${k}.count`, { count: visibleCount })}
           </Badge>
         </div>
@@ -560,7 +560,7 @@ export const CommentThread = ({
                 browserRuntime.runFork(submit());
               }}
               size="sm"
-              severity="primary"
+              variant="primary"
             >
               {variant === 'chat' ? t(`${k}.send`) : t(`${k}.submit`)}
             </Button>

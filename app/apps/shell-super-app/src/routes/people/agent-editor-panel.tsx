@@ -89,7 +89,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onClose)} appearance="outline" severity="secondary">
+            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
               {t(`${key}.cancel`)}
             </Button>
             <SaveBar

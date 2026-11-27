@@ -26,13 +26,13 @@ import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import { formatAgentTime } from './agent-platform-client.ts';
 import { DEFAULT_ACTIVITY_REQUEST, agentActivityData } from './platform-page-data.ts';
 
-type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['severity']>;
+type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['variant']>;
 const ActivityFilterKind = Schema.Union([Schema.Literal(''), AgentActivityKindSchema]);
 
 const activityKinds: readonly AgentActivityKind[] = ['read', 'write', 'denied', 'failed', 'proposal', 'decision'];
 
 const kindBadgeVariant = {
-  decision: 'neutral',
+  decision: 'outline',
   denied: 'warning',
   failed: 'warning',
   proposal: 'info',
@@ -196,7 +196,7 @@ export const ActivityPanel = () => {
             {activityFailureText(state.error.httpStatus)}
           </StatusText>
           {state.error.httpStatus !== 401 && state.error.httpStatus !== 403 && (
-            <Button onClick={reload} size="sm" appearance="outline" severity="secondary">
+            <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
               Zkusit znovu
             </Button>
           )}
@@ -237,7 +237,7 @@ export const ActivityPanel = () => {
                       {activityDetail(entry)}
                     </td>
                     <td>
-                      <Badge size="sm" severity={kindBadgeVariant[entry.kind]}>
+                      <Badge size="sm" variant={kindBadgeVariant[entry.kind]}>
                         {agentActivityKindLabel[entry.kind]}
                       </Badge>
                     </td>
@@ -257,14 +257,14 @@ export const ActivityPanel = () => {
             }
           }}
           size="sm"
-          appearance="outline"
-          severity="secondary"
+          theme="outlined"
+          variant="secondary"
         >
           Načíst další
         </Button>
       )}
       <div>
-        <LinkButton as={LocalizedLink} size="sm" appearance="outline" to="/sprava/ke-schvaleni" severity="primary">
+        <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/ke-schvaleni" variant="primary">
           Přejít na Ke schválení
         </LinkButton>
       </div>

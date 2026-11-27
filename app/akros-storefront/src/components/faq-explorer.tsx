@@ -43,7 +43,7 @@ export function FaqExplorer({ faq }: { faq: FaqCopy }) {
   return (
     <>
       <header className="sf-faq-hero">
-        <Badge size="md" severity="primary">
+        <Badge size="md" variant="primary">
           {chrome.badge}
         </Badge>
         <h1>{chrome.heading}</h1>
@@ -69,8 +69,8 @@ export function FaqExplorer({ faq }: { faq: FaqCopy }) {
             <Button
               aria-current={!normalizedQuery && group.id === activeGroup.id ? "page" : undefined}
               key={group.id}
-              appearance="ghost"
-              severity="secondary"
+              theme="borderless"
+              variant="secondary"
               size="sm"
               className="justify-start"
               onClick={() => {
@@ -97,7 +97,7 @@ export function FaqExplorer({ faq }: { faq: FaqCopy }) {
                   key={item.question}
                   shadow="none"
                   size="sm"
-                  appearance="outline"
+                  variant="default"
                 >
                   <Accordion.Item value={item.question}>
                     <Accordion.Header>

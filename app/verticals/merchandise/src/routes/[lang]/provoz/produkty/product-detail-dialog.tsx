@@ -125,7 +125,7 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
     return <p className="text-fg-secondary text-sm">{k('prices.empty')}</p>;
   }
   return (
-    <Table size="sm" appearance="line">
+    <Table size="sm" variant="line">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader align="end">{k('prices.columnPrice')}</Table.ColumnHeader>
@@ -411,9 +411,9 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
                   onClick={() =>
                     onDraftChange({ variants: draft.variants.filter((current) => current.key !== variant.key) })
                   }
-                  appearance="outline"
+                  theme="outlined"
                   type="button"
-                  severity="secondary"
+                  variant="secondary"
                 >
                   {k('detail.removeVariant')}
                 </Button>
@@ -429,9 +429,9 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
                   variants: [...draft.variants, { attributes: '', key: draft.nextVariantId, name: '' }],
                 })
               }
-              appearance="outline"
+              theme="outlined"
               type="button"
-              severity="secondary"
+              variant="secondary"
             >
               {k('detail.addVariant')}
             </Button>
@@ -482,7 +482,8 @@ export const ProductDetailView = ({
     ...keptDraft<MovementDraft>(movementKeepKey),
   }));
   useEffect(
-    () => keepDraftOnReload(movementKeepKey, () => (isMovementDraftDirty(movementDraft) ? movementDraft : undefined)),
+    () =>
+      keepDraftOnReload(movementKeepKey, () => (isMovementDraftDirty(movementDraft) ? movementDraft : undefined)),
     [movementDraft, movementKeepKey],
   );
   const variantDestination = resolveProductVariantDestination(product, variantId);
@@ -525,8 +526,8 @@ export const ProductDetailView = ({
             <Button
               className="shrink-0 whitespace-nowrap"
               onClick={() => onBack()}
-              appearance="outline"
-              severity="secondary"
+              theme="outlined"
+              variant="secondary"
             >
               {k('detail.back')}
             </Button>
@@ -551,7 +552,7 @@ export const ProductDetailView = ({
             }
           }}
           value={tab}
-          appearance="line"
+          variant="line"
         >
           <div style={{ overflowX: 'auto' }}>
             <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>

@@ -189,7 +189,7 @@ const DocumentVersionsCell = ({ row }: DocumentCellProps) =>
   row.original.versions.length === 0 ? (
     <span className="text-fg-secondary text-xs">—</span>
   ) : (
-    <Badge size="sm" appearance="outline" severity="neutral">{`v${row.original.versions.at(-1)?.version ?? 1}`}</Badge>
+    <Badge size="sm" variant="outline">{`v${row.original.versions.at(-1)?.version ?? 1}`}</Badge>
   );
 const DocumentUploadedCell = ({ row }: DocumentCellProps) => {
   const { t } = useModernI18n();
@@ -481,8 +481,8 @@ const DocumentsFilters = ({ model }: { readonly model: DocumentsModel }) => {
             setChangedTo('');
           }}
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           {t(`${k}.filters.clear`)}
         </Button>
@@ -530,9 +530,7 @@ const DocumentsListing = ({ model }: { readonly model: DocumentsModel }) => {
                 <span className="break-words font-semibold text-sm">{document.title}</span>
                 <span className="flex flex-wrap items-center gap-50">
                   <CategoryBadge category={document.category} />
-                  {version !== undefined && (
-                    <Badge size="sm" appearance="outline" severity="neutral">{`v${version.version}`}</Badge>
-                  )}
+                  {version !== undefined && <Badge size="sm" variant="outline">{`v${version.version}`}</Badge>}
                 </span>
                 <span className="text-fg-secondary text-xs">
                   {version === undefined
@@ -625,7 +623,7 @@ const ContractsTab = ({ model }: { readonly model: DocumentsModel }) => {
                       <ContractStatusBadge status={contract.status} />
                     )}
                     {document.signature !== undefined && (
-                      <Badge size="sm" severity="success">
+                      <Badge size="sm" variant="success">
                         {`✓ ${formatIsoDate(document.signature.signedOn, '')}`}
                       </Badge>
                     )}
@@ -667,7 +665,7 @@ const DeadlinesTab = ({ model }: { readonly model: DocumentsModel }) => {
             >
               <span className="flex w-28 shrink-0 flex-col">
                 <span className="font-semibold text-sm">{formatIsoDate(entry.date, '')}</span>
-                <Badge size="sm" severity={deadlineVariant(entry.days)}>
+                <Badge size="sm" variant={deadlineVariant(entry.days)}>
                   {deadlineLabel(entry.days, t)}
                 </Badge>
               </span>
@@ -722,7 +720,7 @@ const MessagesTab = ({ model }: { readonly model: DocumentsModel }) => {
             >
               <span className="flex items-center justify-between gap-100 font-medium text-sm">
                 # {t(`${k}.messages.channel.${value}`)}
-                <Badge size="sm" appearance="outline" severity="neutral">
+                <Badge size="sm" variant="outline">
                   {String(count)}
                 </Badge>
               </span>
@@ -783,11 +781,11 @@ const DocumentsView = () => {
         actions={
           envelope === undefined ? undefined : (
             <>
-              <Button onClick={downloadCsv} size="sm" appearance="ghost" severity="secondary">
+              <Button onClick={downloadCsv} size="sm" theme="borderless" variant="secondary">
                 {t(`${k}.filters.exportCsv`)}
               </Button>
               {canWrite && (
-                <Button onClick={() => setForm({ kind: 'create' })} size="sm" severity="primary">
+                <Button onClick={() => setForm({ kind: 'create' })} size="sm" variant="primary">
                   {t(`${k}.create.title`)}
                 </Button>
               )}
@@ -829,7 +827,7 @@ const DocumentsView = () => {
           <Tabs
             onValueChange={(value) => setTab(tabs.find((entry) => entry === value) ?? 'all')}
             value={tab}
-            appearance="line"
+            variant="line"
           >
             <Tabs.List>
               {tabs.map((value) => (
@@ -837,7 +835,7 @@ const DocumentsView = () => {
                   {t(`${k}.tabs.${value}`)}
                   {value === 'deadlines' && deadlines.length > 0 && (
                     <span className="ml-100">
-                      <Badge size="sm" severity={deadlineVariant(deadlines[0]?.days ?? 90)}>
+                      <Badge size="sm" variant={deadlineVariant(deadlines[0]?.days ?? 90)}>
                         {String(deadlines.length)}
                       </Badge>
                     </span>

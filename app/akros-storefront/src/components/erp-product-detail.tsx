@@ -49,7 +49,7 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
           <div className="sf-product-detail__summary">
             <header className="sf-product-detail__heading">
               <h1 id="product-title">{product.name}</h1>
-              <Badge className="sf-product-detail__variant-badge" size="md" severity="secondary">
+              <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
                 {erpCopy.title}
               </Badge>
             </header>
@@ -97,7 +97,7 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
 
         <section className="sf-product-detail__description" aria-labelledby="erp-variants-title">
           <h2 id="erp-variants-title">{erpCopy.variants}</h2>
-          <Table size="sm" appearance="line">
+          <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{erpCopy.variant}</Table.ColumnHeader>

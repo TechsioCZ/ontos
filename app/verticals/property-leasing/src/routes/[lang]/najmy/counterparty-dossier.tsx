@@ -96,8 +96,8 @@ export const CounterpartyDossierView = ({
           href={`/${language}/najmy#tenants`}
           icon="icon-[mdi--arrow-left]"
           size="sm"
-          appearance="ghost"
-          severity="secondary"
+          theme="borderless"
+          variant="secondary"
         >
           Zpět na nájemce a zájemce
         </LinkButton>
@@ -108,7 +108,7 @@ export const CounterpartyDossierView = ({
         }
         meta={
           entry?.status === 'ARCHIVED' ? (
-            <Badge size="sm" appearance="outline" severity="neutral">
+            <Badge size="sm" variant="outline">
               Archivováno v registru
             </Badge>
           ) : undefined
@@ -160,7 +160,7 @@ export const CounterpartyDossierView = ({
                   { label: 'V registru od', value: formatDate(entry.createdAt.slice(0, 10)) },
                 ]}
               />
-              <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" appearance="ghost" severity="secondary">
+              <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="borderless" variant="secondary">
                 Otevřít v registru zákazníků →
               </LinkButton>
             </SectionCard>

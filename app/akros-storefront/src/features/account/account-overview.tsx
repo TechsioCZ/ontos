@@ -92,7 +92,7 @@ export function AccountOverview({
                   href={`/sledovani-zasilky?order=${encodeURIComponent(latest.id)}`}
                   data-account-action
                   size="sm"
-                  severity="primary"
+                  variant="primary"
                 >
                   {latest.status === "SHIPPED" ? orderDetail.trackShipment : orderDetail.orderState}
                 </LinkButton>
@@ -101,8 +101,8 @@ export function AccountOverview({
                   href={orderHref(latest)}
                   data-account-action
                   size="sm"
-                  appearance="outline"
-                  severity="secondary"
+                  theme="outlined"
+                  variant="secondary"
                 >
                   {orders.detail}
                 </LinkButton>
@@ -122,7 +122,7 @@ export function AccountOverview({
                 data-account-action
                 className="mt-(--dimension-32)"
                 size="sm"
-                severity="primary"
+                variant="primary"
               >
                 {latest === undefined ? overview.showOrders : cs.favorites.browse}
               </LinkButton>
@@ -150,8 +150,8 @@ export function AccountOverview({
             data-account-action
             className="mt-(--dimension-32)"
             size="sm"
-            appearance="outline"
-            severity="secondary"
+            theme="outlined"
+            variant="secondary"
           >
             {overview.editAccount}
           </LinkButton>
@@ -168,7 +168,7 @@ export function AccountOverview({
               as={StoreLink}
               href={item.href}
               size="sm"
-              unstyled
+              theme="unstyled"
               className="mt-(--dimension-16) justify-start p-0 underline underline-offset-4 hover:no-underline"
             >
               {item.action}

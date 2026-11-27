@@ -109,9 +109,9 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
           size="sm"
-          appearance="ghost"
+          theme="borderless"
           type="button"
-          severity="secondary"
+          variant="secondary"
         />
       </div>
       {invalidAmount === true && (
@@ -329,14 +329,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             })}
         </p>
         {/* Never disabled: a click without a product explains what is missing instead of doing nothing. */}
-        <Button
-          icon="icon-[mdi--plus]"
-          onClick={addLine}
-          size="sm"
-          appearance="outline"
-          type="button"
-          severity="secondary"
-        >
+        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" type="button" variant="secondary">
           {t(`${K}.create.addLine`)}
         </Button>
       </div>
