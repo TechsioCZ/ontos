@@ -242,6 +242,8 @@ export interface SymmyIngressAdmission {
   readonly apiBaseUrl: string;
   readonly assertion: Redacted.Redacted;
   readonly compositionRevision: string;
+  /** Runtime-owned secure request identifiers retained by background copies after this admission. */
+  readonly newRequestIdentifier?: Effect.Effect<string, typeof symmyUnavailableProblem>;
 }
 
 export interface SymmyOwnerAssertion {
@@ -615,22 +617,20 @@ const validateCustomersBody = Schema.decodeUnknownEffect(Schema.toType(SymmyCust
 const SYMMY_CUSTOMERS_READ_DEADLINE = '25 seconds';
 /** The customers read answers only the public body. Anything but a customers projection is unavailable, never an empty list. */
 const handleCustomersRead = handle(SymmyCustomersResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
-  ingress.dispatch
-    .read(input)
-    .pipe(
-      // A page that outlives its deadline answers the retryable 503 problem, never the host's bare 500 at 30 s.
-      Effect.timeoutOrElse({
-        duration: SYMMY_CUSTOMERS_READ_DEADLINE,
-        orElse: () => Effect.fail(symmyUnavailableProblem),
-      }),
-      Effect.flatMap((result) =>
-        'projection' in result && result.projection === 'customers'
-          ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
-              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
-            )
-          : Effect.fail(symmyUnavailableProblem),
-      ),
+  ingress.dispatch.read(input).pipe(
+    // A page that outlives its deadline answers the retryable 503 problem, never the host's bare 500 at 30 s.
+    Effect.timeoutOrElse({
+      duration: SYMMY_CUSTOMERS_READ_DEADLINE,
+      orElse: () => Effect.fail(symmyUnavailableProblem),
+    }),
+    Effect.flatMap((result) =>
+      'projection' in result && result.projection === 'customers'
+        ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
+            Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
+          )
+        : Effect.fail(symmyUnavailableProblem),
     ),
+  ),
 );
 const validateProductsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyProductsResponseSchema));
 /** The products read answers only the public body. Anything but a products projection is unavailable, never an empty list. */
@@ -672,16 +672,14 @@ const handleRegionsRead = handle(SymmyRegionsSuccessSchema, (ingress, input: Fix
 );
 /** The price lists read answers only the public body. Anything but a price list projection is unavailable. */
 const handlePriceListsRead = handle(SymmyPriceListsResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
-  ingress.dispatch
-    .read(input)
-    .pipe(
-      Effect.flatMap((result) =>
-        'projection' in result && result.projection === 'price_lists'
-          ? Effect.succeed(mapSymmyPriceListsProjection(result))
-          : Effect.fail(symmyUnavailableProblem),
-      ),
-      Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
+  ingress.dispatch.read(input).pipe(
+    Effect.flatMap((result) =>
+      'projection' in result && result.projection === 'price_lists'
+        ? Effect.succeed(mapSymmyPriceListsProjection(result))
+        : Effect.fail(symmyUnavailableProblem),
     ),
+    Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
+  ),
 );
 /** One result per submitted group, in request order, each carrying the code of the group it answers. */
 const handleGroupApply = handle(SymmyCustomerGroupsBatchResponseSchema, (ingress, input: FixtureInput<GroupApply>) =>

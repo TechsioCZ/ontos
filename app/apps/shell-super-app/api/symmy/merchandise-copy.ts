@@ -1,12 +1,29 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import type { LiveChange } from '@app/core-runtime/live/change-notification';
 import { executeImportSourceCatalogWithAuthorization } from '@app/merchandise/apis/import-source-catalog-action/client';
-import { CatalogVariantOnHandPageApi } from '@app/inventory/api/catalog-variant-on-hand-page';
+import {
+  CatalogVariantOnHandPageApi,
+  CatalogVariantOnHandPageRequestSchema,
+} from '@app/inventory/api/catalog-variant-on-hand-page';
 import { ImportSourceCatalogPayloadSchema } from '@app/merchandise/contracts/import-source-catalog';
 import { CatalogPagePricesApi, CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import type { SymmyProductRows } from '@app/symmy-integration/symmy-internal-contracts';
-import { Cause, Clock, Console, Context, Effect, Exit, Fiber, Layer, Redacted, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  Clock,
+  Console,
+  Context,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Redacted,
+  Ref,
+  Schema,
+} from 'effect';
 import { HttpClientError } from 'effect/http';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { LiveChangeHub } from '../live-changes/hub.ts';
@@ -29,6 +46,7 @@ import type { SymmyIngressAdmission } from './transport.ts';
 
 const LOG = '[symmy-merchandise-copy]';
 const PAGE = 100;
+const CATALOG_MODULE_ID = 'commerce.catalog';
 const importOperation = {
   entrypointKey: 'demo.merchandise.import-source-catalog',
   moduleId: 'demo.merchandise',
@@ -37,6 +55,10 @@ const importOperation = {
 
 type SourceProducts = Effect.Success<ReturnType<typeof projectSymmySourceProducts>>['products'];
 type SourceProduct = SourceProducts[number];
+type UpsertCommand = Extract<
+  typeof ImportSourceCatalogPayloadSchema.Encoded.command,
+  { readonly _tag: 'UpsertSourceProduct' }
+>;
 
 /** The source code after the record kind and key name: `product:erpId:AKROS-10001` → `AKROS-10001`. */
 export const symmySourceCode = (sourceRecordId: string): string =>
@@ -55,7 +77,7 @@ export interface SymmyVariantFigures {
 export const symmyUpsertSourceProductCommand = (
   item: SourceProduct,
   figures: ReadonlyMap<string, SymmyVariantFigures> = new Map(),
-) => {
+): UpsertCommand | undefined => {
   const erpCode = symmySourceCode(item.source_record_id).slice(0, 64);
   const name = (item.product.name ?? '').trim().slice(0, 200);
   const variants = item.variantSources.flatMap((variant) => {
@@ -63,24 +85,19 @@ export const symmyUpsertSourceProductCommand = (
     if (sku === '') {
       return [];
     }
-    const catalogVariantId = String(variant.variantId);
+    const catalogVariantId = variant.variantId;
     const { priceNetMinor, stockOnHand } = figures.get(catalogVariantId) ?? {};
-    return [
-      {
-        catalogVariantId,
-        sku,
-        ...(priceNetMinor === undefined ? {} : { priceNetMinor }),
-        ...(stockOnHand === undefined ? {} : { stockOnHand }),
-      },
-    ];
+    const fields = { catalogVariantId, sku };
+    const priced = priceNetMinor === undefined ? fields : { ...fields, priceNetMinor };
+    return [stockOnHand === undefined ? priced : { ...priced, stockOnHand }];
   });
   if (erpCode === '' || name === '' || variants.length === 0) {
     return undefined;
   }
   const description = item.product.description?.trim();
-  return {
-    _tag: 'UpsertSourceProduct' as const,
-    catalogProductId: String(item.product.productRef.resourceId),
+  const command: UpsertCommand = {
+    _tag: 'UpsertSourceProduct',
+    catalogProductId: item.product.productRef.resourceId,
     erpCode,
     lifecycle: item.product.lifecycle,
     name,
@@ -88,34 +105,51 @@ export const symmyUpsertSourceProductCommand = (
     // A shop product staff unlinked from Symmy links again only once the ERP changed the product after the unlink.
     sourceUpdatedAt: item.product.updatedAt,
     variants,
-    ...(description === undefined || description === '' ? {} : { description: description.slice(0, 20_000) }),
   };
+  return description === undefined || description === ''
+    ? command
+    : { ...command, description: description.slice(0, 20_000) };
 };
 
-const newRequestIdentifier = Effect.sync(() => globalThis.crypto.randomUUID());
+const newRequestIdentifier = (admission: SymmyIngressAdmission) =>
+  admission.newRequestIdentifier ?? Effect.fail(symmyUnavailableProblem);
 
-const readAllSourceProducts = Effect.fn('SymmyMerchandiseCopy.readAll')(function* readAll(
-  scope: SymmySourceReadScope,
-  admission: SymmyIngressAdmission,
-) {
-  const products: SourceProduct[] = [];
-  for (let offset = 0; ; ) {
-    const page = yield* projectSymmySourceProducts(scope, { limit: PAGE, offset }, admission, newRequestIdentifier);
-    products.push(...page.products);
-    offset += page.products.length;
-    if (page.products.length === 0 || offset >= page.count) {
-      return products;
-    }
-  }
-});
-
+interface SourcePageState {
+  readonly done: boolean;
+  readonly offset: number;
+  readonly products: SourceProduct[];
+}
+const readAllSourceProducts = (scope: SymmySourceReadScope, admission: SymmyIngressAdmission) =>
+  Effect.suspend(() => {
+    let cursor: SourcePageState = { done: false, offset: 0, products: [] };
+    return Effect.whileLoop({
+      body: () =>
+        projectSymmySourceProducts(
+          scope,
+          { limit: PAGE, offset: cursor.offset },
+          admission,
+          newRequestIdentifier(admission),
+        ),
+      step: (page) => {
+        cursor.products.push(...page.products);
+        const offset = cursor.offset + page.products.length;
+        cursor = { done: page.products.length === 0 || offset >= page.count, offset, products: cursor.products };
+      },
+      while: () => !cursor.done,
+    }).pipe(Effect.map(() => cursor.products));
+  });
 
 /** Pricing's and Inventory's governed reads answer at most 100 Variants per page. */
 const VARIANT_PAGE = 100;
 type RouteContext = Effect.Success<ReturnType<NonNullable<SymmyIngressAdmission['acquireRouteAssertion']>>>['route'];
-type CatalogRef = { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string; readonly tenantId: string };
+interface CatalogRef {
+  readonly moduleId: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}
 const variantRefOf = (tenantId: string, variantId: string): CatalogRef => ({
-  moduleId: 'commerce.catalog',
+  moduleId: CATALOG_MODULE_ID,
   resourceId: variantId,
   resourceType: 'commerce.catalog.variant',
   tenantId,
@@ -131,8 +165,8 @@ const ExternalPriceSourceScopesApi = HttpApi.make('ExternalPriceSourceScopesApi'
           Schema.Struct({
             channelId: Schema.Literals(['B2C', 'B2B']),
             currencyCode: Schema.String,
-            marketId: Schema.String,
-            unitId: Schema.String,
+            marketId: CatalogPagePricesRequestSchema.fields.marketId,
+            unitId: Schema.String.pipe(Schema.brand('CatalogProductUnitId')),
             unitQuantity: Schema.String,
           }),
         ),
@@ -158,11 +192,11 @@ const selectRoute = Effect.fn('SymmyMerchandiseCopy.selectRoute')(function* sele
 
 /** Decimal text of a PRE_TAX amount in the currency's major unit (`7.33`) to minor units (733), or undefined. */
 const minorOf = (amount: string): number | undefined => {
-  const match = /^(\d+)(?:\.(\d+))?$/u.exec(amount.trim());
+  const match = /^(?<whole>\d+)(?:\.(?<fraction>\d+))?$/u.exec(amount.trim());
   if (match === null) {
     return undefined;
   }
-  const minor = Math.round(Number(`${match[1] ?? '0'}.${match[2] ?? '0'}`) * 100);
+  const minor = Math.round(Number(`${match.groups?.['whole'] ?? '0'}.${match.groups?.['fraction'] ?? '0'}`) * 100);
   return Number.isSafeInteger(minor) && minor >= 0 ? minor : undefined;
 };
 
@@ -180,12 +214,12 @@ const readPriceKey = Effect.fn('SymmyMerchandiseCopy.priceKey')(function* priceK
       api: ExternalPriceSourceScopesApi,
       credential: Redacted.make(`Bearer ${Redacted.value(assertion.assertion)}`),
       defaultApiPrefix: '/pricing-api',
-      requestCorrelation: yield* newRequestIdentifier,
+      requestCorrelation: yield* newRequestIdentifier(admission),
     },
     { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
   );
   const { scopes } = yield* client.externalPriceSourceScopes.execute({ payload: {} });
-  return scopes.length === 1 ? scopes[0] : undefined;
+  return scopes.length === 1 ? (scopes[0] ?? null) : null;
 });
 
 /** Pricing's current no-group net price of each Variant of one page, by Catalog Variant id (absent: no price). */
@@ -203,7 +237,7 @@ const readPricePage = Effect.fn('SymmyMerchandiseCopy.pricePage')(function* pric
       unitBasis: {
         quantity: key.unitQuantity,
         unitRef: {
-          moduleId: 'commerce.catalog',
+          moduleId: CATALOG_MODULE_ID,
           resourceId: key.unitId,
           resourceType: 'commerce.catalog.product-unit',
           tenantId: productRef.tenantId,
@@ -218,20 +252,24 @@ const readPricePage = Effect.fn('SymmyMerchandiseCopy.pricePage')(function* pric
       api: CatalogPagePricesApi,
       credential: Redacted.make(`Bearer ${Redacted.value(assertion.assertion)}`),
       defaultApiPrefix: '/pricing-api',
-      requestCorrelation: yield* newRequestIdentifier,
+      requestCorrelation: yield* newRequestIdentifier(admission),
     },
     { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
   );
   const answer = yield* client.catalogPagePrices.execute({ payload });
-  if (answer._tag !== 'CATALOG_PAGE_PRICED') {
-    return yield* Effect.fail(`catalog-page-prices answered ${answer._tag}`);
+  if (!Predicate.isTagged(answer, 'CATALOG_PAGE_PRICED')) {
+    yield* Console.error(`${LOG} catalog-page-prices answered ${answer._tag}`);
+    return yield* Effect.fail(symmyUnavailableProblem);
   }
   const prices = new Map<string, number>();
   for (const price of answer.prices) {
-    if (price._tag === 'PRICE_FOUND' && price.priceRevision.monetaryAmount.currencyCode === key.currencyCode) {
+    if (
+      Predicate.isTagged(price, 'PRICE_FOUND') &&
+      price.priceRevision.monetaryAmount.currencyCode === key.currencyCode
+    ) {
       const minor = minorOf(price.priceRevision.monetaryAmount.amount);
       if (minor !== undefined) {
-        prices.set(String(price.catalogSelection.variantRef.resourceId), minor);
+        prices.set(price.catalogSelection.variantRef.resourceId, minor);
       }
     }
   }
@@ -251,19 +289,21 @@ const readOnHandPage = Effect.fn('SymmyMerchandiseCopy.onHandPage')(function* on
       api: CatalogVariantOnHandPageApi,
       credential: Redacted.make(`Bearer ${Redacted.value(assertion.assertion)}`),
       defaultApiPrefix: '/inventory-api',
-      requestCorrelation: yield* newRequestIdentifier,
+      requestCorrelation: yield* newRequestIdentifier(admission),
     },
     { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
   );
-  const answer = yield* client.catalogVariantOnHandPage.execute({
-    payload: { customerConfigurationId, variantRefs } as never,
+  const payload = yield* Schema.decodeUnknownEffect(CatalogVariantOnHandPageRequestSchema)({
+    customerConfigurationId,
+    variantRefs,
   });
+  const answer = yield* client.catalogVariantOnHandPage.execute({ payload });
   const onHand = new Map<string, number>();
   for (const item of answer.items) {
     if (item.outcome === 'ON_HAND') {
       const total = Number(item.total.amount);
       if (Number.isFinite(total) && total >= 0) {
-        onHand.set(String(item.variantRef.resourceId), total);
+        onHand.set(item.variantRef.resourceId, total);
       }
     }
   }
@@ -273,8 +313,11 @@ const readOnHandPage = Effect.fn('SymmyMerchandiseCopy.onHandPage')(function* on
 const describe = (cause: Cause.Cause<unknown>) => Cause.pretty(cause).slice(0, 400);
 
 /** An owner's refusal with its status and body (the refusal code), which an undeclared-status decode error drops. */
-const describeRefusal = (cause: Cause.Cause<unknown>) => {
-  const error = Cause.squash(cause);
+type OwnerReadFailure = Effect.Error<
+  ReturnType<typeof readPriceKey> | ReturnType<typeof readPricePage> | ReturnType<typeof readOnHandPage>
+>;
+const describeRefusal = (error: OwnerReadFailure) => {
+  const cause = Cause.fail(error);
   const response = HttpClientError.isHttpClientError(error) ? error.response : undefined;
   return response === undefined
     ? Effect.succeed(describe(cause))
@@ -290,73 +333,73 @@ const describeRefusal = (cause: Cause.Cause<unknown>) => {
  * rather than sent without a price. Without a price key every product is copied without a price (the upsert keeps
  * stored prices); without an Inventory source, or when an on-hand page fails, its Variants' stock stays untouched.
  */
-const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* figures(
+const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* collectFigures(
   admission: SymmyIngressAdmission,
   legalEntityId: string,
   products: SourceProducts,
   key: Effect.Success<ReturnType<typeof readPriceKey>>,
-  source: RouteContext['inventorySource'],
+  source: NonNullable<RouteContext['inventorySource']> | null,
 ) {
   const refs = products.flatMap((item) =>
     item.variantSources.map((variant) => ({
-      productId: String(item.product.productRef.resourceId),
-      productRef: item.product.productRef as CatalogRef,
-      variantRef: variantRefOf(String(item.product.productRef.tenantId), String(variant.variantId)),
+      productId: item.product.productRef.resourceId,
+      productRef: item.product.productRef,
+      variantRef: variantRefOf(item.product.productRef.tenantId, variant.variantId),
     })),
   );
   const figures = new Map<string, { priceNetMinor?: number; stockOnHand?: number }>();
   const skipped = new Set<string>();
-  let stocked = true;
-  for (let offset = 0; offset < refs.length; offset += VARIANT_PAGE) {
-    const page = refs.slice(offset, offset + VARIANT_PAGE);
-    const [prices, onHand] = yield* Effect.all(
-      [
-        key === undefined
-          ? Effect.succeed(new Map<string, number>())
-          : readPricePage(admission, legalEntityId, key, page).pipe(
-              Effect.catchCause((cause) =>
-                describeRefusal(cause).pipe(
-                  Effect.flatMap((text) =>
-                    Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${text}`),
+  const pages = yield* Effect.forEach(
+    EffectArray.chunksOf(refs, VARIANT_PAGE),
+    Effect.fn('SymmyMerchandiseCopy.figuresPage')(function* figuresPage(page) {
+      const [prices, onHand] = yield* Effect.all(
+        [
+          key === null
+            ? Effect.succeed(new Map<string, number>())
+            : readPricePage(admission, legalEntityId, key, page).pipe(
+                Effect.catch((error) =>
+                  describeRefusal(error).pipe(
+                    Effect.flatMap((text) =>
+                      Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${text}`),
+                    ),
+                    Effect.as(null),
                   ),
-                  Effect.as(undefined),
                 ),
               ),
-            ),
-        source === undefined
-          ? Effect.succeed(new Map<string, number>())
-          : readOnHandPage(
-              admission,
-              legalEntityId,
-              String(source.customerConfigurationId),
-              page.map(({ variantRef }) => variantRef),
-            ).pipe(
-              Effect.catchCause((cause) =>
-                describeRefusal(cause).pipe(
-                  Effect.flatMap((text) => Console.error(`${LOG} on-hand unreadable, stock kept: ${text}`)),
-                  Effect.as(undefined),
+          source === null
+            ? Effect.succeed(new Map<string, number>())
+            : readOnHandPage(
+                admission,
+                legalEntityId,
+                source.customerConfigurationId,
+                page.map(({ variantRef }) => variantRef),
+              ).pipe(
+                Effect.catch((error) =>
+                  describeRefusal(error).pipe(
+                    Effect.flatMap((text) => Console.error(`${LOG} on-hand unreadable, stock kept: ${text}`)),
+                    Effect.as(null),
+                  ),
                 ),
               ),
-            ),
-      ],
-      { concurrency: 2 },
-    );
-    if (prices === undefined) {
-      for (const { productId } of page) {
-        skipped.add(productId);
+        ],
+        { concurrency: 2 },
+      );
+      if (prices === null) {
+        for (const { productId } of page) {
+          skipped.add(productId);
+        }
       }
-    }
-    for (const [variantId, priceNetMinor] of prices ?? []) {
-      figures.set(variantId, { ...figures.get(variantId), priceNetMinor });
-    }
-    if (onHand === undefined) {
-      stocked = false;
-    }
-    for (const [variantId, stockOnHand] of onHand ?? []) {
-      figures.set(variantId, { ...figures.get(variantId), stockOnHand });
-    }
-  }
-  return { figures, priced: key !== undefined, skipped, stocked: source !== undefined && stocked };
+      for (const [variantId, priceNetMinor] of prices ?? []) {
+        figures.set(variantId, { ...figures.get(variantId), priceNetMinor });
+      }
+      for (const [variantId, stockOnHand] of onHand ?? []) {
+        figures.set(variantId, { ...figures.get(variantId), stockOnHand });
+      }
+      return onHand !== null;
+    }),
+    { concurrency: 1 },
+  );
+  return { figures, priced: key !== null, skipped, stocked: source !== null && pages.every(Boolean) };
 });
 
 /** The Inventory configuration of the company's Symmy stock: on the products route, else on the stock route. */
@@ -368,8 +411,10 @@ const readInventorySource = Effect.fn('SymmyMerchandiseCopy.inventorySource')(fu
     return read.inventorySource;
   }
   const source = yield* selectRoute(admission, 'inventoryStockBatch').pipe(
-    Effect.map((route: RouteContext) => route.inventorySource),
-    Effect.catchCause(() => Effect.succeed(undefined)),
+    Effect.map((route: RouteContext) => route.inventorySource ?? null),
+    Effect.catch((error) =>
+      Console.error(`${LOG} Inventory route unavailable: ${describe(Cause.fail(error))}`).pipe(Effect.as(null)),
+    ),
   );
   // The reads after this one are proved with the products route again.
   yield* selectRoute(admission, 'adminProducts');
@@ -390,7 +435,7 @@ const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
     command,
     expectedRevision: 0,
     sourceRequestDigest,
-  }).pipe(Effect.mapError(() => symmyUnavailableProblem));
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
   const assertion = yield* admission.acquireOwnerAssertion({
     audience: 'merchandise',
     legalEntityId: scope.legalEntityId,
@@ -401,22 +446,22 @@ const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
   const baseUrl = yield* resolveSymmyOwnerReleaseBase(assertion.apiBaseUrl, 'merchandise');
   // One key per copy run and command: a retry inside the run is the owner's replay, while a later run always reaches
   // the upsert (which answers UNCHANGED without writing), so a return to an earlier value (A → B → A) is applied.
-  const idempotencyKey = yield* symmyDemoCatalogDigest(
-    JSON.stringify([yield* symmyDemoCatalogScopeIdentity(scope), 'merchandise-copy-v2', runId, sourceRequestDigest]),
-  );
+  const idempotencyInput = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))([
+    yield* symmyDemoCatalogScopeIdentity(scope),
+    'merchandise-copy-v2',
+    runId,
+    sourceRequestDigest,
+  ]).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
+  const idempotencyKey = yield* symmyDemoCatalogDigest(idempotencyInput);
   const result = yield* executeImportSourceCatalogWithAuthorization(
     payload,
     `Bearer ${Redacted.value(assertion.assertion)}`,
-    yield* newRequestIdentifier,
+    yield* newRequestIdentifier(admission),
     { baseUrl, compositionRevision: assertion.compositionRevision, idempotencyKey },
   );
   // The import's result names what the upsert did (sourceUpsert.outcome); an older owner answers without it.
-  const answer = (result as { readonly sourceUpsert?: { readonly outcome?: unknown; readonly reason?: unknown } })
-    .sourceUpsert;
-  return {
-    outcome: typeof answer?.outcome === 'string' ? answer.outcome : 'APPLIED',
-    reason: typeof answer?.reason === 'string' ? answer.reason : undefined,
-  };
+  const answer = 'sourceUpsert' in result ? result.sourceUpsert : undefined;
+  return { outcome: answer?.outcome ?? 'APPLIED', reason: answer?.reason };
 });
 
 /** The source value of a qualified source record id: `variant:variantId:AKROS-1-V1` → `AKROS-1-V1`. */
@@ -433,12 +478,36 @@ export const symmyProductBatchCodes = (products: SymmyProductRows): readonly str
     ...(product.identifier === undefined ? [] : [product.identifier.value]),
     ...product.variants.flatMap((variant) => [
       ...(variant.identifier === undefined ? [] : [variant.identifier.value]),
-      ...(variant.sku === undefined ? [] : [String(variant.sku)]),
+      ...(variant.sku === undefined ? [] : [variant.sku]),
     ]),
   ]);
 
 /** When the newest targeted copy of each Catalog product began reading its Pricing and Inventory figures (epoch ms). */
-const targetedFiguresAt = new Map<string, number>();
+interface CopyProcessState {
+  following: boolean;
+  readonly full: { pending: SymmyIngressAdmission | null; running: boolean };
+  readonly ownerCommitAt: Map<string, number>;
+  readonly targeted: { current: TargetedRun | null; readonly pending: Map<string, Targets>; running: boolean };
+  readonly targetedFiguresAt: Map<string, number>;
+  readonly watches: Map<string, Watch>;
+}
+const CopyProcess = Context.Reference<Ref.Ref<CopyProcessState>>(
+  '@app/shell-super-app/symmy/merchandise-copy/process',
+  {
+    defaultValue: () =>
+      Ref.makeUnsafe<CopyProcessState>({
+        following: false,
+        full: { pending: null, running: false },
+        ownerCommitAt: new Map(),
+        targeted: { current: null, pending: new Map(), running: false },
+        targetedFiguresAt: new Map(),
+        watches: new Map(),
+      }),
+  },
+);
+const copyProcessState = CopyProcess.pipe(Effect.flatMap(Ref.get));
+const logCopyExit = (message: string) => (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) ? Console.error(`${LOG} ${message}: ${describe(exit.cause)}`) : Effect.void;
 
 /**
  * What one copy writes, read from the owners: the products (every one, or with `only` those named by one of the
@@ -460,7 +529,7 @@ const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
       operation.schemaVersion === importOperation.schemaVersion,
   );
   if (legalEntityId === undefined || !enrolled) {
-    return undefined;
+    return null;
   }
   const read = yield* selectRoute(admission, 'adminProducts');
   if (read.tenantId !== write.tenantId) {
@@ -471,10 +540,10 @@ const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
     [
       readAllSourceProducts(read, admission),
       readPriceKey(admission, legalEntityId).pipe(
-        Effect.catchCause((cause) =>
-          describeRefusal(cause).pipe(
+        Effect.catch((error) =>
+          describeRefusal(error).pipe(
             Effect.flatMap((text) => Console.error(`${LOG} price key unreadable, no prices sent: ${text}`)),
-            Effect.as(undefined),
+            Effect.as(null),
           ),
         ),
       ),
@@ -483,9 +552,10 @@ const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
   );
   const products = only === undefined ? all : all.filter((item) => namedBy(item, only));
   const figuresAt = yield* Clock.currentTimeMillis;
+  const { targetedFiguresAt } = yield* copyProcessState;
   if (only !== undefined) {
     for (const item of products) {
-      targetedFiguresAt.set(String(item.product.productRef.resourceId), figuresAt);
+      targetedFiguresAt.set(item.product.productRef.resourceId, figuresAt);
     }
   }
   const figures = yield* readVariantFigures(admission, legalEntityId, products, key, source);
@@ -506,54 +576,71 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
 ) {
   const startedAt = yield* Clock.currentTimeMillis;
   const plan = yield* Effect.interruptible(readCopyPlan(admission, only));
-  if (plan === undefined) {
+  if (plan === null) {
     return { skipped: 'not_enrolled' } as const;
   }
   const { figures, figuresAt, legalEntityId, priced, products, skipped, stocked, write } = plan;
   // The writes are proved with the products import route.
   yield* selectRoute(admission, 'productsBatch');
-  const outcomes: Record<string, number> = { CREATED: 0, UPDATED: 0, UNCHANGED: 0, REFUSED: 0 };
+  const { targetedFiguresAt } = yield* copyProcessState;
+  const outcomes = new Map<string, number>([
+    ['CREATED', 0],
+    ['UPDATED', 0],
+    ['UNCHANGED', 0],
+    ['REFUSED', 0],
+  ]);
   const refused: string[] = [];
   const unpriced: string[] = [];
-  const runId = yield* newRequestIdentifier;
-  for (const item of products) {
-    const code = symmySourceCode(item.source_record_id);
-    // A full sweep never writes over a targeted copy that read the owners after it did: those figures are newer.
-    if (only === undefined && (targetedFiguresAt.get(String(item.product.productRef.resourceId)) ?? 0) >= figuresAt) {
-      outcomes['SUPERSEDED'] = (outcomes['SUPERSEDED'] ?? 0) + 1;
-      continue;
-    }
-    const command = skipped.has(String(item.product.productRef.resourceId))
-      ? undefined
-      : symmyUpsertSourceProductCommand(item, figures);
-    // A product whose price page failed is not written in this sweep. One without a price is still sent: the upsert
-    // never creates a row without a price (never a row at 0 Kč), but an existing row keeps taking its stock figure.
-    const withoutPrice = command !== undefined && command.variants.some((variant) => variant.priceNetMinor === undefined);
-    if (command === undefined || withoutPrice) {
-      unpriced.push(code);
-    }
-    const result =
-      command === undefined
-        ? { outcome: 'SKIPPED', reason: undefined }
-        : yield* upsert({ ...write, legalEntityId }, admission, command, runId).pipe(
-            Effect.catchCause((cause) =>
-              Console.error(`${LOG} ${item.source_record_id} failed: ${describe(cause)}`).pipe(
-                Effect.as({ outcome: 'FAILED', reason: undefined }),
+  const runId = yield* newRequestIdentifier(admission);
+  yield* Effect.forEach(
+    products,
+    Effect.fn('SymmyMerchandiseCopy.copyOne')(function* copyOne(item) {
+      const code = symmySourceCode(item.source_record_id);
+      // A full sweep never writes over a targeted copy that read the owners after it did: those figures are newer.
+      const targetedAt = targetedFiguresAt.get(item.product.productRef.resourceId);
+      if (only === undefined && targetedAt !== undefined && targetedAt >= figuresAt) {
+        outcomes.set('SUPERSEDED', (outcomes.get('SUPERSEDED') ?? 0) + 1);
+        return;
+      }
+      const command = skipped.has(item.product.productRef.resourceId)
+        ? undefined
+        : symmyUpsertSourceProductCommand(item, figures);
+      // A product whose price page failed is not written in this sweep. One without a price is still sent: the upsert
+      // never creates a row without a price (never a row at 0 Kč), but an existing row keeps taking its stock figure.
+      const withoutPrice =
+        command !== undefined && command.variants.some((variant) => variant.priceNetMinor === undefined);
+      if (command === undefined || withoutPrice) {
+        unpriced.push(code);
+      }
+      const result =
+        command === undefined
+          ? { outcome: 'SKIPPED', reason: null }
+          : yield* upsert({ ...write, legalEntityId }, admission, command, runId).pipe(
+              Effect.catch((error) =>
+                Console.error(`${LOG} ${item.source_record_id} failed: ${describe(Cause.fail(error))}`).pipe(
+                  Effect.as({ outcome: 'FAILED', reason: null }),
+                ),
               ),
-            ),
-          );
-    outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
-    if (result.outcome === 'REFUSED') {
-      refused.push(`${code}:${result.reason ?? 'unknown'}`);
-    }
-  }
+            );
+      outcomes.set(result.outcome, (outcomes.get(result.outcome) ?? 0) + 1);
+      if (result.outcome === 'REFUSED') {
+        refused.push(`${code}:${result.reason ?? 'unknown'}`);
+      }
+    }),
+    { concurrency: 1, discard: true },
+  );
   const run = only === undefined ? 'full' : `targeted=[${[...only].slice(0, 20).join(', ')}]`;
   const ms = (yield* Clock.currentTimeMillis) - startedAt;
+  const summary = yield* Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Record(Schema.String, Schema.Union([Schema.Number, Schema.Boolean]))),
+  )({ ...Object.fromEntries(outcomes), priced, stocked }).pipe(
+    Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)),
+  );
   yield* Console.log(
-    `${LOG} company=${legalEntityId} ${run} products=${String(products.length)} ms=${String(ms)} ${JSON.stringify({ ...outcomes, priced, stocked })}` +
+    `${LOG} company=${legalEntityId} ${run} products=${String(products.length)} ms=${String(ms)} ${summary}` +
       ` refused=[${refused.join(', ')}] withoutPrice=[${unpriced.join(', ')}]`,
   );
-  return { outcomes } as const;
+  return { outcomes: Object.fromEntries(outcomes) } as const;
 });
 
 /**
@@ -563,34 +650,32 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
  * assertion), so a run after the response, or seconds later, still proves its calls. Whatever ends a run (failure,
  * defect, interruption) is logged and frees the queue.
  */
-const state: { pending: SymmyIngressAdmission | undefined; running: boolean } = {
-  pending: undefined,
-  running: false,
-};
 const COOL_DOWN = '10 seconds';
-
-const drain: Effect.Effect<void> = Effect.suspend(() => {
-  const next = state.pending;
-  state.pending = undefined;
-  if (next === undefined) {
-    state.running = false;
-    return Effect.void;
+const drain: Effect.Effect<void> = Effect.gen(function* drainFullCopies() {
+  const { full } = yield* copyProcessState;
+  const next = full.pending;
+  full.pending = null;
+  if (next === null) {
+    full.running = false;
+    return;
   }
-  return copySymmyProductsToMerchandise(next).pipe(
-    Effect.asVoid,
-    Effect.catchCause((cause) => Console.error(`${LOG} copy failed: ${describe(cause)}`)),
-    Effect.andThen(Effect.sleep(COOL_DOWN)),
-    Effect.andThen(drain),
-  );
+  const fiber = yield* Effect.forkChild(copySymmyProductsToMerchandise(next));
+  const result = yield* Fiber.await(fiber);
+  yield* Exit.match(result, {
+    onFailure: (cause) => Console.error(`${LOG} copy failed: ${describe(cause)}`),
+    onSuccess: () => Effect.void,
+  });
+  yield* Effect.sleep(COOL_DOWN);
+  yield* drain;
 }).pipe(
-  Effect.onInterrupt(() =>
-    Console.error(`${LOG} copy interrupted; the next trigger runs it again`).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          state.running = false;
-        }),
-      ),
-    ),
+  Effect.onExit((exit) =>
+    Exit.isFailure(exit)
+      ? Effect.gen(function* releaseFullQueue() {
+          const { full } = yield* copyProcessState;
+          full.running = false;
+          yield* Console.error(`${LOG} copy stopped; the next trigger runs it again: ${describe(exit.cause)}`);
+        })
+      : Effect.void,
   ),
 );
 
@@ -599,15 +684,17 @@ const drain: Effect.Effect<void> = Effect.suspend(() => {
  * job polls): the safety net for whatever a targeted copy missed. Never fails and never waits: the request's response
  * is unchanged whatever the copy does.
  */
-export const scheduleSymmyMerchandiseCopy = (admission: SymmyIngressAdmission): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    state.pending = admission;
-    if (state.running) {
-      return Effect.void;
-    }
-    state.running = true;
-    return Effect.forkDetach(drain).pipe(Effect.asVoid);
-  }).pipe(Effect.catchCause((cause) => Console.error(`${LOG} copy not scheduled: ${describe(cause)}`)));
+export const scheduleSymmyMerchandiseCopy = Effect.fn('SymmyMerchandiseCopy.scheduleFull')(function* scheduleFullCopy(
+  admission: SymmyIngressAdmission,
+) {
+  const { full } = yield* copyProcessState;
+  full.pending = admission;
+  if (full.running) {
+    return;
+  }
+  full.running = true;
+  yield* Effect.forkDetach(drain);
+});
 
 /**
  * Targeted copies: only the products a Symmy import names, started the moment their owners commit (a products job)
@@ -629,71 +716,64 @@ interface TargetedRun {
   readonly fiber: Fiber.Fiber<unknown, unknown>;
   readonly targets: Targets;
 }
-const targeted: { current: TargetedRun | undefined; readonly pending: Map<string, Targets>; running: boolean } = {
-  current: undefined,
-  pending: new Map(),
-  running: false,
-};
-const RESTART_WINDOW_MS = 3_000;
-
-const drainTargeted: Effect.Effect<void> = Effect.suspend(() => {
+const RESTART_WINDOW_MS = 3000;
+const drainTargeted: Effect.Effect<void> = Effect.gen(function* drainTargetedCopies() {
+  const { targeted } = yield* copyProcessState;
   const next = targeted.pending.entries().next();
   if (next.done === true) {
     targeted.running = false;
-    return Effect.void;
+    return;
   }
   const [company, targets] = next.value;
   targeted.pending.delete(company);
-  return copySymmyProductsToMerchandise(targets.admission, targets.codes).pipe(
+  const fiber = yield* copySymmyProductsToMerchandise(targets.admission, targets.codes).pipe(
     Effect.uninterruptible,
     Effect.provideContext(targets.context),
     Effect.forkChild,
-    Effect.flatMap((fiber) => {
-      targeted.current = { company, fiber, targets };
-      return Fiber.await(fiber);
-    }),
-    Effect.flatMap((exit) => {
-      targeted.current = undefined;
-      return Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
-        ? Console.error(`${LOG} targeted copy failed: ${describe(exit.cause)}`)
-        : Effect.void;
-    }),
-    Effect.andThen(drainTargeted),
   );
+  targeted.current = { company, fiber, targets };
+  const exit = yield* Fiber.await(fiber);
+  targeted.current = null;
+  if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+    yield* Console.error(`${LOG} targeted copy failed: ${describe(exit.cause)}`);
+  }
+  yield* drainTargeted;
 }).pipe(
-  Effect.onInterrupt(() =>
-    Console.error(`${LOG} targeted copy interrupted; the next import runs it again`).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          targeted.current = undefined;
+  Effect.onExit((exit) =>
+    Exit.isFailure(exit)
+      ? Effect.gen(function* releaseTargetedQueue() {
+          const { targeted } = yield* copyProcessState;
+          targeted.current = null;
           targeted.running = false;
-        }),
-      ),
-    ),
+          yield* Console.error(`${LOG} targeted copy stopped; the next import runs it again: ${describe(exit.cause)}`);
+        })
+      : Effect.void,
   ),
 );
 
 /** Adds the codes to the company's next targeted run, restarting its run still reading, and starts the runs. */
-const copyTargets = (company: string, targets: Omit<Targets, 'since'>): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    const now = Date.now();
-    const run = targeted.current;
-    const restarted =
-      run !== undefined && run.company === company && now - run.targets.since < RESTART_WINDOW_MS ? run : undefined;
-    const pending = targeted.pending.get(company);
-    targeted.pending.set(company, {
-      ...targets,
-      codes: new Set([...(restarted?.targets.codes ?? []), ...(pending?.codes ?? []), ...targets.codes]),
-      since: restarted?.targets.since ?? pending?.since ?? now,
-    });
-    // Interrupts only the reads: a run already writing ends first, then its codes run again with the new ones.
-    const restart = restarted === undefined ? Effect.void : Effect.forkDetach(Fiber.interrupt(restarted.fiber));
-    if (targeted.running) {
-      return Effect.asVoid(restart);
-    }
-    targeted.running = true;
-    return Effect.forkDetach(drainTargeted).pipe(Effect.asVoid);
+const copyTargets = Effect.fn('SymmyMerchandiseCopy.scheduleTargets')(function* scheduleTargetedCopy(
+  company: string,
+  targets: Omit<Targets, 'since'>,
+) {
+  const now = yield* Clock.currentTimeMillis;
+  const { targeted } = yield* copyProcessState;
+  const run = targeted.current;
+  const restarted = run !== null && run.company === company && now - run.targets.since < RESTART_WINDOW_MS ? run : null;
+  const pending = targeted.pending.get(company);
+  targeted.pending.set(company, {
+    ...targets,
+    codes: new Set([...(restarted?.targets.codes ?? []), ...(pending?.codes ?? []), ...targets.codes]),
+    since: restarted?.targets.since ?? pending?.since ?? now,
   });
+  // Interrupts only the reads: a run already writing ends first, then its codes run again with the new ones.
+  const restart = restarted === null ? Effect.void : Effect.forkDetach(Fiber.interrupt(restarted.fiber));
+  if (targeted.running) {
+    return yield* Effect.asVoid(restart);
+  }
+  targeted.running = true;
+  return yield* Effect.forkDetach(drainTargeted).pipe(Effect.asVoid);
+});
 
 /** The company the admitted route copies into ("tenant|legal entity"), or undefined when it has none. */
 const companyOf = Effect.fn('SymmyMerchandiseCopy.company')(function* company(admission: SymmyIngressAdmission) {
@@ -720,42 +800,46 @@ interface Watch {
   readonly legalEntityId: string;
   readonly tenantId: string;
 }
-const watches = new Map<string, Watch>();
+
 /** The newest owner commit seen per tenant (epoch ms). */
-const ownerCommitAt = new Map<string, number>();
-const OWNER_MODULES: ReadonlySet<string> = new Set(['commerce.catalog', 'commerce.inventory', 'commerce.pricing']);
+
+const OWNER_MODULES: ReadonlySet<string> = new Set([CATALOG_MODULE_ID, 'commerce.inventory', 'commerce.pricing']);
 const WATCH_MS = 120_000;
 
 /** Copies the watched products of every company `concerns` names, dropping codes watched long enough. */
-const copyWatched = (concerns: (watch: Watch) => boolean): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    const now = Date.now();
-    const due: [string, Watch][] = [];
-    for (const [company, watch] of watches) {
-      for (const [code, until] of watch.codes) {
-        if (until <= now) {
-          watch.codes.delete(code);
-        }
-      }
-      if (watch.codes.size === 0) {
-        watches.delete(company);
-      } else if (concerns(watch)) {
-        due.push([company, watch]);
+const copyWatched = Effect.fn('SymmyMerchandiseCopy.copyWatched')(function* copyWatchedProducts(
+  concerns: (watch: Watch) => boolean,
+) {
+  const now = yield* Clock.currentTimeMillis;
+  const { watches } = yield* copyProcessState;
+  const due: [string, Watch][] = [];
+  for (const [company, watch] of watches) {
+    for (const [code, until] of watch.codes) {
+      if (until <= now) {
+        watch.codes.delete(code);
       }
     }
-    return Effect.forEach(
-      due,
-      ([company, { admission, codes, context }]) => copyTargets(company, { admission, codes: new Set(codes.keys()), context }),
-      { discard: true },
-    );
-  });
+    if (watch.codes.size === 0) {
+      watches.delete(company);
+    } else if (concerns(watch)) {
+      due.push([company, watch]);
+    }
+  }
+  return yield* Effect.forEach(
+    due,
+    ([company, { admission, codes, context }]) =>
+      copyTargets(company, { admission, codes: new Set(codes.keys()), context }),
+    { concurrency: 1, discard: true },
+  );
+});
 
 /** A committed change: a Catalog, Pricing or Inventory commit of a company copies its watched products. */
 const copyOnOwnerCommit = (change: LiveChange): Effect.Effect<void> =>
   change.moduleKeys.some((key) => OWNER_MODULES.has(key))
-    ? Effect.suspend(() => {
-        ownerCommitAt.set(change.tenantId, Date.now());
-        return copyWatched(
+    ? Effect.gen(function* copyCommittedProducts() {
+        const { ownerCommitAt } = yield* copyProcessState;
+        ownerCommitAt.set(change.tenantId, yield* Clock.currentTimeMillis);
+        return yield* copyWatched(
           (watch) =>
             watch.tenantId === change.tenantId &&
             (change.legalEntityId === null || change.legalEntityId === watch.legalEntityId),
@@ -767,24 +851,24 @@ const copyOnOwnerCommit = (change: LiveChange): Effect.Effect<void> =>
  * Feeds every committed change to the targeted copies for as long as the Shell runs; after a lost change tail (changes
  * may have been missed) every watched product is copied again.
  */
-const follower = { active: false };
 export const SymmyMerchandiseCopyLive = Layer.effectDiscard(
   Effect.gen(function* followOwnerCommits() {
     const hub = yield* LiveChangeHub;
+    const process = yield* copyProcessState;
     // One follower per process: another Shell runtime of the process (the root route handler) adds none, so a commit
     // starts one copy.
     const first = yield* Effect.acquireRelease(
       Effect.sync(() => {
-        if (follower.active) {
+        if (process.following) {
           return false;
         }
-        follower.active = true;
+        process.following = true;
         return true;
       }),
       (owned) =>
         Effect.sync(() => {
           if (owned) {
-            follower.active = false;
+            process.following = false;
           }
         }),
     );
@@ -798,13 +882,17 @@ export const SymmyMerchandiseCopyLive = Layer.effectDiscard(
  * After an accepted products import: its products are watched (see Watch), so they are copied the moment their owners
  * commit the job's effects. Never fails and never waits.
  */
-export const copySymmyProductsOnCommit = (admission: SymmyIngressAdmission, codes: readonly string[]): Effect.Effect<void> =>
+export const copySymmyProductsOnCommit = (
+  admission: SymmyIngressAdmission,
+  codes: readonly string[],
+): Effect.Effect<void> =>
   Effect.gen(function* watchImport() {
     if (codes.length === 0) {
       return;
     }
     const at = yield* Clock.currentTimeMillis;
-    const context = yield* Effect.context<never>();
+    const context = yield* Effect.context();
+    const { ownerCommitAt, watches } = yield* copyProcessState;
     const company = yield* companyOf(admission);
     if (company === undefined) {
       return;
@@ -818,25 +906,20 @@ export const copySymmyProductsOnCommit = (admission: SymmyIngressAdmission, code
     if ((ownerCommitAt.get(company.tenantId) ?? 0) >= at) {
       yield* copyTargets(company.key, { admission, codes: new Set(codes), context });
     }
-  }).pipe(
-    Effect.catchCause((cause) => Console.error(`${LOG} targeted copy not scheduled: ${describe(cause)}`)),
-    Effect.forkDetach,
-    Effect.asVoid,
-  );
+  }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);
 
 /** After an accepted stock import: the products of its items are copied at once. Never fails and never waits. */
-export const copySymmyStockToMerchandise = (admission: SymmyIngressAdmission, itemKeys: readonly string[]): Effect.Effect<void> =>
+export const copySymmyStockToMerchandise = (
+  admission: SymmyIngressAdmission,
+  itemKeys: readonly string[],
+): Effect.Effect<void> =>
   Effect.gen(function* copyStock() {
     if (itemKeys.length === 0) {
       return;
     }
-    const context = yield* Effect.context<never>();
+    const context = yield* Effect.context();
     const company = yield* companyOf(admission);
     if (company !== undefined) {
       yield* copyTargets(company.key, { admission, codes: new Set(itemKeys), context });
     }
-  }).pipe(
-    Effect.catchCause((cause) => Console.error(`${LOG} targeted copy not scheduled: ${describe(cause)}`)),
-    Effect.forkDetach,
-    Effect.asVoid,
-  );
+  }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);
