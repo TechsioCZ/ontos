@@ -4,7 +4,7 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import { AttachTenantThemePayloadSchema, AttachTenantThemeResultSchema } from '../../themes/contract.ts';
+import { AttachTenantThemePayloadSchema } from '../../themes/contract.ts';
 import type { AttachTenantThemePayload } from '../../themes/contract.ts';
 import { TenantThemeNotFound, TenantThemeUnavailable } from '../../themes/errors.ts';
 import { tenantThemeRepositoryFromTransaction } from '../../themes/repository.ts';
@@ -74,7 +74,7 @@ export const attachTenantThemeAction = defineAction(
     owningModuleKey: 'core.themes',
     payloadSchema: AttachTenantThemePayloadSchema,
     policies: [],
-    resultSchema: AttachTenantThemeResultSchema,
+    resultSchema: AttachTenantThemePayloadSchema,
     schemaVersion: '1',
   },
   handleAttachTenantTheme,

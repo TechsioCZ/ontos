@@ -41,7 +41,8 @@ import { UploadAssetRequestSchema, UploadAssetResultSchema } from './core-action
 import { SaveTenantThemeRequestSchema, SaveTenantThemeResultSchema } from './core-actions/save-tenant-theme.ts';
 
 // @ontos-core-action attach-tenant-theme
-import { AttachTenantThemeRequestSchema, AttachTenantThemeResultSchema } from './core-actions/attach-tenant-theme.ts';
+import { AttachTenantThemePayloadSchema } from '@app/core-runtime/themes/contract';
+import { AttachTenantThemeRequestSchema } from './core-actions/attach-tenant-theme.ts';
 // @ontos-codesmith-core-action-contract-imports:end
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
@@ -1090,7 +1091,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         error: identityErrors,
         headers: IdentityRequestHeadersSchema,
         payload: AttachTenantThemeRequestSchema,
-        success: AttachTenantThemeResultSchema,
+        success: AttachTenantThemePayloadSchema,
       }),
     ),
   )
