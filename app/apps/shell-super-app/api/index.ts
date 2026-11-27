@@ -2534,7 +2534,7 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
     ),
 );
 
-/** The caller as a tenant-wide principal, for a company-free Read (a tenant's theme, a reserved upload's row). */
+/** The caller as a tenant-wide principal, for a company-free operation (a tenant's theme, a reserved upload's row). */
 const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
 
 // @ontos-core-read tenant-theme
@@ -2832,7 +2832,7 @@ const coreActionSaveTenantThemeGroupLive = HttpApiBuilder.group(
         return yield* runtime
           .runAction({
             payload,
-            principal: resolved.principal,
+            principal: withoutSelectedLegalEntity(resolved.principal),
             registration: saveTenantThemeAction,
             savedReply: 'answer',
             transport: { correlationId, idempotencyKey },
@@ -2880,7 +2880,7 @@ const coreActionAttachTenantThemeGroupLive = HttpApiBuilder.group(
         return yield* runtime
           .runAction({
             payload,
-            principal: resolved.principal,
+            principal: withoutSelectedLegalEntity(resolved.principal),
             registration: attachTenantThemeAction,
             savedReply: 'answer',
             transport: { correlationId, idempotencyKey },
