@@ -36,3 +36,20 @@ export const useFormValues = <V,>(form: { readonly values: Atom.Atom<Option.Opti
     values: ready ? Option.getOrElse(values, () => opened) : opened,
   };
 };
+
+/**
+ * Forms of one shape kept per key, for a form that is on screen once per record (a comment's edit, a record's
+ * composer): each key gets its own form the first time it is asked for, and the same one after that.
+ */
+export const keyedForms = <Form,>(make: () => Form): ((key: string) => Form) => {
+  const forms = new Map<string, Form>();
+  return (key) => {
+    const known = forms.get(key);
+    if (known !== undefined) {
+      return known;
+    }
+    const made = make();
+    forms.set(key, made);
+    return made;
+  };
+};
