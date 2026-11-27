@@ -10,8 +10,9 @@
  * - the role exists twice, each under a stable id, so renaming it never makes a second one: a tenant role with
  *   exactly `ERP_EDITOR_TENANT_CAPABILITIES` (the calls Core decides in the tenant context), and a role of each company
  *   the operator is a live member of with exactly `ERP_EDITOR_COMPANY_CAPABILITIES` (the calls decided in the selected
- *   company: prices, stock, the current image). Each is created empty and revised through Core's own role writers
- *   (`writeRoleCreation`, `writeRoleRevision`) authored by the tenant owner; a cell added by hand is removed again;
+ *   company: the page and its navigation entry, prices, stock, the current image). Each is created empty and revised
+ *   through Core's own role writers (`writeRoleCreation`, `writeRoleRevision`) authored by the tenant owner; a cell
+ *   added by hand is removed again;
  * - each operator holds one live assignment of the tenant role in the tenant context and of each company role in its
  *   company, made through Core's people commands (`assignRole`).
  *
@@ -123,8 +124,15 @@ export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
   'commerce.inventory.source-assertion.import',
 ];
 
-/** The editor's calls decided in the selected company (`legalEntityScope: 'required'`), held by a company role. */
+/**
+ * The editor's calls decided in the selected company (`legalEntityScope: 'required'`), held by a company role. The
+ * Shell opens a page and lists its navigation entry through the company module target whenever the session has a
+ * selected company, as every shop operator's session does, so the page and its navigation entry are decided there too.
+ */
 export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
+  // The page and its navigation entry, as the Shell's company module target asks them.
+  'commerce.catalog.products.view',
+  'commerce.catalog.navigation-products.read',
   // erp-media-section.tsx: the current image and its preview.
   'commerce.catalog.catalog-media-current.read',
   'commerce.catalog.api-catalog-media-content.read',
