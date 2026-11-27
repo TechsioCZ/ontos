@@ -241,8 +241,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
   suite.effect('imposes no product size cap, MIME allowlist, retry schedule or scanner in the capability', () =>
     Effect.gen(function* noInventedPolicy() {
       const media = yield* loadCoreMediaCode();
+      // Demo line: demo's image store (media-image-contract.ts, media-image-store.ts, since 2026-11-01) bounds the two
+      // renditions a product photo is stored as. It is demo's own extension, not part of the D20 capability main
+      // guards here, so it is the one named exception; any other size ceiling in Core Media still fails.
       forbid(
-        media,
+        media.filter(([file]) => !/\/media\/media-image-(?:contract|store)\.ts$/u.test(file)),
         'a size ceiling',
         /\b(?:maxBytes|maxSize|sizeLimit|maxUpload\w*|MAX_UPLOAD\w*|maximumUpload\w*)\b/iu,
       );
@@ -273,7 +276,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
           }
         }
         // The only media tables ever created in Core: the asset and the link a business owner writes.
-        expect([...created].filter((name) => /media/iu.test(name)).toSorted()).toEqual(['media_assets', 'media_links']);
+        // Demo line: `media_asset_renditions` is demo's image store (20261101172142), the one table beside them.
+        expect([...created].filter((name) => /media/iu.test(name)).toSorted()).toEqual([
+          'media_asset_renditions',
+          'media_assets',
+          'media_links',
+        ]);
         // Both tables' columns were read, and the one revision-like name among them is the provider's technical pin of
         // the stored object: integrity evidence, never a version of the asset.
         expect([...columns]).toEqual(
