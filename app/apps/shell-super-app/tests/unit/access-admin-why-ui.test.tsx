@@ -167,12 +167,34 @@ it.effect('keeps metadata loading failure separate from the actual decision and 
     const retry = rstest.fn<() => void>();
     renderCopy(<WhyResult onRetry={retry} result={whyDecisionView(response('ALLOWED', 'unavailable'), query)} />);
     expect(screen.getByText(en.shell.accessAdmin.outcome.allowed)).toBeTruthy();
+    expect(screen.getByText(en.shell.accessAdmin.why.authorityUnavailable)).toBeTruthy();
     yield* Effect.promise(() =>
       userEvent.setup().click(screen.getByRole('button', { name: en.shell.accessAdmin.common.retry })),
     );
     expect(retry).toHaveBeenCalledTimes(1);
   }),
 );
+
+test('names the roles that admit the decision while the people who could grant it stay unknown', () => {
+  const unavailable = Schema.decodeUnknownSync(ExplainAccessResponseSchema)({
+    ...response('ALLOWED', 'unavailable'),
+    authority: [
+      {
+        capabilityKey: query.capabilityKey,
+        mode: 'run',
+        roleId: '10000000-0000-4000-8000-000000000001',
+        roleName: 'Úpravy produktů z ERP',
+        selector: 'all',
+      },
+    ],
+  });
+  renderCopy(<WhyResult onRetry={noop} result={whyDecisionView(unavailable, query)} />);
+  expect(screen.getByRole('region', { name: en.shell.accessAdmin.why.authority }).textContent).toContain(
+    'Úpravy produktů z ERP',
+  );
+  expect(screen.queryByRole('region', { name: en.shell.accessAdmin.why.grantableBy })).toBeNull();
+  expect(screen.getByText(en.shell.accessAdmin.why.authorityUnavailable)).toBeTruthy();
+});
 
 test('never renders raw unknown reason codes or diagnostics', () => {
   expect(whyReasonKey('private.db.failure user@example.test')).toBe('shell.accessAdmin.why.unknownReason');

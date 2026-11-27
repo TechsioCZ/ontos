@@ -428,7 +428,7 @@
         "grantableBy": "Může udělit",
         "grantableHidden": "Kdo může oprávnění udělit, vidí jen oprávněný správce.",
         "authorityWithheld": "Podrobnosti o rolích a lidech vám nejsou viditelné.",
-        "authorityUnavailable": "Podrobnosti o oprávnění se nepodařilo načíst. Zkuste to znovu.",
+        "authorityUnavailable": "Kdo může oprávnění udělit, se nepodařilo zjistit. Zkuste to znovu.",
         "subjectSearchUnavailable": "Hledání v oprávněních jiných lidí zatím není dostupné. Ověření používá vaši přihlášenou identitu.",
         "fieldClass": "Skupina polí",
         "amountCaveat": "Rozhodnutí platí pro zadanou částku.",

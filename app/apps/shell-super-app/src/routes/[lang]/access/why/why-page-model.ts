@@ -54,13 +54,13 @@ export const whyDecisionView = (
 ): WhyResultView => ({
   decision: {
     authority:
-      response.authorityMetadata === 'included'
-        ? response.authority.map((role) => ({
+      response.authorityMetadata === 'withheld'
+        ? []
+        : response.authority.map((role) => ({
             deadline: role.deadline === undefined ? null : DateTime.formatIso(role.deadline),
             id: `${role.roleId}:${role.capabilityKey}:${role.mode}:${role.selector}`,
             name: role.roleName ?? role.roleId,
-          }))
-        : [],
+          })),
     authorityMetadata: response.authorityMetadata,
     deadline: response.admissionDeadline === undefined ? null : DateTime.formatIso(response.admissionDeadline),
     fieldClass: response.fieldClass ?? null,

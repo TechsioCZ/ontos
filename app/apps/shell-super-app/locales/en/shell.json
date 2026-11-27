@@ -422,7 +422,7 @@
         "grantableBy": "Can grant",
         "grantableHidden": "Who can grant the permission is shown only to an authorized administrator.",
         "authorityWithheld": "Role and people details are not visible to you.",
-        "authorityUnavailable": "Permission details could not be loaded. Try again.",
+        "authorityUnavailable": "Who can grant this permission could not be determined. Try again.",
         "subjectSearchUnavailable": "Searching other people's access is not available yet. This check uses your signed-in identity.",
         "fieldClass": "Field group",
         "amountCaveat": "The decision applies to the amount you entered.",

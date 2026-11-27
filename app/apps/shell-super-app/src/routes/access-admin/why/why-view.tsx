@@ -104,34 +104,32 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
             <li key={key}>{t(key)}</li>
           ))}
         </ul>
+        {decision.authorityMetadata !== 'withheld' && decision.authority.length > 0 ? (
+          <section aria-label={t('shell.accessAdmin.why.authority')} className="shell:grid shell:gap-2">
+            <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.authority')}</h3>
+            <ul>
+              {decision.authority.map((role) => (
+                <li key={role.id}>
+                  {role.name}
+                  {role.deadline === null ? null : (
+                    <p>{t('shell.accessAdmin.deadline.expiresAt', { date: formatDeadline(role.deadline) })}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {decision.authorityMetadata === 'included' ? (
-          <>
-            {decision.authority.length > 0 ? (
-              <section aria-label={t('shell.accessAdmin.why.authority')} className="shell:grid shell:gap-2">
-                <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.authority')}</h3>
-                <ul>
-                  {decision.authority.map((role) => (
-                    <li key={role.id}>
-                      {role.name}
-                      {role.deadline === null ? null : (
-                        <p>{t('shell.accessAdmin.deadline.expiresAt', { date: formatDeadline(role.deadline) })}</p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-            {decision.grantableBy.length > 0 ? (
-              <section aria-label={t('shell.accessAdmin.why.grantableBy')} className="shell:grid shell:gap-2">
-                <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.grantableBy')}</h3>
-                <ul>
-                  {decision.grantableBy.map((person) => (
-                    <li key={person.id}>{person.name}</li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-          </>
+          decision.grantableBy.length > 0 ? (
+            <section aria-label={t('shell.accessAdmin.why.grantableBy')} className="shell:grid shell:gap-2">
+              <h3 className="shell:text-title-sm">{t('shell.accessAdmin.why.grantableBy')}</h3>
+              <ul>
+                {decision.grantableBy.map((person) => (
+                  <li key={person.id}>{person.name}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null
         ) : (
           <StatusText status="default">
             {t(
