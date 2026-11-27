@@ -51,6 +51,25 @@ and those modules must be created, versioned, reverted, and deleted without a pr
 10. **The staff Shell is the first interface host.** Channel Applications are out of scope for the
     first CoreSDK version.
 
+## Open points
+
+These are asked in the interview and not yet decided. They are listed so that no reader takes the
+decisions above as complete.
+
+- **How a Module declares what it needs from outside itself.** The council's recommendation, 4 of 4,
+  is that each datastore, external host, and secret is declared once as a value in the Module
+  Definition, that types are derived from those values and check only the wiring, and that the
+  Module's runtime enforces the declaration from outside. A type-only declaration is not sufficient:
+  types are erased at build and cannot see what a dependency does internally. Decision 5 stands either
+  way; this point settles what the types are derived from.
+- Which facts must be committed in the governed PostgreSQL store when a Module owns another datastore.
+- Inbound endpoints, published events, and Tenant-configured outbound webhooks as vocabulary items.
+- The rules a Module Replacement must meet, and which Platform Modules may be replaced.
+- Isolation of a Tenant Module's interface in the browser.
+- How the design system reaches a Module, and how a Tenant's theme is represented.
+- How a Tenant's Tenant Modules are versioned, reverted, and deleted alongside the one global
+  Application Composition.
+
 ## Considered options
 
 The council (GPT-6.2 Astra, GPT-6.1 Sol, Claude Opus 5.5, Claude Fable 5.2) chose the accepted option

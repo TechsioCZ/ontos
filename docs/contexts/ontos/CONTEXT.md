@@ -166,14 +166,13 @@ business obligations.
 semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,
 and tests. The exact current and target fields are owned by app-local manifest guidance.
 
-**Module Definition** — The single authored description of a Module from which its OntOS Module
-Manifest, Vertical Runtime Registration, and public contracts are derived. Each fact about a Module
-is stated once, there.
-_Avoid_: hand-maintained copies of a manifest, registration, or contract.
+**Module Definition** — The one authored description of what a Module publishes and what it needs
+from outside itself. Every other description of that Module follows from it.
+_Avoid_: a second, separately maintained description of the same Module.
 
-**Module Blueprint** — A deterministic generator that produces an ordinary Module, or part of one,
-from a named pattern and explicit inputs. Its output is plain CoreSDK code with no runtime meaning of
-its own; equal inputs produce equal output.
+**Module Blueprint** — A named, repeatable pattern from which an ordinary Module, or part of one, is
+produced from explicit inputs. A blueprint has no meaning once the Module exists: the result is a
+Module like any other, and equal inputs give an equal result.
 _Avoid_: low-code interpreter, template runtime, treating a blueprint as a module kind.
 
 **Vertical Runtime Registration** — Owner-local private binding from a module's public contract to
