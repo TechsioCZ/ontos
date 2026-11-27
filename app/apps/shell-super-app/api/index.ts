@@ -298,6 +298,7 @@ import {
 import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from './auth/gateway-payment-route-scope.ts';
 import { SymmyGovernedDispatch, SymmyGovernedDispatchLive } from './symmy/governed-dispatch.ts';
 import { symmyOwnerReleaseFetchLive } from './symmy/owner-release-transport.ts';
+import { SymmyMerchandiseCopyLive } from './symmy/merchandise-copy.ts';
 
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
@@ -5506,6 +5507,8 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
+    // Symmy imports reach "Produkty" the moment their owners commit (the change tail held for the process's life).
+    SymmyMerchandiseCopyLive,
     paymentGatewayHandlersLive.pipe(
       Layer.provide(
         Layer.mergeAll(
