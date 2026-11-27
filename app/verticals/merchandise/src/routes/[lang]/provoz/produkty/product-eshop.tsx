@@ -904,6 +904,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             draft={draft}
                             idPrefix={`variant-${draft.key}`}
                             images={variantImageChoices}
+                            mainImage={product.images?.[0]}
                             onChange={(next) => patchDraft(draft.key, next)}
                             productId={product.id}
                             vatRate={vatRate}
