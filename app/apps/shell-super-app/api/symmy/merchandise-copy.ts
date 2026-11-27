@@ -9,6 +9,8 @@ import { ImportSourceCatalogPayloadSchema } from '@app/merchandise/contracts/imp
 import { CatalogPagePricesApi, CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import type { SymmyProductRows } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyJobStatusRequestSchema } from '@app/symmy-integration/api/symmy-job-status';
+import { executeSymmyJobStatusWithAuthorization } from '@app/symmy-integration/api/symmy-job-status/client';
 import {
   Array as EffectArray,
   Cause,
@@ -42,7 +44,7 @@ import type { SymmyIngressAdmission } from './transport.ts';
 // unchanged product changes nothing. It runs beside the Symmy API, never inside a response: a failing copy is logged
 // and retried by the next trigger, and no Symmy response, status code or job result depends on it.
 // A products import or a stock import copies only the products it names, the moment their owners commit (targeted
-// copies, below); full sweeps of every product after Symmy reads and job polls are the safety net.
+// copies, below); full sweeps of every product after Symmy reads and job polls, at most one a minute, are the safety net.
 
 const LOG = '[symmy-merchandise-copy]';
 const PAGE = 100;
@@ -402,13 +404,18 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* c
   return { figures, priced: key !== null, skipped, stocked: source !== null && pages.every(Boolean) };
 });
 
-/** The Inventory configuration of the company's Symmy stock: on the products route, else on the stock route. */
+/**
+ * The Inventory configuration of the company's Symmy stock: on the products import route (the same configuration as the
+ * stock route's), else on the products read route, else on the stock route (selected for it).
+ */
 const readInventorySource = Effect.fn('SymmyMerchandiseCopy.inventorySource')(function* inventorySource(
   admission: SymmyIngressAdmission,
+  write: RouteContext,
   read: RouteContext,
 ) {
-  if (read.inventorySource !== undefined) {
-    return read.inventorySource;
+  const enrolled = write.inventorySource ?? read.inventorySource;
+  if (enrolled !== undefined) {
+    return enrolled;
   }
   const source = yield* selectRoute(admission, 'inventoryStockBatch').pipe(
     Effect.map((route: RouteContext) => route.inventorySource ?? null),
@@ -509,33 +516,52 @@ const copyProcessState = CopyProcess.pipe(Effect.flatMap(Ref.get));
 const logCopyExit = (message: string) => (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? Console.error(`${LOG} ${message}: ${describe(exit.cause)}`) : Effect.void;
 
-/**
- * What one copy writes, read from the owners: the products (every one, or with `only` those named by one of the
- * codes) and the current figures of their Variants. Undefined when the route is not enrolled for the merchandise
- * import or has no company.
- */
-const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
-  admission: SymmyIngressAdmission,
-  only: ReadonlySet<string> | undefined,
-) {
-  // The admission proves owner calls with the route selected last: productsBatch (enrollment), then adminProducts for
-  // every read (Catalog's products and Pricing's price key at once, then each page's prices and on-hand at once).
-  const write = yield* selectRoute(admission, 'productsBatch');
-  const { legalEntityId } = write;
-  const enrolled = write.allowedOwnerOperations.some(
+/** The products import route enrolls the merchandise import (the copy's writes). */
+const enrolledForImport = (route: RouteContext): boolean =>
+  route.allowedOwnerOperations.some(
     (operation) =>
       operation.moduleId === importOperation.moduleId &&
       operation.entrypointKey === importOperation.entrypointKey &&
       operation.schemaVersion === importOperation.schemaVersion,
   );
-  if (legalEntityId === undefined || !enrolled) {
+
+/**
+ * What started a copy. `write`: the products import route its trigger already selected (the company, the writes'
+ * enrollment, the Inventory configuration), so the copy does not select it again before reading. `settle`: reads that
+ * answer before any owner state is read (the statuses of the products jobs a targeted copy watches). `note`: what the
+ * log line adds.
+ */
+interface CopyTrigger {
+  readonly note?: () => string;
+  readonly settle?: Effect.Effect<void>;
+  readonly write?: RouteContext;
+}
+
+/**
+ * What one copy writes, read from the owners: the products (every one, or with `only` those named by one of the
+ * codes) and the current figures of their Variants. Null when the route is not enrolled for the merchandise
+ * import or has no company.
+ */
+const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
+  admission: SymmyIngressAdmission,
+  only: ReadonlySet<string> | undefined,
+  trigger: CopyTrigger,
+) {
+  // The admission proves owner calls with the route selected last: productsBatch (enrollment; the trigger's own
+  // selection when it made one), then adminProducts for every read (Catalog's products and Pricing's price key at once,
+  // then each page's prices and on-hand at once). The trigger's settle reads run beside the read route's selection.
+  const write = trigger.write ?? (yield* selectRoute(admission, 'productsBatch'));
+  const { legalEntityId } = write;
+  if (legalEntityId === undefined || !enrolledForImport(write)) {
     return null;
   }
-  const read = yield* selectRoute(admission, 'adminProducts');
+  const [read] = yield* Effect.all([selectRoute(admission, 'adminProducts'), trigger.settle ?? Effect.void], {
+    concurrency: 2,
+  });
   if (read.tenantId !== write.tenantId) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
-  const source = yield* readInventorySource(admission, read);
+  const source = yield* readInventorySource(admission, write, read);
   const [all, key] = yield* Effect.all(
     [
       readAllSourceProducts(read, admission),
@@ -559,7 +585,7 @@ const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
     }
   }
   const figures = yield* readVariantFigures(admission, legalEntityId, products, key, source);
-  return { ...figures, figuresAt, legalEntityId, products, write };
+  return { ...figures, figuresAt, legalEntityId, products, tenantId: write.tenantId };
 });
 
 /**
@@ -573,15 +599,20 @@ const readCopyPlan = Effect.fn('SymmyMerchandiseCopy.read')(function* readPlan(
 export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.copy')(function* copy(
   admission: SymmyIngressAdmission,
   only?: ReadonlySet<string>,
+  trigger: CopyTrigger = {},
 ) {
   const startedAt = yield* Clock.currentTimeMillis;
-  const plan = yield* Effect.interruptible(readCopyPlan(admission, only));
+  const plan = yield* Effect.interruptible(readCopyPlan(admission, only, trigger));
   if (plan === null) {
     return { skipped: 'not_enrolled' } as const;
   }
-  const { figures, figuresAt, legalEntityId, priced, products, skipped, stocked, write } = plan;
-  // The writes are proved with the products import route.
-  yield* selectRoute(admission, 'productsBatch');
+  const { figures, figuresAt, legalEntityId, priced, products, skipped, stocked, tenantId } = plan;
+  const readMs = (yield* Clock.currentTimeMillis) - startedAt;
+  // The writes are proved with the products import route, selected now: still enrolled, still the same company.
+  const write = yield* selectRoute(admission, 'productsBatch');
+  if (write.tenantId !== tenantId || write.legalEntityId !== legalEntityId || !enrolledForImport(write)) {
+    return { skipped: 'not_enrolled' } as const;
+  }
   const { targetedFiguresAt } = yield* copyProcessState;
   const outcomes = new Map<string, number>([
     ['CREATED', 0],
@@ -637,7 +668,8 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
     Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)),
   );
   yield* Console.log(
-    `${LOG} company=${legalEntityId} ${run} products=${String(products.length)} ms=${String(ms)} ${summary}` +
+    `${LOG} company=${legalEntityId} ${run} products=${String(products.length)} ms=${String(ms)} read=${String(readMs)}` +
+      `${trigger.note === undefined ? '' : ` ${trigger.note()}`} ${summary}` +
       ` refused=[${refused.join(', ')}] withoutPrice=[${unpriced.join(', ')}]`,
   );
   return { outcomes: Object.fromEntries(outcomes) } as const;
@@ -645,12 +677,13 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
 
 /**
  * Full sweeps: one at a time per process; triggers that arrive meanwhile coalesce into one more run with the newest
- * admission, after a pause. The admission is a self-contained capability (API key, the request's correlation headers
+ * admission, a minute after the previous one ended (a sweep writes every product, one at a time: it is the safety net,
+ * not the way an import arrives, and must not keep the owners busy while targeted copies run). The admission is a self-contained capability (API key, the request's correlation headers
  * and the services it needs are held by its closures; every owner call re-verifies the key and mints a fresh
  * assertion), so a run after the response, or seconds later, still proves its calls. Whatever ends a run (failure,
  * defect, interruption) is logged and frees the queue.
  */
-const COOL_DOWN = '10 seconds';
+const COOL_DOWN = '60 seconds';
 const drain: Effect.Effect<void> = Effect.gen(function* drainFullCopies() {
   const { full } = yield* copyProcessState;
   const next = full.pending;
@@ -681,8 +714,8 @@ const drain: Effect.Effect<void> = Effect.gen(function* drainFullCopies() {
 
 /**
  * Schedules a full sweep after an authenticated Symmy request that can reveal catalogue, price or stock state (reads,
- * job polls): the safety net for whatever a targeted copy missed. Never fails and never waits: the request's response
- * is unchanged whatever the copy does.
+ * job polls): the safety net for whatever a targeted copy missed; the first one after the process starts (a deploy)
+ * runs at once. Never fails and never waits: the request's response is unchanged whatever the copy does.
  */
 export const scheduleSymmyMerchandiseCopy = Effect.fn('SymmyMerchandiseCopy.scheduleFull')(function* scheduleFullCopy(
   admission: SymmyIngressAdmission,
@@ -702,14 +735,34 @@ export const scheduleSymmyMerchandiseCopy = Effect.fn('SymmyMerchandiseCopy.sche
  * process; the codes a company names meanwhile merge into its next run, which starts as soon as the running one
  * ends. A run still reading when more codes of its company arrive starts over at once with them (within
  * RESTART_WINDOW_MS of its first start, so a company that commits all the time still gets its copy); writes always
- * finish. A run is given the services of the Symmy request that named its codes (the owner relay's fetch among them).
+ * finish. A run is given the services, the admission and the products import route of the newest Symmy request that
+ * named its codes (the owner relay's fetch among the services).
  */
 interface Targets {
   readonly admission: SymmyIngressAdmission;
   readonly codes: ReadonlySet<string>;
   readonly context: Context.Context<never>;
+  /** The products jobs these codes come from; a run reads the status of those not known settled before anything else. */
+  readonly jobs: ReadonlySet<WatchedJob>;
   /** When the first run for these codes began; a restart keeps it. */
   readonly since: number;
+  readonly write: RouteContext;
+}
+
+/**
+ * A products import a targeted copy watches: `admission`, `context` and `write` (its products import route) are those
+ * of the import's request. It is watched until a copy has read its products after its job settled every effect (a
+ * status read found the job completed), or for at most WATCH_MS.
+ */
+interface WatchedJob {
+  readonly admission: SymmyIngressAdmission;
+  readonly codes: readonly string[];
+  readonly context: Context.Context<never>;
+  readonly jobId: string;
+  /** When a status read found the job completed (epoch ms). */
+  settledAt: number | null;
+  readonly until: number;
+  readonly write: RouteContext;
 }
 interface TargetedRun {
   readonly company: string;
@@ -717,8 +770,72 @@ interface TargetedRun {
   readonly targets: Targets;
 }
 const RESTART_WINDOW_MS = 3000;
+/** A job status read that takes longer leaves the job watched and lets the copy read on. */
+const SETTLE_WAIT = '1 second';
+
+/** Whether the job has settled every effect (completed); an unknown job has nothing left to copy either. */
+const readJobSettled = Effect.fn('SymmyMerchandiseCopy.jobSettled')(function* jobSettled(job: WatchedJob) {
+  if (job.admission.acquireOwnerAssertion === undefined) {
+    return false;
+  }
+  const payload = yield* Schema.decodeUnknownEffect(SymmyJobStatusRequestSchema)({ jobId: job.jobId });
+  // The status read is the job poll's own (GET /jobs/{id}): the integration's unscoped assertion.
+  const assertion = yield* job.admission.acquireOwnerAssertion({ audience: 'symmy-integration' });
+  const baseUrl = yield* resolveSymmyOwnerReleaseBase(assertion.apiBaseUrl, 'symmy-integration');
+  return yield* executeSymmyJobStatusWithAuthorization(
+    payload,
+    `Bearer ${Redacted.value(assertion.assertion)}`,
+    yield* newRequestIdentifier(job.admission),
+    { baseUrl, compositionRevision: assertion.compositionRevision },
+  ).pipe(
+    Effect.map((status) => String(status.phase).startsWith('completed')),
+    Effect.catchTag('SymmyJobStatusNotFoundProblem', () => Effect.succeed(true)),
+  );
+});
+
+/** Reads the status of each job; a settled one is marked with the time it was found settled. Never fails. */
+const settleJobs = (jobs: readonly WatchedJob[]): Effect.Effect<void> =>
+  Effect.forEach(
+    jobs,
+    (job) =>
+      readJobSettled(job).pipe(
+        Effect.flatMap((settled) =>
+          settled
+            ? Clock.currentTimeMillis.pipe(
+                Effect.map((at) => {
+                  job.settledAt = at;
+                }),
+              )
+            : Effect.void,
+        ),
+        Effect.catchCause((cause) => Console.warn(`${LOG} job ${job.jobId} status unreadable: ${describe(cause)}`)),
+      ),
+    { concurrency: 4, discard: true },
+  ).pipe(Effect.timeoutOrElse({ duration: SETTLE_WAIT, orElse: () => Effect.void }));
+
+const jobsNote = (jobs: readonly WatchedJob[]) => () =>
+  jobs.length === 0
+    ? 'jobs=[]'
+    : `jobs=[${jobs.map((job) => `${job.jobId}:${job.settledAt === null ? 'open' : 'settled'}`).join(', ')}]`;
+
+/** A copy that read these jobs' products after they settled leaves nothing of theirs to copy: they are unwatched. */
+const unwatchSettled = (watches: Map<string, Watch>, company: string, jobs: readonly WatchedJob[]) => {
+  const watch = watches.get(company);
+  if (watch === undefined) {
+    return;
+  }
+  for (const job of jobs) {
+    if (job.settledAt !== null && watch.jobs.get(job.jobId) === job) {
+      watch.jobs.delete(job.jobId);
+    }
+  }
+  if (watch.jobs.size === 0) {
+    watches.delete(company);
+  }
+};
+
 const drainTargeted: Effect.Effect<void> = Effect.gen(function* drainTargetedCopies() {
-  const { targeted } = yield* copyProcessState;
+  const { targeted, watches } = yield* copyProcessState;
   const next = targeted.pending.entries().next();
   if (next.done === true) {
     targeted.running = false;
@@ -726,15 +843,22 @@ const drainTargeted: Effect.Effect<void> = Effect.gen(function* drainTargetedCop
   }
   const [company, targets] = next.value;
   targeted.pending.delete(company);
-  const fiber = yield* copySymmyProductsToMerchandise(targets.admission, targets.codes).pipe(
-    Effect.uninterruptible,
-    Effect.provideContext(targets.context),
-    Effect.forkChild,
-  );
+  const jobs = [...targets.jobs];
+  const fiber = yield* copySymmyProductsToMerchandise(targets.admission, targets.codes, {
+    note: jobsNote(jobs),
+    settle: settleJobs(jobs.filter((job) => job.settledAt === null)),
+    write: targets.write,
+  }).pipe(Effect.uninterruptible, Effect.provideContext(targets.context), Effect.forkChild);
   targeted.current = { company, fiber, targets };
   const exit = yield* Fiber.await(fiber);
   targeted.current = null;
-  if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+  if (Exit.isSuccess(exit)) {
+    unwatchSettled(watches, company, jobs);
+  } else if (!Cause.hasInterruptsOnly(exit.cause)) {
+    // Its products may not have been written: the jobs' next commit (or any later one) copies them again.
+    for (const job of jobs) {
+      job.settledAt = null;
+    }
     yield* Console.error(`${LOG} targeted copy failed: ${describe(exit.cause)}`);
   }
   yield* drainTargeted;
@@ -764,6 +888,7 @@ const copyTargets = Effect.fn('SymmyMerchandiseCopy.scheduleTargets')(function* 
   targeted.pending.set(company, {
     ...targets,
     codes: new Set([...(restarted?.targets.codes ?? []), ...(pending?.codes ?? []), ...targets.codes]),
+    jobs: new Set([...(restarted?.targets.jobs ?? []), ...(pending?.jobs ?? []), ...targets.jobs]),
     since: restarted?.targets.since ?? pending?.since ?? now,
   });
   // Interrupts only the reads: a run already writing ends first, then its codes run again with the new ones.
@@ -775,7 +900,7 @@ const copyTargets = Effect.fn('SymmyMerchandiseCopy.scheduleTargets')(function* 
   return yield* Effect.forkDetach(drainTargeted).pipe(Effect.asVoid);
 });
 
-/** The company the admitted route copies into ("tenant|legal entity"), or undefined when it has none. */
+/** The company the admitted route copies into ("tenant|legal entity") with its products import route, if it has one. */
 const companyOf = Effect.fn('SymmyMerchandiseCopy.company')(function* company(admission: SymmyIngressAdmission) {
   const route = yield* selectRoute(admission, 'productsBatch');
   return route.legalEntityId === undefined
@@ -784,19 +909,18 @@ const companyOf = Effect.fn('SymmyMerchandiseCopy.company')(function* company(ad
         key: `${String(route.tenantId)}|${String(route.legalEntityId)}`,
         legalEntityId: String(route.legalEntityId),
         tenantId: String(route.tenantId),
+        write: route,
       };
 });
 
 /**
- * The products of accepted products imports, watched per company for WATCH_MS after each import: every commit of
- * Catalog, Pricing or Inventory for the company copies them at once, so the import's own commits (each owner commits
- * its effect, the last one included) reach "Produkty" as they land, whether or not anyone polls the job.
+ * The products jobs of accepted products imports, watched per company (see WatchedJob): every commit of Catalog,
+ * Pricing or Inventory for the company copies the products of its jobs not known settled at once, so the job's own
+ * commits (each owner commits its effect, the last one included) reach "Produkty" as they land, whether or not anyone
+ * polls the job. A job found settled is no longer copied by later commits: they are not its own.
  */
 interface Watch {
-  readonly admission: SymmyIngressAdmission;
-  /** Each watched code until when (epoch ms). */
-  readonly codes: Map<string, number>;
-  readonly context: Context.Context<never>;
+  readonly jobs: Map<string, WatchedJob>;
   readonly legalEntityId: string;
   readonly tenantId: string;
 }
@@ -806,34 +930,44 @@ interface Watch {
 const OWNER_MODULES: ReadonlySet<string> = new Set([CATALOG_MODULE_ID, 'commerce.inventory', 'commerce.pricing']);
 const WATCH_MS = 120_000;
 
-/** Copies the watched products of every company `concerns` names, dropping codes watched long enough. */
+/** One targeted run for the products of the jobs, with the newest job's request. */
+const copyJobs = (company: string, jobs: readonly [WatchedJob, ...WatchedJob[]]) => {
+  const newest = jobs.at(-1) ?? jobs[0];
+  return copyTargets(company, {
+    admission: newest.admission,
+    codes: new Set(jobs.flatMap((job) => job.codes)),
+    context: newest.context,
+    jobs: new Set(jobs),
+    write: newest.write,
+  });
+};
+
+/** Copies the products of the open jobs of every company `concerns` names, dropping jobs watched long enough. */
 const copyWatched = Effect.fn('SymmyMerchandiseCopy.copyWatched')(function* copyWatchedProducts(
   concerns: (watch: Watch) => boolean,
 ) {
   const now = yield* Clock.currentTimeMillis;
   const { watches } = yield* copyProcessState;
-  const due: [string, Watch][] = [];
+  const due: [string, [WatchedJob, ...WatchedJob[]]][] = [];
   for (const [company, watch] of watches) {
-    for (const [code, until] of watch.codes) {
-      if (until <= now) {
-        watch.codes.delete(code);
+    for (const [jobId, job] of watch.jobs) {
+      if (job.until <= now) {
+        watch.jobs.delete(jobId);
       }
     }
-    if (watch.codes.size === 0) {
+    if (watch.jobs.size === 0) {
       watches.delete(company);
-    } else if (concerns(watch)) {
-      due.push([company, watch]);
+      continue;
+    }
+    const [first, ...rest] = [...watch.jobs.values()].filter((job) => job.settledAt === null);
+    if (first !== undefined && concerns(watch)) {
+      due.push([company, [first, ...rest]]);
     }
   }
-  return yield* Effect.forEach(
-    due,
-    ([company, { admission, codes, context }]) =>
-      copyTargets(company, { admission, codes: new Set(codes.keys()), context }),
-    { concurrency: 1, discard: true },
-  );
+  return yield* Effect.forEach(due, ([company, jobs]) => copyJobs(company, jobs), { concurrency: 1, discard: true });
 });
 
-/** A committed change: a Catalog, Pricing or Inventory commit of a company copies its watched products. */
+/** A committed change: a Catalog, Pricing or Inventory commit of a company copies the products of its open jobs. */
 const copyOnOwnerCommit = (change: LiveChange): Effect.Effect<void> =>
   change.moduleKeys.some((key) => OWNER_MODULES.has(key))
     ? Effect.gen(function* copyCommittedProducts() {
@@ -849,7 +983,7 @@ const copyOnOwnerCommit = (change: LiveChange): Effect.Effect<void> =>
 
 /**
  * Feeds every committed change to the targeted copies for as long as the Shell runs; after a lost change tail (changes
- * may have been missed) every watched product is copied again.
+ * may have been missed) the products of every open job are copied again.
  */
 export const SymmyMerchandiseCopyLive = Layer.effectDiscard(
   Effect.gen(function* followOwnerCommits() {
@@ -879,11 +1013,12 @@ export const SymmyMerchandiseCopyLive = Layer.effectDiscard(
 );
 
 /**
- * After an accepted products import: its products are watched (see Watch), so they are copied the moment their owners
- * commit the job's effects. Never fails and never waits.
+ * After an accepted products import: its job is watched (see Watch), so its products are copied the moment their
+ * owners commit the job's effects. Never fails and never waits.
  */
 export const copySymmyProductsOnCommit = (
   admission: SymmyIngressAdmission,
+  jobId: string,
   codes: readonly string[],
 ): Effect.Effect<void> =>
   Effect.gen(function* watchImport() {
@@ -897,14 +1032,46 @@ export const copySymmyProductsOnCommit = (
     if (company === undefined) {
       return;
     }
-    const watched = new Map(watches.get(company.key)?.codes);
-    for (const code of codes) {
-      watched.set(code, at + WATCH_MS);
-    }
-    watches.set(company.key, { ...company, admission, codes: watched, context });
+    const job: WatchedJob = {
+      admission,
+      codes,
+      context,
+      jobId,
+      settledAt: null,
+      until: at + WATCH_MS,
+      write: company.write,
+    };
+    const watch = watches.get(company.key) ?? {
+      jobs: new Map<string, WatchedJob>(),
+      legalEntityId: company.legalEntityId,
+      tenantId: company.tenantId,
+    };
+    watch.jobs.set(jobId, job);
+    watches.set(company.key, watch);
     // A commit of the job that landed while the route was being read is not missed.
     if ((ownerCommitAt.get(company.tenantId) ?? 0) >= at) {
-      yield* copyTargets(company.key, { admission, codes: new Set(codes), context });
+      yield* copyJobs(company.key, [job]);
+    }
+  }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);
+
+/**
+ * After a job poll found a products job completed: when no copy has read its products since it settled and none is
+ * running or queued with it (the copy started by its last owner commit can find it still running), its products are
+ * copied at once, so a missed or failed copy does not wait for the next full sweep. Never fails and never waits.
+ */
+export const copySymmyJobOnCompleted = (jobId: string): Effect.Effect<void> =>
+  Effect.gen(function* copyCompletedJob() {
+    const { targeted, watches } = yield* copyProcessState;
+    for (const [company, watch] of watches) {
+      const job = watch.jobs.get(jobId);
+      if (
+        job !== undefined &&
+        job.settledAt === null &&
+        targeted.current?.targets.jobs.has(job) !== true &&
+        targeted.pending.get(company)?.jobs.has(job) !== true
+      ) {
+        return yield* copyJobs(company, [job]);
+      }
     }
   }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);
 
@@ -920,6 +1087,12 @@ export const copySymmyStockToMerchandise = (
     const context = yield* Effect.context();
     const company = yield* companyOf(admission);
     if (company !== undefined) {
-      yield* copyTargets(company.key, { admission, codes: new Set(itemKeys), context });
+      yield* copyTargets(company.key, {
+        admission,
+        codes: new Set(itemKeys),
+        context,
+        jobs: new Set(),
+        write: company.write,
+      });
     }
   }).pipe(Effect.onExit(logCopyExit('targeted copy stopped')), Effect.forkDetach, Effect.asVoid);

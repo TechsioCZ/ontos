@@ -72,6 +72,7 @@ import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract
 import { SymmyCustomerGroupsBatchResponseSchema } from './customer-groups-batch-public-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
 import {
+  copySymmyJobOnCompleted,
   copySymmyProductsOnCommit,
   copySymmyStockToMerchandise,
   scheduleSymmyMerchandiseCopy,
@@ -729,9 +730,9 @@ const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: 
 const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: FixtureInput<FixtureSubmit>) =>
   ingress.dispatch.submit(input).pipe(
     // A products job: its products are copied the moment their owners commit the job's effects, polled or not.
-    Effect.tap(() =>
+    Effect.tap((jobId) =>
       input.request.route === 'productsBatch'
-        ? copySymmyProductsOnCommit(input.admission, symmyProductBatchCodes(input.request.products))
+        ? copySymmyProductsOnCommit(input.admission, String(jobId), symmyProductBatchCodes(input.request.products))
         : Effect.void,
     ),
     Effect.map((jobId) => ({ jobId, status: 'queued' as const })),
@@ -740,8 +741,13 @@ const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: Fixtur
 const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureInput<FixturePoll>) =>
   ingress.dispatch.poll(input).pipe(
     // Any job poll refreshes the merchandise copy of every product from the owners' accepted state (the full sweep,
-    // the safety net of the targeted copies; coalesced, one run at a time).
-    Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
+    // the safety net of the targeted copies; coalesced, one run at a time); a completed products job whose products no
+    // copy read since it settled is copied at once.
+    Effect.tap((state) =>
+      scheduleSymmyMerchandiseCopy(input.admission).pipe(
+        Effect.andThen(state.phase === 'completed' ? copySymmyJobOnCompleted(input.request.id) : Effect.void),
+      ),
+    ),
     Effect.map((state) => {
       const jobId = input.request.id;
       if (state.phase === 'admitted' || state.phase === 'running' || state.phase === 'blocked') {
