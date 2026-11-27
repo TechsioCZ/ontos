@@ -335,7 +335,6 @@ it.effect('keeps eligible SKU work when another ACTIVE row cannot satisfy the re
     for (const ineligible of [
       product({ lifecycle: 'ACTIVE', unsupported: ['AttributeHint'] }, [variant({ prices: [price()] })]),
       product({ lifecycle: 'ACTIVE', unsupported: ['ClassificationHint'] }, [variant({ prices: [price()] })]),
-      product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] }), variant({ prices: [price()] })]),
     ]) {
       const plan = Option.getOrThrow(
         yield* build(rowsOf(ineligible, product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] })])), {
@@ -361,6 +360,31 @@ it.effect('keeps eligible SKU work when another ACTIVE row cannot satisfy the re
         itemKey: 'product-1',
       });
     }
+  }),
+);
+
+it.effect('prices every variant of an ACTIVE product with several variants and leaves it DRAFT in Catalog', () =>
+  Effect.gen(function* severalVariants() {
+    const readyTemplate = decodeTemplate({
+      ...templateInput(priceDefaults),
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+      items: [
+        enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations),
+        enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
+        enroll('PRICE', 'enrolled-price', priceDefine),
+      ],
+    });
+    const plan = Option.getOrThrow(
+      yield* build(
+        rowsOf(product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] }), variant({ prices: [price()] })])),
+        { template: readyTemplate },
+      ),
+    );
+    expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
+    expect(itemKeys(plan).filter((key) => key.includes('-price-'))).toHaveLength(2);
+    expect(itemOf(plan, 'product-0').unsupportedBranches).toEqual([
+      { branchKey: 'ClassificationHint', kind: 'ClassificationHint' },
+    ]);
   }),
 );
 const variantCreateOf = (effect: Effect_) =>

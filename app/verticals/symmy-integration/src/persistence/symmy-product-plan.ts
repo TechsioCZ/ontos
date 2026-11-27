@@ -503,9 +503,12 @@ const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'Sto
 const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
   row.lifecycle === 'ACTIVE' &&
   policy !== undefined &&
-  (row.variants.length !== 1 ||
-    row.unsupported.includes('AttributeHint') ||
-    row.unsupported.includes('ClassificationHint'));
+  (row.variants.length !== 1 || hintIneligible(row));
+
+/** A hint the readiness policy cannot answer keeps the product's prices back too. Several variants do not: Catalog
+ * keeps such a product DRAFT, but its variants are priced, so the shop copy creates the row and staff publish it. */
+const hintIneligible = (row: SymmyProductRow) =>
+  row.unsupported.includes('AttributeHint') || row.unsupported.includes('ClassificationHint');
 
 const categoryAssignmentEffects = (
   categories: SymmyProductRow['categories'],
@@ -635,7 +638,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
     ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
   ];
-  const priceItems = (readinessIneligible ? Option.none<PriceContext>() : prices).pipe(
+  const priceItems = (readinessIneligible && hintIneligible(row) ? Option.none<PriceContext>() : prices).pipe(
     Option.match({
       onNone: () => Effect.succeed([]),
       onSome: (context) =>
