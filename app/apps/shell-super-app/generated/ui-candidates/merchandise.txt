@@ -118,6 +118,7 @@ ms-auto
 mt-100
 mt-150
 mt-200
+object-contain
 object-cover
 opacity-40
 opacity-50
@@ -146,6 +147,7 @@ rounded-sm
 running
 self-center
 shrink-0
+size-16
 size-8
 size-full
 sm:col-span-1
