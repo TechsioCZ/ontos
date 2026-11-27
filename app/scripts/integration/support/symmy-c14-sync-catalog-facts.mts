@@ -54,8 +54,23 @@ const committedSnapshotSchema = Schema.Struct({
   result: Schema.Json,
   schema_version: Schema.Literal(1),
 });
-// An existing localized name satisfies readiness via Catalog's source lookup without submitting an Action.
-const observedNameSchema = Schema.Struct({
+// A re-import of a Product that is already ACTIVE prepares nothing: its create records that lifecycle and each
+// readiness step settles unchanged before any owner Action, so the step has no invocation, resolution or receipt.
+const adoptedProductReceiptSchema = Schema.TaggedStruct('ProductCreated', {
+  actionInvocationId: ProductActionInvocationIdSchema,
+  initialVariantRef: VariantRefSchema,
+  lifecycle: Schema.Literal('ACTIVE'),
+  productRef: ProductRefSchema,
+});
+const readinessActions = {
+  'readiness-activate': 'update-product',
+  'readiness-axes': 'govern-variant-axes',
+  'readiness-confirm': 'confirm-variant-combination',
+  'readiness-name': 'set-product-localized-facts',
+  'readiness-unit': 'set-product-unit-target-divisibility',
+  'readiness-untyped': 'decide-product-type-unnecessary',
+} as const;
+const adoptedRowSchema = Schema.Struct({
   ...readinessFields,
   acting_principal_id: Schema.Null,
   action_key: Schema.Null,
@@ -64,16 +79,24 @@ const observedNameSchema = Schema.Struct({
   core_principal_id: Schema.Null,
   core_request_hash: Schema.Null,
   core_status: Schema.Null,
-  effect_key: Schema.Literal(nameEffectKey),
+  effect_key: Schema.Literals([
+    'readiness-activate',
+    'readiness-axes',
+    'readiness-confirm',
+    'readiness-name',
+    'readiness-unit',
+    'readiness-untyped',
+  ]),
   invocation_id: Schema.Null,
   owner_auth_context_ref: Schema.Null,
   owner_executor_principal_id: Schema.Null,
   owner_receipt: Schema.Null,
   owner_request_hash: Schema.Null,
+  product_receipt: adoptedProductReceiptSchema,
   result: Schema.Null,
   schema_version: Schema.Null,
+  source_product: Schema.Null,
 });
-const readinessRowSchema = Schema.Union([committedSnapshotSchema, observedNameSchema]);
 const axesReceiptSchema = Schema.TaggedStruct('ReadinessAxes', {
   axisRevision: GovernVariantAxesRecoveryResponseSchema.fields.axisRevision,
 });
@@ -127,18 +150,27 @@ const currentSchema = Schema.Struct({
   variant_revision_tokens: Schema.Array(Schema.String),
 });
 
-/** Reads committed owner evidence, not just the worker's accepted status labels. */
-export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadinessEvidence')(
-  function* catalogReadinessEvidence(input: {
-    readonly adoption: boolean;
-    readonly authority: Authority;
-    readonly jobId: string;
-    readonly keys: readonly string[];
-    readonly sourceRouteId: string;
-    readonly unitRef: typeof ProductUnitRefSchema.Type;
-  }) {
-    const { admin, systemPrincipalId, tenantId } = input.authority;
-    const snapshots = yield* admin`
+interface CatalogEvidenceInput {
+  /** A new key re-sending the same Products after they are ACTIVE, instead of the job that prepared them. */
+  readonly adoption: boolean;
+  readonly authority: Authority;
+  readonly jobId: string;
+  readonly keys: readonly string[];
+  readonly sourceRouteId: string;
+  readonly unitRef: typeof ProductUnitRefSchema.Type;
+}
+interface CatalogEvidence {
+  readonly invocations: readonly { readonly effectKey: string; readonly invocationId: string }[];
+  readonly key: string;
+  readonly snapshots: readonly { readonly effectKey: string; readonly result: typeof Schema.Json.Type }[];
+  readonly state: Effect.Success<ReturnType<typeof currentCatalogState>> & {
+    readonly productRef: typeof ProductRefSchema.Type;
+    readonly variantRef: typeof VariantRefSchema.Type;
+  };
+}
+const readinessRows = (input: CatalogEvidenceInput) => {
+  const { admin, systemPrincipalId, tenantId } = input.authority;
+  return admin`
       select e.effect_key, coalesce(e.resolved_effect,e.effect)->'ref' as ref,
         e.resolved_effect#>'{intent,payload,sourceProduct}' as source_product,
         e.owner_invocation_id as invocation_id, e.owner_executor_principal_id, e.owner_request_hash,
@@ -162,7 +194,144 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         and i.action_invocation_id=e.owner_invocation_id
       where e.tenant_id=${tenantId} and e.job_id=${input.jobId} and e.effect_key like 'readiness-%'
       order by e.effect_key
-    `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(readinessRowSchema))));
+    `;
+};
+
+/** The source correlations and the current readiness facts Catalog holds for one source Product. */
+const currentCatalogState = Effect.fn('InternalC14Sync.currentCatalogState')(function* currentCatalogState(
+  input: CatalogEvidenceInput,
+  key: string,
+  receipt: {
+    readonly actionInvocationId: string;
+    readonly initialVariantRef: typeof VariantRefSchema.Type;
+    readonly productRef: typeof ProductRefSchema.Type;
+  },
+) {
+  const { admin, systemPrincipalId, tenantId } = input.authority;
+  const recordId = `product:sku:${key}`;
+  const { initialVariantRef, productRef } = receipt;
+  const correlations = yield* admin`
+          select c.*, i.status as core_status, i.action_key as core_action_key, i.principal_id as core_principal_id
+          from catalog.catalog_source_correlations c
+          left join core.action_invocations i on i.tenant_id=c.tenant_id and i.action_invocation_id=c.action_invocation_id
+          where c.tenant_id=${tenantId} and c.product_id=${productRef.resourceId}
+          order by c.entity_kind, c.record_id
+        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(correlationSchema))));
+  expect(correlations).toHaveLength(2);
+  expect(correlations.map(({ entity_kind, record_id }) => ({ entity_kind, record_id }))).toEqual([
+    { entity_kind: 'PRODUCT', record_id: recordId },
+    { entity_kind: 'VARIANT', record_id: `variant:sku:${key}` },
+  ]);
+  for (const correlation of correlations) {
+    expect(correlation).toMatchObject({
+      acting_principal_id: systemPrincipalId,
+      action_invocation_id: receipt.actionInvocationId,
+      core_principal_id: systemPrincipalId,
+      issuer_id: internalSyncSource.issuerId,
+      mapping_revision: internalSyncSource.mappingVersion,
+      product_id: productRef.resourceId,
+      record_namespace: internalSyncSource.namespace,
+      route_scope: input.sourceRouteId,
+      tenant_id: tenantId,
+      variant_id: initialVariantRef.resourceId,
+    });
+  }
+  const currentRows = yield* admin`
+          select p.lifecycle_state as product_lifecycle, p.current_revision as product_revision,
+            v.lifecycle_state as variant_lifecycle, v.current_revision as variant_revision,
+            v.combination_axis_revision, v.combination_key,
+            a.axis_revision, a.attribute_definition_ids as axes,
+            l.locale, l.current_revision as localized_revision, l.state as localized_state, l.name,
+            lr.acting_principal_id as localized_actor, lr.action_invocation_id as localized_invocation_id,
+            u.unit_id, u.current_revision as unit_revision, u.divisible,
+            d.decision_revision, d.decision_state, d.structured_attributes_required, d.variant_axes_required,
+            d.value_revision_tokens, d.variant_revision_tokens, d.acting_principal_id as decision_actor
+          from catalog.products p
+          join catalog.product_variants v on v.tenant_id=p.tenant_id and v.product_id=p.product_id
+          join catalog.product_variant_axis_events a on a.tenant_id=p.tenant_id and a.product_id=p.product_id
+          join catalog.product_localized_facts l on l.tenant_id=p.tenant_id and l.product_id=p.product_id
+          join catalog.product_localized_fact_revisions lr on lr.tenant_id=l.tenant_id and lr.product_id=l.product_id
+            and lr.locale=l.locale and lr.revision=l.current_revision
+          join catalog.variant_unit_divisibility u on u.tenant_id=v.tenant_id and u.variant_id=v.variant_id
+          join catalog.product_type_untyped_decisions d on d.tenant_id=p.tenant_id and d.product_id=p.product_id
+          where p.tenant_id=${tenantId} and p.product_id=${productRef.resourceId}
+            and v.variant_id=${initialVariantRef.resourceId}
+        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(currentSchema))));
+  expect(currentRows).toHaveLength(1);
+  const [current] = currentRows;
+  assert.isDefined(current);
+  return { correlations, current };
+});
+
+/**
+ * A re-import of Products that are ACTIVE already: the create records that lifecycle, and every readiness step settles
+ * unchanged before any owner Action, so none of them has an invocation, a resolved command or a receipt.
+ */
+const adoptedCatalogEvidence = Effect.fn('InternalC14Sync.adoptedCatalogEvidence')(function* adoptedCatalogEvidence(
+  input: CatalogEvidenceInput,
+) {
+  const { tenantId } = input.authority;
+  const rows = yield* readinessRows(input).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(adoptedRowSchema))),
+  );
+  expect(rows).toHaveLength(input.keys.length * 6);
+  return yield* Effect.forEach(
+    input.keys,
+    Effect.fn('InternalC14Sync.adoptedSkuEvidence')(function* adoptedSkuEvidence(key: string) {
+      const recordId = `product:sku:${key}`;
+      const own = rows.filter(({ ref }) => ref.occurrence.record.sourceRecordId === recordId);
+      expect(own.map(({ effect_key }) => effect_key).toSorted()).toEqual(Object.keys(readinessActions).toSorted());
+      const [first] = own;
+      assert.isDefined(first);
+      const receipt = first.product_receipt;
+      const original = first.product_result;
+      expect(original.product.productRef).toEqual(receipt.productRef);
+      expect(original.variantId).toBe(receipt.initialVariantRef.resourceId);
+      for (const row of own) {
+        expect(row.product_receipt).toEqual(receipt);
+        expect(row.product_result).toEqual(original);
+        expect(row.outcome).toMatchObject({
+          effectId: row.ref.effectId,
+          owner: 'commerce.catalog',
+          status: 'accepted_no_change',
+        });
+        expect(row.ref.operation).toEqual({
+          entrypointKey: `commerce.catalog.${readinessActions[row.effect_key]}`,
+          moduleId: 'commerce.catalog',
+          schemaVersion: '1',
+        });
+        expect(row.ref.originalTarget).toBeUndefined();
+        expect(row.ref.occurrence.record).toEqual({
+          entityKind: 'PRODUCT',
+          issuerId: internalSyncSource.issuerId,
+          route: { integrationRouteId: input.sourceRouteId, tenantId },
+          sourceNamespace: internalSyncSource.namespace,
+          sourceRecordId: recordId,
+        });
+      }
+      const state = yield* currentCatalogState(input, key, receipt);
+      const evidence: CatalogEvidence = {
+        invocations: [],
+        key,
+        snapshots: [],
+        state: { ...state, productRef: receipt.productRef, variantRef: receipt.initialVariantRef },
+      };
+      return evidence;
+    }),
+    { concurrency: 1 },
+  );
+});
+
+/** Reads committed owner evidence, not just the worker's accepted status labels. */
+export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadinessEvidence')(
+  function* catalogReadinessEvidence(input: CatalogEvidenceInput) {
+    if (input.adoption) {
+      return yield* adoptedCatalogEvidence(input);
+    }
+    const { systemPrincipalId, tenantId } = input.authority;
+    const snapshots = yield* readinessRows(input).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(committedSnapshotSchema))),
+    );
     expect(snapshots).toHaveLength(input.keys.length * 6);
     return yield* Effect.forEach(
       input.keys,
@@ -177,17 +346,12 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           assert.isDefined(row);
           return row;
         };
-        const committedRowFor = (effectKey: string) => {
-          const row = rowFor(effectKey);
-          assert.isNotNull(row.invocation_id);
-          return row;
-        };
-        const axesRow = committedRowFor('readiness-axes');
-        const confirmRow = committedRowFor('readiness-confirm');
+        const axesRow = rowFor('readiness-axes');
+        const confirmRow = rowFor('readiness-confirm');
         const nameRow = rowFor(nameEffectKey);
-        const activateRow = committedRowFor('readiness-activate');
-        const unitRow = committedRowFor('readiness-unit');
-        const untypedRow = committedRowFor('readiness-untyped');
+        const activateRow = rowFor('readiness-activate');
+        const unitRow = rowFor('readiness-unit');
+        const untypedRow = rowFor('readiness-untyped');
         const receipt = axesRow.product_receipt;
         const { initialVariantRef, productRef } = receipt;
         const original = axesRow.product_result;
@@ -207,16 +371,13 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           [untypedRow, 'decide-product-type-unnecessary'],
         ] as const) {
           const actionKey = `commerce.catalog.${action}`;
-          expect(row.invocation_id === null).toBe(input.adoption && row.effect_key === nameEffectKey);
-          if (row.invocation_id !== null) {
-            expect(row.action_key).toBe(actionKey);
-            expect(row.core_action_key).toBe(actionKey);
-            expect(row.owner_executor_principal_id).toBe(systemPrincipalId);
-            expect(row.core_principal_id).toBe(systemPrincipalId);
-            expect(row.acting_principal_id).toBe(systemPrincipalId);
-            expect(row.owner_request_hash).toBe(row.core_request_hash);
-            expect(row.committed_reply.encoded).toEqual(row.result);
-          }
+          expect(row.action_key).toBe(actionKey);
+          expect(row.core_action_key).toBe(actionKey);
+          expect(row.owner_executor_principal_id).toBe(systemPrincipalId);
+          expect(row.core_principal_id).toBe(systemPrincipalId);
+          expect(row.acting_principal_id).toBe(systemPrincipalId);
+          expect(row.owner_request_hash).toBe(row.core_request_hash);
+          expect(row.committed_reply.encoded).toEqual(row.result);
           expect(row.ref.operation).toEqual({
             entrypointKey: actionKey,
             moduleId: 'commerce.catalog',
@@ -227,7 +388,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           expect(row.product_result).toEqual(original);
           expect(row.outcome.effectId).toBe(row.ref.effectId);
           expect(row.outcome.owner).toBe('commerce.catalog');
-          expect(row.outcome.status).toBe(input.adoption ? 'accepted_no_change' : 'accepted_change');
+          expect(row.outcome.status).toBe('accepted_change');
           expect(row.ref.occurrence.record).toEqual({
             entityKind: 'PRODUCT',
             issuerId: internalSyncSource.issuerId,
@@ -250,15 +411,12 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         }
         const axes = yield* Schema.decodeUnknownEffect(GovernVariantAxesRecoveryResponseSchema)(axesRow.result);
         const confirmed = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationResultSchema)(confirmRow.result);
-        const name =
-          nameRow.invocation_id === null
-            ? undefined
-            : yield* Schema.decodeUnknownEffect(SetProductLocalizedFactsRecoveryResponseSchema)(nameRow.result);
+        const name = yield* Schema.decodeUnknownEffect(SetProductLocalizedFactsRecoveryResponseSchema)(nameRow.result);
         const activated = yield* Schema.decodeUnknownEffect(UpdateProductRecoveryResponseSchema)(activateRow.result);
         const unit = yield* Schema.decodeUnknownEffect(SetProductUnitTargetDivisibilityResultSchema)(unitRow.result);
         const untyped = yield* Schema.decodeUnknownEffect(DecideProductTypeUnnecessaryResultSchema)(untypedRow.result);
         for (const result of [axes, confirmed, activated, unit, untyped]) {
-          expect(result.changed).toBe(!input.adoption);
+          expect(result.changed).toBe(true);
         }
         expect(axes.productRef).toEqual(productRef);
         const axesReceipt = yield* Schema.decodeUnknownEffect(axesReceiptSchema)(
@@ -295,62 +453,11 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         });
         expect(untyped.productRef).toEqual(productRef);
         expect(untyped.decisionState).toBe('CONFIRMED');
-        const correlations = yield* admin`
-          select c.*, i.status as core_status, i.action_key as core_action_key, i.principal_id as core_principal_id
-          from catalog.catalog_source_correlations c
-          left join core.action_invocations i on i.tenant_id=c.tenant_id and i.action_invocation_id=c.action_invocation_id
-          where c.tenant_id=${tenantId} and c.product_id=${productRef.resourceId}
-          order by c.entity_kind, c.record_id
-        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(correlationSchema))));
-        expect(correlations).toHaveLength(2);
-        expect(correlations.map(({ entity_kind, record_id }) => ({ entity_kind, record_id }))).toEqual([
-          { entity_kind: 'PRODUCT', record_id: recordId },
-          { entity_kind: 'VARIANT', record_id: `variant:sku:${key}` },
-        ]);
-        for (const correlation of correlations) {
-          expect(correlation).toMatchObject({
-            acting_principal_id: systemPrincipalId,
-            action_invocation_id: receipt.actionInvocationId,
-            core_principal_id: systemPrincipalId,
-            issuer_id: internalSyncSource.issuerId,
-            mapping_revision: internalSyncSource.mappingVersion,
-            product_id: productRef.resourceId,
-            record_namespace: internalSyncSource.namespace,
-            route_scope: input.sourceRouteId,
-            tenant_id: tenantId,
-            variant_id: initialVariantRef.resourceId,
-          });
-        }
-        const currentRows = yield* admin`
-          select p.lifecycle_state as product_lifecycle, p.current_revision as product_revision,
-            v.lifecycle_state as variant_lifecycle, v.current_revision as variant_revision,
-            v.combination_axis_revision, v.combination_key,
-            a.axis_revision, a.attribute_definition_ids as axes,
-            l.locale, l.current_revision as localized_revision, l.state as localized_state, l.name,
-            lr.acting_principal_id as localized_actor, lr.action_invocation_id as localized_invocation_id,
-            u.unit_id, u.current_revision as unit_revision, u.divisible,
-            d.decision_revision, d.decision_state, d.structured_attributes_required, d.variant_axes_required,
-            d.value_revision_tokens, d.variant_revision_tokens, d.acting_principal_id as decision_actor
-          from catalog.products p
-          join catalog.product_variants v on v.tenant_id=p.tenant_id and v.product_id=p.product_id
-          join catalog.product_variant_axis_events a on a.tenant_id=p.tenant_id and a.product_id=p.product_id
-          join catalog.product_localized_facts l on l.tenant_id=p.tenant_id and l.product_id=p.product_id
-          join catalog.product_localized_fact_revisions lr on lr.tenant_id=l.tenant_id and lr.product_id=l.product_id
-            and lr.locale=l.locale and lr.revision=l.current_revision
-          join catalog.variant_unit_divisibility u on u.tenant_id=v.tenant_id and u.variant_id=v.variant_id
-          join catalog.product_type_untyped_decisions d on d.tenant_id=p.tenant_id and d.product_id=p.product_id
-          where p.tenant_id=${tenantId} and p.product_id=${productRef.resourceId}
-            and v.variant_id=${initialVariantRef.resourceId}
-        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(currentSchema))));
-        expect(currentRows).toHaveLength(1);
-        const [current] = currentRows;
-        assert.isDefined(current);
+        const { correlations, current } = yield* currentCatalogState(input, key, receipt);
         const { localized_invocation_id: nameInvocationId, localized_revision: nameRevision, ...facts } = current;
-        if (name !== undefined) {
-          expect(name.changed).toBe(true);
-          expect(nameInvocationId).toBe(nameRow.invocation_id);
-          expect(nameRevision).toBe(name.revision);
-        }
+        expect(name.changed).toBe(true);
+        expect(nameInvocationId).toBe(nameRow.invocation_id);
+        expect(nameRevision).toBe(name.revision);
         expect(facts).toEqual({
           axes: [],
           axis_revision: axes.axisRevision,
@@ -375,17 +482,16 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           variant_revision: confirmed.variantRevision,
           variant_revision_tokens: [`${initialVariantRef.resourceId}:${confirmed.variantRevision}`],
         });
-        return {
-          invocations: rows.flatMap(({ effect_key, invocation_id }) =>
-            invocation_id === null ? [] : [{ effectKey: effect_key, invocationId: invocation_id }],
-          ),
+        const evidence: CatalogEvidence = {
+          invocations: rows.map(({ effect_key, invocation_id }) => ({
+            effectKey: effect_key,
+            invocationId: invocation_id,
+          })),
           key,
-          productReceipt: receipt,
-          snapshots: rows.flatMap(({ effect_key, invocation_id, result }) =>
-            invocation_id === null ? [] : [{ effectKey: effect_key, result }],
-          ),
+          snapshots: rows.map(({ effect_key, result }) => ({ effectKey: effect_key, result })),
           state: { correlations, current, productRef, variantRef: initialVariantRef },
         };
+        return evidence;
       }),
       { concurrency: 1 },
     );

@@ -19,6 +19,7 @@ import { handleReactivateProduct, reactivateProductAction } from '../../src/acti
 import { handleRetireProduct, retireProductAction } from '../../src/actions/retire-product.action.ts';
 import { handleUpdateProduct, updateProductAction } from '../../src/actions/update-product.action.ts';
 import {
+  catalogSourceCorrelations,
   productLifecycleEvents,
   productRevisions,
   productVariants,
@@ -31,6 +32,8 @@ import {
 } from '../../src/persistence/catalog-persistence.ts';
 import { catalogSelectionCurrentBasisForScope } from '../../src/persistence/catalog-selection-current-basis.ts';
 import type { CatalogPersistence } from '../../src/persistence/catalog-persistence.ts';
+import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
+import { sourceProductIntentFixture } from '../support/source-product-intent.fixture.ts';
 
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type, sonarjs/no-nested-functions -- The Drizzle transaction fake records heterogeneous Catalog writes and implements only the exercised query chains. expires: 2027-03-31. */
 
@@ -183,8 +186,9 @@ const variant = (lifecycleState: string): FakeVariant => ({
   variantId,
 });
 
-const selectable = <T>(rows: T) =>
+const selectable = <T>(rows: T): Effect.Effect<T> & Record<'for' | 'limit' | 'orderBy', () => Effect.Effect<T>> =>
   Object.assign(Effect.succeed(rows), {
+    for: () => selectable(rows),
     limit: () => Effect.succeed(rows),
     orderBy: () => Effect.succeed(rows),
   });
@@ -200,6 +204,7 @@ interface HarnessState {
 const makeTransaction = (input: {
   readonly localizedNames?: readonly { readonly name: string | null; readonly state: string }[];
   readonly product: FakeProduct;
+  readonly sourceCorrelations?: readonly object[];
   readonly variants: readonly FakeVariant[];
 }) => {
   const state: HarnessState = {
@@ -234,6 +239,9 @@ const makeTransaction = (input: {
           }
           if (table === productVariants) {
             return selectable([...state.variants]);
+          }
+          if (table === catalogSourceCorrelations) {
+            return selectable(input.sourceCorrelations ?? []);
           }
           return Effect.succeed(input.localizedNames ?? []);
         },
@@ -515,6 +523,53 @@ describe('Product lifecycle acceptance (#414)', () => {
       );
       expect(repeatedOutcome).not.toBeNull();
       expect(state.revisions).toHaveLength(1);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('the importing source retires its Product by an update, once; nobody else retires by an update', () =>
+    Effect.gen(function* sourceRetirement() {
+      const source = yield* sourceProductIntentFixture({ principalId, productId, tenantId, variantId });
+      const { persistence, state } = yield* persistenceFor({
+        localizedNames: [{ name: 'Kladivo', state: 'SET' }],
+        product: activeProduct(2),
+        sourceCorrelations: [source.correlation],
+        variants: [variant('ACTIVE')],
+      });
+      const retireBy = (expectedRevision: number, sourceProduct?: CreateProductPayload) =>
+        persistence.update({
+          actionInvocationId: invocationId,
+          activateVariantId: undefined,
+          expectedRevision,
+          principalId,
+          productId,
+          reason: 'Retired in the ERP',
+          sourceProduct,
+          targetLifecycle: 'RETIRED',
+          tenantId,
+        });
+      expect(yield* retireBy(2)).toMatchObject({ _tag: 'lifecycle_conflict' });
+      expect(yield* retireBy(1, source.sourceProduct)).toMatchObject({ _tag: 'revision_conflict', actualRevision: 2 });
+      expect(state.revisions).toHaveLength(0);
+
+      expect(yield* retireBy(2, source.sourceProduct)).toMatchObject({
+        _tag: 'updated',
+        changed: true,
+        product: { lifecycle: 'RETIRED', revision: 3 },
+      });
+      expect(state.product).toMatchObject({ lifecycleState: 'RETIRED', retiredReason: 'Retired in the ERP' });
+      expect(state.revisions).toEqual([
+        expect.objectContaining({ changeKind: 'LIFECYCLE', lifecycleState: 'RETIRED', revision: 3 }),
+      ]);
+      expect(state.lifecycleEvents).toEqual([expect.objectContaining({ event: 'RETIRED' })]);
+
+      expect(yield* retireBy(3, source.sourceProduct)).toMatchObject({
+        _tag: 'updated',
+        changed: false,
+        product: { lifecycle: 'RETIRED', revision: 3 },
+      });
+      expect(yield* retireBy(3)).toMatchObject({ _tag: 'lifecycle_conflict' });
+      expect(state.revisions).toHaveLength(1);
+      expect(state.lifecycleEvents).toHaveLength(1);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
