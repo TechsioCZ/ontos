@@ -57,7 +57,8 @@ const tenantsToTheme = Effect.gen(function* tenantsToTheme() {
     .where(and(eq(tenants.status, 'active'), eq(principals.kind, 'human'), eq(principals.status, 'active')))
     .orderBy(principals.tenantId, principals.principalId)
     .pipe(Effect.mapError(() => failure('the active tenants could not be read')));
-  return [...Map.groupBy(rows, ({ tenantId }) => tenantId).values()].flatMap(([first]) => (first === undefined ? [] : [first]));
+  // One person per tenant: the first, so every boot names the same one.
+  return new Map(rows.toReversed().map((row) => [row.tenantId, row]));
 });
 
 /** The tenant-wide scope the theme store runs in, as the theme Actions run without a selected company. */
@@ -109,23 +110,18 @@ export const seedTenantTheme = Effect.fn('TenantThemeSeed.tenant')(function* see
     .pipe(Effect.mapError(() => failure(`tenant ${tenantId}: the theme store refused the write`)));
 });
 
-const describe = (tenantId: string, { outcome, themeKey }: TenantThemeSeedOutcome) => {
-  switch (outcome) {
-    case 'attached': {
-      return `${LOG} tenant ${tenantId}: now wears ${themeKey}`;
-    }
-    case 'chose-default': {
-      return `${LOG} tenant ${tenantId}: keeps the default; ${themeKey} is saved but detached`;
-    }
-    case 'kept': {
-      return `${LOG} tenant ${tenantId}: keeps ${themeKey}`;
-    }
-  }
-};
+const outcomeText = {
+  attached: (themeKey: string) => `now wears ${themeKey}`,
+  'chose-default': (themeKey: string) => `keeps the default; ${themeKey} is saved but detached`,
+  kept: (themeKey: string) => `keeps ${themeKey}`,
+} satisfies Record<TenantThemeSeedOutcome['outcome'], (themeKey: string) => string>;
+
+const describe = (tenantId: string, { outcome, themeKey }: TenantThemeSeedOutcome) =>
+  `${LOG} tenant ${tenantId}: ${outcomeText[outcome](themeKey)}`;
 
 export const seedTenantThemes = Effect.gen(function* seedTenantThemes() {
   const targets = yield* tenantsToTheme;
-  const outcomes = yield* Effect.forEach(targets, ({ principalId, tenantId }) =>
+  const outcomes = yield* Effect.forEach(targets.values(), ({ principalId, tenantId }) =>
     seedTenantTheme(tenantId, principalId).pipe(
       Effect.tap((seeded) => Console.log(describe(tenantId, seeded))),
       Effect.tapError(({ message }) => Console.error(`${LOG} FAILED ${message}`)),
@@ -155,7 +151,10 @@ const RuntimeLive = Layer.unwrap(
 
 if (import.meta.main) {
   NodeRuntime.runMain(
-    Command.run(Command.make('tenant-theme-seed', {}, () => seedTenantThemes), { version: '1.0.0' }).pipe(
+    Command.run(
+      Command.make('tenant-theme-seed', {}, () => seedTenantThemes),
+      { version: '1.0.0' },
+    ).pipe(
       Effect.provide(RuntimeLive),
       Effect.scoped,
       Effect.provide(NodeServices.layer),

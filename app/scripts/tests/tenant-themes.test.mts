@@ -21,35 +21,45 @@ import {
  * (:root.light[data-theme] and the square checkbox on :root) over the kit brand each tenant wore (AKROS for AKROS's
  * tenant, Business for every other). The seeded themes must resolve every one of these tokens to the same value.
  */
+const pageColour = 'var(--color-base)';
+const hairline = 'color-mix(in oklab, var(--color-border-primary) 60%, transparent)';
 const stylesheetOverrides = {
   '--border-width-data-table': '0px',
   '--border-width-form-control': '1px',
   '--color-accordion-bg': 'transparent',
   '--color-accordion-content-bg': 'transparent',
   '--color-accordion-title-bg': 'transparent',
-  '--color-dialog-content-bg': 'var(--color-base)',
-  '--color-drawer-surface': 'var(--color-base)',
-  '--color-form-control-bg': 'var(--color-base)',
-  '--color-form-control-bg-focus': 'var(--color-base)',
-  '--color-form-control-bg-hover': 'var(--color-base)',
+  '--color-dialog-content-bg': pageColour,
+  '--color-drawer-surface': pageColour,
+  '--color-form-control-bg': pageColour,
+  '--color-form-control-bg-focus': pageColour,
+  '--color-form-control-bg-hover': pageColour,
   '--color-form-control-border': 'var(--color-border-primary)',
   '--color-form-control-border-hover': 'var(--color-fg-secondary)',
-  '--color-table-bg': 'var(--color-base)',
-  '--color-table-border': 'color-mix(in oklab, var(--color-border-primary) 60%, transparent)',
+  '--color-table-bg': pageColour,
+  '--color-table-border': hairline,
   '--color-table-footer-bg': 'transparent',
   '--color-table-header-bg': 'transparent',
   '--color-tabs-bg': 'transparent',
-  '--color-tabs-border-base': 'color-mix(in oklab, var(--color-border-primary) 60%, transparent)',
+  '--color-tabs-border-base': hairline,
   '--color-tabs-list-bg': 'transparent',
   '--radius-checkbox': '0.25rem',
   '--radius-checkbox-indeterminate': '0.25rem',
 } as const;
 
+/** How a character changes the parenthesis depth. */
+const depthChange = (character: string | undefined) => {
+  if (character === '(') {
+    return 1;
+  }
+  return character === ')' ? -1 : 0;
+};
+
 /** The index of the parenthesis that closes the one opened just before `from`. */
 const closingParenthesis = (value: string, from: number) => {
   let depth = 1;
   for (let index = from; index < value.length; index += 1) {
-    depth += value[index] === '(' ? 1 : value[index] === ')' ? -1 : 0;
+    depth += depthChange(value[index]);
     if (depth === 0) {
       return index;
     }
@@ -61,7 +71,7 @@ const closingParenthesis = (value: string, from: number) => {
 const firstArgument = (value: string, from: number, end: number) => {
   let depth = 0;
   for (let index = from; index < end; index += 1) {
-    depth += value[index] === '(' ? 1 : value[index] === ')' ? -1 : 0;
+    depth += depthChange(value[index]);
     if (depth === 0 && value[index] === ',') {
       return value.slice(from, index);
     }
@@ -74,7 +84,7 @@ const firstArgument = (value: string, from: number, end: number) => {
  * value over the foundation, every `light-dark()` by its light value, and the kit's transparent spelled `transparent`.
  */
 const resolve = (brand: BrandDefinition, value: string, seen: readonly string[] = []): string => {
-  const call = /(var|light-dark)\(/u.exec(value);
+  const call = /(?:var|light-dark)\(/u.exec(value);
   if (call === null) {
     return value.trim() === 'oklch(0 0 none / 0)' ? 'transparent' : value.trim();
   }
@@ -82,7 +92,7 @@ const resolve = (brand: BrandDefinition, value: string, seen: readonly string[] 
   const close = closingParenthesis(value, open);
   const argument = firstArgument(value, open, close).trim();
   let replacement = resolve(brand, argument, seen);
-  if (call[1] === 'var') {
+  if (call[0] === 'var(') {
     if (seen.includes(argument)) {
       throw new Error(`${argument} refers to itself`);
     }
@@ -99,11 +109,11 @@ const token = (brand: BrandDefinition, name: string) => resolve(brand, `var(${na
 
 /** An oklch() colour's lightness (0-1), chroma and hue, to compare it with a value the browser printed. */
 const oklch = (value: string) => {
-  const match = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)\s*\)$/u.exec(value);
-  if (match === null) {
+  const match = /^oklch\(\s*(?<lightness>[\d.]+)(?<percent>%?)\s+(?<chroma>[\d.]+)\s+(?<hue>[\d.]+)\s*\)$/u.exec(value);
+  if (match?.groups === undefined) {
     throw new Error(`not an oklch() colour: ${value}`);
   }
-  const [, lightness = '', percent, chroma = '', hue = ''] = match;
+  const { chroma = '', hue = '', lightness = '', percent } = match.groups;
   return [Number(lightness) / (percent === '%' ? 100 : 1), Number(chroma), Number(hue)].map((part) =>
     Number(part.toFixed(4)),
   );
