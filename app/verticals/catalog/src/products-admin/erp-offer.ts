@@ -1,5 +1,5 @@
 import { CustomerConfigurationIdSchema } from '@app/inventory/launch-scope';
-import { makeOperationGateway } from '@app/shared-contracts';
+import { issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Option, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -86,7 +86,14 @@ const SymmyStockSourceApi = HttpApi.make('ErpOfferSymmyApi').add(
 );
 
 const pricingGateway = makeOperationGateway('pricing');
-const symmyGateway = makeOperationGateway('symmy-integration');
+/**
+ * The Shell's document hint counts a module as denied when every Shell contribution of it is (for Symmy: the Integrace
+ * routes panel), and the default issuer then refuses its audience without asking. A shop operator holds this read but
+ * not that panel, so the Symmy gateway asks the Shell directly; Symmy still decides the read for that person.
+ */
+const symmyGateway = makeOperationGateway('symmy-integration', (payload, options) =>
+  issueGatewayContext(payload, options),
+);
 
 const pricingScopes = (requestCorrelation: string) =>
   pricingGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
