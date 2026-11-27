@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { defineAction } from '../../src/actions/definition.ts';
+import { registerSystemWorkload } from '../../src/auth/system-workload-registration.ts';
 import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   OntosActionContractSchema,
@@ -766,6 +767,31 @@ it('declares the Action keys the module may act for as an originator, exactly an
       originatorActions: ['privacy.core.dispatch-privacy-measure', 'privacy.core.dispatch-privacy-measure'],
     }),
   ).toThrow();
+});
+
+it('declares the system workloads its own code registers: genuine registrations, once each, under its own id', () => {
+  const registration = registerSystemWorkload({ jobKey: 'property.registry.archive-job' });
+  const declared = defineOntosModuleManifest({ ...emptyManifestInput(), systemWorkloads: [registration] });
+  expect(declared.systemWorkloads).toEqual([registration]);
+  expect(Object.isFrozen(declared.systemWorkloads)).toBe(true);
+  const refused =
+    (systemWorkloads: NonNullable<Parameters<typeof defineOntosModuleManifest>[0]['systemWorkloads']>) => () =>
+      defineOntosModuleManifest({ ...emptyManifestInput(), systemWorkloads });
+  // A look-alike object is not the module's registration.
+  expect(refused([{ allowServicePrincipal: false, jobKey: 'property.registry.archive-job' }])).toThrow(
+    /registerSystemWorkload/u,
+  );
+  // The key starts with the module's own id and a dot: another module's key, or one that only shares the root
+  // segment of the id, is refused.
+  for (const jobKey of ['commerce.catalog.archive-job', 'property.registry-job', 'property.other.archive-job']) {
+    expect(refused([registerSystemWorkload({ jobKey })])).toThrow(/must start with property\.registry\./u);
+  }
+  expect(refused([registerSystemWorkload({ jobKey: 'property_registry_job' })])).toThrow();
+  expect(refused([registration, registerSystemWorkload({ jobKey: 'property.registry.archive-job' })])).toThrow();
+  // Core enrolls only a Principal of kind system for a declared workload.
+  expect(
+    refused([registerSystemWorkload({ allowServicePrincipal: true, jobKey: 'property.registry.archive-job' })]),
+  ).toThrow(/only a system Principal/u);
 });
 
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
