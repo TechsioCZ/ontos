@@ -1,12 +1,12 @@
 import { formatMoney, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { TagsCell } from '../../../../list-cells.tsx';
 import { formatKc } from '../../../../list-format.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
-import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
 import { StorefrontStatusCell, storefrontListNote } from './storefront-status.tsx';
@@ -39,6 +39,37 @@ const variantNoun = (count: number) => {
     return 'varianta';
   }
   return count < 5 ? 'varianty' : 'variant';
+};
+
+/** The stock flag of a tracked product: its tint and why; null when stock is untracked or not running out. */
+type StockFlag = { readonly empty: boolean; readonly reason: string; readonly severity: 'danger' | 'warning' };
+
+const stockFlagOf = (product: ProductRecord, label: (path: string) => string): StockFlag | null => {
+  if (product.availability === undefined || product.availability === 'UNKNOWN') {
+    return null;
+  }
+  const onHand = product.stockOnHand;
+  const reasons: string[] = [];
+  let severity: StockFlag['severity'] | undefined;
+  if (onHand <= 0) {
+    severity = 'danger';
+    reasons.push(label('stockLevel.empty'));
+  } else if (onHand < 10) {
+    severity = 'danger';
+    reasons.push(label('stockLevel.almostEmpty'));
+  } else if (onHand < 50) {
+    severity = 'warning';
+    reasons.push(label('stockLevel.low'));
+  }
+  if (product.lowStock) {
+    severity ??= 'warning';
+    reasons.push(
+      product.lowStockThreshold > 0
+        ? `${label('status.lowStock')} (${label('stockLevel.minimum')} ${formatNumber(product.lowStockThreshold)})`
+        : label('status.lowStock'),
+    );
+  }
+  return severity === undefined ? null : { empty: onHand <= 0, reason: reasons.join(' · '), severity };
 };
 
 /**
@@ -101,7 +132,8 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     enableSorting: false,
     header: label('columns.tags'),
     id: 'tags',
-    meta: { width: 174 },
+    // „Symmy“ (51 px), one short tag chip such as „Výprodej“ (70 px with its dot) and „+N“ (25 px) on one line.
+    meta: { width: 170 },
   },
   {
     accessorFn: (product) =>
@@ -141,23 +173,28 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
   },
   {
     accessorKey: 'stockOnHand',
-    // The number on its own line keeps the numbers of all rows ending at one x; the stock flags sit under it, so the
-    // column is only as wide as its widest flag.
-    cell: (info) => (
-      <span className="flex flex-col items-end gap-50">
-        <span className="whitespace-nowrap tabular-nums">{formatNumber(info.getValue<number>())}</span>
-        <span className="flex flex-wrap justify-end gap-50 whitespace-nowrap">
-          {info.row.original.lowStock && (
-            <Badge severity="warning" size="sm">
-              {label('status.lowStock')}
-            </Badge>
-          )}
-          <AvailabilityBadge value={info.row.original.availability} />
+    // Only the number, end-aligned; it takes a tint only while stock runs out (orange under 50 or under the product's
+    // own minimum, red under 10, red with an exclamation icon at 0 or less). An untinted number sits in a box with the
+    // badge's own padding and border, so the digits of all rows end at one x; the icon sits before the badge.
+    cell: (info) => {
+      const value = formatNumber(info.getValue<number>());
+      const flag = stockFlagOf(info.row.original, label);
+      return flag === null ? (
+        <span className="inline-flex whitespace-nowrap border-(length:--border-width-badge) border-transparent p-badge-sm tabular-nums">
+          {value}
         </span>
-      </span>
-    ),
+      ) : (
+        <span className="inline-flex items-center gap-50 whitespace-nowrap" title={flag.reason}>
+          {flag.empty && <Icon aria-hidden="true" icon="icon-[mdi--alert-circle]" severity="danger" size="sm" />}
+          <Badge className="tabular-nums" severity={flag.severity} size="sm">
+            {value}
+          </Badge>
+          <span className="sr-only">{`, ${flag.reason}`}</span>
+        </span>
+      );
+    },
     header: label('columns.onHand'),
-    meta: { align: 'end', type: 'number', width: 110 },
+    meta: { align: 'end', type: 'number', width: 96 },
   },
   {
     accessorKey: 'stockValueMinor',

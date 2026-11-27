@@ -21,7 +21,7 @@ export const SymmyImportedBadge = ({ product }: { readonly product: Pick<Product
   const { t } = useModernI18n();
   return isSymmyImported(product) ? (
     <span className="shrink-0 whitespace-nowrap" data-imported-via="symmy">
-      <Badge severity="info" size="sm">
+      <Badge severity="info" size="sm" title={t(`${key}.badgeTitle`)}>
         {t(`${key}.badge`)}
       </Badge>
     </span>
