@@ -600,56 +600,6 @@ export const tenantModuleStateChanges = coreSchema.table(
   ],
 );
 
-/** A tenant's themes: the UI kit's brand data, validated by the kit when saved (core.themes). */
-export const tenantThemes = enableCoreGovernedRls(
-  coreSchema.table(
-    'tenant_themes',
-    {
-      tenantId: tenantId(),
-      themeKey: text('theme_key').notNull(),
-      label: text('label').notNull(),
-      modes: text('modes').$type<'light' | 'dark'>().array().notNull(),
-      tokens: jsonb('tokens').$type<Readonly<Record<string, string>>>().notNull(),
-      defaults: jsonb('defaults').$type<TenantThemeDefaults>(),
-      createdAt: createdAt(),
-      updatedAt: updatedAt(),
-    },
-    (table) => [
-      primaryKey({ columns: [table.tenantId, table.themeKey], name: 'core_tenant_themes_pk' }),
-      check(
-        'core_tenant_themes_key_ck',
-        sql`length(${table.themeKey}) <= 64 and ${table.themeKey} ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'`,
-      ),
-      check('core_tenant_themes_label_ck', sql`length(${table.label}) between 1 and 120`),
-      check(
-        'core_tenant_themes_modes_ck',
-        sql`cardinality(${table.modes}) between 1 and 2 and ${table.modes} <@ array['light', 'dark']::text[]`,
-      ),
-      sharedRuntimeAllPolicy('tenant_themes'),
-    ],
-  ),
-);
-
-/** The one theme a tenant uses. No row is the default (the kit's Business brand). */
-export const tenantThemeAttachments = enableCoreGovernedRls(
-  coreSchema.table(
-    'tenant_theme_attachments',
-    {
-      tenantId: tenantId().primaryKey(),
-      themeKey: text('theme_key').notNull(),
-      updatedAt: updatedAt(),
-    },
-    (table) => [
-      foreignKey({
-        columns: [table.tenantId, table.themeKey],
-        foreignColumns: [tenantThemes.tenantId, tenantThemes.themeKey],
-        name: 'core_tenant_theme_attachments_theme_fk',
-      }).onDelete('restrict'),
-      sharedRuntimeAllPolicy('tenant_theme_attachments'),
-    ],
-  ),
-);
-
 export const auditEvents = enableCoreGovernedRls(
   coreSchema.table(
     'audit_events',
@@ -711,6 +661,56 @@ export const auditEvents = enableCoreGovernedRls(
 );
 
 const auditEventId = () => uuid('audit_event_id');
+
+/** A tenant's themes: the UI kit's brand data, validated by the kit when saved (core.themes). */
+export const tenantThemes = enableCoreGovernedRls(
+  coreSchema.table(
+    'tenant_themes',
+    {
+      tenantId: tenantId(),
+      themeKey: text('theme_key').notNull(),
+      label: text('label').notNull(),
+      modes: text('modes').$type<'light' | 'dark'>().array().notNull(),
+      tokens: jsonb('tokens').$type<Readonly<Record<string, string>>>().notNull(),
+      defaults: jsonb('defaults').$type<TenantThemeDefaults>(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({ columns: [table.tenantId, table.themeKey], name: 'core_tenant_themes_pk' }),
+      check(
+        'core_tenant_themes_key_ck',
+        sql`length(${table.themeKey}) <= 64 and ${table.themeKey} ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'`,
+      ),
+      check('core_tenant_themes_label_ck', sql`length(${table.label}) between 1 and 120`),
+      check(
+        'core_tenant_themes_modes_ck',
+        sql`cardinality(${table.modes}) between 1 and 2 and ${table.modes} <@ array['light', 'dark']::text[]`,
+      ),
+      sharedRuntimeAllPolicy('tenant_themes'),
+    ],
+  ),
+);
+
+/** The one theme a tenant uses. No row is the default (the kit's Business brand). */
+export const tenantThemeAttachments = enableCoreGovernedRls(
+  coreSchema.table(
+    'tenant_theme_attachments',
+    {
+      tenantId: tenantId().primaryKey(),
+      themeKey: text('theme_key').notNull(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      foreignKey({
+        columns: [table.tenantId, table.themeKey],
+        foreignColumns: [tenantThemes.tenantId, tenantThemes.themeKey],
+        name: 'core_tenant_theme_attachments_theme_fk',
+      }).onDelete('restrict'),
+      sharedRuntimeAllPolicy('tenant_theme_attachments'),
+    ],
+  ),
+);
 
 export const dataAccessEvents = enableCoreGovernedRls(
   coreSchema.table(
