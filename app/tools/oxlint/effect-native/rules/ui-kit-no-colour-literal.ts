@@ -111,7 +111,15 @@ export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: { description: 'Disallow colour literals and Tailwind palette classes outside the kit tokens.' },
-    schema: [{ type: 'object', properties: { includePaths: { type: 'array', items: { type: 'string' } } } }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          excludePaths: { type: 'array', items: { type: 'string' } },
+          includePaths: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    ],
     messages: {
       colourFunction: 'Colour literal "{{value}}" bypasses the kit: use a kit colour token.',
       hex: 'Colour literal "{{value}}" bypasses the kit: use a kit colour token.',

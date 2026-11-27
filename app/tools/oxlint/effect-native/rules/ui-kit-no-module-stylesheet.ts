@@ -47,7 +47,15 @@ export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: { description: 'Disallow a module stylesheet, CSS build tooling or Tailwind theme of its own.' },
-    schema: [{ type: 'object', properties: { includePaths: { type: 'array', items: { type: 'string' } } } }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          excludePaths: { type: 'array', items: { type: 'string' } },
+          includePaths: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    ],
     messages: {
       styleConfig: 'A module has no Tailwind or PostCSS configuration of its own: the kit stylesheet styles it.',
       styleTooling: '"{{source}}" builds a stylesheet of the module\'s own: modules ship no CSS, the kit styles them.',
