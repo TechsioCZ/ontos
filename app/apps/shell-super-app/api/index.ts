@@ -169,6 +169,7 @@ import {
 import {
   assetByteSourceRead,
   assetDownloadRead,
+  checkConfirmedBytes,
   confirmAssetAction,
   confirmAssetRequest,
   confirmReservedUpload,
@@ -4259,8 +4260,8 @@ const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi
  * stored object, and only the host can produce one: a payload field could be forged by any caller. So the host reads
  * the reserved row through the same `authenticated_principal` byte-source Read the byte edge uses (the row and the
  * reserving principal authorize the read-back; the confirm capability is still decided by the Action), lets the Core
- * settle the upload against the stored object, and hands the Action the verification it asked for. A sealed asset is
- * answered from its row: neither the provider nor the Action is asked again.
+ * settle the upload against the stored object, and hands the Action the verification it asked for. For a sealed or closed
+ * asset the provider is not asked, but the Action still decides the caller and follows the row.
  */
 const settleReservedUpload = Effect.fn('shell.coreMedia.settleReservedUpload')(function* settleReservedUpload<
   Failure extends { readonly _tag: string },
@@ -4444,6 +4445,7 @@ const coreActionUploadAssetProblem = (
     ? Match.value(error).pipe(
         Match.tags({
           MediaForbidden: shellTargetForbiddenProblem,
+          MediaTooLarge: shellPolicyUnprocessableProblem,
           MediaUnavailable: shellCapabilityUnavailableProblem,
         }),
         Match.exhaustive,
@@ -4633,8 +4635,15 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
       if (Option.isNone(offered)) {
         return yield* failIdentityProblem(shellCapabilityUnavailableProblem());
       }
-      // HEAD falls back to this GET route: it is its own decision too, but it reads no provider byte and drops no stream.
+      // HEAD falls back to this GET route: it is its own decision too. It stats the stored object and reads no byte,
+      // so it never answers success for an object GET would refuse before its first byte.
       if (request.method === 'HEAD') {
+        yield* checkConfirmedBytes(offered.value).pipe(
+          Effect.catchTags({
+            MediaNotReady: () => failIdentityProblem(shellPolicyConflictProblem()),
+            MediaUnavailable: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
+          }),
+        );
         return HttpServerResponse.empty({ headers: downloadResponseHeaders(authorization) });
       }
       const download = yield* streamConfirmedBytes(offered.value, authorization).pipe(
@@ -4655,7 +4664,7 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
 
 /**
  * The failure of a Core Media upload as the client sees it: the media outcomes keep the status ERRORS.md gives them
- * (403 refused principal, 404 absent or foreign, 409 state or content conflict, 411 body of unstated length,
+ * (403 refused capability, 404 absent, foreign or another principal's, 409 state or content conflict, 411 body of unstated length,
  * 422 proven corruption, 503 uncertain or unavailable), and every Action or Read failure of the confirm step keeps
  * its identity mapping. No problem carries a key, a digest, a locator or a provider message.
  */
@@ -4673,6 +4682,7 @@ const mediaUploadProblem = (error: IdentityRuntimeError | MediaFailure): MediaUp
       MediaIntegrityFailed: shellPolicyUnprocessableProblem,
       MediaLengthRequired: shellLengthRequiredProblem,
       MediaNotReady: shellPolicyConflictProblem,
+      MediaTooLarge: shellPolicyUnprocessableProblem,
       MediaUnavailable: shellCapabilityUnavailableProblem,
     }),
     Match.exhaustive,
@@ -4791,7 +4801,7 @@ export const hostedAssetCurrent = Effect.fn('CoreHostedOperation.handle')(functi
     return yield* Effect.fail(hostedOperationProblems.invalid());
   }
   return yield* Effect.gen(function* runHostedCurrent() {
-    const { installed, principal } = yield* authenticateHostedOperation(
+    const { installed, principal } = yield* authenticateHostedOperation(assetCurrentRead)(
       Redacted.make(headers['authorization']),
       hostedOperationProblems,
     );
@@ -4839,8 +4849,9 @@ export const makeCoreMediaDigestStepTimeoutLive = (options: Parameters<typeof me
 const coreMediaDigestStepTimeoutLive = makeCoreMediaDigestStepTimeoutLive();
 
 /**
- * The object store of Core Media. A host without a valid S3 configuration still boots: every download then ends as
- * a retryable 503, because the unconfigured port matches no asset and reaches no provider.
+ * The object store of Core Media. A host without a valid S3 configuration still boots: a reservation is refused with
+ * no row, and every download ends as a retryable 503, because the unconfigured port matches no asset and reaches no
+ * provider.
  */
 const coreMediaObjectStoreLive = Layer.effect(
   ObjectStorage,

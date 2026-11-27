@@ -267,6 +267,8 @@ export const principals = enableCoreGovernedRls(
       tenantId: tenantId(),
       kind: text('kind').$type<PrincipalKind>().notNull(),
       displayName: text('display_name').notNull(),
+      /** For a `system` principal: the system workload it was enrolled for, written once by its enrollment. */
+      systemWorkloadKey: text('system_workload_key'),
       status: text('status').$type<PrincipalStatus>().notNull(),
       createdAt: createdAt(),
       disabledAt: timestamp('disabled_at', { withTimezone: true }),
@@ -301,6 +303,11 @@ export const principals = enableCoreGovernedRls(
         'core_principals_integration_kind_ck',
         sql`${table.integrationKind} is null or (${table.kind} = 'integration' and ${table.integrationKind} ~ '^[a-z][a-z0-9-]{0,39}$')`,
       ),
+      // One live Principal per Tenant and system workload; an archived one never blocks a new enrollment.
+      uniqueIndex('core_principals_system_workload_uk')
+        .on(table.tenantId, table.systemWorkloadKey)
+        .where(sql`${table.status} <> 'archived'`),
+      check('core_principals_system_workload_ck', sql`${table.systemWorkloadKey} is null or ${table.kind} = 'system'`),
       sharedRuntimeAllPolicy('principals'),
     ],
   ),

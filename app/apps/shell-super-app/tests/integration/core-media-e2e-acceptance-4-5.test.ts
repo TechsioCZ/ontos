@@ -23,8 +23,10 @@ import {
   putBytes,
   refOf,
   renameAs,
+  renameOverHttp,
   requireFaultInjection,
   reserve,
+  reserveOverHttp,
   rowOf,
   rowsOf,
   textOf,
@@ -295,6 +297,28 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
     );
 
     suite.effect(
+      'row 4: a byte PUT replayed on a ready asset is decided again: after the real revoke it is refused',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* revokedReplay() {
+              const uploader = person(world, 'uploader');
+              const grant = yield* world.grant(uploader, uploaderCapabilities);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('a replay is a request of its own');
+              const id = yield* readyAsset(world, edge, bytes, 'replay-1');
+              const sealed = yield* rowOf(world, id);
+
+              expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
+              yield* world.revoke(grant.incarnationId);
+              expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(403);
+              expect(yield* rowOf(world, id)).toEqual(sealed);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
       'row 4: SpiceDB UNAVAILABLE keeps both the metadata and the bytes back and changes nothing (CONTROLLED FAULT INJECTION: engine partition)',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
@@ -324,6 +348,73 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
               const recovered = yield* untilStatus(world, downloadOf(edge, reader, id), 200);
               expect(recovered.status).toBe(200);
               expect(recovered.bytes).toEqual(bytes);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'row 4: SpiceDB UNAVAILABLE never lets a byte PUT succeed or close the asset (CONTROLLED FAULT INJECTION: engine partition)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* engineDownDuringUpload() {
+              const injection = yield* requireFaultInjection(ctx, world);
+              const uploader = person(world, 'uploader');
+              yield* world.grant(uploader, uploaderCapabilities);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('an upload with no decision is no upload');
+              const id = (yield* reserve(world, uploader, bytes, { idempotencyKey: 'engine-put' })).mediaAssetRef
+                .resourceId;
+
+              injection.engine.setDown(true);
+              const put = yield* putBytes(edge, uploader, id, bytes);
+              injection.engine.setDown(false);
+              // Whether or not any byte reached the store (decision 5 accepts bytes before confirm is decided), a
+              // missing decision is a retryable refusal: nothing is sealed and nothing is closed.
+              expect(put.status).toBe(503);
+              expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'uploaded', sealed_at: null });
+
+              const recovered = yield* untilStatus(world, putBytes(edge, uploader, id, bytes), 200);
+              expect(recovered.status).toBe(200);
+              expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'ready' });
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'row 4: SpiceDB UNAVAILABLE reserves nothing and renames nothing (CONTROLLED FAULT INJECTION: engine partition)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* engineDownForActions() {
+              const injection = yield* requireFaultInjection(ctx, world);
+              const uploader = person(world, 'uploader');
+              const renamer = person(world, 'currentOnly');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(renamer, [MEDIA_CAPABILITIES.rename]);
+              const edge = yield* world.shell;
+              const bytes = bytesOf('no decision, no write');
+              const id = yield* readyAsset(world, edge, bytes, 'engine-actions');
+              const sealed = yield* rowOf(world, id);
+
+              injection.engine.setDown(true);
+              const reserved = yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'engine-reserve' });
+              const renamed = yield* renameOverHttp(edge, renamer, id, 'Renamed.pdf', 'engine-rename');
+              injection.engine.setDown(false);
+              expect(reserved.status).toBe(503);
+              expect(renamed.status).toBe(503);
+              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowOf(world, id)).toEqual(sealed);
+
+              // The engine is back: the same rename, under a new attempt, is answered.
+              const recovered = yield* untilStatus(
+                world,
+                renameOverHttp(edge, renamer, id, 'Renamed.pdf', 'engine-rename-again'),
+                200,
+              );
+              expect(recovered.status).toBe(200);
             }),
           ),
         ),

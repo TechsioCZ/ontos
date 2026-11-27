@@ -181,6 +181,13 @@ it.effect('keeps the bytes of every part in order', () =>
 );
 
 it.layer(NodeCrypto.layer)('the S3 object storage adapter against a scripted provider', (suite) => {
+  suite.effect('states the largest object its parts can carry: 10,000 parts of 5 GiB, and no product limit', () =>
+    Effect.gen(function* largest() {
+      const { storage } = storageOn(configWith(), () => ok());
+      expect((yield* storage).maximumObjectBytes).toBe(10_000 * 5 * 1024 * MIB);
+    }),
+  );
+
   suite.effect('treats a write the provider refused for its digest as a transfer fault: nothing was stored', () =>
     Effect.gen(function* refusedDigest() {
       const { storage } = storageOn(configWith(), () => xmlError('BadDigest', 400));
@@ -470,11 +477,11 @@ it.layer(NodeCrypto.layer)('the S3 object storage adapter against a scripted pro
     20_000,
   );
 
-  suite.effect('exposes only the four port operations and no way to mint a URL or read a credential', () =>
+  suite.effect('exposes only the port and no way to mint a URL or read a credential', () =>
     Effect.gen(function* surface() {
       const { storage } = storageOn(configWith(), () => ok());
       const service = yield* storage;
-      expect(Object.keys(service).toSorted()).toStrictEqual(['get', 'providerId', 'put', 'stat']);
+      expect(Object.keys(service).toSorted()).toStrictEqual(['get', 'maximumObjectBytes', 'providerId', 'put', 'stat']);
       expect(jsonText(Object.values(service).map(String))).not.toContain(SECRET);
     }),
   );

@@ -2,6 +2,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { Context, Duration, Effect, Predicate, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
+import { mediaUnavailable } from './errors.ts';
+import type { MediaUnavailable } from './errors.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
 import type { MediaByteSize, MediaContentSha256 } from './public-contract.ts';
 
@@ -62,8 +64,11 @@ const identityOf = (byteSize: number, digest: Uint8Array): ContentIdentity => ({
   contentSha256: MediaContentSha256Schema.make(Hex.encode(digest)),
 });
 
-/** A platform step that must not hang: a stuck one is a defect of the platform, never of the object. */
-const stuckDigestStep = () => Effect.die('The platform digest did not answer');
+/**
+ * A platform step that must not hang: an unanswered one proves nothing about the object, so it fails the request as
+ * unavailable (retryable), never as corruption and never as a defect.
+ */
+const stuckDigestStep = () => Effect.failSync(() => mediaUnavailable('The platform digest did not answer'));
 
 /**
  * The size and SHA-256 of the chunks added to it, in order. `add` is called once per chunk and `finish` after the
@@ -91,7 +96,7 @@ export class ContentDigest {
     return this.#byteSize;
   }
 
-  add(chunk: Uint8Array): Effect.Effect<void> {
+  add(chunk: Uint8Array): Effect.Effect<void, MediaUnavailable> {
     this.#byteSize += chunk.byteLength;
     const native = this.#native;
     if (native === undefined) {
@@ -106,7 +111,7 @@ export class ContentDigest {
     );
   }
 
-  finish(): Effect.Effect<ContentIdentity> {
+  finish(): Effect.Effect<ContentIdentity, MediaUnavailable> {
     const known = this.#identity;
     if (known !== undefined) {
       return Effect.succeed(known);
@@ -146,7 +151,7 @@ export const digestStream = <E, ExceedFailure>(
   body: Stream.Stream<Uint8Array, E>,
   digest: ContentDigest,
   limit: { readonly byteSize: number; readonly onExceed: () => ExceedFailure } | undefined,
-): Stream.Stream<Uint8Array, E | ExceedFailure> =>
+): Stream.Stream<Uint8Array, E | ExceedFailure | MediaUnavailable> =>
   body.pipe(
     // One chunk at a time: the digest is order-dependent, so the sequence is the contract, not an accident.
     Stream.mapEffect(

@@ -29,8 +29,8 @@ import {
  * runtime starts, so a run without it is BLOCKED (a failure under `D20_E2E_REQUIRED=1`), never green on the 5 s default.
  *
  * A Node run has no native digest, so the platform's `crypto.DigestStream` is stood in by a stream that never answers (a
- * stuck platform call). Under the configured guard that step ends as an unexpected defect, never as proven corruption:
- * a 500 problem on the PUT and the confirm, a closed connection before any complete body on the download, and the
+ * stuck platform call). Under the configured guard that step ends as unavailable, never as proven corruption:
+ * a retryable 503 problem on the PUT and the confirm, a closed connection before any complete body on the download, and the
  * asset is never `failed`; the same request completes once the platform answers (a stand-in that answers at once is the
  * control, so a stand-in that is broken in itself cannot read as a pass). How a malformed or absent value degrades is
  * the Shell unit test `core-media-digest-step-timeout-layer`.
@@ -150,7 +150,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
   'the digest step guard of the Shell (CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS) reaches every route that digests bytes',
   (suite) => {
     suite.effect(
-      'the download: a stuck step ends as a defect, never as corruption, and the asset downloads once the platform answers',
+      'the download: a stuck step ends the transfer, never as corruption, and the asset downloads once the platform answers',
       (ctx) =>
         withMediaE2eWorld(
           ctx,
@@ -197,7 +197,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
         ),
     );
 
-    suite.effect('the byte PUT: a stuck step ends as a 500 and the same asset completes afterwards', (ctx) =>
+    suite.effect('the byte PUT: a stuck step ends as a retryable 503 and the same asset completes afterwards', (ctx) =>
       withMediaE2eWorld(
         ctx,
         platform,
@@ -210,7 +210,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
               const bytes = patternBytes(70_001);
               const id = idOf(yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'guard-put' }));
 
-              expect((yield* stuck(putBytes(edge, uploader, id, bytes))).status).toBe(500);
+              expect((yield* stuck(putBytes(edge, uploader, id, bytes))).status).toBe(503);
               expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
 
               expect((yield* prompt(putBytes(edge, uploader, id, bytes))).status).toBe(200);
@@ -221,7 +221,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
       ),
     );
 
-    suite.effect('the generated confirm: a stuck read-back ends as a 500, never as failed', (ctx) =>
+    suite.effect('the generated confirm: a stuck read-back ends as a retryable 503, never as failed', (ctx) =>
       withMediaE2eWorld(
         ctx,
         platform,
@@ -235,7 +235,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 se
               const id = idOf(yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'guard-confirm' }));
               yield* storeOutOfBand(world, id, bytes);
 
-              expect((yield* stuck(confirmOverHttp(edge, uploader, id, 'guard-confirm-1'))).status).toBe(500);
+              expect((yield* stuck(confirmOverHttp(edge, uploader, id, 'guard-confirm-1'))).status).toBe(503);
               expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
 
               const confirmed = yield* prompt(confirmOverHttp(edge, uploader, id, 'guard-confirm-2'));

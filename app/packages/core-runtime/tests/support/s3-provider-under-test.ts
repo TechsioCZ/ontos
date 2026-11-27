@@ -190,18 +190,31 @@ export const s3Providers: readonly S3ProviderDescriptor[] = [
   ...MOCK_ROWS.map((row) => ({ id: row.id, label: row.label, layer: providerLayer(startMock(row)) })),
 ];
 
+/** A required run (`D20_E2E_REQUIRED=1`, as the Core Media E2E use it) turns an unconfigured row into a failure. */
+const skipUnconfiguredRow = (ctx: { readonly skip: () => void }) =>
+  Effect.gen(function* skipOrFail() {
+    const mustRun = yield* Config.option(Config.String('D20_E2E_REQUIRED')).pipe(Effect.orDie);
+    if (Option.isSome(mustRun) && mustRun.value === '1') {
+      return yield* Effect.die(
+        new ObjectStorageConfigError({
+          reason: 'D20_E2E_REQUIRED is set but the run is not configured with CORE_MEDIA_S3_ENDPOINT',
+        }),
+      );
+    }
+    yield* Effect.sync(() => {
+      ctx.skip();
+    });
+    return yield* Effect.never;
+  });
+
 /**
- * The settings of the provider row under test. A row that is not configured is SKIPPED (never passed); a supplied
- * non-loopback endpoint without the opt-in fails the suite instead of being written to.
+ * The settings of the provider row under test. A row that is not configured is SKIPPED (never passed), or fails a
+ * required run; a supplied non-loopback endpoint without the opt-in fails the suite instead of being written to.
  */
 export const s3ProviderConfig = (ctx: { readonly skip: () => void }) =>
   Effect.gen(function* providerConfig() {
     const provider = yield* S3ProviderUnderTest;
-    return Option.isSome(provider.config)
-      ? provider.config.value
-      : yield* Effect.sync(() => {
-          ctx.skip();
-        }).pipe(Effect.andThen(Effect.never));
+    return Option.isSome(provider.config) ? provider.config.value : yield* skipUnconfiguredRow(ctx);
   });
 
 /**

@@ -1,16 +1,19 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Stream } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { MediaAssetRef } from '../resources/media-asset.ts';
 import { streamMediaObject } from './byte-stream.ts';
+import { isCallersReservation } from './byte-source-contract.ts';
 import type { MediaByteSourceOffer } from './byte-source-contract.ts';
+import { confirmReservedUpload } from './confirm-upload.ts';
 import {
   MediaContentConflict,
   MediaIngestUncertain,
   MediaIntegrityFailed,
   MediaLengthRequired,
+  MediaUnavailable,
   mediaAssetNotFound,
 } from './errors.ts';
 import { reconcileUncertainUpload } from './reconciliation.ts';
@@ -34,6 +37,9 @@ import type { MediaStoredObjectVerification } from './verification.ts';
 
 type ConfirmResult = typeof ConfirmAssetResultSchema.Type;
 
+/** The confirm Action's answers about the row itself, as opposed to a refusal of the caller. */
+const isRowAnswer = Schema.is(Schema.Union([MediaIntegrityFailed, MediaIngestUncertain, MediaUnavailable]));
+
 export interface IngestMediaBytesInput<BodyError, ConfirmFailure extends { readonly _tag: string }, ConfirmServices> {
   /** The reserved row the byte-source Read offered, read in the trusted tenant scope. */
   readonly asset: MediaByteSourceOffer;
@@ -45,7 +51,7 @@ export interface IngestMediaBytesInput<BodyError, ConfirmFailure extends { reado
   /** The request's own `Content-Length`; undefined when it stated none. */
   readonly contentLength: number | undefined;
   readonly mediaAssetRef: MediaAssetRef;
-  /** The authenticated caller. The hop refuses everyone but the principal that reserved the asset. */
+  /** The authenticated caller. Anyone but the principal that reserved the asset does not find it. */
   readonly principalId: string;
   /** The company the caller selected, if any: an asset reserved in another company is not found. */
   readonly selectedLegalEntityId?: string | undefined;
@@ -118,15 +124,26 @@ export const ingestMediaBytes = Effect.fn('MediaIngest.ingest')(function* ingest
     mediaAssetId: input.mediaAssetRef.resourceId,
     tenantId: input.mediaAssetRef.tenantId,
   });
-  if (asset.storageKey !== namedKey) {
+  // As at confirm: another caller gets the unknown-id answer, so this edge cannot be used to probe asset ids.
+  if (asset.storageKey !== namedKey || !isCallersReservation(asset, input)) {
     return yield* mediaAssetNotFound();
   }
-  if (
-    input.selectedLegalEntityId !== undefined &&
-    asset.legalEntityId !== null &&
-    asset.legalEntityId !== input.selectedLegalEntityId
-  ) {
-    return yield* mediaAssetNotFound();
+  // A request on an asset past `uploaded` is decided by the Action under the confirm capability (it follows the row, so
+  // it needs no evidence about the object), before a body byte is read or anything of the row is told.
+  if (asset.processingStatus !== 'uploaded') {
+    const decision = confirmReservedUpload({
+      asset,
+      confirm: input.confirm,
+      mediaAssetRef: input.mediaAssetRef,
+      principalId: input.principalId,
+      selectedLegalEntityId: input.selectedLegalEntityId,
+    });
+    // A sealed asset's replay is answered only after the Action agreed. A closed or scanning asset takes no bytes
+    // whatever the Action says about the row (`failed`, or a state it cannot settle): the gate has allowed the caller
+    // by then, so only a refusal matters and the byte hop answers.
+    yield* asset.processingStatus === 'ready'
+      ? decision
+      : decision.pipe(Effect.catchIf(isRowAnswer, () => Effect.void));
   }
   // A body that breaks mid-flight (a dropped connection, a short body) is a transfer that did not finish: the put
   // aborts and leaves nothing readable, and the stored object is judged by the verification below.

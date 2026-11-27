@@ -23,6 +23,20 @@ export interface MediaByteSourceOffer extends MediaByteHopAsset {
 }
 
 /**
+ * Whether the reserved row is this caller's to complete: the principal that reserved it and, when the caller selected a
+ * company, no other company's asset. A caller it is not for must not find the asset, at the byte hop and at confirm.
+ */
+export const isCallersReservation = (
+  asset: MediaByteSourceOffer,
+  caller: { readonly principalId: string; readonly selectedLegalEntityId?: string | undefined },
+): boolean =>
+  asset.ingestedByPrincipalId !== null &&
+  asset.ingestedByPrincipalId === caller.principalId &&
+  (caller.selectedLegalEntityId === undefined ||
+    asset.legalEntityId === null ||
+    asset.legalEntityId === caller.selectedLegalEntityId);
+
+/**
  * The request-scoped channel on which the byte-source Read hands the reserved row to the edge that ran it. Only
  * the composing host provides it and only the Read calls it, inside the Read's own tenant-scoped transaction. The
  * host uses what it was offered only after the Read completed. It is deliberately not part of any result schema.

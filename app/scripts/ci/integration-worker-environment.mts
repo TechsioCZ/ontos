@@ -23,6 +23,8 @@ export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
+    // A suite that cuts the engine connection reaches it through a relay its harness starts on this port.
+    ONTOS_CI_ENGINE_RELAY_PORT: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[1-9]\d{3,4}$/u))),
     ONTOS_CI_ISOLATED_WORKERS: Schema.Literals(['2', '4']),
     // run-integration-suites.sh assigns every lane its slot. Rstest worker ids grow past the provisioned
     // clusters when one process runs many files, so they never select a cluster.
@@ -52,7 +54,14 @@ export const integrationWorkerEnvironment = (settings: IntegrationWorkerSettings
     return Option.none();
   }
   const worker = settings.ONTOS_CI_WORKER_SLOT;
+  const engine = `localhost:${55_050 + Number(worker)}`;
+  // With a relay, the clients under test reach the relay and the relay forwards to this lane's own engine.
+  const engineEndpoints =
+    settings.ONTOS_CI_ENGINE_RELAY_PORT === undefined
+      ? { SPICEDB_ENDPOINT: engine }
+      : { D20_E2E_ENGINE_UPSTREAM: engine, SPICEDB_ENDPOINT: `localhost:${settings.ONTOS_CI_ENGINE_RELAY_PORT}` };
   return Option.some({
+    ...engineEndpoints,
     DATABASE_ADMIN_URL: retargetDatabase(settings.DATABASE_ADMIN_URL, worker),
     DATABASE_URL: retargetDatabase(settings.DATABASE_URL, worker),
     ONTOS_TEST_DB_CONTAINER: `ontos-ci-db-${worker}`,
@@ -62,7 +71,6 @@ export const integrationWorkerEnvironment = (settings: IntegrationWorkerSettings
     PARTY_REGISTRY_WORKER_DATABASE_URL: retargetDatabase(settings.PARTY_REGISTRY_WORKER_DATABASE_URL, worker),
     POSTGRES_PORT: String(5540 + Number(worker)),
     SHELL_GATEWAY_ISSUER_DATABASE_URL: retargetDatabase(settings.SHELL_GATEWAY_ISSUER_DATABASE_URL, worker),
-    SPICEDB_ENDPOINT: `localhost:${55_050 + Number(worker)}`,
     SPICEDB_GRPC_PORT: String(55_050 + Number(worker)),
     SPICEDB_HTTP_PORT: String(58_440 + Number(worker)),
   });

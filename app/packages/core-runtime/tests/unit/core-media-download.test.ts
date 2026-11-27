@@ -10,7 +10,7 @@ import {
 } from '../../src/media/download-headers.ts';
 import { AssetDownloadAuthorizationSchema } from '../../src/media/download-contract.ts';
 import type { AssetDownloadAuthorization } from '../../src/media/download-contract.ts';
-import { MediaDownloadAborted, streamConfirmedBytes } from '../../src/media/download.ts';
+import { MediaDownloadAborted, checkConfirmedBytes, streamConfirmedBytes } from '../../src/media/download.ts';
 import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { MediaIntegrityFailed, MediaNotReady, MediaUnavailable } from '../../src/media/errors.ts';
 import { MediaIntegrityRecorder } from '../../src/media/integrity-recorder.ts';
@@ -322,4 +322,36 @@ it.effect(
       }
       expect(emitted.length).toBeGreaterThan(0);
     }),
+);
+
+const checked = (storage: ObjectStorageService, subject: MediaVerifiableAsset = asset) =>
+  Effect.exit(checkConfirmedBytes(subject).pipe(Effect.provideService(ObjectStorage, storage)));
+
+it.effect('a metadata-only request asks the provider for a stat and opens no body', () =>
+  Effect.gen(function* statOnly() {
+    const storage = yield* withStored(content);
+    const exit = yield* checked(storage.service);
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect((yield* storage.calls).map(({ operation }) => operation)).toEqual(['put', 'stat']);
+  }),
+);
+
+it.effect('a metadata-only request is unavailable for a missing object, another size or another provider', () =>
+  Effect.gen(function* refusals() {
+    const empty = yield* makeInMemoryObjectStorage();
+    expect(Schema.is(MediaUnavailable)(failureOf(yield* checked(empty.service)))).toBe(true);
+    const longer = yield* withStored(encoder.encode('a different and longer confirmed body'));
+    expect(Schema.is(MediaUnavailable)(failureOf(yield* checked(longer.service)))).toBe(true);
+    const stored = yield* withStored(content);
+    const elsewhere = yield* checked(stored.service, { ...asset, storageProvider: 'another-provider' });
+    expect(Schema.is(MediaUnavailable)(failureOf(elsewhere))).toBe(true);
+  }),
+);
+
+it.effect('a metadata-only request for an asset that is not ready says so', () =>
+  Effect.gen(function* notReady() {
+    const storage = yield* withStored(content);
+    const exit = yield* checked(storage.service, { ...asset, processingStatus: 'uploaded', sealedAt: null });
+    expect(Schema.is(MediaNotReady)(failureOf(exit))).toBe(true);
+  }),
 );

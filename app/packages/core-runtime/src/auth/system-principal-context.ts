@@ -1,4 +1,4 @@
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
@@ -128,6 +128,9 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
                 eq(accessWorkloadBindings.tenantId, input.tenantId),
                 eq(accessWorkloadBindings.workloadKey, input.jobKey),
                 eq(accessWorkloadBindings.status, 'active'),
+                // Never a Principal enrolled for another workload, which may still hold a binding of this key. One with
+                // no recorded workload (a service Principal, or a system Principal no enrollment made) resolves as before.
+                or(isNull(principals.systemWorkloadKey), eq(principals.systemWorkloadKey, input.jobKey)),
                 eq(principals.status, 'active'),
                 eq(tenants.status, 'active'),
                 input.allowServicePrincipal
