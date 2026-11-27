@@ -866,6 +866,37 @@ const reconciledVariants = Effect.fn('Merchandise.reconciledVariants')(function*
 type SourceUpsertChange = MerchandiseChange;
 type SourceVariantInput = CommandOf<'UpsertSourceProduct'>['variants'][number];
 
+const holdsSku = (entry: Product, sku: string) =>
+  sameSku(entry.sku, sku) ||
+  (entry.variants ?? []).some((variant) => variant.sku !== undefined && sameSku(variant.sku, sku));
+
+/** Category ids minted only by the Symmy create route /catalog/products/batch (demo-catalog-identity.ts). */
+const SYMMY_ROUTE_CATEGORY_ID = /^symmy-[0-9a-f]{64}-[0-9a-f]{64}$/u;
+
+/**
+ * The one plain row the old create-only Symmy route made for this source product: no provenance yet, filed in a
+ * category that route minted, holding the source product's code or its only variant SKU, and the only holder. Such a
+ * row is adopted (keeps its id) instead of duplicated; any other holder makes the upsert refuse.
+ */
+const adoptableRouteRow = (
+  holders: readonly Product[],
+  value: CommandOf<'UpsertSourceProduct'>,
+): Product | undefined => {
+  const [only, ...others] = holders;
+  const [variant, ...moreVariants] = value.variants;
+  return only !== undefined &&
+    others.length === 0 &&
+    variant !== undefined &&
+    moreVariants.length === 0 &&
+    only.importedVia === undefined &&
+    (only.variants ?? []).length === 0 &&
+    only.categoryId !== undefined &&
+    SYMMY_ROUTE_CATEGORY_ID.test(only.categoryId) &&
+    (sameSku(only.sku, variant.sku) || sameSku(only.sku, value.erpCode))
+    ? only
+    : undefined;
+};
+
 /** The deterministic merchandise row of one main Catalog product imported through Symmy. */
 export const symmyProductIdOf = (catalogProductId: string) => `symmy-${catalogProductId}`;
 const symmyVariantIdOf = (catalogVariantId: string) => `symmy-${catalogVariantId}`;
@@ -912,31 +943,33 @@ const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(functio
   value: CommandOf<'UpsertSourceProduct'>,
   input: MerchandiseCommandInput,
 ) {
-  const id = yield* mintId(ProductIdSchema, symmyProductIdOf(value.catalogProductId));
+  const symmyId = yield* mintId(ProductIdSchema, symmyProductIdOf(value.catalogProductId));
+  const linked = state.products.find(
+    (entry) =>
+      entry.id === symmyId || (entry.importedVia === 'symmy' && entry.catalogProductId === value.catalogProductId),
+  );
+  // Every other row holding the code or a source variant SKU (the working set loads them by the indexed SKU keys).
+  const sourceSkus = [value.erpCode, ...value.variants.map((variant) => variant.sku)];
+  const holders = state.products.filter(
+    (entry) => entry.id !== linked?.id && sourceSkus.some((sku) => holdsSku(entry, sku)),
+  );
+  const adopted = linked === undefined ? adoptableRouteRow(holders, value) : undefined;
+  const existing = linked ?? adopted;
+  const id = existing?.id ?? symmyId;
   const entity = yield* entityIdOf(id);
-  const existing = state.products.find((entry) => entry.id === id);
   const refused = (reason: NonNullable<SourceUpsertResult['reason']>): SourceUpsertChange => ({
     entityIds: [entity],
     sourceUpsert: { outcome: 'REFUSED', productId: id, reason },
     state,
   });
-  if (state.products.some((entry) => entry.id !== id && sameSku(entry.sku, value.erpCode))) {
-    return refused('CODE_HELD_BY_NATIVE_PRODUCT');
+  if (adopted === undefined && holders.length > 0) {
+    return refused(
+      holders.some((entry) => holdsSku(entry, value.erpCode))
+        ? 'CODE_HELD_BY_NATIVE_PRODUCT'
+        : 'SKU_HELD_BY_NATIVE_PRODUCT',
+    );
   }
   const single = value.variants.length === 1 ? value.variants[0] : undefined;
-  const variantSkus = single === undefined ? value.variants.map((variant) => variant.sku) : [];
-  if (
-    variantSkus.some((sku) =>
-      state.products.some(
-        (entry) =>
-          entry.id !== id &&
-          (sameSku(entry.sku, sku) ||
-            (entry.variants ?? []).some((variant) => variant.sku !== undefined && sameSku(variant.sku, sku))),
-      ),
-    )
-  ) {
-    return refused('SKU_HELD_BY_NATIVE_PRODUCT');
-  }
   const now = input.now;
   const singlePrice = single?.priceNetMinor ?? undefined;
   // Product without merchandise variants: Symmy's one variant is the product itself.
@@ -2620,7 +2653,11 @@ export const workingSetRequestOf = (
       UpsertSourceProduct: (value): WorkingSetRequest => ({
         movements: true,
         productIds: [symmyProductIdOf(value.catalogProductId)],
-        productKeys: { sku: value.erpCode, slugPrefix: productSlugBase(value.name, value.erpCode) },
+        productKeys: {
+          sku: value.erpCode,
+          skus: value.variants.map((variant) => variant.sku),
+          slugPrefix: productSlugBase(value.name, value.erpCode),
+        },
       }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ConfigureStorefrontCatalog: (): WorkingSetRequest => ({ productIds: [] }),
