@@ -54,6 +54,7 @@ const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelP
         Option.getOrUndefined,
       ),
     isValid: (value) => !slugInvalidOf(value.slug) && !(takenSlug !== null && takenSlug === value.slug.trim()),
+    keepAs: `eshop:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
     partlyConfirmed: eshopPartlyConfirmed,
