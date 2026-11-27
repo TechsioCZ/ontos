@@ -97,7 +97,16 @@ it.effect(
       const contracts = yield* mainContracts;
       expect(requiredOnly('customersBatch', contracts)).toEqual([]);
       // Every owner a customer plan reaches registers each call its requirements name, live and on recovery.
-      expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan))).toEqual([]);
+      const person = requiredOnlyPlan('customersBatch', contracts, enrolling(...personPlan));
+      expect(person.refusals).toEqual([]);
+      for (const identity of ['integration', 'executor'])
+        {expect(
+          person.bindings.some(
+            (binding) =>
+              binding.identity === identity &&
+              binding.workloads.includes('commerce.customer-context.source-profile-proof'),
+          ),
+        ).toBe(true);}
       expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan, contact, address))).toEqual([]);
       expect(requiredOnly('customersBatch', contracts, enrolling(...organizationPlan))).toEqual([]);
       expect(
