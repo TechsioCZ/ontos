@@ -25,3 +25,6 @@ export {
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export { CheckboxSettingField } from './checkbox-setting-field.ts';
+export { EntrySwitchField } from './entry-switch-field.ts';
+export { UpperCaseTextField } from './upper-case-text-field.ts';

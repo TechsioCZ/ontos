@@ -2,26 +2,34 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import { CheckboxField, FormReact, FormRoot, useAtomSet } from '@app/core-runtime/ui/form';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import { CreateMarketPayloadSchema } from '../../shared/actions/create-market.ts';
 import { executeCreateMarket } from '../api/create-market-action-client.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
 import { FormDialogFrame } from './dialog-frame.tsx';
-import { DefinitionFields, PricingFields } from './market-fields.tsx';
 import {
+  DefinitionFields,
+  LiveChecks,
+  PricingFields,
+  definitionControls,
+  definitionFields,
+  pricingControls,
+  pricingFields,
+  useOpenedValues,
+} from './market-fields.tsx';
+import {
+  MarketPricingFormSchema,
   configureMarketCommand,
   createMarketInput,
   defaultPricingForm,
-  definitionIssues,
   emptyDefinitionForm,
   normalizeMarketCode,
-  pricingIssues,
 } from './market-form.ts';
-import type { MarketDefinitionForm, MarketPricingForm } from './market-form.ts';
+import type { MarketDefinitionForm } from './market-form.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
 import { commandOutcome } from './assortment-save.ts';
 import { marketActionEffect } from './page-data.ts';
@@ -57,12 +65,22 @@ export interface NewMarketDialogProps {
   readonly tenantId: string;
 }
 
-/** The draft of the new-market form: the definition, the price list and whether the market launches at once. */
-interface NewMarketDraft {
-  readonly form: MarketDefinitionForm;
-  readonly launchNow: boolean;
-  readonly pricing: MarketPricingForm;
-}
+/**
+ * The new-market form: the definition, the price list and whether the market launches at once. Typing changes only the
+ * form; the dialog's Uložit sends it through the save bar, so the form itself is never submitted.
+ */
+const newMarketForm = FormReact.make(definitionFields.merge(pricingFields).addField('launchNow', Schema.Boolean), {
+  fields: { ...definitionControls, ...pricingControls, launchNow: CheckboxField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+type NewMarketValues = typeof newMarketForm.schema.Encoded;
+
+const isComplete = Schema.is(newMarketForm.schema);
+
+/** A new market starts empty, with the default price list, and launches at once. */
+const opened: NewMarketValues = { ...emptyDefinitionForm(), ...defaultPricingForm(), launchNow: true };
 
 interface CreateRequest {
   readonly form: MarketDefinitionForm;
@@ -88,11 +106,8 @@ export const NewMarketDialog = ({
   tenantId,
 }: NewMarketDialogProps) => {
   const { text } = useMarketText();
-  const [draft, setDraft] = useState<NewMarketDraft>(() => ({
-    form: emptyDefinitionForm(),
-    launchNow: true,
-    pricing: defaultPricingForm(),
-  }));
+  const { ready, values } = useOpenedValues(newMarketForm.values, opened);
+  const setValues = useAtomSet(newMarketForm.setValues);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
   /**
    * The market is created by the first successful save; the price list follows in the same save. A save that stops
@@ -100,7 +115,7 @@ export const NewMarketDialog = ({
    */
   const afterCreate = (
     outcome: WriteOutcome<CreateResult>,
-    value: NewMarketDraft,
+    value: NewMarketValues,
     code: string,
   ): Effect.Effect<SaveOutcome> => {
     if (!outcome.ok) {
@@ -121,21 +136,27 @@ export const NewMarketDialog = ({
     if (!canConfigurePricing) {
       return Effect.sync(() => finish('notSaved'));
     }
-    // The market already exists; only its price list may wait for approval.
-    return commandOutcome(
-      configureMarketCommand({ expectedRevision: 0, form: value.pricing, marketCode: code, marketId }),
-      merchandiseRevision,
-    ).pipe(Effect.map((configured) => finish(pricingOf(configured))));
+    // The market already exists; only its price list may wait for approval. The choices offer only valid values.
+    return Schema.decodeUnknownEffect(MarketPricingFormSchema)(value).pipe(
+      Effect.orDie,
+      Effect.flatMap((pricing) =>
+        commandOutcome(
+          configureMarketCommand({ expectedRevision: 0, form: pricing, marketCode: code, marketId }),
+          merchandiseRevision,
+        ),
+      ),
+      Effect.map((configured) => finish(pricingOf(configured))),
+    );
   };
-  const record = useDraftSave<NewMarketDraft, never>({
-    isValid: (value) =>
-      definitionIssues(value.form).length === 0 && (!canConfigurePricing || pricingIssues(value.pricing).length === 0),
+  // The price-list fields hold valid defaults until someone who may configure the price list changes them.
+  const record = useDraftSave<NewMarketValues, never>({
+    isValid: isComplete,
     runtime: browserRuntime,
     save: (value) => {
-      const code = normalizeMarketCode(value.form.code);
+      const code = normalizeMarketCode(value.code);
       return marketActionEffect(
         createPayload({
-          form: value.form,
+          form: value,
           launchNow: value.launchNow,
           legalEntityId,
           reason: text('create.reason', { code }),
@@ -144,18 +165,15 @@ export const NewMarketDialog = ({
         executeCreateMarket,
       ).pipe(Effect.flatMap((outcome) => afterCreate(outcome, value, code)));
     },
-    value: draft,
+    value: values,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft: record,
     navigation: blocker,
-    onDiscard: () => setDraft(record.confirmed),
+    onDiscard: () => setValues(record.confirmed),
   });
   const handleSave = record.save;
-  const issues = definitionIssues(draft.form);
-  const priceIssues = canConfigurePricing ? pricingIssues(draft.pricing) : [];
-  const showIssues = record.status === 'invalid';
   return (
     <FormDialogFrame
       description={text('create.description')}
@@ -166,36 +184,28 @@ export const NewMarketDialog = ({
       status={record.status}
       title={text('create.title')}
     >
-      <p className="text-sm">
-        <span className="font-medium">{text('form.seller')}: </span>
-        {text('form.sellerValue')}
-      </p>
-      <DefinitionFields
-        codeEditable
-        form={draft.form}
-        issues={issues}
-        onChange={(form) => setDraft((current) => ({ ...current, form }))}
-        prefix="new-market"
-        showIssues={showIssues}
-      />
-      <FormCheckbox
-        checked={draft.launchNow}
-        id="new-market-launch"
-        label={text('form.launchNow')}
-        onCheckedChange={(checked: boolean) => setDraft((current) => ({ ...current, launchNow: checked }))}
-      />
-      {canConfigurePricing && (
-        <section className="flex flex-col gap-150">
-          <h3 className="font-semibold text-sm">{text('form.pricingTitle')}</h3>
-          <PricingFields
-            form={draft.pricing}
-            issues={priceIssues}
-            onChange={(pricing) => setDraft((current) => ({ ...current, pricing }))}
-            prefix="new-market"
-            showIssues={showIssues}
-          />
-        </section>
-      )}
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={newMarketForm}
+        translateMessage={(message) => text(message)}
+      >
+        {ready}
+        {/* Validation messages appear once the draft is invalid. */}
+        <LiveChecks checking={record.status === 'invalid'} form={newMarketForm} />
+        <p className="text-sm">
+          <span className="font-medium">{text('form.seller')}: </span>
+          {text('form.sellerValue')}
+        </p>
+        <DefinitionFields codeEditable form={newMarketForm} prefix="new-market" />
+        <newMarketForm.launchNow id="new-market-launch" label={text('form.launchNow')} />
+        {canConfigurePricing && (
+          <section className="flex flex-col gap-150">
+            <h3 className="font-semibold text-sm">{text('form.pricingTitle')}</h3>
+            <PricingFields form={newMarketForm} prefix="new-market" />
+          </section>
+        )}
+      </FormRoot>
     </FormDialogFrame>
   );
 };

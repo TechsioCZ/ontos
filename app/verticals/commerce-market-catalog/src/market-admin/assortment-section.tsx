@@ -10,20 +10,22 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
+import { FormReact, FormRoot, useAtomSet, useAtomSubscribe, useAtomValue } from '@app/core-runtime/ui/form';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { executeRecords } from '@app/merchandise/apis/records/client';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect, Predicate, Schema } from 'effect';
-import { useRef, useState } from 'react';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import { useEffect, useRef, useState } from 'react';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { commandOutcome, offerCommand, sameSectionDraft, saveSectionEffect } from './assortment-save.ts';
 import type { SectionDraft, SectionSteps } from './assortment-save.ts';
 import { ExceptionsBlock } from './assortment-exceptions.tsx';
 import type { SetOffer } from './assortment-exceptions.tsx';
 import type { CurrentMarket } from './eshops-model.ts';
-import { PricingFields } from './market-fields.tsx';
-import { configureMarketCommand, pricingFormOf, pricingIssues } from './market-form.ts';
+import { LiveChecks, PricingFields, pricingControls, pricingFields } from './market-fields.tsx';
+import { MarketPricingFormSchema, configureMarketCommand, pricingFormOf, pricingIssues } from './market-form.ts';
+import type { MarketPricingForm } from './market-form.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
 import { marketExceptionsData } from './page-data.ts';
 import { PriceListSetup } from './price-list-setup.tsx';
@@ -64,6 +66,64 @@ interface PriceListEditorProps {
 }
 
 const isSaveOutcome = Schema.is(SaveOutcomeSchema);
+
+/**
+ * The price list as the section's form shows it. Typing changes only the section's draft; its Save sends it, so the
+ * form itself is never submitted.
+ */
+const priceListForm = FormReact.make(pricingFields, {
+  fields: pricingControls,
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+type PriceListValues = typeof priceListForm.schema.Encoded;
+
+const decodePricing = Schema.decodeUnknownOption(MarketPricingFormSchema);
+
+const samePricing = (values: PriceListValues, pricing: MarketPricingForm): boolean =>
+  values.currency === pricing.currency &&
+  values.exchangeRate === pricing.exchangeRate &&
+  values.offerMode === pricing.offerMode &&
+  values.roundingMinor === pricing.roundingMinor;
+
+/**
+ * Keeps the price-list fields and the section's draft one price list: typing changes the draft, and a draft that moves
+ * without typing (Zahodit změny, the latest version, a refresh) moves the fields. Rendered inside the form, after it
+ * started.
+ */
+const PricingDraft = ({
+  onPricing,
+  pricing,
+}: {
+  readonly onPricing: (pricing: MarketPricingForm) => void;
+  readonly pricing: MarketPricingForm;
+}) => {
+  const values = useAtomValue(priceListForm.values);
+  const setValues = useAtomSet(priceListForm.setValues);
+  useAtomSubscribe(
+    priceListForm.values,
+    (next) => {
+      // The choices offer only the currencies and offer modes a price list takes.
+      const shown = next.pipe(Option.flatMap(decodePricing));
+      if (Option.isSome(shown)) {
+        onPricing(shown.value);
+      }
+    },
+    { immediate: false },
+  );
+  const shownDraft = useRef(pricing);
+  useEffect(() => {
+    if (shownDraft.current === pricing) {
+      return;
+    }
+    shownDraft.current = pricing;
+    if (Option.exists(values, (shown) => !samePricing(shown, pricing))) {
+      setValues(pricing);
+    }
+  }, [pricing, setValues, values]);
+  return null;
+};
 
 const outcomeOf = (result: DraftSaveResult<SectionDraft>): SaveOutcome | number =>
   isSaveOutcome(result) || Predicate.isNumber(result) ? result : result.outcome;
@@ -138,7 +198,6 @@ export const PriceListEditor = ({
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const labels = saveLabelsFor(language);
-  const issues = pricingIssues(record.draft.pricing);
   // A switch or a search result changes the draft only; the section's Save sends it.
   const setOffer: SetOffer = (productId, name, offered, currentlyOffered) => {
     // The offer the product shows now, as last read; a Save compares the draft with it. A search hit does not know
@@ -187,14 +246,17 @@ export const PriceListEditor = ({
   const handleSave = record.save;
   return (
     <div className="flex flex-col gap-150">
-      <PricingFields
-        form={record.draft.pricing}
-        issues={issues}
-        onChange={(pricing) => record.setDraft((current) => ({ ...current, pricing }))}
-        prefix="market-pricing"
-        showIssues={issues.length > 0}
-        size="sm"
-      />
+      <FormRoot defaultValues={record.draft.pricing} form={priceListForm} translateMessage={(message) => text(message)}>
+        <PricingDraft
+          onPricing={(pricing) =>
+            record.setDraft((current) => (samePricing(pricing, current.pricing) ? current : { ...current, pricing }))
+          }
+          pricing={record.draft.pricing}
+        />
+        {/* An invalid price list names its fields at once. */}
+        <LiveChecks checking form={priceListForm} />
+        <PricingFields form={priceListForm} prefix="market-pricing" size="sm" />
+      </FormRoot>
       {exceptionsView}
       <SaveBar
         error={failure === null ? null : failureText(text, failure)}
