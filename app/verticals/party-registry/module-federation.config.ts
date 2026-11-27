@@ -48,13 +48,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     }),
   },
   name: 'verticalPartyRegistry',
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': i18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': i18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'remote' },
+  ),
 });
 
 export default moduleFederationConfig;

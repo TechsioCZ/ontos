@@ -23,7 +23,7 @@ import type {
   ObservedModuleFederationManifest,
 } from '../packages/core-runtime/src/index.ts';
 import { deriveModuleIntrinsicRequirements } from '../packages/core-runtime/src/modules/module-dependency-contracts.ts';
-import { governedSharedSingletonPackages } from '../module-federation.shared.ts';
+import { governedSharedSingletonPackages, UI_KIT_PACKAGE } from '../module-federation.shared.ts';
 
 /**
  * The one place that fixes how long an observed active Application Composition may be trusted. Consumers
@@ -105,6 +105,12 @@ const ModuleFederationManifestSchema = Schema.Struct({
   name: Schema.NonEmptyString,
   shared: Schema.Array(
     Schema.Struct({
+      assets: Schema.optionalKey(
+        Schema.Struct({
+          css: Schema.Struct({ async: Schema.Array(Schema.String), sync: Schema.Array(Schema.String) }),
+          js: Schema.Struct({ async: Schema.Array(Schema.String), sync: Schema.Array(Schema.String) }),
+        }),
+      ),
       name: Schema.NonEmptyString,
       requiredVersion: Schema.optionalKey(Schema.String),
       singleton: Schema.optionalKey(Schema.Boolean),
@@ -150,12 +156,51 @@ const decodeShellRuntime = (artifact: ObservedArtifact) =>
 const singletonOrder = Order.mapInput(Order.String, (singleton: SharedSingleton) => singleton.packageName);
 const moduleOrder = Order.mapInput(Order.String, (module: ApplicationCompositionModule) => module.moduleId);
 
+type ManifestSharedEntry = ModuleFederationManifest['shared'][number];
+
+/** The kit has no root export: its subpaths are shared one by one and together stand for the package. */
+const sharedEntriesOf = (manifest: ModuleFederationManifest, packageName: string): readonly ManifestSharedEntry[] =>
+  manifest.shared.filter(
+    ({ name }) => name === packageName || (packageName === UI_KIT_PACKAGE && name.startsWith(`${UI_KIT_PACKAGE}/`)),
+  );
+
+const shipsFallback = ({ assets }: ManifestSharedEntry): boolean =>
+  assets !== undefined &&
+  [assets.js.sync, assets.js.async, assets.css.sync, assets.css.async].some((files) => files.length > 0);
+
+/**
+ * The one version a governed package is shared at, or none when the manifest does not share it as strict
+ * singletons. React, the router, the runtime and i18n are shared exactly once; the kit is shared as many
+ * subpaths that must all claim the same version. A remote consumes the kit the Shell provides and carries
+ * no fallback copy of it.
+ */
+const governedVersion = (
+  entries: readonly ManifestSharedEntry[],
+  packageName: string,
+  role: 'host' | 'remote',
+): Option.Option<string> => {
+  const [first] = entries;
+  const versioned = entries.every(
+    ({ requiredVersion, singleton }) =>
+      singleton === true &&
+      requiredVersion !== undefined &&
+      requiredVersion !== '' &&
+      requiredVersion === first?.requiredVersion,
+  );
+  const counted = packageName === UI_KIT_PACKAGE ? entries.length > 0 : entries.length === 1;
+  const shellProvided = packageName !== UI_KIT_PACKAGE || role === 'host' || !entries.some(shipsFallback);
+  return first?.requiredVersion !== undefined && versioned && counted && shellProvided
+    ? Option.some(first.requiredVersion)
+    : Option.none();
+};
+
 /**
  * Strict shared singletons the Shell and every browser remote must agree on. Module Federation lists only
  * the shared packages a build actually consumes, so a remote may omit a governed package it never loads;
- * the Shell hosts all of them. Every listed governed package must be shared exactly once as a versioned
- * singleton: an unshared or duplicated entry would let a remote run its own React, router, runtime, or
- * i18n instance, so the observation is rejected.
+ * the Shell hosts all of them. Every listed governed package must be shared as one versioned singleton: an
+ * unshared or duplicated entry would let a remote run its own React, router, runtime, i18n or design-system
+ * instance, and a remote that ships its own kit fallback would carry a second copy, so the observation is
+ * rejected.
  */
 const governedSingletons = Effect.fn('ActiveApplicationComposition.governedSingletons')(function* governedSingletons(
   manifest: ModuleFederationManifest,
@@ -165,23 +210,22 @@ const governedSingletons = Effect.fn('ActiveApplicationComposition.governedSingl
   const singletons = yield* Effect.forEach(
     governedSharedSingletonPackages,
     (packageName) => {
-      const entries = manifest.shared.filter(({ name }) => name === packageName);
-      const [entry] = entries;
+      const entries = sharedEntriesOf(manifest, packageName);
       if (entries.length === 0 && role === 'remote') {
         return Effect.succeed(Option.none());
       }
-      return entries.length === 1 &&
-        entry !== undefined &&
-        entry.singleton === true &&
-        entry.requiredVersion !== undefined &&
-        entry.requiredVersion !== ''
-        ? Effect.succeed(Option.some({ packageName, version: entry.requiredVersion }))
-        : Effect.fail(
+      return Option.match(governedVersion(entries, packageName, role), {
+        onNone: () =>
+          Effect.fail(
             new ActiveApplicationCompositionPublicationError({
-              message: `Module Federation manifest at ${url} does not share ${packageName} exactly once as a versioned singleton`,
+              message: `Module Federation manifest at ${url} does not share ${packageName} as one versioned singleton${
+                role === 'remote' ? ' provided by the Shell' : ''
+              }`,
               reason: 'invalid_observation',
             }),
-          );
+          ),
+        onSome: (version) => Effect.succeed(Option.some({ packageName, version })),
+      });
     },
     { concurrency: 1 },
   );

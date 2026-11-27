@@ -56,7 +56,7 @@ import {
   OntosShellRuntimeContractSchema,
 } from '../../../packages/core-runtime/src/index.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../active-application-composition.mts';
-import { createSharedRuntimeConfig } from '../../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../../module-federation.shared.ts';
 import type { staffAuthenticationNamespaceRegistryLayer } from '../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
 import {
@@ -3002,13 +3002,19 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
         const inventoryContractDocument = yield* Schema.encodeEffect(
           Schema.fromJsonString(OntosModuleDeploymentContractSchema),
         )(inventoryContract);
-        const sharedRuntimeConfig = createSharedRuntimeConfig({
-          '@modern-js/plugin-i18n/runtime': observedPackageVersion('@modern-js/plugin-i18n'),
-          '@modern-js/runtime': observedPackageVersion('@modern-js/runtime'),
-          '@tanstack/react-router': observedPackageVersion('@tanstack/react-router'),
-          react: observedPackageVersion('react'),
-          'react-dom': observedPackageVersion('react-dom'),
-        });
+        const sharedRuntimeConfig = createSharedRuntimeConfig(
+          {
+            '@modern-js/plugin-i18n/runtime': observedPackageVersion('@modern-js/plugin-i18n'),
+            '@modern-js/runtime': observedPackageVersion('@modern-js/runtime'),
+            '@tanstack/react-router': observedPackageVersion('@tanstack/react-router'),
+            react: observedPackageVersion('react'),
+            'react-dom': observedPackageVersion('react-dom'),
+          },
+          {
+            role: 'host',
+            uiKit: resolveUiKitShare(new URL('../../../apps/shell-super-app/package.json', import.meta.url).href),
+          },
+        );
         const observedShared = Object.entries(sharedRuntimeConfig).map(([name, shared]) => ({
           name,
           requiredVersion: shared.requiredVersion,

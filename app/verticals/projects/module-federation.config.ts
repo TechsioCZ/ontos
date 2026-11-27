@@ -8,7 +8,7 @@ import {
   Struct as PackageVersionStruct,
 } from 'effect/Schema';
 
-import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { createSharedRuntimeConfig, resolveUiKitShare } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -54,13 +54,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     }),
   },
   name: 'verticalProjects',
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': i18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': i18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'remote', uiKit: resolveUiKitShare(import.meta.url) },
+  ),
 });
 
 export default moduleFederationConfig;

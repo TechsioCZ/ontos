@@ -122,7 +122,25 @@ const governedShared = shared([
   ['react', '19.2.8'],
   ['react-dom', '19.2.8'],
   ['react-dom/client', '19.2.8'],
+  ['@techsio/ui-kit/atoms/button', '0.67.0'],
+  ['@techsio/ui-kit/molecules/toast', '0.67.0'],
 ]);
+const KIT_BUTTON = '@techsio/ui-kit/atoms/button';
+
+interface KitFileList {
+  readonly async: readonly string[];
+  readonly sync: readonly string[];
+}
+interface KitFallbackFiles {
+  readonly css: KitFileList;
+  readonly js: KitFileList;
+}
+interface KitSharedEntry {
+  readonly assets?: KitFallbackFiles;
+  readonly name: string;
+  readonly requiredVersion: string;
+  readonly singleton: boolean;
+}
 
 const PARTY_REGISTRY = 'party-registry';
 const PARTY_REMOTE = 'verticalPartyRegistry';
@@ -333,7 +351,7 @@ it.effect('rejects observations that contradict the deployment identity or Shell
       },
     };
     const incompatible = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(shellWithOldReact));
-    expect(incompatible.message).toMatch(/share @modern-js\/plugin-i18n\/runtime exactly once/u);
+    expect(incompatible.message).toMatch(/share @modern-js\/plugin-i18n\/runtime as one versioned singleton/u);
 
     const olderReactShell = {
       ...incompatibleShell,
@@ -362,7 +380,62 @@ it.effect('rejects observations that contradict the deployment identity or Shell
       },
     ]);
     const unshared = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(unsharedReact));
-    expect(unshared.message).toMatch(/does not share react exactly once/u);
+    expect(unshared.message).toMatch(/does not share react as one versioned singleton/u);
+
+    const noKitFiles: KitFallbackFiles = { css: { async: [], sync: [] }, js: { async: [], sync: [] } };
+    const remoteWithKit = (kit: readonly KitSharedEntry[]) =>
+      observation([
+        {
+          ...partyRegistry,
+          federationManifest: artifact(PARTY_MANIFEST_URL, {
+            exposes: [{ path: PAGE_EXPOSE }],
+            name: PARTY_REMOTE,
+            shared: [...governedShared.filter(({ name }) => !name.startsWith('@techsio/ui-kit/')), ...kit],
+          }),
+        },
+      ]);
+    const consumesKit = yield* deriveActiveApplicationCompositionSnapshot(
+      remoteWithKit([{ assets: noKitFiles, name: KIT_BUTTON, requiredVersion: '0.67.0', singleton: true }]),
+    );
+    expect(consumesKit.composition.modules[0]?.sharedSingletons).toContainEqual({
+      packageName: '@techsio/ui-kit',
+      version: '0.67.0',
+    });
+    expect(consumesKit.composition.shell.sharedSingletons).toContainEqual({
+      packageName: '@techsio/ui-kit',
+      version: '0.67.0',
+    });
+
+    const kitCopy = yield* Effect.flip(
+      deriveActiveApplicationCompositionSnapshot(
+        remoteWithKit([
+          {
+            assets: { ...noKitFiles, js: { async: ['static/js/async/button.js'], sync: [] } },
+            name: KIT_BUTTON,
+            requiredVersion: '0.67.0',
+            singleton: true,
+          },
+        ]),
+      ),
+    );
+    expect(kitCopy.message).toMatch(/share @techsio\/ui-kit as one versioned singleton provided by the Shell/u);
+
+    const mixedKit = yield* Effect.flip(
+      deriveActiveApplicationCompositionSnapshot(
+        remoteWithKit([
+          { name: KIT_BUTTON, requiredVersion: '0.67.0', singleton: true },
+          { name: '@techsio/ui-kit/molecules/toast', requiredVersion: '0.66.2', singleton: true },
+        ]),
+      ),
+    );
+    expect(mixedKit.message).toMatch(/share @techsio\/ui-kit as one versioned singleton/u);
+
+    const olderKit = yield* Effect.flip(
+      deriveActiveApplicationCompositionSnapshot(
+        remoteWithKit([{ name: KIT_BUTTON, requiredVersion: '0.66.2', singleton: true }]),
+      ),
+    );
+    expect(olderKit.message).toMatch(/valid Application Composition/u);
 
     const withoutI18n = observation([
       {

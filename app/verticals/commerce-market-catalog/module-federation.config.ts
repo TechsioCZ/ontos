@@ -38,13 +38,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   filename: 'remoteEntry.js',
   name: 'verticalCommerceMarketCatalog',
-  shared: createSharedRuntimeConfig({
-    '@modern-js/plugin-i18n/runtime': pluginI18nVersion,
-    '@modern-js/runtime': runtimeVersion,
-    '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    react: reactVersion,
-    'react-dom': reactDomVersion,
-  }),
+  shared: createSharedRuntimeConfig(
+    {
+      '@modern-js/plugin-i18n/runtime': pluginI18nVersion,
+      '@modern-js/runtime': runtimeVersion,
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: reactVersion,
+      'react-dom': reactDomVersion,
+    },
+    { role: 'remote' },
+  ),
 });
 
 export default moduleFederationConfig;
