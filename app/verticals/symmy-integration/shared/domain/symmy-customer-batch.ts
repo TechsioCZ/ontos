@@ -36,7 +36,7 @@ export const symmyCustomerOccurrenceSeed = (idempotencyKey: string, itemKey: str
   `occurrence\u0000${idempotencyKey}\u0000${itemKey}`;
 
 /** The text whose digest names the source record of a customer id the owners cannot take as it is. */
-export const symmyCustomerRecordSeed = (customerId: string): string => `customer-record\u0000${customerId}`;
+export { symmyCustomerRecordSeed } from '@app/shared-contracts/symmy';
 
 /**
  * The text whose digest names the source record of one saved address of one customer. A saved address binds one

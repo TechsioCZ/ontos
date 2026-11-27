@@ -1,3 +1,4 @@
+import { CustomerProfileSourceResponseSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { ChangeOrganizationCustomerProfileIcoPayloadSchema } from '@app/commerce-customer-context/domain/organization-profile-ico';
 import { OrganizationBusinessSourceReferenceSchema } from '@app/party-registry/apis/organization-record-facts';
 import { AddSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/add-saved-address-action';
@@ -157,6 +158,7 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
   Schema.TaggedStruct('CustomerGroupCreate', { payload: Schema.toEncoded(CreateCustomerGroupPayloadSchema) }),
   Schema.TaggedStruct('CustomerGroupUpdate', { payload: Schema.toEncoded(UpdateCustomerGroupPayloadSchema) }),
   Schema.TaggedStruct('CustomerGroupMembership', {
+    customerSource: Schema.optionalKey(CustomerProfileSourceResponseSchema.members[1].fields.item.fields.source),
     payload: Schema.toEncoded(ApplyCustomerGroupMembershipSourcePayloadSchema),
   }),
   Schema.TaggedStruct('OrganizationCustomerProfileIco', {

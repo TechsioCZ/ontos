@@ -1,3 +1,4 @@
+import { symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
 import {
   OrganizationBusinessCounterpartyContextReason,
   OrganizationBusinessCustomerRoleReason,
@@ -19,7 +20,6 @@ import {
   symmyCustomerAddressRecordSeed,
   symmyCustomerContactRecordSeed,
   symmyCustomerOccurrenceSeed,
-  symmyCustomerRecordSeed,
 } from '../../shared/domain/symmy-customer-batch.ts';
 import type {
   SymmyCustomerAddress,
@@ -58,7 +58,6 @@ const addressKey = 'address-add';
 const contactKey = 'contact-add';
 const icoKey = 'ico-set';
 /** A source record id the owners accept: bounded to the Party source identifier and free of surrounding blanks. */
-const MAX_SOURCE_RECORD_LENGTH = 200;
 
 type TemplateSource = SymmyFixtureExecutionPlan['items'][number]['source'];
 
@@ -379,17 +378,7 @@ interface CustomerFacts<Failure> {
   readonly row: SymmyCustomerRow;
 }
 
-/** A source record id for a customer id the owners accept, or the one derived from the customer id when they do not. */
-const customerRecordId = Effect.fn('SymmyCustomerPlan.recordId')(function* customerRecordId<Failure>(
-  customerId: string,
-  digest: Digest<Failure>,
-) {
-  if (customerId.length <= MAX_SOURCE_RECORD_LENGTH && customerId === customerId.trim()) {
-    return customerId;
-  }
-  return `symmy-customer:${yield* digest(symmyCustomerRecordSeed(customerId))}`;
-});
-
+/** The same request key and item always name the same occurrence. */
 const occurrenceOf = <Failure>(digest: Digest<Failure>, idempotencyKey: string, itemKey: string) =>
   digest(symmyCustomerOccurrenceSeed(idempotencyKey, itemKey)).pipe(Effect.map(uuidFromDigest));
 
@@ -399,7 +388,7 @@ const buildCustomer = Effect.fn('SymmyCustomerPlan.customer')(function* buildCus
 ) {
   const { context, digest, idempotencyKey, index, row } = facts;
   const itemKey = `customer-${index}`;
-  const recordId = yield* customerRecordId(row.customerId, digest);
+  const recordId = yield* symmyCustomerSourceRecordId(row.customerId, digest);
   const customer = customerItem(
     { context, occurrenceId: yield* occurrenceOf(digest, idempotencyKey, itemKey), recordId },
     row,

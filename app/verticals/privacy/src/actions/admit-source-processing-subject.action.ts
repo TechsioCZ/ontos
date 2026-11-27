@@ -41,7 +41,7 @@ import type { PrivacySourceRecordIdentity } from '../../shared/domain/privacy-su
 type Services = Pick<PrivacyOperationRepositoryService, 'createSubject'> & {
   readonly authorizations: Pick<
     SourceProcessingAuthorizationRepositoryService,
-    'activeForRoute' | 'sourceSubjectId' | 'admit'
+    'activeForRoute' | 'admission' | 'sourceSubjectId' | 'admit'
   >;
   readonly nextSubjectId: Effect.Effect<string, PrivacyOperationPersistenceError>;
   readonly profileSource: (
@@ -51,6 +51,46 @@ type Services = Pick<PrivacyOperationRepositoryService, 'createSubject'> & {
 
 const privacyModuleId = 'privacy.core' as const;
 const rejected = (reason: string) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason });
+
+const requireMembershipCustomer = Effect.fn('AdmitSourceProcessingSubjectAction.requireMembershipCustomer')(
+  function* requireMembershipCustomer(
+    customerSource: AdmitSourceProcessingSubjectPayload['membershipCustomer'],
+    known: Option.Option<string>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, Services>,
+  ) {
+    const { authorizations } = context.services;
+    if (customerSource !== undefined) {
+      // Never use the membership authorization as a grant over the independently enrolled customer.
+      // Pin that route in this transaction too, and require its admitted subject to be the owner-bound one.
+      const [customerAuth] = yield* authorizations.activeForRoute(customerSource, 'admission');
+      if (
+        customerAuth === undefined ||
+        !sourceIsOnRoute(customerAuth.source, customerSource) ||
+        !customerAuth.principals.some(
+          ({ authMethod, principalId }) =>
+            authMethod === context.scope.authMethod && principalId === context.scope.principalId,
+        ) ||
+        !customerAuth.grants.some(
+          ({ consumerModuleId, operation }) =>
+            consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+            operation === SymmyCustomerSourceIntakeOperation,
+        )
+      ) {
+        return yield* rejected('The customer source has no current intake authorization');
+      }
+      const customer = yield* authorizations.admission(customerSource);
+      if (
+        Option.isNone(known) ||
+        Option.isNone(customer) ||
+        customer.value.subjectId !== known.value ||
+        customer.value.role !== 'SUBJECT'
+      ) {
+        return yield* rejected('The customer record does not belong to the Profile subject');
+      }
+    }
+    return yield* Effect.void;
+  },
+);
 
 /**
  * Creates or finds the SOURCE_ASSERTED subject of one source record under the active authorization of its route and
@@ -102,6 +142,7 @@ export const handleAdmitSourceProcessingSubject = Effect.fn('AdmitSourceProcessi
     if (payload.membershipProfile !== undefined && Option.isNone(known)) {
       return yield* rejected('The owner-bound customer has not been admitted');
     }
+    yield* requireMembershipCustomer(payload.membershipCustomer, known, context);
     const subjectId = Option.isSome(known) ? known.value : yield* context.services.nextSubjectId;
     const admittedAt = DateTime.formatIso(yield* DateTime.now);
     const subjectRef = {

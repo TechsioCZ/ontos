@@ -462,6 +462,8 @@ const start = ({
 };
 
 const fixtureJson = { body: '{"fixtureId":"internal-c14-fixture"}', headers: { 'content-type': 'application/json' } };
+const membershipCustomers = [{ customerId: 'ERP-42' }];
+const membershipJson = { body: JSON.stringify({ customers: membershipCustomers }), headers: fixtureJson.headers };
 const customerGroupRow = (code: string) => ({
   businessCode: 'WHOLESALE_BUYERS',
   code,
@@ -664,6 +666,9 @@ const routeBody = (path: string) => {
   }
   if (path === SYMMY_ROUTES.customersBatch.path) {
     return customersJson();
+  }
+  if (path === SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode)) {
+    return membershipJson;
   }
   if (path === SYMMY_ROUTES.customerGroupsBatch.path) {
     return customerGroupsJson(['group-1', 'group-2']);
@@ -1111,6 +1116,8 @@ it.effect('uses a privately acquired route assertion without falling back to hum
     };
     const route = yield* Schema.decodeUnknownEffect(SymmyRouteContextResponseSchema)({
       ...internalRoute,
+      allowedOwnerOperations: [],
+      replayIdempotencyDigest: 'b'.repeat(64),
       resolvedCode: rawCode,
       selector: { kind: 'CUSTOMER_GROUP', source, target: nativeCustomerGroupRef },
       sourceNamespace: 'distinct-price-row-namespace',
@@ -1161,7 +1168,7 @@ it.effect('uses a privately acquired route assertion without falling back to hum
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
-        ...fixtureJson,
+        ...membershipJson,
         headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
@@ -1455,7 +1462,7 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
     const submit = (code: string) =>
       Effect.promise(() =>
         server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
-          ...fixtureJson,
+          ...membershipJson,
           headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
         }),
@@ -2068,7 +2075,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminCustomers' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
-      { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
+      { code: groupCode, groupCustomers: membershipCustomers, idempotencyKey, route: 'customerGroupCustomersBatch' },
       {
         customerGroups: [customerGroupRow('group-1'), customerGroupRow('group-2')],
         idempotencyKey,
@@ -3302,13 +3309,25 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
       }),
     );
     const server = yield* Effect.acquireRelease(
-      Effect.sync(() => start({ dispatch, ownerFetch: fetchOwner })),
+      Effect.sync(() =>
+        start({
+          acquireRouteAssertion: () =>
+            Effect.succeed({
+              apiBaseUrl,
+              assertion: Redacted.make(`scoped-assertion-${identifier}`),
+              compositionRevision: revision,
+              route: Schema.decodeUnknownSync(SymmyRouteContextResponseSchema)(internalRoute),
+            }),
+          dispatch,
+          ownerFetch: fetchOwner,
+        }),
+      ),
       (fixture) => Effect.promise(fixture.dispose),
     );
     const submit = () =>
       Effect.promise(() =>
-        server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode), {
-          ...fixtureJson,
+        server.request(SYMMY_ROUTES.customersBatch.path, {
+          ...customersJson(),
           headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
         }),
@@ -3330,7 +3349,7 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
       `${releasePath}/symmy-integration/actions/admit-symmy-job`,
       `${releasePath}/symmy-integration/actions/admit-symmy-job`,
     ]);
-    const intent = { code: groupCode, fixtureId, idempotencyKey, routeKey: 'customerGroupCustomersBatch' };
+    const intent = { customers: publicCustomerRows, idempotencyKey, routeKey: 'customersBatch' };
     expect(calls.map(({ payload }) => payload)).toEqual([{ jobId }, intent, intent]);
     expect(calls.map(({ headers }) => headers['idempotency-key'])).toEqual([
       undefined,
@@ -3339,8 +3358,8 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
     ]);
     expect(calls.map(({ headers }) => headers['authorization'])).toEqual([
       'Bearer synthetic-assertion-1',
-      'Bearer synthetic-assertion-2',
-      'Bearer synthetic-assertion-3',
+      'Bearer scoped-assertion-1',
+      'Bearer scoped-assertion-3',
     ]);
     expect(calls.map(({ headers }) => headers['x-correlation-id'])).toEqual([
       'fixture-identifier-1',

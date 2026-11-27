@@ -1,8 +1,32 @@
+import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
 import { Schema } from 'effect';
+import {
+  CustomerProfileSourceRequestSchema,
+  CustomerProfileSourceResponseSchema,
+} from '@app/commerce-customer-context/api/customer-profile-source';
+import type { CustomerProfileSourceRequest } from '@app/commerce-customer-context/api/customer-profile-source';
+import { OrganizationMembershipProfileSchema } from '@app/commerce-customer-context/domain/organization-membership-source';
+import { SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
 
-/** A synchronous group plan holds at most sixteen items: one per group. */
+import { SymmyCustomerRowSchema } from './symmy-customer-batch.ts';
+
+/**
+ * The admission contract of an ERP membership route: the customers of one group, each named by the ERP's own customer
+ * id and ordered by the Symmy membership ledger. A route enrolls it alone, never beside another contract.
+ */
+export const SYMMY_ERP_MEMBERSHIP_CONTRACT = 'ERP_MEMBERSHIP_V1';
+/**
+ * The source namespaces reserved for ERP memberships. The ledger is the only issuer of their membership orders, the
+ * database refuses every other route a source of them, and a route is an ERP membership route exactly when its
+ * membership source is one of them.
+ */
+export const SYMMY_ERP_MEMBERSHIP_NAMESPACE_PREFIX = 'erp-membership-v1:';
+export const isSymmyErpMembershipNamespace = (sourceNamespace: string): boolean =>
+  sourceNamespace.startsWith(SYMMY_ERP_MEMBERSHIP_NAMESPACE_PREFIX);
+
+/** A synchronous group plan and a membership job hold at most sixteen items: one per group or per customer. */
 const SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS = 16;
 
 /**
@@ -11,7 +35,10 @@ const SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS = 16;
  */
 export const SYMMY_CUSTOMER_GROUP_REASON = 'Qualified Symmy source explicitly defines this customer group';
 export const SYMMY_CUSTOMER_GROUP_SOURCE_REVISION_STEM = 'symmy-customer-group-revision';
+export const SYMMY_GROUP_MEMBERSHIP_REASON =
+  'Qualified Symmy source explicitly assigns this customer to the selected customer group';
 
+const CustomerProfileSourceAssertionSchema = CustomerProfileSourceResponseSchema.members[1].fields.item.fields.source;
 const create = CreateCustomerGroupPayloadSchema.fields;
 const update = UpdateCustomerGroupPayloadSchema.fields;
 const definitionSource = create.source.schema.fields;
@@ -78,3 +105,122 @@ export const SymmyCustomerGroupDefinitionFactsSchema = Schema.Array(SymmyCustome
   ),
 );
 export type SymmyCustomerGroupDefinitionFacts = typeof SymmyCustomerGroupDefinitionFactsSchema.Type;
+
+/**
+ * One customer of the group the path code selects, named by the source's own customer id: the `customerId` the same
+ * source sent in `POST /customers/batch`. Symmy resolves it to the customer profile it created for that source record,
+ * so the sender never reads an OntOS reference back. The group is never named here: the route enrollment binds it.
+ */
+export const SymmyGroupCustomerRowSchema = Schema.Struct({
+  customerId: SymmyCustomerRowSchema.members[0].fields.customerId,
+});
+export type SymmyGroupCustomerRow = typeof SymmyGroupCustomerRowSchema.Type;
+
+/** One to sixteen customers, each once. Assignment only: no removal, no replacement set. */
+export const SymmyGroupCustomerRowsSchema = Schema.NonEmptyArray(SymmyGroupCustomerRowSchema).check(
+  Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
+  Schema.makeFilter(
+    (rows: readonly SymmyGroupCustomerRow[]) =>
+      new Set(rows.map(({ customerId }) => customerId)).size === rows.length || 'Each customer appears once',
+  ),
+);
+export type SymmyGroupCustomerRows = typeof SymmyGroupCustomerRowsSchema.Type;
+
+/** A customer profile exactly as the Commerce owner names it in a membership. */
+export const SymmyGroupMembershipProfileSchema =
+  ApplyCustomerGroupMembershipSourcePayloadSchema.members[0].fields.profile;
+
+/** Current owner evidence, never a Symmy job receipt. Only an organization-proved Counterparty is business-only. */
+export const SymmyGroupMembershipCustomerFactSchema = Schema.Union([
+  Schema.Struct({
+    customerSource: CustomerProfileSourceAssertionSchema,
+    processingKind: Schema.Literal('PERSONAL'),
+    profile: SymmyGroupMembershipProfileSchema,
+  }),
+  Schema.Struct({
+    customerSource: CustomerProfileSourceAssertionSchema,
+    processingKind: Schema.Literal('ORG_BUSINESS_REFERENCE'),
+    profile: OrganizationMembershipProfileSchema,
+  }),
+]);
+export type SymmyGroupMembershipCustomerFact = typeof SymmyGroupMembershipCustomerFactSchema.Type;
+const customerProfiles = Schema.Array(SymmyGroupMembershipCustomerFactSchema).check(
+  Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
+  Schema.makeFilter(
+    (facts) =>
+      new Set(facts.map(({ customerSource }) => customerSource.recordId)).size === facts.length ||
+      'Each customer source has one current profile',
+  ),
+);
+type CurrentRequest = Extract<CustomerProfileSourceRequest, { readonly mode: 'CURRENT' }>;
+/** Exact customer source route and revisions, not merely a same-tenant profile or manager namespace. */
+export const symmyMembershipSourceMatches = (
+  request: Omit<CurrentRequest, 'mode'>,
+  source: typeof CustomerProfileSourceAssertionSchema.Type,
+): boolean =>
+  source.issuer === request.issuer &&
+  source.namespace === request.namespace &&
+  source.recordType === request.recordType &&
+  source.recordId === request.recordId &&
+  source.mappingRevision === request.mappingRevision &&
+  source.route.id === request.route.id &&
+  source.route.revision === request.route.revision;
+
+const {
+  mode: _currentMode,
+  recordId: _customerRecordId,
+  ...customerAuthorityFields
+} = CustomerProfileSourceRequestSchema.members[0].fields;
+/** The exact customer enrollment queried by the owner reader, including when every answer was ABSENT. */
+export const SymmyMembershipCustomerAuthoritySchema = Schema.Struct({
+  ...customerAuthorityFields,
+  issuer: SymmySourceRecordRefSchema.fields.issuerId,
+  namespace: SymmySourceRecordRefSchema.fields.sourceNamespace,
+  route: Schema.Struct({
+    id: Schema.String.check(Schema.isUUID()),
+    revision: customerAuthorityFields.route.fields.revision,
+  }),
+});
+export type SymmyMembershipCustomerAuthority = typeof SymmyMembershipCustomerAuthoritySchema.Type;
+
+/** One queried authority owns the whole batch; absent records do not lose their source qualifications. */
+export const SymmyGroupMembershipCustomerResolutionSchema = Schema.Struct({
+  authority: SymmyMembershipCustomerAuthoritySchema,
+  profiles: customerProfiles,
+}).check(
+  Schema.makeFilter(
+    ({ authority, profiles }) =>
+      profiles.every(({ customerSource }) =>
+        symmyMembershipSourceMatches({ ...authority, recordId: customerSource.recordId }, customerSource),
+      ) || 'Every current profile must come from the exact queried customer authority',
+  ),
+);
+export type SymmyGroupMembershipCustomerResolution = typeof SymmyGroupMembershipCustomerResolutionSchema.Type;
+
+/**
+ * The text whose digest names the source record of one membership: the selected group's source record and the
+ * customer's source record. The same customer of the same group is always the same record, whichever request asserts it.
+ */
+export const symmyGroupMembershipRecordSeed = (groupRecordId: string, customerRecordId: string): string =>
+  ['group-membership', groupRecordId, customerRecordId].map((part) => `${part.length}:${part}`).join('');
+
+/**
+ * The text whose digest names the occurrence of one customer of a `POST /customer-groups/{code}/customers/batch`
+ * request: the admitted route, the group it selects, the request's Idempotency-Key and the plan item. The owner keys a
+ * membership assertion by profile and manager, which two group routes can share, so one key and position sent to two
+ * routes names two assertions. A conformance suite seeds Privacy for this exact occurrence before it submits.
+ */
+export const symmyGroupMembershipOccurrenceSeed = ({
+  groupId,
+  idempotencyKey,
+  itemKey,
+  routeId,
+}: {
+  readonly groupId: string;
+  readonly idempotencyKey: string;
+  readonly itemKey: string;
+  readonly routeId: string;
+}): string =>
+  ['group-membership-occurrence', routeId, groupId, idempotencyKey, itemKey]
+    .map((part) => `${part.length}:${part}`)
+    .join('');

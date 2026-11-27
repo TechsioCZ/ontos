@@ -175,7 +175,16 @@ const valid = {
   adminRegions: () => ({ configuration: { items: [item('REGION', [currentMarkets, currencies])] }, legalEntityId }),
   customerGroupCustomersBatch: () => ({
     ...write,
-    configuration: { items: [item('CUSTOMER', [applyMembership])], selector, sourceRouteId },
+    configuration: {
+      items: [
+        item('CUSTOMER', [
+          applyMembership,
+          operation('commerce.customer-context', 'commerce.customer-context.api.customer-profile-source'),
+        ]),
+      ],
+      selector,
+      sourceRouteId,
+    },
     routeCode: 'VIP',
   }),
   customerGroupsBatch: () => ({
@@ -313,7 +322,26 @@ it('publishes the exact registered Inventory provision, receipt recovery and sou
   }
 });
 
+/** The enrolled item under a source namespace reserved for ERP memberships. */
+const reserved = (enrolled: EncodedItem): EncodedItem => ({
+  ...enrolled,
+  source: { ...enrolled.source, sourceNamespace: 'erp-membership-v1:AKROS' },
+});
+
 describe('Symmy route inventories', () => {
+  it('enrolls the ERP membership contract alone exactly on a membership route of a namespace reserved for it', () => {
+    // A membership route of any other namespace keeps the contract it always had and never admits an ERP customer id.
+    expect(symmyPlannedRouteRow(request('customerGroupCustomersBatch')).fixtureIds).toEqual(['INTERNAL_C14']);
+    const [membership] = valid.customerGroupCustomersBatch().configuration.items;
+    const erp = withConfiguration('customerGroupCustomersBatch', { items: [reserved(membership)] });
+    expect(codes(erp)).toEqual([]);
+    expect(symmyPlannedRouteRow(erp).fixtureIds).toEqual(['ERP_MEMBERSHIP_V1']);
+    // The reserved namespace means nothing on any other route: only the membership route's ledger orders it.
+    const [customer] = valid.customersBatch().configuration.items;
+    expect(
+      symmyPlannedRouteRow(withConfiguration('customersBatch', { items: [reserved(customer)] })).fixtureIds,
+    ).toEqual(['INTERNAL_C14']);
+  });
   it('inventories dynamic stock resolution and names no inventory for an operator fixture route', () => {
     const stock = symmyRouteInventoryOf('inventoryStockBatch');
     expect(Option.isOption(stock) && Option.isSome(stock)).toBe(true);

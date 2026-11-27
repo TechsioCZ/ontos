@@ -307,6 +307,8 @@ export const EndSourceProcessingAuthorizationPayloadSchema = Schema.Struct({
  */
 export const AdmitSourceProcessingSubjectPayloadSchema = Schema.Struct({
   childSources: Schema.Array(PrivacySourceRecordIdentitySchema).check(Schema.isMaxLength(256)),
+  /** For ERP membership, the exact customer record Commerce resolved before the assertion was planned. */
+  membershipCustomer: Schema.optionalKey(PrivacySourceRecordIdentitySchema),
   membershipProfile: Schema.optionalKey(
     Schema.Struct({
       kind: Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY_PURCHASING_PROFILE']),
@@ -316,8 +318,10 @@ export const AdmitSourceProcessingSubjectPayloadSchema = Schema.Struct({
   preparation: Schema.optionalKey(SourceChildPreparationSchema),
   source: PrivacySourceRecordIdentitySchema,
 }).check(
-  Schema.makeFilter(({ childSources, membershipProfile, source }) => {
+  Schema.makeFilter(({ childSources, membershipCustomer, membershipProfile, source }) => {
     if (
+      (membershipCustomer !== undefined &&
+        (membershipProfile === undefined || !['CUSTOMER', 'PERSON'].includes(membershipCustomer.recordType))) ||
       (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP') !== (membershipProfile !== undefined) ||
       (membershipProfile !== undefined && childSources.length !== 0) ||
       [source, ...childSources].some((entry) => entry.recordType === 'CUSTOMER_GROUP') ||

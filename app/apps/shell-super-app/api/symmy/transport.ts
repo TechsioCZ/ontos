@@ -10,9 +10,14 @@ import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symm
 import {
   SymmyCustomerGroupRowsSchema,
   SymmyCustomerRowsSchema,
+  SymmyGroupCustomerRowsSchema,
   SymmyInternalExecutionPlanSchema,
 } from '@app/symmy-integration/symmy-internal-contracts';
-import type { SymmyCustomerGroupRows, SymmyCustomerRows } from '@app/symmy-integration/symmy-internal-contracts';
+import type {
+  SymmyCustomerGroupRows,
+  SymmyCustomerRows,
+  SymmyGroupCustomerRows,
+} from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
@@ -39,6 +44,7 @@ import {
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
+import { SymmyGroupCustomersBatchRequestSchema } from './group-customers-batch-request-contract.ts';
 import type {
   SymmyCustomerFieldName,
   SymmyProductFieldName,
@@ -161,6 +167,15 @@ interface CustomersSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
   readonly route: 'customersBatch';
 }
+/** Whether the body of the group customers route is the ERP's customers rather than the internal write. */
+const isGroupCustomersBody = Schema.is(SymmyGroupCustomersBatchRequestSchema);
+/** The public customers of the selected group. The owner admission resolves each to its profile. */
+interface GroupCustomersSubmit {
+  readonly code: string;
+  readonly groupCustomers: SymmyGroupCustomerRows;
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'customerGroupCustomersBatch';
+}
 type FixtureSubmit =
   | (InternalWritePayload & {
       readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
@@ -174,6 +189,7 @@ type FixtureSubmit =
           }
       ))
   | CustomersSubmit
+  | GroupCustomersSubmit
   | PriceBatchSubmit
   | PriceListsSubmit
   | ProductsSubmit;
@@ -348,6 +364,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerRowsSchema))(request.customers).pipe(
       Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
     );
+    return encoded.includes(raw);
+  }
+  if ('groupCustomers' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyGroupCustomerRowsSchema))(
+      request.groupCustomers,
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
     return encoded.includes(raw);
   }
   if ('customerGroups' in request) {
@@ -645,12 +667,21 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       }),
     )
     .handle('customerGroupCustomersBatch', ({ headers, params, payload }) =>
-      handleSubmit({
-        code: params.code,
-        ...payload,
-        idempotencyKey: headers['idempotency-key'],
-        route: 'customerGroupCustomersBatch',
-      }),
+      handleSubmit(
+        isGroupCustomersBody(payload)
+          ? {
+              code: params.code,
+              groupCustomers: payload.customers,
+              idempotencyKey: headers['idempotency-key'],
+              route: 'customerGroupCustomersBatch',
+            }
+          : {
+              code: params.code,
+              ...payload,
+              idempotencyKey: headers['idempotency-key'],
+              route: 'customerGroupCustomersBatch',
+            },
+      ),
     )
     .handle('customerGroupsBatch', ({ headers, payload }) =>
       handleGroupApply(groupRequest(payload.customerGroups, headers['idempotency-key'])),

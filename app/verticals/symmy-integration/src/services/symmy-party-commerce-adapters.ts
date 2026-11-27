@@ -1,3 +1,5 @@
+import { readSymmyGroupMembershipFacts } from '../../shared/readers/symmy-membership-customer-facts.ts';
+import { SymmyGroupMembershipProfileSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
 import { ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema } from '@app/commerce-customer-context/api/change-organization-customer-profile-ico-action';
 import {
   ChangeOrganizationCustomerProfileIcoPayloadSchema,
@@ -163,6 +165,8 @@ const traceProfileStage = Effect.fn('SymmyPartyCommerceAdapters.traceProfileStag
 const createPartyActionKey = 'party.registry.create-party';
 const party = 'party.registry';
 const commerce = 'commerce.customer-context';
+const customerProfileSourceDeclaration = 'commerce.customer-context.customer-profile-source.read';
+const customerProfileSourceRead = 'commerce.customer-context.api.customer-profile-source';
 const operations = [
   {
     declaration: 'party.registry.party.create',
@@ -1505,11 +1509,11 @@ const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.curre
     const context = yield* freshOwnerContext(
       crypto,
       input,
-      'commerce.customer-context.customer-profile-source.read',
+      customerProfileSourceDeclaration,
       commerce,
       false,
       undefined,
-      'commerce.customer-context.api.customer-profile-source',
+      customerProfileSourceRead,
     );
     const current = yield* executeCustomerProfileSourceWithAuthorization(
       request,
@@ -1543,6 +1547,76 @@ const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.curre
     return yield* Effect.void;
   },
 );
+/** Re-read current Commerce eligibility under the canonical customer source, never the synthetic membership source. */
+const currentMembershipCustomer = Effect.fn('SymmyPartyCommerceAdapters.currentMembershipCustomer')(
+  function* currentMembershipCustomer(
+    crypto: Crypto.Crypto,
+    input: SymmyEffectAdapterInput,
+    intent: SymmyPartyCommerceIntent,
+  ) {
+    const membership = Match.value(intent).pipe(
+      Match.tag('CustomerGroupMembership', (value) => Option.some(value)),
+      Match.orElse(() => Option.none()),
+    );
+    if (Option.isNone(membership)) {
+      return true;
+    }
+    if (input.legalEntityId === undefined) {
+      return yield* symmyJobWorkerUnavailable();
+    }
+    const { customerSource: source, payload } = membership.value;
+    // Only an ERP-id assignment pins a customer source; explicit internal plans already name their profile.
+    if (source === undefined) {
+      return true;
+    }
+    const context = yield* freshOwnerContext(
+      crypto,
+      input,
+      customerProfileSourceDeclaration,
+      commerce,
+      false,
+      undefined,
+      customerProfileSourceRead,
+    );
+    return yield* readSymmyGroupMembershipFacts({
+      authority: {
+        issuer: source.issuer,
+        mappingRevision: source.mappingRevision,
+        namespace: source.namespace,
+        recordType: source.recordType,
+        route: source.route,
+      },
+      read: (request) =>
+        executeCustomerProfileSourceWithAuthorization(
+          request,
+          context.authorization,
+          context.requestCorrelation,
+          context.options,
+        ),
+      recordIds: [source.recordId],
+      tenantId: payload.profile.profileRef.tenantId,
+    }).pipe(
+      Effect.map(
+        ({ profiles: [current] }) =>
+          current !== undefined &&
+          Schema.toEquivalence(SymmyGroupMembershipProfileSchema)(current.profile, payload.profile) &&
+          (current.processingKind === 'ORG_BUSINESS_REFERENCE') ===
+            (payload.processingKind === 'ORG_BUSINESS_REFERENCE'),
+      ),
+      // Only what the owner answers about this exact customer is definitive: no current profile, Privacy's own
+      // refusal of it as the owner's REFUSED result, or an inactive profile. The endpoint's forbidden problem is also
+      // what a missing permission, module, operation context, deployment binding or source route authority answers;
+      // like an undecodable reply or a failed delegation it says nothing about this customer, so it stays retryable
+      // and settles nothing.
+      Effect.catchTags({
+        SymmyMembershipCustomerRefused: () => Effect.succeed(false),
+        SymmyMembershipProfileInactive: () => Effect.succeed(false),
+      }),
+      Effect.mapError(symmyJobWorkerUnavailable),
+    );
+  },
+);
+
 const currentMembershipDefinition = Effect.fn('SymmyPartyCommerceAdapters.currentMembershipDefinition')(
   function* currentMembershipDefinition(
     crypto: SecureRandom.SecureRandom['Service'],
@@ -1665,6 +1739,9 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
       }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
     }
     yield* currentMembershipDefinition(crypto, input, normalizedIntent);
+    if (!(yield* currentMembershipCustomer(crypto, input, normalizedIntent))) {
+      return yield* outcome(input, 'denied');
+    }
     yield* currentOrganizationIcoTarget(crypto, input, normalizedIntent);
     const selected = operationForIntent(normalizedIntent);
     const context = yield* freshOwnerContext(
@@ -2052,12 +2129,31 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupMembership' }>,
 ) {
   const payload = yield* Schema.decodeUnknownEffect(ApplyCustomerGroupMembershipSourcePayloadSchema)(intent.payload);
-  const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)({
+  if (input.originalExecutorPrincipalId === undefined || input.originalRequestHash === undefined) {
+    return unavailableRecovery;
+  }
+  // Only the command whose request hash the original invocation was admitted under can be recovered.
+  const originalScope: SymmyPartyCommerceRequestScope = {
+    principalId: input.originalExecutorPrincipalId,
+    tenantId: input.effect.ref.occurrence.record.route.tenantId,
+  };
+  const pinnedHash = yield* prepareSymmyPartyCommerceRequestHash(
+    intent,
+    input.legalEntityId === undefined ? originalScope : { ...originalScope, legalEntityId: input.legalEntityId },
+  );
+  if (pinnedHash !== input.originalRequestHash) {
+    return unavailableRecovery;
+  }
+  const query = {
     effectId: payload.source.effectId,
     manager: payload.manager,
     profile: payload.profile,
     route: payload.route,
-  });
+  };
+  // The owner reads an organization's receipt under its business processing, never under a person's.
+  const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)(
+    payload.processingKind === undefined ? query : { ...query, processingKind: payload.processingKind },
+  );
   const requestHash = yield* readRequestHash(CustomerGroupMembershipSourceReceiptRequestSchema, request);
   const authorized = yield* freshRecoveryContext(
     crypto,
@@ -2077,9 +2173,17 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
     context.requestCorrelation,
     context.options,
   );
+  // The receipt settles this effect only when it records the pinned command: its assertion, its order, its source
+  // record and, for an assignment, exactly the group it names.
+  const receiptGroups = receipt.items.map((item) => ('membership' in item ? item.membership.groupRef : item.groupRef));
   if (
     receipt.source.effectId !== payload.source.effectId ||
-    receipt.source.assertionId !== payload.source.assertionId
+    receipt.source.assertionId !== payload.source.assertionId ||
+    receipt.source.order !== payload.source.order ||
+    receipt.source.sourceRecordId !== payload.source.sourceRecordId ||
+    (payload.operation === 'ASSIGN' &&
+      (receiptGroups.length !== 1 ||
+        !receiptGroups.every((groupRef) => Schema.toEquivalence(CustomerGroupRefSchema)(groupRef, payload.groupRef))))
   ) {
     return unavailableRecovery;
   }
@@ -2264,9 +2368,9 @@ const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileM
   const authorized = yield* freshRecoveryContext(
     crypto,
     input,
-    'commerce.customer-context.customer-profile-source.read',
+    customerProfileSourceDeclaration,
     commerce,
-    'commerce.customer-context.api.customer-profile-source',
+    customerProfileSourceRead,
     requestHash,
   );
   if (Option.isNone(authorized)) {

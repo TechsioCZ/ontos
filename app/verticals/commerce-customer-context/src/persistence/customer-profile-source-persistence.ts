@@ -42,6 +42,7 @@ import type {
 } from '../../shared/apis/customer-profile-source-page.ts';
 import type { CustomerProfileSourceAssertion } from '../../shared/domain/customer-profile-source.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
+import { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 
 const storedSourceResponseSchema = Schema.Union([
@@ -152,6 +153,36 @@ const unavailable = (cause?: unknown) =>
     'cause',
     { configurable: true, value: cause },
   );
+/** Privacy's own current decision against one exact source Profile. It carries nothing of that decision. */
+export class CustomerProfileSourceRefused extends Schema.TaggedError<CustomerProfileSourceRefused>()(
+  'CustomerProfileSourceRefused',
+  {},
+) {}
+/**
+ * Only Privacy's typed DENIED for the exact source is a refusal of that customer. An outage, a failed delegation, a
+ * missing binding or any other cause says nothing about the customer and stays unavailable.
+ */
+export const customerProfileSourcePrivacyFailure = (cause: unknown) =>
+  Schema.is(CommerceSourceProcessingRejected)(cause) && cause.code === 'DENIED'
+    ? new CustomerProfileSourceRefused()
+    : unavailable(cause);
+/**
+ * A Counterparty without organization authority is read as its person. That person's refusal stays the refusal; every
+ * other failure of the fallback is unavailable evidence that keeps both causes.
+ */
+export const customerProfileSourcePersonFallbackFailure = (
+  organization: ReadHandlerUnavailable,
+  person: CustomerProfileSourceRefused | ReadHandlerUnavailable,
+) => (Schema.is(CustomerProfileSourceRefused)(person) ? person : unavailable({ organization, person }));
+/** The CURRENT answer of one projected item: its refusal is the REFUSED result, never a problem of the endpoint. */
+export const customerProfileSourceCurrentResult = <Item, E, R>(
+  projected: Effect.Effect<Item, CustomerProfileSourceRefused | E, R>,
+) =>
+  projected.pipe(
+    Effect.map((item) => ({ _tag: 'CURRENT' as const, item })),
+    Effect.catchIf(Schema.is(CustomerProfileSourceRefused), () => Effect.succeed({ _tag: 'REFUSED' as const })),
+  );
+
 export interface CustomerProfileSourceReadServices {
   readonly readSource: (
     input: CustomerProfileSourceRequest,
@@ -186,29 +217,33 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       reason: 'Source Profile reads require a trusted Legal Entity',
     });
   }
-  const privacyCheck = (source: CustomerProfileSourceAssertion, item: CustomerProfileSourceItem, operation: string) =>
-    privacy
-      .check(
-        scope,
-        {
-          operation,
-          source: {
-            issuer: source.issuer,
-            namespace: source.namespace,
-            occurrenceId: source.occurrenceId,
-            recordId: source.recordId,
-            recordType: source.recordType,
-            routeRef: source.route.id,
-          },
-          target: {
-            kind:
-              item.profile.profileRef.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
-            resourceId: item.profile.profileRef.resourceId,
-          },
+  const privacyDecision = (
+    source: CustomerProfileSourceAssertion,
+    item: CustomerProfileSourceItem,
+    operation: string,
+  ) =>
+    privacy.check(
+      scope,
+      {
+        operation,
+        source: {
+          issuer: source.issuer,
+          namespace: source.namespace,
+          occurrenceId: source.occurrenceId,
+          recordId: source.recordId,
+          recordType: source.recordType,
+          routeRef: source.route.id,
         },
-        requirements.privacy,
-      )
-      .pipe(Effect.mapError(unavailable));
+        target: {
+          kind:
+            item.profile.profileRef.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
+          resourceId: item.profile.profileRef.resourceId,
+        },
+      },
+      requirements.privacy,
+    );
+  const privacyCheck = (source: CustomerProfileSourceAssertion, item: CustomerProfileSourceItem, operation: string) =>
+    privacyDecision(source, item, operation).pipe(Effect.mapError(unavailable));
   const currentAdmissionForItem = Effect.fn('CustomerProfileSourceRead.currentAdmission')(
     function* currentAdmissionForItem(item: CustomerProfileSourceItem) {
       if (item.profile.subject.kind === 'RETAIL') {
@@ -251,7 +286,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       return result.currentAdmission;
     },
   );
-  const checkItem = Effect.fn('CustomerProfileSourceRead.checkItem')(function* checkItem(
+  const admitItem = Effect.fn('CustomerProfileSourceRead.admitItem')(function* admitItem(
     item: CustomerProfileSourceItem,
   ) {
     yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
@@ -271,7 +306,23 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     ) {
       return yield* unavailable();
     }
-    yield* privacyCheck(item.source, item, 'customer-profile-source.read');
+    return currentAdmission;
+  });
+  const checkItem = Effect.fn('CustomerProfileSourceRead.checkItem')(function* checkItem(
+    item: CustomerProfileSourceItem,
+  ) {
+    const currentAdmission = yield* admitItem(item);
+    yield* privacyCheck(item.source, item, SOURCE_READ_ROUTINE_KEY);
+    return currentAdmission;
+  });
+  /** The same checks for a current item, with Privacy's refusal of that exact source kept apart from unavailability. */
+  const checkRefusableItem = Effect.fn('CustomerProfileSourceRead.checkRefusableItem')(function* checkRefusableItem(
+    item: CustomerProfileSourceItem,
+  ) {
+    const currentAdmission = yield* admitItem(item);
+    yield* privacyDecision(item.source, item, SOURCE_READ_ROUTINE_KEY).pipe(
+      Effect.mapError(customerProfileSourcePrivacyFailure),
+    );
     return currentAdmission;
   });
   const checkOriginalRecovery = Effect.fn('CustomerProfileSourceRead.checkOriginalRecovery')(
@@ -422,18 +473,23 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     item: CustomerProfileSourceItem,
   ) {
     if (item.profile.subject.kind === 'RETAIL') {
-      yield* checkItem(item);
+      yield* checkRefusableItem(item);
       return { ...item, icoAuthority: 'PERSONAL' as const };
     }
     return yield* projectOrganizationItem(item).pipe(
       Effect.catch((error) =>
-        checkItem(item).pipe(
-          Effect.mapError((personFailure) => unavailable({ organization: error, person: personFailure })),
+        checkRefusableItem(item).pipe(
+          Effect.mapError((personFailure) => customerProfileSourcePersonFallbackFailure(error, personFailure)),
           Effect.as({ ...item, icoAuthority: 'PERSONAL' as const }),
         ),
       ),
     );
   });
+  /** A page has no answer per item: an item Privacy refuses leaves the whole page unavailable. */
+  const projectPageItem = (item: CustomerProfileSourceItem) =>
+    projectCurrentItem(item).pipe(
+      Effect.mapError((failure) => (Schema.is(CustomerProfileSourceRefused)(failure) ? unavailable(failure) : failure)),
+    );
   const organizationRecoveryIdentity = Effect.fn('CustomerProfileSourceRead.organizationRecoveryIdentity')(
     function* organizationRecoveryIdentity() {
       const admitted = yield* readScopedAdmittedWorkload(
@@ -538,7 +594,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const items =
         page.items.length === 0
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-          : yield* Effect.forEach(page.items, projectCurrentItem, { concurrency: 1 });
+          : yield* Effect.forEach(page.items, projectPageItem, { concurrency: 1 });
       return { ...page, items };
     }),
     readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(
@@ -598,12 +654,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
         Match.tagsExhaustive({
           ABSENT: (value) =>
             requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as(value)),
-          CURRENT: (value) =>
-            projectCurrentItem(value.item).pipe(Effect.map((item) => ({ _tag: 'CURRENT' as const, item }))),
+          CURRENT: (value) => customerProfileSourceCurrentResult(projectCurrentItem(value.item)),
           PAGE: (value) =>
             (value.items.length === 0
               ? requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-              : Effect.forEach(value.items, projectCurrentItem, { concurrency: 1 })
+              : Effect.forEach(value.items, projectPageItem, { concurrency: 1 })
             ).pipe(Effect.map((items) => ({ ...value, items }))),
           RECEIPT: Effect.fn('CustomerProfileSourceRead.recover')(function* checkReceipt({
             current,

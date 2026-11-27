@@ -576,6 +576,16 @@ it.live(
         expect(yield* Effect.flip(read({ ...authority, effectId: source.effectId, mode: 'RECEIPT' }))).toMatchObject({
           code: 'read_handler_unavailable',
         });
+        // Privacy's own refusal of an exact current source Profile is the owner's distinct REFUSED result, never a
+        // problem of the endpoint: for a retail Profile, and for a Counterparty read as its person, where the same
+        // refusal must not come back as unavailable evidence.
+        const isRefused = Schema.is(Schema.TaggedStruct('REFUSED', {}));
+        expect(isRefused(yield* read({ ...authority, mode: 'CURRENT', recordId: source.recordId }))).toBe(true);
+        expect(isRefused(yield* read({ ...authority, mode: 'CURRENT', recordId: 'customer-003' }))).toBe(true);
+        // A page has no answer per item, so the refusal of one of its items leaves the page unavailable.
+        expect(yield* Effect.flip(read({ ...authority, cursor: null, limit: 10, mode: 'LIST' }))).toMatchObject({
+          code: 'read_handler_unavailable',
+        });
         expect(yield* Effect.flip(ensure())).toMatchObject({ code: 'PRIVACY_DENIED' });
         expect(privacyChecks).toBeGreaterThan(callsBefore);
         expect(observedPrivacyRequirements).toEqual(

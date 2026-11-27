@@ -60,6 +60,8 @@ const ledgers = (authorization: SourceProcessingAuthorization) => {
   const services: AdmitServices = {
     authorizations: {
       activeForRoute: () => Effect.succeed(authorization.lifecycle === 'ACTIVE' ? [authorization] : []),
+      admission: (source) =>
+        Effect.succeed(Option.fromUndefinedOr(admissions.get(sourceProcessingIdentityKey(source)))),
       admit: (input) =>
         Effect.suspend(() => {
           for (const { role, source } of input.sources) {
@@ -238,6 +240,32 @@ describe('source processing subject admission', () => {
       expect(admissions.has(sourceProcessingIdentityKey(member.source))).toBe(false);
       expect(candidates.get(sourceProcessingIdentityKey(member.source))?.role).toBe('CHILD');
       expect(subjects.size).toBe(1);
+      const ownerLinked = admitContext(
+        { ...renewed, profileSource: () => Effect.succeed(Option.some(root)) },
+        '30000000-0000-4000-8000-0000000000a5',
+      );
+      expect(
+        (yield* handleAdmitSourceProcessingSubject({ ...member, membershipCustomer: root }, ownerLinked)).subjectRef,
+      ).toEqual(first.subjectRef);
+      const other = customer('customer:someone-else');
+      yield* handleAdmitSourceProcessingSubject(
+        { childSources: [], source: other },
+        admitContext(renewed, '30000000-0000-4000-8000-0000000000a6'),
+      );
+      const before = new Map(admissions);
+      for (const membershipCustomer of [
+        other,
+        customer('customer:never-admitted'),
+        { ...root, namespace: 'foreign-customers' },
+      ]) {
+        expect(
+          yield* handleAdmitSourceProcessingSubject({ ...member, membershipCustomer }, ownerLinked).pipe(
+            Effect.isFailure,
+          ),
+        ).toBe(true);
+      }
+      expect(admissions).toEqual(before);
+      expect(subjects.size).toBe(2);
     }),
   );
   it.effect('refuses an ended authorization, an unlisted principal and a foreign route', () =>

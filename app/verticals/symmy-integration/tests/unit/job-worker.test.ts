@@ -1,10 +1,11 @@
-import { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerDeferred, OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import type { OutboxWorkerHandlerContext, ScopedRoutineInvoker } from '@app/core-runtime';
 import { trustResolvedSystemPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { FetchHttpClient } from 'effect/http';
 import { SymmyJobNotification, SymmyJobNotificationError } from '../../src/services/symmy-job-notification.service.ts';
 import { SymmyJobNotificationStore } from '../../src/services/symmy-job-notification-store.ts';
@@ -147,6 +148,9 @@ const harness = () => {
   let originalEligible = true;
   let systemEligible = true;
   let routeEligible = true;
+  let orderReady = true;
+  /** What the claim makes of one effect of a lineage: kept waiting for an earlier order, or refused for good. */
+  const lineage = new Map<string, 'waiting' | 'refused'>();
   let notified = 0;
   let notificationFails = false;
   const executed: SymmyPinnedEffect[] = [];
@@ -176,6 +180,31 @@ const harness = () => {
         const entry = job.effects.find(({ effect }) => effect.ref.effectId === claimedId);
         if (entry === undefined) {
           return { effect: Option.none(), mode: 'blocked', version: 0 };
+        }
+        if (!orderReady || lineage.get(claimedId) === 'waiting') {
+          return { effect: Option.none(), mode: 'waiting', version: entry.version };
+        }
+        if (lineage.get(claimedId) === 'refused' && entry.state === 'planned') {
+          // The claim settles a membership whose bounded wait ended, as the routine does, and hands out no work.
+          const version = entry.version + 1;
+          job = {
+            ...job,
+            effects: job.effects.map((saved) =>
+              saved === entry
+                ? {
+                    ...saved,
+                    outcome: Option.some({
+                      effectId: entry.effect.ref.effectId,
+                      owner: entry.effect.ref.operation.moduleId,
+                      status: 'unresolved' as const,
+                    }),
+                    state: 'settled' as const,
+                    version,
+                  }
+                : saved,
+            ),
+          };
+          return { effect: Option.some(entry.effect), mode: 'settled', version };
         }
         const mode = claimMode(entry.state);
         const version = entry.version + 1;
@@ -400,11 +429,17 @@ const harness = () => {
     jobPresent: (value: boolean) => {
       jobPresent = value;
     },
+    lineage: (claimedId: string, state: 'waiting' | 'refused') => {
+      lineage.set(claimedId, state);
+    },
     makeWorker,
     notificationFails: (value: boolean) => {
       notificationFails = value;
     },
     notified: () => notified,
+    orderReady: (value: boolean) => {
+      orderReady = value;
+    },
     originalEligible: (value: boolean) => {
       originalEligible = value;
     },
@@ -486,6 +521,67 @@ describe('Symmy durable execution and original-effect recovery', () => {
       expect(fixture.recovered).toHaveLength(0);
       expect(fixture.notified()).toBe(0);
     }),
+  );
+
+  it.effect(
+    'defers an effect behind an unsettled earlier membership order without claiming it, calling an owner or spending an attempt',
+    () =>
+      Effect.gen(function* laterOrderWaits() {
+        const fixture = harness();
+        fixture.orderReady(false);
+        const now = DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
+        yield* TestClock.setTime(now);
+        const failure = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+        // A deferral, not a failure: the delivery wakes after an earlier attempt's lease and keeps its retry budget.
+        expect(Schema.is(OutboxWorkerDeferred)(failure)).toBe(true);
+        expect(failure).toMatchObject({ wakeAtMs: now + 30_000 });
+        expect(fixture.executed).toHaveLength(0);
+        expect(fixture.recovered).toHaveLength(0);
+        expect(fixture.job()).toEqual(initialJob);
+        fixture.orderReady(true);
+        yield* (yield* fixture.makeWorker()).execute({ jobId }, context);
+        expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+        expect(fixture.job().effects.map(({ state }) => state)).toEqual(['settled', 'settled']);
+      }),
+  );
+
+  it.effect(
+    'keeps a waiting membership awake when a sibling fails, and counts the failure again once the wait has ended',
+    () =>
+      Effect.gen(function* siblingFailsBesideWaitingOrder() {
+        const fixture = harness();
+        fixture.replaceJob({
+          ...initialJob,
+          effects: initialJob.effects.map((saved) => ({ ...saved, outcome: Option.none(), state: 'planned' as const })),
+        });
+        // The sibling's owner call is lost on every attempt; the other effect waits for an earlier order of its lineage.
+        fixture.execute((effect, pin) =>
+          effect.ref.effectId === siblingId ? loseAcknowledgement(effect, pin) : defaultExecute(effect),
+        );
+        fixture.recover(() => Effect.fail(unavailable()));
+        fixture.lineage(effectId, 'waiting');
+        const now = DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
+        yield* TestClock.setTime(now);
+        const deferred = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+        // Were this the delivery's last attempt, the sibling's failure would have ended it and the waiting membership
+        // would never wake. The deferral spends no attempt, and the sibling's possibly committed call is kept.
+        expect(Schema.is(OutboxWorkerDeferred)(deferred)).toBe(true);
+        expect(deferred).toMatchObject({ wakeAtMs: now + 30_000 });
+        expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([siblingId]);
+        expect(fixture.job().effects.map(({ state }) => state)).toEqual(['indeterminate', 'planned']);
+        // The claim ends the bounded wait by refusing the membership for good: nothing waits, so the failure counts.
+        fixture.lineage(effectId, 'refused');
+        const failed = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+        expect(Schema.is(OutboxWorkerDeferred)(failed)).toBe(false);
+        expect(failed).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+        expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([siblingId]);
+        expect(
+          fixture.job().effects.map(({ outcome, state }) => [state, Option.getOrUndefined(outcome)?.status]),
+        ).toEqual([
+          ['indeterminate', undefined],
+          ['settled', 'unresolved'],
+        ]);
+      }),
   );
 
   it.effect('shows fresh revoked authority as blocked and reactivates only the same effect', () =>

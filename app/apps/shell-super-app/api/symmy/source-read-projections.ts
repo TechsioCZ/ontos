@@ -90,7 +90,8 @@ const authenticationRequired = GatewayAuthenticationRequiredProblemSchema.make({
   title: 'Gateway authentication required',
   type: 'https://ontos.dev/problems/gateway-authentication-required',
 });
-const forbidden = GatewayForbiddenProblemSchema.make({
+/** The whole request is refused: the route may not read what it asks the owner for. */
+export const symmyOwnerReadForbidden = GatewayForbiddenProblemSchema.make({
   detail: 'The current route cannot read the requested owner data.',
   status: GatewayForbiddenProblemSchema.fields.status.literal,
   title: 'Gateway context forbidden',
@@ -104,7 +105,7 @@ export const mapSymmyOwnerReadProblem = (error: { readonly _tag: string }): Symm
     ),
     Match.when(
       (tag) => tag.endsWith('ForbiddenProblem'),
-      () => forbidden,
+      () => symmyOwnerReadForbidden,
     ),
     Match.orElse(() => symmyUnavailableProblem),
   );
@@ -130,10 +131,10 @@ const routeAllows = (scope: SymmySourceReadScope, moduleId: string, entrypointKe
       operation.moduleId === moduleId && operation.entrypointKey === entrypointKey && operation.schemaVersion === '1',
   );
 export const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
-  routeAllows(scope, moduleId, entrypointKey) ? Effect.void : Effect.fail(forbidden);
+  routeAllows(scope, moduleId, entrypointKey) ? Effect.void : Effect.fail(symmyOwnerReadForbidden);
 /** The company the route is enrolled for, before an owner that holds its data per company is asked for anything. */
 export const requireRouteCompany = (scope: SymmySourceReadScope) =>
-  scope.legalEntityId === undefined ? Effect.fail(forbidden) : Effect.succeed(scope.legalEntityId);
+  scope.legalEntityId === undefined ? Effect.fail(symmyOwnerReadForbidden) : Effect.succeed(scope.legalEntityId);
 /** The paging and `q` the products read takes. The route has no cursor and no single-record lookup. */
 type ProductsQuery = Pick<ReadQuery, 'limit' | 'offset'> & { readonly q?: string };
 const catalogItemsAreValid = (
