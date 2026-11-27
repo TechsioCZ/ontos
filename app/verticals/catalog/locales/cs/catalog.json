@@ -33,6 +33,7 @@
         "noCompany": "Vyberte firmu",
         "noCompanyDescription": "Cena a sklad z ERP patří firmě. Vyberte firmu v záhlaví.",
         "noName": "Bez názvu v tomto jazyce",
+        "sourceNameFallback": "Chybí český název, zobrazuje se název z ERP",
         "showVariants": "Zobrazit varianty",
         "hideVariants": "Skrýt varianty",
         "range": "{{from}}–{{to}} z {{total}}",

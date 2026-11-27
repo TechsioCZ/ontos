@@ -54,12 +54,13 @@ export const erpStorefrontStatus = (
         'Varianta bez ceny z ERP se v e-shopu ukáže jako „Cena na dotaz“ (ceny vidíte v Zobrazit varianty).',
       ]
     : [];
+  // The Akros shop is Czech: its own links name the market locale, so this one opens the page without a redirect.
   return Option.some({
     notes,
     reasons,
     visible,
     ...(visible && akrosOrigin !== ''
-      ? { href: `${akrosOrigin}/novinky-z-erp/${encodeURIComponent(item.productRef.resourceId)}` }
+      ? { href: `${akrosOrigin}/cs/novinky-z-erp/${encodeURIComponent(item.productRef.resourceId)}` }
       : {}),
   });
 };

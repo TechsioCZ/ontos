@@ -24,12 +24,13 @@ import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { keepDraftOnReload, keptDraft } from '@app/shared-contracts';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { DateTime, Effect, Fiber, Match, Option, Schema } from 'effect';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { freshUuid as newUuid, requestId as newRequestId } from './browser-crypto.ts';
+import { encodeErpOffer } from './erp-offer.ts';
 import type { ErpOffer } from './erp-offer.ts';
 import { readErpPriceGroups } from './erp-price-groups.ts';
 import type { ErpPriceGroup } from './erp-price-groups.ts';
@@ -533,41 +534,57 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
   const [reason, setReason] = useState(() => kept?.reason ?? DEFAULT_REASON);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  // What the dialog last loaded and what the user has typed, so a re-read (the list reloads after every save,
-  // failed or not) refreshes the owners' figures without wiping the figures the user changed.
+  // What the dialog last loaded and what the user has typed, so a re-read (after a failed save) refreshes the
+  // owners' figures without wiping the figures the user changed.
   const loadedRef = useRef<Loaded | null>(null);
   const typedRef = useRef({ amount, groupAmounts, stock });
   typedRef.current = { amount, groupAmounts, stock };
-  useEffect(() => {
+  // The lists the dialog opens from reload on their own (every 20 s on screen, and on every Catalog, Pricing or ERP
+  // change) and answer new objects each time. The figures are read from the latest product, offer and Variant, but
+  // once per opening of the Variant under its offer, and again only after a failed save (`rereads`).
+  const [rereads, setRereads] = useState(0);
+  const offerKey = encodeErpOffer(offer);
+  const readFigures = useEffectEvent(() => {
     if (variant === undefined) {
-      return;
+      return Option.none();
     }
-    browserRuntime.runFork(
-      Effect.all(
-        {
-          groups: readGroupPrices(item, variant, offer),
-          price: readPrice(item, variant, offer),
-          stock: readStock(item, variant, offer),
-        },
-        { concurrency: 3 },
-      ).pipe(
-        Effect.match({
-          onFailure: (text: string) => setFailure(text),
-          onSuccess: (value) => {
-            const figures = loadedFigures(value);
-            const previous = loadedRef.current;
-            const restored = previous === null ? keptFigures.current : editedFigures(previous, typedRef.current);
-            keptFigures.current = undefined;
-            loadedRef.current = value;
-            setLoaded(value);
-            setAmount(restored?.amount ?? figures.amount);
-            setGroupAmounts({ ...figures.groupAmounts, ...restored?.groupAmounts });
-            setStock(restored?.stock ?? figures.stock);
+    return Option.some(
+      browserRuntime.runFork(
+        Effect.all(
+          {
+            groups: readGroupPrices(item, variant, offer),
+            price: readPrice(item, variant, offer),
+            stock: readStock(item, variant, offer),
           },
-        }),
+          { concurrency: 3 },
+        ).pipe(
+          Effect.match({
+            onFailure: (text: string) => setFailure(text),
+            onSuccess: (value) => {
+              const figures = loadedFigures(value);
+              const previous = loadedRef.current;
+              const restored = previous === null ? keptFigures.current : editedFigures(previous, typedRef.current);
+              keptFigures.current = undefined;
+              loadedRef.current = value;
+              setLoaded(value);
+              setAmount(restored?.amount ?? figures.amount);
+              setGroupAmounts({ ...figures.groupAmounts, ...restored?.groupAmounts });
+              setStock(restored?.stock ?? figures.stock);
+            },
+          }),
+        ),
       ),
     );
-  }, [item, offer, variant]);
+  });
+  useEffect(() => {
+    const reading = readFigures();
+    // A closed dialog, or one re-read, stops the read it no longer shows.
+    return () => {
+      if (Option.isSome(reading)) {
+        browserRuntime.runFork(Fiber.interrupt(reading.value));
+      }
+    };
+  }, [offerKey, rereads, variantId]);
   useEffect(
     () =>
       keepDraftOnReload(keepKey, () => {
@@ -638,6 +655,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
             setBusy(false);
             setFailure(text === RELOAD_REQUIRED ? text : `Uložení se nezdařilo – ${text}.`);
             variantFiguresData.invalidate();
+            setRereads((count) => count + 1);
           },
           onSuccess: () => {
             setBusy(false);

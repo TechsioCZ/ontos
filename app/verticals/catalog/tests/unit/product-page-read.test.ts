@@ -135,7 +135,7 @@ const localizedJoin =
   'from "catalog"."products" left join "catalog"."product_localized_facts" on (("catalog"."product_localized_facts"."tenant_id" = "catalog"."products"."tenant_id") and ("catalog"."product_localized_facts"."product_id" = "catalog"."products"."product_id") and ("catalog"."product_localized_facts"."locale" = $1))';
 const tenantAndLifecycle =
   '("catalog"."products"."tenant_id" = $2) and ("catalog"."products"."lifecycle_state" in ($3))';
-const retiredReason = 'Only a caller who may read any Product detail may page RETIRED Products';
+const retiredReason = 'Only a caller who may read any Product detail may page RETIRED Products or list every Category';
 const pageOrder = 'order by "catalog"."product_localized_facts"."name" asc, "catalog"."products"."product_id" asc';
 
 describe('Catalog product page request', () => {
@@ -331,11 +331,12 @@ const importedVariantId = 'b0000000-0000-4000-8000-000000000003';
 const axisId = 'c0000000-0000-4000-8000-000000000001';
 const ancestorId = 'd0000000-0000-4000-8000-000000000001';
 const instant = '2030-01-01T00:00:00.000Z';
-const productOf = (id: string, lifecycle: string, variants: readonly (readonly [string, string])[]) =>
+const productOf = (id: string, lifecycle: string, variants: readonly (readonly [string, string])[], name?: string) =>
   Schema.decodeUnknownSync(ProductSchema)({
     catalogReady: false,
     createdAt: instant,
     lifecycle,
+    ...(name === undefined ? {} : { name }),
     productRef: productRef(id),
     revision: 2,
     updatedAt: instant,
@@ -354,7 +355,8 @@ const products = new Map([
       [workVariantId, 'WORK_IN_PROGRESS'],
     ]),
   ],
-  [draftProductId, productOf(draftProductId, 'DRAFT', [[importedVariantId, 'WORK_IN_PROGRESS']])],
+  // An ERP import names the Product once, in no locale.
+  [draftProductId, productOf(draftProductId, 'DRAFT', [[importedVariantId, 'WORK_IN_PROGRESS']], 'KLADIVO 500G')],
 ]);
 const mediaAssignment = Schema.decodeUnknownSync(CatalogMediaAssignmentSchema)({
   assignmentId: 'e0000000-0000-4000-8000-000000000001',
@@ -557,6 +559,7 @@ describe('Catalog product page items', () => {
           localized: { kind: 'MISSING_TRANSLATION', requestedLocale: 'cs-CZ' },
           localizedRevision: 1,
           media: [],
+          name: 'KLADIVO 500G',
           productRef: productRef(draftProductId),
           revision: 2,
           variants: [

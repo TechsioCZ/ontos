@@ -5,7 +5,12 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { SkuCodeSchema } from '../actions/assign-sku.ts';
 import { CategoryCounterSchema, CategoryRevisionSchema } from '../actions/create-product-category.ts';
-import { ProductLifecycleSchema, ProductRevisionSchema, ProductVariantLifecycleSchema } from '../domain/product.ts';
+import {
+  ProductLifecycleSchema,
+  ProductNameSchema,
+  ProductRevisionSchema,
+  ProductVariantLifecycleSchema,
+} from '../domain/product.ts';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductCategoryRefSchema } from '../resources/product-category.ts';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
@@ -61,8 +66,9 @@ const ProductPageVariantSchema = Schema.Struct({
 });
 
 /**
- * Only Catalog facts: the localized text exactly as the Product detail read answers it, the directly assigned
- * Categories with their names and the Current media assignments of the Product. No price and no stock.
+ * Only Catalog facts: the localized text exactly as the Product detail read answers it, the Product's source name, the
+ * directly assigned Categories with their names and the Current media assignments of the Product. No price and no
+ * stock.
  */
 const ProductPageItemSchema = Schema.Struct({
   categories: ProductCategoryClassificationResponseSchema.fields.categoryNames,
@@ -71,6 +77,11 @@ const ProductPageItemSchema = Schema.Struct({
   /** The revision of the Product's own text in the requested locale (0 when it has none), for staff edits. */
   localizedRevision: Schema.optionalKey(Schema.Int),
   media: CatalogMediaCurrentResponseSchema.fields.ordered,
+  /**
+   * The Product's source name, as it was created or imported (an ERP import always sends one). It is no translation:
+   * a Product without its own text in `locale` is shown by this name, and `localized` still says the text is missing.
+   */
+  name: Schema.optionalKey(ProductNameSchema),
   productRef: ProductRefSchema,
   revision: ProductRevisionSchema,
   variants: Schema.Array(ProductPageVariantSchema).check(Schema.isMinLength(1)),

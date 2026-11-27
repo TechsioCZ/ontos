@@ -205,7 +205,18 @@ const ProductRows = ({
   return (
     <>
       <Table.Row>
-        <Table.Cell>{name ?? t(`${key}.noName`)}</Table.Cell>
+        <Table.Cell>
+          {name ??
+            (item.name === undefined ? (
+              t(`${key}.noName`)
+            ) : (
+              // No text in the list's language: the ERP's source name stands in, as on the e-shop.
+              <span className="flex flex-col gap-50" data-name-fallback="source">
+                <span>{item.name}</span>
+                <span className="text-fg-secondary text-xs">{t(`${key}.sourceNameFallback`)}</span>
+              </span>
+            ))}
+        </Table.Cell>
         <Table.Cell>
           <Badge size="sm" variant={lifecycleVariant(item.lifecycle)}>
             {t(`${key}.lifecycle.${item.lifecycle}`)}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   shownVariantRefs,
   erpCardSummary,
+  erpItemMatches,
   erpCopy,
   erpPriceLabel,
   isYourPrice,
@@ -223,10 +224,10 @@ describe("ERP product page model", () => {
     });
   });
 
-  it("titles an untranslated DRAFT product by its first variant's name, else „not translated“, and drops one with only RETIRED variants", () => {
+  it("titles an untranslated product by its first variant's name, else the ERP's source name, else the SKU, and drops one with only RETIRED variants", () => {
     const missing = { kind: "MISSING_TRANSLATION" as const, requestedLocale: "cs" };
     const untranslated: CatalogProductPage = {
-      count: 3,
+      count: 4,
       items: [
         {
           ...page.items[0]!,
@@ -239,7 +240,13 @@ describe("ERP product page model", () => {
             variant(1, { localized: { kind: "PRESENT", locale: "cs", name: "Šroub M1" } }),
           ],
         },
-        { ...page.items[0]!, localized: missing, variants: [variant(2, { sku: undefined })] },
+        {
+          ...page.items[0]!,
+          localized: missing,
+          name: "VRUT 6X70 DIN7997",
+          variants: [variant(2, { sku: undefined })],
+        },
+        { ...page.items[0]!, localized: missing, variants: [variant(3)] },
         { ...page.items[0]!, variants: [variant(7, { lifecycle: "RETIRED" })] },
       ],
     };
@@ -248,9 +255,14 @@ describe("ERP product page model", () => {
       products.map(({ name, descriptionParagraphs }) => ({ name, descriptionParagraphs })),
     ).toEqual([
       { name: "Šroub M1", descriptionParagraphs: [] },
-      { name: "Název zatím není přeložen", descriptionParagraphs: [] },
+      { name: "VRUT 6X70 DIN7997", descriptionParagraphs: [] },
+      { name: "ERP-3", descriptionParagraphs: [] },
     ]);
     expect(products[1]!.variants[0]).not.toHaveProperty("sku");
+    expect(products[1]!.imageAlt).toBe(erpCopy.noImage("VRUT 6X70 DIN7997"));
+    // Search finds a product by the name it is shown with.
+    expect(erpItemMatches(untranslated.items[1]!, "vrut din7997")).toBe(true);
+    expect(erpItemMatches(untranslated.items[2]!, "vrut")).toBe(false);
     expect(erpCardSummary(products[0]!, cs, "cs")).toEqual({
       priceLabel: "1\u00a0234,50\u00a0Kč bez DPH",
       stockLabel: "Skladem",

@@ -40,6 +40,8 @@ export interface CatalogProductPage {
     readonly productRef: OwnerRef;
     readonly lifecycle: string;
     readonly localized: Localized;
+    /** The Product's source name (as the ERP sent it), shown when it has no text in the market language. */
+    readonly name?: string;
     readonly categories: readonly { readonly name?: unknown }[];
     /** Current Catalog media assignments, main first; a `core.media` resource is an uploaded image. */
     readonly media: readonly {
@@ -143,7 +145,6 @@ export const erpCopy = {
   description: "Popis",
   descriptionUnavailable: "Popis zatím není k dispozici.",
   categories: "Kategorie",
-  untranslatedName: "Název zatím není přeložen",
   noImage: (name: string) => `${name} – obrázek zatím není k dispozici`,
 } as const;
 
@@ -180,7 +181,10 @@ const foldSearch = (value: string) =>
     .replaceAll(/[\u0300-\u036f]/gu, "")
     .toLocaleLowerCase("cs-CZ");
 
-/** Whether every word of the query occurs in the product's name, a Variant's name, SKU or option values. */
+/**
+ * Whether every word of the query occurs in the product's name (its text in the market language or its source name),
+ * a Variant's name, SKU or option values.
+ */
 export const erpItemMatches = (
   item: CatalogProductPage["items"][number],
   query: string,
@@ -190,6 +194,7 @@ export const erpItemMatches = (
   const text = foldSearch(
     [
       nameOf(item.localized) ?? "",
+      item.name ?? "",
       ...item.variants.flatMap((variant) => [
         nameOf(variant.localized) ?? "",
         variant.sku ?? "",
@@ -342,12 +347,15 @@ export function toErpProducts(
       };
     });
     if (variants.length === 0) return [];
-    // A DRAFT import often has no product text in the market language yet: its first Variant's name stands in.
+    // An import often has no product text in the market language yet: its first Variant's text stands in, else the
+    // name the ERP sent. A product is never shown without a name.
     const [first] = item.variants.filter(shown);
     const name =
       nameOf(item.localized) ??
       (first === undefined ? undefined : nameOf(first.localized)) ??
-      erpCopy.untranslatedName;
+      item.name ??
+      first?.sku ??
+      keyOf(item.productRef);
     const description = item.localized.kind === "PRESENT" ? (item.localized.description ?? "") : "";
     return [
       {

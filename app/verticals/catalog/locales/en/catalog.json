@@ -33,6 +33,7 @@
         "noCompany": "Select a company",
         "noCompanyDescription": "ERP price and stock belong to a company. Select a company in the header.",
         "noName": "No name in this language",
+        "sourceNameFallback": "No Czech name yet, showing the ERP name",
         "showVariants": "Show variants",
         "hideVariants": "Hide variants",
         "range": "{{from}}–{{to}} of {{total}}",

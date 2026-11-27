@@ -81,7 +81,7 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
   if (Option.isNone(current)) {
     return yield* unavailable();
   }
-  const { lifecycle, productRef, revision, variants } = current.value;
+  const { lifecycle, name, productRef, revision, variants } = current.value;
   // One transaction serves every owner read, so they run in order.
   const [text, classification, media] = yield* Effect.all(
     [
@@ -143,6 +143,7 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
     localized: localizedOf(text, input.locale),
     localizedRevision: text.revision,
     media: media.ordered,
+    ...(name === undefined ? {} : { name }),
     productRef,
     revision,
     variants: pageVariants,
