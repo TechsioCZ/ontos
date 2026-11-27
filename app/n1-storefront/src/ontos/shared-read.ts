@@ -32,7 +32,10 @@ const detached = <A>(load: (operation: Operation) => Promise<A>): Promise<A> => 
 };
 
 /** The caller stops waiting when its own request ends; the shared read itself goes on for other waiters. */
-const joined = <A>(value: Promise<A>, { operation, signal }: OperationOptions): Promise<A> => {
+export const joined = <A>(
+  value: Promise<A>,
+  { operation, signal }: OperationOptions,
+): Promise<A> => {
   const signals = [...(signal ? [signal] : []), ...(operation ? [operation.signal] : [])];
   if (signals.length === 0) return value;
   const stop = AbortSignal.any(signals);

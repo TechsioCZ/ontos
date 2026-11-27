@@ -12,6 +12,7 @@ export default defineConfig({
       ),
     },
   },
+  setupFiles: ["./tests/setup-fresh-reads.ts"],
   testEnvironment: "node",
   tools: { swc: { jsc: { transform: { react: { runtime: "automatic" } } } } },
 });

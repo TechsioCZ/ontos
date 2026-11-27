@@ -295,10 +295,10 @@ const readyCatalog = expect.objectContaining({
 });
 const readyCart = { scope: { currency: "CZK", legalEntityId, marketId, tenantId }, state: "ready" };
 const readNames = (requests: (typeof Read.Type)[]) => requests.map((read) => read.readName);
-/** The company's catalogue revision head (no market, no products): checked at most once a second per process. */
+/** The company's catalogue revision head (no market, no products): one fresh read per process, repeated while visited. */
 const isRevisionRead = (read: typeof Read.Type) =>
   read.readName === "records" && read.query.view?.storefrontCatalog.mode === "categories";
-/** Market and catalogue reads, without the revision head read (its count depends on the one-second window). */
+/** Market and catalogue reads, without the revision head read (its count depends on the background repeat). */
 const ownerReadNames = (requests: (typeof Read.Type)[]) =>
   readNames(requests.filter((read) => !isRevisionRead(read))).toSorted();
 

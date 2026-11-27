@@ -9,7 +9,8 @@ import { selectMarket } from "./market";
 import { readCurrentMarketCatalog } from "./market-catalog-read";
 import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { storefrontRuntime } from "./runtime";
-import { MAX_STALE_MS, sharedRead } from "./shared-read";
+import { freshRead } from "./fresh-read";
+import { sharedRead } from "./shared-read";
 
 export interface CatalogQuery {
   categorySlug?: string;
@@ -121,14 +122,15 @@ const readCatalog = async (locale: string, queryKey: string, options: OperationO
 
 // Public catalogue answers are equal for every shopper of a market: shared across requests, served stale while one
 // refresh runs. Merchandise advances the company's catalogue revision with every write (product, category, listing
-// policy, stock), so an answer belongs to the revision it was read at and the first visit after an admin save waits for
-// the new state. The revision check is one head read, shared per process for a second.
+// policy, stock), so an answer belongs to the revision it was read at. The revision check is one head read the process
+// shares, timed as in the AKROS storefront: a visit takes a revision whose read started at most 1.5 s ago, so an admin
+// save shows on every visit 1.5 s after it, and while visitors come the head read repeats in the background, so a warm
+// visit does not wait for the owner.
 const CATALOG_TTL_MS = 15_000;
-const REVISION_TTL_MS = 1_000;
+const REVISION_TIMING = { intervalMs: 500, keepAliveMs: 10 * 60_000, maxAgeMs: 1_500 };
 const RevisionSchema = Schema.Struct({ revision: Schema.Int });
-let lastRevision: { at: number; revision: number } | undefined;
-const loadRevision = async (operation: Operation) => {
-  const revision = await storefrontRuntime.runPromise(
+const loadRevision = async (operation: Operation) =>
+  await storefrontRuntime.runPromise(
     withOwnerOperation(
       Effect.gen(function* loadCatalogRevision() {
         const config = yield* readConfiguration(process.env);
@@ -149,17 +151,12 @@ const loadRevision = async (operation: Operation) => {
       { operation },
     ),
   );
-  lastRevision = { at: Date.now(), revision };
-  return revision;
-};
-/** `undefined` while merchandise cannot say: such a read is not shared at all. */
+/**
+ * While merchandise is unavailable shoppers keep the revision read last, for up to 10 minutes. `undefined` once
+ * merchandise cannot say: such a read is not shared at all.
+ */
 const catalogRevision = (options: OperationOptions) =>
-  sharedRead("catalog:revision", REVISION_TTL_MS, loadRevision, { caller: options }).catch(() =>
-    // While merchandise is unavailable shoppers keep the catalogue they had, as long as it may still be served.
-    lastRevision !== undefined && Date.now() - lastRevision.at < MAX_STALE_MS
-      ? lastRevision.revision
-      : undefined,
-  );
+  freshRead("catalog:revision", REVISION_TIMING, loadRevision, options).catch(() => undefined);
 
 type CatalogResult = Awaited<ReturnType<typeof readCatalog>>;
 // Every listing answer of one revision repeats the same category tree (about 1,800 nodes): shared answers keep one copy.
