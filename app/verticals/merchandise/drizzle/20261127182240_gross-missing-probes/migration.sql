@@ -1,0 +1,2 @@
+CREATE INDEX "demo_merchandise_variants_gross_missing" ON "demo_merchandise"."product_variants" ("tenant_id","legal_entity_id","product_id","position") WHERE "gross_price_minor" is null and "price_minor" is not null;--> statement-breakpoint
+CREATE INDEX "demo_merchandise_products_gross_missing" ON "demo_merchandise"."products" ("tenant_id","legal_entity_id","id") WHERE "gross_price_minor" is null;
