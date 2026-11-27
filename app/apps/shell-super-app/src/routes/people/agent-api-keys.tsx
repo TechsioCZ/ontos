@@ -327,7 +327,7 @@ const OneTimeSecret = ({
         </span>
         <output
           aria-labelledby={labelId}
-          className="block select-all rounded-md border border-border-primary p-150 font-mono text-sm [overflow-wrap:anywhere]"
+          className="block select-all rounded-md border border-border-primary p-150 font-mono text-sm vertical-navigation-control"
           ref={shown}
         >
           {Redacted.value(secret)}

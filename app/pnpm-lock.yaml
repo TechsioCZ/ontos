@@ -180,8 +180,8 @@ catalogs:
       specifier: 1.1.1
       version: 1.1.1
     '@techsio/ui-kit':
-      specifier: 0.70.0
-      version: 0.70.0
+      specifier: 0.70.1
+      version: 0.70.1
   ultramodern:
     '@modern-js/adapter-rstest':
       specifier: npm:@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1
@@ -553,7 +553,7 @@ importers:
         version: link:../packages/storefront-runtime
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       effect:
         specifier: 4.0.7
         version: 4.0.7
@@ -752,7 +752,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       better-auth:
         specifier: 1.7.23
         version: 1.7.23(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7))(next@16.4.6(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@playwright/test@1.61.0)(@types/node@26.6.3)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sass@1.105.1))(pg@8.22.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(vitest@5.0.2(@opentelemetry/api@1.9.1)(@types/node@26.6.3)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))(vite@8.3.8(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.1(supports-color@10.2.2))(sass-embedded@1.105.1)(sass@1.105.1)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)))
@@ -873,7 +873,7 @@ importers:
         version: link:../packages/storefront-runtime
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       '@zag-js/dom-query':
         specifier: 1.47.0
         version: 1.47.0
@@ -950,7 +950,7 @@ importers:
         version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       '@testing-library/react':
         specifier: 16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -1121,7 +1121,7 @@ importers:
         version: 2.2.0
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -1761,7 +1761,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -2166,7 +2166,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -2484,7 +2484,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -2626,7 +2626,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -2780,7 +2780,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -2952,7 +2952,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -3242,7 +3242,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -3387,7 +3387,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -3538,7 +3538,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -4204,7 +4204,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -4434,7 +4434,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -4582,7 +4582,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -4736,7 +4736,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -4887,7 +4887,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -5135,7 +5135,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -5271,7 +5271,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -5501,7 +5501,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -5637,7 +5637,7 @@ importers:
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
         specifier: 'catalog:'
-        version: 0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        version: 0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -10079,8 +10079,8 @@ packages:
   '@tanstack/virtual-core@3.19.11':
     resolution: {integrity: sha512-/5iHb0RHBvj8Di59FDs4ESNm45jls33aZAi4zccVXZjc/6ZvwQP6nzEYeT6weXjTf9E6/vrp2JhYWRyO+ZP13A==}
 
-  '@techsio/ui-kit@0.70.0':
-    resolution: {integrity: sha512-pItRw2IF//u1C5KHJvEXPkfs1Vib83ffIZDPvF3J6BQRQ+8xQIvZWhtCBQuczi+BE6C/WNKRaOCPwCqTL8yp0g==}
+  '@techsio/ui-kit@0.70.1':
+    resolution: {integrity: sha512-hDKvI8680HrGg5+U/4V29WczfTB8mNY9fR2tUS7ttORsrwGentK/5y4QlduyD0fypGHe7F+PmpB0rZ48dj9Zyg==}
     peerDependencies:
       '@types/react': '>=19.2.0'
       '@types/react-dom': '>=19.2.0'
@@ -21729,7 +21729,7 @@ snapshots:
 
   '@tanstack/virtual-core@3.19.11': {}
 
-  '@techsio/ui-kit@0.70.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)':
+  '@techsio/ui-kit@0.70.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)':
     dependencies:
       '@dnd-kit/abstract': 0.5.3
       '@dnd-kit/collision': 0.5.3
