@@ -1,18 +1,34 @@
 // Detail of one calendar entry. Derived deadlines are read-only here: the date is changed in the source record
 // (S13 „Termín se upravuje v původním záznamu“). Own calendar events can be edited, reassigned, completed or
 // cancelled, and carry a comment thread (S14). Also the create form. Owned by the ops-agenda lane.
-import { DetailList, SaveBar, SidePanel, UnsavedChangesDialog, saveLabelsFor, useDraftSave } from '@app/admin-ui';
+import {
+  DetailList,
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  requiredLabelFor,
+  saveLabelsFor,
+  useDraftSave,
+} from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Schema } from 'effect';
 import type { Types } from 'effect';
 import { constVoid } from 'effect/Function';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { useState } from 'react';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { OpsCommandSchema } from '../../../../../shared/agendas.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { AgendaState, CalendarEvent, CalendarEventKind } from '../../../../../shared/domain/agenda.ts';
@@ -27,6 +43,7 @@ import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 
 const k = 'facility-operations.agenda';
 const kinds: readonly CalendarEventKind[] = ['MEETING', 'DEADLINE', 'INSPECTION', 'REMINDER'];
@@ -66,99 +83,144 @@ const draftOf = (event: CalendarEvent): Draft => ({
   title: event.title,
 });
 
-const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDraft: (draft: Draft) => void }) => {
-  const { t } = useModernI18n();
+const sameDraft = (left: Draft, right: Draft): boolean =>
+  left.assignee === right.assignee &&
+  left.date === right.date &&
+  left.kind === right.kind &&
+  left.location === right.location &&
+  left.note === right.note &&
+  left.title === right.title;
+
+/**
+ * The fields of one event as the panel edits them. Uložit sends the draft through the save bar, so the form itself
+ * submits nothing: Enter changes nothing either. The draft → command builders and `completeDraft` judge the values.
+ */
+const eventFormOf = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('assignee', Schema.String)
+      .addField('date', Schema.String)
+      .addField('kind', Schema.String)
+      .addField('location', Schema.String)
+      .addField('note', Schema.String)
+      .addField('title', Schema.String),
+    {
+      fields: {
+        assignee: ChoiceField,
+        date: TextField,
+        kind: ChoiceField,
+        location: ChoiceField,
+        note: TextAreaField,
+        title: TextField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+// The create panel stays mounted next to the detail panel, whose edit can be open at the same time: each has its own
+// form, so neither shows or overwrites the other's values.
+const createEventForm = eventFormOf();
+const editEventForm = eventFormOf();
+type EventFormModel = typeof createEventForm;
+type EventValues = typeof createEventForm.schema.Encoded;
+
+const valuesOf = (draft: Draft): EventValues => draft;
+
+const draftFrom = (values: EventValues): Draft => ({
+  ...values,
+  kind: kinds.find((kind) => kind === values.kind) ?? 'MEETING',
+});
+
+/**
+ * The draft a panel's form shows. `show` puts other values into the form (a reopened create, a newer read, Zahodit
+ * změny): the draft is those values from this render on, before the form's own state follows in an effect, so the save
+ * bar never sees the values the form is leaving.
+ */
+const useEventDraft = (form: EventFormModel, opened: EventValues) => {
+  const { ready, values } = useFormValues(form, opened);
+  const setValues = useAtomSet(form.setValues);
+  const [shown, setShown] = useState<Draft | undefined>();
+  const current = draftFrom(values);
+  if (shown !== undefined && sameDraft(shown, current)) {
+    setShown(undefined);
+  }
+  useEffect(() => {
+    if (shown !== undefined) {
+      setValues(valuesOf(shown));
+    }
+  }, [setValues, shown]);
+  return { draft: shown ?? current, ready, show: setShown };
+};
+
+const EventForm = ({
+  assignee,
+  form,
+  opened,
+  ready,
+}: {
+  /** The assignee the draft holds, also when the people list no longer offers them. */
+  readonly assignee: string;
+  readonly form: EventFormModel;
+  /** The values the form opens with. */
+  readonly opened: EventValues;
+  /** `useFormValues(form).ready`. */
+  readonly ready: ReactNode;
+}) => {
+  const { language, t } = useModernI18n();
+  const requiredLabel = requiredLabelFor(language);
   const properties = usePropertyOptions();
   const people = useAgendaPeople();
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3">
-      <FormInput
+    <FormRoot
+      className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3"
+      defaultValues={opened}
+      form={form}
+      translateMessage={(message) => t(message)}
+    >
+      {ready}
+      <form.title
         autoComplete="off"
         id="ops-agenda-title"
         label={t(`${k}.fields.title`)}
         maxLength={300}
-        onChange={(event) => setDraft({ ...draft, title: event.target.value })}
         required
-        value={draft.title}
+        requiredLabel={requiredLabel}
       />
       <div className="facilityoperations:grid facilityoperations:grid-cols-2 facilityoperations:gap-3">
-        <FormInput
+        <form.date
           id="ops-agenda-date"
           label={t(`${k}.fields.date`)}
-          onChange={(event) => setDraft({ ...draft, date: event.target.value })}
           required
+          requiredLabel={requiredLabel}
           type="date"
-          value={draft.date}
         />
-        <Select
-          items={kinds.map((value) => ({
-            displayValue: t(`${k}.kind.${value}`),
-            label: t(`${k}.kind.${value}`),
-            value,
-          }))}
+        <form.kind
+          items={kinds.map((value) => ({ label: t(`${k}.kind.${value}`), value }))}
           label={t(`${k}.fields.kind`)}
-          name="kind"
-          onValueChange={({ value }) =>
-            setDraft({ ...draft, kind: kinds.find((kind) => kind === value[0]) ?? 'MEETING' })
-          }
-          size="md"
-          value={[draft.kind]}
         />
       </div>
-      <Select
+      <form.assignee
         items={[
-          { displayValue: t(`${k}.fields.nobody`), label: t(`${k}.fields.nobody`), value: NONE },
-          ...people.map((person) => ({
-            displayValue: person.displayName,
-            label: person.displayName,
-            value: person.principalId,
-          })),
-          ...(draft.assignee !== NONE && !people.some((person) => person.principalId === draft.assignee)
-            ? [
-                {
-                  displayValue: t(`${k}.fields.currentAssignee`),
-                  label: t(`${k}.fields.currentAssignee`),
-                  value: draft.assignee,
-                },
-              ]
+          { label: t(`${k}.fields.nobody`), value: NONE },
+          ...people.map((person) => ({ label: person.displayName, value: person.principalId })),
+          ...(assignee !== NONE && !people.some((person) => person.principalId === assignee)
+            ? [{ label: t(`${k}.fields.currentAssignee`), value: assignee }]
             : []),
         ]}
         label={t(`${k}.fields.knownAssignee`)}
-        name="assignee"
-        onValueChange={({ value }) => setDraft({ ...draft, assignee: value[0] ?? NONE })}
-        size="md"
-        value={[draft.assignee]}
       />
       {properties.status === 'ready' && (
-        <Select
+        <form.location
           items={[
-            {
-              displayValue: t('facility-operations.property.none'),
-              label: t('facility-operations.property.none'),
-              value: NONE,
-            },
-            ...properties.options.map((option) => ({
-              displayValue: option.ref.label,
-              label: option.ref.label,
-              value: option.value,
-            })),
+            { label: t('facility-operations.property.none'), value: NONE },
+            ...properties.options.map((option) => ({ label: option.ref.label, value: option.value })),
           ]}
           label={t('facility-operations.common.location')}
-          name="location"
-          onValueChange={({ value }) => setDraft({ ...draft, location: value[0] ?? NONE })}
-          size="md"
-          value={[draft.location]}
         />
       )}
-      <FormTextarea
-        id="ops-agenda-note"
-        label={t('facility-operations.common.note')}
-        maxLength={4000}
-        onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-        rows={3}
-        value={draft.note}
-      />
-    </div>
+      <form.note id="ops-agenda-note" label={t('facility-operations.common.note')} maxLength={4000} rows={3} />
+    </FormRoot>
   );
 };
 
@@ -174,14 +236,6 @@ const closeKey = 'facility-operations.common.close';
 const requiredKey = 'facility-operations.common.required';
 const datePattern = /^\d{4}-\d{2}-\d{2}$/u;
 const completeDraft = (draft: Draft) => draft.title.trim() !== '' && datePattern.test(draft.date);
-
-const sameDraft = (left: Draft, right: Draft): boolean =>
-  left.assignee === right.assignee &&
-  left.date === right.date &&
-  left.kind === right.kind &&
-  left.location === right.location &&
-  left.note === right.note &&
-  left.title === right.title;
 
 /**
  * Sends one wire command as the save bar sees it: a command the schema refuses saves nothing and says why, a command
@@ -221,7 +275,8 @@ export const CreateEventPanel = ({
   readonly open: boolean;
 }) => {
   const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState(() => emptyDraft(initialDate));
+  const opened = valuesOf(emptyDraft(initialDate));
+  const { draft, ready, show } = useEventDraft(createEventForm, opened);
   const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
@@ -262,12 +317,12 @@ export const CreateEventPanel = ({
     setPreviousForm({ initialDate, open });
     if (open) {
       const empty = emptyDraft(initialDate);
-      setDraft(empty);
+      show(empty);
       record.adopt(empty);
     }
   }
   const guard = useEditGuard(record, () => {
-    setDraft(record.confirmed);
+    show(record.confirmed);
   });
   const labels = saveLabelsFor(language);
   const handleSave = () => {
@@ -313,7 +368,7 @@ export const CreateEventPanel = ({
               {t(requiredKey)}
             </StatusText>
           )}
-          <EventForm draft={draft} setDraft={setDraft} />
+          <EventForm assignee={draft.assignee} form={createEventForm} opened={opened} ready={ready} />
         </div>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
@@ -340,7 +395,7 @@ const EventEditPanel = ({
   readonly title: string;
 }) => {
   const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState<Draft>(() => draftOf(event));
+  const { draft, ready, show } = useEventDraft(editEventForm, valuesOf(draftOf(event)));
   const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
@@ -386,13 +441,13 @@ const EventEditPanel = ({
       const stored = draftOf(event);
       if (!sameDraft(stored, draft)) {
         record.adopt(stored);
-        setDraft(stored);
+        show(stored);
       }
     },
     settled: !record.pending && sameDraft(draft, record.confirmed),
   });
   const guard = useEditGuard(record, () => {
-    setDraft(record.confirmed);
+    show(record.confirmed);
   });
   const labels = saveLabelsFor(language);
   const handleSave = () => {
@@ -407,7 +462,7 @@ const EventEditPanel = ({
     const current = draftOf(event);
     base.rebase();
     record.adopt(current);
-    setDraft(current);
+    show(current);
   };
   return (
     <>
@@ -443,7 +498,7 @@ const EventEditPanel = ({
               {t(requiredKey)}
             </StatusText>
           )}
-          <EventForm draft={draft} setDraft={setDraft} />
+          <EventForm assignee={draft.assignee} form={editEventForm} opened={valuesOf(draftOf(event))} ready={ready} />
         </div>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />

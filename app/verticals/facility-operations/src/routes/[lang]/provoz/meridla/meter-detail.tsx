@@ -1,4 +1,4 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter detail (ops-meters lane): master data, consumption chart, full reading history with truthful differences,
 // anomaly highlight, photo preview and voiding. Rendered inside the page's SidePanel.
 import {
@@ -8,15 +8,16 @@ import {
   formatDate,
   formatDateTime,
   formatMoney,
+  requiredLabelFor,
   surfaceTileClassName,
 } from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomSet } from '@app/core-runtime/ui/form';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DateTime, Effect, Schema } from 'effect';
@@ -27,6 +28,7 @@ import type { Meter, MeterReading, ReadingRow } from '../../../../../shared/doma
 import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import { loadRecords } from '../../../../ui/use-agenda.ts';
 import type { FailureReason } from '../../../../ui/use-agenda.ts';
 import { MeterForm, ReadingForm } from './meter-forms.tsx';
@@ -42,6 +44,14 @@ import {
 } from './meters-view.ts';
 
 const k = 'facility-operations.meters';
+
+/** Why a reading is voided. Its own button sends the void, so the form only holds the reason. */
+const voidReasonForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noReason = { reason: '' };
 const NOT_PROVIDED = 'facility-operations.common.notProvided';
 
 const DetailModeSchema = Schema.Literals(['view', 'edit', 'reading']);
@@ -394,7 +404,14 @@ export const MeterDetail = ({
   const { t } = useModernI18n();
   const toast = useToast();
   const [voiding, setVoiding] = useState<MeterReading | undefined>();
-  const [reason, setReason] = useState('');
+  const {
+    ready: voidReady,
+    values: { reason },
+  } = useFormValues(voidReasonForm, noReason);
+  const setVoidValues = useAtomSet(voidReasonForm.setValues);
+  const setReason = (next: string) => {
+    setVoidValues({ reason: next });
+  };
   const [voidBusy, setVoidBusy] = useState(false);
   const [voidError, setVoidError] = useState<FailureReason | 'required' | undefined>();
   const [photo, setPhoto] = useState<PhotoPreview | undefined>();
@@ -523,16 +540,23 @@ export const MeterDetail = ({
                   : t(`facility-operations.common.errors.${voidError}`)}
               </StatusText>
             )}
-            <FormInput
-              autoComplete="off"
-              helpText={t(`${k}.void.reasonHelp`)}
-              id="void-reason"
-              label={t(`${k}.void.reason`)}
-              maxLength={500}
-              onChange={(event) => setReason(event.target.value)}
-              required
-              value={reason}
-            />
+            <FormRoot
+              defaultValues={noReason}
+              form={voidReasonForm}
+              key={voiding.id}
+              translateMessage={(message) => t(message)}
+            >
+              {voidReady}
+              <voidReasonForm.reason
+                autoComplete="off"
+                helpText={t(`${k}.void.reasonHelp`)}
+                id="void-reason"
+                label={t(`${k}.void.reason`)}
+                maxLength={500}
+                required
+                requiredLabel={requiredLabelFor(language)}
+              />
+            </FormRoot>
             <div className="flex justify-end gap-100">
               <Button
                 appearance="outline"

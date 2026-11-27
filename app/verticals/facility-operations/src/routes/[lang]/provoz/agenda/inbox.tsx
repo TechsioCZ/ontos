@@ -12,19 +12,33 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  ChoiceField,
+  FormReact,
+  FormRoot,
+  SwitchField,
+  fromPayload,
+  makeMemberCheckboxField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import type { Effect } from 'effect';
-import { DateTime } from 'effect';
-import { useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
+import { useEffect, useRef, useState } from 'react';
+import { agendaCommandSchemas } from '../../../../../shared/commands/agenda.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
-import type { Notification, NotificationPreference, AgendaState } from '../../../../../shared/domain/agenda.ts';
+import type {
+  AgendaState,
+  Notification,
+  NotificationCategory,
+  NotificationPreference,
+} from '../../../../../shared/domain/agenda.ts';
 import {
   DEFAULT_LEAD_DAYS,
   MANDATORY_EMAIL_CATEGORIES,
+  NotificationCategorySchema,
   OPTIONAL_EMAIL_CATEGORIES,
 } from '../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
@@ -464,6 +478,42 @@ const samePreferenceDraft = (left: PreferenceDraft, right: PreferenceDraft): boo
   left.optional.length === right.optional.length &&
   left.optional.every((category, index) => category === right.optional[index]);
 
+const leadDayChoices = ['3', '7', '14', '30', '60'];
+
+/**
+ * The notification settings as the panel edits them: the lead time, whether e-mail is on and the categories e-mailed
+ * (the mandatory ones always ticked). Uložit sends the draft through the save bar, so the form itself submits nothing.
+ */
+const preferencesForm = FormReact.make(
+  // The e-mail switch is the `AgendaPreferencesSet` payload's own field.
+  fromPayload(agendaCommandSchemas[6].mapFields(Struct.pick(['emailOptIn'])))
+    .addField('emailCategories', Schema.Array(NotificationCategorySchema))
+    .addField('leadDays', Schema.String),
+  {
+    fields: {
+      emailCategories: makeMemberCheckboxField((category: NotificationCategory) => category),
+      emailOptIn: SwitchField,
+      leadDays: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type PreferenceValues = typeof preferencesForm.schema.Encoded;
+
+const preferenceValuesOf = (draft: PreferenceDraft): PreferenceValues => ({
+  emailCategories: [...MANDATORY_EMAIL_CATEGORIES, ...draft.optional],
+  emailOptIn: draft.email,
+  leadDays: draft.leadDays,
+});
+
+const preferenceDraftFrom = (values: PreferenceValues): PreferenceDraft => ({
+  email: values.emailOptIn,
+  leadDays: values.leadDays === '' ? String(DEFAULT_LEAD_DAYS) : values.leadDays,
+  optional: OPTIONAL_EMAIL_CATEGORIES.filter((category) => values.emailCategories.includes(category)),
+});
+
 export const SettingsPanel = ({
   canWrite,
   me,
@@ -490,13 +540,30 @@ export const SettingsPanel = ({
     server: preferenceDraftOf(current),
   });
   const { draft, setDraft } = record;
-  const { email, leadDays, optional } = draft;
-  const setLeadDays = (value: string) => setDraft({ ...draft, leadDays: value });
-  const setEmail = (value: boolean) => setDraft({ ...draft, email: value });
-  const setOptional = (update: (previous: ReadonlySet<OptionalCategory>) => ReadonlySet<OptionalCategory>) => {
-    const next = update(new Set(optional));
-    setDraft({ ...draft, optional: OPTIONAL_EMAIL_CATEGORIES.filter((category) => next.has(category)) });
-  };
+  const shown = useAtomValue(preferencesForm.values);
+  const setValues = useAtomSet(preferencesForm.setValues);
+  // The fields are the draft: a change in the form changes it at once.
+  useAtomSubscribe(
+    preferencesForm.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(preferenceDraftFrom(next.value));
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without the form (a newer read while nothing is pending, Zahodit změny, the latest version):
+  // the fields follow it.
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (Option.exists(shown, (values) => !samePreferenceDraft(preferenceDraftFrom(values), draft))) {
+      setValues(preferenceValuesOf(draft));
+    }
+  }, [draft, setValues, shown]);
   const labels = saveLabelsFor(language);
   const guard = useEditGuard(record, record.discard);
   const provider = useEmailProvider();
@@ -513,77 +580,64 @@ export const SettingsPanel = ({
       <div className="facilityoperations:xl:col-span-2">
         <SectionCard title={t(`${k}.settings.title`)}>
           <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
-            <Select
-              disabled={!canWrite}
-              items={['3', '7', '14', '30', '60'].map((value) => ({
-                displayValue: t(`${k}.settings.days`, { count: Number(value) }),
-                label: t(`${k}.settings.days`, { count: Number(value) }),
-                value,
-              }))}
-              label={t(`${k}.settings.leadDays`)}
-              name="leadDays"
-              onValueChange={({ value }) => setLeadDays(value[0] ?? String(DEFAULT_LEAD_DAYS))}
-              size="md"
-              value={[leadDays]}
-            />
-            <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
-              <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
-                {t(`${k}.settings.email`)}
-              </Switch>
-              <span
-                className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs"
-                data-testid="email-provider"
-                style={muted}
-              >
-                {providerPill}
-                <span>{providerText}</span>
-              </span>
-            </div>
-            {email && (
-              <fieldset
-                className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0"
-                data-testid="email-events"
-              >
-                <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">
-                  {t(`${k}.settings.emailEvents`)}
-                </legend>
-                {MANDATORY_EMAIL_CATEGORIES.map((category) => (
-                  <FormCheckbox
-                    checked
-                    disabled
-                    helpText={t(`${k}.settings.mandatory`)}
-                    id={`email-category-${category}`}
-                    key={category}
-                    label={t(`${k}.notifications.category.${category}`)}
-                    size="sm"
-                  />
-                ))}
-                {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
-                  <FormCheckbox
-                    checked={optional.includes(category)}
-                    disabled={!canWrite}
-                    id={`email-category-${category}`}
-                    key={category}
-                    label={t(`${k}.notifications.category.${category}`)}
-                    onCheckedChange={(checked) =>
-                      setOptional((previous) => {
-                        const next = new Set(previous);
-                        if (checked) {
-                          next.add(category);
-                        } else {
-                          next.delete(category);
-                        }
-                        return next;
-                      })
-                    }
-                    size="sm"
-                  />
-                ))}
-                <span className="facilityoperations:text-xs" style={muted}>
-                  {t(`${k}.settings.optionalHint`)}
+            <FormRoot
+              className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4"
+              defaultValues={preferenceValuesOf(draft)}
+              form={preferencesForm}
+              translateMessage={(message) => t(message)}
+            >
+              <preferencesForm.leadDays
+                disabled={!canWrite}
+                items={leadDayChoices.map((value) => ({
+                  label: t(`${k}.settings.days`, { count: Number(value) }),
+                  value,
+                }))}
+                label={t(`${k}.settings.leadDays`)}
+              />
+              <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
+                <preferencesForm.emailOptIn disabled={!canWrite}>{t(`${k}.settings.email`)}</preferencesForm.emailOptIn>
+                <span
+                  className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs"
+                  data-testid="email-provider"
+                  style={muted}
+                >
+                  {providerPill}
+                  <span>{providerText}</span>
                 </span>
-              </fieldset>
-            )}
+              </div>
+              {draft.email && (
+                <fieldset
+                  className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0"
+                  data-testid="email-events"
+                >
+                  <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">
+                    {t(`${k}.settings.emailEvents`)}
+                  </legend>
+                  {MANDATORY_EMAIL_CATEGORIES.map((category) => (
+                    <preferencesForm.emailCategories
+                      disabled
+                      helpText={t(`${k}.settings.mandatory`)}
+                      id={`email-category-${category}`}
+                      key={category}
+                      label={t(`${k}.notifications.category.${category}`)}
+                      member={category}
+                    />
+                  ))}
+                  {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
+                    <preferencesForm.emailCategories
+                      disabled={!canWrite}
+                      id={`email-category-${category}`}
+                      key={category}
+                      label={t(`${k}.notifications.category.${category}`)}
+                      member={category}
+                    />
+                  ))}
+                  <span className="facilityoperations:text-xs" style={muted}>
+                    {t(`${k}.settings.optionalHint`)}
+                  </span>
+                </fieldset>
+              )}
+            </FormRoot>
             <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
               {current === undefined
                 ? t(`${k}.settings.default`, { count: DEFAULT_LEAD_DAYS })

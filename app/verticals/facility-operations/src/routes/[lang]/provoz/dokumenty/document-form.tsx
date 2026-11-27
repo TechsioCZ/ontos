@@ -1,22 +1,35 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
 import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   surfaceTileClassName,
   useDraftSave,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RuledTextField,
+  TemplateChoiceField,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Result, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useRef, useState } from 'react';
 import { OpsCommandSchema } from '../../../../../shared/agendas.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
@@ -27,7 +40,12 @@ import type {
   SubjectRef,
   StoredFileRef,
 } from '../../../../../shared/domain/documents.ts';
-import { ContractStatusSchema, documentLinks, sameSubject } from '../../../../../shared/domain/documents.ts';
+import {
+  ContractStatusSchema,
+  SubjectRefSchema,
+  documentLinks,
+  sameSubject,
+} from '../../../../../shared/domain/documents.ts';
 import {
   NONE,
   contractDraftOf,
@@ -45,6 +63,7 @@ import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import {
   documentCategories,
   FileTypeIcon,
@@ -192,139 +211,290 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
   return commandResult(outcome, (result) => onPersisted(result.entityIds[0], 'created'), onFailure);
 });
 
-const DocumentFilePicker = ({
-  file,
-  onFilePicked,
-}: {
-  readonly file: File | undefined;
-  readonly onFilePicked: (file: File | undefined) => void;
-}) => {
+/** The links of a document as chips; removing a chip removes the link. */
+const LinkChips: FormReact.FieldComponent<readonly SubjectRef[]> = ({ field }) => {
   const { t } = useModernI18n();
-  const fileInput = useRef<HTMLInputElement>(null);
+  return field.value.length > 0 ? (
+    <div className="flex flex-wrap gap-100">
+      {field.value.map((link) => (
+        <SubjectChip
+          key={`${link.kind}:${link.id}`}
+          onRemove={() => field.onChange(field.value.filter((entry) => !sameSubject(entry, link)))}
+          removeLabel={t(`${k}.create.removeLink`, { label: link.label })}
+          subject={link}
+        />
+      ))}
+    </div>
+  ) : null;
+};
+
+/**
+ * One document's values. The edit and the create panel each hold theirs in their own form; Uložit sends them through
+ * the draft save or the form save, so Enter sends nothing.
+ */
+const makeDocumentForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('amends', Schema.String)
+      .addField('amountTerms', Schema.String)
+      .addField('category', Schema.String)
+      .addField('contractStatus', Schema.String)
+      .addField('contractType', Schema.String)
+      .addField('description', Schema.String)
+      .addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File)))
+      .addField('links', Schema.Array(Schema.toType(SubjectRefSchema)))
+      .addField('noticeDateInput', Schema.String)
+      .addField('noticePeriod', Schema.String)
+      .addField('owner', Schema.String)
+      .addField('parties', Schema.String)
+      .addField('pickContact', Schema.String)
+      .addField('pickContract', Schema.String)
+      .addField('pickInvoice', Schema.String)
+      .addField('pickProperty', Schema.String)
+      .addField('pickTask', Schema.String)
+      .addField('subject', Schema.String)
+      .addField('title', Schema.String)
+      .addField('validFromInput', Schema.String)
+      .addField('validToInput', Schema.String),
+    {
+      fields: {
+        amends: ChoiceField,
+        amountTerms: TextField,
+        category: ChoiceField,
+        contractStatus: ChoiceField,
+        contractType: TextField,
+        description: TextAreaField,
+        file: FileField,
+        links: LinkChips,
+        noticeDateInput: TextField,
+        noticePeriod: TextField,
+        owner: TextField,
+        parties: TextAreaField,
+        pickContact: TemplateChoiceField,
+        pickContract: TemplateChoiceField,
+        pickInvoice: TemplateChoiceField,
+        pickProperty: TemplateChoiceField,
+        pickTask: TemplateChoiceField,
+        subject: TextField,
+        title: RuledTextField,
+        validFromInput: TextField,
+        validToInput: TextField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+const documentCreateForm = makeDocumentForm();
+const documentEditForm = makeDocumentForm();
+type DocumentForm = typeof documentCreateForm;
+type DocumentValues = DocumentForm['schema']['Encoded'];
+
+/** The link pickers hold nothing: a pick adds its link at once and the picker is empty again. */
+const noPicks = { pickContact: '', pickContract: '', pickInvoice: '', pickProperty: '', pickTask: '' };
+
+const contractValuesOf = (contract: ContractDraft) => ({
+  amountTerms: contract.amountTerms,
+  contractStatus: contract.status,
+  contractType: contract.contractType,
+  noticeDateInput: contract.noticeDateInput,
+  noticePeriod: contract.noticePeriod,
+  owner: contract.owner,
+  parties: contract.parties,
+  subject: contract.subject,
+  validFromInput: contract.validFromInput,
+  validToInput: contract.validToInput,
+});
+
+/** The contract terms the form shows; a status that is not one of the choices is a draft. */
+const contractFrom = (values: DocumentValues): ContractDraft => ({
+  amountTerms: values.amountTerms,
+  contractType: values.contractType,
+  noticeDateInput: values.noticeDateInput,
+  noticePeriod: values.noticePeriod,
+  owner: values.owner,
+  parties: values.parties,
+  status: Schema.is(ContractStatusSchema)(values.contractStatus) ? values.contractStatus : 'draft',
+  subject: values.subject,
+  validFromInput: values.validFromInput,
+  validToInput: values.validToInput,
+});
+
+const editValuesOf = (draft: DocumentEditDraft): DocumentValues => ({
+  ...contractValuesOf(draft.contract),
+  ...noPicks,
+  amends: NONE,
+  category: draft.category,
+  description: draft.description,
+  file: null,
+  links: draft.links,
+  title: draft.title,
+});
+
+const editDraftFrom = (values: DocumentValues): DocumentEditDraft => ({
+  category: values.category,
+  contract: contractFrom(values),
+  description: values.description,
+  links: values.links,
+  title: values.title,
+});
+
+const createValuesOf = (initial: ReturnType<typeof initialDocumentForm>): DocumentValues => ({
+  ...contractValuesOf(initial.contract),
+  ...noPicks,
+  amends: initial.amends,
+  category: initial.category,
+  description: initial.description,
+  file: null,
+  links: initial.links,
+  title: initial.title,
+});
+
+/** The picked file of a new document, which changes only when the pick does. */
+const pickedDocumentFile = documentCreateForm
+  .getFieldAtoms(documentCreateForm.fields.file)
+  .value.pipe(Atom.map(Option.getOrElse((): File | null => null)));
+
+const DocumentFilePicker = ({ file }: { readonly file: File | undefined }) => {
+  const { t } = useModernI18n();
   const [dragging, setDragging] = useState(false);
+  const setFile = useAtomSet(documentCreateForm.getFieldAtoms(documentCreateForm.fields.file).setValue);
   return (
-    <>
-      <input
-        aria-label={t(`${k}.create.dropTitle`)}
-        className="sr-only"
-        data-testid="document-file-input"
-        onChange={(event) => onFilePicked(event.target.files?.[0])}
-        ref={fileInput}
-        tabIndex={-1}
-        type="file"
-      />
-      <button
-        className={`flex cursor-pointer flex-col items-center gap-100 rounded-lg border-2 border-dashed px-200 py-300 text-center transition-colors ${dragging ? 'border-primary bg-primary-light' : 'border-border-primary bg-highlight hover:bg-surface'}`}
-        data-testid="document-dropzone"
-        onClick={() => fileInput.current?.click()}
-        onDragLeave={() => setDragging(false)}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          onFilePicked(event.dataTransfer.files[0]);
-        }}
-        type="button"
-      >
-        {file === undefined ? (
-          <>
-            <span aria-hidden="true" className="text-2xl">
-              ⇪
-            </span>
-            <span className="font-semibold text-sm">{t(`${k}.create.dropTitle`)}</span>
-            <span className="text-fg-secondary text-xs">{t(`${k}.create.dropHint`)}</span>
-          </>
-        ) : (
-          <span className="flex items-center gap-150 text-left">
-            <FileTypeIcon mime={file.type} name={file.name} />
-            <span className="flex flex-col">
-              <span className="font-semibold text-sm">{file.name}</span>
-              <span className="text-fg-secondary text-xs">
-                {formatBytes(file.size)} · {t(`${k}.create.replace`)}
+    <documentCreateForm.file
+      aria-label={t(`${k}.create.dropTitle`)}
+      className="sr-only"
+      data-testid="document-file-input"
+      tabIndex={-1}
+    >
+      {(pick) => (
+        <button
+          className={`flex cursor-pointer flex-col items-center gap-100 rounded-lg border-2 border-dashed px-200 py-300 text-center transition-colors ${dragging ? 'border-primary bg-primary-light' : 'border-border-primary bg-highlight hover:bg-surface'}`}
+          data-testid="document-dropzone"
+          onClick={pick}
+          onDragLeave={() => setDragging(false)}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            const [dropped] = event.dataTransfer.files;
+            if (dropped !== undefined) {
+              setFile(dropped);
+            }
+          }}
+          type="button"
+        >
+          {file === undefined ? (
+            <>
+              <span aria-hidden="true" className="text-2xl">
+                ⇪
+              </span>
+              <span className="font-semibold text-sm">{t(`${k}.create.dropTitle`)}</span>
+              <span className="text-fg-secondary text-xs">{t(`${k}.create.dropHint`)}</span>
+            </>
+          ) : (
+            <span className="flex items-center gap-150 text-left">
+              <FileTypeIcon mime={file.type} name={file.name} />
+              <span className="flex flex-col">
+                <span className="font-semibold text-sm">{file.name}</span>
+                <span className="text-fg-secondary text-xs">
+                  {formatBytes(file.size)} · {t(`${k}.create.replace`)}
+                </span>
               </span>
             </span>
-          </span>
-        )}
-      </button>
-    </>
+          )}
+        </button>
+      )}
+    </documentCreateForm.file>
   );
 };
 
+/**
+ * The links of a document: its chips, and pickers that each add the picked subject as a link at once. A picker holds
+ * no value of its own; the links live in the form.
+ */
 const DocumentLinkFields = ({
   category,
   contacts,
+  form,
   invoices,
   linkableContracts,
-  links,
-  onAddLink,
-  onRemoveLink,
   properties,
   tasks,
 }: {
   readonly category: string;
   readonly contacts: ReturnType<typeof useContactOptions>;
+  readonly form: DocumentForm;
   readonly invoices: ReturnType<typeof useInvoiceOptions>;
   readonly linkableContracts: readonly DocumentRecord[];
-  readonly links: readonly SubjectRef[];
-  readonly onAddLink: (link: SubjectRef) => void;
-  readonly onRemoveLink: (link: SubjectRef) => void;
   readonly properties: ReturnType<typeof usePropertyOptions>;
   readonly tasks: TaskOptionsState;
 }) => {
   const { t } = useModernI18n();
+  const setValues = useAtomSet(form.setValues);
+  /** The subject a picker's choice stands for, when it is still offered. */
+  const subjectOf = (values: DocumentValues): SubjectRef | undefined => {
+    if (values.pickProperty !== '' && properties.status === 'ready') {
+      return properties.options.find((option) => option.value === values.pickProperty)?.ref;
+    }
+    if (values.pickTask !== '' && tasks.status === 'ready') {
+      return tasks.options.find((task) => task.id === values.pickTask);
+    }
+    if (values.pickContract !== '') {
+      const picked = linkableContracts.find((entry) => entry.id === values.pickContract);
+      return picked === undefined ? undefined : { id: picked.id, kind: 'document', label: picked.title };
+    }
+    if (values.pickContact !== '' && contacts.status === 'ready') {
+      return contacts.options.find((option) => option.id === values.pickContact);
+    }
+    if (values.pickInvoice !== '' && invoices.status === 'ready') {
+      return invoices.options.find((option) => option.id === values.pickInvoice);
+    }
+    return undefined;
+  };
+  // A pick adds its subject as a link, once, and empties the picker again.
+  useAtomSubscribe(form.values, (next) => {
+    if (Option.isNone(next)) {
+      return;
+    }
+    const values = next.value;
+    if (
+      values.pickContact === '' &&
+      values.pickContract === '' &&
+      values.pickInvoice === '' &&
+      values.pickProperty === '' &&
+      values.pickTask === ''
+    ) {
+      return;
+    }
+    const link = subjectOf(values);
+    const links =
+      link === undefined || values.links.some((entry) => sameSubject(entry, link))
+        ? values.links
+        : [...values.links, link];
+    setValues({ ...values, ...noPicks, links });
+  });
   return (
     <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
       <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
-      {links.length > 0 && (
-        <div className="flex flex-wrap gap-100">
-          {links.map((link) => (
-            <SubjectChip
-              key={`${link.kind}:${link.id}`}
-              onRemove={() => onRemoveLink(link)}
-              removeLabel={t(`${k}.create.removeLink`, { label: link.label })}
-              subject={link}
-            />
-          ))}
-        </div>
-      )}
+      <form.links />
       {properties.status === 'ready' && (
-        <Select
-          items={properties.options.map((option) => ({
-            displayValue: option.ref.label,
-            label: option.ref.label,
-            value: option.value,
-          }))}
+        <form.pickProperty
+          items={properties.options.map((option) => ({ label: option.ref.label, value: option.value }))}
           label={t('facility-operations.property.pick')}
-          name="document-link-property"
-          onValueChange={({ value }) => {
-            const picked = properties.options.find((option) => option.value === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked.ref);
-            }
-          }}
           placeholder={t('facility-operations.property.pick')}
           size="md"
-          value={[]}
         />
       )}
       {tasks.status === 'ready' && tasks.options.length > 0 && (
-        <Select
-          items={tasks.options.map((task) => ({ displayValue: task.label, label: task.label, value: task.id }))}
+        <form.pickTask
+          items={tasks.options.map((task) => ({ label: task.label, value: task.id }))}
           label={t(`${k}.create.taskLink`)}
-          name="document-link-task"
-          onValueChange={({ value }) => {
-            const picked = tasks.options.find((task) => task.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickTask`)}
           size="md"
-          value={[]}
         />
       )}
       {tasks.status !== 'ready' && (
@@ -333,43 +503,19 @@ const DocumentLinkFields = ({
         </p>
       )}
       {linkableContracts.length > 0 && category !== 'amendment' && (
-        <Select
-          items={linkableContracts.map((entry) => ({
-            displayValue: entry.title,
-            label: entry.title,
-            value: entry.id,
-          }))}
+        <form.pickContract
+          items={linkableContracts.map((entry) => ({ label: entry.title, value: entry.id }))}
           label={t(`${k}.create.contractLink`)}
-          name="document-link-contract"
-          onValueChange={({ value }) => {
-            const picked = linkableContracts.find((entry) => entry.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink({ id: picked.id, kind: 'document', label: picked.title });
-            }
-          }}
           placeholder={t(`${k}.contract.pickOriginal`)}
           size="md"
-          value={[]}
         />
       )}
       {contacts.status === 'ready' && (
-        <Select
-          items={contacts.options.map((option) => ({
-            displayValue: option.label,
-            label: option.label,
-            value: option.id,
-          }))}
+        <form.pickContact
+          items={contacts.options.map((option) => ({ label: option.label, value: option.id }))}
           label={t(`${k}.create.tenant`)}
-          name="document-link-contact"
-          onValueChange={({ value }) => {
-            const picked = contacts.options.find((option) => option.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickContact`)}
           size="md"
-          value={[]}
         />
       )}
       {contacts.status !== 'ready' && (
@@ -378,23 +524,11 @@ const DocumentLinkFields = ({
         </p>
       )}
       {invoices.status === 'ready' && invoices.options.length > 0 && (
-        <Select
-          items={invoices.options.map((option) => ({
-            displayValue: option.label,
-            label: option.label,
-            value: option.id,
-          }))}
+        <form.pickInvoice
+          items={invoices.options.map((option) => ({ label: option.label, value: option.id }))}
           label={t(`${k}.create.invoiceLink`)}
-          name="document-link-invoice"
-          onValueChange={({ value }) => {
-            const picked = invoices.options.find((option) => option.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickInvoice`)}
           size="md"
-          value={[]}
         />
       )}
     </fieldset>
@@ -402,135 +536,69 @@ const DocumentLinkFields = ({
 };
 
 const DocumentContractFields = ({
-  amends,
   amendsLocked,
   category,
-  contract,
   contracts,
-  onAmendsChange,
-  onStatusChange,
-  onTermChange,
+  form,
 }: {
-  readonly amends: string;
   /** An existing document keeps the document it amends: the picker only belongs to a new amendment. */
   readonly amendsLocked?: boolean | undefined;
   readonly category: string;
-  readonly contract: ContractDraft;
   readonly contracts: readonly DocumentRecord[];
-  /** Given only when the picker is shown; a stored document keeps the document it amends. */
-  readonly onAmendsChange?: ((value: string) => void) | undefined;
-  readonly onStatusChange: (status: ContractStatus) => void;
-  readonly onTermChange: (key: keyof ContractDraft) => (value: string) => void;
+  readonly form: DocumentForm;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const requiredLabel = requiredLabelFor(language);
   return (
     <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
-      {category === 'amendment' && amendsLocked !== true && onAmendsChange !== undefined && (
-        <Select
+      {category === 'amendment' && amendsLocked !== true && (
+        <form.amends
           items={[
-            {
-              displayValue: t(`${k}.contract.pickOriginal`),
-              label: t(`${k}.contract.pickOriginal`),
-              value: NONE,
-            },
+            { label: t(`${k}.contract.pickOriginal`), value: NONE },
             ...contracts.flatMap((entry) =>
-              entry.category === 'contract' ? [{ displayValue: entry.title, label: entry.title, value: entry.id }] : [],
+              entry.category === 'contract' ? [{ label: entry.title, value: entry.id }] : [],
             ),
           ]}
           label={t(`${k}.contract.amends`)}
-          name="document-amends"
-          onValueChange={({ value }) => onAmendsChange(value[0] ?? NONE)}
-          size="md"
-          value={[amends]}
         />
       )}
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-        <FormInput
+        <form.contractType
           id="contract-type"
           label={t(`${k}.contract.contractType`)}
           maxLength={120}
-          onChange={(event) => onTermChange('contractType')(event.target.value)}
           placeholder={t('facility-operations.ui.leaseAgreement')}
           required
-          value={contract.contractType}
+          requiredLabel={requiredLabel}
         />
-        <Select
-          items={statuses.map((value) => ({
-            displayValue: t(`${k}.contractStatus.${value}`),
-            label: t(`${k}.contractStatus.${value}`),
-            value,
-          }))}
+        <form.contractStatus
+          items={statuses.map((value) => ({ label: t(`${k}.contractStatus.${value}`), value }))}
           label={t(`${k}.contract.status`)}
-          name="contract-status"
-          onValueChange={({ value }) => {
-            const status = Schema.decodeUnknownOption(ContractStatusSchema)(value[0]);
-            onStatusChange(Option.getOrElse(status, () => 'draft' as const));
-          }}
-          size="md"
-          value={[contract.status]}
         />
       </div>
-      <FormTextarea
+      <form.parties
         helpText={t(`${k}.contract.partiesHelp`)}
         id="contract-parties"
         label={t(`${k}.contract.parties`)}
-        onChange={(event) => onTermChange('parties')(event.target.value)}
         required
+        requiredLabel={requiredLabel}
         rows={2}
-        value={contract.parties}
       />
-      <FormInput
-        id="contract-subject"
-        label={t(`${k}.contract.subject`)}
-        maxLength={1000}
-        onChange={(event) => onTermChange('subject')(event.target.value)}
-        value={contract.subject}
-      />
+      <form.subject id="contract-subject" label={t(`${k}.contract.subject`)} maxLength={1000} />
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-        <FormInput
-          id="contract-valid-from"
-          label={t(`${k}.contract.validFrom`)}
-          onChange={(event) => onTermChange('validFromInput')(event.target.value)}
-          type="date"
-          value={contract.validFromInput}
-        />
-        <FormInput
-          id="contract-valid-to"
-          label={t(`${k}.contract.validTo`)}
-          onChange={(event) => onTermChange('validToInput')(event.target.value)}
-          type="date"
-          value={contract.validToInput}
-        />
-        <FormInput
-          id="contract-amount"
-          label={t(`${k}.contract.amountTerms`)}
-          maxLength={500}
-          onChange={(event) => onTermChange('amountTerms')(event.target.value)}
-          value={contract.amountTerms}
-        />
-        <FormInput
+        <form.validFromInput id="contract-valid-from" label={t(`${k}.contract.validFrom`)} type="date" />
+        <form.validToInput id="contract-valid-to" label={t(`${k}.contract.validTo`)} type="date" />
+        <form.amountTerms id="contract-amount" label={t(`${k}.contract.amountTerms`)} maxLength={500} />
+        <form.owner
           id="contract-owner"
           label={t(`${k}.contract.owner`)}
           maxLength={200}
-          onChange={(event) => onTermChange('owner')(event.target.value)}
           required
-          value={contract.owner}
+          requiredLabel={requiredLabel}
         />
-        <FormInput
-          id="contract-notice-period"
-          label={t(`${k}.contract.noticePeriod`)}
-          maxLength={300}
-          onChange={(event) => onTermChange('noticePeriod')(event.target.value)}
-          value={contract.noticePeriod}
-        />
-        <FormInput
-          id="contract-notice-date"
-          label={t(`${k}.contract.noticeDate`)}
-          onChange={(event) => onTermChange('noticeDateInput')(event.target.value)}
-          type="date"
-          value={contract.noticeDateInput}
-        />
+        <form.noticePeriod id="contract-notice-period" label={t(`${k}.contract.noticePeriod`)} maxLength={300} />
+        <form.noticeDateInput id="contract-notice-date" label={t(`${k}.contract.noticeDate`)} type="date" />
       </div>
     </fieldset>
   );
@@ -538,58 +606,31 @@ const DocumentContractFields = ({
 
 /** The fields both panels share: title, category and description. */
 const DocumentTextFields = ({
-  category,
-  description,
-  onCategoryChange,
-  onDescriptionChange,
-  onTitleChange,
+  form,
   problems,
-  title,
 }: {
-  readonly category: string;
-  readonly description: string;
-  readonly onCategoryChange: (category: string) => void;
-  readonly onDescriptionChange: (description: string) => void;
-  readonly onTitleChange: (title: string) => void;
+  readonly form: DocumentForm;
   readonly problems: { readonly title: boolean } | undefined;
-  readonly title: string;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const categoryLabel = useCategoryLabel();
   return (
     <>
-      <FormInput
+      <form.title
         autoComplete="off"
         id="document-title"
+        invalid={problems?.title === true}
         label={t(`${k}.fields.title`)}
         maxLength={300}
-        onChange={(event) => onTitleChange(event.target.value)}
         required
-        value={title}
-        {...(problems?.title === true
-          ? { helpText: t('facility-operations.common.required'), validateStatus: 'error' as const }
-          : {})}
+        requiredLabel={requiredLabelFor(language)}
+        {...(problems?.title === true ? { helpText: t('facility-operations.common.required') } : {})}
       />
-      <Select
-        items={documentCategories.map((value) => ({
-          displayValue: categoryLabel(value),
-          label: categoryLabel(value),
-          value,
-        }))}
+      <form.category
+        items={documentCategories.map((value) => ({ label: categoryLabel(value), value }))}
         label={t(`${k}.fields.category`)}
-        name="document-category"
-        onValueChange={({ value }) => onCategoryChange(value[0] ?? 'other')}
-        size="md"
-        value={[category]}
       />
-      <FormTextarea
-        id="document-description"
-        label={t(`${k}.fields.description`)}
-        maxLength={4000}
-        onChange={(event) => onDescriptionChange(event.target.value)}
-        rows={2}
-        value={description}
-      />
+      <form.description id="document-description" label={t(`${k}.fields.description`)} maxLength={4000} rows={2} />
     </>
   );
 };
@@ -617,7 +658,10 @@ const DocumentEditPanel = ({
   const properties = usePropertyOptions();
   const contacts = useContactOptions();
   const invoices = useInvoiceOptions();
-  const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
+  const opened = documentEditDraftOf(document);
+  const shown = useFormValues(documentEditForm, editValuesOf(opened));
+  const draft = editDraftFrom(shown.values);
+  const setValues = useAtomSet(documentEditForm.setValues);
   const problems = documentEditProblems(draft);
   // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
   const base = useDraftBase(document, run);
@@ -639,24 +683,13 @@ const DocumentEditPanel = ({
       const stored = documentEditDraftOf(document);
       if (!sameDocumentEditDraft(stored, draft)) {
         record.adopt(stored);
-        setDraft(stored);
+        setValues(editValuesOf(stored));
       }
     },
     settled: !record.pending && sameDocumentEditDraft(draft, record.confirmed),
   });
-  const update = (patch: Partial<DocumentEditDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  const setTerm = (key: keyof ContractDraft) => (value: string) =>
-    setDraft((current) => ({ ...current, contract: { ...current.contract, [key]: value } }));
-  const addLink = (link: SubjectRef) =>
-    setDraft((current) =>
-      current.links.some((entry) => sameSubject(entry, link))
-        ? current
-        : { ...current, links: [...current.links, link] },
-    );
-  const removeLink = (link: SubjectRef) =>
-    setDraft((current) => ({ ...current, links: current.links.filter((entry) => !sameSubject(entry, link)) }));
   const guard = useEditGuard(record, () => {
-    setDraft(record.confirmed);
+    setValues(editValuesOf(record.confirmed));
   });
   const labels = saveLabelsFor(language);
   const close = () => {
@@ -667,7 +700,7 @@ const DocumentEditPanel = ({
     const current = documentEditDraftOf(document);
     base.rebase();
     record.adopt(current);
-    setDraft(current);
+    setValues(editValuesOf(current));
   };
   const showErrors = record.status === 'invalid';
   const linkableContracts = contracts.filter((entry) => entry.id !== document.id);
@@ -693,46 +726,37 @@ const DocumentEditPanel = ({
         size="lg"
         title={t(`${k}.create.editTitle`)}
       >
-        <div className="flex flex-col gap-250 py-200">
+        <FormRoot
+          className="flex flex-col gap-250 py-200"
+          defaultValues={editValuesOf(opened)}
+          form={documentEditForm}
+          translateMessage={(message) => t(message)}
+        >
+          {shown.ready}
           {problems.contract && showErrors && (
             <StatusText showIcon status="error">
               {t(`${k}.contract.required`)}
             </StatusText>
           )}
-          <DocumentTextFields
-            category={draft.category}
-            description={draft.description}
-            onCategoryChange={(category) => update({ category })}
-            onDescriptionChange={(description) => update({ description })}
-            onTitleChange={(title) => update({ title })}
-            problems={showErrors ? problems : undefined}
-            title={draft.title}
-          />
+          <DocumentTextFields form={documentEditForm} problems={showErrors ? problems : undefined} />
           <DocumentLinkFields
             category={draft.category}
             contacts={contacts}
+            form={documentEditForm}
             invoices={invoices}
             linkableContracts={linkableContracts}
-            links={draft.links}
-            onAddLink={addLink}
-            onRemoveLink={removeLink}
             properties={properties}
             tasks={tasks}
           />
           {isContractCategory(draft.category) && (
             <DocumentContractFields
-              amends={NONE}
               amendsLocked
               category={draft.category}
-              contract={draft.contract}
               contracts={contracts}
-              onStatusChange={(status) =>
-                setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
-              }
-              onTermChange={setTerm}
+              form={documentEditForm}
             />
           )}
-        </div>
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -762,39 +786,42 @@ const DocumentCreatePanel = ({
   const properties = usePropertyOptions();
   const contacts = useContactOptions();
   const invoices = useInvoiceOptions();
-  const [file, setFile] = useState<File | undefined>();
   const initial = initialDocumentForm(mode, contracts);
-  const [title, setTitle] = useState(initial.title);
-  const [category, setCategory] = useState(initial.category);
-  const [description, setDescription] = useState(initial.description);
-  const [links, setLinks] = useState<readonly SubjectRef[]>(initial.links);
-  const [amends, setAmends] = useState(initial.amends);
-  const [contract, setContract] = useState<ContractDraft>(initial.contract);
+  const shown = useFormValues(documentCreateForm, createValuesOf(initial));
+  const { amends, category, description, links, title } = shown.values;
+  const file = shown.values.file ?? undefined;
+  const contract = contractFrom(shown.values);
+  const fileAtoms = documentCreateForm.getFieldAtoms(documentCreateForm.fields.file);
+  const setFile = useAtomSet(fileAtoms.setValue);
+  const setTitle = useAtomSet(documentCreateForm.getFieldAtoms(documentCreateForm.fields.title).setValue);
+  const setCategory = useAtomSet(documentCreateForm.getFieldAtoms(documentCreateForm.fields.category).setValue);
   const [busy, setBusy] = useState<'upload' | 'save' | undefined>();
   const [error, setError] = useState<FailureReason | 'required' | 'tooLarge' | 'upload' | undefined>();
 
-  const addLink = (link: SubjectRef) =>
-    setLinks((current) => (current.some((entry) => sameSubject(entry, link)) ? current : [...current, link]));
-
-  const removeLink = (link: SubjectRef) => setLinks((current) => current.filter((entry) => !sameSubject(entry, link)));
-
-  const pickFile = (picked: File | undefined) => {
-    if (picked === undefined) {
-      return;
-    }
-    if (picked.size > MAX_UPLOAD_BYTES) {
-      setError('tooLarge');
-      return;
-    }
-    setError(undefined);
-    setFile(picked);
-    if (title.trim() === '') {
-      setTitle(picked.name.replace(/\.[^.]+$/u, '').replaceAll(/[_-]+/gu, ' '));
-    }
-    if (category === 'other' && picked.type.startsWith('image/')) {
-      setCategory('photo');
-    }
-  };
+  // A picked file that is too large is refused and the file before it stays; an accepted one names an untitled
+  // document after itself and makes an image a photo.
+  const accepted = useRef<File | null>(null);
+  useAtomSubscribe(
+    pickedDocumentFile,
+    (picked) => {
+      if (picked === null || picked === accepted.current) {
+        accepted.current = picked;
+        return;
+      }
+      if (picked.size > MAX_UPLOAD_BYTES) {
+        setError('tooLarge');
+        setFile(accepted.current);
+        return;
+      }
+      setError(undefined);
+      accepted.current = picked;
+      setTitle((current: string) =>
+        current.trim() === '' ? picked.name.replace(/\.[^.]+$/u, '').replaceAll(/[_-]+/gu, ' ') : current,
+      );
+      setCategory((current: string) => (current === 'other' && picked.type.startsWith('image/') ? 'photo' : current));
+    },
+    { immediate: false },
+  );
 
   // The document and its file are sent on Uložit only; an amendment opens prefilled, which Uložit can send as it is.
   const form = useFormSave({
@@ -832,8 +859,6 @@ const DocumentCreatePanel = ({
 
   const errorText = error === undefined ? undefined : documentErrorText(error, t);
   const heading = t(documentHeadingKey(mode));
-  const setTerm = (key: keyof ContractDraft) => (value: string) =>
-    setContract((current) => ({ ...current, [key]: value }));
   const linkableContracts = contracts;
 
   return (
@@ -859,46 +884,34 @@ const DocumentCreatePanel = ({
       size="lg"
       title={heading}
     >
-      <div className="flex flex-col gap-250 py-200">
+      <FormRoot
+        className="flex flex-col gap-250 py-200"
+        defaultValues={createValuesOf(initial)}
+        form={documentCreateForm}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
         {errorText !== undefined && (
           <StatusText showIcon status="error">
             {errorText}
           </StatusText>
         )}
-        <DocumentFilePicker file={file} onFilePicked={pickFile} />
+        <DocumentFilePicker file={file} />
         {file === undefined && <p className="-mt-150 text-fg-secondary text-xs">{t(`${k}.create.noFile`)}</p>}
-        <DocumentTextFields
-          category={category}
-          description={description}
-          onCategoryChange={setCategory}
-          onDescriptionChange={setDescription}
-          onTitleChange={setTitle}
-          problems={undefined}
-          title={title}
-        />
+        <DocumentTextFields form={documentCreateForm} problems={undefined} />
         <DocumentLinkFields
           category={category}
           contacts={contacts}
+          form={documentCreateForm}
           invoices={invoices}
           linkableContracts={linkableContracts}
-          links={links}
-          onAddLink={addLink}
-          onRemoveLink={removeLink}
           properties={properties}
           tasks={tasks}
         />
         {isContractCategory(category) && (
-          <DocumentContractFields
-            amends={amends}
-            category={category}
-            contract={contract}
-            contracts={contracts}
-            onAmendsChange={setAmends}
-            onStatusChange={(status) => setContract((current) => ({ ...current, status }))}
-            onTermChange={setTerm}
-          />
+          <DocumentContractFields category={category} contracts={contracts} form={documentCreateForm} />
         )}
-      </div>
+      </FormRoot>
     </SidePanel>
   );
 };

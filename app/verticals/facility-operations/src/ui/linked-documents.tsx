@@ -1,20 +1,30 @@
-import { Effect } from 'effect';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Documents linked to one record (S12.R3) — OWNED BY THE documents LANE. Embed inside AgendaFrame:
 //   <LinkedDocuments subject={{ kind: 'property', id: property.id, label: property.label }} />
 // Lists every document whose links contain that subject, with preview and authorised download. Writers can upload a
 // file straight onto the record (new document linked to it) or attach an existing document.
+import {
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { useState } from 'react';
-import type { StoredFileRef, SubjectRef } from '../../shared/domain/documents.ts';
+import type { DocumentRecord, StoredFileRef, SubjectRef } from '../../shared/domain/documents.ts';
 import { documentLinks, sameSubject } from '../../shared/domain/documents.ts';
 import { CategoryBadge, currentVersion, FileTypeIcon, formatBytes, formatWhen } from './documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
+import { keyedForms } from './form-values.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
 import type { CommandOutcome } from './use-agenda.ts';
 import { dividedListClassName } from '@app/admin-ui';
@@ -38,6 +48,92 @@ const uploadLinkedDocument = Effect.fn('FacilityOperations.uploadLinkedDocument'
   });
   return { ok: true as const, outcome };
 });
+
+/**
+ * A file to upload onto the record and an existing document to attach: each acts as soon as it is picked and the pick
+ * goes back to empty. The linked documents of each record have their own form.
+ */
+const linkForm = keyedForms(() => {
+  const form = FormReact.make(
+    FormBuilder.empty
+      .addField('attach', Schema.String)
+      .addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File))),
+    {
+      fields: { attach: TemplateChoiceField, file: FileField },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+  return {
+    attached: form.getFieldAtoms(form.fields.attach).value.pipe(Atom.map(Option.getOrElse(() => ''))),
+    form,
+    picked: form.getFieldAtoms(form.fields.file).value.pipe(Atom.map(Option.getOrElse((): File | null => null))),
+  };
+});
+const noPick = { attach: '', file: null };
+
+const LinkedDocumentActions = ({
+  busy,
+  onAttach,
+  onUpload,
+  others,
+  subject,
+}: {
+  readonly busy: boolean;
+  readonly onAttach: (documentId: string) => void;
+  readonly onUpload: (file: File) => void;
+  readonly others: readonly DocumentRecord[];
+  readonly subject: SubjectRef;
+}) => {
+  const { t } = useModernI18n();
+  const { attached, form, picked } = linkForm(`${subject.kind}:${subject.id}`);
+  const setValues = useAtomSet(form.setValues);
+  useAtomSubscribe(
+    picked,
+    (file) => {
+      if (file !== null) {
+        setValues(noPick);
+        onUpload(file);
+      }
+    },
+    { immediate: false },
+  );
+  useAtomSubscribe(
+    attached,
+    (documentId) => {
+      if (documentId !== '') {
+        setValues(noPick);
+        onAttach(documentId);
+      }
+    },
+    { immediate: false },
+  );
+  return (
+    <FormRoot
+      className="facility-linked-document-actions flex flex-wrap items-end gap-150"
+      defaultValues={noPick}
+      form={form}
+      translateMessage={(message) => t(message)}
+    >
+      <label className={busy ? 'pointer-events-none opacity-60' : 'cursor-pointer'}>
+        <form.file data-testid="linked-documents-upload" />
+        <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
+          ⇪ {busy ? t(`${k}.uploading`) : t(`${k}.linked.upload`)}
+        </span>
+      </label>
+      {others.length > 0 && (
+        <div className="min-w-0 flex-1 sm:max-w-xs">
+          <form.attach
+            items={others.map((document) => ({ label: document.title, value: document.id }))}
+            label={t(`${k}.linked.attach`)}
+            placeholder={t(`${k}.linked.attach`)}
+            size="sm"
+          />
+        </div>
+      )}
+    </FormRoot>
+  );
+};
 
 export const LinkedDocuments = ({
   hideWhenForbidden = false,
@@ -162,41 +258,17 @@ export const LinkedDocuments = ({
         </ul>
       )}
       {canWrite && (
-        <div className="facility-linked-document-actions flex flex-wrap items-end gap-150">
-          <label className={busy ? 'pointer-events-none opacity-60' : 'cursor-pointer'}>
-            <input
-              className="sr-only"
-              data-testid="linked-documents-upload"
-              onChange={(event) => {
-                browserRuntime.runFork(uploadHere(event.target.files?.[0]));
-                event.target.value = '';
-              }}
-              type="file"
-            />
-            <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
-              ⇪ {busy ? t(`${k}.uploading`) : t(`${k}.linked.upload`)}
-            </span>
-          </label>
-          {others.length > 0 && (
-            <div className="min-w-0 flex-1 sm:max-w-xs">
-              <Select
-                items={others.map((document) => ({
-                  displayValue: document.title,
-                  label: document.title,
-                  value: document.id,
-                }))}
-                label={t(`${k}.linked.attach`)}
-                name={`attach-${subject.kind}-${subject.id}`}
-                onValueChange={({ value }) => {
-                  browserRuntime.runFork(attachExisting(value[0]));
-                }}
-                placeholder={t(`${k}.linked.attach`)}
-                size="sm"
-                value={[]}
-              />
-            </div>
-          )}
-        </div>
+        <LinkedDocumentActions
+          busy={busy}
+          onAttach={(documentId) => {
+            browserRuntime.runFork(attachExisting(documentId));
+          }}
+          onUpload={(file) => {
+            browserRuntime.runFork(uploadHere(file));
+          }}
+          others={others}
+          subject={subject}
+        />
       )}
       <FilePreviewDialog file={preview?.file} onClose={() => setPreview(undefined)} title={preview?.title} />
     </section>

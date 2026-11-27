@@ -1,23 +1,33 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
 import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   surfaceTileClassName,
   useDraftSave,
 } from '@app/admin-ui';
 import type { SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
+import {
+  CheckboxField,
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RuledTextAreaField,
+  RuledTextField,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Result, Schema } from 'effect';
-import { useReducer, useState } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { IsoDateSchema, PropertyRef } from '../../../../../shared/domain/common.ts';
@@ -43,6 +53,7 @@ import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { FormSaveFooter, commandResult, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
@@ -120,138 +131,128 @@ const PanelFrame = ({
   );
 };
 
+/**
+ * The device card's values. Uložit sends them through the form save or the draft save, so the form only holds them
+ * and Enter sends nothing.
+ */
+const makeDeviceForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('administrator', Schema.String)
+      .addField('deviceType', Schema.String)
+      .addField('lastInspectionDate', Schema.String)
+      .addField('location', Schema.String)
+      .addField('locationDetail', Schema.String)
+      .addField('name', Schema.String)
+      .addField('nextInspectionDate', Schema.String)
+      .addField('note', Schema.String)
+      .addField('serialNumber', Schema.String)
+      .addField('state', Schema.String)
+      .addField('supplier', Schema.String),
+    {
+      fields: {
+        administrator: TextField,
+        deviceType: ChoiceField,
+        lastInspectionDate: TextField,
+        location: ChoiceField,
+        locationDetail: TextField,
+        name: RuledTextField,
+        nextInspectionDate: TextField,
+        note: TextAreaField,
+        serialNumber: TextField,
+        state: ChoiceField,
+        supplier: TextField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+/** A new card and the edit of one are separate forms. */
+const deviceCreateForm = makeDeviceForm();
+const deviceEditForm = makeDeviceForm();
+type DeviceForm = typeof deviceCreateForm;
+type DeviceValues = DeviceForm['schema']['Encoded'];
+
+/** The values the card form shows for a draft: no location is the "none" choice. */
+const deviceValuesOf = (draft: DeviceDraft): DeviceValues => ({
+  ...draft,
+  location: draft.location === '' ? NONE : draft.location,
+});
+
+/** The draft the card form shows: a type or state that is not one of the choices keeps the opening one. */
+const deviceDraftFrom = (values: DeviceValues, opened: DeviceDraft): DeviceDraft => ({
+  ...values,
+  deviceType: Schema.is(SecurityDeviceTypeSchema)(values.deviceType) ? values.deviceType : opened.deviceType,
+  location: values.location === NONE ? '' : values.location,
+  state: Schema.is(SecurityDeviceStateSchema)(values.state) ? values.state : opened.state,
+});
+
 const DeviceFields = ({
-  draft,
+  form,
   k,
   nameMissing,
   properties,
-  set,
 }: {
-  readonly draft: DeviceDraft;
+  readonly form: DeviceForm;
   readonly k: ReturnType<typeof useSecurityLabel>;
   readonly nameMissing: boolean;
   readonly properties: ReturnType<typeof usePropertyOptions>;
-  readonly set: <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) => void;
 }) => {
+  const { language } = useModernI18n();
   const options = (values: readonly string[], prefix: string) =>
-    values.map((value) => ({ displayValue: k(`${prefix}.${value}`), label: k(`${prefix}.${value}`), value }));
+    values.map((value) => ({ label: k(`${prefix}.${value}`), value }));
   return (
     <>
-      <FormInput
+      <form.name
         autoComplete="off"
         id="security-name"
+        invalid={nameMissing}
         label={k('fields.name')}
         maxLength={200}
-        onChange={(event) => set('name', event.target.value)}
         required
-        value={draft.name}
-        {...(nameMissing ? { helpText: k('fields.nameRequired'), validateStatus: 'error' as const } : {})}
+        requiredLabel={requiredLabelFor(language)}
+        {...(nameMissing ? { helpText: k('fields.nameRequired') } : {})}
       />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <Select
-          items={options(securityDeviceTypes, 'deviceType')}
-          label={k('fields.deviceType')}
-          name="deviceType"
-          onValueChange={({ value }) => {
-            const parsed = Schema.decodeUnknownResult(SecurityDeviceTypeSchema)(value[0] ?? 'camera');
-            if (Result.isSuccess(parsed)) {
-              set('deviceType', parsed.success);
-            }
-          }}
-          size="md"
-          value={[draft.deviceType]}
-        />
-        <Select
-          items={options(securityDeviceStates, 'state')}
-          label={k('fields.state')}
-          name="state"
-          onValueChange={({ value }) => {
-            const parsed = Schema.decodeUnknownResult(SecurityDeviceStateSchema)(value[0] ?? 'in_operation');
-            if (Result.isSuccess(parsed)) {
-              set('state', parsed.success);
-            }
-          }}
-          size="md"
-          value={[draft.state]}
-        />
+        <form.deviceType items={options(securityDeviceTypes, 'deviceType')} label={k('fields.deviceType')} />
+        <form.state items={options(securityDeviceStates, 'state')} label={k('fields.state')} />
       </div>
       {properties.status === 'ready' ? (
-        <Select
+        <form.location
           items={[
-            { displayValue: k('fields.location'), label: '—', value: NONE },
-            ...properties.options.map((option) => ({
-              displayValue: option.ref.label,
-              label: option.ref.label,
-              value: option.value,
-            })),
+            { label: '—', value: NONE },
+            ...properties.options.map((option) => ({ label: option.ref.label, value: option.value })),
           ]}
           label={k('fields.location')}
-          name="location"
-          onValueChange={({ value }) => set('location', value[0] === undefined || value[0] === NONE ? '' : value[0])}
-          size="md"
-          value={[draft.location === '' ? NONE : draft.location]}
         />
       ) : null}
-      <FormInput
+      <form.locationDetail
         autoComplete="off"
         id="security-location-detail"
         label={k('fields.locationDetail')}
         maxLength={300}
-        onChange={(event) => set('locationDetail', event.target.value)}
-        value={draft.locationDetail}
       />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
+        <form.administrator
           autoComplete="off"
           id="security-administrator"
           label={k('fields.administrator')}
           maxLength={200}
-          onChange={(event) => set('administrator', event.target.value)}
-          value={draft.administrator}
         />
-        <FormInput
-          autoComplete="off"
-          id="security-supplier"
-          label={k('fields.supplier')}
-          maxLength={200}
-          onChange={(event) => set('supplier', event.target.value)}
-          value={draft.supplier}
-        />
-        <FormInput
-          autoComplete="off"
-          id="security-serial"
-          label={k('fields.serialNumber')}
-          maxLength={120}
-          onChange={(event) => set('serialNumber', event.target.value)}
-          value={draft.serialNumber}
-        />
+        <form.supplier autoComplete="off" id="security-supplier" label={k('fields.supplier')} maxLength={200} />
+        <form.serialNumber autoComplete="off" id="security-serial" label={k('fields.serialNumber')} maxLength={120} />
         <div />
-        <FormInput
-          id="security-last-inspection"
-          label={k('fields.lastInspectionDate')}
-          onChange={(event) => set('lastInspectionDate', event.target.value)}
-          type="date"
-          value={draft.lastInspectionDate}
-        />
-        <FormInput
-          id="security-next-inspection"
-          label={k('fields.nextInspectionDate')}
-          onChange={(event) => set('nextInspectionDate', event.target.value)}
-          type="date"
-          value={draft.nextInspectionDate}
-        />
+        <form.lastInspectionDate id="security-last-inspection" label={k('fields.lastInspectionDate')} type="date" />
+        <form.nextInspectionDate id="security-next-inspection" label={k('fields.nextInspectionDate')} type="date" />
       </div>
-      <FormTextarea
-        id="security-note"
-        label={k('fields.note')}
-        maxLength={4000}
-        onChange={(event) => set('note', event.target.value)}
-        rows={3}
-        value={draft.note}
-      />
+      <form.note id="security-note" label={k('fields.note')} maxLength={4000} rows={3} />
     </>
   );
 };
+
+/** One form of a panel: it fills the panel body. */
+const formClassName = 'flex flex-col gap-200';
 
 /** The stored location of a draft: the picked property, or the one the device already has. */
 const pickedLocationOf = ({
@@ -294,17 +295,18 @@ const DeviceCreatePanel = ({
   const k = useSecurityLabel();
   const toast = useToast();
   const properties = usePropertyOptions();
-  const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf());
+  const opened = deviceDraftOf();
+  const shown = useFormValues(deviceCreateForm, deviceValuesOf(opened));
+  const draft = deviceDraftFrom(shown.values, opened);
+  const setValues = useAtomSet(deviceCreateForm.setValues);
   const [error, setError] = useState<FormError | undefined>();
   const errorText = useErrorText();
-  const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
 
   // A new card is sent on Uložit only.
   const form = useFormSave<DeviceDraft>({
     equals: sameDeviceDraft,
     onDiscard: () => {
-      setDraft(deviceDraftOf());
+      setValues(deviceValuesOf(deviceDraftOf()));
       setError(undefined);
     },
     submit: (value) => {
@@ -338,8 +340,16 @@ const DeviceCreatePanel = ({
       open={open}
       title={k('create.title')}
     >
-      <ErrorLine error={error} />
-      <DeviceFields draft={draft} k={k} nameMissing={error === 'required'} properties={properties} set={set} />
+      <FormRoot
+        className={formClassName}
+        defaultValues={deviceValuesOf(opened)}
+        form={deviceCreateForm}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <ErrorLine error={error} />
+        <DeviceFields form={deviceCreateForm} k={k} nameMissing={error === 'required'} properties={properties} />
+      </FormRoot>
     </PanelFrame>
   );
 };
@@ -362,9 +372,10 @@ const DeviceEditPanel = ({
   const { language, t } = useModernI18n();
   const k = useSecurityLabel();
   const properties = usePropertyOptions();
-  const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
-  const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
+  const opened = deviceDraftOf(device);
+  const shown = useFormValues(deviceEditForm, deviceValuesOf(opened));
+  const draft = deviceDraftFrom(shown.values, opened);
+  const setValues = useAtomSet(deviceEditForm.setValues);
   // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
   const base = useDraftBase(device, run);
   const record = useDraftSave<DeviceDraft, never>({
@@ -384,13 +395,13 @@ const DeviceEditPanel = ({
       const stored = deviceDraftOf(device);
       if (!sameDeviceDraft(stored, draft)) {
         record.adopt(stored);
-        setDraft(stored);
+        setValues(deviceValuesOf(stored));
       }
     },
     settled: !record.pending && sameDeviceDraft(draft, record.confirmed),
   });
   const guard = useEditGuard(record, () => {
-    setDraft(record.confirmed);
+    setValues(deviceValuesOf(record.confirmed));
   });
   const labels = saveLabelsFor(language);
   const close = () => {
@@ -401,7 +412,7 @@ const DeviceEditPanel = ({
     const current = deviceDraftOf(device);
     base.rebase();
     record.adopt(current);
-    setDraft(current);
+    setValues(deviceValuesOf(current));
   };
   return (
     <>
@@ -419,7 +430,15 @@ const DeviceEditPanel = ({
         open={open}
         title={k('edit.title')}
       >
-        <DeviceFields draft={draft} k={k} nameMissing={record.status === 'invalid'} properties={properties} set={set} />
+        <FormRoot
+          className={formClassName}
+          defaultValues={deviceValuesOf(opened)}
+          form={deviceEditForm}
+          translateMessage={(message) => t(message)}
+        >
+          {shown.ready}
+          <DeviceFields form={deviceEditForm} k={k} nameMissing={record.status === 'invalid'} properties={properties} />
+        </FormRoot>
       </PanelFrame>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -606,15 +625,32 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
   });
 });
 
-interface ReportDraft {
-  readonly description: string;
-  readonly deviceId: string;
-  readonly dueDate: typeof IsoDateSchema.Encoded;
-  readonly occurredOn: SecurityIncident['occurredOn'];
-  readonly severity: SecuritySeverity;
-  readonly title: string;
-  readonly withTask: boolean;
-}
+/** The fault report's values; Uložit sends them through the form save, so Enter sends nothing. */
+const reportForm = FormReact.make(
+  FormBuilder.empty
+    .addField('description', Schema.String)
+    .addField('deviceId', Schema.String)
+    .addField('dueDate', Schema.String)
+    .addField('occurredOn', Schema.String)
+    .addField('severity', Schema.String)
+    .addField('title', Schema.String)
+    .addField('withTask', Schema.Boolean),
+  {
+    fields: {
+      description: TextAreaField,
+      deviceId: ChoiceField,
+      dueDate: TextField,
+      occurredOn: TextField,
+      severity: ChoiceField,
+      title: TextField,
+      withTask: CheckboxField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type ReportDraft = typeof reportForm.schema.Encoded;
+
 const reportDraftOf = (initialDeviceId: string | undefined): ReportDraft => {
   const today = todayPrague();
   return {
@@ -627,10 +663,6 @@ const reportDraftOf = (initialDeviceId: string | undefined): ReportDraft => {
     withTask: true,
   };
 };
-const updateReportDraft = (draft: ReportDraft, changes: Partial<ReportDraft>): ReportDraft => ({
-  ...draft,
-  ...changes,
-});
 
 const ReportFaultSession = ({
   devices,
@@ -652,22 +684,21 @@ const ReportFaultSession = ({
   const k = useSecurityLabel();
   const { t } = useModernI18n();
   const toast = useToast();
+  const { language } = useModernI18n();
   const active = devices.filter((device) => device.state !== 'decommissioned');
-  const [draft, updateDraft] = useReducer(updateReportDraft, initialDeviceId, reportDraftOf);
-  const { description, deviceId, dueDate, occurredOn, severity, title, withTask } = draft;
-  const setDeviceId = (nextValue: string) => updateDraft({ deviceId: nextValue });
-  const setTitle = (nextValue: string) => updateDraft({ title: nextValue });
-  const setDescription = (nextValue: string) => updateDraft({ description: nextValue });
-  const setSeverity = (nextValue: SecuritySeverity) => updateDraft({ severity: nextValue });
-  const setOccurredOn = (nextValue: SecurityIncident['occurredOn']) => updateDraft({ occurredOn: nextValue });
-  const setWithTask = (nextValue: boolean) => updateDraft({ withTask: nextValue });
-  const setDueDate = (nextValue: typeof IsoDateSchema.Encoded) => updateDraft({ dueDate: nextValue });
+  const opened = reportDraftOf(initialDeviceId);
+  const { ready, values: draft } = useFormValues(reportForm, opened);
+  const { description, deviceId, dueDate, occurredOn, title, withTask } = draft;
+  // A severity that is not one of the choices reads as the one the report opens with.
+  const severity = Schema.is(SecuritySeveritySchema)(draft.severity) ? draft.severity : 'high';
+  const setValues = useAtomSet(reportForm.setValues);
+  const requiredLabel = requiredLabelFor(language);
   const [error, setError] = useState<FormError | undefined>();
   const errorText = useErrorText();
   // A fault is reported on Uložit only, with the same command and follow-up task as before.
   const form = useFormSave<ReportDraft>({
     onDiscard: () => {
-      updateDraft(reportDraftOf(initialDeviceId));
+      setValues(reportDraftOf(initialDeviceId));
       setError(undefined);
     },
     submit: () =>
@@ -699,82 +730,55 @@ const ReportFaultSession = ({
       open={open}
       title={k('report.title')}
     >
-      <ErrorLine error={error} />
-      <Select
-        items={active.map((device) => ({
-          displayValue: device.name,
-          label: `${device.name} · ${locationText(device, '')}`,
-          value: device.id,
-        }))}
-        label={k('fields.device')}
-        name="deviceId"
-        onValueChange={({ value }) => setDeviceId(value[0] ?? '')}
-        placeholder={k('report.pickDevice')}
-        size="md"
-        value={deviceId === '' ? [] : [deviceId]}
-      />
-      <FormInput
-        autoComplete="off"
-        id="security-incident-title"
-        label={k('fields.title')}
-        maxLength={200}
-        onChange={(event) => setTitle(event.target.value)}
-        required
-        value={title}
-      />
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <Select
-          items={securitySeverities.map((value) => ({
-            displayValue: k(`severity.${value}`),
-            label: k(`severity.${value}`),
-            value,
-          }))}
-          label={k('fields.severity')}
-          name="severity"
-          onValueChange={({ value }) => {
-            const parsed = Schema.decodeUnknownResult(SecuritySeveritySchema)(value[0] ?? 'high');
-            if (Result.isSuccess(parsed)) {
-              setSeverity(parsed.success);
-            }
-          }}
-          size="md"
-          value={[severity]}
+      <FormRoot
+        className={formClassName}
+        defaultValues={opened}
+        form={reportForm}
+        translateMessage={(message) => t(message)}
+      >
+        {ready}
+        <ErrorLine error={error} />
+        <reportForm.deviceId
+          items={active.map((device) => ({ label: `${device.name} · ${locationText(device, '')}`, value: device.id }))}
+          label={k('fields.device')}
+          placeholder={k('report.pickDevice')}
         />
-        <FormInput
-          id="security-incident-date"
-          label={k('fields.occurredOn')}
-          onChange={(event) => setOccurredOn(event.target.value)}
+        <reportForm.title
+          autoComplete="off"
+          id="security-incident-title"
+          label={k('fields.title')}
+          maxLength={200}
           required
-          type="date"
-          value={occurredOn}
+          requiredLabel={requiredLabel}
         />
-      </div>
-      <FormTextarea
-        id="security-incident-description"
-        label={k('fields.description')}
-        maxLength={4000}
-        onChange={(event) => setDescription(event.target.value)}
-        rows={3}
-        value={description}
-      />
-      <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
-        <FormCheckbox
-          checked={withTask}
-          helpText={k('report.withTaskHint')}
-          label={k('report.withTask')}
-          name="withTask"
-          onCheckedChange={setWithTask}
-        />
-        {withTask && (
-          <FormInput
-            id="security-task-due"
-            label={k('fields.taskDueDate')}
-            onChange={(event) => setDueDate(event.target.value)}
-            type="date"
-            value={dueDate}
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+          <reportForm.severity
+            items={securitySeverities.map((value) => ({ label: k(`severity.${value}`), value }))}
+            label={k('fields.severity')}
           />
-        )}
-      </div>
+          <reportForm.occurredOn
+            id="security-incident-date"
+            label={k('fields.occurredOn')}
+            required
+            requiredLabel={requiredLabel}
+            type="date"
+          />
+        </div>
+        <reportForm.description
+          id="security-incident-description"
+          label={k('fields.description')}
+          maxLength={4000}
+          rows={3}
+        />
+        <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+          <reportForm.withTask
+            helpText={k('report.withTaskHint')}
+            id="security-with-task"
+            label={k('report.withTask')}
+          />
+          {withTask && <reportForm.dueDate id="security-task-due" label={k('fields.taskDueDate')} type="date" />}
+        </div>
+      </FormRoot>
     </PanelFrame>
   );
 };
@@ -834,6 +838,17 @@ const submitSecurityInspection = Effect.fn('Facility.submitSecurityInspection')(
   );
 });
 
+/** The inspection's values; Uložit sends them through the form save, so Enter sends nothing. */
+const inspectionForm = FormReact.make(
+  FormBuilder.empty.addField('date', Schema.String).addField('next', Schema.String).addField('note', Schema.String),
+  {
+    fields: { date: TextField, next: TextField, note: RuledTextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const inspectionOf = () => ({ date: todayPrague(), next: addDays(todayPrague(), 365), note: '' });
+
 const InspectionSession = ({
   device,
   onClose,
@@ -850,17 +865,17 @@ const InspectionSession = ({
   const { t } = useModernI18n();
   const k = useSecurityLabel();
   const toast = useToast();
-  const [date, setDate] = useState(todayPrague);
-  const [next, setNext] = useState(() => addDays(todayPrague(), 365));
-  const [note, setNote] = useState('');
+  const { language } = useModernI18n();
+  const opened = inspectionOf();
+  const { ready, values } = useFormValues(inspectionForm, opened);
+  const { date, next, note } = values;
+  const setValues = useAtomSet(inspectionForm.setValues);
   const [error, setError] = useState<FormError | undefined>();
   const errorText = useErrorText();
   // The inspection opens with today and the next date filled in: Uložit records it as it is.
   const form = useFormSave({
     onDiscard: () => {
-      setDate(todayPrague());
-      setNext(addDays(todayPrague(), 365));
-      setNote('');
+      setValues(inspectionOf());
       setError(undefined);
     },
     savableAtOnce: true,
@@ -875,36 +890,35 @@ const InspectionSession = ({
       open={open}
       title={k('inspection.title')}
     >
-      <ErrorLine error={error} />
-      <p className="text-fg-secondary text-sm">{device?.name}</p>
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          id="security-inspection-date"
-          label={k('fields.inspectionDate')}
-          onChange={(event) => setDate(event.target.value)}
-          required
-          type="date"
-          value={date}
+      <FormRoot
+        className={formClassName}
+        defaultValues={opened}
+        form={inspectionForm}
+        translateMessage={(message) => t(message)}
+      >
+        {ready}
+        <ErrorLine error={error} />
+        <p className="text-fg-secondary text-sm">{device?.name}</p>
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+          <inspectionForm.date
+            id="security-inspection-date"
+            label={k('fields.inspectionDate')}
+            required
+            requiredLabel={requiredLabelFor(language)}
+            type="date"
+          />
+          <inspectionForm.next id="security-inspection-next" label={k('fields.nextInspectionDate')} type="date" />
+        </div>
+        <inspectionForm.note
+          helpText={k('inspection.noteLimit', { limit: inspectionNoteLimit })}
+          id="security-inspection-note"
+          // Marked while typing once the note is longer than what is kept; the typed text itself is never cut.
+          invalid={note.trim().length > inspectionNoteLimit}
+          label={k('fields.note')}
+          maxLength={4000}
+          rows={3}
         />
-        <FormInput
-          id="security-inspection-next"
-          label={k('fields.nextInspectionDate')}
-          onChange={(event) => setNext(event.target.value)}
-          type="date"
-          value={next}
-        />
-      </div>
-      <FormTextarea
-        helpText={k('inspection.noteLimit', { limit: inspectionNoteLimit })}
-        id="security-inspection-note"
-        label={k('fields.note')}
-        maxLength={4000}
-        onChange={(event) => setNote(event.target.value)}
-        rows={3}
-        // Marked while typing once the note is longer than what is kept; the typed text itself is never cut.
-        validateStatus={note.trim().length > inspectionNoteLimit ? 'error' : 'default'}
-        value={note}
-      />
+      </FormRoot>
     </PanelFrame>
   );
 };
@@ -952,6 +966,14 @@ const submitSecurityResolution = Effect.fn('Facility.submitSecurityResolution')(
   );
 });
 
+/** The resolution note; Uložit sends it through the form save, so Enter sends nothing. */
+const resolveForm = FormReact.make(FormBuilder.empty.addField('resolution', Schema.String), {
+  fields: { resolution: TextAreaField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noResolution = { resolution: '' };
+
 const ResolveSession = ({
   incident,
   onClose,
@@ -968,13 +990,17 @@ const ResolveSession = ({
   const { t } = useModernI18n();
   const k = useSecurityLabel();
   const toast = useToast();
-  const [resolution, setResolution] = useState('');
+  const {
+    ready,
+    values: { resolution },
+  } = useFormValues(resolveForm, noResolution);
+  const setValues = useAtomSet(resolveForm.setValues);
   const [error, setError] = useState<FormError | undefined>();
   const errorText = useErrorText();
   // The resolution note is optional: Uložit resolves the fault as it is.
   const form = useFormSave({
     onDiscard: () => {
-      setResolution('');
+      setValues(noResolution);
       setError(undefined);
     },
     savableAtOnce: true,
@@ -989,16 +1015,17 @@ const ResolveSession = ({
       open={open}
       title={k('resolveDialog.title')}
     >
-      <ErrorLine error={error} />
-      <p className="font-medium text-sm">{incident?.title}</p>
-      <FormTextarea
-        id="security-resolution"
-        label={k('fields.resolution')}
-        maxLength={4000}
-        onChange={(event) => setResolution(event.target.value)}
-        rows={4}
-        value={resolution}
-      />
+      <FormRoot
+        className={formClassName}
+        defaultValues={noResolution}
+        form={resolveForm}
+        translateMessage={(message) => t(message)}
+      >
+        {ready}
+        <ErrorLine error={error} />
+        <p className="font-medium text-sm">{incident?.title}</p>
+        <resolveForm.resolution id="security-resolution" label={k('fields.resolution')} maxLength={4000} rows={4} />
+      </FormRoot>
     </PanelFrame>
   );
 };

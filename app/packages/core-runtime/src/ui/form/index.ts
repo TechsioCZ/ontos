@@ -29,3 +29,8 @@ export { type FieldNotice, NoticedTextField } from './noticed-text-field.ts';
 export { CheckboxSettingField } from './checkbox-setting-field.ts';
 export { EntrySwitchField } from './entry-switch-field.ts';
 export { UpperCaseTextField } from './upper-case-text-field.ts';
+export { BareTextAreaField, BareTextField } from './kit-fields-bare.ts';
+export { FileField } from './kit-fields-file.ts';
+export { RuledTextAreaField, RuledTextField } from './kit-fields-ruled.ts';
+export { SwitchField } from './kit-fields-switch.ts';
+export { TemplateChoiceField } from './kit-fields-template-choice.ts';

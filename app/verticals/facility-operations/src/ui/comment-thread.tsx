@@ -1,18 +1,24 @@
-import { Effect } from 'effect';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { Effect, Schema } from 'effect';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Reusable persistent comment thread (S14) — OWNED BY THE documents LANE (ops-documents). Embed anywhere inside
 // AgendaFrame:   <CommentThread subject={{ kind: 'task', id: task.id, label: task.title }} />
 // Comments are stored in the `documents` agenda (restricted): only roles the restricted field group covers see
 // them; the server never returns them to the external persona. Author/time are set by the server; edits keep the
 // previous wording.
 import { optionalField } from '../../shared/domain/common.ts';
+import {
+  BareTextAreaField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  useAtomSet,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Textarea } from '@techsio/ui-kit/atoms/textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Fragment, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { UnsavedChangesDialog, saveLabelsFor, surfaceTileClassName } from '@app/admin-ui';
@@ -20,6 +26,7 @@ import type { SavableDraft, SaveState, UnsavedChangesGuard } from '@app/admin-ui
 import type { CommentRecord, DocumentsState, SubjectRef } from '../../shared/domain/documents.ts';
 import { sameSubject } from '../../shared/domain/documents.ts';
 import { formatWhen, isoOf } from './documents-kit.tsx';
+import { keyedForms, useFormValues } from './form-values.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { useEditGuard } from './edit-guard.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
@@ -27,6 +34,28 @@ import type { CommandOutcome, FailureReason } from './use-agenda.ts';
 
 const k = 'facility-operations.documents.comments';
 const NO_ATTACHMENT = '__none__';
+
+/**
+ * The new wording of one comment. Every comment on screen can be edited at once, so each comment has its own form; its
+ * own buttons send it, so Enter sends nothing.
+ */
+const commentEditForm = keyedForms(() =>
+  FormReact.make(FormBuilder.empty.addField('body', Schema.String), {
+    fields: { body: BareTextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  }),
+);
+
+/** A new comment and its attachment: the thread of each subject has its own composer. */
+const composerForm = keyedForms(() =>
+  FormReact.make(FormBuilder.empty.addField('attachment', Schema.String).addField('body', Schema.String), {
+    fields: { attachment: TemplateChoiceField, body: BareTextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  }),
+);
+const emptyComposer = { attachment: NO_ATTACHMENT, body: '' };
 
 /** Highlights @mentions in a comment body. */
 const renderBody = (body: string): ReactNode =>
@@ -163,14 +192,19 @@ const CommentItem = ({
   const { language, t } = useModernI18n();
   const toast = useToast();
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(comment.body);
+  const editForm = commentEditForm(comment.id);
+  // The edit opens with the stored wording each time it opens.
+  const opened = { body: comment.body };
+  const {
+    ready,
+    values: { body: draft },
+  } = useFormValues(editForm, opened);
   const [showHistory, setShowHistory] = useState(false);
   const [confirmRetract, setConfirmRetract] = useState(false);
   const [busy, setBusy] = useState(false);
   const mine = meId !== undefined && comment.createdBy.principalId === meId;
   const retracted = comment.retractedAt !== undefined;
   const stopEditing = () => {
-    setDraft(comment.body);
     setEditing(false);
   };
 
@@ -254,14 +288,14 @@ const CommentItem = ({
           </p>
         )}
         {!retracted && editing && (
-          <div className="flex flex-col gap-100">
-            <Textarea
-              aria-label={t(`${k}.edit`)}
-              maxLength={4000}
-              onChange={(event) => setDraft(event.target.value)}
-              rows={3}
-              value={draft}
-            />
+          <FormRoot
+            className="flex flex-col gap-100"
+            defaultValues={opened}
+            form={editForm}
+            translateMessage={(message) => t(message)}
+          >
+            {ready}
+            <editForm.body aria-label={t(`${k}.edit`)} maxLength={4000} rows={3} />
             <div className="flex gap-100">
               <Button
                 isLoading={busy}
@@ -270,15 +304,22 @@ const CommentItem = ({
                 }}
                 severity="primary"
                 size="sm"
+                type="button"
               >
                 {t(`${k}.save`)}
               </Button>
-              <Button appearance="outline" onClick={() => edit.request(stopEditing)} severity="secondary" size="sm">
+              <Button
+                appearance="outline"
+                onClick={() => edit.request(stopEditing)}
+                severity="secondary"
+                size="sm"
+                type="button"
+              >
                 {t(`${k}.cancel`)}
               </Button>
             </div>
             <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={edit.prompt} />
-          </div>
+          </FormRoot>
         )}
         {!retracted && !editing && (
           <div className="whitespace-pre-wrap break-words rounded-md bg-highlight px-150 py-100 text-sm">
@@ -326,7 +367,6 @@ const CommentItem = ({
             <button
               className="text-fg-secondary text-xs hover:text-fg-primary hover:underline"
               onClick={() => {
-                setDraft(comment.body);
                 setEditing(true);
               }}
               type="button"
@@ -425,8 +465,12 @@ export const CommentThread = ({
   const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
   const view = threadViewOf(ops, subject);
-  const [body, setBody] = useState('');
-  const [attachment, setAttachment] = useState(NO_ATTACHMENT);
+  const composeForm = composerForm(`${subject.kind}:${subject.id}`);
+  const {
+    ready: composerReady,
+    values: { attachment, body },
+  } = useFormValues(composeForm, emptyComposer);
+  const setComposer = useAtomSet(composeForm.setValues);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FailureReason | undefined>();
   const presentation = threadPresentation(variant);
@@ -436,8 +480,7 @@ export const CommentThread = ({
     Effect.sync(() => {
       setBusy(false);
       if (outcome.ok) {
-        setBody('');
-        setAttachment(NO_ATTACHMENT);
+        setComposer(emptyComposer);
         toast.create({ title: t(`${k}.posted`), type: 'success' });
       } else {
         setError(outcome.reason);
@@ -461,8 +504,7 @@ export const CommentThread = ({
     busy,
     dirty: composerHasText({ body, busy, status: ops.status, view }),
     onDiscard: () => {
-      setBody('');
-      setAttachment(NO_ATTACHMENT);
+      setComposer(emptyComposer);
     },
     send: (settle) => {
       browserRuntime.runFork(submit().pipe(Effect.tap((ok) => Effect.sync(() => settle(ok)))));
@@ -510,16 +552,21 @@ export const CommentThread = ({
         </ol>
       )}
       {canWrite ? (
-        <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
+        <FormRoot
+          className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}
+          defaultValues={emptyComposer}
+          form={composeForm}
+          translateMessage={(message) => t(message)}
+        >
+          {composerReady}
           {error !== undefined && (
             <StatusText showIcon status="error">
               {t(`facility-operations.common.errors.${error}`)}
             </StatusText>
           )}
-          <Textarea
+          <composeForm.body
             aria-label={t(`${k}.label`)}
             maxLength={4000}
-            onChange={(event) => setBody(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                 event.preventDefault();
@@ -528,25 +575,17 @@ export const CommentThread = ({
             }}
             placeholder={t(`${k}.placeholder`)}
             rows={presentation.rows}
-            value={body}
           />
           <div className="flex flex-wrap items-end justify-between gap-100">
             {withAttachment && documents.length > 0 ? (
               <div className="min-w-0 flex-1 sm:max-w-sm">
-                <Select
+                <composeForm.attachment
                   items={[
-                    { displayValue: t(`${k}.noAttachment`), label: t(`${k}.noAttachment`), value: NO_ATTACHMENT },
-                    ...documents.map((document) => ({
-                      displayValue: document.title,
-                      label: document.title,
-                      value: document.id,
-                    })),
+                    { label: t(`${k}.noAttachment`), value: NO_ATTACHMENT },
+                    ...documents.map((document) => ({ label: document.title, value: document.id })),
                   ]}
                   label={t(`${k}.attachment`)}
-                  name="comment-attachment"
-                  onValueChange={({ value }) => setAttachment(value[0] ?? NO_ATTACHMENT)}
                   size="sm"
-                  value={[attachment]}
                 />
               </div>
             ) : (
@@ -561,12 +600,13 @@ export const CommentThread = ({
               }}
               severity="primary"
               size="sm"
+              type="button"
             >
               {variant === 'chat' ? t(`${k}.send`) : t(`${k}.submit`)}
             </Button>
           </div>
           <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={composer.prompt} />
-        </div>
+        </FormRoot>
       ) : (
         <p className="text-fg-secondary text-xs">{t(`${k}.readOnly`)}</p>
       )}
