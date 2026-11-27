@@ -18,7 +18,7 @@ const K = 'property-portfolio.pages.records.unitStory';
 
 const LeaseBlockSchema = Schema.Literals(['building', 'outOfService', 'retired']);
 export type LeaseBlock = typeof LeaseBlockSchema.Type;
-const cardClass = 'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base min-w-0 space-y-3 p-4';
+const cardClass = 'surface-tile min-w-0 space-y-3 p-4';
 const rowClass =
   'flex flex-wrap items-center justify-between gap-2 py-3 text-sm border-b border-border-primary/60 last:border-b-0';
 const mutedClass = 'text-sm text-fg-secondary';

@@ -38,4 +38,5 @@
   --color-accordion-content-bg: transparent;
   --color-dialog-content-bg: var(--color-base);
   --color-drawer-surface: var(--color-base);
+  --color-surface-card-border: color-mix(in oklab, var(--color-border-primary) 60%, transparent);
 }

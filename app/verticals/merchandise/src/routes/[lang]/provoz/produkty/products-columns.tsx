@@ -193,7 +193,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
         </span>
       ) : (
         <span className="inline-flex items-center gap-50 whitespace-nowrap" title={flag.reason}>
-          {flag.empty && <Icon aria-hidden="true" icon="icon-[mdi--alert-circle]" severity="danger" size="sm" />}
+          {flag.empty && <Icon aria-hidden="true" icon="token-icon-alert-circle" severity="danger" size="sm" />}
           <Badge className="tabular-nums" severity={flag.severity} size="sm">
             {value}
           </Badge>

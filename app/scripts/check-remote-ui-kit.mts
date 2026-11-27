@@ -69,6 +69,9 @@ const shellKitRoot = Effect.fn('RemoteUiKit.shellKitRoot')(function* shellKitRoo
   });
 });
 
+/** One utility class: lowercase, so a sentence of the kit's message catalogues never passes for a class list. */
+const CLASS_TOKEN = /^[a-z0-9_:/.!@[\]%#*&>~+-]+$/u;
+
 /** Long class-list literals of the kit's components: minification keeps them verbatim in any bundle. */
 const kitClassStrings = Effect.fn('RemoteUiKit.kitClassStrings')(function* kitClassStrings(root: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -79,7 +82,10 @@ const kitClassStrings = Effect.fn('RemoteUiKit.kitClassStrings')(function* kitCl
     sources.flatMap((source) =>
       [...source.matchAll(CLASS_STRING)].flatMap(({ groups }) => {
         const literal = groups?.literal ?? '';
-        return literal.trim().split(/\s+/u).length >= 4 && !/[{}();=]/u.test(literal) ? [literal] : [];
+        const tokens = literal.trim().split(/\s+/u);
+        return tokens.length >= 4 && !/[{}();=]/u.test(literal) && tokens.every((token) => CLASS_TOKEN.test(token))
+          ? [literal]
+          : [];
       }),
     ),
   );

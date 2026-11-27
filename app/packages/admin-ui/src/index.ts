@@ -72,7 +72,6 @@ export {
   datePickerSegmentsClassName,
   dividedListClassName,
   dividerColorClassName,
-  sidePanelSurfaceClassName,
   surfaceCardClassName,
   surfaceTileClassName,
 } from './ui-kit-classes.ts';

@@ -12,23 +12,18 @@
 export const datePickerSegmentsClassName = '[&_[data-part=segment]]:min-w-0 [&_[data-part=segment]]:px-px';
 
 /*
- * Calm surfaces: one outlined level, tints inside it, hairline dividers. `ontos-card` and `ontos-tile` are marker
- * classes without CSS of their own; the arbitrary variants use them so nesting never stacks outlines, whatever
- * module renders the inner block.
+ * Calm surfaces: one outlined level, tints inside it, hairline dividers. The kit's `surface-card` and `surface-tile`
+ * carry the nesting rules, so nesting never stacks outlines, whatever module renders the inner block.
  */
 
 /** The one outlined level: white, one light hairline. A card inside a card (or a side panel) loses outline and padding. */
-export const surfaceCardClassName =
-  'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
+export const surfaceCardClassName = 'surface-card';
 
 /** A tinted block without an outline: KPI tile, list item, note, filter bar. A tile inside a tile turns white. */
-export const surfaceTileClassName = 'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base';
+export const surfaceTileClassName = 'surface-tile';
 
 /** Hairline dividers between stacked rows inside one surface. */
 export const dividedListClassName = 'divide-y divide-border-primary/60';
 
 /** Colour for a single remaining edge (section break, header rule). Pair with `border-t` or `border-b`. */
 export const dividerColorClassName = 'border-border-primary/60';
-
-/** Side panel content: the panel edge is the outline, so cards inside it drop theirs. */
-export const sidePanelSurfaceClassName = '[&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
