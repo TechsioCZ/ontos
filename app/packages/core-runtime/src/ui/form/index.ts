@@ -24,3 +24,6 @@ export {
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export { BareTextAreaField, BareTextField } from './kit-fields-bare.ts';
+export { FileField } from './kit-fields-file.ts';
+export { SwitchField } from './kit-fields-switch.ts';
