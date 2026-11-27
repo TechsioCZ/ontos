@@ -1,6 +1,7 @@
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Outlet } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Latch, Redacted, Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
@@ -10,6 +11,7 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import { shellTestCopy } from '../../../support/shell-i18n.tsx';
 import type { ShellLanguage } from '../../../support/shell-i18n.tsx';
+import { ShellProviders } from '../../../../src/routes/shell-providers.tsx';
 import { makeShellRouter, renderShellRoute } from '../../../support/shell-router.tsx';
 import type { ShellRouter } from '../../../support/shell-router.tsx';
 
@@ -45,8 +47,14 @@ const signInBff = (gate?: Latch.Latch) =>
   });
 
 /** The login route of a real router, in the given language. */
+/** The Shell's root providers around the page, as its layout renders them. */
+const ShellRoot = () => (
+  <ShellProviders>
+    <Outlet />
+  </ShellProviders>
+);
 const loginRouter = (language: ShellLanguage = 'en') =>
-  makeShellRouter({ page: { component: LoginPage, path: 'login' }, url: `/${language}/login` });
+  makeShellRouter({ page: { component: LoginPage, path: 'login' }, root: ShellRoot, url: `/${language}/login` });
 const renderLogin = (router: ShellRouter = loginRouter(), language: ShellLanguage = 'en') =>
   renderShellRoute(router, shellTestCopy(language, copy));
 
@@ -58,7 +66,6 @@ const getSubmitControl = () => screen.getByRole('button', { name: /^(?:Login|Sig
 
 afterEach(() => {
   cleanup();
-  toaster.remove();
 });
 
 it.effect('shows the required login controls through the UI kit', () =>
