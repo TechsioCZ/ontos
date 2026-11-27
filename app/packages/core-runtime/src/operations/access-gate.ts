@@ -1,6 +1,7 @@
 import { PrivacyDispatchLivenessSource } from '../access/enforcement/privacy-dispatch-liveness.ts';
 import type { PrivacyDispatchLiveness } from '../access/enforcement/privacy-dispatch-liveness.ts';
 import { Context, Effect, Option, Predicate, Schedule } from 'effect';
+import type { Duration } from 'effect';
 
 import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
 import type { AccessPrincipalKinds, PrincipalKindQuery } from '../access/enforcement/actor.ts';
@@ -30,6 +31,7 @@ import type { OperationalScope } from './context.ts';
 import {
   AccessAuthorityChanging,
   AccessAuthorityCurrentnessLive,
+  authorityTakenByAccessWriter,
   sameAuthorityRevision,
 } from '../access/enforcement/currentness.ts';
 import type { AccessAuthorityCurrentness, AccessAuthorityRevision } from '../access/enforcement/currentness.ts';
@@ -53,6 +55,11 @@ export interface PreparedAccessDecision {
  * nothing here reads the clock or invents a reason.
  */
 export interface BoundAccessGate {
+  /**
+   * How long an Action whose owner transaction met an access writer may start over (prepare and owner transaction
+   * again) before it answers the 503. Absent, it answers at once.
+   */
+  readonly authorityReadyWait?: Duration.Duration;
   /**
    * The one decision of this request. `transaction` is a transaction the caller already owns (O75):
    * the owner phase of an Action decides inside the transaction its write commits with, so every
@@ -326,12 +333,10 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
         const current = yield* currentness
           .read(input.scope, input.legalEntityScope, administrative, transaction)
           .pipe(
-            Effect.catchTag('AccessAuthorityChanging', (failure) =>
-              Effect.fail(accessDecisionUnavailable(failure.reason, failure)),
-            ),
+            Effect.catchTag('AccessAuthorityChanging', (failure) => Effect.fail(authorityTakenByAccessWriter(failure))),
           );
         if (!sameAuthorityRevision(before, current)) {
-          return yield* accessDecisionUnavailable('The prepared authority revision is no longer current');
+          return yield* authorityTakenByAccessWriter();
         }
         const joined = joinAccessEnforcementPorts({ ...ports, check: evidence.replay }, transaction);
         const rebound = gate.rebind?.(decisionPortsOf(joined));
@@ -358,7 +363,13 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) =>
       gate.selectableLegalEntities(input).pipe(Effect.provideContext(context)),
   };
-  return Object.freeze(ports.currentness === undefined ? bound : { ...bound, prepare });
+  if (ports.currentness === undefined) {
+    return Object.freeze(bound);
+  }
+  const { readyWait } = ports.currentness;
+  return Object.freeze(
+    readyWait === undefined ? { ...bound, prepare } : { ...bound, authorityReadyWait: readyWait, prepare },
+  );
 };
 
 /** The runtime's own wiring: the seam from the tag, the ports from the layers it is built with. */

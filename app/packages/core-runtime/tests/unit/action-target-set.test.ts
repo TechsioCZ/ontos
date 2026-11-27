@@ -1,5 +1,8 @@
-import { Cause, Effect, Exit, Option, Result, Schema } from 'effect';
+import { Cause, Duration, Effect, Exit, Fiber, Option, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
+
+import { accessFenceChanging } from '../../src/access/approvals/action-access-fence.ts';
 
 import { ActionProposalAcceptedSchema } from '../../src/actions/proposal-accepted.ts';
 import type {
@@ -10,6 +13,7 @@ import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/
 import { defineActionGoverningRead } from '../../src/actions/governing-read.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
 import type { GateInput } from '../../src/access/enforcement/contract.ts';
+import type { AccessAuthorityCurrentness } from '../../src/access/enforcement/currentness.ts';
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import {
@@ -147,6 +151,7 @@ const canonicalGate = (
     readonly failRecord?: string;
     readonly guardedRecord?: string;
     readonly prepared?: boolean;
+    readonly readyWait?: Duration.Duration;
   } = {},
 ) => {
   const authoritySpec = options.authority ?? {
@@ -189,15 +194,11 @@ const canonicalGate = (
     intent,
     principalKinds: { readKind: () => Effect.succeed(Option.some('human')) },
   };
-  const preparedPorts =
-    options.prepared === true
-      ? {
-          ...ports,
-          currentness: {
-            read: () => Effect.sync(() => [{ revision, scopeId: 'fixture-persisted-scope' }]),
-          },
-        }
-      : ports;
+  const read: AccessAuthorityCurrentness['read'] = () =>
+    Effect.sync(() => [{ revision, scopeId: 'fixture-persisted-scope' }]);
+  const currentness: AccessAuthorityCurrentness =
+    options.readyWait === undefined ? { read } : { read, readyWait: options.readyWait };
+  const preparedPorts = options.prepared === true ? { ...ports, currentness } : ports;
   const gate = bindAccessGate(
     makeAccessDecisionService({
       authorityFor: ports.intent.authorityFor,
@@ -372,6 +373,148 @@ it.effect('refuses a complete-set proof after the persisted revision changes bef
     expect(subject.writes).toEqual([]);
     expect(harness.snapshot().committed).toEqual([]);
     expect(harness.snapshot().permissionDenials).toEqual([]);
+  }),
+);
+
+/** A scripted owner-transaction fence: each listed refusal answers one lock, then the fence is Ready. */
+const scriptedFence = (refusals: readonly ActionPermissionCheckError[]) => {
+  const pending = [...refusals];
+  let locks = 0;
+  return {
+    lock: () =>
+      Effect.suspend(() => {
+        locks += 1;
+        const refusal = pending.shift();
+        return refusal === undefined ? Effect.void : Effect.fail(refusal);
+      }),
+    locks: () => locks,
+  };
+};
+
+const harnessWithFence = (
+  subject: ReturnType<typeof fixture>,
+  accessDecision: BoundAccessGate,
+  fence: ReturnType<typeof scriptedFence>,
+) =>
+  makeActionTestHarness({
+    accessDecision,
+    applicationComposition: subject.owner.applicationComposition,
+    expectedDeployment: subject.owner.expectedDeployment,
+    lockAccessExecutionFence: fence.lock,
+    ownerRegistration: subject.owner.ownerRegistration,
+  });
+
+it.effect(
+  'starts over when an access writer takes the fence before the owner transaction and runs the handler once',
+  () =>
+    Effect.gen(function* writerTakesFenceBeforeOwner() {
+      const gate = canonicalGate({ prepared: true, readyWait: Duration.seconds(20) });
+      const subject = fixture();
+      const fence = scriptedFence([accessFenceChanging(), accessFenceChanging()]);
+      const harness = yield* harnessWithFence(subject, gate.bound, fence);
+      const running = yield* harness.runtime
+        .runAction({
+          payload,
+          principal,
+          registration: subject.action,
+          transport: { correlationId: 'writer-took-fence', idempotencyKey: 'writer-took-fence' },
+        })
+        .pipe(Effect.forkChild);
+      for (let step = 0; step < 8; step += 1) {
+        yield* TestClock.adjust('250 millis');
+      }
+      expect(yield* Fiber.join(running)).toEqual({ count: 2 });
+      expect(fence.locks()).toBe(3);
+      expect(subject.writes).toEqual([[firstId, secondId]]);
+      expect(harness.snapshot().committed).toHaveLength(1);
+      expect(harness.snapshot().invocations).toHaveLength(1);
+      expect(harness.snapshot().permissionDenials).toEqual([]);
+    }),
+);
+
+it.effect(
+  'a writer revision between preparation and the owner transaction is decided again, never committed stale',
+  () =>
+    Effect.gen(function* writerRevisionBeforeOwner() {
+      const gate = canonicalGate({ prepared: true, readyWait: Duration.seconds(20) });
+      let preparations = 0;
+      const subject = fixture(allTargets, () => {
+        preparations += 1;
+        if (preparations === 1) {
+          gate.advanceRevision();
+        }
+      });
+      const harness = yield* harnessFor(subject, gate.bound);
+      const running = yield* harness.runtime
+        .runAction({
+          payload,
+          principal,
+          registration: subject.action,
+          transport: { correlationId: 'writer-revision', idempotencyKey: 'writer-revision' },
+        })
+        .pipe(Effect.forkChild);
+      for (let step = 0; step < 8; step += 1) {
+        yield* TestClock.adjust('250 millis');
+      }
+      expect(yield* Fiber.join(running)).toEqual({ count: 2 });
+      expect(preparations).toBe(2);
+      expect(subject.writes).toEqual([[firstId, secondId]]);
+      expect(harness.snapshot().committed).toHaveLength(1);
+    }),
+);
+
+it.effect('a missing or unavailable fence at the owner transaction fails closed at once', () =>
+  Effect.gen(function* fenceFailsClosed() {
+    const unavailable = new ActionPermissionCheckError({
+      code: 'action_permission_check_failed',
+      reason: 'The access authority of this Action could not be pinned to its transaction',
+    });
+    const broken = scriptedFence([unavailable]);
+    const brokenSubject = fixture();
+    const brokenHarness = yield* harnessWithFence(
+      brokenSubject,
+      canonicalGate({ prepared: true, readyWait: Duration.seconds(20) }).bound,
+      broken,
+    );
+    const brokenExit = yield* Effect.exit(
+      brokenHarness.runtime.runAction({
+        payload,
+        principal,
+        registration: brokenSubject.action,
+        transport: { correlationId: 'fence-unavailable', idempotencyKey: 'fence-unavailable' },
+      }),
+    );
+    expect(Schema.is(ActionPermissionCheckError)(failureOf(brokenExit))).toBe(true);
+    expect(broken.locks()).toBe(1);
+    expect(brokenSubject.writes).toEqual([]);
+  }),
+);
+
+it.effect('a writer that keeps the fence past the wait still fails closed with the retryable 503', () =>
+  Effect.gen(function* fenceHeldPastWait() {
+    const held = scriptedFence(Array.from({ length: 200 }, () => accessFenceChanging()));
+    const heldSubject = fixture();
+    const heldHarness = yield* harnessWithFence(
+      heldSubject,
+      canonicalGate({ prepared: true, readyWait: Duration.seconds(20) }).bound,
+      held,
+    );
+    const heldRun = yield* Effect.exit(
+      heldHarness.runtime.runAction({
+        payload,
+        principal,
+        registration: heldSubject.action,
+        transport: { correlationId: 'fence-held', idempotencyKey: 'fence-held' },
+      }),
+    ).pipe(Effect.forkChild);
+    for (let step = 0; step < 90; step += 1) {
+      yield* TestClock.adjust('250 millis');
+    }
+    const heldExit = yield* Fiber.join(heldRun);
+    expect(Schema.is(ActionPermissionCheckError)(failureOf(heldExit))).toBe(true);
+    expect(held.locks()).toBeGreaterThan(10);
+    expect(heldSubject.writes).toEqual([]);
+    expect(heldHarness.snapshot().committed).toEqual([]);
   }),
 );
 

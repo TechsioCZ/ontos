@@ -25,6 +25,7 @@ import {
   Option,
   Ref,
   Result,
+  Schedule,
   Schema,
 } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -32,7 +33,12 @@ import { ConnectionError, UnknownError, isSqlError } from 'effect/sql/SqlError';
 
 import type { AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
 import type { AccessAmount, AccessDecision, AccessRecordTarget } from '../access/decision/contract.ts';
-import { lockActionAccessFence } from '../access/approvals/action-access-fence.ts';
+import {
+  accessFenceChanging,
+  isAccessFenceChanging,
+  lockActionAccessFence,
+} from '../access/approvals/action-access-fence.ts';
+import { changedByAccessWriter } from '../access/enforcement/currentness.ts';
 import { ActionMandateDispatcher } from '../access/approvals/action-mandate-dispatch-service.ts';
 import { actionExecutionDeadlineV2 } from '../access/approvals/action-lifecycle-v2.ts';
 import { resolveGovernedAmount } from '../access/approvals/governed-amount.ts';
@@ -2266,6 +2272,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       let targetSetAdmission: ActionTargetSetAdmission | undefined;
       let preflightTargetDecisions: readonly AccessDecision[] = [];
       const preparedAccess = new Map<string, PreparedAccessDecision>();
+      /** An in-transaction recheck met an access writer that took the prepared authority (see `accessFenceChanging`). */
+      let authorityTakenByWriter = false;
       let authorizedMandate = mandatePrepared;
 
       const logPermissionInvocationFailure = Effect.fn('ActionRuntime.logPermissionInvocationFailure')(
@@ -2426,12 +2434,19 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               return seamUnavailable(UNAVAILABLE_AUTHORITY_REASON);
             }
             const rechecked = yield* Effect.result(prepared.recheck(question.now, transaction));
+            if (Result.isFailure(rechecked) && changedByAccessWriter(rechecked.failure)) {
+              authorityTakenByWriter = true;
+            }
             return Result.isFailure(rechecked)
               ? attachFailureCause(seamUnavailable(UNAVAILABLE_AUTHORITY_REASON), rechecked.failure)
               : rechecked.success;
           }
           const prepared = yield* Effect.result(accessDecision.prepare(question));
           if (Result.isFailure(prepared)) {
+            // The 503 names no dependency to its caller; the log keeps which one could not answer.
+            yield* Effect.logWarning(
+              `The access authority of ${question.carrier.accessDeclaration?.key ?? 'an undeclared Action'} could not be prepared: ${prepared.failure.reason}`,
+            );
             return attachFailureCause(seamUnavailable(UNAVAILABLE_AUTHORITY_REASON), prepared.failure);
           }
           preparedAccess.set(key, prepared.success);
@@ -3243,9 +3258,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               return yield* permissionUnavailable();
             }
           }
+          authorityTakenByWriter = false;
           const current = yield* decideAccessThroughGate(now, transaction);
           if (current.outcome === 'UNAVAILABLE') {
-            return yield* permissionUnavailable();
+            return yield* authorityTakenByWriter ? accessFenceChanging() : permissionUnavailable();
           }
           return current;
         },
@@ -3958,8 +3974,49 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return result;
       },
     );
+    /**
+     * An access writer took the fence between this Action's preparation and its owner transaction, so the transaction
+     * refused before the handler and rolled back. The whole attempt starts over: the next preparation waits for the
+     * writer and decides on its fresh authority, and the owner handler runs once, in the attempt that commits.
+     */
+    const { authorityReadyWait } = accessDecision ?? {};
+    let writerRestarts = 0;
+    const executeAttemptOnReadyAuthority = () =>
+      authorityReadyWait === undefined
+        ? executeAttempt()
+        : Effect.suspend(() => {
+            Object.assign(attempt, {
+              commitObserved: false,
+              committedRejection: undefined,
+              disposition: 'unstarted' as const,
+              original: undefined,
+              replayAllowed: undefined,
+              revision: undefined,
+              savedReply: undefined,
+            });
+            return executeAttempt();
+          }).pipe(
+            Effect.retry({
+              schedule: Schedule.spaced('250 millis').pipe(Schedule.upTo({ duration: authorityReadyWait })),
+              while: (failure) => {
+                const restarts =
+                  attempt.disposition === 'uncommitted' &&
+                  Schema.is(ActionPermissionCheckError)(failure) &&
+                  isAccessFenceChanging(failure);
+                writerRestarts += restarts ? 1 : 0;
+                return restarts;
+              },
+            }),
+            Effect.onExit(() =>
+              writerRestarts === 0
+                ? Effect.void
+                : Effect.logInfo(
+                    `Action ${input.registration.descriptor.actionKey} started over ${writerRestarts} times after an access writer took its fence`,
+                  ),
+            ),
+          );
     const warnedAttempt = () =>
-      executeAttempt().pipe(
+      executeAttemptOnReadyAuthority().pipe(
         Effect.tapError((failure) =>
           isActionPermissionDenied(failure)
             ? logActionRefusal(declaredCarrier, refusalContext.scope, failure)

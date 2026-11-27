@@ -24,6 +24,12 @@ const fenceUnavailable = (cause?: unknown, reason = FENCE_UNAVAILABLE_REASON) =>
   return failure;
 };
 
+/**
+ * The refusal of an Action whose owner transaction met an access writer: the fence is Changing, or the authority it
+ * prepared moved to a new revision before the transaction locked it. The runtime starts such an Action over.
+ */
+export const accessFenceChanging = (cause?: unknown) => fenceUnavailable(cause, FENCE_CHANGING_REASON);
+
 /** Whether this refusal is a writer holding the fence, not a missing, unavailable or unreadable one. */
 export const isAccessFenceChanging = (failure: ActionPermissionCheckError): boolean =>
   failure.reason === FENCE_CHANGING_REASON;

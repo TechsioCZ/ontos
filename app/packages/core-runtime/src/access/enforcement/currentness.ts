@@ -141,6 +141,16 @@ export const AccessAuthorityCurrentnessLive = Effect.gen(function* accessAuthori
   return makeAccessAuthorityCurrentness({ enrollment, executor: database.executor }, ACTION_AUTHORITY_READY_WAIT);
 });
 
+/** The recheck refusal of an Action whose prepared authority an access writer changed before its owner transaction. */
+const TAKEN_BY_ACCESS_WRITER = 'An access writer changed the prepared authority before the owner transaction';
+
+export const authorityTakenByAccessWriter = (cause?: AccessAuthorityChanging): AccessDecisionUnavailable =>
+  accessDecisionUnavailable(TAKEN_BY_ACCESS_WRITER, cause);
+
+/** Whether an Action's in-transaction recheck failed because an access writer took its prepared authority. */
+export const changedByAccessWriter = (failure: AccessDecisionUnavailable): boolean =>
+  failure.reason === TAKEN_BY_ACCESS_WRITER;
+
 export const sameAuthorityRevision = (
   left: readonly AccessAuthorityRevision[],
   right: readonly AccessAuthorityRevision[],
