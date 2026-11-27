@@ -21,7 +21,7 @@ const routeMetadata: readonly RouteMetadata[] = ultramodernRouteMetadata;
 const isSupportedLanguage = Schema.is(SupportedLanguageSchema);
 
 const normalisePath = (pathname: string) => {
-  const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/+$/u, '');
+  const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/$/u, '');
   return normalised.length > 0 ? normalised : '/';
 };
 
@@ -87,7 +87,10 @@ const isPublicIndexableRoute = (route: RouteMetadata | undefined): boolean =>
   route !== undefined && route.public && route.indexable;
 
 const absoluteUrl = (pathname: string) => {
-  const origin = ULTRAMODERN_SITE_URL.replace(/\/+$/u, '');
+  let origin = ULTRAMODERN_SITE_URL;
+  while (origin.endsWith('/')) {
+    origin = origin.slice(0, -1);
+  }
   return `${origin}${pathname}`;
 };
 

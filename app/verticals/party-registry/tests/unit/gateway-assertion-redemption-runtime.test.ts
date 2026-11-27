@@ -70,9 +70,12 @@ for (const settlement of ['COMMIT', 'ROLLBACK']) {
 it.effect('preserves unrelated transaction defects', () =>
   Effect.gen(function* preserveProgrammingDefect() {
     const defect = new Error('fixture programming defect');
-    const fixture = yield* makeRedemptionFixture((sql) =>
-      sql === 'COMMIT' ? Effect.die(defect) : Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []),
-    );
+    const fixture = yield* makeRedemptionFixture((sql) => {
+      if (sql === 'COMMIT') {
+        return Effect.die(defect);
+      }
+      return Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []);
+    });
     const exit = yield* fixture.redemption
       .consume(assertion)
       .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.exit);

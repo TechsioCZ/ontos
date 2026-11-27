@@ -1,6 +1,6 @@
 import { OperationContextUnavailable, requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { DateTime, Effect } from 'effect';
 import type {
   CustomerPriceGroupAssignmentStorePort,
@@ -30,7 +30,7 @@ export const priceGroupActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
   catalogRequirement?: PriceGroupCatalogRequirement,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, SecureRandom.SecureRandom> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -86,7 +86,7 @@ const withRequiredPriceGroupCatalog = (
 export const assignCustomerPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-): Effect.Effect<PriceGroupAssignmentActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+): Effect.Effect<PriceGroupAssignmentActionServices, OperationContextUnavailable, SecureRandom.SecureRandom> =>
   priceGroupActionServicesForTransaction(
     invoker,
     scope,
@@ -108,7 +108,7 @@ export const assignCustomerPriceGroupServicesForTransaction = (
 export const assignCounterpartyPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-): Effect.Effect<PriceGroupAssignmentActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+): Effect.Effect<PriceGroupAssignmentActionServices, OperationContextUnavailable, SecureRandom.SecureRandom> =>
   priceGroupActionServicesForTransaction(
     invoker,
     scope,
@@ -130,7 +130,7 @@ export const assignCounterpartyPriceGroupServicesForTransaction = (
 export const migrateCustomerPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, SecureRandom.SecureRandom> =>
   priceGroupActionServicesForTransaction(
     invoker,
     scope,
@@ -147,7 +147,7 @@ export const migrateCustomerPriceGroupServicesForTransaction = (
 export const migrateCounterpartyPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, SecureRandom.SecureRandom> =>
   priceGroupActionServicesForTransaction(
     invoker,
     scope,

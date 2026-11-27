@@ -458,7 +458,7 @@ it.effect('shows the owner each company admitted by its own gate decision', () =
     const listed = yield* run((bff) => bff.list(headers, listPayload()));
     expect(sorted(listKeys(listed))).toEqual(sorted([TENANT_ROLE, A_ROLE, A_ROLE_SECOND, B_ROLE]));
     // Even an owner must pass the company's guard; ownership cannot mask a company suspension.
-    expect(asked.length).toBe(3);
+    expect(asked).toHaveLength(3);
     expect(asked[0]?.legalEntityScope).toBe('optional');
     expect(asked[0]?.legalEntityId).toBeUndefined();
 
@@ -517,7 +517,7 @@ it.effect('shows a company administrator only their own company, in that company
     expect(sorted(companyQuestions.map(({ key }) => key))).toEqual(sorted([LIST, LIST]));
     expect(companyQuestions.every(({ principalId }) => principalId === PERSON)).toBe(true);
     // The tenant context is asked too, so tenant-context roles stay a separate answer.
-    expect(tenantQuestionsOf(asked).length).toBe(1);
+    expect(tenantQuestionsOf(asked)).toHaveLength(1);
 
     const own = yield* run((bff) => bff.detail(headers, detailPayload(A_ROLE)));
     expect(own.role.id).toBe(A_ROLE);
@@ -621,10 +621,10 @@ it.effect('cuts the page and counts holders only after the narrowing, so a hidde
 
     // One role per page: the cursor counts the narrowed list, never the tenant's whole role set.
     const page = yield* run((bff) => bff.list(headers, listPayload({ limit: 1 })));
-    expect(page.items.length).toBe(1);
+    expect(page.items).toHaveLength(1);
     expect(page.nextCursor).toBe('1');
     const next = yield* run((bff) => bff.list(headers, listPayload({ cursor: '1', limit: 1 })));
-    expect(next.items.length).toBe(1);
+    expect(next.items).toHaveLength(1);
     expect(next.nextCursor).toBeNull();
     expect(sorted([...listKeys(page), ...listKeys(next)])).toEqual(sorted([A_ROLE, A_ROLE_SECOND]));
   }),

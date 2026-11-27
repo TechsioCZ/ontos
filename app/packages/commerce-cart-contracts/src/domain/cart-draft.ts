@@ -12,7 +12,7 @@ import {
 
 export const CartIdentitySchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 export const CartRevisionNumberSchema = Schema.Int.check(Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }));
-const CartPopulationGenerationSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/u));
+const CartPopulationGenerationSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)$/u));
 export const CartRevisionRefSchema = Schema.Struct({
   resourceRef: CartRefSchema,
   revision: CartRevisionNumberSchema,
@@ -21,7 +21,7 @@ export const CartRevisionRefSchema = Schema.Struct({
 export const CartRequestedQuantitySchema = Schema.Struct({
   amount: Schema.String.check(
     Schema.isMaxLength(100),
-    Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u),
+    Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u),
     Schema.makeFilter((value) => (/^0(?:\.0+)?$/u.test(value) ? 'Requested quantity must be positive' : undefined)),
   ),
   unitRef: ProductUnitRefSchema,

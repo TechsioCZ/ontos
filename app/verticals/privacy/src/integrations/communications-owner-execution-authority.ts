@@ -3,7 +3,8 @@ import { readVerifiedGatewayPrivacyDispatch } from '@app/core-runtime/auth/syste
 import { executePrivacyOwnerExecutionOutcomeWithAuthorization } from '@app/communications-contracts/privacy-owner-execution-outcome/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -42,10 +43,10 @@ const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHa
  * owner's receipt attests the handoff Privacy dispatched and not a caller's copy of it.
  */
 export const fingerprintCommunicationsOwnerHandoff = Effect.fn('Privacy.CommunicationsOwnerReceipt.fingerprint')(
-  function* fingerprint(handoff: PrivacyMeasureHandoff, crypto: Crypto.Crypto) {
+  function* fingerprint(handoff: PrivacyMeasureHandoff, crypto: Digest.Digest['Service']) {
     const encoded = yield* encodeHandoff(normalizePrivacyMeasureHandoff(handoff)).pipe(Effect.mapError(unavailable));
     return Hex.encode(
-      yield* crypto.digest('SHA-256', new TextEncoder().encode(encoded)).pipe(Effect.mapError(unavailable)),
+      yield* crypto.digest(Digest.sha256, new TextEncoder().encode(encoded)).pipe(Effect.mapError(unavailable)),
     );
   },
 );
@@ -62,7 +63,7 @@ export const resolveCommunicationsOwnerExecutionReceipt = Effect.fn('Privacy.Com
     request: OwnerExecutionOutcomeRequest,
     context: OwnerExecutionAuthorityContext,
     transport: ReceiptTransport,
-    crypto: Crypto.Crypto,
+    crypto: Digest.Digest['Service'],
   ) {
     const { handoff, scope } = context;
     if (
@@ -157,7 +158,8 @@ export const communicationsReceiptSubject = (
 export const CommunicationsOwnerExecutionAuthorityLive = Layer.effect(
   OwnerExecutionAuthority,
   Effect.gen(function* make() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const otherOwners = yield* OwnerExecutionAuthority;
     return OwnerExecutionAuthority.of({
       resolve: Effect.fn('Privacy.CommunicationsOwnerExecutionAuthority.resolve')(function* resolve(request, context) {
@@ -195,7 +197,7 @@ export const CommunicationsOwnerExecutionAuthorityLive = Layer.effect(
             baseUrl: issued.apiBaseUrl,
             compositionRevision: issued.compositionRevision,
           },
-          crypto,
+          digest,
         );
       }),
     });

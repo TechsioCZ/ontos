@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'effect-rstest';
 
 const configFilename = 'tsconfig.json';
-const compilerRelativePath = 'node_modules/.bin/tsc';
+const compilerRelativePath = 'node_modules/.bin/effect-tsgo';
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const countDiagnostics = (diagnostics: string, pattern: RegExp): number => [...diagnostics.matchAll(pattern)].length;
@@ -101,7 +101,7 @@ cockroachRole('invalid', { createRole: 1 });
         );
         const result = spawnSync(
           path.join(workspaceRoot, compilerRelativePath),
-          ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
+          ['tsrs@7.1.0-beta.tsrs3', '-p', path.join(fixture, configFilename), '--pretty', 'false'],
           { encoding: 'utf-8' },
         );
         expect(result.error).toBeUndefined();

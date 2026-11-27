@@ -282,11 +282,12 @@ const RetailPortalAuthorityGroupSchema = Schema.Struct({
     Schema.makeFilter((permissions) =>
       new Set(permissions).size === permissions.length ? undefined : 'Authority group Permission codes must be unique',
     ),
-    Schema.makeFilter((permissions) =>
-      RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) => permissions.includes(permission))
+    Schema.makeFilter((permissions) => {
+      const permissionSet = new Set(permissions);
+      return RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) => permissionSet.has(permission))
         ? undefined
-        : 'Retail Portal Self-Service must retain every reviewed baseline Permission',
-    ),
+        : 'Retail Portal Self-Service must retain every reviewed baseline Permission';
+    }),
   ),
   version: ProfileBoundedKeySchema,
 });

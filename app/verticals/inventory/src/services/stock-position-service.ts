@@ -1,8 +1,10 @@
 import type { Effect as EffectType } from 'effect';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { InventoryBackendConfiguration } from '../../shared/domain/inventory-backend-configuration.ts';
 import type { InventoryBackendConfigurationPersistenceUnavailable } from '../../shared/domain/inventory-backend-configuration-persistence-unavailable.ts';
+import type { StockPositionPersistenceUnavailable } from '../../shared/domain/stock-position-persistence-unavailable.ts';
 import {
   StockPositionRejected,
   StockPositionSchema,
@@ -19,7 +21,6 @@ import type {
 } from '../../shared/domain/stock-position.ts';
 import type { StockPositionRef } from '../../shared/resources/stock-position.ts';
 import type { StockPositionPersistence } from '../persistence/stock-position-repository.ts';
-import { StockPositionPersistenceUnavailable } from '../../shared/domain/stock-position-persistence-unavailable.ts';
 import type { InventoryBackendConfigurationPersistence } from '../persistence/inventory-backend-configuration-repository.ts';
 import type { StockPositionAllocationReadUnavailable } from './stock-position-allocation-read-unavailable.ts';
 
@@ -82,7 +83,7 @@ export interface StockPositionServiceContract {
   readonly end: (ref: StockPositionRef, endedAt: string) => EffectType.Effect<StockPosition, StockPositionServiceError>;
   readonly establish: (
     input: CreateStockPositionInput,
-  ) => EffectType.Effect<StockPosition, StockPositionServiceError, Crypto.Crypto>;
+  ) => EffectType.Effect<StockPosition, StockPositionServiceError, SecureRandom.SecureRandom>;
   readonly read: (ref: StockPositionRef) => EffectType.Effect<
     {
       readonly position: StockPosition;
@@ -137,16 +138,8 @@ export const stockPositionEstablishment = (
       });
     }
     const createdAt = DateTime.formatIso(yield* DateTime.now);
-    const crypto = yield* Crypto.Crypto;
-    const positionId = yield* crypto.randomUUIDv4().pipe(
-      Effect.mapError(
-        (cause) =>
-          new StockPositionPersistenceUnavailable({
-            code: 'stock_position_persistence_unavailable',
-            reason: `Stock Position identity is unavailable: ${String(cause)}`,
-          }),
-      ),
-    );
+    const crypto = yield* SecureRandom.SecureRandom;
+    const positionId = yield* crypto.uuidV4();
     const candidate = yield* Schema.decodeEffect(StockPositionSchema)({
       createdAt,
       endedAt: null,

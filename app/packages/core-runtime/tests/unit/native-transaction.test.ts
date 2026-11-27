@@ -1,7 +1,8 @@
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Match, Predicate, Redacted, Schema } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Match, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -104,15 +105,16 @@ for (const boundary of ['context', 'evidence'] as const) {
   it.effect(`scoped ${boundary} preserves unrelated settlement defects`, () =>
     Effect.gen(function* preserveUnrelatedSettlementDefect() {
       const defect = new Error('unexpected settlement defect');
-      const executor = yield* makeGatewayTestDatabase((statement) =>
-        statement === 'COMMIT'
-          ? Effect.die(defect)
-          : Effect.succeed(
-              statement.includes('trust.')
-                ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
-                : [],
-            ),
-      );
+      const executor = yield* makeGatewayTestDatabase((statement) => {
+        if (statement === 'COMMIT') {
+          return Effect.die(defect);
+        }
+        return Effect.succeed(
+          statement.includes('trust.')
+            ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+            : [],
+        );
+      });
       const exit = yield* Effect.exit(run(executor));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -181,7 +183,7 @@ it.layer(NodeCrypto.layer)('Action transaction settlement', (suite) => {
               }
               return Effect.fail(sqlFailure);
             });
-            const repository = makeActionRepository(yield* Crypto.Crypto);
+            const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
             const transport: ActionTransportMetadata = { correlationId: 'settlement-test' };
             const input = {
               actionInvocationId: '30000000-0000-4000-8000-000000000001',
@@ -510,7 +512,7 @@ it.layer(NodeCrypto.layer)('Signed historical commit lookup', (suite) => {
         }
         return Effect.succeed([]);
       });
-      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
       const row = yield* repository.resolveInvocation(executor, { invocationId, principal: reader });
       expect(row.actionInvocationId).toBe(invocationId);
       expect(parameters).toHaveLength(1);

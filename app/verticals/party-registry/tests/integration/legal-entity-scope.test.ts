@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Effect, Layer, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ProbeRollback } from '../support/probe-rollback.ts';
 import { expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
@@ -38,20 +39,20 @@ const denied = (client: Client, statement: string, parameters: readonly unknown[
 
 const openFixture = Effect.gen(function* openLegalEntityFixture() {
   const clients = yield* openPartyBoundaryClients({ runtimeMaxConnections: 1 });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const ids = yield* Effect.all({
-    tenant: crypto.randomUUIDv4(),
-    l1: crypto.randomUUIDv4(),
-    l2: crypto.randomUUIDv4(),
-    party: crypto.randomUUIDv4(),
-    principal: crypto.randomUUIDv4(),
-    c1: crypto.randomUUIDv4(),
-    c2: crypto.randomUUIDv4(),
-    r1: crypto.randomUUIDv4(),
-    r2: crypto.randomUUIDv4(),
-    i1: crypto.randomUUIDv4(),
-    i2: crypto.randomUUIDv4(),
-    globalInvocation: crypto.randomUUIDv4(),
+    tenant: crypto.uuidV4(),
+    l1: crypto.uuidV4(),
+    l2: crypto.uuidV4(),
+    party: crypto.uuidV4(),
+    principal: crypto.uuidV4(),
+    c1: crypto.uuidV4(),
+    c2: crypto.uuidV4(),
+    r1: crypto.uuidV4(),
+    r2: crypto.uuidV4(),
+    i1: crypto.uuidV4(),
+    i2: crypto.uuidV4(),
+    globalInvocation: crypto.uuidV4(),
   });
   const selected = yield* registerPartyGatewayScope(clients, { tenantId: ids.tenant, legalEntityId: ids.l1 });
   const tenantWide = yield* registerPartyGatewayScope(clients, { tenantId: ids.tenant });

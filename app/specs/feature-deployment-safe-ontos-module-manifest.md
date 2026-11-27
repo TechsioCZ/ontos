@@ -249,7 +249,7 @@ Exercise a generated owner-local Action and worker registration separately from 
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — Strictly typecheck Codesmith and contract-generation tooling.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — Strictly typecheck Codesmith and contract-generation tooling.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding scripts/generate-ontos-module-contract.mts` — Lint generator and artifact tooling directly.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — Run disposable generator, composition, artifact, and deployment-boundary fixtures.
 - `mise exec -- pnpm scaffold:module-contract -- --help` — Prove the new mandatory generator documents its write-free contract.
@@ -297,7 +297,7 @@ Execute every command to validate the feature with zero regressions.
 
 ### Validation
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding scripts/generate-ontos-module-contract.mts` — passed.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — passed, 30 tests.
 - `mise exec -- pnpm scaffold:module-contract -- --help` — passed and wrote no files.

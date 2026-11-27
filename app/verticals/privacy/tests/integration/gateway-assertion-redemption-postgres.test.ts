@@ -4,7 +4,8 @@ import { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
 import { defineRelations, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Clock, Crypto, Effect, Redacted, Result, Schema } from 'effect';
+import { Clock, Effect, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
@@ -19,13 +20,13 @@ it.live('atomically redeems real native Privacy ingress assertions and preserves
       const relations = defineRelations({ gatewayAssertionRedemptions });
       const executor = yield* makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
       const redeem = makeGatewayAssertionRedemption(executor);
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
       const input = {
         audience: 'privacy',
         expiresAtEpochSeconds: now + 120,
         issuer: 'https://internal-privacy-native.test',
-        jti: yield* crypto.randomUUIDv4(),
+        jti: yield* crypto.uuidV4(),
       };
       const attempts = yield* Effect.all(
         [redeem.consume(input).pipe(Effect.result), redeem.consume(input).pipe(Effect.result)],

@@ -30,11 +30,13 @@ const evaluateBffPrefix = (target: 'node' | 'cloudflare', enabled: boolean) => {
 Object.assign(process.env, ${JSON.stringify(environment)});
 const require = createRequire(import.meta.url);
 const appToolsRequire = createRequire(require.resolve('@modern-js/app-tools'));
-const pluginRequire = createRequire(appToolsRequire.resolve('@modern-js/plugin'));
-const { createJiti } = pluginRequire('jiti');
-const jiti = createJiti(import.meta.url, { requireCache: false, interopDefault: true });
-const loaded = jiti(${JSON.stringify(configPath)});
-const config = loaded.default || loaded;
+const { createLoadedConfig } = appToolsRequire('@modern-js/plugin/cli');
+const { config } = await createLoadedConfig(
+  ${JSON.stringify(shellDirectory)},
+  ${JSON.stringify(configPath)},
+  undefined,
+  { command: 'build', env: 'production' },
+);
 process.stdout.write(JSON.stringify(config.bff.prefix));`,
       ],
       { cwd: shellDirectory, encoding: 'utf-8' },

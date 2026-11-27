@@ -8,7 +8,9 @@ import { manageMarketRetirementAdmissionAction } from '../../src/actions/manage-
 describe('Market owner-authored dependency contracts', () => {
   it('advertises all eight mounted Actions while keeping owner-local admission management private', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(commerceMarketCatalogRegistration);
-    const claims = safe.operationContracts.filter(({ operationKey }) => operationKey.split('.')[0]?.endsWith('Action'));
+    const claims = safe.operationContracts.filter(
+      ({ operationKey }) => operationKey.split('.')[0]?.endsWith('Action') === true,
+    );
     const mountedActionGroups = Object.keys(commerceMarketCatalogApi.groups).filter((key) => key.endsWith('Action'));
     expect(claims.map(({ operationKey }) => operationKey.split('.')[0])).toEqual(
       expect.arrayContaining(mountedActionGroups),

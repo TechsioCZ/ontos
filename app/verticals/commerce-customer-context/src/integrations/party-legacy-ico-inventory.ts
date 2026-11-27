@@ -22,7 +22,8 @@ import { executeCounterpartyOrganizationIcoFactsWithAuthorization } from '@app/p
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { CustomerProfileIcoMigrationRejected } from '../../shared/domain/customer-profile-ico-migration.ts';
 
 const partyAudience = 'party-registry';
@@ -88,7 +89,7 @@ export class CommerceLegacyIcoInventory extends Context.Service<
 export const commerceLegacyIcoInventoryLive = Layer.effect(
   CommerceLegacyIcoInventory,
   Effect.gen(function* legacyIcoInventory() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       correlate: (scope, ref, options) =>
         options?.organizationOnly === true

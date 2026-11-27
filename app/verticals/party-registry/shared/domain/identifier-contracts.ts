@@ -11,7 +11,7 @@ export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
 
 const isValidCzechIco = (value: string): boolean => {
-  if (!/^[0-9]{8}$/u.test(value)) {
+  if (!/^\d{8}$/u.test(value)) {
     return false;
   }
   const weights = [8, 7, 6, 5, 4, 3, 2] as const;
@@ -27,11 +27,11 @@ export const OfficialIdentifierInputSchema = Schema.Struct({
   Schema.makeFilter((input) => {
     const value = input.value.trim().toUpperCase();
     if (input.identifierType === 'ICO') {
-      return /^[0-9]{1,8}$/u.test(value) && isValidCzechIco(value.padStart(8, '0'))
+      return /^\d{1,8}$/u.test(value) && isValidCzechIco(value.padStart(8, '0'))
         ? undefined
         : 'invalid ICO format or checksum';
     }
-    return /^CZ[0-9]{8,10}$/u.test(value) ? undefined : 'invalid CZ_DIC format';
+    return /^CZ\d{8,10}$/u.test(value) ? undefined : 'invalid CZ_DIC format';
   }),
 );
 export type OfficialIdentifierInput = typeof OfficialIdentifierInputSchema.Type;
@@ -78,7 +78,7 @@ const officialIdentifierAssertionFields = {
   normalizedValue: Schema.String,
   // Additive V1 evidence: omitted by older producers; NULL means no retained source proof.
   originalInputDigits: Schema.optionalKey(
-    Schema.toEncoded(Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^[0-9]{1,8}$/u)))),
+    Schema.toEncoded(Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^\d{1,8}$/u)))),
   ),
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,

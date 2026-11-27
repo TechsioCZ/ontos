@@ -43,7 +43,14 @@ const malformedConfiguration = (): CommerceCoreIdentityClientConfigError =>
   });
 
 const parseBaseUrl = (value: string): Effect.Effect<string, CommerceCoreIdentityClientConfigError> =>
-  Effect.map(parseHttpUrl(value, malformedConfiguration), (url) => url.href.replace(/\/+$/u, ''));
+  Effect.map(parseHttpUrl(value, malformedConfiguration), (url) => {
+    const { href } = url;
+    let end = href.length;
+    while (href[end - 1] === '/') {
+      end -= 1;
+    }
+    return href.slice(0, end);
+  });
 
 const configSource = Config.all({
   apiKey: Config.Redacted(CORE_IDENTITY_API_KEY_KEY),

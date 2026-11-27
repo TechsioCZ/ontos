@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, Schema } from 'effect';
+import { Context, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { AuthenticationNamespaceIdSchema } from '../../src/auth/external-identity-contracts.ts';
 
@@ -6,7 +7,7 @@ export const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNa
   'test.staff.better-auth.v1',
 );
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 export const makePermissionSuite = Effect.gen(function* makePermissionSuite() {
   const suiteId = yield* nextUuid;

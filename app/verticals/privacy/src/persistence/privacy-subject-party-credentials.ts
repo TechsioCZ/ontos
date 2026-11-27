@@ -5,7 +5,8 @@ import {
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PrivacyOperationPersistenceError } from './privacy-operation-persistence-error.ts';
 
@@ -42,7 +43,7 @@ export class PrivacySubjectPartyCredentials extends Context.Service<
 export const PrivacySubjectPartyCredentialsLive = Layer.effect(
   PrivacySubjectPartyCredentials,
   Effect.gen(function* partyCredentials() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       acquire: Effect.fn('PrivacySubjectPartyCredentials.acquire')(
         function* acquire(scope, declarationKey, operationRequirementKey, recoveryRequestHash) {

@@ -24,7 +24,7 @@ import { partyTestAccessGate } from './party-test-access-gate.ts';
 const REDACTED = '[REDACTED]';
 const redactCredentials = (text: string) =>
   text
-    .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, `$<scheme>${REDACTED}@`)
+    .replaceAll(/(?<!\w)(?<scheme>\w+:\/\/)[^\s/@][^\s/@:]*:[^\s/@]+@/gu, `$<scheme>${REDACTED}@`)
     .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, REDACTED)
     .replaceAll(/(?<field>Bearer\s+)\S+/gu, `$<field>${REDACTED}`);
 

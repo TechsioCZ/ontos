@@ -6,7 +6,8 @@ import type {
   HttpClientError,
   Schema,
 } from '@modern-js/bff-effect/effect-client';
-import { Context, Crypto, PlatformError } from 'effect';
+import { Context } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
@@ -269,19 +270,8 @@ const accessWriteHeaders = (options: AccessAdministrationWriteOptions) => ({
 });
 
 /** Secure, retry-stable command identity is created once at the UI boundary, then reused on retry. */
-const browserCrypto = Crypto.make({
-  digest: (algorithm, data) => {
-    const input = new Uint8Array(data.byteLength);
-    input.set(data);
-    return Effect.tryPromise({
-      catch: (cause) => PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' }),
-      try: globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle, algorithm, input),
-    }).pipe(Effect.map((result) => new Uint8Array(result)));
-  },
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-});
-export const createAccessAdministrationIdempotencyKey = (): Effect.Effect<string, PlatformError.PlatformError> =>
-  browserCrypto.randomUUIDv4();
+const browserCrypto = SecureRandom.make((size) => globalThis.crypto.getRandomValues(new Uint8Array(size)));
+export const createAccessAdministrationIdempotencyKey = (): Effect.Effect<string> => browserCrypto.uuidV4();
 const invokeAccessAdministrationClient = <Success, Failure>(
   options: ShellAuthenticationClientOptions,
   operation: (client: AccessAdministrationClient) => Effect.Effect<Success, Failure>,

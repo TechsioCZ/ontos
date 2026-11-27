@@ -113,13 +113,16 @@ const lifetimeBoundExecutor = Effect.fn('KernelTransactions.lifetimeBoundExecuto
   }).pipe(
     Effect.updateContext((context: Context.Context<never>) => Context.add(context, Reactivity.Reactivity, reactivity)),
   );
-  const pgClient: PgClient.PgClient = Object.assign(client, {
-    config: driverClient.config,
-    json: driverClient.json,
-    listen: driverClient.listen,
-    notify: driverClient.notify,
-    [PgClient.TypeId]: PgClient.TypeId,
-  });
+  const pgClient = PgClient.PgClient.of(
+    Object.assign(client, {
+      config: driverClient.config,
+      json: driverClient.json,
+      listen: driverClient.listen,
+      notify: driverClient.notify,
+      [PgClient.TypeId]: PgClient.TypeId,
+      poolStats: driverClient.poolStats,
+    }),
+  );
   return yield* makeWithDefaults({ relations: coreRelations }).pipe(
     Effect.updateContext((context: Context.Context<never>) => Context.add(context, PgClient.PgClient, pgClient)),
   );

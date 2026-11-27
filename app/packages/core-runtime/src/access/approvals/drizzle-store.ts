@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Context, Crypto, Effect, Layer, Option, Result, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { isDatabaseIntegrityRefusal, isDatabaseUnavailableFailure } from '../../database/driver-failure.ts';
@@ -270,15 +271,8 @@ const readOnly = <Value>(
     Effect.catchTag('ApprovalStorageConflictError', (failure) => Effect.fail(storageUnavailable(failure.reason))),
   );
 
-/** The identifier a store mints: the approval record and the decision record each need one. */
-const nextUuid = (crypto: Crypto.Crypto): Effect.Effect<string, ApprovalStorageUnavailableError> =>
-  crypto
-    .randomUUIDv4()
-    .pipe(
-      Effect.catchTag('PlatformError', () =>
-        Effect.fail(storageUnavailable('An identifier for this proposal record could not be generated')),
-      ),
-    );
+/** The native secure generator has no expected failure channel. */
+const nextUuid = (crypto: SecureRandom.SecureRandom['Service']): Effect.Effect<string> => crypto.uuidV4();
 
 const decodeHolder = Schema.decodeUnknownResult(HolderSchema);
 
@@ -554,7 +548,7 @@ const buildApprovalStore = ({
   frozenCommands,
   runInScope,
 }: {
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly frozenCommands: FrozenCommandStore | undefined;
   readonly runInScope: ScopedRunner;
 }): ApprovalStoreService => {
@@ -931,10 +925,12 @@ const buildApprovalStore = ({
     create: (proposal) => create(scope, proposal),
     createWithFrozenCommand: (input) => createWithFrozenCommand(scope, input),
     executeInTransaction: (input, transaction) => executeInTransaction(scope, input, transaction),
-    listOpen: (input) =>
-      input.tenantId === scope.tenantId
-        ? listOpen(scope, input.scopeId === undefined ? {} : { scopeId: input.scopeId })
-        : Effect.fail(storageUnavailable('The open proposals of another tenant are never listed')),
+    listOpen: (input) => {
+      if (input.tenantId !== scope.tenantId) {
+        return Effect.fail(storageUnavailable('The open proposals of another tenant are never listed'));
+      }
+      return listOpen(scope, input.scopeId === undefined ? {} : { scopeId: input.scopeId });
+    },
     load: (input) =>
       input.tenantId === scope.tenantId
         ? load(scope, { proposalId: input.proposalId, scopeId: input.scopeId })
@@ -961,7 +957,7 @@ const buildApprovalStore = ({
  */
 export const makeDrizzleApprovalStore = (
   database: ApprovalStoreDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): ApprovalStoreService =>
   buildApprovalStore({
     crypto,
@@ -976,7 +972,7 @@ export const makeDrizzleApprovalStore = (
  */
 export const makeJoinedDrizzleApprovalStore = (
   database: JoinedApprovalStoreDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): ApprovalStoreService =>
   buildApprovalStore({
     crypto,
@@ -993,12 +989,15 @@ export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreS
   '@app/core-runtime/access/approvals/drizzle-store/ApprovalStore',
 ) {}
 
-export const ApprovalStoreLive: Layer.Layer<ApprovalStore, never, CoreDatabase | Crypto.Crypto | FrozenCommands> =
-  Layer.effect(
-    ApprovalStore,
-    Effect.gen(function* makeApprovalStoreLive() {
-      const { executor } = yield* CoreDatabase;
-      const frozenCommands = yield* FrozenCommands;
-      return makeDrizzleApprovalStore({ executor, frozenCommands }, yield* Crypto.Crypto);
-    }),
-  );
+export const ApprovalStoreLive: Layer.Layer<
+  ApprovalStore,
+  never,
+  CoreDatabase | SecureRandom.SecureRandom | FrozenCommands
+> = Layer.effect(
+  ApprovalStore,
+  Effect.gen(function* makeApprovalStoreLive() {
+    const { executor } = yield* CoreDatabase;
+    const frozenCommands = yield* FrozenCommands;
+    return makeDrizzleApprovalStore({ executor, frozenCommands }, yield* SecureRandom.SecureRandom);
+  }),
+);

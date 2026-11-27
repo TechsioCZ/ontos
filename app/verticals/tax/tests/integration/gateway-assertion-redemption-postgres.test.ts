@@ -3,7 +3,8 @@ import {
   GatewayAssertionReplayError,
 } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { NodeCrypto } from '@effect/platform-node';
-import { Clock, Context, Crypto, Effect, Layer, Result, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -25,7 +26,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('Tax gateway assertion
         );
         const redemption = Context.get(services, GatewayAssertionRedemptionService);
         const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-        const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+        const jti = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
         const redeem = redemption.consume({
           audience: 'tax',
           expiresAtEpochSeconds: now + 60,

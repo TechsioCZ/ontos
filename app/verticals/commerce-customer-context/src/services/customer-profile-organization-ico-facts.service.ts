@@ -12,7 +12,8 @@ import {
 import { executeCounterpartyOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/counterparty-organization-ico-facts/client';
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type {
   CustomerProfileOrganizationIcoFactsRequest,
   CustomerProfileOrganizationIcoFactsResponse,
@@ -71,10 +72,10 @@ export interface CustomerProfileOrganizationIcoFactsServices {
 /** A snapshot of exact current owner references; it grants no write or IČO processing authority. */
 export const customerProfileOrganizationIcoFactsServices: ReadServiceFactory<
   CustomerProfileOrganizationIcoFactsServices,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > = Effect.fn('CustomerProfileOrganizationIcoFacts.services')(
   function* organizationIcoFactsServices(transaction, scope) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     if (scope.legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',

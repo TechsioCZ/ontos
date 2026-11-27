@@ -3,7 +3,8 @@ import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } 
 import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { PricingQuotationBindingSchema, PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { ManageCommitmentConfirmationActionServices } from '../actions/manage-commitment-confirmation.action.ts';
 import type { CommitmentConfirmationPersistence } from '../services/commitment-confirmation-persistence.service.ts';
@@ -66,7 +67,7 @@ export type CommitmentConfirmationProductionServices = ManageCommitmentConfirmat
 
 export const commitmentConfirmationProductionForScope: ReadServiceFactory<
   CommitmentConfirmationProductionServices,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > = Effect.fn('PricingCommitmentConfirmation.productionForScope')(function* productionForScope(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -80,7 +81,7 @@ export const commitmentConfirmationProductionForScope: ReadServiceFactory<
     });
   }
   const proof = yield* pricingCommitmentOwnerProof.pipe(Effect.mapError(unavailable));
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision, crypto).pipe(
     Effect.mapError(unavailable),
   );

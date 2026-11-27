@@ -13,7 +13,8 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Clock, ConfigProvider, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, ConfigProvider, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -76,11 +77,11 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
       const readRuntime: ReadRuntimeService = {
         runRead: () =>
           Effect.gen(function* executeDeferredBusinessRead() {
-            const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+            const crypto = yield* Effect.serviceOption(SecureRandom.SecureRandom);
             if (Option.isNone(crypto)) {
               return yield* Effect.die('HTTP execution context has no native Crypto');
             }
-            const generatedId = yield* crypto.value.randomUUIDv4().pipe(Effect.orDie);
+            const generatedId = yield* crypto.value.uuidV4().pipe(Effect.orDie);
             expect(Schema.is(Schema.String.check(Schema.isUUID(4)))(generatedId)).toBe(true);
             readCalls += 1;
             return yield* Effect.die('stopped after deferred native Crypto proof');

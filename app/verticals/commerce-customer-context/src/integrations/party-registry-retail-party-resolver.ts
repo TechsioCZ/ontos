@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { executePartyDetail } from '@app/party-registry/api/client';
 import type { GatewayContextClientError } from '@app/shared-contracts';
 import type { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
@@ -33,7 +33,10 @@ export interface PartyRegistryRetailPartyResolverFactoryInput {
 }
 
 export interface PartyRegistryRetailPartyResolverFactoryService {
-  readonly make: (input: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) => RetailPartyResolver;
+  readonly make: (input: {
+    readonly crypto: SecureRandom.SecureRandom['Service'];
+    readonly scope: OperationalScope;
+  }) => RetailPartyResolver;
 }
 
 export class PartyRegistryRetailPartyResolverFactory extends Context.Service<
@@ -126,7 +129,13 @@ export const makePartyRegistryRetailPartyResolver =
 export const partyRegistryRetailPartyResolverFactoryLive = Layer.succeed(
   PartyRegistryRetailPartyResolverFactory,
   Object.freeze({
-    make: ({ crypto, scope }: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) =>
+    make: ({
+      crypto,
+      scope,
+    }: {
+      readonly crypto: SecureRandom.SecureRandom['Service'];
+      readonly scope: OperationalScope;
+    }) =>
       makePartyRegistryRetailPartyResolver(
         { requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
         (payload) =>

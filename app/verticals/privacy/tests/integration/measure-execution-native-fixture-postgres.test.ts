@@ -1,7 +1,8 @@
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -24,11 +25,11 @@ it.live('prepares current native governance without dispatch and appends a real 
       mode: 'schema-only',
       purpose: 'implementation-1096-privacy-measure-native-helper',
     });
-    const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4();
-    const legalEntityId = yield* crypto.randomUUIDv4();
-    const governancePrincipalId = yield* crypto.randomUUIDv4();
-    const resourceRef = `integration.symmy.job:${yield* crypto.randomUUIDv4()}`;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const tenantId = yield* crypto.uuidV4();
+    const legalEntityId = yield* crypto.uuidV4();
+    const governancePrincipalId = yield* crypto.uuidV4();
+    const resourceRef = `integration.symmy.job:${yield* crypto.uuidV4()}`;
     const fixture = yield* seedMeasureExecutionNativeFixture({
       connections: isolated.connections,
       contentScopeRef: `${resourceRef}#integration.symmy.job-intent`,

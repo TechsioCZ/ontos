@@ -9,7 +9,8 @@ import type {
 import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing-contracts/current-supported-currencies/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Match, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   PurchaseCurrencyDependencyUnavailable,
@@ -92,7 +93,7 @@ type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
 
 const makePricingPort = (input: {
   readonly acquire: DelegatedGatewayAcquisition;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly execute: CurrentSupportedCurrenciesExecutor;
   readonly requestContext: {
     readonly requestCorrelation: string;
@@ -144,7 +145,7 @@ export const purchaseCurrencyPricingPortFromEnvironment = Effect.fn('PurchaseCur
     execute: CurrentSupportedCurrenciesExecutor = executeAuthorizedCurrentSupportedCurrencies,
     acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
   ) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makePricingPort({ acquire, crypto, execute, requestContext });
   },
 );

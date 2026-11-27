@@ -7,7 +7,8 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { CartDraftSchema } from '@app/commerce-cart-contracts/domain/cart-draft';
 import type { PreapprovalCartObservationRequest } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { carts, cartRevisions } from '../database/schema.ts';
@@ -93,10 +94,8 @@ export const preapprovalCartObservationService = (transaction: ScopedTransaction
         const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(CartDraftSchema))(cart).pipe(
           Effect.mapError(unavailable),
         );
-        const crypto = yield* Crypto.Crypto;
-        const bytes = yield* crypto
-          .digest('SHA-256', new TextEncoder().encode(encoded))
-          .pipe(Effect.mapError(unavailable));
+        const messageDigest = yield* Digest.Digest;
+        const bytes = yield* messageDigest.digest(Digest.sha256, new TextEncoder().encode(encoded));
         return {
           cart,
           materialHash: Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join(''),

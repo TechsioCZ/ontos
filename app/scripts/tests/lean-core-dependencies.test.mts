@@ -125,6 +125,30 @@ for (const [importer, suffixes] of [
 const customerPriceGroupClientImport =
   "import { execute } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';\n";
 
+it.live('admits the pinned native crypto entry without admitting neighboring Effect specifiers', () =>
+  Effect.gen(function* nativeCryptoSpecifier() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-crypto-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const sourceDirectory = path.join(root, 'packages/core-runtime/src');
+    yield* Effect.tryPromise(() => mkdir(sourceDirectory, { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, 'packages/core-runtime/package.json'),
+        JSON.stringify({ dependencies: { effect: '4.1.4' } }),
+      ),
+    );
+    const file = path.join(sourceDirectory, 'crypto.ts');
+    yield* Effect.tryPromise(() => writeFile(file, "import { Digest, SecureRandom } from 'effect/crypto';\n"));
+    expect(yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer))).toEqual([]);
+    yield* Effect.tryPromise(() => writeFile(file, "import { crypto } from 'effect/crypto-unapproved';\n"));
+    const violations = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.reason).toContain('"effect/crypto-unapproved"');
+  }),
+);
+
 it.live(
   'flags Core Commerce/Storefront/Better-Auth vocabulary and non-Commerce mandatory imports of Commerce private implementation, while allowing documented seams',
   () =>

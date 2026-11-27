@@ -124,7 +124,7 @@ const verification = Effect.gen(function* verifyDatabase() {
 ) as valid`,
     'objects',
   );
-  if (!gateway?.valid) {
+  if (gateway?.valid !== true) {
     return yield* new VerificationError({
       reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
     });

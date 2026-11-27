@@ -2,7 +2,7 @@ import { Predicate, Result, Schema } from 'effect';
 
 const dottedPermissionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u;
 const dottedEntrypointPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9_-]*)+$/u;
-const schemaVersionPattern = /^[1-9][0-9]*$/u;
+const schemaVersionPattern = /^[1-9]\d*$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
 export const BusinessPermissionCodeSchema = Schema.String.check(Schema.isPattern(dottedPermissionPattern)).pipe(

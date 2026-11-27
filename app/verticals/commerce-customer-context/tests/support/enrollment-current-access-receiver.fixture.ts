@@ -47,7 +47,7 @@ export const makeEnrollmentFailureTracer = (
           }
         }
         diagnostic = diagnostic
-          .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+          .replaceAll(/(?<!\w)(?<scheme>\w+:\/\/)(?=[^\s/@][^\s/@]*:[^\s/@])[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
           .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, redacted)
           .replaceAll(/(?<field>"d"\s*:\s*")[^"]+"/gu, '$<field>[REDACTED]"');
         // Redact whole values before any cap; never retain arbitrary tails of an oversized line.

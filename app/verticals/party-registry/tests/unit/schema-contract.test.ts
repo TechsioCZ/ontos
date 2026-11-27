@@ -51,6 +51,19 @@ const configuredTables = [
 
 const configOf = (table: (typeof configuredTables)[number]) => getTableConfig(table);
 
+const hasSqlFragmentsInOrder = (expression: string, fragments: readonly string[]): boolean =>
+  expression.split(/[\n\r\u2028\u2029]/u).some((line) => {
+    let start = 0;
+    for (const fragment of fragments) {
+      const index = line.indexOf(fragment, start);
+      if (index === -1) {
+        return false;
+      }
+      start = index + fragment.length;
+    }
+    return true;
+  });
+
 const uniqueColumns = (table: (typeof configuredTables)[number], name: string) => {
   const config = configOf(table);
   const constraint = config.uniqueConstraints.find((candidate) => candidate.name === name);
@@ -429,9 +442,17 @@ it('models relationship lifecycles with owner-local references', () => {
     configOf(partyRelationships).columns.some((column) => column.name === 'state'),
     false,
   );
-  assert.match(
-    checkSql(relationshipChecks, 'party_relationships_interval_ck'),
-    /valid_to.*is null.*valid_from.*is null.*valid_to.*>.*valid_from/u,
+  assert.equal(
+    hasSqlFragmentsInOrder(checkSql(relationshipChecks, 'party_relationships_interval_ck'), [
+      'valid_to',
+      'is null',
+      'valid_from',
+      'is null',
+      'valid_to',
+      '>',
+      'valid_from',
+    ]),
+    true,
   );
   assert.match(
     checkSql(relationshipChecks, 'party_relationships_assertion_state_ck'),
@@ -691,5 +712,5 @@ it('bounds retained ICO source digits while leaving historical unknown evidence 
   expect(expression).toMatch(/original_input_digits.*is null/u);
   expect(expression).toMatch(/identifier_type_key.*ICO/u);
   expect(expression).toContain('^[0-9]{1,8}$');
-  expect(expression).toMatch(/lpad.*original_input_digits.*8.*normalized_value/u);
+  expect(hasSqlFragmentsInOrder(expression, ['lpad', 'original_input_digits', '8', 'normalized_value'])).toBe(true);
 });

@@ -529,7 +529,9 @@ it('checks in non-destructive generated migrations with forced RLS and exact imm
     expect(sql).not.toContain(`DROP TABLE "privacy"."${table}"`);
   }
   const actualTriggers = EffectArray.sort(
-    [...sql.matchAll(/CREATE TRIGGER "(?<name>privacy_[^"]+_immutable)"/gu)].map(({ groups }) => groups?.name ?? ''),
+    [...sql.matchAll(/CREATE TRIGGER "(?<name>privacy_[^"]+_immutable)"/gu)].map(
+      ({ groups }) => groups?.['name'] ?? '',
+    ),
     Order.String,
   );
   expect(actualTriggers).toEqual(IMMUTABLE_TRIGGER_NAMES);

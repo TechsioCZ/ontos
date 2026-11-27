@@ -33,7 +33,8 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeHttpServerRequest, NodeServices } from '@effect/platform-node';
 import { runMain } from '@effect/platform-node/NodeRuntime';
-import { Clock, Config, Crypto, Deferred, Effect, FiberHandle, Layer, Option, Redacted, Schema } from 'effect';
+import { Clock, Config, Deferred, Effect, FiberHandle, Layer, Option, Redacted, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -209,7 +210,7 @@ const serve = Effect.scoped(
         return yield* Effect.void;
       }),
     });
-    const crypto = yield* Crypto.Crypto;
+    const messageDigest = yield* Digest.Digest;
     const authority = Layer.succeed(OwnerExecutionAuthority, {
       resolve: Effect.fn('PrivacyCompletionTest.authoritativeReceipt')(function* resolve(request, context) {
         if (!authorityAvailable) {
@@ -243,9 +244,7 @@ const serve = Effect.scoped(
           preconditionRefs: handoff.preconditionRefs.toSorted(),
           resourceRefs: handoff.resourceRefs.toSorted(),
         }).pipe(Effect.mapError(unavailable));
-        const fingerprint = Hex.encode(
-          yield* crypto.digest('SHA-256', new TextEncoder().encode(canonical)).pipe(Effect.mapError(unavailable)),
-        );
+        const fingerprint = Hex.encode(yield* messageDigest.digest(Digest.sha256, new TextEncoder().encode(canonical)));
         if (receipt.value.handoffFingerprint !== fingerprint || request.attempt !== receipt.value.outcome.attempt) {
           return yield* new PrivacyActionRejected({
             code: 'privacy_action_rejected',

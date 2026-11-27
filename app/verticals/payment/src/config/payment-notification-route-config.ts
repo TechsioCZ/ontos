@@ -1,4 +1,5 @@
-import { Config, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import { paymentNotificationRouteUnavailable } from '../../shared/actions/configure-provider-account-binding.ts';
@@ -103,7 +104,7 @@ export const notificationUrlOf = (input: {
 }) =>
   `${input.origin}${PAYMENT_GATEWAY_RELAY_PATH_PREFIX}/notifications/${input.family.toLowerCase()}/${input.tenantId}/${input.routeKey}`;
 
-const makeIssuer = (crypto: Crypto.Crypto): PaymentNotificationRouteIssuer => ({
+const makeIssuer = (crypto: SecureRandom.SecureRandom['Service']): PaymentNotificationRouteIssuer => ({
   issue: Effect.fn('PaymentNotificationRoutes.issue')(function* issue({ family, tenantId }) {
     const origin = yield* readOrigin;
     const routeKey = yield* crypto.randomBytes(ROUTE_KEY_BYTES).pipe(
@@ -122,5 +123,5 @@ const makeIssuer = (crypto: Crypto.Crypto): PaymentNotificationRouteIssuer => ({
 /** Production issuer over the composition's cryptographic random source. */
 export const PaymentNotificationRoutesLive = Layer.effect(
   PaymentNotificationRoutes,
-  Crypto.Crypto.pipe(Effect.map(makeIssuer)),
+  SecureRandom.SecureRandom.pipe(Effect.map(makeIssuer)),
 );

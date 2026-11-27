@@ -1,5 +1,7 @@
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
+import type { StockItemPersistenceUnavailable } from '../../shared/domain/stock-item-persistence-unavailable.ts';
 import { StockItemRejected, StockItemSchema } from '../../shared/domain/stock-item.ts';
 import type {
   CreateStockItemInput,
@@ -9,7 +11,6 @@ import type {
 } from '../../shared/domain/stock-item.ts';
 import { StockItemRepository } from '../persistence/stock-item-repository.ts';
 import type { StockItemRepositoryService } from '../persistence/stock-item-repository.ts';
-import { StockItemPersistenceUnavailable } from '../../shared/domain/stock-item-persistence-unavailable.ts';
 
 type StockItemServiceError = StockItemRejected | StockItemPersistenceUnavailable;
 
@@ -48,17 +49,9 @@ const notFound = (stockItemId: StockItem['stockItemRef']['resourceId']): StockIt
  */
 export const stockItemRegistration = (
   repository: Pick<StockItemRepositoryService, 'findByExactSelectionMeaning' | 'insert'>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): StockItemServiceContract['register'] => {
-  const nextStockItemId = crypto.randomUUIDv4().pipe(
-    Effect.mapError(
-      (cause) =>
-        new StockItemPersistenceUnavailable({
-          code: 'stock_item_persistence_unavailable',
-          reason: `Stock Item identity is unavailable: ${String(cause)}`,
-        }),
-    ),
-  );
+  const nextStockItemId = crypto.uuidV4();
   return (input) =>
     repository.findByExactSelectionMeaning(input.tenantId, input.exactSelectionMeaning.id).pipe(
       Effect.flatMap(
@@ -104,7 +97,7 @@ export const stockItemRegistration = (
 };
 
 const makeStockItemService = Effect.gen(function* makeStockItemService() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const repository = yield* StockItemRepository;
 
   return {

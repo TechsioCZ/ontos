@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 
 import { Array as EffectArray, Option, Order, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { parseSync } from 'oxc-parser';
 
 const source = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
@@ -55,9 +55,17 @@ const shippedRuntimeRoutines = () => {
   );
   for (const migration of migrations) {
     const sql = readFileSync(new URL(`${migration}/migration.sql`, directory), 'utf-8');
-    const declarations =
-      /(?<operation>GRANT\s+EXECUTE\s+ON\s+FUNCTION|DROP\s+FUNCTION(?:\s+IF\s+EXISTS)?)\s+"?commerce_customer_context"?\."?(?<name>[a-z0-9_]+)"?\((?<parameters>[^)]*)\)(?:\s+TO\s+"?(?<role>[a-z_]+)"?)?/giu;
-    for (const match of sql.matchAll(declarations)) {
+    const operations = /(?<operation>GRANT\s+EXECUTE\s+ON\s+FUNCTION|DROP\s+FUNCTION(?:\s+IF\s+EXISTS)?)/giu;
+    const signaturePattern = /^\s+"?commerce_customer_context"?\."?(?<name>[a-z0-9_]+)"?\((?<parameters>[^)]*)\)/iu;
+    const rolePattern = /^\s+TO\s+"?(?<role>[a-z_]+)"?/iu;
+    for (let match = operations.exec(sql); match !== null; match = operations.exec(sql)) {
+      const signatureMatch = signaturePattern.exec(sql.slice(operations.lastIndex));
+      if (signatureMatch === null) {
+        continue;
+      }
+      const signatureEnd = operations.lastIndex + signatureMatch[0].length;
+      const roleMatch = rolePattern.exec(sql.slice(signatureEnd));
+      operations.lastIndex = signatureEnd + (roleMatch?.[0].length ?? 0);
       const { name, operation, parameters, role } = Schema.decodeUnknownSync(
         Schema.Struct({
           name: Schema.String,
@@ -65,7 +73,7 @@ const shippedRuntimeRoutines = () => {
           parameters: Schema.String,
           role: Schema.OptionFromUndefinedOr(Schema.String),
         }),
-      )(match.groups);
+      )({ ...match.groups, ...signatureMatch.groups, role: roleMatch?.groups?.['role'] });
       const signature = `${name}(${parameters.toLowerCase().replaceAll(/\s+/gu, '')})`;
       if (operation.toUpperCase().startsWith('DROP')) {
         signatures.delete(signature);
@@ -94,7 +102,9 @@ it('accepts the complete SQL-ordered runtime routine set through the verifier co
 it('rejects missing, duplicate, unexpected, and substituted runtime routines', () => {
   expect(compare(sqlOrdered.slice(1))).toBe(false);
   expect(compare(sqlOrdered.filter((routine) => routine !== 'lock_profile_ico_correlation'))).toBe(false);
-  expect(compare(EffectArray.sort([sqlOrdered[1], ...sqlOrdered.slice(1)], Order.String))).toBe(false);
+  const [, duplicate] = sqlOrdered;
+  assert.isDefined(duplicate);
+  expect(compare(EffectArray.sort([duplicate, ...sqlOrdered.slice(1)], Order.String))).toBe(false);
   expect(compare(EffectArray.sort([...sqlOrdered, 'unexpected_runtime_routine'], Order.String))).toBe(false);
   expect(compare(EffectArray.sort(['wrong_runtime_routine', ...sqlOrdered.slice(1)], Order.String))).toBe(false);
 });

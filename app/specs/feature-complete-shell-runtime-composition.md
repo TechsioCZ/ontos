@@ -278,7 +278,7 @@ Use Postgres integration tests for legal-entity tenant/status isolation and sess
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — Type-check Codesmith generators and their shared planning utilities.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — Type-check Codesmith generators and their shared planning utilities.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — Run generator compile, mutation, repeat, traversal, and no-partial-write tests.
 - `mise exec -- node --test scripts/tests/*.test.mts` — Run module-entrypoint and generated-artifact boundary tests.
 - `mise exec -- pnpm --filter @app/shared-contracts test:unit` — Validate trusted gateway context contracts.

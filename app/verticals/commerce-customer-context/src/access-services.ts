@@ -2,7 +2,8 @@ import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, PrincipalEligibility } from '@app/core-runtime';
 import type { AccessPortalTransaction } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
+import type { CommerceAuthSha256 } from './portal-auth/sha256.ts';
 import type {
   CounterpartyAccessPortService,
   CounterpartyInvitationProofDelivery,
@@ -16,7 +17,7 @@ export const counterpartyAccessServicesForTransaction = (
 ): Effect.Effect<
   CounterpartyAccessPortService,
   OperationContextUnavailable,
-  CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
+  CounterpartyInvitationProofDelivery | CommerceAuthSha256 | SecureRandom.SecureRandom | PrincipalEligibility
 > => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(

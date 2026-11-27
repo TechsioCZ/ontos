@@ -110,7 +110,7 @@ Use the existing Node test runner against temporary workspaces for the generator
 
 Execute every command to validate the chore with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — typecheck the CLI, generator, helpers, and disposable-workspace tests.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — typecheck the CLI, generator, helpers, and disposable-workspace tests.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint generator infrastructure not covered by the root application lint paths.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run all Codesmith unit and disposable-workspace integration tests.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` — verify command discovery and the documented optional URL without writing.
@@ -128,7 +128,7 @@ Execute every command to validate the chore with zero regressions.
 
 ## Implementation Evidence
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - Focused page-generator coverage now proves formatted multi-page owner slots, exact current/legacy wiring (including conflicting duplicates), one- and multi-segment URLs, two-letter owner slugs, exact page identities, general explicit locale-prefix rejection, and reserved, dynamic, and cross-owner collision preflight. It also executes a newly generated federated page with the owner's English and Czech resources. The full scaffolding suite passed 35/38; its three failures are unrelated existing baselines: a stale Action fixture missing `--legal-entity-scope`, unavailable generated gateway-issuer keys, and a disposable typecheck fixture missing `system-principal-context-provenance.ts`. The formatter-stability generator test passed.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` passed and documented the optional URL plus `/<vertical>/<page>` default. A read-only real-workspace plan reports zero mutations for the migrated CRM page and twelve mutations for a new CRM `customers` page; `/modules/bad` is rejected against the existing `[moduleId]` route.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` passed 146/146 tests. Exact-page UI coverage proves that private registries and loaders remain untouched for selection-required, forbidden, not-found, and unavailable outcomes and run once only after resolution.

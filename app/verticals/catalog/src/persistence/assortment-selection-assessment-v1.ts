@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type {
   AssortmentSelectionAssessmentV1OperationRequest,
@@ -14,7 +14,7 @@ export interface AssortmentSelectionAssessmentV1Source {
   readonly assess: (input: {
     readonly purpose: 'ASSORTMENT';
     readonly selection: AssortmentSelectionSourceProofV1['selection'];
-  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto>;
+  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, SecureRandom.SecureRandom>;
 }
 
 type AssortmentSelectionAssessmentV1Response = typeof AssortmentSelectionAssessmentV1ResponseSchema.Type;
@@ -41,7 +41,7 @@ export const assessOrVerifyAssortmentSelectionV1: (
   request: AssortmentSelectionAssessmentV1OperationRequest,
   tenantId: string,
   source: AssortmentSelectionAssessmentV1Source,
-) => Effect.Effect<AssortmentSelectionAssessmentV1Response, never, Crypto.Crypto> = Effect.fn(
+) => Effect.Effect<AssortmentSelectionAssessmentV1Response, never, SecureRandom.SecureRandom> = Effect.fn(
   'assessOrVerifyAssortmentSelectionV1',
 )(function* assessOrVerify(
   request: AssortmentSelectionAssessmentV1OperationRequest,

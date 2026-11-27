@@ -215,7 +215,7 @@ Run PostgreSQL-backed Core tests for initial state creation, serialized transiti
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — strictly typecheck the approved Core Action generator extension and disposable fixtures.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — strictly typecheck the approved Core Action generator extension and disposable fixtures.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint Codesmith infrastructure outside the normal application lint roots.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run all generator behavior, failure, composition, format, and generated-output compilation tests.
 - `mise exec -- pnpm scaffold:action -- --help` — verify both existing MicroVertical and approved Core Action command forms are documented without writing files.
@@ -265,7 +265,7 @@ Execute every command to validate the feature with zero regressions.
 
 ### Validation Results
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 20/20 passed.
 - `mise exec -- pnpm scaffold:action -- --help` — passed and documents both ownership forms.

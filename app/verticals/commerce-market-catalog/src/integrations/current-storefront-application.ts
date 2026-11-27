@@ -6,7 +6,7 @@ import type {
 } from '@app/storefront-registry-contracts';
 import { executeCurrentStorefrontApplicationWithAuthorization } from '@app/storefront-registry-contracts/current-storefront-application/client';
 import { Effect, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 
@@ -139,7 +139,7 @@ export const makeServerCurrentStorefrontApplicationAuthority = ({
   scope,
 }: {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly scope: OperationalScope;
 }): CurrentStorefrontApplicationAuthority =>
   makeCurrentStorefrontApplicationAuthority(

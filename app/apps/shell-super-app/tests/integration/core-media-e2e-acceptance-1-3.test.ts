@@ -208,12 +208,12 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(yield* failureCodeOf(reserve(world, uploader, bytes, { idempotencyKey: 'retry-1' }))).toBe(
                 'action_already_committed',
               );
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               // The same key with another request is a conflict, never a silent swap of the payload.
               expect(
                 yield* failureTagOf(reserve(world, uploader, bytesOf('another file'), { idempotencyKey: 'retry-1' })),
               ).toBe('ActionRequestHashConflict');
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
 
               expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
               const sealedAt = (yield* rowOf(world, id))?.sealed_at;
@@ -227,7 +227,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 processingStatus: 'ready',
               });
               expect((yield* rowOf(world, id))?.sealed_at).toEqual(sealedAt);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               // Other bytes for the already confirmed asset are a conflict, and the asset keeps its own.
               const other = yield* putBytes(edge, uploader, id, bytesOf('not the same!'));
               expect(other.status).toBe(409);
@@ -261,7 +261,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               proxy.setRules([]);
               // Success only because the stored bytes were read back and proved to be the declared ones: one asset.
               expect(answered.status).toBe(200);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(bytes);
             }),
@@ -310,7 +310,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // same asset: still exactly one.
               const retried = yield* putBytes(edge, uploader, id, bytes);
               expect(retried.status).toBe(200);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
               expect((yield* downloadOf(edge, reader, id)).bytes).toEqual(bytes);
             }),

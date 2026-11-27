@@ -14,7 +14,6 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Option, Schema, Struct } from 'effect';
-import type { PlatformError } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import type { Atom } from 'effect/reactivity';
 
@@ -36,9 +35,7 @@ class CreateRoleRefused extends Schema.TaggedError<CreateRoleRefused>()('CreateR
   status: RoleEditorStatusSchema,
 }) {}
 
-const attempt = makeActionAttempt<CreateAccessRolePayload, PlatformError.PlatformError>(
-  createAccessAdministrationIdempotencyKey(),
-);
+const attempt = makeActionAttempt<CreateAccessRolePayload, never>(createAccessAdministrationIdempotencyKey());
 
 /** The company scope of the role; an id that is not a company id is refused on its field. */
 const decodeCompanyScope = (companyId: string) =>

@@ -124,14 +124,16 @@ export const makeTestOperationalScopeAccess = (
     ((scope: OperationalScope) => (scope.legalEntityId === undefined ? [] : [scope.legalEntityId]));
   return Object.freeze({
     decide: () => Effect.succeed(scopeDecisionOf(decision)),
-    selectableLegalEntities: ({ scope }) =>
-      decision === 'unavailable'
-        ? Effect.fail(accessDecisionUnavailable('The scripted scope authority is unavailable'))
-        : Effect.succeed(
-            decision === 'allowed'
-              ? legalEntityIds(scope).map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId))
-              : [],
-          ),
+    selectableLegalEntities: ({ scope }) => {
+      if (decision === 'unavailable') {
+        return Effect.fail(accessDecisionUnavailable('The scripted scope authority is unavailable'));
+      }
+      return Effect.succeed(
+        decision === 'allowed'
+          ? legalEntityIds(scope).map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId))
+          : [],
+      );
+    },
   });
 };
 

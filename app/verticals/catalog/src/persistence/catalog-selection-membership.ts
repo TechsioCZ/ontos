@@ -1,6 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { CatalogSelectionMembershipSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
@@ -78,8 +79,8 @@ export const catalogSelectionMembershipForScope = (transaction: ScopedTransactio
       Effect.mapError(unavailable),
     );
     const observedAt = DateTime.formatIso(yield* DateTime.now);
-    const crypto = yield* Crypto.Crypto;
-    const attestationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const attestationId = yield* crypto.uuidV4();
     const membership = yield* Schema.decodeEffect(CatalogSelectionMembershipSchema)({
       attestationId,
       observedAt,

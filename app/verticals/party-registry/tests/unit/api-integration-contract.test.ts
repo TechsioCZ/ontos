@@ -67,9 +67,8 @@ const operationContextRejectsIdentityMetadata: OperationContext = {
   // @ts-expect-error generic operation metadata must not admit trusted identity fields
   tenantId: 'must-not-enter-generic-operation-metadata',
 };
-void operationContextRejectsIdentityMetadata;
 const literalTypeProof: ReadinessPathRemainsLiteral & ReadinessOperationRouteRemainsLiteral = true;
-void literalTypeProof;
+export { literalTypeProof, operationContextRejectsIdentityMetadata };
 
 it('aggregates every governed read and search API beside readiness', () => {
   expect(Object.keys(partyRegistryApi.groups).toSorted()).toEqual(apiNames);

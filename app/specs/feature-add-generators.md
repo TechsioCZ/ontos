@@ -187,7 +187,7 @@ Do not add a browser test: the page scaffold intentionally has no data interacti
 Execute every command to validate the feature with zero regressions.
 
 - `mise exec -- pnpm install --frozen-lockfile` — prove the exact Codesmith pin and lockfile install cleanly with the repository-managed toolchain.
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — strictly typecheck the generator runner, entrypoints, helpers, and tests with the repository's stable TS7 compiler.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — strictly typecheck the generator runner, entrypoints, helpers, and tests with the workspace's Effect-enabled tsrs compiler.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint generator infrastructure that the existing root lint script does not scan.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run all generator unit and disposable-workspace integration tests.
 - `mise exec -- pnpm scaffold:action -- --help` — verify Action command discovery and documented flags without writing.

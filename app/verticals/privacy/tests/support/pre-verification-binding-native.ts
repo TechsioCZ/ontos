@@ -1,6 +1,7 @@
 import { trustVerifiedGatewayPrincipalContext, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { CoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   BindPreVerificationSubjectPayloadSchema,
@@ -51,9 +52,9 @@ export interface PreVerificationCall {
 const COMPOSITION_REVISION = 'e'.repeat(64);
 
 const scopeOf = Effect.fn('PrivacyPreVerificationNative.scope')(function* scope(call: PreVerificationCall) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const tenantWide = {
-    authBindingId: yield* crypto.randomUUIDv4(),
+    authBindingId: yield* crypto.uuidV4(),
     authContextRef: `fixture:pre-verification:${call.callerAppId}`,
     authenticationNamespaceId: 'core.staff',
     authMethod: 'session',
@@ -76,11 +77,14 @@ export const makePreVerificationPrivacyNative = Effect.fn('PrivacyPreVerificatio
   policies: readonly (typeof PreVerificationBindingPolicySchema.Encoded)[],
 ) {
   const decodedPolicies = yield* Schema.decodeUnknownEffect(Schema.Array(PreVerificationBindingPolicySchema))(policies);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const database = yield* CoreDatabase;
   /** Every call runs on the database and crypto the seam was built with, so a consumer transport needs nothing more. */
-  const owned = <Value, Failure>(program: Effect.Effect<Value, Failure, CoreDatabase | Crypto.Crypto>) =>
-    program.pipe(Effect.provideService(CoreDatabase, database), Effect.provideService(Crypto.Crypto, crypto));
+  const owned = <Value, Failure>(program: Effect.Effect<Value, Failure, CoreDatabase | SecureRandom.SecureRandom>) =>
+    program.pipe(
+      Effect.provideService(CoreDatabase, database),
+      Effect.provideService(SecureRandom.SecureRandom, crypto),
+    );
   return {
     /** The bind Action body: the encoded payload in, the encoded result out, or its typed rejection. */
     bind: (call: PreVerificationCall, payload: typeof BindPreVerificationSubjectPayloadSchema.Encoded) =>
@@ -90,7 +94,7 @@ export const makePreVerificationPrivacyNative = Effect.fn('PrivacyPreVerificatio
           const scope = yield* scopeOf(call);
           const result = yield* inPrivacyLedger(scope, (transaction) =>
             bindPreVerificationSubject(decoded, scope, {
-              newBindingRef: crypto.randomUUIDv4().pipe(Effect.orDie),
+              newBindingRef: crypto.uuidV4(),
               policies: decodedPolicies,
               repository: preVerificationBindingRepositoryFor(transaction, scope),
             }),

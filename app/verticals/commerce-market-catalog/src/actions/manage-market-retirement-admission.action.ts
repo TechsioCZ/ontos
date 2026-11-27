@@ -7,7 +7,7 @@ import { MarketRetirementImpactAssessmentStale } from './market-retirement-impac
 // @ontos-action-slug manage-market-retirement-admission
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import {
   ManageMarketRetirementAdmissionPayloadSchema,
   ManageMarketRetirementAdmissionResultSchema,
@@ -20,7 +20,10 @@ import type { MarketRetirementAdmissionService } from '../services/market-retire
 const handleManageMarketRetirementAdmission = Effect.fn('ManageMarketRetirementAdmission.handle')(
   function* handleManageMarketRetirementAdmission(
     payload: ManageMarketRetirementAdmissionPayload,
-    context: ActionHandlerContext<Record<never, never>, MarketRetirementAdmissionService>,
+    context: Pick<
+      ActionHandlerContext<DomainEventContractMap, MarketRetirementAdmissionService>,
+      'recordDataAccess' | 'services'
+    >,
   ) {
     const managed = yield* context.services.manage(payload);
     if (Option.isSome(managed.admissionReadCount)) {

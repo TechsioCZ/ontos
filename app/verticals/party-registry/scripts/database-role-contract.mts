@@ -477,8 +477,14 @@ const tablePolicyMismatches = (
   if (actual.length !== expected.length) {
     mismatches.push(`${qualifiedTable} has ${actual.length} policies, expected ${expected.length}`);
   }
+  const actualByName = new Map<string, PolicyRow>();
+  for (const row of actual) {
+    if (!actualByName.has(row.policy_name)) {
+      actualByName.set(row.policy_name, row);
+    }
+  }
   for (const policy of expected) {
-    const row = actual.find((candidate) => candidate.policy_name === policy.name);
+    const row = actualByName.get(policy.name);
     mismatches.push(...(row === undefined ? [`Policy ${policy.name} is missing`] : policyRowMismatches(policy, row)));
   }
   return mismatches;

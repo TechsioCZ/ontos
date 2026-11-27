@@ -28,14 +28,16 @@ export const scriptedPgClientLayer = (
         spanAttributes: [['db.system.name', 'postgresql']],
       });
       const notificationsUnavailable = Effect.die('Notifications are unavailable on a scripted PostgreSQL client');
-      const service: PgClient.PgClient = Object.assign(client, {
-        config: {},
-        json: Fn.flow(Statement.custom<PgClient.PgCustom>('PgJson'), (segment) => Statement.fragment([segment])),
-        listen: () => notificationsUnavailable,
-        notify: () => notificationsUnavailable,
-        [PgClient.TypeId]: PgClient.TypeId,
-      });
-      return service;
+      return PgClient.PgClient.of(
+        Object.assign(client, {
+          config: {},
+          json: Fn.flow(Statement.custom<PgClient.PgCustom>('PgJson'), (segment) => Statement.fragment([segment])),
+          listen: () => notificationsUnavailable,
+          notify: () => notificationsUnavailable,
+          [PgClient.TypeId]: PgClient.TypeId,
+          poolStats: Effect.succeed({ idle: 0, max: 1, min: 1, pending: 0, used: 1 }),
+        }),
+      );
     }),
   );
 

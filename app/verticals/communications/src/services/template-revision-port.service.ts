@@ -1,5 +1,6 @@
 import { Context } from 'effect';
-import type { Crypto, DateTime, Effect, Option } from 'effect';
+import type { DateTime, Effect, Option } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { TemplateRevisionListCursor } from '../../shared/template-revision-read.ts';
 import type { TemplateIdentity, TemplateScope } from '../../shared/template-revision.ts';
 import type { TemplateStoreUnavailable as TemplateStoreUnavailableClass } from '../../shared/template-revision-errors.ts';
@@ -102,15 +103,15 @@ export interface TemplateRevisionPortContract {
       /** The Legal Entity of a Legal Entity scoped Type; null for a tenant-wide Type. */
       readonly legalEntityId: string | null;
     },
-  ) => Effect.Effect<TemplateActivationRecord, TemplateStoreUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<TemplateActivationRecord, TemplateStoreUnavailable, SecureRandom.SecureRandom>;
   readonly appendInvalidation: (
     input: TemplateInvalidationRecord & { readonly actionInvocationId: string },
-  ) => Effect.Effect<void, TemplateStoreUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<void, TemplateStoreUnavailable, SecureRandom.SecureRandom>;
   /** Adds the next revision of a Type: its number is assigned under the Type lock, so numbers never collide. */
   readonly appendRevision: (
     input: Omit<TemplateRevisionRecord, 'createdAt' | 'createdByPrincipalId' | 'revisionId' | 'revisionNumber'> &
       TemplateWriteAttribution,
-  ) => Effect.Effect<TemplateRevisionRecord, TemplateStoreUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<TemplateRevisionRecord, TemplateStoreUnavailable, SecureRandom.SecureRandom>;
   /**
    * The database wall clock, read at the moment of the call. It is business time only after the Type lock is held: a
    * transaction-start time would predate the activations a concurrent writer committed while this one waited.
@@ -123,7 +124,7 @@ export interface TemplateRevisionPortContract {
   /** Creates the Type if its identity is new, then returns it locked, so concurrent writers of one Type serialize. */
   readonly ensureType: (
     input: Omit<TemplateTypeRecord, 'createdAt' | 'createdByPrincipalId' | 'templateTypeId'> & TemplateWriteAttribution,
-  ) => Effect.Effect<TemplateTypeRecord, TemplateStoreUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<TemplateTypeRecord, TemplateStoreUnavailable, SecureRandom.SecureRandom>;
   readonly findInvalidation: (
     revisionId: string,
   ) => Effect.Effect<Option.Option<TemplateInvalidationRecord>, TemplateStoreUnavailable>;

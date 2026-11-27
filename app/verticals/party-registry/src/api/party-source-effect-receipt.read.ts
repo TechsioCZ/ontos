@@ -45,9 +45,7 @@ const traceRecoveryFailure = <Failure>(failure: Failure) =>
             boundary: 'party-source-effect-receipt',
             stage: 'recover',
             failureTag: Schema.is(Schema.Struct({ _tag: Schema.String }))(failure) ? failure._tag : 'unclassified',
-            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_]{1,100}$/u)) }))(
-              failure,
-            )
+            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^\w{1,100}$/u)) }))(failure)
               ? failure.code
               : undefined,
             reason: Schema.is(

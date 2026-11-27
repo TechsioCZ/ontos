@@ -37,12 +37,13 @@ const retailPortalBindingResultIssue = (result: {
   readonly authorizationOperation?: typeof RetailPortalBindingAuthorizationOperationSchema.Type;
   readonly authorizationState?: typeof RetailPortalBindingStateSchema.Type;
   readonly state: typeof RetailPortalBindingStateSchema.Type;
-}) =>
-  (result.authorizationOperation === undefined ||
-    result.authorizationOperation === (result.state === 'ACTIVE' ? 'grant' : 'revoke')) &&
-  (result.authorizationState === undefined || result.authorizationState === result.state)
+}) => {
+  const expectedOperation = result.state === 'ACTIVE' ? 'grant' : 'revoke';
+  return (result.authorizationOperation === undefined || result.authorizationOperation === expectedOperation) &&
+    (result.authorizationState === undefined || result.authorizationState === result.state)
     ? undefined
     : 'Retail binding authorization must match the binding state';
+};
 
 export const RetailPortalBindingResultSchema = Schema.Struct({
   authorizationOperation: Schema.optionalKey(RetailPortalBindingAuthorizationOperationSchema),

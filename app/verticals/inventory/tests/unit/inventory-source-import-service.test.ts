@@ -1,7 +1,7 @@
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import type { ActionHandlerContext, DataAccessEventInput } from '@app/core-runtime';
+import type { DataAccessEventInput } from '@app/core-runtime';
 import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
@@ -23,7 +23,6 @@ import {
   importSourceAssertionAction,
 } from '../../src/actions/import-source-assertion.action.ts';
 import { makeInventorySourceImportService } from '../../src/services/inventory-source-import.service.ts';
-import type { InventorySourceImportOperations } from '../../src/services/inventory-source-import.service.ts';
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -49,7 +48,6 @@ const positionRef = {
 };
 const configuration = Schema.decodeUnknownSync(InventoryBackendConfigurationSchema)({
   configurationId: '88888888-8888-4888-8888-888888888888',
-  customerConfigurationId,
   revision: 1,
   selectedAt: '2026-09-24T09:00:00.000Z',
   selection: {
@@ -58,6 +56,7 @@ const configuration = Schema.decodeUnknownSync(InventoryBackendConfigurationSche
     exactReservationCapability: 'SUPPORTED',
     stockCorrectionCapability: 'UNSUPPORTED',
   },
+  customerConfigurationId,
   tenantId,
 });
 
@@ -68,33 +67,33 @@ const proposal = (revision: number, input?: Partial<typeof InventorySourceAssert
     assertionId: uuidFor(revision),
     businessObservedAt: `2026-09-24T10:${String(revision % 60).padStart(2, '0')}:00.000Z`,
     coverage: [],
-    customerConfigurationId,
     factMeaning: 'ABSOLUTE_PHYSICAL_ON_HAND',
     issuer: { backendId: 'erp-a', backendKind: 'external_business_system' },
     itemExternalKey: {
-      customerConfigurationId,
       externalScope: 'warehouse:prague',
       externalValue: 'ITEM-123',
       identifierKind: 'ITEM',
       issuer: { backendId: 'erp-a', backendKind: 'external_business_system' },
       namespace: 'inventory',
+      customerConfigurationId,
       tenantId,
     },
     locationExternalKey: {
-      customerConfigurationId,
       externalScope: 'warehouse:prague',
       externalValue: 'LOC-123',
       identifierKind: 'LOCATION',
       issuer: { backendId: 'erp-a', backendKind: 'external_business_system' },
       namespace: 'inventory',
+      customerConfigurationId,
       tenantId,
     },
     orderingEvidence: { _tag: 'SOURCE_REVISION', revision: String(revision) },
     ownerEvidenceRef: `erp-a:snapshot:${revision}`,
-    positionRef,
     quantity: { amount: String(revision), unitRef },
     receivedAt: '2026-09-24T12:00:00.000Z',
     sourceReference: `erp-a:warehouse:prague:snapshot:${revision}`,
+    customerConfigurationId,
+    positionRef,
     ...input,
   });
 
@@ -248,11 +247,10 @@ describe('Inventory source import service', () => {
           stale: 0,
         },
       };
-      const context: ActionHandlerContext<Readonly<Record<never, never>>, InventorySourceImportOperations> = {
+      const context: Parameters<typeof handleImportSourceAssertion>[1] = {
         actionInvocationId: actionId,
         addDomainEvent: () => Effect.die(new Error('unexpected domain event')),
         addOutboxMessage: () => Effect.die(new Error('unexpected outbox message')),
-        compositionRevision,
         recordAuditEvidence: () => Effect.die(new Error('unexpected audit evidence')),
         recordDataAccess: (access) =>
           Effect.sync(() => {
@@ -270,6 +268,7 @@ describe('Inventory source import service', () => {
           compositionRevision,
         ),
         services: { importBatch: () => Effect.succeed(expected) },
+        compositionRevision,
       };
 
       const result = yield* handleImportSourceAssertion(

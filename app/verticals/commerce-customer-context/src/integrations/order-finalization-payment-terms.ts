@@ -2,7 +2,7 @@ import { OperationContextUnavailable, ReadHandlerUnavailable } from '@app/core-r
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { DateTime, Effect, Schema, Predicate } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { PaymentTermsResolutionRequestSchema } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PaymentTermsResolutionResponse } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
@@ -84,7 +84,7 @@ export const resolveOrderFinalizationPaymentTerms = Effect.fn('OrderFinalization
   ): Effect.fn.Return<
     PaymentTermsResolutionResponse,
     ReadHandlerUnavailable | OperationContextUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   > {
     const { legalEntityId } = actualScope;
     if (legalEntityId === undefined) {

@@ -34,9 +34,9 @@ const approvalFailure = (error: ClientFailure): ApprovalClientFailure =>
     ),
   });
 
-export const createApprovalKey: Effect.Effect<string, ApprovalClientFailure> = Effect.suspend(() =>
+export const createApprovalKey: Effect.Effect<string> = Effect.suspend(() =>
   createAccessAdministrationIdempotencyKey(),
-).pipe(Effect.catchTag('PlatformError', () => Effect.fail(new ApprovalClientFailure({ reason: 'unavailable' }))));
+);
 
 /** Native Shell BFF only; execution availability is server-projected and rechecked by the execute endpoint. */
 export const approvalsClient: ApprovalsClient = {

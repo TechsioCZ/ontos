@@ -12,7 +12,8 @@ import { requireModuleOperation } from '@app/core-runtime';
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, DateTime, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
 import { sameAmount } from '../domain/money.ts';
@@ -178,7 +179,7 @@ const requirementFor = (consumer: PaymentTermOwnerCall['consumer'], subject: 'PR
 
 /** The actual Payment-to-CCC path. CCC resolves the reusable C15 semantics and its own Current policy. */
 const makeGovernedPaymentTermEvidence = Effect.fn('PaymentTermEvidence.makeGoverned')(function* makeGoverned() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const purchasing = yield* PaymentPurchaseEvidencePort;
   const { acquire, executeGuest, executeProfile } = yield* PaymentTermOwnerTransport;
   const verifyTermUse = Effect.fn('PaymentTermEvidence.verifyTermUse')(function* verifyTermUse(input: VerifyInput) {

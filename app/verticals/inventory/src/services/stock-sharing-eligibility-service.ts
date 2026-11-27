@@ -1,4 +1,3 @@
-import type { PlatformError } from 'effect';
 import { Effect, Option, Schema } from 'effect';
 
 import {
@@ -17,16 +16,6 @@ import type {
   StockSharingEligibilityPersistence,
   StockSharingEligibilitySubject,
 } from '../../shared/domain/stock-sharing-eligibility.ts';
-import { StockSharingEligibilityUnavailable } from '../../shared/domain/stock-sharing-eligibility-unavailable.ts';
-
-const eligibilityIdentityUnavailable = (cause: PlatformError.PlatformError) =>
-  Object.assign(
-    new StockSharingEligibilityUnavailable({
-      code: 'stock_sharing_eligibility_unavailable',
-      reason: 'Stock Sharing Eligibility persistence or owner validation is temporarily unavailable',
-    }),
-    { cause },
-  );
 
 const rejected = (reason: StockSharingEligibilityRejected['reason'], relationRef?: StockSharingEligibility['ref']) =>
   relationRef === undefined
@@ -116,7 +105,7 @@ export const makeStockSharingEligibilityEvaluator = (persistence: StockSharingEl
 
 export const makeStockSharingEligibilityService = (dependencies: {
   readonly commerceValidator: StockSharingCommerceScopeValidator;
-  readonly makeEligibilityId: Effect.Effect<string, PlatformError.PlatformError>;
+  readonly makeEligibilityId: Effect.Effect<string>;
   readonly persistence: StockSharingEligibilityPersistence;
 }) => {
   const { commerceValidator, makeEligibilityId, persistence } = dependencies;
@@ -176,7 +165,7 @@ export const makeStockSharingEligibilityService = (dependencies: {
       if (current.some((relation) => sameSubject(relation.subject, input.subject))) {
         return yield* rejected('DUPLICATE_CURRENT_RELATION');
       }
-      const relationId = yield* makeEligibilityId.pipe(Effect.mapError(eligibilityIdentityUnavailable));
+      const relationId = yield* makeEligibilityId;
       const relation = yield* candidate(input, commerceValidation, relationId);
       return yield* persistence.insertCurrent(relation);
     }),

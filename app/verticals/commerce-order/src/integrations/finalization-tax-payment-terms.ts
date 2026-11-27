@@ -14,7 +14,8 @@ import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-c
 import { executeCurrentPaymentTermsWithAuthorization } from '@app/payment-term-catalog-contracts/current-payment-terms/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { executeFinalizeOrderTaxWithAuthorization, executeFinalOrderTaxWithAuthorization } from '@app/tax/api/client';
-import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import { delegationSubject } from '../services/order-module-call.ts';
 import type { OrderFinalizationCall } from '../services/order-module-call.ts';
@@ -109,7 +110,7 @@ export const FinalizationTaxPaymentTermsLive = Layer.effect(
   FinalizationTaxPaymentTerms,
   Effect.gen(function* finalizationTaxPaymentTermsLayer() {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('FinalizationTaxPaymentTerms.credential')(function* credential(
       audience: 'tax' | 'payment-term-catalog' | 'commerce-customer-context',

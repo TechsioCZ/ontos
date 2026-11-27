@@ -1,5 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Deferred, Effect, Exit, Fiber, Layer } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -10,13 +11,15 @@ import {
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
 
-it.layer(Layer.mergeAll(NodeServices.layer, TestClock.layer()), { excludeTestServices: true })(
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(Layer.mergeAll(nativeServices, TestClock.layer()), { excludeTestServices: true })(
   'Native source execution fence',
   (suite) => {
     suite.effect('orders enrollment deactivation with receiving writes and only reopens the exact enrollment', () =>
       Effect.scoped(
         Effect.gen(function* gateRevocationBarrier() {
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
             makeOutboxWorkerComposition([
               { appId: 'source-gate-proof', buildMarker: 'source-gate-proof', moduleId: 'core.shell' },
@@ -30,11 +33,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, TestClock.layer()), { excludeTestSer
           const admin = yield* makeTestPgClient(fixture.connections.admin.connectionString);
           const publisher = yield* makeTestPgSession(fixture.connections.admin.connectionString);
           const owner = yield* makeTestPgSession(fixture.connections.runtime.connectionString);
-          const tenantId = yield* crypto.randomUUIDv4();
-          const gateId = yield* crypto.randomUUIDv4();
-          const legacyAdmissionId = yield* crypto.randomUUIDv4();
-          const freshAdmissionId = yield* crypto.randomUUIDv4();
-          const principalId = yield* crypto.randomUUIDv4();
+          const tenantId = yield* crypto.uuidV4();
+          const gateId = yield* crypto.uuidV4();
+          const legacyAdmissionId = yield* crypto.uuidV4();
+          const freshAdmissionId = yield* crypto.uuidV4();
+          const principalId = yield* crypto.uuidV4();
           const actionKey = 'core.shell.admit-gated-fixture';
           const ownerKey = 'core.shell';
           const publishStatement = 'select trust.publish_source_execution_gate($1,$2,$3,$4,null,$5,$6,$7,$8)';
@@ -184,7 +187,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, TestClock.layer()), { excludeTestSer
       () =>
         Effect.scoped(
           Effect.gen(function* sourceExecutionFenceBarrier() {
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
             const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
               makeOutboxWorkerComposition([
                 { appId: 'source-fence-proof', buildMarker: 'source-fence-proof', moduleId: 'core.shell' },
@@ -199,10 +202,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, TestClock.layer()), { excludeTestSer
             const owner = yield* makeTestPgSession(fixture.connections.runtime.connectionString);
             const retention = yield* makeTestPgSession(fixture.connections.runtime.connectionString);
             const proofReader = yield* makeTestPgSession(fixture.connections.runtime.connectionString);
-            const tenantId = yield* crypto.randomUUIDv4();
-            const otherTenant = yield* crypto.randomUUIDv4();
-            const admissionId = yield* crypto.randomUUIDv4();
-            const originalPrincipalId = yield* crypto.randomUUIDv4();
+            const tenantId = yield* crypto.uuidV4();
+            const otherTenant = yield* crypto.uuidV4();
+            const admissionId = yield* crypto.uuidV4();
+            const originalPrincipalId = yield* crypto.uuidV4();
             yield* admin.unsafe(
               "insert into core.tenants(tenant_id,slug,name,status,default_locale) values($1,$2,'Fence proof','active','cs')",
               [tenantId, `fence-${tenantId}`],
@@ -341,7 +344,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, TestClock.layer()), { excludeTestSer
                 expect(
                   yield* proofReader.unsafe('select * from trust.read_source_execution_fence($1,$2)', [
                     tenantId,
-                    yield* crypto.randomUUIDv4(),
+                    yield* crypto.uuidV4(),
                   ]),
                 ).toEqual([]);
                 yield* proofReader.unsafe("select set_config('ontos.legal_entity_id',$1,true)", [originalPrincipalId]);

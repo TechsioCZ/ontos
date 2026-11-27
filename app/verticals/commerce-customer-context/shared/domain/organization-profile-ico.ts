@@ -8,8 +8,8 @@ import { ProfileInstantSchema } from './profile-contracts.ts';
 const UuidSchema = Schema.toEncoded(
   Schema.String.check(Schema.isUUID()).pipe(Schema.brand('OrganizationProfileIcoOpaqueId')),
 );
-const DigitsSchema = Schema.String.check(Schema.isPattern(/^[0-9]{1,8}$/u));
-const NormalizedSchema = Schema.String.check(Schema.isPattern(/^[0-9]{8}$/u));
+const DigitsSchema = Schema.String.check(Schema.isPattern(/^\d{1,8}$/u));
+const NormalizedSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u));
 const RevisionSchema = Schema.Int.check(Schema.isGreaterThan(0));
 export const ORGANIZATION_PROFILE_ICO_FIELD_CONTRACT_VERSION =
   'commerce.customer-context.organization-ico-business-fields.v1';
@@ -67,7 +67,7 @@ const writeFields = {
 const numericFields = {
   identifier: OfficialIdentifierInputSchema.check(
     Schema.makeFilter((value) =>
-      value.identifierType === 'ICO' && /^[0-9]{1,8}$/u.test(value.value)
+      value.identifierType === 'ICO' && /^\d{1,8}$/u.test(value.value)
         ? undefined
         : 'Only numeric Czech ICO input is in this field contract',
     ),

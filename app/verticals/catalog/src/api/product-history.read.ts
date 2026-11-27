@@ -7,7 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { CatalogRevisionLookupResultSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 
 import { ProductHistoryRequestSchema, ProductHistoryResponseSchema } from '../../shared/apis/product-history.ts';
@@ -55,7 +55,7 @@ export const readProductHistory = Effect.fn('ProductHistoryRead.read')(function*
   input: ProductHistoryRequest,
   trustedTenantId: string,
   services: CatalogPersistence & Pick<LocalizedFactsReads, 'productHistory'>,
-): Effect.fn.Return<ProductHistoryResponse, ReadHandlerNotFound | ReadHandlerUnavailable, Crypto.Crypto> {
+): Effect.fn.Return<ProductHistoryResponse, ReadHandlerNotFound | ReadHandlerUnavailable, SecureRandom.SecureRandom> {
   if (input.productRef.tenantId !== trustedTenantId) {
     return yield* notFound();
   }

@@ -2,6 +2,7 @@ import { expect, it } from 'effect-rstest';
 import { Option, Predicate, Schema } from 'effect';
 
 import { orderPreparationInput } from '../support/order-preparation-input.ts';
+import { OrderTaxCandidateSchema } from '../../shared/domain/order-finalization-evidence.ts';
 import {
   OrderPurchaseValueUnresolvable,
   frozenPurchaseValueAccessAmount,
@@ -10,15 +11,18 @@ import {
 
 const governedAmount = (input = orderPreparationInput()) => purchaseValueAccessAmount(input.taxCandidate);
 
-const publishedLines = (input: ReturnType<typeof orderPreparationInput>) => input.taxCandidate.pricing.publishedLines;
+const publishedLines = (input: ReturnType<typeof orderPreparationInput>) =>
+  Schema.encodeSync(OrderTaxCandidateSchema)(input.taxCandidate).pricing.publishedLines;
 
-const lineValue = (input: ReturnType<typeof orderPreparationInput>, index: number) => {
+const publishedLine = (input: ReturnType<typeof orderPreparationInput>, index: number) => {
   const line = publishedLines(input)[index];
   if (line === undefined) {
     throw new Error(`The fixture has no published Pricing line ${index}`);
   }
-  return line.lineCommercialValue;
+  return line;
 };
+const lineValue = (input: ReturnType<typeof orderPreparationInput>, index: number) =>
+  publishedLine(input, index).lineCommercialValue;
 
 it('derives the governed purchase value from the published net Pricing line values', () => {
   expect(governedAmount()).toEqual({ currency: 'CZK', minor: 100_000 });
@@ -31,7 +35,7 @@ it('sums every published net line exactly, including sub-unit fractional line va
       ...candidate.pricing,
       publishedLines: [
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: {
             amount: { denominator: '1', numerator: '1000' },
             amountBasis: 'NET',
@@ -39,7 +43,7 @@ it('sums every published net line exactly, including sub-unit fractional line va
           },
         },
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: {
             amount: { denominator: '2', numerator: '1' },
             amountBasis: 'NET',
@@ -62,7 +66,7 @@ it('refuses a purchase whose published lines do not state one net value in one c
       publishedLines: [
         ...candidate.pricing.publishedLines,
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: {
             amount: { denominator: '1', numerator: '10' },
             amountBasis: 'NET',
@@ -82,7 +86,7 @@ it('refuses a purchase whose published lines do not state one net value in one c
       ...candidate.pricing,
       publishedLines: [
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: { ...lineValue(orderPreparationInput(), 0), amountBasis: 'GROSS' },
         },
       ],
@@ -98,7 +102,7 @@ it('rounds a value that is not representable in minor units up, so a ceiling is 
       ...candidate.pricing,
       publishedLines: [
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: {
             amount: { denominator: '3', numerator: '1' },
             amountBasis: 'NET',
@@ -162,7 +166,7 @@ const singleLine = (currency: string, numerator: string, denominator = '1') =>
       ...candidate.pricing,
       publishedLines: [
         {
-          ...publishedLines(orderPreparationInput())[0],
+          ...publishedLine(orderPreparationInput(), 0),
           lineCommercialValue: { amount: { denominator, numerator }, amountBasis: 'NET', currency },
         },
       ],

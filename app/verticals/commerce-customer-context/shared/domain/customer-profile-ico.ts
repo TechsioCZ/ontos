@@ -47,7 +47,7 @@ export const CustomerProfileIcoAssertionSchema = Schema.Struct({
   ),
   effectId: ProfileBoundedKeySchema,
   effectiveAt: ProfileInstantSchema,
-  normalizedValue: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^[0-9]{8}$/u)))),
+  normalizedValue: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^\d{8}$/u)))),
   normalizerVersion: Schema.toEncoded(Schema.OptionFromNullOr(Schema.Literal('CZ:ICO:party-v1'))),
   operation: Schema.Literals(['SET', 'CORRECT', 'END']),
   originalInput: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),

@@ -1,8 +1,9 @@
-/* oxlint-disable typescript/consistent-return, typescript/no-unsafe-argument -- Existing compatibility boundary; expires: 2026-12-31. */
+/* oxlint-disable typescript/consistent-return -- Existing compatibility boundary; expires: 2026-12-31. */
 const { existsSync } = process.getBuiltinModule('node:fs');
 const path = process.getBuiltinModule('node:path');
 const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
 
+/** @param {string} name - Ambient environment variable name. */
 const environmentValue = (name) => {
   const variableDescriptor =
     ambientEnvironmentDescriptor === undefined
@@ -11,10 +12,12 @@ const environmentValue = (name) => {
   return variableDescriptor === undefined ? undefined : String(variableDescriptor.value);
 };
 
+/** @param {string} candidate - Directory to inspect for workspace files. */
 const isAppWorkspace = (candidate) =>
   existsSync(path.join(candidate, 'pnpm-workspace.yaml')) &&
   existsSync(path.join(candidate, 'packages/core-runtime/package.json'));
 
+/** @param {string} startDirectory - Directory from which to find the workspace. */
 const resolveAppWorkspaceRootSync = (startDirectory) => {
   let candidate = path.resolve(startDirectory);
   while (true) {
@@ -38,9 +41,12 @@ const resolveAppWorkspaceRootSync = (startDirectory) => {
  * @returns {{ APP_ENV_PATH: string, APP_WORKSPACE_ROOT: string }} The resolved workspace paths.
  */
 const resolveWorkspaceEnvironmentSync = (candidates) => {
-  const usableCandidates = candidates.filter((candidate) => candidate !== undefined && candidate.length > 0);
   const APP_WORKSPACE_ROOT =
-    usableCandidates.map(resolveAppWorkspaceRootSync).find((candidate) => candidate !== undefined) ?? candidates[1];
+    candidates
+      .map((candidate) =>
+        candidate === undefined || candidate.length === 0 ? undefined : resolveAppWorkspaceRootSync(candidate),
+      )
+      .find((candidate) => candidate !== undefined) ?? candidates[1];
   const explicitEnvironmentPath = environmentValue('APP_ENV_PATH');
   return {
     APP_ENV_PATH:

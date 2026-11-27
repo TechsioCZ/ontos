@@ -1,5 +1,6 @@
 import { Context } from 'effect';
-import type { Crypto, DateTime, Effect, Option } from 'effect';
+import type { DateTime, Effect, Option } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { LanguageMode } from '../../shared/language-policy.ts';
 import type { LanguagePolicyStoreUnavailable as LanguagePolicyStoreUnavailableClass } from '../../shared/language-policy-errors.ts';
 
@@ -29,7 +30,7 @@ export interface LanguagePolicyPortContract {
     readonly mode: LanguageMode;
     readonly principalId: string;
     readonly setAt: DateTime.Utc;
-  }) => Effect.Effect<LanguageModeVersionRecord, LanguagePolicyStoreUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<LanguageModeVersionRecord, LanguagePolicyStoreUnavailable, SecureRandom.SecureRandom>;
   /** The database wall clock now; only meaningful for business time once the Tenant lock is held. */
   readonly clockNow: Effect.Effect<DateTime.Utc, LanguagePolicyStoreUnavailable>;
   /** The Tenant's latest own choice; none is a proven absence of an own choice, not an unreadable setting. */

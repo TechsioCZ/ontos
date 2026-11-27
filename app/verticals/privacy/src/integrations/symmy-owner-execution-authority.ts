@@ -3,7 +3,8 @@ import { readVerifiedGatewayPrivacyDispatch } from '@app/core-runtime/auth/syste
 import { executeSymmyJobPrivacyExecutionWithAuthorization } from '@app/symmy-integration/api/symmy-job-privacy-execution/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -37,7 +38,7 @@ const symmyReceiptRequirement = 'privacy.core.requirement.symmy-owner-execution-
 
 export const fingerprintSymmyOwnerHandoff = Effect.fn('Privacy.SymmyOwnerReceipt.fingerprint')(function* fingerprint(
   handoff: PrivacyMeasureHandoff,
-  crypto: Crypto.Crypto,
+  digest: Digest.Digest['Service'],
 ) {
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHandoffSchema))({
     ...handoff,
@@ -46,9 +47,7 @@ export const fingerprintSymmyOwnerHandoff = Effect.fn('Privacy.SymmyOwnerReceipt
     preconditionRefs: handoff.preconditionRefs.toSorted(),
     resourceRefs: handoff.resourceRefs.toSorted(),
   }).pipe(Effect.mapError(unavailable));
-  return Hex.encode(
-    yield* crypto.digest('SHA-256', new TextEncoder().encode(encoded)).pipe(Effect.mapError(unavailable)),
-  );
+  return Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(encoded)));
 });
 interface ReceiptTransport {
   readonly authorization: Redacted.Redacted;
@@ -61,7 +60,7 @@ export const resolveSymmyOwnerExecutionReceipt = Effect.fn('Privacy.SymmyOwnerRe
   request: OwnerExecutionOutcomeRequest,
   context: OwnerExecutionAuthorityContext,
   transport: ReceiptTransport,
-  crypto: Crypto.Crypto,
+  digest: Digest.Digest['Service'],
 ) {
   const { handoff, scope } = context;
   if (
@@ -85,7 +84,7 @@ export const resolveSymmyOwnerExecutionReceipt = Effect.fn('Privacy.SymmyOwnerRe
     return yield* unavailable();
   }
   const receipt = result.value;
-  if (receipt.handoffFingerprint !== (yield* fingerprintSymmyOwnerHandoff(handoff, crypto))) {
+  if (receipt.handoffFingerprint !== (yield* fingerprintSymmyOwnerHandoff(handoff, digest))) {
     return yield* conflict('Symmy receipt does not attest the exact complete Privacy handoff');
   }
   const authority = yield* Schema.decodeUnknownEffect(OwnerExecutionAuthorityResultSchema)({
@@ -110,7 +109,8 @@ export const resolveSymmyOwnerExecutionReceipt = Effect.fn('Privacy.SymmyOwnerRe
 export const SymmyOwnerExecutionAuthorityLive = Layer.effect(
   OwnerExecutionAuthority,
   Effect.gen(function* make() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     return OwnerExecutionAuthority.of({
       resolve: Effect.fn('Privacy.SymmyOwnerExecutionAuthority.resolve')(function* resolve(request, context) {
         if (context.handoff.owningCapability !== 'integration.symmy') {
@@ -172,7 +172,7 @@ export const SymmyOwnerExecutionAuthorityLive = Layer.effect(
             baseUrl: issued.apiBaseUrl,
             compositionRevision: issued.compositionRevision,
           },
-          crypto,
+          digest,
         );
       }),
     });

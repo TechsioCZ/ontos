@@ -1,5 +1,5 @@
 import { Effect, Match, Schema } from 'effect';
-import type { Config, PlatformError } from 'effect';
+import type { Config } from 'effect';
 
 import { AccessRoleEditPayloadSchema } from '../../../../shared/access-admin-api.ts';
 import type { PreviewAccessRoleEditResponse } from '../../../../shared/access-admin-api.ts';
@@ -11,9 +11,7 @@ import {
 import type { AccessAdministrationClientError } from '../../../api/auth-client.ts';
 import type { RolePreviewView } from './model.ts';
 
-export const roleErrorStatus = (
-  error: AccessAdministrationClientError | Config.ConfigError | PlatformError.PlatformError,
-) =>
+export const roleErrorStatus = (error: AccessAdministrationClientError | Config.ConfigError) =>
   Match.value(error).pipe(
     Match.tag('AccessAdminAuthenticationRequired', () => 'unauthenticated' as const),
     Match.tag('AccessAdminForbidden', () => 'forbidden' as const),
@@ -24,14 +22,13 @@ export const roleErrorStatus = (
       'AccessAdminInternal',
       'HttpClientError',
       'SchemaError',
-      'PlatformError',
       'ConfigError',
       () => 'unavailable' as const,
     ),
     Match.exhaustive,
   );
 
-export const roleFormErrorStatus = (error: AccessAdministrationClientError | PlatformError.PlatformError) =>
+export const roleFormErrorStatus = (error: AccessAdministrationClientError) =>
   Match.value(error).pipe(
     Match.tag('SchemaError', () => 'invalid' as const),
     Match.orElse(roleErrorStatus),

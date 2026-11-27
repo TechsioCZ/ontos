@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   deliveryDestinationPortsForTransaction,
   composeAddressExternalResolutionPorts,
@@ -13,7 +14,7 @@ type InvoiceRecipientReadServices = ReturnType<typeof invoiceRecipientPortsForTr
 
 type AddressExternalResolutionPortsFactory = (
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   requirementKey:
     | 'commerce.customer-context.requirement.delivery-destination-resolution-party'
     | 'commerce.customer-context.requirement.invoice-recipient-resolution-party',
@@ -25,10 +26,10 @@ const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scop
 
 const makeDeliveryDestinationReadServiceFactory = (
   externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
-): ReadServiceFactory<DeliveryDestinationReadServices, Crypto.Crypto> =>
+): ReadServiceFactory<DeliveryDestinationReadServices, SecureRandom.SecureRandom> =>
   Effect.fn('AddressReadSupport.makeDeliveryDestinationReadServiceFactory')(
     function* deliveryDestinationServices(transaction, scope) {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       return deliveryDestinationPortsForTransaction(
         transaction,
         scope,
@@ -47,10 +48,10 @@ export const deliveryDestinationReadServiceFactory = makeDeliveryDestinationRead
 
 const makeInvoiceRecipientReadServiceFactory = (
   externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
-): ReadServiceFactory<InvoiceRecipientReadServices, Crypto.Crypto> =>
+): ReadServiceFactory<InvoiceRecipientReadServices, SecureRandom.SecureRandom> =>
   Effect.fn('AddressReadSupport.makeInvoiceRecipientReadServiceFactory')(
     function* invoiceRecipientServices(transaction, scope) {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       return invoiceRecipientPortsForTransaction(
         transaction,
         scope,

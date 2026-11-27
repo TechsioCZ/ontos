@@ -197,7 +197,7 @@ Reuse the prerequisite CRM BFF integration coverage for governed Customer reads,
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — typecheck the approved dynamic-page generator and its tests.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — typecheck the approved dynamic-page generator and its tests.
 - `mise exec -- node --test scripts/scaffolding/tests/scaffold-generators.test.mts` — prove dynamic generation, collisions, reruns, and atomic failure in disposable workspaces.
 - `mise exec -- pnpm --filter @app/crm test:unit` — run CRM route/client/view-model and existing schema unit contracts.
 - `mise exec -- pnpm --filter @app/crm test:component` — validate the Customer-detail query, UI-kit presentation, states, retry, localization, semantics, and accessibility.

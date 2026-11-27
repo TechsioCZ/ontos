@@ -14,7 +14,8 @@ import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { OpenApi } from 'effect/http-api';
 import { expect, it } from 'effect-rstest';
@@ -62,7 +63,7 @@ it.live('recovers only the operator’s exact policy invocation without executin
     const credential = Effect.fn('InventoryPolicyRecoveryTest.credential')(function* credential(
       legalEntityId?: string,
     ) {
-      const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const jti = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       const now = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
       const token = yield* Effect.promise(() =>
         new SignJWT({

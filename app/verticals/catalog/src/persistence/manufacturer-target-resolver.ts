@@ -9,7 +9,7 @@ import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
 import type { CallOutcome } from '@app/core-runtime/sdk';
 import type { LegalEntityDetailResponseSchema } from '@app/core-runtime/sdk/core';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
@@ -246,7 +246,7 @@ export const manufacturerTargetResolverForCoreRead = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- Action factory resolves ReadRuntime from Context and binds it here to the target resolver's owner-read port.
   readRuntime: ReadRuntimeService,
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   requirementKey?:
     | 'commerce.catalog.requirement.set-product-manufacturer-party'
     | 'commerce.catalog.requirement.change-product-manufacturer-party',

@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, FileSystem, Option } from 'effect';
+import { Effect, FileSystem, Option, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -472,8 +473,8 @@ const accessRlsProgram = Effect.gen(function* accessTenantIsolation() {
   // statement, so every probe gets its own transaction on this connection.
   const runtime = yield* makeTestPgSession(connections.runtime.connectionString);
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const schemaName = `access_rls_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const schemaName = `access_rls_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const schema = `"${schemaName}"`;
   const table = (name: TenantTable | (typeof CATALOG_TABLES)[number]) => `${schema}."${name}"`;
   const catalogSnapshotId = uid(600);
@@ -698,7 +699,9 @@ const accessRlsProgram = Effect.gen(function* accessTenantIsolation() {
   }
 });
 
-it.layer(NodeServices.layer)('the access intent tables isolate tenants', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the access intent tables isolate tenants', (suite) => {
   suite.effect(
     'refuses every cross-tenant read, insert, update and delete and allows the same write inside',
     Effect.fnUntraced(function* accessTenantIsolationEffect() {

@@ -6,7 +6,8 @@ import {
 } from '@app/privacy/api/organization-business-applicability';
 import { executeOrganizationBusinessApplicabilityWithAuthorization } from '@app/privacy/api/organization-business-applicability/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
 import { validateOrganizationBusinessDecision } from './organization-business-decision.ts';
@@ -44,7 +45,7 @@ const unavailable = (cause: unknown) =>
 export const commerceOrganizationBusinessEligibilityLive = Layer.effect(
   CommerceOrganizationBusinessEligibility,
   Effect.gen(function* organizationBusinessEligibility() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       check: Effect.fn('CommerceOrganizationBusinessEligibility.check')(
         function* check(scope, input, operationRequirementKey) {

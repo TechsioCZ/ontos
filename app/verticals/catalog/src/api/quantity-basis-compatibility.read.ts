@@ -2,7 +2,7 @@
 import type { ReadLoadContext } from '@app/core-runtime';
 import { ReadHandlerNotFound, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { QuantityBasisCompatibilityRequestSchema } from '@app/catalog-selection-contracts/quantity-basis-compatibility';
 import { QuantityBasisCompatibilityResponseSchema } from '../../shared/apis/quantity-basis-compatibility.ts';
@@ -29,7 +29,7 @@ export const readQuantityBasisCompatibility = Effect.fn('QuantityBasisCompatibil
     input: QuantityBasisCompatibilityRequest,
     tenantId: string,
     services: ReturnType<typeof catalogQuantityHandoffForScope>,
-  ): Effect.fn.Return<QuantityBasisCompatibilityResponse, ReadHandlerNotFound, Crypto.Crypto> {
+  ): Effect.fn.Return<QuantityBasisCompatibilityResponse, ReadHandlerNotFound, SecureRandom.SecureRandom> {
     if (input.handoff.selection.productRef.tenantId !== tenantId) {
       return yield* new ReadHandlerNotFound({
         code: 'read_handler_not_found',

@@ -27,7 +27,8 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Crypto, Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -130,7 +131,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 const assortmentFixtureOwnerCurrentnessLive = Layer.effect(
   AssortmentFixtureOwnerCurrentness,
   Effect.gen(function* assortmentOwnerOverlay() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const client = yield* HttpClient.HttpClient;
     return {
       check: (scope, at, fingerprint) =>

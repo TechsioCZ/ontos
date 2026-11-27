@@ -25,18 +25,15 @@ const InventoryWidgetContent = () => {
   );
 };
 
-const InventoryWidget = (_props: Record<string, never>) => {
-  void _props;
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="inventory"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <InventoryWidgetContent />
-    </FederatedI18nBoundary>
-  );
-};
+const InventoryWidget = (_props: Record<string, never>) => (
+  <FederatedI18nBoundary
+    defaultNamespace="inventory"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <InventoryWidgetContent />
+  </FederatedI18nBoundary>
+);
 
 export default InventoryWidget;

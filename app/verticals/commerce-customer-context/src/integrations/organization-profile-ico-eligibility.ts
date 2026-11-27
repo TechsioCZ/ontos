@@ -7,7 +7,8 @@ import {
 import type { OrganizationProfileIcoApplicabilityRequest } from '@app/privacy/api/organization-profile-ico-applicability';
 import { executeOrganizationProfileIcoApplicabilityWithAuthorization } from '@app/privacy/api/organization-profile-ico-applicability/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   ORGANIZATION_PROFILE_ICO_FIELDS,
   OrganizationProfileIcoRejected,
@@ -40,7 +41,7 @@ const unavailable = (cause: unknown) =>
 export const commerceOrganizationProfileIcoEligibilityLive = Layer.effect(
   CommerceOrganizationProfileIcoEligibility,
   Effect.gen(function* organizationIcoEligibility() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       check: Effect.fn('OrganizationProfileIcoEligibility.check')(function* check(scope, input, requirementKey) {
         yield* requireModuleOperation(requirementKey).pipe(Effect.mapError(unavailable));

@@ -11,7 +11,7 @@ import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -275,7 +275,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
 ): Effect.fn.Return<
   StageAccountsBootstrapResult,
   StageAccountsBootstrapError,
-  AuthDatabase | Crypto.Crypto | InstallationRuntime
+  AuthDatabase | SecureRandom.SecureRandom | InstallationRuntime
 > {
   const { accountsFile } = configuration;
   const accountConfigurations = accountsFile.tenants.flatMap(({ accounts }) =>
@@ -347,7 +347,7 @@ export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBoo
   ): Effect.fn.Return<
     StageAccountsBootstrapResult,
     StageAccountsBootstrapError,
-    AuthDatabase | Crypto.Crypto | InstallationRuntime
+    AuthDatabase | SecureRandom.SecureRandom | InstallationRuntime
   > {
     const configuration = yield* loadStageAccountsConfiguration(readAccountsFile);
     return yield* bootstrapStageAccounts(configuration, { modules: input.modules });

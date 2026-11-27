@@ -28,7 +28,7 @@ import { StockCorrectionRejected } from './stock-correction-rejected.ts';
 import { StockCorrectionUnavailable } from './stock-correction-unavailable.ts';
 
 const instant = Schema.toEncoded(Schema.DateTimeUtcFromString);
-const signedCanonicalDecimal = /^(?:0|-?[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/u;
+const signedCanonicalDecimal = /^(?:0|-?[1-9]\d*)(?:\.\d*[1-9])?$/u;
 const boundedEvidenceText = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300));
 
 export const SignedStockQuantityDeltaSchema = Schema.String.check(
@@ -228,9 +228,17 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
   }
   const padded = unsigned.toString().padStart(scale + 1, '0');
   const integer = padded.slice(0, -scale);
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const rawFraction = padded.slice(-scale);
+  let fractionEnd = rawFraction.length;
+  while (rawFraction[fractionEnd - 1] === '0') {
+    fractionEnd -= 1;
+  }
+  const fraction = rawFraction.slice(0, fractionEnd);
   const value = fraction.length === 0 ? integer : `${integer}.${fraction}`;
-  return value === '0' ? value : `${negative ? '-' : ''}${value}`;
+  if (value === '0') {
+    return value;
+  }
+  return `${negative ? '-' : ''}${value}`;
 };
 
 /** The correction meaning is absolute; this signed delta is explanatory evidence only. */

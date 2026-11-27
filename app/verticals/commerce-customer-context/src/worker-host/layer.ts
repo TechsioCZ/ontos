@@ -6,7 +6,7 @@ import {
 } from '@app/core-runtime/outbox/worker';
 import type { OutboxRuntime } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Layer } from 'effect';
 import { reconcilePartyMergePersistenceForTransaction } from '../persistence/profile-persistence.ts';
 import { ReconcilePartyMergePersistence } from '../workers/reconcile-party-merge.worker.ts';
@@ -37,7 +37,7 @@ export type { OutboxWorkerOwnerServices };
 export const outboxWorkerLayer: Layer.Layer<
   OutboxWorkerOwnerServices,
   never,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | Layer.Services<typeof OutboxWorkerInfrastructureLive>
   | Layer.Services<typeof OutboxWorkerLegalEntityScopeFanoutLive>
 > = Layer.mergeAll(

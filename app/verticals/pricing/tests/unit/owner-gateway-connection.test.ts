@@ -5,7 +5,8 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
-import { ConfigProvider, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -79,7 +80,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, shellConfiguration))('owner connection
 
   suite.effect('fails when a spread copy of the verified scope reaches the owner connection', () =>
     Effect.gen(function* deniesCopiedScope() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const copied = { ...verifiedScope() };
       const failure = yield* acquireOwnerGatewayConnection(
         {

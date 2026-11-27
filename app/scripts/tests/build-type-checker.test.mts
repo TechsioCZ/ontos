@@ -40,6 +40,7 @@ for (const config of JSON.parse(process.argv[1])) {
   result[config] = {
     autoprefixerBrowserslist: autoprefixer.overrideBrowserslist ?? [],
     disableTsChecker: resolved.output?.disableTsChecker ?? false,
+    jsSourceMap: resolved.output?.sourceMap?.js ?? true,
     overrideBrowserslist: resolved.output?.overrideBrowserslist ?? [],
   };
 }
@@ -51,6 +52,7 @@ const BuildOutputsSchema = Schema.Record(
   Schema.Struct({
     autoprefixerBrowserslist: Schema.Array(Schema.String),
     disableTsChecker: Schema.Boolean,
+    jsSourceMap: Schema.Union([Schema.Boolean, Schema.String]),
     overrideBrowserslist: Schema.Array(Schema.String),
   }),
 );
@@ -111,6 +113,9 @@ it.live(
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must not repeat the workspace typecheck`).toBe(true);
+      expect(output.jsSourceMap, `${config} must disable JavaScript source maps through native output policy`).toBe(
+        false,
+      );
     }
   }),
 );

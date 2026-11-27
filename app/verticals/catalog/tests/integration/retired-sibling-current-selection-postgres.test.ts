@@ -1,4 +1,5 @@
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import {
   SelectionEvidenceForbiddenProblemSchema,
@@ -35,7 +36,7 @@ it.live(
       expect(
         Schema.is(SelectionEvidenceForbiddenProblemSchema)(yield* read(alternate, fixture.denied).pipe(Effect.flip)),
       ).toBe(true);
-      const foreignTenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const foreignTenantId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       const foreignSelection = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
         productRef: { ...alternate.productRef, tenantId: foreignTenantId },
         variantRef: { ...alternate.variantRef, tenantId: foreignTenantId },

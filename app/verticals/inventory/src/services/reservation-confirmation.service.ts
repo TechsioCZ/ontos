@@ -68,17 +68,19 @@ const authorityRequestFor = (input: IssueReservationConfirmationInput) =>
     Effect.mapError((cause) => Object.assign(rejected('RESERVATION_SCOPE_MISMATCH', input.confirmationRef), { cause })),
   );
 
-const resultForExisting = (existing: ReservationConfirmation, input: IssueReservationConfirmationInput) =>
-  sameReservationConfirmationIssuance(existing, input)
-    ? Effect.succeed({ confirmation: existing, outcome: 'EXACT_REPLAY' as const })
-    : Effect.fail(
-        rejected(
-          existing.ref.resourceId === input.confirmationRef.resourceId
-            ? 'CONFIRMATION_IDENTITY_CONFLICT'
-            : 'SIBLING_CONFIRMATION_FORBIDDEN',
-          input.confirmationRef,
-        ),
-      );
+const resultForExisting = (existing: ReservationConfirmation, input: IssueReservationConfirmationInput) => {
+  if (sameReservationConfirmationIssuance(existing, input)) {
+    return Effect.succeed({ confirmation: existing, outcome: 'EXACT_REPLAY' as const });
+  }
+  return Effect.fail(
+    rejected(
+      existing.ref.resourceId === input.confirmationRef.resourceId
+        ? 'CONFIRMATION_IDENTITY_CONFLICT'
+        : 'SIBLING_CONFIRMATION_FORBIDDEN',
+      input.confirmationRef,
+    ),
+  );
+};
 
 export const makeReservationConfirmationService = (dependencies: {
   readonly issuer: ReservationConfirmationIssuer;

@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { TenantAccessBootstrapLive } from '@app/core-runtime/access/bootstrap';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
 import {
@@ -20,7 +20,7 @@ import type { InstallationRuntime } from '@app/core-runtime/install/stage-contex
 import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import type { DatabaseConnectionError } from '@app/core-runtime';
 import { Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { AuthConfig } from '../api/auth/config.ts';
 import { AuthDatabaseLive } from '../api/auth/db/client.ts';
@@ -123,7 +123,7 @@ const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRunt
   return Layer.mergeAll(bootstrap, writer, catalog, stores, platform) satisfies Layer.Layer<
     InstallationRuntime,
     DatabaseConnectionError,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 });
 
@@ -183,5 +183,7 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
   Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
 );
 
-const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
+const exit = await Effect.runPromiseExit(
+  program.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom)), Effect.scoped),
+);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

@@ -5,7 +5,8 @@ import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
 import type { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { ExternalPriceSourceAuthorityGrantSchema } from '@app/pricing/testing/c14-source-authority';
-import { Crypto, DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { internalProductPriceSource } from './symmy-c14-product-plan.mts';
 import { SymmyC14ProductFixtureUnavailable } from './symmy-c14-product-runtime.mts';
@@ -42,7 +43,7 @@ export const bootstrapInternalC14SupportedProductPriceFacts = Effect.fn('Interna
     readonly shell: Effect.Success<ReturnType<typeof makeApiKeyGatewayNativeFixture>>;
     readonly tenantId: string;
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const catalogGateway = yield* input.shell.issueFixtureSetupGateway({ audience: 'catalog' });
     const readiness = yield* bootstrapInternalC14CatalogPricingReadiness({
       ...input.catalogReadiness,
@@ -50,7 +51,7 @@ export const bootstrapInternalC14SupportedProductPriceFacts = Effect.fn('Interna
         authorization: Redacted.make(`Bearer ${catalogGateway.token}`),
         baseUrl: input.catalogUrl,
         compositionRevision: input.compositionRevision,
-        requestCorrelation: yield* crypto.randomUUIDv4(),
+        requestCorrelation: yield* crypto.uuidV4(),
       },
     });
     const options = { baseUrl: input.pricingUrl, compositionRevision: input.compositionRevision };
@@ -63,7 +64,7 @@ export const bootstrapInternalC14SupportedProductPriceFacts = Effect.fn('Interna
     const current = yield* executeCurrentSupportedCurrenciesWithAuthorization(
       request,
       `Bearer ${initialGateway.token}`,
-      yield* crypto.randomUUIDv4(),
+      yield* crypto.uuidV4(),
       options,
     );
     if (
@@ -85,14 +86,14 @@ export const bootstrapInternalC14SupportedProductPriceFacts = Effect.fn('Interna
         supportedCurrencies: ['CZK'],
       }),
       `Bearer ${setGateway.token}`,
-      yield* crypto.randomUUIDv4(),
+      yield* crypto.uuidV4(),
       { ...options, idempotencyKey: 'INTERNAL_C14_PRODUCT_POSITIVE_CURRENCY' },
     );
     const afterGateway = yield* input.shell.issueFixtureSetupGateway({ audience: 'pricing' });
     const configured = yield* executeCurrentSupportedCurrenciesWithAuthorization(
       request,
       `Bearer ${afterGateway.token}`,
-      yield* crypto.randomUUIDv4(),
+      yield* crypto.uuidV4(),
       options,
     );
     if (configured.outcome !== 'SUPPORTED_CURRENCIES_CURRENT' || !configured.supportedCurrencies.includes('CZK')) {

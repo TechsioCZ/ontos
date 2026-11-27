@@ -9,7 +9,8 @@ import {
 import { registerTestGatewayScopeGrant } from '@app/core-runtime/testing/gateway-scope-grant';
 import { PgClient } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
-import { Context, Crypto, Effect, Layer, Option, Redacted } from 'effect';
+import { Context, Effect, Layer, Option, Redacted } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { establishGatewayScopeStatement } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -83,7 +84,7 @@ export const registerPartyGatewayScope = Effect.fn('PartyBoundary.registerGatewa
     scope: PartyGatewayScope,
   ) {
     const { admin, issuer } = clients;
-    const principalId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+    const principalId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
     const createdTenants = yield* admin<{ readonly tenant_id: string }>`
       insert into core.tenants (tenant_id, slug, name, status, default_locale)
       values (${scope.tenantId}::uuid, ${`party-boundary-${scope.tenantId}`}, 'Party boundary', 'active', 'en')

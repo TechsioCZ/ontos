@@ -555,15 +555,17 @@ type InvoiceSavedAddressPlan = Readonly<{ kind: 'RESOLVE'; savedAddress: SavedAd
 const planInvoiceSavedAddress = (
   savedAddress: SavedAddress,
   source: 'EXPLICIT' | 'DEFAULT',
-): InvoiceSavedAddressPlan =>
-  isAddressEligibleFor(savedAddress, 'BILLING')
-    ? { kind: 'RESOLVE', savedAddress }
-    : invoiceCandidateFailure(
-        source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_BILLING_ADDRESS_INVALID',
-        source === 'EXPLICIT'
-          ? 'The explicit saved address is missing, inactive, or not billing eligible.'
-          : 'The configured billing default is inactive or ineligible.',
-      );
+): InvoiceSavedAddressPlan => {
+  if (isAddressEligibleFor(savedAddress, 'BILLING')) {
+    return { kind: 'RESOLVE', savedAddress };
+  }
+  return invoiceCandidateFailure(
+    source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_BILLING_ADDRESS_INVALID',
+    source === 'EXPLICIT'
+      ? 'The explicit saved address is missing, inactive, or not billing eligible.'
+      : 'The configured billing default is inactive or ineligible.',
+  );
+};
 
 const planExplicitInvoiceSavedAddress = (saved: AddressLookup<SavedAddress>): InvoiceSavedAddressPlan =>
   saved.kind === 'FOUND'

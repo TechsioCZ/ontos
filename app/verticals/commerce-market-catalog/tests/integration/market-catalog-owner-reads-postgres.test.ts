@@ -139,7 +139,7 @@ it.live('reads scheduled Current state and immutable retained history through ru
       );
       expect(Predicate.isTagged(created, 'created')).toBe(true);
       expect(created).toMatchObject({ generation: 1, revision: 1 });
-      const definitionRevisionOneId = Schema.decodeUnknownSync(Schema.String)(created.definitionRevisionId);
+      const definitionRevisionOneId = Schema.decodeUnknownSync(Schema.String)(created['definitionRevisionId']);
 
       const associated = oneOutcome(
         yield* scoped(runtime, (transaction) =>
@@ -194,7 +194,9 @@ it.live('reads scheduled Current state and immutable retained history through ru
       );
       expect(Predicate.isTagged(revisedDefinition, 'revised')).toBe(true);
       expect(revisedDefinition).toMatchObject({ generation: 3, revision: 2 });
-      const definitionRevisionTwoId = Schema.decodeUnknownSync(Schema.String)(revisedDefinition.definitionRevisionId);
+      const definitionRevisionTwoId = Schema.decodeUnknownSync(Schema.String)(
+        revisedDefinition['definitionRevisionId'],
+      );
 
       const revisedAssociation = oneOutcome(
         yield* scoped(runtime, (transaction) =>

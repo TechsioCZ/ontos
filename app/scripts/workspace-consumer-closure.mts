@@ -1,5 +1,5 @@
 export interface WorkspaceConsumer {
-  readonly contractProducer?: string;
+  readonly contractProducer?: string | undefined;
   readonly dependencies: readonly string[];
   readonly name: string;
 }

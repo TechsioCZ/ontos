@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Result } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { executeActivateMarketWithAuthorization } from '../../src/api/activate-market-action-client.ts';
@@ -58,8 +59,8 @@ it.layer(nativeOwnerServices, { excludeTestServices: true, timeout: '120 seconds
           sellingLegalEntityRef: owner.sellerRef,
           supportedLocales: ['cs-CZ'],
         };
-        const crypto = yield* Crypto.Crypto;
-        const foreignTenantId = yield* crypto.randomUUIDv4();
+        const crypto = yield* SecureRandom.SecureRandom;
+        const foreignTenantId = yield* crypto.uuidV4();
         const crossScope = yield* admit('native-cross-scope');
         const crossScopeCreation = yield* executeCreateMarketWithAuthorization(
           { ...createPayload, sellingLegalEntityRef: { ...owner.sellerRef, tenantId: foreignTenantId } },
@@ -149,7 +150,7 @@ it.layer(nativeOwnerServices, { excludeTestServices: true, timeout: '120 seconds
         // v2 Market capabilities have no record selectors: the owner's company-wide grant admits a suspension of
         // any Market, so the owner itself refuses a basis that belongs to another Market, without effect.
         const foreignBasis = yield* admit('native-foreign-basis-market-suspend');
-        const otherMarketRef = { ...owner.marketRef, resourceId: yield* crypto.randomUUIDv4() };
+        const otherMarketRef = { ...owner.marketRef, resourceId: yield* crypto.uuidV4() };
         const foreignBasisSuspension = yield* executeSuspendMarketWithAuthorization(
           {
             effectiveAt: owner.now,

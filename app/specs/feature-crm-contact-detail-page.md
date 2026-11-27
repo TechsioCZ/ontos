@@ -196,7 +196,7 @@ Retain the existing CRM BFF/integration suite as proof that `getContact` verifie
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — typecheck the page generator and focused two-parameter generator test.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — typecheck the page generator and focused two-parameter generator test.
 - `mise exec -- node --test scripts/scaffolding/tests/scaffold-generators.test.mts` — prove exact two-parameter generation, safe rerun, collisions, and atomic failure in disposable workspaces.
 - `mise exec -- pnpm --filter @app/crm test:unit` — retain Contact schemas, client exports, read registration, and CRM public-surface contracts.
 - `mise exec -- pnpm --filter @app/crm test:component` — validate Contact-detail routing, BFF query, hierarchy check, presentation, states, localization, semantics, retry, and accessibility.
@@ -248,7 +248,7 @@ Execute every command to validate the feature with zero regressions.
 
 ### Validation
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- node --test scripts/scaffolding/tests/scaffold-generators.test.mts` — passed, 36 tests.
 - `mise exec -- pnpm --filter @app/crm test:unit` — passed, 20 tests.
 - `mise exec -- pnpm --filter @app/crm test:component` — passed, 81 tests.

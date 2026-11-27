@@ -4,7 +4,8 @@ import { makeCoreDatabase } from '@app/core-runtime/db/client';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import type { LanguagePolicyPortContract } from '../../src/services/language-policy-port.service.ts';
 import { postgresLanguagePolicyPort } from '../../src/services/language-policy.service.ts';
@@ -13,7 +14,7 @@ import { postgresTemplateRevisionPort } from '../../src/services/template-revisi
 import type { TemplateActor } from '../../src/services/template-revision-domain.service.ts';
 
 export const nativeServices = Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, Reactivity.layer);
-export const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+export const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 export const actorWith = (actionInvocationId: string, legalEntityId: string | null = null): TemplateActor => ({
   actionInvocationId,

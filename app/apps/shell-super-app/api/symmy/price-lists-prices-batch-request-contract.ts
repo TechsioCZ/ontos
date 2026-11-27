@@ -30,8 +30,19 @@ const RevisePriceSchema = Schema.Struct({
   priceId: PriceRefSchema.fields.resourceId,
 });
 
-const trimTrailingZeros = (quantity: string) =>
-  quantity.includes('.') ? quantity.replace(/0+$/u, '').replace(/\.$/u, '') : quantity;
+const trimTrailingZeros = (quantity: string) => {
+  if (!quantity.includes('.')) {
+    return quantity;
+  }
+  let end = quantity.length;
+  while (quantity[end - 1] === '0') {
+    end -= 1;
+  }
+  if (quantity[end - 1] === '.') {
+    end -= 1;
+  }
+  return quantity.slice(0, end);
+};
 
 type PriceItem = typeof DefinePriceSchema.Type | typeof RevisePriceSchema.Type;
 /** The identity a price is written under, so two items for one price are one error rather than a race. */

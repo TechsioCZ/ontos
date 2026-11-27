@@ -11,7 +11,8 @@ import {
 } from '@app/party-registry/apis/source-counterparty-admission';
 import { executeSourceCounterpartyAdmissionWithAuthorization } from '@app/party-registry/apis/source-counterparty-admission/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type {
   CustomerProfileCurrentPersonAdmission,
   CustomerProfileCurrentCounterpartyAdmission,
@@ -65,7 +66,7 @@ export class CommerceSourceProfileOwnerProof extends Context.Service<
 export const commerceSourceProfileOwnerProofLive = Layer.effect(
   CommerceSourceProfileOwnerProof,
   Effect.gen(function* sourceProfileOwnerProof() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       counterparty: Effect.fn('CommerceSourceProfileOwnerProof.counterparty')(
         function* counterparty(scope, counterpartyResourceId, _source, partySourceReference, operationRequirementKey) {

@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type {
   VariantReactivationRequiredPackageOption,
@@ -88,7 +88,7 @@ export interface VariantUseChangePersistence {
   ) => Effect.Effect<
     VariantReactivationAssessment,
     CatalogPersistenceUnavailable | VariantUseChangeBasisUnavailable | VariantUseChangeConflict,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 }
 
