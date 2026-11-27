@@ -17,7 +17,6 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -33,6 +32,7 @@ import {
 } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
+import { ListSearch, useListSearch } from '../../../../ui/search-form.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { ConsumptionByPlace } from './consumption-by-place.tsx';
@@ -280,7 +280,7 @@ const useMetersView = () => {
   const fileAccess = ops.data?.access.find((entry) => entry.agenda === 'documents');
 
   const [medium, setMedium] = useState<MeterMedium | 'ALL'>('ALL');
-  const [search, setSearch] = useState('');
+  const search = useListSearch('meters');
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const initialSelection = useInitialSelection();
   const [detailId, setDetailId] = useState<string | undefined>(initialSelection);
@@ -376,7 +376,6 @@ const useMetersView = () => {
     setDetailMode,
     setMedium,
     setRecording,
-    setSearch,
     t,
     toast,
     visible,
@@ -526,14 +525,12 @@ const MetersView = () => {
     meters,
     ops,
     recentReadings,
-    search,
     setAnomaliesOnly,
     setCreating,
     setDetailId,
     setDetailMode,
     setMedium,
     setRecording,
-    setSearch,
     t,
     visible,
   } = view;
@@ -636,13 +633,12 @@ const MetersView = () => {
             {anomalies.length > 0 ? ` (${anomalies.length})` : ''}
           </Button>
           <div className="min-w-[16rem] flex-1">
-            <Input
-              aria-label={t(`${k}.filters.search`)}
-              onChange={(event) => setSearch(event.target.value)}
+            <ListSearch
+              label={t(`${k}.filters.search`)}
+              list="meters"
               placeholder={t(`${k}.filters.search`)}
               size="sm"
               type="search"
-              value={search}
             />
           </div>
         </div>
