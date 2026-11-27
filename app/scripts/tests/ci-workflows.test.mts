@@ -1299,7 +1299,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
-it('builds, packs and uploads each Node build shard and does nothing else', () => {
+it('builds, checks, packs and uploads each Node build shard and does nothing else', () => {
   const { needs, permissions, steps, 'timeout-minutes': jobTimeout } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   // A producer starts with the run and never waits for anything, so its runner frees as soon as it uploaded.
   expect(needs).toEqual([CI_PLAN_JOB]);
@@ -1310,6 +1310,7 @@ it('builds, packs and uploads each Node build shard and does nothing else', () =
     'Sample runner pressure until the job ends',
     INSTALL_APP_STEP,
     NODE_BUILD_STEP,
+    "Check that the shard's module browser bundles ship no CSS",
     "Pack the shard's build outputs",
     UPLOAD_STEP,
     'Print the runner pressure samples',

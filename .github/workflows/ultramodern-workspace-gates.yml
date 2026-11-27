@@ -1492,6 +1492,19 @@ jobs:
           done
           mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
 
+      # A module ships no CSS of its own: the kit stylesheet the Shell loads styles every module.
+      - name: Check that the shard's module browser bundles ship no CSS
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          flags=()
+          for unit in "${units[@]}"; do
+            flags+=(--unit "$unit")
+          done
+          mise exec -- node ./scripts/check-module-browser-css.mts "${flags[@]}"
+
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
         working-directory: app
