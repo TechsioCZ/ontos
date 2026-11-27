@@ -68,6 +68,9 @@ import {
   assetMetadataRead,
   renameDisplayFilenameAction,
   uploadAssetAction,
+  tenantThemeRead,
+  saveTenantThemeAction,
+  attachTenantThemeAction,
 } from '@app/core-runtime';
 import {
   AccessDecisionLive,
@@ -276,6 +279,9 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 
 // @ontos-core-read asset-metadata
 // assetMetadataRead uses the canonical @app/core-runtime import
+
+// @ontos-core-read tenant-theme
+// tenantThemeRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
 
 // @ontos-codesmith-core-action-server-imports:start
@@ -288,6 +294,12 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 
 // @ontos-core-action upload-asset
 // uploadAssetAction is imported once by the host root
+
+// @ontos-core-action save-tenant-theme
+// saveTenantThemeAction is imported once by the host root
+
+// @ontos-core-action attach-tenant-theme
+// attachTenantThemeAction is imported once by the host root
 // @ontos-codesmith-core-action-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
@@ -2520,6 +2532,35 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
       ),
     ),
 );
+
+// @ontos-core-read tenant-theme
+const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadTenantTheme', (handlers) =>
+  handlers.handle('executeTenantTheme', ({ payload, request }) =>
+    Effect.gen(function* executeTenantThemeCoreRead() {
+      const authentication = yield* AuthenticationService;
+      const resolved = yield* authentication
+        .resolveTenantContext(requestHeaders(request.headers))
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+      if (resolved.state !== 'authenticated') {
+        return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+      }
+      const runtime = yield* ReadRuntime;
+      return yield* runtime
+        .runRead({
+          input: payload,
+          principal: resolved.principal,
+          registration: tenantThemeRead,
+          transport: { correlationId: correlationFromRequest(request) },
+        })
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+    }).pipe(
+      recoverUnexpectedDefect(request, 'Unexpected Shell Core read defect', () =>
+        failIdentityProblem(shellInternalProblem()),
+      ),
+    ),
+  ),
+);
 // @ontos-codesmith-core-read-server-groups:end
 
 /** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
@@ -2748,6 +2789,102 @@ const coreActionUploadAssetGroupLive = HttpApiBuilder.group(
             transport: { correlationId, idempotencyKey },
           })
           .pipe(Effect.catch((error) => pipe(error, coreActionUploadAssetProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+
+// @ontos-core-action save-tenant-theme
+const coreActionSaveTenantThemeProblem = (
+  error: ActionCoreError | typeof saveTenantThemeAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(saveTenantThemeAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          TenantThemeInvalid: shellPolicyUnprocessableProblem,
+          TenantThemeUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionSaveTenantThemeGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionSaveTenantTheme',
+  (handlers) =>
+    handlers.handle('executeSaveTenantTheme', ({ headers, payload, request }) =>
+      Effect.gen(function* executeSaveTenantThemeCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: resolved.principal,
+            registration: saveTenantThemeAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionSaveTenantThemeProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+
+// @ontos-core-action attach-tenant-theme
+const coreActionAttachTenantThemeProblem = (
+  error: ActionCoreError | typeof attachTenantThemeAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(attachTenantThemeAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          TenantThemeNotFound: shellTargetNotFoundProblem,
+          TenantThemeUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionAttachTenantThemeGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionAttachTenantTheme',
+  (handlers) =>
+    handlers.handle('executeAttachTenantTheme', ({ headers, payload, request }) =>
+      Effect.gen(function* executeAttachTenantThemeCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: resolved.principal,
+            registration: attachTenantThemeAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionAttachTenantThemeProblem, failIdentityProblem)));
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
           failIdentityProblem(shellInternalProblem()),
@@ -3565,6 +3702,9 @@ export const makeShellAuthenticationApiRuntime = (
 
     // @ontos-core-read asset-metadata
     coreReadAssetMetadataGroupLive,
+
+    // @ontos-core-read tenant-theme
+    coreReadTenantThemeGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
 
     // @ontos-codesmith-core-action-server-layers:start
@@ -3577,6 +3717,12 @@ export const makeShellAuthenticationApiRuntime = (
 
     // @ontos-core-action upload-asset
     coreActionUploadAssetHandlersLive,
+
+    // @ontos-core-action save-tenant-theme
+    coreActionSaveTenantThemeGroupLive,
+
+    // @ontos-core-action attach-tenant-theme
+    coreActionAttachTenantThemeGroupLive,
     // @ontos-codesmith-core-action-server-layers:end
     coreMediaDownloadHandlersLive,
     coreMediaUploadHandlersLive,

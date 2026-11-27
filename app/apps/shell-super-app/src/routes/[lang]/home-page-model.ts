@@ -14,6 +14,8 @@ import type { AvailableTenantsClientError } from '../../api/auth-client.ts';
 import { reportHomeLoaderFailure } from '../../api/loader-diagnostics.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
+import { readShellTheme } from '../tenant-theme.ts';
+import type { ShellTheme } from '../tenant-theme.ts';
 
 interface HomeLoaderArguments {
   readonly request: Request;
@@ -63,6 +65,8 @@ export interface AuthenticatedHomePageModel {
         readonly items: readonly [AvailableTenant];
         readonly state: 'unavailable';
       };
+  /** The tenant's theme, as Core answers it: Business for a tenant without an attachment. */
+  readonly theme: ShellTheme;
 }
 
 export type HomePageModel =
@@ -159,10 +163,11 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
             onSuccess: Effect.succeed,
           }),
         ),
+        theme: readShellTheme(options),
       },
-      { concurrency: 3 },
+      { concurrency: 4 },
     ).pipe(
-      Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel => {
+      Effect.map(({ legalEntities: choices, navigation: items, tenants, theme }): HomePageModel => {
         if (tenants.state === 'stale') {
           return anonymousModel;
         }
@@ -173,6 +178,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
           navigation: items,
           state: 'authenticated' as const,
           tenants,
+          theme,
         };
         const model = compositionRevision === undefined ? baseModel : { ...baseModel, compositionRevision };
         return session.state === 'authenticated'

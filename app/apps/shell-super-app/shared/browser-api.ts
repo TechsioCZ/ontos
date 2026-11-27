@@ -18,6 +18,9 @@ import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from 
 
 // @ontos-core-read asset-metadata
 import { AssetMetadataRequestSchema, AssetMetadataResponseSchema } from './core-reads/asset-metadata.ts';
+
+// @ontos-core-read tenant-theme
+import { TenantThemeRequestSchema, TenantThemeResponseSchema } from './core-reads/tenant-theme.ts';
 // @ontos-codesmith-core-read-contract-imports:end
 
 // @ontos-codesmith-core-action-contract-imports:start
@@ -33,6 +36,12 @@ import { ConfirmAssetRequestSchema, ConfirmAssetResultSchema } from './core-acti
 
 // @ontos-core-action upload-asset
 import { UploadAssetRequestSchema, UploadAssetResultSchema } from './core-actions/upload-asset.ts';
+
+// @ontos-core-action save-tenant-theme
+import { SaveTenantThemeRequestSchema, SaveTenantThemeResultSchema } from './core-actions/save-tenant-theme.ts';
+
+// @ontos-core-action attach-tenant-theme
+import { AttachTenantThemeRequestSchema, AttachTenantThemeResultSchema } from './core-actions/attach-tenant-theme.ts';
 // @ontos-codesmith-core-action-contract-imports:end
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
@@ -1011,6 +1020,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       }),
     ),
   )
+
+  // @ontos-core-read tenant-theme
+  .add(
+    HttpApiGroup.make('coreReadTenantTheme').add(
+      HttpApiEndpoint.post('executeTenantTheme', '/core/reads/tenant-theme', {
+        error: identityErrors,
+        payload: TenantThemeRequestSchema,
+        success: TenantThemeResponseSchema,
+      }),
+    ),
+  )
   // @ontos-codesmith-core-read-api-groups:end
 
   // @ontos-codesmith-core-action-api-groups:start
@@ -1047,6 +1067,30 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         headers: IdentityRequestHeadersSchema,
         payload: UploadAssetRequestSchema,
         success: UploadAssetResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action save-tenant-theme
+  .add(
+    HttpApiGroup.make('coreActionSaveTenantTheme').add(
+      HttpApiEndpoint.post('executeSaveTenantTheme', '/core/actions/save-tenant-theme', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: SaveTenantThemeRequestSchema,
+        success: SaveTenantThemeResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action attach-tenant-theme
+  .add(
+    HttpApiGroup.make('coreActionAttachTenantTheme').add(
+      HttpApiEndpoint.post('executeAttachTenantTheme', '/core/actions/attach-tenant-theme', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: AttachTenantThemeRequestSchema,
+        success: AttachTenantThemeResultSchema,
       }),
     ),
   )

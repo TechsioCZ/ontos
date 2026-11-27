@@ -7,6 +7,7 @@ import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
+import { useAppTheme } from '@techsio/ui-kit/theme/theme-provider';
 import { Effect, Schema } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import type { Atom } from 'effect/reactivity';
@@ -421,6 +422,39 @@ const AccessAdministrationNavigation = ({
   );
 };
 
+const ModeSettingSchema = Schema.Literals(['light', 'dark', 'system']);
+const isModeSetting = Schema.is(ModeSettingSchema);
+
+/** The light/dark switch, offered only when the tenant's theme ships both modes. */
+const DashboardAppearance = () => {
+  const { t } = useModernI18n();
+  const { availableModes, mode, mounted, setMode } = useAppTheme();
+  if (availableModes.length < 2) {
+    return null;
+  }
+  const items: MenuItem[] = availableModes.map((value) => ({
+    checked: mounted && value === mode,
+    label: t(`shell.dashboard.appearance.${value}`),
+    name: 'appearance',
+    type: 'radio',
+    value,
+  }));
+  return (
+    <Header.ActionItem>
+      <Menu
+        aria-label={t('shell.dashboard.appearance.label')}
+        items={items}
+        onSelect={({ value }) => {
+          if (isModeSetting(value)) {
+            setMode(value);
+          }
+        }}
+        triggerText={t('shell.dashboard.appearance.label')}
+      />
+    </Header.ActionItem>
+  );
+};
+
 const DashboardHeader = ({ identity, logoutPending, onLogout, title }: DashboardHeaderProps) => {
   const { t } = useModernI18n();
   const hydrated = useHydrated();
@@ -442,6 +476,7 @@ const DashboardHeader = ({ identity, logoutPending, onLogout, title }: Dashboard
       )}
       <Header.Container position="end">
         <Header.Actions>
+          <DashboardAppearance />
           <Header.ActionItem data-hydrated={hydrated || undefined}>
             <Menu
               aria-label={t('shell.dashboard.account.label')}

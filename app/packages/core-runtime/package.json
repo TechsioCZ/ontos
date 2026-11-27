@@ -72,6 +72,7 @@
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./route-meta": "./src/modules/route-meta.ts",
     "./sdk": "./src/sdk/index.ts",
+    "./themes/contract": "./src/themes/contract.ts",
     "./ui/form": "./src/ui/form/index.ts",
     "./sdk/core": "./src/sdk/core-operations.ts",
     "./sdk/read": "./src/sdk/read.ts",

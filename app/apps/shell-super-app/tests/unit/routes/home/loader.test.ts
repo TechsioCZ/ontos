@@ -12,7 +12,10 @@ import {
   TenantAuthenticationRequiredProblemSchema,
   TenantCapabilityUnavailableProblemSchema,
 } from '../../../../shared/browser-api.ts';
+import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
+
 import { loadHomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
@@ -109,10 +112,36 @@ it.effect('resolves trusted context before returning one serializable compositio
         ],
         state: 'available',
       },
+      theme: businessShellTheme,
     });
-    // The session is read first and the composition before either choice list.
+    // The session is read first and the composition before either choice list and the tenant theme.
     expect(endpoints(bff).slice(0, 2)).toEqual(['currentSession', 'shellComposition']);
-    expect(endpoints(bff).slice(2).toSorted()).toEqual(['availableLegalEntities', 'availableTenants']);
+    expect(endpoints(bff).slice(2).toSorted()).toEqual([
+      'availableLegalEntities',
+      'availableTenants',
+      'executeTenantTheme',
+    ]);
+  }),
+);
+
+it.effect("carries the tenant's attached theme and is unavailable while the theme cannot be read", () =>
+  Effect.gen(function* verifyTenantTheme() {
+    const acme = extendBrand(businessShellTheme.brand, { key: 'acme', label: 'Acme', modes: ['light', 'dark'] });
+    const attached = signedInBff({ executeTenantTheme: () => Effect.succeed({ revision: 'acme-1', theme: acme }) });
+    expect(yield* loadModel(attached)).toMatchObject({ theme: { brand: acme, revision: 'acme-1' } });
+
+    const unreadable = signedInBff({
+      executeTenantTheme: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(ShellCapabilityUnavailableProblemSchema)({
+            ...problem,
+            _tag: 'ShellCapabilityUnavailableProblem',
+            retryable: true,
+            status: 503,
+          }),
+        ),
+    });
+    expect(yield* loadModel(unreadable)).toMatchObject({ state: 'unavailable' });
   }),
 );
 

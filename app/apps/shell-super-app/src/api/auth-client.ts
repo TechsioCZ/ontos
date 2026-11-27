@@ -11,6 +11,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { AccessAdministrationApi } from '../../shared/access-admin-api.ts';
+import { announceTenantThemeChange } from './tenant-theme-events.ts';
 import type {
   AccessAdminProblem,
   AccessApproval,
@@ -60,6 +61,9 @@ import type {
 
 // @ontos-core-read asset-metadata
 import type { AssetMetadataRequest, AssetMetadataResponse } from '../../shared/core-reads/asset-metadata.ts';
+
+// @ontos-core-read tenant-theme
+import type { TenantThemeRequest, TenantThemeResponse } from '../../shared/core-reads/tenant-theme.ts';
 // @ontos-codesmith-core-read-client-imports:end
 
 // @ontos-codesmith-core-action-client-imports:start
@@ -78,6 +82,17 @@ import type { ConfirmAssetPayload, ConfirmAssetResult } from '../../shared/core-
 // @ontos-core-action upload-asset
 import { encodeUploadAssetPayload } from '../../shared/core-actions/upload-asset.ts';
 import type { UploadAssetPayload, UploadAssetResult } from '../../shared/core-actions/upload-asset.ts';
+
+// @ontos-core-action save-tenant-theme
+import { encodeSaveTenantThemePayload } from '../../shared/core-actions/save-tenant-theme.ts';
+import type { SaveTenantThemePayload, SaveTenantThemeResult } from '../../shared/core-actions/save-tenant-theme.ts';
+
+// @ontos-core-action attach-tenant-theme
+import { encodeAttachTenantThemePayload } from '../../shared/core-actions/attach-tenant-theme.ts';
+import type {
+  AttachTenantThemePayload,
+  AttachTenantThemeResult,
+} from '../../shared/core-actions/attach-tenant-theme.ts';
 // @ontos-codesmith-core-action-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
@@ -506,6 +521,13 @@ export const executeAssetMetadata = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<AssetMetadataResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.coreReadAssetMetadata.executeAssetMetadata({ payload }));
+
+// @ontos-core-read tenant-theme
+export const executeTenantTheme = (
+  payload: TenantThemeRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<TenantThemeResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.coreReadTenantTheme.executeTenantTheme({ payload }));
 // @ontos-codesmith-core-read-client-operations:end
 
 // @ontos-codesmith-core-action-client-operations:start
@@ -550,6 +572,40 @@ export const executeUploadAsset = (
         client.coreActionUploadAsset.executeUploadAsset({ headers: identityHeaders(options), payload: encoded }),
       ),
     ),
+  );
+
+// @ontos-core-action save-tenant-theme
+export const executeSaveTenantTheme = (
+  payload: SaveTenantThemePayload,
+  options: IdentityClientOptions,
+): Effect.Effect<SaveTenantThemeResult, IdentityClientError> =>
+  encodeSaveTenantThemePayload(payload).pipe(
+    Effect.flatMap((encoded) =>
+      invokeShellAuthenticationClient(options, (client) =>
+        client.coreActionSaveTenantTheme.executeSaveTenantTheme({
+          headers: identityHeaders(options),
+          payload: encoded,
+        }),
+      ),
+    ),
+    Effect.tap(() => announceTenantThemeChange),
+  );
+
+// @ontos-core-action attach-tenant-theme
+export const executeAttachTenantTheme = (
+  payload: AttachTenantThemePayload,
+  options: IdentityClientOptions,
+): Effect.Effect<AttachTenantThemeResult, IdentityClientError> =>
+  encodeAttachTenantThemePayload(payload).pipe(
+    Effect.flatMap((encoded) =>
+      invokeShellAuthenticationClient(options, (client) =>
+        client.coreActionAttachTenantTheme.executeAttachTenantTheme({
+          headers: identityHeaders(options),
+          payload: encoded,
+        }),
+      ),
+    ),
+    Effect.tap(() => announceTenantThemeChange),
   );
 // @ontos-codesmith-core-action-client-operations:end
 
