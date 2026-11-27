@@ -8,7 +8,8 @@ import { constVoid } from 'effect/Function';
 import { afterEach, expect, it } from 'effect-rstest';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { VariantDetailEditor } from '../../src/routes/[lang]/provoz/produkty/product-variant-editor.tsx';
-import type { VariantDetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-variant-editor.tsx';
+import { VariantsForm, variantsFields } from '../../src/routes/[lang]/provoz/produkty/product-variants-form.ts';
+import type { VariantDetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-variants-form.ts';
 import { mountInRoute } from '../support/module-ui.ts';
 
 const gallery = 'https://www.akros.cz/img/banner/fve-konstrukce-banner-sekce.jpg';
@@ -36,16 +37,24 @@ const editor = (
   mainImage?: string,
   onChange: (next: Partial<VariantDetailDraft>) => void = constVoid,
 ) => (
-  <VariantDetailEditor
-    disabled={false}
-    draft={draft}
-    idPrefix="variant-1"
-    images={images}
-    mainImage={mainImage}
-    onChange={onChange}
-    productId={Schema.decodeSync(ProductIdSchema)('product-1')}
-    vatRate={21}
-  />
+  // The editor's inputs are the fields of the variant's row in the Varianty tab's form.
+  <VariantsForm
+    className=""
+    drafts={[{ ...draft, active: true, attributes: '', key: 'variant-1', name: 'Hák', priceText: '10', sku: 'HAK-1' }]}
+  >
+    <variantsFields.rows.Item index={0}>
+      <VariantDetailEditor
+        disabled={false}
+        draft={draft}
+        idPrefix="variant-1"
+        images={images}
+        mainImage={mainImage}
+        onChange={onChange}
+        productId={Schema.decodeSync(ProductIdSchema)('product-1')}
+        vatRate={21}
+      />
+    </variantsFields.rows.Item>
+  </VariantsForm>
 );
 
 const choices = () => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="variant-image-choice"]')];

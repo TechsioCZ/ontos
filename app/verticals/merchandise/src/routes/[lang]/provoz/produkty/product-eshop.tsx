@@ -3,29 +3,37 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-shop product administration: real variants (SKU, price, stock, active), publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormNumericInput, Switch } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime, formatMoney, ScrollRegion, SectionCard } from '@app/admin-ui';
-import { DateTime } from 'effect';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  NumberTextSchema,
+  NumericField,
+  unrenderedField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useRef, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type {
-  Availability,
-  ProductVariant,
-  StockMovementReason,
-  VariantId,
-} from '../../../../../shared/domain/merchandise-model.ts';
-import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
+import type { Availability, ProductVariant } from '../../../../../shared/domain/merchandise-model.ts';
+import { VariantIdSchema, grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { productVersionOf, runCommand } from './products-api.ts';
-import { fieldError } from './product-form-validation.ts';
+import { fieldVerdict } from './product-form-validation.ts';
 import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
+import { ManualReasonSchema } from './product-movement-draft.ts';
+import type { ManualReason } from './product-movement-draft.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import { mergeKeyedDrafts } from './product-draft-merge.ts';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
@@ -33,7 +41,17 @@ import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from '
 import type { CompanyVat } from './product-tax-classification.ts';
 import { priceHistoryRows } from './product-price-history.ts';
 import { VariantDetailEditor, VariantDetailsToggle } from './product-variant-editor.tsx';
-import type { VariantDetailDraft } from './product-variant-editor.tsx';
+import {
+  VariantsForm,
+  variantsFields,
+  useUpdateVariantRows,
+  useSetVariantSearch,
+  variantDraftOf,
+  variantDrafts,
+  variantRowOf,
+  variantSearch,
+} from './product-variants-form.ts';
+import type { VariantDetailDraft, VariantDraft } from './product-variants-form.ts';
 import {
   czkText,
   parseCzkText,
@@ -70,16 +88,6 @@ const parseCzk = (text: string): number | null => {
   const value = Number(normalized);
   return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;
 };
-
-interface VariantDraft extends VariantDetailDraft {
-  readonly active: boolean;
-  readonly attributes: string;
-  readonly id?: VariantId;
-  readonly key: string;
-  readonly name: string;
-  readonly priceText: string;
-  readonly sku: string;
-}
 
 const EMPTY_VARIANT_DETAILS: VariantDetailDraft = {
   description: '',
@@ -157,7 +165,7 @@ export interface PanelProps {
   readonly variantDestination?: ProductVariantDestination | undefined;
 }
 
-type MovementReason = Exclude<StockMovementReason, 'ORDER'>;
+type MovementReason = ManualReason;
 const reasonLabels = {
   ADJUSTMENT: 'Korekce (inventura)',
   ISSUE: 'Výdej',
@@ -173,31 +181,65 @@ const variantMovementDelta = (reason: MovementReason, quantity: number) => {
   return reason === 'RECEIPT' ? Math.abs(quantity) : quantity;
 };
 
-/** Stock movement for one variant (ledger entry with variantId). */
-const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+/**
+ * The stock movement of one variant being typed. Its button records it; Enter in a field does not, so the form itself
+ * is never submitted. The variant and the reason are picked in selects that write the form's fields.
+ */
+const stockForm = FormReact.make(
+  FormBuilder.empty
+    .addField('quantity', NumberTextSchema)
+    .addField('reason', ManualReasonSchema)
+    .addField('variantId', Schema.OptionFromUndefinedOr(VariantIdSchema)),
+  {
+    fields: {
+      quantity: NumericField,
+      reason: unrenderedField<MovementReason>(),
+      variantId: unrenderedField<string | undefined>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type StockValues = typeof stockForm.schema.Encoded;
+
+/** An empty movement: a receipt of 10 of the first variant. */
+const stockValuesOf = (variantId: string | undefined): StockValues => ({
+  quantity: { number: 10, text: '10' },
+  reason: 'RECEIPT',
+  variantId,
+});
+const stockQuantityText = stockForm.values.pipe(
+  Atom.map(Option.match({ onNone: () => '10', onSome: (values) => values.quantity.text })),
+);
+const stockReasonField = stockForm.getFieldAtoms(stockForm.fields.reason);
+const stockVariantField = stockForm.getFieldAtoms(stockForm.fields.variantId);
+
+const VariantStockFields = ({ onCommitted, onReload, product, revision }: PanelProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const variants = product.variantRecords ?? [];
-  const [variantId, setVariantId] = useState<string>(variants[0]?.id ?? '');
-  const [reason, setReason] = useState<MovementReason>('RECEIPT');
-  const [quantityText, setQuantityText] = useState('10');
+  const firstVariant = variants[0]?.id;
+  const {
+    quantity: typedQuantity,
+    reason,
+    variantId,
+  } = Option.getOrElse(useAtomValue(stockForm.values), () => stockValuesOf(firstVariant));
+  const setValues = useAtomSet(stockForm.setValues);
+  const setReason = useAtomSet(stockReasonField.setValue);
+  const setVariantId = useAtomSet(stockVariantField.setValue);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A refused quantity is marked on its field until it is typed again.
   const [quantityRefused, setQuantityRefused] = useState(false);
-  const firstVariant = variants[0]?.id ?? '';
+  useAtomSubscribe(stockQuantityText, () => setQuantityRefused(false), { immediate: false });
+  const quantityText = typedQuantity.text;
   const clear = () => {
-    setVariantId(firstVariant);
-    setReason('RECEIPT');
-    setQuantityText('10');
+    setValues(stockValuesOf(firstVariant));
     setQuantityRefused(false);
   };
   // The movement keeps its own button; leaving with a half-filled one asks before the input is lost.
   const typed = variantId !== firstVariant || reason !== 'RECEIPT' || quantityText !== '10';
-  const { dialog } = useCommandInputGuard(canWrite && typed, clear);
-  if (!canWrite) {
-    return null;
-  }
+  const { dialog } = useCommandInputGuard(typed, clear);
   const variant = variants.find((entry) => entry.id === variantId);
   const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
   const quantityValid = isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
@@ -248,10 +290,13 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.stockOnHand} ks)`))}
           label={t('merchandise.ui.variant')}
           name="stockVariant"
-          onValueChange={(details) => setVariantId(details.value[0] ?? '')}
+          onValueChange={(details) => {
+            const [next] = details.value;
+            setVariantId(variants.find((entry) => entry.id === next)?.id);
+          }}
           placeholder={t('merchandise.ui.selectVariant')}
           size="sm"
-          value={variantId === '' ? [] : [variantId]}
+          value={variantId === undefined ? [] : [variantId]}
         />
         <SelectTemplate
           items={movementReasons.map((value) => selectItem(value, reasonLabels[value]))}
@@ -267,28 +312,20 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           size="sm"
           value={[reason]}
         />
-        <FormNumericInput
+        <stockForm.quantity
           clampValueOnBlur={false}
           formatOptions={QUANTITY_FORMAT}
+          hideValueMax
           id="variant-stock-quantity"
           label={t('merchandise.ui.quantityPieces')}
           locale="cs-CZ"
           max={MAX_QUANTITY}
           min={reason === 'ADJUSTMENT' ? -MAX_QUANTITY : MIN_STOCK_QUANTITY}
           name="variantStockQuantity"
-          onValueChange={(details) => {
-            setQuantityText(details.value);
-            setQuantityRefused(false);
-          }}
           size="sm"
           step={1}
-          value={quantityText}
-          {...fieldError(quantityRefused && !quantityValid, quantityError)}
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-valuemax={undefined} />
-          </NumericInput.Control>
-        </FormNumericInput>
+          {...fieldVerdict(quantityRefused && !quantityValid, quantityError)}
+        />
         <Button
           appearance="outline"
           isLoading={busy}
@@ -307,6 +344,23 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
       )}
       {dialog}
     </SectionCard>
+  );
+};
+
+/** Stock movement for one variant (ledger entry with variantId). */
+const VariantStockForm = (props: PanelProps) => {
+  const { t } = useModernI18n();
+  if (!props.canWrite) {
+    return null;
+  }
+  return (
+    <FormRoot
+      defaultValues={stockValuesOf(props.product.variantRecords?.[0]?.id)}
+      form={stockForm}
+      translateMessage={t}
+    >
+      <VariantStockFields {...props} />
+    </FormRoot>
   );
 };
 
@@ -511,24 +565,19 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
 
 /**
  * Real variants: each has its own identity, SKU, net price (gross shown), stock and active flag. Editing changes the
- * draft only; the Save button sends one UpdateProduct. The server keeps a per-variant price history, so a price
- * change stays traceable.
+ * form only; the Save button sends one UpdateProduct. The server keeps a per-variant price history, so a price
+ * change stays traceable. It renders inside the form, so the draft it saves is this product's.
  */
-const useVariantsPanel = ({
-  canWrite,
-  canMoveStock = canWrite,
-  onCommitted,
-  onReload,
-  product,
-  revision,
-}: PanelProps) => {
-  const [drafts, setDrafts] = useState<readonly VariantDraft[]>(() => variantDraftsOf(product));
-  const [variantPage, setVariantPage] = useState(0);
-  const [variantSearch, setVariantSearch] = useState('');
+const useVariantsPanel = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+  const server = variantDraftsOf(product);
+  const drafts = Option.getOrElse(useAtomValue(variantDrafts), () => server);
+  const setRows = useUpdateVariantRows();
   const sequence = useRef(0);
   const records = new Map((product.variantRecords ?? []).map((record) => [record.id, record] as const));
   const patchDraft = (key: string, next: Partial<VariantDraft>) =>
-    setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
+    setRows((current) =>
+      current.map((row) => (row.key === key ? variantRowOf({ ...variantDraftOf(row), ...next }) : row)),
+    );
   const save = useProductTabSave<readonly VariantDraft[]>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
     // A Symmy product: no saved price may differ from the stored one and no variant may be added (ERP-only prices).
@@ -536,7 +585,9 @@ const useVariantsPanel = ({
       !variantsInvalid(value) &&
       (product.importedVia !== 'symmy' ||
         value.every((draft) => {
-          const stored = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
+          const stored = (product.variants ?? []).find(
+            (variant) => variant.id !== undefined && variant.id === draft.id,
+          );
           return stored !== undefined && stored.priceMinor === parseCzk(draft.priceText);
         })),
     keepAs: `variants:${product.id}`,
@@ -544,28 +595,18 @@ const useVariantsPanel = ({
     merge: mergeKeyedDrafts,
     onReload,
     onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
-    reset: setDrafts,
+    reset: (value) => setRows(() => value.map(variantRowOf)),
     revision,
-    server: variantDraftsOf(product),
+    server,
     value: drafts,
     version: productVersionOf(product),
   });
 
-  const visibleDrafts = drafts.filter((draft) =>
-    `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(variantSearch.toLocaleLowerCase('cs')),
-  );
-  const pageCount = Math.max(1, Math.ceil(visibleDrafts.length / 20));
-  const currentPage = Math.min(variantPage, pageCount - 1);
-  const errors = variantErrorsOf(drafts);
-  const duplicateSku = duplicateSkuOf(drafts);
-  // The field messages show once the draft is changed and holds the Save button back.
-  const submitted = save.draft.status === 'invalid';
-
   const addDraft = () => {
     const key = `new-${sequence.current}`;
-    setDrafts((current) => [
+    setRows((current) => [
       ...current,
-      {
+      variantRowOf({
         active: true,
         attributes: '',
         key,
@@ -573,43 +614,29 @@ const useVariantsPanel = ({
         ...EMPTY_VARIANT_DETAILS,
         priceText: moneyInputText(product.currentPriceMinor / 100),
         sku: `${product.sku}-${current.length + 1}`,
-      },
+      }),
     ]);
     sequence.current += 1;
   };
 
   return {
     addDraft,
-    canMoveStock,
     canWrite,
-    currentPage,
     drafts,
-    duplicateSku,
-    errors,
-    onCommitted,
-    onReload,
-    pageCount,
+    // The field messages show once the draft is changed and holds the Save button back.
+    errors: variantErrorsOf(drafts),
     patchDraft,
     product,
     records,
-    revision,
     save,
-    setVariantPage,
-    setVariantSearch,
-    submitted,
-    variantSearch,
-    visibleDrafts,
+    submitted: save.draft.status === 'invalid',
   };
 };
 
 type VariantRecord = NonNullable<ProductRecord['variantRecords']>[number];
 
-const variantFieldError = (submitted: boolean, helpText: string, invalid = false) => {
-  if (submitted && invalid) {
-    return { helpText, validateStatus: 'error' as const };
-  }
-  return {};
-};
+const variantFieldVerdict = (submitted: boolean, helpText: string, invalid = false) =>
+  fieldVerdict(submitted && invalid, helpText);
 
 /** The gross price a variant row shows: the server's for a saved price, else the preview at today's rate. */
 const variantGrossPrice = (
@@ -678,30 +705,225 @@ const variantImageChoicesOf = (product: ProductRecord, drafts: readonly { readon
   ]),
 ];
 
-export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
-  const { t } = useModernI18n();
-  const {
-    addDraft,
-    canMoveStock,
-    canWrite,
+const PAGE_SIZE = 20;
+
+/**
+ * The page of the list: the page a button or a variant link picked, while the search it was picked for is still
+ * typed; a changed search starts at the first page again.
+ */
+interface Paging {
+  readonly page: number;
+  readonly search: string;
+}
+
+/**
+ * The search box and pages of the list, and the variant a link opened: it shows, unfiltered and on its page, and
+ * takes the focus once its row is shown.
+ */
+const useVariantPaging = (drafts: readonly VariantDraft[], selectedKey: string | undefined) => {
+  const search = useAtomValue(variantSearch);
+  const setSearch = useSetVariantSearch();
+  const [paging, setPaging] = useState<Paging>({ page: 0, search: '' });
+  const [target, setTarget] = useState<{ readonly clearSearch: boolean; readonly key: string | null }>({
+    clearSearch: false,
+    key: null,
+  });
+  const currentTarget = selectedKey ?? null;
+  if (currentTarget !== target.key) {
+    const index = selectedKey === undefined ? -1 : drafts.findIndex((draft) => draft.key === selectedKey);
+    setTarget({ clearSearch: index !== -1, key: currentTarget });
+    if (index !== -1) {
+      setPaging({ page: Math.floor(index / PAGE_SIZE), search: '' });
+    }
+  }
+  useEffect(() => {
+    if (target.clearSearch) {
+      setSearch('');
+    }
+  }, [setSearch, target]);
+  const visibleDrafts = drafts.filter((draft) =>
+    `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(search.toLocaleLowerCase('cs')),
+  );
+  const pageCount = Math.max(1, Math.ceil(visibleDrafts.length / PAGE_SIZE));
+  const currentPage = Math.min(paging.search === search ? paging.page : 0, pageCount - 1);
+  const pageDrafts = visibleDrafts.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const targetShown = selectedKey !== undefined && pageDrafts.some((draft) => draft.key === selectedKey);
+  const focused = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedKey === undefined) {
+      focused.current = null;
+    } else if (targetShown && focused.current !== selectedKey) {
+      focused.current = selectedKey;
+      document.querySelector<HTMLElement>('[data-variant-target="selected"]')?.focus();
+    }
+  }, [selectedKey, targetShown]);
+  return {
     currentPage,
-    drafts,
-    duplicateSku,
-    errors,
-    onCommitted,
-    onReload,
     pageCount,
-    patchDraft,
-    product,
-    records,
-    revision,
-    save,
-    setVariantPage,
-    setVariantSearch,
-    submitted,
-    variantSearch,
-    visibleDrafts,
-  } = useVariantsPanel(props);
+    pageDrafts,
+    showPage: (page: number) => setPaging({ page, search }),
+    visibleCount: visibleDrafts.length,
+  };
+};
+
+interface VariantRowProps {
+  readonly canWrite: boolean;
+  readonly classification: ReturnType<typeof classificationChoice>;
+  readonly draft: VariantDraft;
+  readonly error: ReturnType<typeof variantErrorsOf>[number] | undefined;
+  readonly images: readonly string[];
+  readonly index: number;
+  readonly notSet: string;
+  readonly onPatch: (next: Partial<VariantDetailDraft>) => void;
+  readonly onToggle: () => void;
+  readonly open: boolean;
+  readonly placeholders: ReturnType<typeof variantPlaceholders>;
+  readonly product: ProductRecord;
+  readonly record: VariantRecord | undefined;
+  readonly selected: boolean;
+  readonly submitted: boolean;
+}
+
+/** One variant: its row of the table and, while open, the row of its detail editor. */
+const VariantRow = ({
+  canWrite,
+  classification,
+  draft,
+  error,
+  images,
+  index,
+  notSet,
+  onPatch,
+  onToggle,
+  open,
+  placeholders,
+  product,
+  record,
+  selected,
+  submitted,
+}: VariantRowProps) => {
+  const { t } = useModernI18n();
+  const price = parseCzk(draft.priceText);
+  const vatRate = classification.current?.ratePercent;
+  return (
+    <variantsFields.rows.Item index={index}>
+      <Table.Row
+        aria-current={selected}
+        className={selected ? 'bg-primary/10' : ''}
+        data-variant-target={selected ? 'selected' : 'none'}
+        selected={selected}
+        tabIndex={-1}
+      >
+        <Table.Cell>
+          <div className="flex min-w-48 flex-col gap-50">
+            <variantsFields.rows.name
+              disabled={!canWrite}
+              id={`variant-label-${draft.key}`}
+              label={<span className="sr-only">Název varianty</span>}
+              name={`variant-label-${draft.key}`}
+              placeholder={placeholders.name}
+              size="sm"
+              {...variantFieldVerdict(submitted, 'Zadejte název', error?.name)}
+            />
+            {selected ? (
+              <Badge severity="info" size="sm">
+                {t('merchandise.pages.products.detail.variantSelected')}
+              </Badge>
+            ) : null}
+            <variantsFields.rows.attributes
+              disabled={!canWrite}
+              id={`variant-attrs-${draft.key}`}
+              label={<span className="sr-only">Vlastnosti varianty</span>}
+              name={`variant-attrs-${draft.key}`}
+              placeholder={placeholders.attributes}
+              size="sm"
+            />
+            <VariantDetailsToggle invalid={error?.details === true} onToggle={onToggle} open={open} />
+            {renderVariantPriceTiers(
+              record,
+              product.unit,
+              record !== undefined && price !== null && price !== record.priceMinor
+                ? t('merchandise.ui.variantTiersRescaled')
+                : null,
+            )}
+          </div>
+        </Table.Cell>
+        <Table.Cell>
+          <div className="w-48">
+            <variantsFields.rows.sku
+              disabled={!canWrite}
+              id={`variant-sku-${draft.key}`}
+              label={<span className="sr-only">SKU</span>}
+              name={`variant-sku-${draft.key}`}
+              size="sm"
+              {...variantFieldVerdict(submitted, 'Zadejte SKU', error?.sku)}
+            />
+          </div>
+        </Table.Cell>
+        <Table.Cell align="end">
+          <div className="ml-auto w-32">
+            <variantsFields.rows.price
+              // A Symmy product's prices live in the ERP; this panel does not write them there.
+              disabled={!canWrite || product.importedVia === 'symmy'}
+              formatOptions={MONEY_FORMAT}
+              id={`variant-price-${draft.key}`}
+              label={<span className="sr-only">Cena bez DPH</span>}
+              locale="cs-CZ"
+              min={0}
+              name={`variant-price-${draft.key}`}
+              size="sm"
+              {...variantFieldVerdict(submitted, 'Zadejte cenu', error?.price)}
+            />
+          </div>
+        </Table.Cell>
+        <Table.Cell align="end" className="tabular-nums">
+          {variantGrossPrice(price, record, vatRate, notSet)}
+        </Table.Cell>
+        <Table.Cell align="end" className="tabular-nums">
+          {variantStockText(record, product.unit)}
+        </Table.Cell>
+        <Table.Cell>
+          {record === undefined ? (
+            <span className="text-fg-secondary">—</span>
+          ) : (
+            <AvailabilityBadge value={record.availability} />
+          )}
+        </Table.Cell>
+        <Table.Cell>
+          {canWrite ? (
+            <variantsFields.rows.active disabled={!canWrite} name={`variant-active-${draft.key}`}>
+              <span className="sr-only">Aktivní</span>
+            </variantsFields.rows.active>
+          ) : (
+            <Badge severity={draft.active ? 'success' : 'neutral'} size="sm">
+              {draft.active ? 'Aktivní' : 'Neaktivní'}
+            </Badge>
+          )}
+        </Table.Cell>
+      </Table.Row>
+      {open ? (
+        <Table.Row>
+          <Table.Cell colSpan={7}>
+            <VariantDetailEditor
+              disabled={!canWrite}
+              draft={draft}
+              idPrefix={`variant-${draft.key}`}
+              images={images}
+              mainImage={product.images?.[0]}
+              onChange={onPatch}
+              productId={product.id}
+              vatRate={vatRate}
+            />
+          </Table.Cell>
+        </Table.Row>
+      ) : null}
+    </variantsFields.rows.Item>
+  );
+};
+
+const VariantsEditor = (props: PanelProps & { readonly vat: CompanyVat }) => {
+  const { t } = useModernI18n();
+  const { addDraft, canWrite, drafts, errors, patchDraft, product, records, save, submitted } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
   const variantImageChoices = variantImageChoicesOf(product, drafts);
   const taxLabels = useTaxLabels();
@@ -713,29 +935,12 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
     DateTime.nowUnsafe(),
   );
   const [openDetails, setOpenDetails] = useState<string | null>(null);
-  const vatRate = classification.current?.ratePercent;
   const variantDestination = props.variantDestination ?? { kind: 'none' };
   const selectedKey = variantDestination.kind === 'selected' ? variantDestination.draftKey : undefined;
-  const [appliedTarget, setAppliedTarget] = useState<string | null>(null);
-  const currentTarget = selectedKey ?? null;
-  if (currentTarget !== appliedTarget) {
-    setAppliedTarget(currentTarget);
-    if (selectedKey !== undefined) {
-      const index = drafts.findIndex((draft) => draft.key === selectedKey);
-      if (index !== -1) {
-        setVariantSearch('');
-        setVariantPage(Math.floor(index / 20));
-      }
-    }
-  }
-  useEffect(() => {
-    if (selectedKey !== undefined) {
-      document.querySelector<HTMLElement>('[data-variant-target="selected"]')?.focus();
-    }
-  }, [selectedKey]);
+  const { currentPage, pageCount, pageDrafts, showPage, visibleCount } = useVariantPaging(drafts, selectedKey);
 
   return (
-    <div className="flex flex-col gap-250">
+    <>
       {variantDestination.kind === 'unavailable' ? (
         <StatusText showIcon status="warning">
           {t('merchandise.pages.products.detail.variantUnavailable')}
@@ -745,32 +950,27 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
         {t('merchandise.ui.variantsIntro', { vat: taxLabels.choice(classification) })}
       </p>
       <div className="flex flex-wrap items-center gap-150">
-        <FormInput
+        <variantsFields.search
           id="variant-search"
           label={t('merchandise.ui.searchVariants')}
           name="variant-search"
-          onChange={(event) => {
-            setVariantSearch(event.target.value);
-            setVariantPage(0);
-          }}
           placeholder={t('merchandise.ui.variantSearchPlaceholder')}
-          value={variantSearch}
         />
         <Button
           appearance="outline"
           disabled={currentPage === 0}
-          onClick={() => setVariantPage(currentPage - 1)}
+          onClick={() => showPage(currentPage - 1)}
           severity="secondary"
         >
           Předchozí
         </Button>
         <span className="text-fg-secondary text-sm">
-          Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant
+          Strana {currentPage + 1} z {pageCount} · {visibleCount} variant
         </span>
         <Button
           appearance="outline"
           disabled={currentPage + 1 >= pageCount}
-          onClick={() => setVariantPage(currentPage + 1)}
+          onClick={() => showPage(currentPage + 1)}
           severity="secondary"
         >
           Další
@@ -797,152 +997,35 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {visibleDrafts.slice(currentPage * 20, (currentPage + 1) * 20).map((draft) => {
+                {pageDrafts.map((draft) => {
                   const index = drafts.indexOf(draft);
-                  const record = draft.id === undefined ? undefined : records.get(draft.id);
-                  const price = parseCzk(draft.priceText);
-                  const error = errors[index];
-                  return [
-                    <Table.Row
-                      aria-current={draft.key === selectedKey}
-                      className={draft.key === selectedKey ? 'bg-primary/10' : ''}
-                      data-variant-target={draft.key === selectedKey ? 'selected' : 'none'}
+                  return (
+                    <VariantRow
+                      canWrite={canWrite}
+                      classification={classification}
+                      draft={draft}
+                      error={errors[index]}
+                      images={variantImageChoices}
+                      index={index}
                       key={draft.key}
+                      notSet={taxLabels.notSet}
+                      onPatch={(next) => patchDraft(draft.key, next)}
+                      onToggle={() => setOpenDetails((current) => (current === draft.key ? null : draft.key))}
+                      open={openDetails === draft.key}
+                      placeholders={placeholders}
+                      product={product}
+                      record={draft.id === undefined ? undefined : records.get(draft.id)}
                       selected={draft.key === selectedKey}
-                      tabIndex={-1}
-                    >
-                      <Table.Cell>
-                        <div className="flex min-w-48 flex-col gap-50">
-                          <FormInput
-                            disabled={!canWrite}
-                            id={`variant-label-${draft.key}`}
-                            label={<span className="sr-only">Název varianty</span>}
-                            name={`variant-label-${draft.key}`}
-                            onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
-                            placeholder={placeholders.name}
-                            size="sm"
-                            value={draft.name}
-                            {...variantFieldError(submitted, 'Zadejte název', error?.name)}
-                          />
-                          {draft.key === selectedKey ? (
-                            <Badge severity="info" size="sm">
-                              {t('merchandise.pages.products.detail.variantSelected')}
-                            </Badge>
-                          ) : null}
-                          <FormInput
-                            disabled={!canWrite}
-                            id={`variant-attrs-${draft.key}`}
-                            label={<span className="sr-only">Vlastnosti varianty</span>}
-                            name={`variant-attrs-${draft.key}`}
-                            onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
-                            placeholder={placeholders.attributes}
-                            size="sm"
-                            value={draft.attributes}
-                          />
-                          <VariantDetailsToggle
-                            invalid={error?.details === true}
-                            onToggle={() => setOpenDetails((current) => (current === draft.key ? null : draft.key))}
-                            open={openDetails === draft.key}
-                          />
-                          {renderVariantPriceTiers(
-                            record,
-                            product.unit,
-                            record !== undefined && price !== null && price !== record.priceMinor
-                              ? t('merchandise.ui.variantTiersRescaled')
-                              : null,
-                          )}
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="w-48">
-                          <FormInput
-                            disabled={!canWrite}
-                            id={`variant-sku-${draft.key}`}
-                            label={<span className="sr-only">SKU</span>}
-                            name={`variant-sku-${draft.key}`}
-                            onChange={(event) => patchDraft(draft.key, { sku: event.target.value })}
-                            size="sm"
-                            value={draft.sku}
-                            {...variantFieldError(submitted, 'Zadejte SKU', error?.sku)}
-                          />
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell align="end">
-                        <div className="ml-auto w-32">
-                          <FormNumericInput
-                            // A Symmy product's prices live in the ERP; this panel does not write them there.
-                            disabled={!canWrite || product.importedVia === 'symmy'}
-                            formatOptions={MONEY_FORMAT}
-                            id={`variant-price-${draft.key}`}
-                            label={<span className="sr-only">Cena bez DPH</span>}
-                            locale="cs-CZ"
-                            min={0}
-                            name={`variant-price-${draft.key}`}
-                            onValueChange={(details) => patchDraft(draft.key, { priceText: details.value })}
-                            size="sm"
-                            value={draft.priceText}
-                            {...variantFieldError(submitted, 'Zadejte cenu', error?.price)}
-                          >
-                            <NumericInput.Control>
-                              <NumericInput.Input />
-                            </NumericInput.Control>
-                          </FormNumericInput>
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {variantGrossPrice(price, record, classification.current?.ratePercent, taxLabels.notSet)}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {variantStockText(record, product.unit)}
-                      </Table.Cell>
-                      <Table.Cell>
-                        {record === undefined ? (
-                          <span className="text-fg-secondary">—</span>
-                        ) : (
-                          <AvailabilityBadge value={record.availability} />
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        {canWrite ? (
-                          <Switch
-                            checked={draft.active}
-                            disabled={!canWrite}
-                            name={`variant-active-${draft.key}`}
-                            onCheckedChange={(checked: boolean) => patchDraft(draft.key, { active: checked })}
-                          >
-                            <span className="sr-only">Aktivní</span>
-                          </Switch>
-                        ) : (
-                          <Badge severity={draft.active ? 'success' : 'neutral'} size="sm">
-                            {draft.active ? 'Aktivní' : 'Neaktivní'}
-                          </Badge>
-                        )}
-                      </Table.Cell>
-                    </Table.Row>,
-                    openDetails === draft.key ? (
-                      <Table.Row key={`${draft.key}-details`}>
-                        <Table.Cell colSpan={7}>
-                          <VariantDetailEditor
-                            disabled={!canWrite}
-                            draft={draft}
-                            idPrefix={`variant-${draft.key}`}
-                            images={variantImageChoices}
-                            mainImage={product.images?.[0]}
-                            onChange={(next) => patchDraft(draft.key, next)}
-                            productId={product.id}
-                            vatRate={vatRate}
-                          />
-                        </Table.Cell>
-                      </Table.Row>
-                    ) : null,
-                  ];
+                      submitted={submitted}
+                    />
+                  );
                 })}
               </Table.Body>
             </Table>
           </ScrollRegion>
         )}
       </SectionCard>
-      {submitted && duplicateSku && (
+      {submitted && duplicateSkuOf(drafts) && (
         <StatusText showIcon status="error">
           SKU variant se nesmí opakovat.
         </StatusText>
@@ -965,7 +1048,20 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           <ProductTabSaveBar active={props.active ?? true} save={save} />
         </div>
       )}
-      {(product.variantRecords ?? []).length > 0 && (
+    </>
+  );
+};
+
+/** The "Varianty a ceny" tab: the variants form with its Save button, the variant stock movement and price history. */
+export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
+  const { canWrite, canMoveStock = canWrite, onCommitted, onReload, product, revision } = props;
+  const hasRecords = (product.variantRecords ?? []).length > 0;
+  return (
+    <div className="flex flex-col gap-250">
+      <VariantsForm className="flex flex-col gap-250" drafts={variantDraftsOf(product)}>
+        <VariantsEditor {...props} />
+      </VariantsForm>
+      {hasRecords && (
         <VariantStockForm
           canWrite={canMoveStock}
           onCommitted={onCommitted}
@@ -974,7 +1070,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           revision={revision}
         />
       )}
-      {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} />}
+      {hasRecords && <VariantPriceHistory product={product} />}
     </div>
   );
 };

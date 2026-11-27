@@ -35,3 +35,4 @@ export {
   unrenderedField,
   type NumberText,
 } from './kit-fields-controls.ts';
+export { makePartInputField, type PartInputProps } from './kit-fields-part.ts';

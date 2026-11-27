@@ -5,6 +5,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { formatMoney, SectionCard } from '@app/admin-ui';
+import { useAtomValue } from '@app/core-runtime/ui/form';
 import { Match, Option } from 'effect';
 import { useState } from 'react';
 import { AvailabilityBadge } from './product-eshop.tsx';
@@ -12,6 +13,7 @@ import type { PanelProps } from './product-eshop.tsx';
 import { ArchiveSection, PublicationSection, RestoreSection } from './product-eshop-sections.tsx';
 import { eshopCommandsOf, eshopDraftOf, eshopPartlyConfirmed, slugInvalidOf } from './product-eshop-draft.ts';
 import type { EshopDraft } from './product-eshop-draft.ts';
+import { EshopForm, archiveReason, eshopDraft, useUpdateEshopImages, useSetEshopDraft } from './product-eshop-form.ts';
 import { useProductLabel } from './product-form-labels.ts';
 import { ProductImageGallery } from './product-image-gallery.tsx';
 import type { StageImage } from './product-image-gallery.tsx';
@@ -28,7 +30,9 @@ export interface EshopPanelProps extends PanelProps {
 
 const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelProps) => {
   const k = useProductLabel();
-  const [form, setForm] = useState<EshopDraft>(() => eshopDraftOf(product));
+  const form = Option.getOrElse(useAtomValue(eshopDraft), () => eshopDraftOf(product));
+  const reason = useAtomValue(archiveReason);
+  const setDraft = useSetEshopDraft();
   // The slug the server refused because another product uses it; editing the field clears the message.
   const [takenSlug, setTakenSlug] = useState<string | null>(null);
   const save = useProductTabSave<EshopDraft>({
@@ -59,30 +63,33 @@ const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelP
     onReload,
     onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
     partlyConfirmed: eshopPartlyConfirmed,
-    reset: setForm,
+    // The archive reason is its own command's: putting a draft back keeps it as typed.
+    reset: (next) => setDraft(next, reason),
     revision,
     server: eshopDraftOf(product),
     value: form,
     version: productVersionOf(product),
   });
-  return { form, save, setForm, takenSlug };
+  return { form, save, takenSlug };
 };
 
-export const EshopPanel = (props: EshopPanelProps) => {
+/** The tab's contents; they render inside its form. */
+const EshopPanelContent = (props: EshopPanelProps) => {
   const { t } = useModernI18n();
   const { canWrite, canWriteImages = false, onArchived, onCommitted, onReload, product, revision } = props;
-  const { form, save, setForm, takenSlug } = useEshopPanel(props);
+  const { form, save, takenSlug } = useEshopPanel(props);
+  const setImages = useUpdateEshopImages();
   const { published } = form;
   const storefrontHref =
     props.storefrontOrigin === undefined
       ? undefined
       : `${props.storefrontOrigin}/produkt/${product.slug ?? product.id}`;
   return (
-    <div className="flex flex-col gap-250">
+    <>
       <ProductImageGallery
         canWrite={canWriteImages}
         images={form.images}
-        onImagesChange={(update) => setForm((current) => ({ ...current, images: update(current.images) }))}
+        onImagesChange={setImages}
         productId={product.id}
         productName={product.name}
         {...(props.prepare === undefined ? {} : { prepare: props.prepare })}
@@ -125,14 +132,15 @@ export const EshopPanel = (props: EshopPanelProps) => {
       {canWrite && product.demoArchive !== undefined && (
         <RestoreSection onCommitted={onCommitted} onReload={onReload} product={product} revision={revision} />
       )}
-      <PublicationSection
-        canWrite={canWrite}
-        form={form}
-        onFormChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
-        takenSlug={takenSlug}
-      />
+      <PublicationSection canWrite={canWrite} slug={form.slug} takenSlug={takenSlug} />
       {/* The tab's one Save button, last: settings and pictures are saved together. */}
       {(canWrite || canWriteImages) && <ProductTabSaveBar active={props.active ?? true} save={save} />}
-    </div>
+    </>
   );
 };
+
+export const EshopPanel = (props: EshopPanelProps) => (
+  <EshopForm product={props.product}>
+    <EshopPanelContent {...props} />
+  </EshopForm>
+);

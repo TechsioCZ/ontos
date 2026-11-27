@@ -1,15 +1,28 @@
 // Sales terms of one product as the storefront shows them: order minimum (also the order increment on Akros), package
 // quantity, the unit label, quantity price tiers and the struck-through original price.
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { SectionCard } from '@app/admin-ui';
-import { DateTime } from 'effect';
-import { useState } from 'react';
+import {
+  FormBuilder,
+  FormInputField,
+  FormReact,
+  FormRoot,
+  makePartInputField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { PartInputProps } from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import type { FC } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { grossUnitPriceMinor } from '../../../../../shared/domain/merchandise-model.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
+  TierDraftSchema,
   czkText,
   nextTierKey,
   parseCzkText,
@@ -22,26 +35,59 @@ import {
   tiersAtMinimumNote,
 } from './product-sales-terms-draft.ts';
 import type { TierDraft } from './product-sales-terms-draft.ts';
-import { fieldError } from './product-form-validation.ts';
+import { fieldVerdict } from './product-form-validation.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import { productVersionOf } from './products-api.ts';
 import { DEFAULT_TAX_CLASSIFICATION, rateAt } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
 
-export interface PriceTierRowsProps {
+export interface PriceTierRowsProps<Value> {
   readonly disabled: boolean;
+  /** The field's value with `next` as its tier rows: a typed, added or removed row. */
+  readonly edit: (value: Value, next: readonly TierDraft[]) => Value;
+  /** The form field holding the rows; one input per tier value reads and writes its part of it. */
+  readonly field: FC<PartInputProps<Value>>;
   readonly idPrefix: string;
   readonly minimum: number | null;
+  /** A row was added or removed: the rows the field holds next. */
   readonly onChange: (next: readonly TierDraft[]) => void;
+  /** The rows the field's value shows: as they sell at the current minimum. */
+  readonly shownOf: (value: Value) => readonly TierDraft[];
+  /** The rows shown now. */
   readonly tiers: readonly TierDraft[];
   /** The rate the gross price is pre-filled with from the net price. */
   readonly vatRate: number | undefined;
 }
 
+type TierText = Exclude<keyof TierDraft, 'key'>;
+
 /** Row editor of quantity tiers ("Od N ks"). Gross is pre-filled from net × VAT and stays editable. */
-export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, vatRate }: PriceTierRowsProps) => {
-  const patch = (key: number, next: Partial<TierDraft>) =>
-    onChange(tiers.map((tier) => (tier.key === key ? { ...tier, ...next } : tier)));
+export const PriceTierRows = <Value,>({
+  disabled,
+  edit,
+  field: TierField,
+  idPrefix,
+  minimum,
+  onChange,
+  shownOf,
+  tiers,
+  vatRate,
+}: PriceTierRowsProps<Value>) => {
+  /** The input of one text of one row: it shows the row as shown and writes the shown rows with it typed. */
+  const part = (key: number, text: TierText, patch: (tier: TierDraft, typed: string) => TierDraft) => ({
+    read: (value: Value) => shownOf(value).find((tier) => tier.key === key)?.[text] ?? '',
+    write: (value: Value, typed: string) =>
+      edit(
+        value,
+        shownOf(value).map((tier) => (tier.key === key ? patch(tier, typed) : tier)),
+      ),
+  });
+  const withNet = (tier: TierDraft, typed: string): TierDraft => {
+    const net = parseCzkText(typed);
+    return net === null || vatRate === undefined
+      ? { ...tier, netText: typed }
+      : { ...tier, grossText: czkText(grossUnitPriceMinor(net, vatRate)), netText: typed };
+  };
   const nextKey = nextTierKey(tiers);
   return (
     <div className="flex flex-col gap-100">
@@ -54,46 +100,33 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
             className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
             key={tier.key}
           >
-            <FormInput
+            <TierField
               disabled={disabled}
               id={`${idPrefix}-tier-min-${tier.key}`}
               inputMode="decimal"
               label="Od množství"
               name={`${idPrefix}-tier-min-${tier.key}`}
-              onChange={(event) => patch(tier.key, { minimumText: event.target.value })}
               size="sm"
-              value={tier.minimumText}
-              {...fieldError(fromInvalid, 'Nesmí být menší než minimální odběr')}
+              {...part(tier.key, 'minimumText', (row, typed) => ({ ...row, minimumText: typed }))}
+              {...fieldVerdict(fromInvalid, 'Nesmí být menší než minimální odběr')}
             />
-            <FormInput
+            <TierField
               disabled={disabled}
               id={`${idPrefix}-tier-net-${tier.key}`}
               inputMode="decimal"
               label="Cena bez DPH (Kč)"
               name={`${idPrefix}-tier-net-${tier.key}`}
-              onChange={(event) => {
-                const net = parseCzkText(event.target.value);
-                if (net === null || vatRate === undefined) {
-                  patch(tier.key, { netText: event.target.value });
-                } else {
-                  patch(tier.key, {
-                    grossText: czkText(grossUnitPriceMinor(net, vatRate)),
-                    netText: event.target.value,
-                  });
-                }
-              }}
               size="sm"
-              value={tier.netText}
+              {...part(tier.key, 'netText', withNet)}
             />
-            <FormInput
+            <TierField
               disabled={disabled}
               id={`${idPrefix}-tier-gross-${tier.key}`}
               inputMode="decimal"
               label="Cena s DPH (Kč)"
               name={`${idPrefix}-tier-gross-${tier.key}`}
-              onChange={(event) => patch(tier.key, { grossText: event.target.value })}
               size="sm"
-              value={tier.grossText}
+              {...part(tier.key, 'grossText', (row, typed) => ({ ...row, grossText: typed }))}
             />
             {disabled ? null : (
               <Button
@@ -216,6 +249,57 @@ const salesTermsPatchOf = (
   return patch;
 };
 
+/** The tier rows of the sales terms: the rows as typed and the minimum they were written for. */
+const SalesTiersSchema = Schema.Struct({ minimumText: Schema.String, rows: Schema.Array(TierDraftSchema) });
+type SalesTiers = typeof SalesTiersSchema.Encoded;
+
+/**
+ * The sales terms of the open product. Typing changes only this form; the tab's Save button sends it, so the form
+ * itself is never submitted.
+ */
+const salesTermsForm = FormReact.make(
+  FormBuilder.empty
+    .addField('minimumText', Schema.String)
+    .addField('originalText', Schema.String)
+    .addField('packageText', Schema.String)
+    .addField('sourceUnit', Schema.String)
+    .addField('tiers', SalesTiersSchema),
+  {
+    fields: {
+      minimumText: FormInputField,
+      originalText: FormInputField,
+      packageText: FormInputField,
+      sourceUnit: FormInputField,
+      tiers: makePartInputField<SalesTiers>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type SalesTermsValues = typeof salesTermsForm.schema.Encoded;
+
+const salesTermsValuesOf = (draft: SalesTermsDraft): SalesTermsValues => ({
+  minimumText: draft.minimumText,
+  originalText: draft.originalText,
+  packageText: draft.packageText,
+  sourceUnit: draft.sourceUnit,
+  tiers: { minimumText: draft.tiersMinimumText, rows: draft.tiers },
+});
+
+const salesTermsDraft = salesTermsForm.values.pipe(
+  Atom.map(
+    Option.map((values): SalesTermsDraft => ({
+      minimumText: values.minimumText,
+      originalText: values.originalText,
+      packageText: values.packageText,
+      sourceUnit: values.sourceUnit,
+      tiers: values.tiers.rows,
+      tiersMinimumText: values.tiers.minimumText,
+    })),
+  ),
+);
+const salesTiersField = salesTermsForm.getFieldAtoms(salesTermsForm.fields.tiers);
+
 export interface SalesTermsPanelProps {
   readonly active?: boolean;
   readonly canWrite: boolean;
@@ -226,8 +310,7 @@ export interface SalesTermsPanelProps {
   readonly vat: CompanyVat;
 }
 
-/** Sales terms editor: one draft, one Uložit sending one UpdateProduct. */
-export const SalesTermsPanel = ({
+const SalesTermsFields = ({
   active = true,
   canWrite,
   onCommitted,
@@ -236,7 +319,9 @@ export const SalesTermsPanel = ({
   revision,
   vat,
 }: SalesTermsPanelProps) => {
-  const [form, setForm] = useState<SalesTermsDraft>(() => salesTermsDraftOf(product));
+  const form = Option.getOrElse(useAtomValue(salesTermsDraft), () => salesTermsDraftOf(product));
+  const setValues = useAtomSet(salesTermsForm.setValues);
+  const setTiers = useAtomSet(salesTiersField.setValue);
   const save = useProductTabSave<SalesTermsDraft>({
     commandOf: (value, confirmed) => ({
       _tag: 'UpdateProduct',
@@ -247,13 +332,12 @@ export const SalesTermsPanel = ({
     keepAs: `sales-terms:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Prodejní podmínky uloženy. Změnu uvidí zákazník po obnovení stránky.'),
-    reset: setForm,
+    reset: (next) => setValues(salesTermsValuesOf(next)),
     revision,
     server: salesTermsDraftOf(product),
     value: form,
     version: productVersionOf(product),
   });
-  const set = (next: Partial<SalesTermsDraft>) => setForm((current) => ({ ...current, ...next }));
   const variants = hasRealVariants(product);
   const disabled = !canWrite;
   const minimum = parseQuantityText(form.minimumText);
@@ -265,34 +349,35 @@ export const SalesTermsPanel = ({
   const invalid = salesTermsInvalid(form, product);
   const shownTiers = shownTiersOf(form);
   const tiersNote = tiersAtMinimumNote(form.tiers, shownTiers, minimum);
+  const shownOf = (value: SalesTiers) => tiersAtMinimum(value.rows, parseQuantityText(value.minimumText), minimum);
+  const editTiers = (value: SalesTiers, next: readonly TierDraft[]): SalesTiers => ({
+    minimumText: minimum === null ? value.minimumText : form.minimumText,
+    rows: next,
+  });
   return (
-    <div className="flex flex-col gap-250">
+    <>
       <SectionCard title="Prodejní podmínky v e-shopu">
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
+          <salesTermsForm.originalText
             disabled={disabled}
             helpText="Prázdné = žádná. Zobrazí se přeškrtnutá vedle aktuální ceny."
             id="sales-original-price"
             inputMode="decimal"
             label="Původní cena s DPH (přeškrtnutá)"
             name="originalPrice"
-            onChange={(event) => set({ originalText: event.target.value })}
-            value={form.originalText}
           />
           {variants ? (
             <p className="text-fg-secondary text-sm">
               Jednotku zobrazenou v e-shopu nastavte u každé varianty v Varianty › Podrobnosti.
             </p>
           ) : (
-            <FormInput
+            <salesTermsForm.sourceUnit
               disabled={disabled}
               helpText={`Prázdné = jednotka produktu (${product.unit}).`}
               id="sales-source-unit"
               label="Jednotka zobrazená v e-shopu"
               maxLength={40}
               name="sourceUnit"
-              onChange={(event) => set({ sourceUnit: event.target.value })}
-              value={form.sourceUnit}
             />
           )}
         </div>
@@ -303,24 +388,20 @@ export const SalesTermsPanel = ({
           </p>
         ) : (
           <div className="mt-200 grid grid-cols-1 gap-200 sm:grid-cols-2">
-            <FormInput
+            <salesTermsForm.minimumText
               disabled={disabled}
               id="sales-minimum"
               inputMode="decimal"
               label="Minimální odběr (zároveň násobek v e-shopu)"
               name="minimumQuantity"
-              onChange={(event) => set({ minimumText: event.target.value })}
-              value={form.minimumText}
-              {...fieldError(minimum === null, 'Zadejte číslo větší než 0')}
+              {...fieldVerdict(minimum === null, 'Zadejte číslo větší než 0')}
             />
-            <FormInput
+            <salesTermsForm.packageText
               disabled={disabled}
               id="sales-package"
               inputMode="decimal"
               label="Počet v balení"
               name="packageQuantity"
-              onChange={(event) => set({ packageText: event.target.value })}
-              value={form.packageText}
             />
           </div>
         )}
@@ -329,11 +410,12 @@ export const SalesTermsPanel = ({
         <SectionCard title={`Množstevní ceny (${shownTiers.length})`}>
           <PriceTierRows
             disabled={disabled}
+            edit={editTiers}
+            field={salesTermsForm.tiers}
             idPrefix="product"
             minimum={minimum}
-            onChange={(tiers) =>
-              set({ tiers, tiersMinimumText: minimum === null ? form.tiersMinimumText : form.minimumText })
-            }
+            onChange={(next) => setTiers(editTiers({ minimumText: form.tiersMinimumText, rows: form.tiers }, next))}
+            shownOf={shownOf}
             tiers={shownTiers}
             vatRate={vatRate}
           />
@@ -346,6 +428,21 @@ export const SalesTermsPanel = ({
         </StatusText>
       ) : null}
       {canWrite ? <ProductTabSaveBar active={active} save={save} /> : null}
-    </div>
+    </>
+  );
+};
+
+/** Sales terms editor: one draft, one Uložit sending one UpdateProduct. */
+export const SalesTermsPanel = (props: SalesTermsPanelProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot
+      className="flex flex-col gap-250"
+      defaultValues={salesTermsValuesOf(salesTermsDraftOf(props.product))}
+      form={salesTermsForm}
+      translateMessage={t}
+    >
+      <SalesTermsFields {...props} />
+    </FormRoot>
   );
 };
