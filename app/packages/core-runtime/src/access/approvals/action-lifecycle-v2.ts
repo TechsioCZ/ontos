@@ -17,7 +17,7 @@ import { CapabilityKeySchema, PrincipalIdSchema, TenantIdSchema } from '../ids.t
 import type { PrincipalId } from '../ids.ts';
 import type { Proposal } from '../model.ts';
 import { AccessDecisionGate } from '../enforcement/contract.ts';
-import { makeAccessAuthorityCurrentness } from '../enforcement/currentness.ts';
+import { ACTION_AUTHORITY_READY_WAIT, makeAccessAuthorityCurrentness } from '../enforcement/currentness.ts';
 import { lockActionAccessFence } from './action-access-fence.ts';
 import { decodeActionCommandV2 } from './action-command-v2.ts';
 import type { ActionCommandV2 } from './action-command-v2.ts';
@@ -209,7 +209,8 @@ const constructActionApprovalLifecycleV2Effect = Effect.fn('ActionApproval.const
     // An externally supplied currentness function or a scripted bound gate is not a lease.
     const enforcement = {
       ...ports.enforcement,
-      currentness: makeAccessAuthorityCurrentness(ports.database),
+      // Approvals wait for an access writer to give the fence back, as every live Action preparation does.
+      currentness: makeAccessAuthorityCurrentness(ports.database, ACTION_AUTHORITY_READY_WAIT),
     };
     const gate = bindAccessGate(seam, enforcement);
 
