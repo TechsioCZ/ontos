@@ -2,7 +2,7 @@ import type { RouteComponent } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
 import { BrandScope, useAppTheme } from '@techsio/ui-kit/theme/theme-provider';
-import { Effect } from 'effect';
+import { Deferred, Effect } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
 
 import { TENANT_THEME_CHANGED_EVENT } from '../../src/api/tenant-theme-events.ts';
@@ -108,6 +108,38 @@ it.effect('swaps the theme of an open Shell when the tenant theme changes, witho
       expect(document.documentElement.dataset['theme']).toBe('acme');
     }).pipe(Effect.provide(bff.browser));
     expect(bff.requests.map((received) => received.endpoint)).toEqual(['executeTenantTheme']);
+  }),
+);
+
+it.live('keeps the newest theme when an older read of it answers late', () =>
+  Effect.gen(function* latestReadWins() {
+    const staleTheme = extendBrand(businessShellTheme.brand, { key: 'stale', label: 'Stale' });
+    const staleAnswer = yield* Deferred.make<null>();
+    let reads = 0;
+    const bff = makeShellBff({
+      executeTenantTheme: () => {
+        reads += 1;
+        // The first read answers only after the second one has; it carries what the tenant had before.
+        return reads === 1
+          ? Deferred.await(staleAnswer).pipe(Effect.as({ revision: 'stale-1', theme: staleTheme }))
+          : Effect.succeed({ revision: acmeTheme.revision, theme: acmeTheme.brand });
+      },
+    });
+    yield* Effect.gen(function* twoReads() {
+      yield* renderPage(ModulePage, businessShellTheme);
+      expect((yield* Effect.promise(() => screen.findByTestId('inherited'))).textContent).toBe('business');
+
+      window.dispatchEvent(new Event(TENANT_THEME_CHANGED_EVENT));
+      yield* Effect.promise(() => waitFor(() => expect(bff.requests).toHaveLength(1)));
+      window.dispatchEvent(new Event(TENANT_THEME_CHANGED_EVENT));
+      yield* Effect.promise(() => waitFor(() => expect(screen.getByTestId('inherited').textContent).toBe('acme')));
+
+      yield* Deferred.succeed(staleAnswer, null);
+      yield* Effect.sleep('50 millis');
+      expect(screen.getByTestId('inherited').textContent).toBe('acme');
+      expect(document.documentElement.dataset['theme']).toBe('acme');
+    }).pipe(Effect.provide(bff.browser));
+    expect(reads).toBe(2);
   }),
 );
 

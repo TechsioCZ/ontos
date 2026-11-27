@@ -1,4 +1,4 @@
-import { Effect, Fiber } from 'effect';
+import { Effect, Fiber, FiberHandle } from 'effect';
 import { useEffect, useState } from 'react';
 
 import { TENANT_THEME_CHANGED_EVENT } from '../api/tenant-theme-events.ts';
@@ -22,7 +22,11 @@ const shownTheme = (loaded: ShellTheme | undefined, fresh: FreshTheme | undefine
   return fresh?.loadedRevision === loaded.revision ? fresh.theme : loaded;
 };
 
-/** Reads the tenant's theme on every trigger and reports a revision other than the one on screen. */
+/**
+ * Reads the tenant's theme on every trigger and reports a revision other than the one on screen. One read runs at a
+ * time, the latest trigger's: a new trigger interrupts the read in flight, so an older answer that lands late never
+ * replaces a newer one, and the cleanup interrupts the read with the polling.
+ */
 const watchTenantTheme = (shownRevision: string, onChange: (theme: ShellTheme) => void) => {
   const refresh = readShellTheme().pipe(
     Effect.matchEffect({
@@ -37,23 +41,39 @@ const watchTenantTheme = (shownRevision: string, onChange: (theme: ShellTheme) =
     }),
   );
   const refreshWhenVisible = Effect.suspend(() => (document.visibilityState === 'visible' ? refresh : Effect.void));
-  const polling = browserRuntime.runFork(
-    Effect.sleep(REFRESH_INTERVAL).pipe(Effect.andThen(refreshWhenVisible), Effect.forever),
+  const watching = browserRuntime.runFork(
+    Effect.scoped(
+      Effect.gen(function* watchTriggers() {
+        const reading = yield* FiberHandle.make();
+        const read = yield* FiberHandle.runtime(reading)();
+        const onFocus = () => {
+          read(refresh);
+        };
+        const onVisibilityChange = () => {
+          read(refreshWhenVisible);
+        };
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            window.addEventListener('focus', onFocus);
+            window.addEventListener(TENANT_THEME_CHANGED_EVENT, onFocus);
+            document.addEventListener('visibilitychange', onVisibilityChange);
+          }),
+          () =>
+            Effect.sync(() => {
+              window.removeEventListener('focus', onFocus);
+              window.removeEventListener(TENANT_THEME_CHANGED_EVENT, onFocus);
+              document.removeEventListener('visibilitychange', onVisibilityChange);
+            }),
+        );
+        return yield* Effect.sleep(REFRESH_INTERVAL).pipe(
+          Effect.andThen(FiberHandle.run(reading, refreshWhenVisible)),
+          Effect.forever,
+        );
+      }),
+    ),
   );
-  const onFocus = () => {
-    void browserRuntime.runPromise(refresh);
-  };
-  const onVisibilityChange = () => {
-    void browserRuntime.runPromise(refreshWhenVisible);
-  };
-  window.addEventListener('focus', onFocus);
-  window.addEventListener(TENANT_THEME_CHANGED_EVENT, onFocus);
-  document.addEventListener('visibilitychange', onVisibilityChange);
   return () => {
-    void browserRuntime.runPromise(Fiber.interrupt(polling));
-    window.removeEventListener('focus', onFocus);
-    window.removeEventListener(TENANT_THEME_CHANGED_EVENT, onFocus);
-    document.removeEventListener('visibilitychange', onVisibilityChange);
+    void browserRuntime.runPromise(Fiber.interrupt(watching));
   };
 };
 
