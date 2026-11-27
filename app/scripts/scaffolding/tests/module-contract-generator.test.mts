@@ -12,7 +12,12 @@ import { expect, it } from 'effect-rstest';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { runScaffoldEffect } from '../cli.mts';
-import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
+import {
+  asJsonObject,
+  bindSharedRuntimeWorkerEntry,
+  formatGeneratedMutationContent,
+  readModuleRuntimeDeclarationEffect,
+} from '../shared.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
 import { snapshotTree, write } from './fixture-files.mts';
@@ -55,6 +60,7 @@ const CUSTOM_FEDERATION_EXPOSE = './cards/UnitCard.v2';
 const DOCUMENTS_APP_ID = 'documents-center';
 const DOCUMENTS_MODULE_ID = 'documents.center';
 const MODULE_CONTRACT_COMMAND = 'module-contract';
+const CURRENT_DETAILS = 'current-details';
 const MODULE_API_COMMAND = 'module-api';
 const MODULE_ID = 'property.registry';
 const PROPERTY_MANIFEST_PATH = 'verticals/property-registry/vertical.manifest.ts';
@@ -414,7 +420,7 @@ it.live(
       Effect.fn(function* verifySharedOwner(root) {
         yield* scaffold(root);
         yield* linkFixtureDependencies(root, appRoot, { '@app/shared-contracts': 'packages/shared-contracts' });
-        const apiFlags = [VERTICAL_FLAG, APP_ID, '--name', 'current-details', AUTHORIZATION_FLAG, 'protected'];
+        const apiFlags = [VERTICAL_FLAG, APP_ID, '--name', CURRENT_DETAILS, AUTHORIZATION_FLAG, 'protected'];
         yield* runScaffoldEffect(MODULE_API_COMMAND, apiFlags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
         );
@@ -749,7 +755,7 @@ it.live(
             ),
           ),
         );
-        const flags = [VERTICAL_FLAG, APP_ID, '--name', 'current-details', AUTHORIZATION_FLAG, 'protected'];
+        const flags = [VERTICAL_FLAG, APP_ID, '--name', CURRENT_DETAILS, AUTHORIZATION_FLAG, 'protected'];
         yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
         );
@@ -857,6 +863,45 @@ it.live(
           (error) => expect(String(error)).toMatch(/conflicting operation binding slot/u),
         );
         expect(yield* snapshotTree(root)).toEqual(beforeFailure);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'reruns a module API scaffold with grouped Read imports and groups a missing Read into its existing module import',
+  Effect.fn(function* groupedReadScaffold() {
+    yield* withFixture(
+      Effect.fn(function* groupedReadOwners(root) {
+        yield* scaffold(root);
+        const flags = [VERTICAL_FLAG, APP_ID, '--name', CURRENT_DETAILS, AUTHORIZATION_FLAG, 'protected'];
+        const run = () =>
+          runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          );
+        yield* run();
+        const owners = [PROPERTY_MANIFEST_PATH, `${PROPERTY_DIRECTORY}/${MODULE_REGISTRATION_FILE}`];
+        for (const file of owners) {
+          const target = path.join(root, file);
+          const source = yield* Effect.promise(() => readFile(target, 'utf-8'));
+          const grouped = source.replace(
+            'import { currentDetailsRead }',
+            'import { currentDetailsRead, currentDetailsSetRead }',
+          );
+          expect(grouped).not.toBe(source);
+          const formatted = yield* formatGeneratedMutationContent(target, grouped);
+          yield* Effect.promise(() => writeFile(target, formatted));
+        }
+        const before = yield* snapshotTree(root);
+        yield* run();
+        expect(yield* snapshotTree(root)).toEqual(before);
+        for (const file of owners) {
+          const target = path.join(root, file);
+          const source = yield* Effect.promise(() => readFile(target, 'utf-8'));
+          yield* Effect.promise(() => writeFile(target, source.replace('currentDetailsRead, ', '')));
+        }
+        yield* run();
+        expect(yield* snapshotTree(root)).toEqual(before);
       }),
     );
   }),

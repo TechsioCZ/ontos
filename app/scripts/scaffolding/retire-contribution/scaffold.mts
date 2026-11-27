@@ -62,6 +62,8 @@ import {
   patchJsonObjectProperty,
   normalizeGeneratedSlotEntry,
   readGeneratedSlotEntries,
+  parseModuleReadImport,
+  replaceGeneratedSlotEntry,
   raiseScaffoldFailure,
   readJsonEffect,
   removeGeneratedSlotEntry,
@@ -235,6 +237,42 @@ const isSlotEntry =
   (expected: string) =>
   (entry: string): boolean =>
     normalizeGeneratedSlotEntry(entry) === normalizeGeneratedSlotEntry(expected);
+
+export const removeOperationReadImport = (
+  source: string,
+  start: string,
+  end: string,
+  binding: string,
+  specifier: string,
+): string => {
+  if (!source.includes(start)) {
+    return source;
+  }
+  const matching = readGeneratedSlotEntries(source, start, end).flatMap((entry) => {
+    const imported = parseModuleReadImport(entry);
+    return imported?.specifier === specifier && imported.bindings.includes(binding) ? [{ entry, imported }] : [];
+  });
+  if (matching.length === 0) {
+    return source;
+  }
+  const [match] = matching;
+  if (matching.length !== 1 || match === undefined) {
+    return raiseScaffoldFailure(
+      `expected exactly one generated operation Read import ${binding}; found ${matching.length}`,
+    );
+  }
+  const { entry, imported } = match;
+  const remaining = imported.bindings.filter((name) => name !== binding);
+  return remaining.length === 0
+    ? removeGeneratedSlotEntry(
+        source,
+        start,
+        end,
+        (candidate) => candidate === entry,
+        `operation Read import ${binding}`,
+      )
+    : replaceGeneratedSlotEntry(source, start, end, entry, `import { ${remaining.join(', ')} } from '${specifier}';`);
+};
 
 /** What a retired read leaves behind: each file the plan deletes, by its path. */
 interface RetiredRead {
@@ -781,59 +819,63 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     ]),
   ]);
   const graph = retirementGraph(sources, packages);
-  const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
+  const readSpecifier = `./src/api/${name}.read.ts`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
-      nextManifest: removeSlotEntries(vertical.manifestContent, [
-        {
-          end: MODULE_MANIFEST_IMPORT_SLOT_END,
-          label: `module API import ${name}`,
-          matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
-          start: MODULE_MANIFEST_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_IMPORT_SLOT_END,
-          label: `module API read import ${name}`,
-          matches: isSlotEntry(readImport),
-          optional: true,
-          start: MODULE_MANIFEST_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_API_SLOT_END,
-          label: `module API descriptor ${name}`,
-          matches: isSlotEntry(`'${name}': ${value},`),
-          start: MODULE_MANIFEST_API_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_OPERATION_SLOT_END,
-          label: `module API operation contract ${name}`,
-          matches: (entry) => entry.includes(`apiKey: '${name}'`),
-          optional: true,
-          start: MODULE_MANIFEST_OPERATION_SLOT_START,
-        },
-      ]),
-      nextRegistration: removeSlotEntries(vertical.registrationContent, [
-        {
-          end: MODULE_REGISTRATION_IMPORT_SLOT_END,
-          label: `module API registration read import ${name}`,
-          matches: isSlotEntry(readImport),
-          optional: true,
-          start: MODULE_REGISTRATION_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_REGISTRATION_READ_SLOT_END,
-          label: `module API registration read ${name}`,
-          matches: isSlotEntry(`${camel}Read,`),
-          optional: true,
-          start: MODULE_REGISTRATION_READ_SLOT_START,
-        },
-        {
-          end: MODULE_REGISTRATION_API_SLOT_END,
-          label: `module API registration ${name}`,
-          matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
-          start: MODULE_REGISTRATION_API_SLOT_START,
-        },
-      ]),
+      nextManifest: removeSlotEntries(
+        removeOperationReadImport(
+          vertical.manifestContent,
+          MODULE_MANIFEST_IMPORT_SLOT_START,
+          MODULE_MANIFEST_IMPORT_SLOT_END,
+          `${camel}Read`,
+          readSpecifier,
+        ),
+        [
+          {
+            end: MODULE_MANIFEST_IMPORT_SLOT_END,
+            label: `module API import ${name}`,
+            matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
+            start: MODULE_MANIFEST_IMPORT_SLOT_START,
+          },
+          {
+            end: MODULE_MANIFEST_API_SLOT_END,
+            label: `module API descriptor ${name}`,
+            matches: isSlotEntry(`'${name}': ${value},`),
+            start: MODULE_MANIFEST_API_SLOT_START,
+          },
+          {
+            end: MODULE_MANIFEST_OPERATION_SLOT_END,
+            label: `module API operation contract ${name}`,
+            matches: (entry) => entry.includes(`apiKey: '${name}'`),
+            optional: true,
+            start: MODULE_MANIFEST_OPERATION_SLOT_START,
+          },
+        ],
+      ),
+      nextRegistration: removeSlotEntries(
+        removeOperationReadImport(
+          vertical.registrationContent,
+          MODULE_REGISTRATION_IMPORT_SLOT_START,
+          MODULE_REGISTRATION_IMPORT_SLOT_END,
+          `${camel}Read`,
+          readSpecifier,
+        ),
+        [
+          {
+            end: MODULE_REGISTRATION_READ_SLOT_END,
+            label: `module API registration read ${name}`,
+            matches: isSlotEntry(`${camel}Read,`),
+            optional: true,
+            start: MODULE_REGISTRATION_READ_SLOT_START,
+          },
+          {
+            end: MODULE_REGISTRATION_API_SLOT_END,
+            label: `module API registration ${name}`,
+            matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
+            start: MODULE_REGISTRATION_API_SLOT_START,
+          },
+        ],
+      ),
     }),
     `failed to retire generated module API ${name}`,
   );

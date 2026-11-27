@@ -55,6 +55,7 @@ import {
   insertModuleFederationExposure,
   isModuleManifestImport,
   isModuleRegistrationImport,
+  parseModuleReadImport,
   maskNonCode,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
@@ -1790,22 +1791,39 @@ const ensureOperationBindingSlot = (
   return `${source.slice(0, insertion)}${property}: [\n${start}\n${end}\n],\n${source.slice(insertion)}`;
 };
 
-const patchOperationReadImport = (source: string, start: string, end: string, name: string): string => {
+export const patchOperationReadImport = (source: string, start: string, end: string, name: string): string => {
   const binding = `${toCamelCase(name)}Read`;
   const specifier = `./src/api/${name}.read.ts`;
-  if (hasUniqueExactNamedImport(source, binding, specifier)) {
-    return source;
-  }
-  if (hasNamedImportBinding(source, binding)) {
+  const exactImport = hasUniqueExactNamedImport(source, binding, specifier);
+  if (!exactImport && hasNamedImportBinding(source, binding)) {
     return raiseScaffoldFailure(`generated operation Read import conflicts with ${binding}`);
   }
-  return insertSortedSlotIdempotently(
-    source,
-    start,
-    end,
-    `import { ${binding} } from '${specifier}';`,
-    start === MODULE_REGISTRATION_IMPORT_SLOT_START ? isModuleRegistrationImport : isModuleManifestImport,
-  );
+  const validateEntry =
+    start === MODULE_REGISTRATION_IMPORT_SLOT_START ? isModuleRegistrationImport : isModuleManifestImport;
+  const entries = readGeneratedSlotEntries(source, start, end);
+  if (entries.some((entry) => !validateEntry(entry))) {
+    return raiseScaffoldFailure(`generated owner slot contains unsupported developer content: ${start}`);
+  }
+  if (exactImport) {
+    return source;
+  }
+  const sameModule = entries.filter((entry) => parseModuleReadImport(entry)?.specifier === specifier);
+  if (sameModule.length > 1) {
+    return raiseScaffoldFailure(`generated operation Read import conflicts with ${specifier}`);
+  }
+  const [existing] = sameModule;
+  const imported = existing === undefined ? undefined : parseModuleReadImport(existing);
+  if (existing !== undefined && imported !== undefined) {
+    const bindings = [...imported.bindings, binding].toSorted();
+    return replaceGeneratedSlotEntry(
+      source,
+      start,
+      end,
+      existing,
+      `import { ${bindings.join(', ')} } from '${specifier}';`,
+    );
+  }
+  return insertSortedSlotIdempotently(source, start, end, `import { ${binding} } from '${specifier}';`, validateEntry);
 };
 
 const route = (
