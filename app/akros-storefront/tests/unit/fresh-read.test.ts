@@ -4,11 +4,13 @@ import { createOperation } from "@ontos/storefront-runtime";
 import { clearFreshReads, freshRead, latestFreshRead } from "@/ontos/fresh-read";
 import {
   applyLiveFrame,
-  ERP_OWNERS,
   MERCHANDISE_OWNERS,
   resetLiveChanges,
   setLiveConnected,
 } from "@/ontos/live-changes";
+
+/** Any second owner group of the stream (the main Catalog, Pricing and Inventory). */
+const ERP_OWNERS = ["catalog", "pricing", "inventory"] as const;
 
 // The owner's state, changed by an "admin save"; every load records when it ran.
 let owner = "N";

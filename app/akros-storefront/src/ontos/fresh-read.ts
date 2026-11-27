@@ -40,7 +40,7 @@ export interface FreshReadTiming {
    * old): an owner that answers in time still shows a save on the first visit, a slow one never holds the visit.
    */
   waitMs?: number;
-  /** The owner app ids whose committed changes change the answer (`MERCHANDISE_OWNERS`, `ERP_OWNERS`). */
+  /** The owner app ids whose committed changes change the answer (`MERCHANDISE_OWNERS`). */
   owners?: readonly string[];
 }
 /** An answer the change stream keeps current is still read again this often, and never trusted longer than a minute. */

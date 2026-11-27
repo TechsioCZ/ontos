@@ -8,10 +8,6 @@ import { getDictionary } from "@/ontos/active-market";
 import { getCatalogPage } from "@/ontos/catalog-server";
 import { placeholdersLast, toSearchGridItem } from "@/ontos/search-suggestions";
 import { readSearchVariantMatches } from "@/ontos/search-variants";
-import { ErpProductGrid } from "@/components/erp-product-grid";
-import { erpCopy, type ErpProduct } from "@/lib/erp-catalogue";
-import { searchErpProductsWithin } from "@/ontos/erp-catalogue-server";
-import { renderOperation } from "@/ontos/render-operation";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getDictionary()).search.results };
@@ -31,13 +27,9 @@ export default async function SearchPage({
   let items: ProductGridItem[] = [];
   let itemCount = 0;
   let currentPage = 1;
-  let erpProducts: readonly ErpProduct[] = [];
   // OntOS searches the whole permitted catalog server-side and returns one page plus the total.
   if (term) {
-    // The ERP catalogue (products of „Novinky z ERP“) is searched beside the shop catalogue, within the page's second.
-    const erpSearch = searchErpProductsWithin(term, 24, renderOperation(), 600);
     let listing = await getCatalogPage({ q: term, page: requested, pageSize: productsPerPage });
-    erpProducts = (await erpSearch).products;
     const lastPage = Math.max(1, Math.ceil(listing.total / productsPerPage));
     if (requested > lastPage && listing.total > 0)
       listing = await getCatalogPage({ q: term, page: lastPage, pageSize: productsPerPage });
@@ -67,12 +59,6 @@ export default async function SearchPage({
           <h1 id="search-results-title">{cs.search.results}</h1>
           {q && <p>{cs.search.query(q)}</p>}
         </div>
-        {erpProducts.length > 0 && (
-          <section className="grid gap-4" aria-labelledby="search-erp-title" data-sf-search-erp="">
-            <h2 id="search-erp-title">{erpCopy.title}</h2>
-            <ErpProductGrid products={erpProducts} />
-          </section>
-        )}
         {itemCount > 0 && items.length > 0 ? (
           <>
             <ProductGrid products={items} />
@@ -84,7 +70,7 @@ export default async function SearchPage({
               searchParams={{ q }}
             />
           </>
-        ) : erpProducts.length > 0 ? null : (
+        ) : (
           <p className="sf-empty-state">{cs.search.noResults}</p>
         )}
       </section>

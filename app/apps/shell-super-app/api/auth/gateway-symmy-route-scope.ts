@@ -61,7 +61,12 @@ export const decideSymmyOwnerRouteAdmission = (
   selectedRoute: RouteRequest | undefined,
   input: { readonly audience: string; readonly legalEntityId?: string },
 ): SymmyOwnerRouteAdmission => {
-  if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
+  if (
+    input.audience === 'inventory' &&
+    selectedRoute?.routeKey !== 'inventoryStockBatch' &&
+    // The demo store copy reads company on-hand figures under the company-qualified product read route.
+    !(selectedRoute?.routeKey === 'adminProducts' && input.legalEntityId !== undefined)
+  ) {
     return { kind: 'refused' };
   }
   if (

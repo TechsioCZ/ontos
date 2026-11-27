@@ -321,8 +321,8 @@ export const catalogPagePricesRead = defineRead(
     accessKind: 'detail',
     accessWorkload: {
       reason:
-        'The registered Storefront BFF prices the catalogue page an anonymous visitor of its own company sees, before any customer session exists',
-      workloads: ['commerce.storefront-client'],
+        'The registered Storefront BFF prices the catalogue page an anonymous visitor of its own company sees, before any customer session exists; the enrolled Symmy catalog importer reads the same base Prices of its company to copy them into the demo store',
+      workloads: ['commerce.storefront-client', 'commerce.symmy-demo-catalog-copy'],
     },
     entrypoint: catalogPagePricesEntrypoint,
     evidencePolicy: {

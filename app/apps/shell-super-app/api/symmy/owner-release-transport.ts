@@ -18,7 +18,7 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'reads/symmy-route-context',
     ]),
   ],
-  ['inventory', new Set(['reads/source-stock-position-resolution'])],
+  ['inventory', new Set(['reads/source-stock-position-resolution', 'reads/catalog-variant-on-hand-page'])],
   [
     'merchandise',
     new Set(['reads/demo-order-export', 'reads/demo-catalog-revision', 'merchandise/actions/import-source-catalog']),
@@ -27,7 +27,13 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['price-group-catalog', new Set(['reads/price-group-source-associations', 'reads/price-group-definition'])],
   [
     'pricing',
-    new Set(['reads/price-group-source-prices', 'reads/price-schedule', 'reads/current-supported-currencies']),
+    new Set([
+      'reads/price-group-source-prices',
+      'reads/price-schedule',
+      'reads/current-supported-currencies',
+      'reads/catalog-page-prices',
+      'reads/external-price-source-scopes',
+    ]),
   ],
   ['commerce-market-catalog', new Set(['reads/current-market-catalog'])],
   [

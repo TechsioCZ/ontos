@@ -52,7 +52,6 @@ import { ALL_CATEGORIES, DEFAULT_SORT, SORTS, sortSelectItems } from './select-i
 import { selectItem } from '../../../../ui/select-item.ts';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
-import { ProductSourceTabs } from './product-source-tabs.tsx';
 
 const merchandiseI18nResources = {
   cs: { merchandise: csResource },
@@ -408,8 +407,6 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           title={k('title')}
         />
 
-        <ProductSourceTabs />
-
         <ProductStats indicators={ready?.indicators} label={k} />
 
         <div className="flex flex-wrap items-end gap-150">
@@ -599,6 +596,9 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               onReload={reload}
               open={dialog === 'price'}
               revision={revision}
+              symmyProducts={products.filter(
+                (product) => product.importedVia === 'symmy' && selectedIds.includes(product.id),
+              )}
               variantProducts={products.filter(
                 (product) => (product.variantCount ?? 0) > 0 && selectedIds.includes(product.id),
               )}
