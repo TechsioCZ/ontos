@@ -75,6 +75,22 @@ it("hands a caller that cannot wait the newest answer while a slow read goes on,
   expect(latestFreshRead("key")).toBeUndefined();
 });
 
+it("with waitMs, hands a visit the newest answer once a slow read takes longer, and the read goes on", async () => {
+  const bounded = { ...timing, waitMs: 20 };
+  expect(await read(load, bounded)).toBe("N");
+  vi.advanceTimersByTime(2_000);
+  let finish: (value: string) => void = () => undefined;
+  expect(await read(() => new Promise<string>((resolve) => (finish = resolve)), bounded)).toBe("N");
+  finish("N+1");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(await read(async () => "never read", bounded)).toBe("N+1");
+  // A visit with nothing kept still waits for its own read.
+  clearFreshReads();
+  expect(
+    await read(() => new Promise((resolve) => setTimeout(() => resolve("slow"), 60)), bounded),
+  ).toBe("slow");
+});
+
 it("repeats the read in the background while visits come, so a later visit gets a fresh answer at once", async () => {
   vi.useRealTimers();
   const polled = { maxAgeMs: 400, intervalMs: 20, keepAliveMs: 1_000 };

@@ -290,9 +290,15 @@ export const readErpProduct = cache(
  * bound), priced as a guest with its stock, that every shopper shares. Catalog and Pricing have no revision to check,
  * so a search takes a snapshot whose reads started at most ERP_SNAPSHOT_TIMING.maxAgeMs ago: a product state or price
  * saved in the ERP editor is in every search that long after the save. While shoppers search, the snapshot is read
- * again in the background, so a search does not wait for the owners.
+ * again in the background, so a search does not wait for the owners; when that read is slower than its interval (the
+ * stage owners take 1-5 s under load), a search waits at most 300 ms for it and otherwise takes the newest snapshot.
  */
-const ERP_SNAPSHOT_TIMING = { maxAgeMs: 1_800, intervalMs: 500, keepAliveMs: 10 * 60_000 };
+const ERP_SNAPSHOT_TIMING = {
+  maxAgeMs: 1_800,
+  intervalMs: 500,
+  keepAliveMs: 10 * 60_000,
+  waitMs: 300,
+};
 type ErpPageItem = CatalogProductPage["items"][number];
 interface ErpSnapshot {
   readonly items: readonly ErpPageItem[];

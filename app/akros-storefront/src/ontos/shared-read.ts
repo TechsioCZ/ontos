@@ -12,6 +12,8 @@ interface Entry {
   value: Promise<unknown>;
   done: boolean;
   refreshing: boolean;
+  /** The settled answer of the generation this entry's first read replaces, for readers with `waitMs`. */
+  replaced: { at: number; value: Promise<unknown> } | undefined;
 }
 const entries = new Map<string, Entry>();
 // Full product records are large and the heap is about 281 MB: keep the newest entries only.
@@ -62,7 +64,9 @@ export const joined = <A>(value: Promise<A>, caller: Operation | undefined): Pro
 
 /**
  * `ttlMs` fresh; with `stale`, an older settled value keeps being served while one background refresh replaces it.
- * A value read at another `generation` (the owner's revision) is never served: the read waits for its own load.
+ * A value read at another `generation` (the owner's revision) is served only to a reader with `waitMs` whose new
+ * generation's read has not answered within `waitMs` (while an owner outage would still serve it); otherwise the
+ * read waits for its own load.
  */
 export function sharedRead<A>(
   key: string,
@@ -72,10 +76,30 @@ export function sharedRead<A>(
     stale = false,
     caller,
     generation,
-  }: { stale?: boolean; caller?: Operation; generation?: number } = {},
+    waitMs,
+  }: { stale?: boolean; caller?: Operation; generation?: number; waitMs?: number } = {},
 ): Promise<A> {
-  return joined(read(key, ttlMs, load, stale, generation), caller);
+  return joined(read(key, ttlMs, load, stale, generation, waitMs), caller);
 }
+
+/** The entry's read, or after `waitMs` (or when it fails) the answer of the generation it replaces. */
+const within = <A>(entry: Entry, waitMs: number | undefined): Promise<A> => {
+  const { replaced } = entry;
+  if (
+    entry.done ||
+    waitMs === undefined ||
+    replaced === undefined ||
+    Date.now() - replaced.at >= MAX_STALE_MS
+  )
+    return entry.value as Promise<A>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    entry.value.catch(() => replaced.value),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, waitMs);
+    }).then(() => replaced.value),
+  ]).finally(() => clearTimeout(timer)) as Promise<A>;
+};
 
 function read<A>(
   key: string,
@@ -83,6 +107,7 @@ function read<A>(
   load: (operation: Operation) => Promise<A>,
   stale: boolean,
   generation: number | undefined,
+  waitMs: number | undefined,
 ): Promise<A> {
   const found = entries.get(key);
   const held = found?.generation === generation ? found : undefined;
@@ -91,7 +116,7 @@ function read<A>(
     entries.set(key, held);
   }
   if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
-    return held.value as Promise<A>;
+    return within(held, waitMs);
   if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
     if (!held.refreshing) {
       held.refreshing = true;
@@ -105,6 +130,7 @@ function read<A>(
             value: Promise.resolve(value),
             done: true,
             refreshing: false,
+            replaced: undefined,
           });
         },
         () => {
@@ -115,7 +141,21 @@ function read<A>(
     return held.value as Promise<A>;
   }
   const value = detached(load);
-  const entry: Entry = { at: Date.now(), generation, value, done: false, refreshing: false };
+  // A new generation's first read keeps the settled answer it replaces for readers that cannot wait.
+  const replaced =
+    found === undefined || found === held
+      ? undefined
+      : found.done
+        ? { at: found.at, value: found.value }
+        : found.replaced;
+  const entry: Entry = {
+    at: Date.now(),
+    generation,
+    value,
+    done: false,
+    refreshing: false,
+    replaced,
+  };
   put(key, entry);
   value.then(
     () => {
@@ -125,5 +165,5 @@ function read<A>(
       if (entries.get(key) === entry) entries.delete(key);
     },
   );
-  return value;
+  return within(entry, waitMs);
 }

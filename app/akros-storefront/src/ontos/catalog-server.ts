@@ -118,7 +118,16 @@ const marketIdOf = async (operation: Operation) =>
 // the one its check found. The check is one head read the process shares: a visit takes a revision whose read started
 // at most REVISION_TIMING.maxAgeMs ago, so an admin save shows on every visit 1.5 s after it, and while visitors come
 // the head read repeats in the background, so a warm visit does not wait for it.
-const REVISION_TIMING = { maxAgeMs: 1_500, intervalMs: 500, keepAliveMs: 10 * 60_000 };
+// A visit waits at most OWNER_WAIT_MS for a revision read that is not young, and for the first product or tree read of a
+// new revision, then takes the newest answer (up to 10 minutes old): an owner that answers in time still shows a save
+// on the first visit, and a slow owner (stage: 1-5 s per read under load) never holds a page or a search for seconds.
+const OWNER_WAIT_MS = 300;
+const REVISION_TIMING = {
+  maxAgeMs: 1_500,
+  intervalMs: 500,
+  keepAliveMs: 10 * 60_000,
+  waitMs: OWNER_WAIT_MS,
+};
 
 const loadRevision = async (operation: Operation): Promise<number> => {
   // Without a market id merchandise reads only the company's head: no market, product or category rows.
@@ -179,7 +188,7 @@ export async function readProducts(
       `products:${key}`,
       CATALOG_TTL_MS,
       (detached) => loadProducts(key, detached)(),
-      { stale: true, caller: operation, generation: revision },
+      { stale: true, caller: operation, generation: revision, waitMs: OWNER_WAIT_MS },
     );
   });
 }
@@ -243,7 +252,7 @@ const cachedCategoryPage = cache(
       `catpage:${marketId ?? ""}:${categorySlug}`,
       CATALOG_TTL_MS,
       (detached) => loadCategoryPage(marketId, categorySlug, detached)(),
-      { stale: true, caller: operation, generation: revision },
+      { stale: true, caller: operation, generation: revision, waitMs: OWNER_WAIT_MS },
     );
   },
 );
@@ -259,7 +268,7 @@ const rootTree = cache(async (operation: Operation) => {
     `tree:${marketId ?? ""}`,
     TREE_TTL_MS,
     (detached) => loadRootTree(marketId, detached)(),
-    { stale: true, caller: operation, generation: revision },
+    { stale: true, caller: operation, generation: revision, waitMs: OWNER_WAIT_MS },
   );
 });
 
