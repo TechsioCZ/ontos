@@ -291,15 +291,16 @@ export const readErpProduct = cache(
  * bound), priced as a guest with its stock, that every shopper shares. The snapshot is current until the Shell's change
  * stream names Catalog, Pricing or Inventory (live-changes.ts), and is read again in the background at once: a product
  * state, price or stock saved in the ERP editor is in every search about a second after its commit, and a search between
- * saves reads no owner. Without the stream, a search takes a snapshot whose reads started at most
- * ERP_SNAPSHOT_TIMING.maxAgeMs ago, read again every interval while shoppers search. When a read is still running (the
- * stage owners take 1-5 s under load), a search waits at most 300 ms for it and otherwise takes the newest snapshot.
+ * saves reads no owner. The snapshot (every ERP product with stock and prices, 20+ owner reads) is read at most every
+ * intervalMs: stock moves with every order, and reading it back to back loaded the owners every search depends on.
+ * Without the stream, a search takes a snapshot whose reads started at most ERP_SNAPSHOT_TIMING.maxAgeMs ago. A search
+ * never waits for a running read while a snapshot is kept: it takes the newest one (waitMs 0).
  */
 const ERP_SNAPSHOT_TIMING = {
-  maxAgeMs: 1_800,
-  intervalMs: 500,
+  maxAgeMs: 30_000,
+  intervalMs: 5_000,
   keepAliveMs: 10 * 60_000,
-  waitMs: 300,
+  waitMs: 0,
   owners: ERP_OWNERS,
 };
 type ErpPageItem = CatalogProductPage["items"][number];

@@ -103,13 +103,10 @@ const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) 
         continue;
       }
       const pending = state.pending ?? start(state);
-      const answered = await pending.answer.then(
-        () => true,
-        () => false,
-      );
-      // With the stream, an answer outdated by a change during its read is read again at once; a failed read waits.
-      if (!streamed || !answered)
-        await pause(Math.max(0, timing.intervalMs - (Date.now() - pending.startedAt)));
+      await pending.answer.catch(() => undefined);
+      // Reads repeat at most every `intervalMs`, with or without the stream: owners that change every second (stock
+      // movements during order traffic) are read once per interval, never back to back.
+      await pause(Math.max(0, timing.intervalMs - (Date.now() - pending.startedAt)));
     }
   } finally {
     state.polling = false;
