@@ -48,15 +48,17 @@ type SuggestionData =
       priceMinor: number;
       priceIsFrom: boolean;
       priceUnavailableReason?: string;
+      priceExcludesVat?: boolean;
       currency: StoreCurrency;
     };
 
-export function HeaderSearch() {
+/** `initialQuery` is the results page's own q: the server renders it into the box before any script runs. */
+export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
   const cs = useDictionary();
   const href = useStoreHref();
   const id = useId();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -68,8 +70,10 @@ export function HeaderSearch() {
     // Consumed once: later client-rendered headers must not get this text back.
     early_.__sfEarlyQuery = undefined;
     form.setAttribute("data-sf-hydrated", "");
-    if (early) setQuery((current) => (current.trim() ? current : early));
-  }, []);
+    // Text typed before hydration wins over the server's query, but never over text typed since.
+    if (early)
+      setQuery((current) => (current.trim() && current !== initialQuery ? current : early));
+  }, [initialQuery]);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
   // The browser only holds featured products and navigation, so all suggestions come from the BFF.
@@ -184,6 +188,7 @@ export function HeaderSearch() {
               priceMinor: item.priceMinor,
               priceIsFrom: item.priceIsFrom,
               priceUnavailableReason: item.priceUnavailableReason,
+              priceExcludesVat: item.priceExcludesVat,
               currency: item.currency,
             },
           };
@@ -341,9 +346,14 @@ export function HeaderSearch() {
 }
 
 function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
-  const price = describeCatalogPrice(data, useDictionary(), useMoney());
+  const dictionary = useDictionary();
+  const price = describeCatalogPrice(data, dictionary, useMoney());
   return price.kind !== "unavailable" ? (
-    <strong className="shrink-0 whitespace-nowrap text-sm">{price.label}</strong>
+    <strong className="shrink-0 whitespace-nowrap text-sm">
+      {data.priceExcludesVat && price.kind === "exact"
+        ? `${price.label} ${dictionary.product.excludingVat}`
+        : price.label}
+    </strong>
   ) : (
     <span
       className="shrink-0 whitespace-nowrap text-xs text-(--color-fg-secondary)"

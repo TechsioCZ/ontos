@@ -12,9 +12,12 @@ import { isCatalogPath } from "@/ontos/market-locale";
 export function StorefrontShell({
   activeCategorySlug,
   children,
+  searchQuery,
 }: {
   activeCategorySlug?: string;
   children: ReactNode;
+  /** The results page's q, shown in the header search box. */
+  searchQuery?: string;
 }) {
   const { getSidebarCategories } = useCatalog();
   // A market without a merchandise offer sells nothing yet: catalog pages show one friendly empty state.
@@ -24,7 +27,7 @@ export function StorefrontShell({
   const unconfigured = market?.configured === false && isCatalogPath(pathname);
   return (
     <div className="sf-shell">
-      <SiteHeader />
+      <SiteHeader searchQuery={searchQuery} />
       <div className="sf-page-grid">
         <CatalogSidebar
           activeSlug={activeCategorySlug}

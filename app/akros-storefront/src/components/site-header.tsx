@@ -165,7 +165,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
   );
 }
 
-export function SiteHeader() {
+/** `searchQuery`: the results page's q, kept in the search box (a new q gives a fresh box). */
+export function SiteHeader({ searchQuery }: { searchQuery?: string }) {
   // Without the market prefix, so current-page state matches Kai's unprefixed routes.
   const pathname = useStorePathname();
   const cs = useDictionary();
@@ -256,7 +257,7 @@ export function SiteHeader() {
           </div>
         </div>
         <div className="sf-header__search">
-          <HeaderSearch />
+          <HeaderSearch initialQuery={searchQuery} key={searchQuery} />
         </div>
       </div>
     </header>

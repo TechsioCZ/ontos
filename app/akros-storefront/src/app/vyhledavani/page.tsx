@@ -55,7 +55,7 @@ export default async function SearchPage({
   }
 
   return (
-    <StorefrontShell>
+    <StorefrontShell searchQuery={term}>
       <StorefrontBreadcrumbs
         items={[{ href: "/", label: cs.header.home }, { label: cs.search.results }]}
       />

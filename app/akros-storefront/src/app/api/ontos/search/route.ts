@@ -27,6 +27,7 @@ const erpSuggestion = (product: ErpProduct): RemoteSearchResponse["items"][numbe
       ? price.currencyCode
       : "CZK") as RemoteSearchResponse["items"][number]["currency"],
     priceMinor: price?.kind === "price" ? Math.round(Number(price.amount) * 100) : 0,
+    priceExcludesVat: true,
     priceIsFrom: product.variants.length > 1,
     ...(product.variants.length === 1 && price?.kind !== "price"
       ? { priceUnavailableReason: erpCopy.priceOnRequest }
