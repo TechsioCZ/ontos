@@ -73,7 +73,7 @@ export const resolveUiKitShare = (fromUrl: string): UiKitShare => {
     const files: readonly string[] = readdirSync(path.join(root, prefix), { encoding: 'utf-8' });
     return files.flatMap((name) => {
       const stem = name.slice(0, name.length - suffix.length);
-      return name.endsWith(suffix) && !stem.includes('.')
+      return name.endsWith(suffix)
         ? [{ file: path.join(root, prefix, name), request: `${UI_KIT_PACKAGE}${key.slice(1).replace('*', stem)}` }]
         : [];
     });
