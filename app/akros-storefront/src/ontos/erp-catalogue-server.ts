@@ -292,13 +292,14 @@ export const readErpProduct = cache(
  * stream names Catalog, Pricing or Inventory (live-changes.ts), and is read again in the background at once: a product
  * state, price or stock saved in the ERP editor is in every search about a second after its commit, and a search between
  * saves reads no owner. The snapshot (every ERP product with stock and prices, 20+ owner reads) is read at most every
- * intervalMs: stock moves with every order, and reading it back to back loaded the owners every search depends on.
+ * intervalMs: stock moves with every order, and reading it back to back loaded the owners every search depends on;
+ * 2 s keeps a save that lands as several owner changes (Pricing, then Inventory) on the first search within 6 s.
  * Without the stream, a search takes a snapshot whose reads started at most ERP_SNAPSHOT_TIMING.maxAgeMs ago. A search
  * never waits for a running read while a snapshot is kept: it takes the newest one (waitMs 0).
  */
 const ERP_SNAPSHOT_TIMING = {
   maxAgeMs: 30_000,
-  intervalMs: 5_000,
+  intervalMs: 2_000,
   keepAliveMs: 10 * 60_000,
   waitMs: 0,
   owners: ERP_OWNERS,
