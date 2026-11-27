@@ -168,6 +168,7 @@
           "demoNotice": "E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.",
           "demoStatusNotice": "Změny stavu neodesílají zásilku ani výzvu k platbě.",
           "unitPriceGross": "Cena/j s DPH",
+          "customerGroupPrice": "Cena cenové skupiny zákazníka: {{price}} bez DPH",
           "unitPriceNet": "Cena/j bez DPH",
           "goodsGross": "Zboží s DPH",
           "shippingGross": "Doprava s DPH",

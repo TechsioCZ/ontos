@@ -739,6 +739,13 @@ export const OrderDetailContent = ({
                     <span className="text-fg-secondary text-xs">
                       {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
                     </span>
+                    {line.customerGroupPrice !== undefined && (
+                      <span className="text-fg-secondary text-xs" data-customer-group-price="">
+                        {t('merchandise.pages.orders.detail.customerGroupPrice', {
+                          price: formatMoney(line.customerGroupPrice.netMinor, orderCurrency(order)),
+                        })}
+                      </span>
+                    )}
                   </div>
                 </Table.Cell>
                 <Table.Cell align="end" className="whitespace-nowrap tabular-nums">

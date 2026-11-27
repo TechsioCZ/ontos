@@ -4,6 +4,7 @@ import "server-only";
 import { guard, jsonValue, problem, requestDictionary } from "@/ontos/http";
 import { createCatalog } from "@/ontos/catalog-model";
 import { getCategoryTree, readProducts } from "@/ontos/catalog-server";
+import { withCustomerPrices } from "@/ontos/customer-prices";
 import { SEARCH_QUERY_MIN_LENGTH, searchQueryText } from "@/ontos/search-query";
 import {
   matchCategories,
@@ -57,13 +58,18 @@ export async function POST(request: Request) {
       });
     // The shop catalogue and its tree are read side by side, never after each other, and neither holds the answer
     // longer than SEARCH_WAIT_MS.
-    const [page, tree] = await Promise.all([
+    const [shared, tree] = await Promise.all([
       answeredWithin(
-        readProducts({ q: term, page: 1, pageSize: 6 }, "card", false, { operation: lifetime }),
+        readProducts({ q: term, page: 1, pageSize: 6 }, "card", false, {
+          operation: lifetime,
+          shared: true,
+        }),
         SEARCH_WAIT_MS,
       ),
       answeredWithin(getCategoryTree("", { operation: lifetime }), SEARCH_WAIT_MS),
     ]);
+    // A signed-in customer's own group prices: read after the shared page, never within its wait.
+    const page = shared && (await withCustomerPrices(shared, lifetime));
     // Every card carries validated owner attribution plus at most one market-priced presentation offer.
     const products = placeholdersLast(page?.products ?? []);
     const matches = await readSearchVariantMatches(products, term);

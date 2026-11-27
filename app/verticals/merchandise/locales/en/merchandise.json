@@ -168,6 +168,7 @@
           "demoNotice": "The online store is a presentation demo. No goods will be delivered and nothing is charged.",
           "demoStatusNotice": "Status changes send neither a shipment nor a payment request.",
           "unitPriceGross": "Unit price incl. VAT",
+          "customerGroupPrice": "Customer's price group price: {{price}} excl. VAT",
           "unitPriceNet": "Unit price excl. VAT",
           "goodsGross": "Goods incl. VAT",
           "shippingGross": "Shipping incl. VAT",

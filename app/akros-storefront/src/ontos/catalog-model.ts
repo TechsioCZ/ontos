@@ -101,6 +101,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       (tier) => tier.priceMinor === product.priceMinor,
     )?.priceExcludingVatMinor,
     originalPriceMinor: product.originalPriceMinor,
+    ...(product.customerPrice ? { customerPrice: product.customerPrice } : {}),
     currency: product.currency,
     imageSrc: product.imageSrc,
     imageAlt: product.imageAlt,

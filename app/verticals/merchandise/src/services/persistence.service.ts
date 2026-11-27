@@ -69,6 +69,7 @@ import {
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Availability,
+  CustomerGroupPrice,
   EntityId,
   Order,
   OrderHistoryEntry,
@@ -1789,6 +1790,8 @@ const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): Store
 
 interface PricedUnit {
   readonly availability: Availability;
+  /** Set when the unit is priced at the customer's own Price Group price the storefront sent (`groupPriceOf`). */
+  readonly customerGroupPrice?: CustomerGroupPrice;
   readonly grossPriceMinor: number;
   readonly minimumQuantity?: number;
   readonly name: string;
@@ -1799,6 +1802,20 @@ interface PricedUnit {
   readonly variantId?: OrderLine['variantId'];
   readonly variantName?: string;
 }
+
+/**
+ * The customer's Price Group price the storefront sent for a unit, when it names the unit's own main Catalog variant
+ * (a Symmy product or a SKU-linked one): its gross at the unit's rate, for every quantity. Any other claim is ignored
+ * and the stored price applies.
+ */
+const groupPriceOf = (
+  claim: CustomerGroupPrice | undefined,
+  catalogVariantId: string | undefined,
+  vatRate: number,
+): { readonly customerGroupPrice: CustomerGroupPrice; readonly grossPriceMinor: number } | undefined =>
+  claim !== undefined && catalogVariantId !== undefined && claim.catalogVariantId === catalogVariantId
+    ? { customerGroupPrice: claim, grossPriceMinor: grossUnitPriceMinor(claim.netMinor, vatRate) }
+    : undefined;
 
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
@@ -1836,19 +1853,19 @@ const sellableUnitOf = (
         issue: { ...ids, code: 'NOT_AVAILABLE', message: `Varianta ${variant.name} už není v nabídce.` },
       };
     }
+    const stored = product.variants?.find((entry) => entry.id === variant.id);
+    const group = groupPriceOf(line.customerGroupPrice, stored?.catalogVariantId, tax.vatRate);
     return {
       product,
       tax,
       unit: {
         availability: variant.availability,
+        ...(group === undefined ? {} : { customerGroupPrice: group.customerGroupPrice }),
         // The price its record shows below the first break (`baseGrossOf`); a missing one is refused below.
         grossPriceMinor:
-          grossForQuantity(
-            product.variants?.find((entry) => entry.id === variant.id) ?? variant,
-            variant.priceMinor,
-            tax.vatRate,
-            line.quantity,
-          ) ?? 0,
+          group?.grossPriceMinor ??
+          grossForQuantity(stored ?? variant, variant.priceMinor, tax.vatRate, line.quantity) ??
+          0,
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1860,13 +1877,18 @@ const sellableUnitOf = (
       },
     };
   }
+  const group = groupPriceOf(line.customerGroupPrice, product.catalogVariantId, tax.vatRate);
   return {
     product,
     tax,
     unit: {
       availability: record.availability ?? 'UNKNOWN',
+      ...(group === undefined ? {} : { customerGroupPrice: group.customerGroupPrice }),
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
-      grossPriceMinor: grossForQuantity(product, product.currentPriceMinor, tax.vatRate, line.quantity) ?? 0,
+      grossPriceMinor:
+        group?.grossPriceMinor ??
+        grossForQuantity(product, product.currentPriceMinor, tax.vatRate, line.quantity) ??
+        0,
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,
@@ -2112,6 +2134,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
         ...tax,
+        ...(unit.customerGroupPrice === undefined ? {} : { customerGroupPrice: unit.customerGroupPrice }),
       } satisfies OrderLine;
       const withVariant =
         unit.variantId === undefined
@@ -2376,10 +2399,14 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       // A line the editor added (also one it removed and added again) is priced as a new line, never kept.
       const kept = request.offeredUnitPriceMinor === undefined ? before : undefined;
       if (kept !== undefined) {
+        const unitPriceMinor = request.unitPriceMinor ?? kept.unitPriceMinor;
+        // A staff price replaces the customer's group price the line was charged at.
+        const { customerGroupPrice: _group, ...repriced } = kept;
+        void _group;
         return {
-          ...kept,
+          ...(unitPriceMinor === kept.unitPriceMinor ? kept : repriced),
           quantity: normalizeQuantity(request.quantity),
-          unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
+          unitPriceMinor,
         };
       }
       return yield* addedOrderLine(state, existing, request, input);

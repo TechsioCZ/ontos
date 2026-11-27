@@ -128,6 +128,8 @@ export const cs = {
     priceExcludingVat: "Cena bez DPH",
     priceIncludingVat: "Cena s DPH",
     excludingVat: "bez DPH",
+    yourPrice: "Vaše cena",
+    basePrice: "Základní cena",
     noValidPrice: "OntOS pro tuto položku nevrátil platnou cenu.",
     cannotBuyNow: "Koupit ji proto nyní nelze.",
     availabilityCannotConfirm:

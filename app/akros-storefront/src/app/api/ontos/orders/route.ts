@@ -19,6 +19,7 @@ import { readCustomerOrders } from "@/ontos/customer-orders";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
 import { getActiveMarket, marketReadsFor } from "@/ontos/active-market";
 import { ownerIssueText, type OwnerIssue } from "@/ontos/owner-issues";
+import { groupPriceClaimOf } from "@/ontos/customer-prices";
 
 export async function GET(request: Request) {
   const t = requestDictionary(request);
@@ -84,6 +85,12 @@ export async function POST(request: Request) {
       throw new RequestError(400, t.server.orders.invalidDelivery);
     const address = getDeliveryAddress(draft);
     const delivery = options.shippingMethods.find((method) => method.id === draft.deliveryId)!;
+    // One fresh owner read: for a signed-in customer the cart's products with the customer's own group prices, read by
+    // this server from Pricing for this order (never from the cart); for a guest only the aggregate revision.
+    const snapshot = account
+      ? await readCartProducts(cart.lines, { operation: lifetime, charged: true })
+      : await readProducts({ pageSize: 1 }, "card", true, { operation: lifetime });
+    const priced = account ? snapshot : undefined;
     const command = {
       _tag: "PlaceStorefrontOrder",
       clientRequestId,
@@ -113,12 +120,16 @@ export async function POST(request: Request) {
       },
       shippingMethod: delivery.id,
       expectedShippingPriceMinor: delivery.priceMinor,
-      lines: cart.lines.map((l) => ({
-        productId: l.productId,
-        ...(l.variantId ? { variantId: l.variantId } : {}),
-        quantity: l.quantity,
-        expectedUnitPriceMinor: l.priceMinor,
-      })),
+      lines: cart.lines.map((l) => {
+        const customerGroupPrice = priced && groupPriceClaimOf(priced, l);
+        return {
+          productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
+          quantity: l.quantity,
+          expectedUnitPriceMinor: l.priceMinor,
+          ...(customerGroupPrice ? { customerGroupPrice } : {}),
+        };
+      }),
       note: [
         draft.company,
         draft.companyId && `IČ: ${draft.companyId}`,
@@ -128,8 +139,6 @@ export async function POST(request: Request) {
         .join("; ")
         .slice(0, 1000),
     };
-    // Only the aggregate revision is needed: smallest possible fresh owner read.
-    const snapshot = await readProducts({ pageSize: 1 }, "card", true, { operation: lifetime });
     const payload = { command, expectedRevision: snapshot.revision };
     const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
     // The storefront key is admitted on merchandise's narrow storefront-order Action, not on apply-command.
