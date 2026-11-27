@@ -50,6 +50,8 @@ type SuggestionData =
       priceUnavailableReason?: string;
       priceExcludesVat?: boolean;
       currency: StoreCurrency;
+      stockLabel: string;
+      stockTone: RemoteSearchResponse["items"][number]["stockTone"];
     };
 
 /** `initialQuery` is the results page's own q: the server renders it into the box before any script runs. */
@@ -193,6 +195,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
               priceUnavailableReason: item.priceUnavailableReason,
               priceExcludesVat: item.priceExcludesVat,
               currency: item.currency,
+              stockLabel: item.stockLabel,
+              stockTone: item.stockTone,
             },
           };
         }),
@@ -323,6 +327,15 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
                       {item.data.kind === "category" && item.data.trail && (
                         <span className="truncate text-xs text-(--color-fg-secondary)">
                           {item.data.trail}
+                        </span>
+                      )}
+                      {item.data.kind === "product" && item.data.stockLabel && (
+                        <span
+                          className="truncate text-xs data-[stock=in-stock]:text-product-card-stock-fg-in-stock data-[stock=limited-stock]:text-product-card-stock-fg-limited-stock data-[stock=out-of-stock]:text-product-card-stock-fg-out-of-stock"
+                          data-sf-search-stock=""
+                          data-stock={item.data.stockTone}
+                        >
+                          {item.data.stockLabel}
                         </span>
                       )}
                     </span>

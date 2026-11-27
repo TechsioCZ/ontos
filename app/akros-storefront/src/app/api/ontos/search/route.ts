@@ -12,10 +12,14 @@ import {
 } from "@/ontos/search-suggestions";
 import { readSearchVariantMatches } from "@/ontos/search-variants";
 import { searchErpProductsWithin } from "@/ontos/erp-catalogue-server";
-import { erpCopy, type ErpProduct } from "@/lib/erp-catalogue";
+import { erpCopy, erpStockSummary, type ErpProduct } from "@/lib/erp-catalogue";
+import type { Dictionary } from "@/i18n";
 
 /** One ERP product as a header suggestion: it opens its „Novinky z ERP“ page. */
-const erpSuggestion = (product: ErpProduct): RemoteSearchResponse["items"][number] => {
+const erpSuggestion = (
+  product: ErpProduct,
+  t: Dictionary,
+): RemoteSearchResponse["items"][number] => {
   const [only] = product.variants;
   const price = product.variants.length === 1 ? only?.price : undefined;
   return {
@@ -35,6 +39,7 @@ const erpSuggestion = (product: ErpProduct): RemoteSearchResponse["items"][numbe
     hasVariants: product.variants.length > 1,
     ...(only?.sku && product.variants.length === 1 ? { variantSku: only.sku } : {}),
     path: `/novinky-z-erp/${encodeURIComponent(product.id)}`,
+    ...erpStockSummary(product, t),
   };
 };
 
@@ -65,8 +70,8 @@ export async function POST(request: Request) {
     const products = placeholdersLast(listing.products);
     const matches = await readSearchVariantMatches(products, term);
     const items = [
-      ...erp.products.map(erpSuggestion),
-      ...products.map((product) => toRemoteSuggestion(product, term, matches.get(product.id))),
+      ...erp.products.map((product) => erpSuggestion(product, t)),
+      ...products.map((product) => toRemoteSuggestion(product, term, t, matches.get(product.id))),
     ];
     // The request's navigation tree is matched here so the browser never needs it.
     const categories = matchCategories(

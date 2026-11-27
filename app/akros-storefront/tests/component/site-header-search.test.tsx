@@ -67,6 +67,8 @@ const product: RemoteSearchSuggestion = {
   priceMinor: 12100,
   priceIsFrom: true,
   hasVariants: false,
+  stockLabel: "Skladem",
+  stockTone: "in-stock",
 };
 const retezy: RemoteCategorySuggestion = {
   id: "c-retezy",
@@ -228,6 +230,8 @@ describe("SiteHeader search", () => {
           variantLabel: "8 x 1000 mm",
           variantSku: "766A48",
           path: "/produkt/retez-din-766?variantIds=item-9025#product-variants",
+          stockLabel: "Skladem 6 ks, prodej po 10 ks",
+          stockTone: "out-of-stock",
         },
       ],
       categories: [],
@@ -246,6 +250,10 @@ describe("SiteHeader search", () => {
     );
     expect(within(option).getByText(formatPrice(2_54).replace(/\s/g, " "))).toBeTruthy();
     expect(within(option).queryByText("Cena dle varianty")).toBeNull();
+    // The exact variant's stock by the shop's one rule: held below one package, not sold.
+    expect(
+      within(option).getByText("Skladem 6 ks, prodej po 10 ks").getAttribute("data-stock"),
+    ).toBe("out-of-stock");
     await user.click(option);
     await expectNavigation(option.getAttribute("href"), false);
   });

@@ -6,16 +6,17 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { erpCardSummary, erpCopy, type ErpProduct } from "@/lib/erp-catalogue";
-import { useMoney } from "@/ontos/market-context";
+import { useDictionary, useMoney } from "@/ontos/market-context";
 
 /** The shop's catalogue cards for ERP products: no cart or favourite control, these cannot be ordered yet. */
 export function ErpProductGrid({ products }: { products: readonly ErpProduct[] }) {
+  const cs = useDictionary();
   const { locale } = useMoney();
   return (
     <div className="sf-product-grid" data-sf-product-listing="catalog" data-sf-erp-products="">
       {products.map((product, index) => {
         const href = `/novinky-z-erp/${encodeURIComponent(product.id)}`;
-        const summary = erpCardSummary(product, locale);
+        const summary = erpCardSummary(product, cs, locale);
         const [first] = product.variants;
         return (
           <article className="min-w-0" key={product.id}>

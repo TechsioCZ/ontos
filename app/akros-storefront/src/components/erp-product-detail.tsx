@@ -10,8 +10,7 @@ import {
   erpCardSummary,
   erpCopy,
   erpPriceLabel,
-  erpStockLabel,
-  erpAvailabilityStatus,
+  erpVariantAvailability,
   isYourPrice,
   type ErpProduct,
 } from "@/lib/erp-catalogue";
@@ -21,7 +20,7 @@ import { useDictionary, useMoney } from "@/ontos/market-context";
 export function ErpProductDetail({ product }: { product: ErpProduct }) {
   const cs = useDictionary();
   const { locale } = useMoney();
-  const summary = erpCardSummary(product, locale);
+  const summary = erpCardSummary(product, cs, locale);
   const [single] = product.variants.length === 1 ? product.variants : [];
   return (
     <>
@@ -129,10 +128,7 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
                     )}
                   </Table.Cell>
                   <Table.Cell data-sf-erp-stock="">
-                    <AvailabilityStatus
-                      label={erpStockLabel(variant.stock, locale)}
-                      status={erpAvailabilityStatus(variant.stock)}
-                    />
+                    <AvailabilityStatus {...erpVariantAvailability(cs, variant.stock)} />
                   </Table.Cell>
                 </Table.Row>
               ))}

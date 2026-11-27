@@ -513,8 +513,8 @@ describe("compact owner search evidence", () => {
         ],
       }).products[0];
       const legacyMatch = matchSearchVariants(full, leaf.sku);
-      expect(toRemoteSuggestion(compact, leaf.sku, compact.searchMatch)).toEqual(
-        toRemoteSuggestion(full, leaf.sku, legacyMatch),
+      expect(toRemoteSuggestion(compact, leaf.sku, cs, compact.searchMatch)).toEqual(
+        toRemoteSuggestion(full, leaf.sku, cs, legacyMatch),
       );
       expect(toSearchGridItem(summary(compact), leaf.sku, cs, compact.searchMatch)).toEqual(
         toSearchGridItem(summary(full), leaf.sku, cs, legacyMatch),
@@ -613,7 +613,7 @@ describe("compact owner search evidence", () => {
         },
       ],
     }).products[0];
-    const suggestion = toRemoteSuggestion(product, "leaf", product.searchMatch);
+    const suggestion = toRemoteSuggestion(product, "leaf", cs, product.searchMatch);
     const grid = toSearchGridItem(summary(product), "leaf", cs, product.searchMatch);
     expect(suggestion).toMatchObject({
       priceMinor: 0,
@@ -651,7 +651,7 @@ describe("compact owner search evidence", () => {
           },
         ],
       }).products[0];
-      expect(toRemoteSuggestion(product, "leaf", product.searchMatch).imageSrc).toBe(
+      expect(toRemoteSuggestion(product, "leaf", cs, product.searchMatch).imageSrc).toBe(
         "/storefront/parent.jpg",
       );
     },
@@ -669,7 +669,7 @@ describe("compact owner search evidence", () => {
           },
         ],
       }).products[0];
-      expect(toRemoteSuggestion(product, "query", product.searchMatch)).toMatchObject({
+      expect(toRemoteSuggestion(product, "query", cs, product.searchMatch)).toMatchObject({
         variantSku: offer().sku,
         variantLabel: offer().name,
         priceMinor: 254,

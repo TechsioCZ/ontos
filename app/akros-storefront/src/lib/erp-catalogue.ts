@@ -2,10 +2,14 @@
 // page prices, read as they answer. A Price of the signed-in customer's own Price Group carries the quiet „Vaše cena“;
 // every other found Price is the no-group Price. A variant whose customer Price Pricing could not decide shows the guest
 // Price of the same page, without „Vaše cena“. Nothing is invented: a variant without a found Price is „Cena na
-// dotaz“, a figure that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty
-// SKU, and the image is the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so
-// every Variant that is not RETIRED is shown.
+// dotaz“, its stock is read by the shop's one stock rule (`lib/product-stock`, a figure that is not an exact ON_HAND
+// total is „Dostupnost nelze ověřit“), a variant without SKU has an empty SKU, and the image is the shop's no-image
+// placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so every Variant that is not RETIRED is
+// shown.
 import { Predicate } from "effect";
+import type { Dictionary } from "@/i18n";
+import { getProductStockStatus, productStockTone, stockStatusLabel } from "@/lib/product-stock";
+import { describeVariantAvailability } from "@/lib/variant-availability";
 import { imagePlaceholder } from "@/ontos/media-path";
 
 /** An owner resource reference (`{moduleId, resourceType, resourceId, tenantId}`). */
@@ -97,10 +101,8 @@ export type ErpPrice =
       readonly yours: boolean;
     }
   | { readonly kind: "on-request" };
-export type ErpStock =
-  | { readonly kind: "in-stock"; readonly quantity: string }
-  | { readonly kind: "out-of-stock" }
-  | { readonly kind: "unknown" };
+/** One ERP variant's stock as the shop's one stock rule reads it (`lib/product-stock`), in its unit. */
+export type ErpStock = Parameters<typeof getProductStockStatus>[0] & { readonly unit: string };
 
 export interface ErpVariant {
   readonly id: string;
@@ -132,11 +134,6 @@ export const erpCopy = {
   yourPrice: "Vaše cena",
   excludingVat: "bez DPH",
   from: "od",
-  inStock: (quantity: string, locale: string) =>
-    `Skladem: ${Number(quantity).toLocaleString(locale, { maximumFractionDigits: 3 })} ks`,
-  outOfStock: "Není skladem",
-  stockUnknown: "Dostupnost ověřujeme",
-  inStockShort: "Skladem",
   variants: "Varianty",
   variantCount: "Počet variant",
   variant: "Varianta",
@@ -210,11 +207,31 @@ export const erpItemMatches = (
 export const shownVariantRefs = (page: CatalogProductPage): OwnerRef[] =>
   page.items.flatMap((item) => item.variants.filter(shown).map(({ variantRef }) => variantRef));
 
+/** Inventory counts an ERP variant in pieces. */
+const ERP_UNIT = "ks";
+/**
+ * Catalog states no minimum or package for an ERP variant, so its first order is the owner order rules' default of one
+ * piece (Merchandise `firstOrderableQuantity`: minimum 1 without a package). A constant here: this module reaches the
+ * browser, which cannot load the owner's TypeScript source.
+ */
+const ERP_FIRST_ORDER = 1;
+
+/**
+ * Inventory's ON_HAND total by the shop's one stock rule: a unit is in stock only when the total covers its first
+ * order (`ERP_FIRST_ORDER`); less is held, not sold („Skladem 0,5 ks, prodej po 1 ks“). Any other outcome is unknown.
+ */
 export const toErpStock = (item: CatalogVariantOnHand | undefined): ErpStock => {
-  if (item?.outcome !== "ON_HAND") return { kind: "unknown" };
-  return Number(item.total.amount) > 0
-    ? { kind: "in-stock", quantity: item.total.amount }
-    : { kind: "out-of-stock" };
+  if (item?.outcome !== "ON_HAND")
+    return { availabilityUnknown: true, stockCount: 0, unit: ERP_UNIT };
+  const onHand = Number(item.total.amount);
+  if (onHand >= ERP_FIRST_ORDER) return { stockCount: onHand, unit: ERP_UNIT };
+  return onHand > 0
+    ? {
+        belowPackage: { stockOnHand: onHand, firstOrderableQuantity: ERP_FIRST_ORDER },
+        stockCount: 0,
+        unit: ERP_UNIT,
+      }
+    : { stockCount: 0, unit: ERP_UNIT };
 };
 
 type PagePrice = Extract<
@@ -364,28 +381,51 @@ export const erpPriceLabel = (price: ErpPrice, locale: string): string =>
     ? `${formatErpAmount(price.amount, price.currencyCode, locale)} ${erpCopy.excludingVat}`
     : erpCopy.priceOnRequest;
 
-export const erpStockLabel = (stock: ErpStock, locale: string): string =>
-  stock.kind === "in-stock"
-    ? erpCopy.inStock(stock.quantity, locale)
-    : stock.kind === "out-of-stock"
-      ? erpCopy.outOfStock
-      : erpCopy.stockUnknown;
+/** One ERP variant in the shop's words; in stock it names the quantity, as the shop's product page does. */
+export const erpStockLabel = (cs: Dictionary, stock: ErpStock): string => {
+  const status = getProductStockStatus(stock);
+  return status === "in-stock"
+    ? cs.product.inStockCount(stock.stockCount, stock.unit)
+    : stockStatusLabel(cs, status, stock.belowPackage, stock.unit);
+};
 
-/** The ui-kit stock tones; an unconfirmed figure uses the cautionary one, as the shop's „nelze ověřit“. */
-export const erpStockTone = (stock: ErpStock): "in-stock" | "limited-stock" | "out-of-stock" =>
-  stock.kind === "in-stock"
-    ? "in-stock"
-    : stock.kind === "out-of-stock"
-      ? "out-of-stock"
-      : "limited-stock";
+/** The ui-kit AvailabilityStatus of one ERP variant: the shop's (`describeVariantAvailability`), with its quantity. */
+export const erpVariantAvailability = (cs: Dictionary, stock: ErpStock) =>
+  ({ ...describeVariantAvailability(cs, stock), label: erpStockLabel(cs, stock) }) as const;
 
-/** The ui-kit AvailabilityStatus of a variant; an unconfirmed figure is „unknown“, as the shop's „nelze ověřit“. */
-export const erpAvailabilityStatus = (stock: ErpStock): "available" | "unavailable" | "unknown" =>
-  stock.kind === "in-stock"
-    ? "available"
-    : stock.kind === "out-of-stock"
-      ? "unavailable"
-      : "unknown";
+/**
+ * Several variants, as the shop words a variant group: in stock when one is, unknown when one cannot be verified,
+ * else held below one first order or not in stock.
+ */
+const groupStock = (variants: readonly ErpVariant[]): ErpStock => {
+  const stocks = variants.map(({ stock }) => stock);
+  const total = (amount: (stock: ErpStock) => number) =>
+    stocks.reduce((sum, stock) => sum + amount(stock), 0);
+  if (stocks.some((stock) => getProductStockStatus(stock) === "in-stock"))
+    return { stockCount: total(({ stockCount }) => stockCount), unit: ERP_UNIT };
+  if (stocks.some(({ availabilityUnknown }) => availabilityUnknown))
+    return { availabilityUnknown: true, stockCount: 0, unit: ERP_UNIT };
+  const held = total(({ belowPackage }) => belowPackage?.stockOnHand ?? 0);
+  return held > 0
+    ? { belowPackage: { stockOnHand: held }, stockCount: 0, unit: ERP_UNIT }
+    : { stockCount: 0, unit: ERP_UNIT };
+};
+
+/** The stock line of an ERP card or header suggestion: one variant's own, several variants' as a group. */
+export function erpStockSummary(product: ErpProduct, cs: Dictionary) {
+  const [only] = product.variants;
+  if (product.variants.length === 1 && only !== undefined)
+    return {
+      stockLabel: erpStockLabel(cs, only.stock),
+      stockTone: productStockTone(getProductStockStatus(only.stock)),
+    };
+  const stock = groupStock(product.variants);
+  const status = getProductStockStatus(stock);
+  return {
+    stockLabel: stockStatusLabel(cs, status, stock.belowPackage, stock.unit),
+    stockTone: productStockTone(status),
+  };
+}
 
 /** Whether a price is the signed-in customer's own (shown with the quiet `erpCopy.yourPrice`). */
 export const isYourPrice = (price: ErpPrice | undefined): boolean =>
@@ -395,31 +435,24 @@ export const isYourPrice = (price: ErpPrice | undefined): boolean =>
  * One card: a single variant shows its own price and stock; several show the lowest found price „od“. `yourPrice`
  * says whether the shown price is the signed-in customer's own Price Group's.
  */
-export function erpCardSummary(product: ErpProduct, locale: string) {
+export function erpCardSummary(product: ErpProduct, cs: Dictionary, locale: string) {
   const [only] = product.variants;
   if (product.variants.length === 1 && only !== undefined)
     return {
       priceLabel: erpPriceLabel(only.price, locale),
-      stockLabel: erpStockLabel(only.stock, locale),
-      stockTone: erpStockTone(only.stock),
+      ...erpStockSummary(product, cs),
       yourPrice: isYourPrice(only.price),
     };
   const priced = product.variants.flatMap((variant) =>
     variant.price.kind === "price" ? [variant.price] : [],
   );
   const lowest = priced.toSorted((left, right) => Number(left.amount) - Number(right.amount))[0];
-  const stock: ErpStock = product.variants.some((variant) => variant.stock.kind === "in-stock")
-    ? { kind: "in-stock", quantity: "0" }
-    : product.variants.every((variant) => variant.stock.kind === "out-of-stock")
-      ? { kind: "out-of-stock" }
-      : { kind: "unknown" };
   return {
     priceLabel:
       lowest === undefined
         ? erpCopy.priceOnRequest
         : `${erpCopy.from} ${erpPriceLabel(lowest, locale)}`,
-    stockLabel: stock.kind === "in-stock" ? erpCopy.inStockShort : erpStockLabel(stock, locale),
-    stockTone: erpStockTone(stock),
+    ...erpStockSummary(product, cs),
     yourPrice: isYourPrice(lowest),
   };
 }

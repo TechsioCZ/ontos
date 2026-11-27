@@ -297,9 +297,9 @@ describe("ERP product pages", () => {
     );
     console.log("[detail rows]", JSON.stringify(rows));
     expect(rows).toEqual([
-      ["M1", "ERP-1", "M1", "249,90\u00a0Kč bez DPH", "Skladem: 42 ks"],
+      ["M1", "ERP-1", "M1", "249,90\u00a0Kč bez DPH", "Skladem 42 ks"],
       ["M2", "ERP-2", "M2", "Cena na dotaz", "Není skladem"],
-      ["M3", "", "M3", "Cena na dotaz", "Dostupnost ověřujeme"],
+      ["M3", "", "M3", "Cena na dotaz", "Dostupnost nelze ověřit"],
     ]);
     expect(container.textContent).toContain("Dovezeno ze Symmy.");
     expect(container.textContent).toContain("Objednání této položky připravujeme.");

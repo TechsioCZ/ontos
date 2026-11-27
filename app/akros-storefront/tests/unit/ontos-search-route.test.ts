@@ -311,6 +311,8 @@ describe("header search BFF", () => {
           priceIsFrom: true,
           hasVariants: true,
           path: "/produkt/sroub-din-933-a2",
+          stockLabel: "Skladem",
+          stockTone: "in-stock",
         },
       ],
     });

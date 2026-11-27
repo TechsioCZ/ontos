@@ -14,6 +14,7 @@ import {
   type CatalogProductPage,
   type CatalogVariantOnHand,
 } from "@/lib/erp-catalogue";
+import { cs } from "@/i18n/cs";
 import { parseErpOffers } from "@/ontos/erp-config";
 import { imagePlaceholder } from "@/ontos/media-path";
 
@@ -107,17 +108,17 @@ describe("ERP product page model", () => {
       item.sku,
       item.options.join(", "),
       erpPriceLabel(item.price, "cs"),
-      erpStockLabel(item.stock, "cs"),
+      erpStockLabel(cs, item.stock),
     ]);
     expect(rows).toEqual([
-      ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem: 42 ks"],
+      ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem 42 ks"],
       ["ERP-2", "M2, 20 mm", "99,00\u00a0Kč bez DPH", "Není skladem"],
-      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost ověřujeme"],
-      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost ověřujeme"],
-      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost ověřujeme"],
-      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost ověřujeme"],
+      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
     ]);
-    expect(erpCardSummary(product!, "cs")).toEqual({
+    expect(erpCardSummary(product!, cs, "cs")).toEqual({
       priceLabel: "od 99,00\u00a0Kč bez DPH",
       stockLabel: "Skladem",
       stockTone: "in-stock",
@@ -137,7 +138,7 @@ describe("ERP product page model", () => {
     ]);
     expect(product!.variants.slice(2).every(({ price }) => !isYourPrice(price))).toBe(true);
     // The card shows the lowest price: the no-group 99 here, so no label.
-    expect(erpCardSummary(product!, "cs")).toMatchObject({
+    expect(erpCardSummary(product!, cs, "cs")).toMatchObject({
       priceLabel: "od 99,00\u00a0Kč bez DPH",
       yourPrice: false,
     });
@@ -146,9 +147,9 @@ describe("ERP product page model", () => {
       onHand,
       groupPriced,
     );
-    expect(erpCardSummary(single!, "cs")).toEqual({
+    expect(erpCardSummary(single!, cs, "cs")).toEqual({
       priceLabel: "950,00\u00a0Kč bez DPH",
-      stockLabel: "Skladem: 42 ks",
+      stockLabel: "Skladem 42 ks",
       stockTone: "in-stock",
       yourPrice: true,
     });
@@ -208,10 +209,10 @@ describe("ERP product page model", () => {
   it("prices nothing when Currency Support is not current, and shows unknown stock without a figure", () => {
     const [product] = toErpProducts(page, [], { _tag: "CURRENCY_SUPPORT_NOT_CURRENT" });
     expect(product!.variants.every(({ price }) => price.kind === "on-request")).toBe(true);
-    expect(product!.variants.every(({ stock }) => stock.kind === "unknown")).toBe(true);
-    expect(erpCardSummary(product!, "cs")).toEqual({
+    expect(product!.variants.every(({ stock }) => stock.availabilityUnknown === true)).toBe(true);
+    expect(erpCardSummary(product!, cs, "cs")).toEqual({
       priceLabel: "Cena na dotaz",
-      stockLabel: "Dostupnost ověřujeme",
+      stockLabel: "Dostupnost nelze ověřit",
       stockTone: "limited-stock",
       yourPrice: false,
     });
@@ -245,9 +246,9 @@ describe("ERP product page model", () => {
       { name: "Název zatím není přeložen", descriptionParagraphs: [] },
     ]);
     expect(products[1]!.variants[0]).not.toHaveProperty("sku");
-    expect(erpCardSummary(products[0]!, "cs")).toEqual({
+    expect(erpCardSummary(products[0]!, cs, "cs")).toEqual({
       priceLabel: "1\u00a0234,50\u00a0Kč bez DPH",
-      stockLabel: "Skladem: 42 ks",
+      stockLabel: "Skladem 42 ks",
       stockTone: "in-stock",
       yourPrice: false,
     });

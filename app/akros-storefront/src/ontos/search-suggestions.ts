@@ -1,7 +1,7 @@
 import type { ProductGridItem } from "@/components/product-grid";
 import type { Dictionary } from "@/i18n";
 import type { StoreCurrency } from "@/lib/format";
-import { getProductStockStatus } from "@/lib/product-stock";
+import { getProductStockStatus, productStockTone, stockStatusLabel } from "@/lib/product-stock";
 import { buildVariantSelectionHref } from "@/lib/product-variant-links";
 import type {
   CatalogCategory,
@@ -37,6 +37,9 @@ export interface RemoteSearchSuggestion {
   variantSku?: string;
   /** Unprefixed detail path: an exact variant hit opens `?variantIds=`, several hits the query-filtered table. */
   path?: string;
+  /** The stock line of the product's card by the shop's one stock rule, in the market language. */
+  stockLabel: string;
+  stockTone: ReturnType<typeof productStockTone>;
 }
 /** One header-search category suggestion; the browser no longer holds the whole category tree. */
 export interface RemoteCategorySuggestion {
@@ -164,7 +167,8 @@ export function searchHitPath(
 /** One card plus owner evidence; a true only-variant fallback changes header presentation, not routing. */
 export function toRemoteSuggestion(
   product: CatalogProduct,
-  query = "",
+  query: string,
+  dictionary: Dictionary,
   match?: SearchHitMatch,
 ): RemoteSearchSuggestion {
   const hasVariants = product.variantSummary.count > 0;
@@ -174,6 +178,9 @@ export function toRemoteSuggestion(
   const priceUnavailableReason = variant
     ? variant.priceUnavailableReason
     : product.priceUnavailableReason;
+  // The suggestion's own unit: the variant it stands for, else the product (a group's owner aggregate).
+  const unit = variant ?? product;
+  const stock = getProductStockStatus(unit);
   return {
     productId: product.id,
     slug: product.slug,
@@ -187,6 +194,8 @@ export function toRemoteSuggestion(
     hasVariants,
     ...(variant ? { variantLabel: variant.label, variantSku: variant.sku } : {}),
     ...(query.trim() ? { path: searchHitPath(product.slug, query, hasVariants, match) } : {}),
+    stockLabel: stockStatusLabel(dictionary, stock, unit.belowPackage, unit.unit),
+    stockTone: productStockTone(stock),
   };
 }
 
