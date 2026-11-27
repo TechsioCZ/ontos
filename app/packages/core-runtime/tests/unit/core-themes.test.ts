@@ -4,12 +4,18 @@ import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Layer, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { createActionCollector, getActionHandler } from '../../src/testing/actions.ts';
+import {
+  bindActionTestServices,
+  createActionCollector,
+  getActionHandler,
+  makeActionTestHarness,
+} from '../../src/testing/actions.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { tenantThemeRead } from '../../src/generated-reads/tenant-theme.ts';
 import { attachTenantThemeAction, coreActionCatalog, saveTenantThemeAction } from '../../src/index.ts';
 import { isGenuineCoreOperation } from '../../src/modules/module-operation-execution.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
+import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { AttachTenantThemePayloadSchema } from '../../src/themes/contract.ts';
 import type { TenantThemeDefinition } from '../../src/themes/contract.ts';
 import { TenantThemeKit, tenantThemeRevision } from '../../src/themes/definition.ts';
@@ -89,6 +95,9 @@ const contextFor = <Services>(
     services,
   };
 };
+
+/** One Action request of the Shell, under its own idempotency key. */
+const themeTransport = (idempotencyKey: string) => ({ correlationId: 'core-themes', idempotencyKey });
 
 const save = (payload: TenantThemeDefinition, repository: TenantThemeRepository) =>
   TenantThemeKit.pipe(
@@ -171,6 +180,59 @@ it.layer(TenantThemeKitLive)('with the kit bound as the Shell binds it', (suite)
         '--color-primary: not a safe token value',
       ]);
       expect(store.themes.size).toBe(0);
+    }),
+  );
+
+  /*
+   * Both Actions through the real Action runtime, as the Shell calls them for an administrator who has a company
+   * selected. They are tenant-wide (`forbidden` company scope), so the runtime refuses a principal that carries one:
+   * the Shell drops the selected company, as it does for the tenant theme read.
+   */
+  suite.effect('saves and attaches for an administrator with a company selected once the company is dropped', () =>
+    Effect.gen(function* administratorWithCompany() {
+      const kit = yield* TenantThemeKit;
+      const store = memoryThemes();
+      const harness = yield* makeActionTestHarness({
+        access: 'allowed',
+        services: [
+          bindActionTestServices(saveTenantThemeAction, { kit, themes: store.repository }),
+          bindActionTestServices(attachTenantThemeAction, { themes: store.repository }),
+        ],
+      });
+      const withCompany = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        ...Struct.omit(scope, ['correlationId']),
+        legalEntityId: '00000000-0000-4000-8000-000000000003',
+      });
+      const tenantWide = Struct.omit(withCompany, ['legalEntityId']);
+
+      const refused = yield* harness.runtime
+        .runAction({
+          payload: acme,
+          principal: withCompany,
+          registration: saveTenantThemeAction,
+          transport: themeTransport('save-with-company'),
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(OperationContextInvalid)(refused)).toBe(true);
+      expect(store.themes.size).toBe(0);
+
+      expect(
+        yield* harness.runtime.runAction({
+          payload: acme,
+          principal: tenantWide,
+          registration: saveTenantThemeAction,
+          transport: themeTransport('save'),
+        }),
+      ).toEqual({ themeKey: 'acme' });
+      expect(
+        yield* harness.runtime.runAction({
+          payload: yield* Schema.decodeEffect(AttachTenantThemePayloadSchema)({ themeKey: 'acme' }),
+          principal: tenantWide,
+          registration: attachTenantThemeAction,
+          transport: themeTransport('attach'),
+        }),
+      ).toEqual({ themeKey: 'acme' });
+      expect(store.attachedKey()).toBe('acme');
     }),
   );
 });
