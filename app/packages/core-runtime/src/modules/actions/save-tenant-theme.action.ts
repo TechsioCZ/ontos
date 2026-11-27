@@ -5,11 +5,11 @@ import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import {
-  SaveTenantThemePayloadSchema,
   SaveTenantThemeResultSchema,
+  TenantThemeDefinitionSchema,
   TenantThemeKeySchema,
 } from '../../themes/contract.ts';
-import type { SaveTenantThemePayload } from '../../themes/contract.ts';
+import type { TenantThemeDefinition } from '../../themes/contract.ts';
 import { validateTenantTheme } from '../../themes/definition.ts';
 import { TenantThemeInvalid, TenantThemeUnavailable } from '../../themes/errors.ts';
 import { tenantThemeRepositoryFromTransaction } from '../../themes/repository.ts';
@@ -31,7 +31,7 @@ type SaveTenantThemeContext = ActionHandlerContext<Record<never, never>, SaveTen
 const SaveTenantThemeFailureSchema = Schema.Union([TenantThemeInvalid, TenantThemeUnavailable]);
 
 const handleSaveTenantTheme = Effect.fn('SaveTenantThemeAction.handle')(function* handleSaveTenantTheme(
-  payload: SaveTenantThemePayload,
+  payload: TenantThemeDefinition,
   context: SaveTenantThemeContext,
 ) {
   const theme = yield* validateTenantTheme(payload);
@@ -69,7 +69,7 @@ export const saveTenantThemeAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'forbidden',
     owningModuleKey: 'core.themes',
-    payloadSchema: SaveTenantThemePayloadSchema,
+    payloadSchema: TenantThemeDefinitionSchema,
     policies: [],
     resultSchema: SaveTenantThemeResultSchema,
     schemaVersion: '1',
