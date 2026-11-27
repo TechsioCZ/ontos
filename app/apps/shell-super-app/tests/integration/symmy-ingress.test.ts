@@ -3003,6 +3003,30 @@ it.effect('authenticates and admits the caller of every route before decoding or
   }),
 );
 
+it.effect('challenges a caller before reporting a malformed job id or idempotency header', () =>
+  Effect.gen(function* isolatesPathAndHeaderErrors() {
+    const server = yield* acceptingServer();
+    for (const [key, status] of [
+      [undefined, 401],
+      [validKey, 400],
+    ] as const) {
+      const headers: Record<string, string> = key === undefined ? {} : { 'x-api-key': key };
+      const job = yield* Effect.promise(() =>
+        server.request(SYMMY_ROUTES.job.path.replace('{id}', 'not-a-uuid'), { headers, method: 'GET' }),
+      );
+      expect(job.status).toBe(status);
+      const customers = yield* Effect.promise(() =>
+        server.request(SYMMY_ROUTES.customersBatch.path, {
+          ...customersJson(),
+          headers: { ...headers, 'content-type': 'application/json', 'idempotency-key': 'not valid!' },
+          method: 'POST',
+        }),
+      );
+      expect(customers.status).toBe(status);
+    }
+  }),
+);
+
 it.effect('keeps job progress separate from whether completed items succeeded', () =>
   Effect.gen(function* distinguishesFixtureJobProgress() {
     const accepted = yield* decodeSymmyItemOutcome({
