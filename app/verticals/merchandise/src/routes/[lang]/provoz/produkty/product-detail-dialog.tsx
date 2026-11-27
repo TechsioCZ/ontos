@@ -43,6 +43,7 @@ import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import { StorefrontStatusPanel } from './storefront-status.tsx';
+import { ErpCodeLine, SymmyImportedBadge, SymmyWriteThroughNote } from './symmy-provenance.tsx';
 import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
@@ -327,6 +328,7 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
       />
       {/* A product with variants sells at its variants' prices: its own net price stores no gross that staff see. */}
       {gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>}
+      <SymmyWriteThroughNote product={product} />
       <FormTextarea
         disabled={disabled}
         id="detail-short-description"
@@ -536,6 +538,8 @@ export const ProductDetailView = ({
                   : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)} s DPH`
               }`}</span>
               <AvailabilityBadge value={product.availability} />
+              <SymmyImportedBadge product={product} />
+              <ErpCodeLine product={product} />
             </span>
           }
           title={product.name}
@@ -596,7 +600,8 @@ export const ProductDetailView = ({
               />
             )}
           </Tabs.Content>
-          <Tabs.Content className="py-200" value="variants">
+          <Tabs.Content className="flex flex-col gap-200 py-200" value="variants">
+            <SymmyWriteThroughNote product={product} />
             <VariantsPanel
               active={tab === 'variants'}
               canMoveStock={canMoveStock}
@@ -661,6 +666,7 @@ export const ProductDetailView = ({
             <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
+            <SymmyWriteThroughNote product={product} />
             <MovementsTable
               hasOlder={ledger.hasOlder}
               key={ledger.movements.at(-1)?.id ?? ''}

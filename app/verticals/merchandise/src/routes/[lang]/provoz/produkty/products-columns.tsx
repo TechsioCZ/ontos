@@ -10,6 +10,7 @@ import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
 import { StorefrontStatusCell } from './storefront-status.tsx';
+import { ErpCodeLine, SymmyImportedBadge } from './symmy-provenance.tsx';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
 const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
@@ -48,7 +49,12 @@ const variantNoun = (count: number) => {
 export const productColumns = (label: (path: string) => string, tagsOf: TagsOf): ColumnDef<ProductRecord>[] => [
   {
     accessorKey: 'sku',
-    cell: (info) => <span className="whitespace-nowrap">{info.getValue<string>()}</span>,
+    cell: (info) => (
+      <span className="flex min-w-0 flex-col">
+        <span className="whitespace-nowrap">{info.getValue<string>()}</span>
+        <ErpCodeLine product={info.row.original} />
+      </span>
+    ),
     header: label('columns.sku'),
     meta: { type: 'string', width: 120 },
   },
@@ -63,7 +69,10 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && <ProductThumbnail image={image} productId={product.id} />}
           <span className="flex min-w-0 flex-col">
-            <span className="truncate">{product.name}</span>
+            <span className="flex min-w-0 items-center gap-100">
+              <span className="truncate">{product.name}</span>
+              <SymmyImportedBadge product={product} />
+            </span>
             {(variants > 0 || product.published === false) && (
               <span className="truncate text-fg-secondary text-xs">
                 {[variantsLabel, product.published === false ? 'skryto v e-shopu' : null]

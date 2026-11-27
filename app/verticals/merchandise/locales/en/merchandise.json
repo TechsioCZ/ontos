@@ -481,6 +481,11 @@
           "products": "Products",
           "stockValue": "Stock value"
         },
+        "symmy": {
+          "badge": "Imported via Symmy",
+          "erpCode": "ERP code",
+          "writeThrough": "The price and stock of this product are also written to the ERP."
+        },
         "status": {
           "active": "Active",
           "inactive": "Inactive",

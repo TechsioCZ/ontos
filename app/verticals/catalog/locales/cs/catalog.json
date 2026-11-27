@@ -23,6 +23,7 @@
         "description": "Produkty katalogu importované z ERP s cenou a skladem z ERP.",
         "intro": "Produkty, které do katalogu OntOS importoval ERP (Symmy), ve všech stavech. U variant je cena a sklad z ERP. Produkty e-shopu (ceny, sklad, obrázky, zveřejnění) upravíte v sekci Produkty.",
         "editorLink": "Upravit produkty e-shopu",
+        "moved": "Produkty z ERP jsou teď v sekci Produkty. Přejít na Produkty",
         "search": "Hledat podle názvu",
         "searchSubmit": "Hledat",
         "loading": "Načítám produkty…",
