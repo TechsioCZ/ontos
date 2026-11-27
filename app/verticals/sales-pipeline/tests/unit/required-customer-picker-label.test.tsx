@@ -3,7 +3,7 @@ import { unmountAll } from '@app/admin-ui/testing/module-ui';
 import { Effect, Option } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
 import { emptyDraft } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-draft.ts';
-import { OpportunityFields } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-fields.tsx';
+import { OpportunityForm } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-fields.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const customerName = moduleText('cs')('sales-pipeline.pages.records.create.fields.customer');
@@ -39,14 +39,12 @@ afterEach(unmountAll);
 it.live('identifies the customer picker and its required state in Czech to screen readers', () =>
   Effect.gen(function* requiredCustomer() {
     yield* mountInRoute(
-      <OpportunityFields
+      <OpportunityForm
         customers={{ items: [], status: 'ready' }}
-        draft={emptyDraft}
         employees={{ items: [], status: 'ready' }}
         isEdit={false}
-        onChange={() => {}}
+        opened={emptyDraft}
         products={{ items: [], status: 'ready' }}
-        showErrors={false}
       />,
       { language: 'cs', path: 'prodej/prilezitosti', url: '/cs/prodej/prilezitosti' },
     );
