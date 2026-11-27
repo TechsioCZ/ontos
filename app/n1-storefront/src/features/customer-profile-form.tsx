@@ -153,14 +153,14 @@ export const CustomerProfileForm = ({
       />
       <div className="w-full md:w-fit">
         <Button
+          appearance="solid"
           block
           disabled={pending || needsRead || disabled}
           isLoading={pending}
           loadingText={d.accountPage.saving}
-          size="md"
-          appearance="solid"
-          type="submit"
           severity="secondary"
+          size="md"
+          type="submit"
         >
           {d.accountPage.save}
         </Button>
@@ -169,11 +169,11 @@ export const CustomerProfileForm = ({
       {needsRead && (
         <div>
           <Button
-            onClick={() => router.refresh()}
-            size="md"
             appearance="outline"
-            type="button"
+            onClick={() => router.refresh()}
             severity="secondary"
+            size="md"
+            type="button"
           >
             {d.accountPage.reload}
           </Button>

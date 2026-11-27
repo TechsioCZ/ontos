@@ -296,14 +296,14 @@ export const ContactView = ({
                 size="md"
               />
               <Button
+                appearance="solid"
                 block
                 disabled={locked}
                 isLoading={state === "pending"}
                 loadingText={d.contact.submitting}
-                size="md"
-                appearance="solid"
-                type="submit"
                 severity="secondary"
+                size="md"
+                type="submit"
               >
                 {state === "pending" || state === "unavailable"
                   ? buttonText[state]

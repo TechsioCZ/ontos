@@ -30,13 +30,13 @@ export const ProductVariants = ({
             key={item.id}
           >
             <LinkButton
+              appearance="outline"
               aria-current={selected ? "true" : undefined}
               as={NextLink}
               href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
               prefetch={false}
-              size="sm"
-              appearance="outline"
               severity="secondary"
+              size="sm"
             >
               {item.name}
             </LinkButton>

@@ -63,15 +63,15 @@ const MiniCartTrigger = ({
 }) => (
   <Popover.Trigger
     aria-label={state === "filled" ? `${title} (${count.label})` : title}
+    severity="tertiary"
     size="current"
     unstyled
-    severity="tertiary"
   >
     <span className="relative inline-flex">
       <Image alt="" as={NextImage} height={28} size="custom" src="/brand/cart.svg" width={28} />
       {state === "filled" && (
         <span className="n1-cart-count absolute -right-2 -top-2 grid min-h-5 min-w-5">
-          <Badge aria-hidden="true" size="sm" severity="primary">
+          <Badge aria-hidden="true" severity="primary" size="sm">
             {count.badge}
           </Badge>
         </span>
@@ -199,11 +199,11 @@ const MiniCartLine = ({
             <div className="flex items-center">
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.DecrementTrigger
+                  appearance="outline"
                   aria-label={d.shopping.decreaseQuantity}
                   block
                   icon="token-icon-minus"
                   iconSize="md"
-                  appearance="outline"
                   severity="secondary"
                 />
               </div>
@@ -216,11 +216,11 @@ const MiniCartLine = ({
               </NumericInput.Control>
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.IncrementTrigger
+                  appearance="outline"
                   aria-label={d.shopping.increaseQuantity}
                   block
                   icon="token-icon-plus"
                   iconSize="md"
-                  appearance="outline"
                   severity="secondary"
                 />
               </div>
@@ -229,14 +229,14 @@ const MiniCartLine = ({
         </div>
         <div className="flex h-7 w-7 shrink-0 self-center">
           <Button
+            appearance="ghost"
             aria-label={`${d.shopping.remove}: ${entry.name}`}
             block
             icon="token-icon-trash"
             iconSize="sm"
             onClick={onRemove}
-            size="current"
-            appearance="ghost"
             severity="secondary"
+            size="current"
           />
         </div>
       </div>
@@ -305,13 +305,13 @@ const MiniCartCheckoutAction = ({
   if (ready) {
     return (
       <LinkButton
+        appearance="solid"
         as={NextLink}
         block
         href={`/${locale}/pokladna`}
         onClick={onContinue}
-        size="md"
-        appearance="solid"
         severity="secondary"
+        size="md"
       >
         {d.shopping.checkout}
       </LinkButton>
@@ -319,20 +319,20 @@ const MiniCartCheckoutAction = ({
   }
   if (unavailable) {
     return (
-      <Button block onClick={onRetry} size="md" appearance="solid" severity="secondary">
+      <Button appearance="solid" block onClick={onRetry} severity="secondary" size="md">
         {d.retry}
       </Button>
     );
   }
   return (
     <Button
+      appearance="solid"
       block
       disabled
       isLoading={pending}
       loadingText={d.loadingPrice}
-      size="md"
-      appearance="solid"
       severity="secondary"
+      size="md"
     >
       {d.shopping.checkout}
     </Button>
@@ -367,23 +367,23 @@ const MiniCartStatus = ({
     {state === "error" && (
       <>
         <p role="alert">{d.shopping.storageError}</p>
-        <Button onClick={onClear} size="sm" appearance="outline" severity="secondary">
+        <Button appearance="outline" onClick={onClear} severity="secondary" size="sm">
           {d.shopping.clear}
         </Button>
       </>
     )}
     {state === "unavailable" && (
-      <Button onClick={onRefresh} size="sm" appearance="outline" severity="secondary">
+      <Button appearance="outline" onClick={onRefresh} severity="secondary" size="sm">
         {d.contact.retry}
       </Button>
     )}
     <Button
+      appearance="solid"
       block
       density="compact"
       onClick={onContinue}
-      size="sm"
-      appearance="solid"
       severity="secondary"
+      size="sm"
     >
       {d.shopping.continueShopping}
     </Button>
@@ -483,10 +483,10 @@ export const MiniCart = ({
                 {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
                 {quote.state === "scope-mismatch" && (
                   <Button
-                    onClick={() => router.refresh()}
-                    size="sm"
                     appearance="outline"
+                    onClick={() => router.refresh()}
                     severity="secondary"
+                    size="sm"
                   >
                     {d.contact.retry}
                   </Button>
@@ -509,12 +509,12 @@ export const MiniCart = ({
                     unavailable={quote.state === "unavailable"}
                   />
                   <Button
+                    appearance="outline"
                     block
                     density="compact"
                     onClick={continueShopping}
-                    size="sm"
-                    appearance="outline"
                     severity="secondary"
+                    size="sm"
                   >
                     {d.shopping.continueShopping}
                   </Button>

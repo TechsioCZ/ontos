@@ -187,11 +187,11 @@ const CartRow = ({
           </LineItem.Quantity>
           <LineItem.Actions>
             <LineItem.Remove
+              appearance="ghost"
               label={d.shopping.remove}
               onClick={onRemove}
-              size="md"
-              appearance="ghost"
               severity="tertiary"
+              size="md"
             />
           </LineItem.Actions>
         </LineItem.Controls>
@@ -205,13 +205,13 @@ const CartRow = ({
         ))}
         {changedPrice !== undefined && changedPrice > 0 && (
           <Button
+            appearance="outline"
             onClick={() => {
               const accepted = cart?.acceptPrice(entry, changedPrice) ?? false;
               setSaveError(!accepted);
             }}
-            size="md"
-            appearance="outline"
             severity="secondary"
+            size="md"
           >
             {d.shopping.acceptPrice}: {money(changedPrice, locale, cart?.scope?.currency)}
           </Button>
@@ -252,10 +252,10 @@ const CartContent = ({
       <>
         <p>{d.shopping.scopeUnavailable}</p>
         <Button
-          onClick={() => router.refresh()}
-          size="md"
           appearance="outline"
+          onClick={() => router.refresh()}
           severity="secondary"
+          size="md"
         >
           {d.contact.retry}
         </Button>
@@ -269,7 +269,7 @@ const CartContent = ({
     return (
       <>
         <p role="alert">{d.shopping.storageError}</p>
-        <Button onClick={() => cart.clear()} size="md" appearance="outline" severity="secondary">
+        <Button appearance="outline" onClick={() => cart.clear()} severity="secondary" size="md">
           {d.shopping.clear}
         </Button>
       </>
@@ -282,10 +282,10 @@ const CartContent = ({
       {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
       {quote.state === "scope-mismatch" && (
         <Button
-          onClick={() => router.refresh()}
-          size="md"
           appearance="outline"
+          onClick={() => router.refresh()}
           severity="secondary"
+          size="md"
         >
           {d.contact.retry}
         </Button>

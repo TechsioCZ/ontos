@@ -19,11 +19,11 @@ export const EmptyCartView = ({
     <p className="text-fg-secondary">{d.shopping.emptyDescription}</p>
     <div>
       <LinkButton
+        appearance="solid"
         as={NextLink}
         href={`/${locale}`}
-        size="md"
-        appearance="solid"
         severity="secondary"
+        size="md"
       >
         {d.shopping.backHome}
       </LinkButton>

@@ -135,14 +135,14 @@ export const CardVariants = ({
   const links = (variants: readonly { id: string; name: string }[]) =>
     variants.map((variant) => (
       <LinkButton
+        appearance="outline"
         as={NextLink}
         density="compact"
         href={`${href}?${new URLSearchParams({ variantId: variant.id })}`}
         key={variant.id}
         prefetch={false}
-        size="sm"
-        appearance="outline"
         severity="tertiary"
+        size="sm"
       >
         {variant.name}
       </LinkButton>
@@ -201,9 +201,9 @@ export const CardVariants = ({
                   requestExpansion("activation");
                 }
               }}
+              severity="tertiary"
               size="current"
               unstyled
-              severity="tertiary"
             >
               <span className="text-xs font-normal text-fg-secondary">+{remaining}</span>
             </Popover.Trigger>

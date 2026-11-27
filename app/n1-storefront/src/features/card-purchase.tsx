@@ -41,15 +41,15 @@ export const CardPurchase = ({
   return (
     <Button
       {...(listing ? {} : { icon: "token-icon-cart" })}
+      appearance="solid"
       aria-label={entry === null ? `${label}: ${d.commerceUnavailable}` : label}
       block={listing}
       density={listing ? undefined : "compact"}
       disabled={entry === null}
       iconPosition="left"
       onClick={addToCart}
-      size={listing ? "md" : "sm"}
-      appearance="solid"
       severity={listing ? "primary" : "secondary"}
+      size={listing ? "md" : "sm"}
     >
       {label}
     </Button>

@@ -64,7 +64,7 @@ export const CustomerOrderContent = ({
               (item) => item.productId === line.productId,
             );
             const image = product?.image ?? "";
-            const quantity = <Badge size="sm" severity="secondary">{`${line.quantity}×`}</Badge>;
+            const quantity = <Badge severity="secondary" size="sm">{`${line.quantity}×`}</Badge>;
             return (
               <ProductCard
                 key={`${line.productId}-${line.variantId ?? ""}-${line.sku}`}
@@ -240,11 +240,11 @@ export const CustomerOrderDetailView = ({
       <div className="flex flex-col items-start gap-4">
         <p>{d.accountPage.anonymous}</p>
         <LinkButton
+          appearance="solid"
           as={NextLink}
           href={`/${locale}/prihlaseni`}
-          size="md"
-          appearance="solid"
           severity="primary"
+          size="md"
         >
           {d.accountPage.login}
         </LinkButton>
@@ -267,10 +267,10 @@ export const CustomerOrderDetailView = ({
             : d.accountPage.ordersUnavailable}
         </output>
         <Button
-          onClick={() => router.refresh()}
-          size="md"
           appearance="outline"
+          onClick={() => router.refresh()}
           severity="secondary"
+          size="md"
         >
           {d.accountPage.reload}
         </Button>

@@ -89,7 +89,7 @@ const ReceiptHeader = ({
           {date !== null && <p className="text-sm leading-normal text-fg-secondary">{date}</p>}
         </div>
         {result.status !== null && (
-          <Badge size="md" severity={result.status === "CANCELLED" ? "danger" : "info"}>
+          <Badge severity={result.status === "CANCELLED" ? "danger" : "info"} size="md">
             {d.checkout.statuses[result.status]}
           </Badge>
         )}
@@ -102,11 +102,11 @@ const ReceiptHeader = ({
       {(receipt === null || receipt === undefined) && checkout.progress !== "recovery" && (
         <div>
           <Button
+            appearance="outline"
             disabled={checkout.progress !== "idle"}
             onClick={() => checkout.recover()}
-            size="sm"
-            appearance="outline"
             severity="secondary"
+            size="sm"
           >
             {d.checkout.loadReceipt}
           </Button>
@@ -139,6 +139,7 @@ const ConfirmedCheckoutActions = ({
   return (
     <div className={admitted ? "grid gap-3 n1-compact:grid-cols-2" : "grid gap-3"}>
       <LinkButton
+        appearance="solid"
         as={NextLink}
         block
         href={home}
@@ -146,14 +147,14 @@ const ConfirmedCheckoutActions = ({
           event.preventDefault();
           dismiss(() => router.push(home));
         }}
-        size="md"
-        appearance="solid"
         severity="secondary"
+        size="md"
       >
         {d.shopping.backHome}
       </LinkButton>
       {admitted && (
         <LinkButton
+          appearance="solid"
           as={NextLink}
           block
           href={orders}
@@ -161,9 +162,8 @@ const ConfirmedCheckoutActions = ({
             event.preventDefault();
             dismiss(() => router.push(orders));
           }}
-          size="md"
-          appearance="solid"
           severity="primary"
+          size="md"
         >
           {d.accountPage.myOrders}
         </LinkButton>
@@ -209,11 +209,11 @@ const ConfirmedCheckout = ({
         {checkout.cart !== null && checkout.cart.entries.length > 0 && (
           <div className="mt-2">
             <Button
+              appearance="solid"
               disabled={checkout.progress !== "idle"}
               onClick={() => checkout.dismiss()}
-              size="md"
-              appearance="solid"
               severity="primary"
+              size="md"
             >
               {d.checkout.continueWithCart}
             </Button>
@@ -316,22 +316,23 @@ const CheckoutActions = ({
   return (
     <div className="grid grid-cols-2 gap-2">
       {pending ? (
-        <Button block disabled size="md" appearance="solid" type="button" severity="secondary">
+        <Button appearance="solid" block disabled severity="secondary" size="md" type="button">
           {d.checkout.back}
         </Button>
       ) : (
         <LinkButton
+          appearance="solid"
           as={NextLink}
           block
           href={`/${locale}/kosik`}
-          size="md"
-          appearance="solid"
           severity="secondary"
+          size="md"
         >
           {d.checkout.back}
         </LinkButton>
       )}
       <Button
+        appearance="solid"
         aria-busy={pending}
         aria-label={pending ? pendingLabel : actionLabel}
         block
@@ -341,10 +342,9 @@ const CheckoutActions = ({
           restoreFocus.current = submit.current?.form?.contains(document.activeElement) ?? false;
         }}
         ref={submit}
-        size="md"
-        appearance="solid"
-        type="submit"
         severity="secondary"
+        size="md"
+        type="submit"
       >
         {pending && (
           <>
@@ -405,13 +405,13 @@ const ReadyCheckout = ({
           </StatusText>
         )}
         <Button
+          appearance="solid"
           disabled={pending}
           isLoading={pending}
           loadingText={d.checkout.checking}
           onClick={() => checkout.recover()}
-          size="md"
-          appearance="solid"
           severity="secondary"
+          size="md"
         >
           {d.checkout.checkResult}
         </Button>
@@ -519,11 +519,11 @@ const ReadyCheckout = ({
       {checkoutNeedsBackLink(checkout) && (
         <div className="mt-5">
           <LinkButton
+            appearance="outline"
             as={NextLink}
             href={`/${locale}/kosik`}
-            size="md"
-            appearance="outline"
             severity="secondary"
+            size="md"
           >
             {d.cart}
           </LinkButton>
@@ -553,15 +553,15 @@ export const CheckoutView = ({
     <article className="mx-auto flex max-w-n1-product-content flex-col items-start gap-5 p-5">
       <h1 className="text-2xl leading-normal font-bold">{d.checkout.heading}</h1>
       <output>{d.checkout.unavailable}</output>
-      <Button onClick={() => router.refresh()} size="md" appearance="outline" severity="secondary">
+      <Button appearance="outline" onClick={() => router.refresh()} severity="secondary" size="md">
         {d.contact.retry}
       </Button>
       <LinkButton
+        appearance="solid"
         as={NextLink}
         href={`/${locale}/kosik`}
-        size="md"
-        appearance="solid"
         severity="secondary"
+        size="md"
       >
         {d.checkout.back}
       </LinkButton>

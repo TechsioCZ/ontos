@@ -346,15 +346,15 @@ const AuthForm = ({
         value="true"
       />
       <Button
+        appearance="solid"
         block
         density="compact"
         disabled={
           pending || (mode === "register" && attemptedInvalid && Object.keys(errors).length > 0)
         }
-        size="sm"
-        appearance="solid"
-        type="submit"
         severity="secondary"
+        size="sm"
+        type="submit"
       >
         {
           {
@@ -696,6 +696,7 @@ export const AuthContent = ({
             <legend>{d.auth.mfa.methodLabel}</legend>
             {outcome.methods.map((available) => (
               <Button
+                appearance="solid"
                 aria-pressed={selectedMethod === available}
                 disabled={pending}
                 key={available}
@@ -704,10 +705,9 @@ export const AuthContent = ({
                   mfaForm.current?.reset();
                   edit();
                 }}
-                size="sm"
-                appearance="solid"
-                type="button"
                 severity="secondary"
+                size="sm"
+                type="button"
               >
                 {d.auth.mfa.methods[available]}
               </Button>
@@ -727,12 +727,12 @@ export const AuthContent = ({
             >
               {selectedMethod === "otp" && (
                 <Button
+                  appearance="solid"
                   disabled={pending}
                   onClick={requestOtp}
-                  size="sm"
-                  appearance="solid"
-                  type="button"
                   severity="secondary"
+                  size="sm"
+                  type="button"
                 >
                   {d.auth.mfa.sendOtp}
                 </Button>
@@ -752,12 +752,12 @@ export const AuthContent = ({
                 validateStatus={codeError === undefined ? "default" : "error"}
               />
               <Button
+                appearance="solid"
                 block
                 disabled={pending}
-                size="sm"
-                appearance="solid"
-                type="submit"
                 severity="primary"
+                size="sm"
+                type="submit"
               >
                 {d.auth.mfa.verify}
               </Button>
@@ -773,12 +773,12 @@ export const AuthContent = ({
             {d.accountPage.heading}
           </Link>
           <Button
+            appearance="solid"
             disabled={pending}
             onClick={() => run(logoutPortal())}
-            size="sm"
-            appearance="solid"
-            type="button"
             severity="secondary"
+            size="sm"
+            type="button"
           >
             {d.auth.signOut}
           </Button>
@@ -801,23 +801,23 @@ export const AuthContent = ({
         <div className="flex flex-wrap gap-2">
           {canResumePortalEnrollment(outcome) && (
             <Button
+              appearance="solid"
               disabled={pending}
               onClick={() => run(resumePortalEnrollment())}
-              size="sm"
-              appearance="solid"
-              type="button"
               severity="primary"
+              size="sm"
+              type="button"
             >
               {pending ? d.auth.continuing : d.auth.continueEnrollment}
             </Button>
           )}
           <Button
+            appearance="solid"
             disabled={pending}
             onClick={() => run(readPortalCurrent())}
-            size="sm"
-            appearance="solid"
-            type="button"
             severity="secondary"
+            size="sm"
+            type="button"
           >
             {pending ? d.auth.checking : d.auth.checkSession}
           </Button>

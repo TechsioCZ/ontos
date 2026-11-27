@@ -41,10 +41,10 @@ export const FulfillmentView = ({
       <div className="mt-6 flex flex-col items-start gap-4">
         <output>{d.fulfillment.unavailable}</output>
         <Button
-          onClick={() => router.refresh()}
-          size="sm"
           appearance="outline"
+          onClick={() => router.refresh()}
           severity="secondary"
+          size="sm"
         >
           {d.contact.retry}
         </Button>

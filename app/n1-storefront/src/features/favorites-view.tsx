@@ -75,7 +75,7 @@ const FavoriteRow = ({
     });
   };
   const removeButton = (
-    <Button onClick={remove} size="sm" appearance="outline" type="button" severity="secondary">
+    <Button appearance="outline" onClick={remove} severity="secondary" size="sm" type="button">
       {d.favoriteItems.remove}
     </Button>
   );
@@ -185,8 +185,8 @@ export const FavoritesView = ({
         {rows.some(({ card }) => card === undefined) && (
           <div>
             <Button
-              onClick={() => setAttempt((value) => value + 1)}
               appearance="outline"
+              onClick={() => setAttempt((value) => value + 1)}
               severity="secondary"
             >
               {d.favoriteItems.retry}

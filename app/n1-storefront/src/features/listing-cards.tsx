@@ -69,12 +69,12 @@ export const ListingCards = ({
               <CardPurchase dictionary={d} presentation="listing" product={product} />
             ) : (
               <LinkButton
+                appearance="outline"
                 as={NextLink}
                 block
                 href={href}
-                size="md"
-                appearance="outline"
                 severity="secondary"
+                size="md"
               >
                 {chooseVariant ? d.selectVariantListing : d.detail}
               </LinkButton>

@@ -135,9 +135,9 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                       changeHeaderPanel(current, "navigation", current !== "navigation"),
                     )
                   }
+                  severity="tertiary"
                   size="current"
                   unstyled
-                  severity="tertiary"
                 />
               </Header.ActionItem>
             </div>

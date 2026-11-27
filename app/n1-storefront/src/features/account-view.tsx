@@ -91,11 +91,11 @@ export const AccountView = ({
   } else if (admitted) {
     content = (
       <Tabs
+        appearance="underline"
         onValueChange={setTab}
         orientation={desktop ? "vertical" : "horizontal"}
         size="sm"
         value={tab}
-        appearance="underline"
       >
         <div className="flex w-full min-w-0 flex-col items-start gap-4 md:flex-row">
           <div className="n1-account-navigation flex w-full shrink-0 flex-wrap items-start gap-0.5 md:w-auto md:flex-col md:flex-nowrap">
@@ -107,13 +107,13 @@ export const AccountView = ({
               </div>
             </Tabs.List>
             <Button
+              appearance="solid"
               disabled={auth.pending}
               isLoading={auth.pending}
               loadingText={d.auth.checking}
               onClick={() => auth.run(logoutPortal())}
-              size="sm"
-              appearance="solid"
               severity="secondary"
+              size="sm"
             >
               {d.auth.signOut}
             </Button>
@@ -137,10 +137,10 @@ export const AccountView = ({
                         : d.accountPage.unavailable}
                     </output>
                     <Button
-                      onClick={() => router.refresh()}
-                      size="md"
                       appearance="outline"
+                      onClick={() => router.refresh()}
                       severity="secondary"
+                      size="md"
                     >
                       {d.accountPage.reload}
                     </Button>
@@ -162,20 +162,20 @@ export const AccountView = ({
           {auth.outcome.state === "anonymous" ? d.accountPage.anonymous : d.accountPage.unavailable}
         </p>
         <LinkButton
+          appearance="solid"
           as={NextLink}
           href={`/${locale}/prihlaseni`}
-          size="md"
-          appearance="solid"
           severity="primary"
+          size="md"
         >
           {d.accountPage.login}
         </LinkButton>
         <Button
+          appearance="outline"
           disabled={auth.pending}
           onClick={() => router.refresh()}
-          size="md"
-          appearance="outline"
           severity="secondary"
+          size="md"
         >
           {d.accountPage.reload}
         </Button>

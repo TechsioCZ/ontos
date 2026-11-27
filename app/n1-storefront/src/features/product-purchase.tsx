@@ -102,12 +102,12 @@ export const ProductPurchase = ({
   if (selectionRequired) {
     return (
       <Button
+        appearance="solid"
         data-purchase-disabled={purchaseDecision}
         density="compact"
         disabled
-        size="md"
-        appearance="solid"
         severity="secondary"
+        size="md"
       >
         {d.selectVariantAction}
       </Button>
@@ -165,14 +165,14 @@ export const ProductPurchase = ({
           </NumericInput>
         </div>
         <Button
+          appearance="solid"
           aria-describedby={guidanceId}
           data-purchase-disabled={purchaseDecision}
           density="compact"
           disabled={purchaseDisabled}
           onClick={addToCart}
-          size="md"
-          appearance="solid"
           severity="secondary"
+          size="md"
         >
           {current.stock === "unavailable" ? d.stock.unavailable : d.addToCartDetail}
         </Button>

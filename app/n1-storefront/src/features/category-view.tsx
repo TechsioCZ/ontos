@@ -158,13 +158,13 @@ export const CategoryView = ({
           {catalog.configured && nodes.length > 0 && (
             <div className="mb-6 md:hidden">
               <Button
+                appearance="outline"
                 aria-controls="category-tree"
                 aria-expanded={browseOpen}
                 block
                 onClick={() => setBrowseOpen(!browseOpen)}
-                size="md"
-                appearance="outline"
                 severity="secondary"
+                size="md"
               >
                 {d.browseCategories}
               </Button>
@@ -180,12 +180,12 @@ export const CategoryView = ({
                   {row.map((category) => (
                     <div className="max-w-full md:min-w-0" key={category.id}>
                       <LinkButton
+                        appearance="outline"
                         as={NextLink}
                         block
                         href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                        size="md"
-                        appearance="outline"
                         severity="secondary"
+                        size="md"
                       >
                         {category.name}
                       </LinkButton>

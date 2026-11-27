@@ -46,11 +46,11 @@ export const CatalogView = ({
         {presentation === "listing" && (
           <div className="mt-6">
             <LinkButton
+              appearance="outline"
               as={NextLink}
               href={`/${locale}`}
-              size="md"
-              appearance="outline"
               severity="secondary"
+              size="md"
             >
               {d.backHome}
             </LinkButton>
@@ -152,13 +152,13 @@ export const CatalogView = ({
               <PriceBlock {...priceProps(product, d, locale)} />
               {(product.variantCount ?? 0) > 0 ? (
                 <LinkButton
+                  appearance="solid"
                   as={NextLink}
                   density="compact"
                   href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
-                  size="sm"
-                  appearance="solid"
-                  uppercase
                   severity="secondary"
+                  size="sm"
+                  uppercase
                 >
                   {d.detail}
                 </LinkButton>

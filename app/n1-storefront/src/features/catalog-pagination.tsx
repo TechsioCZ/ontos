@@ -41,6 +41,7 @@ export const CatalogPagination = ({
     >
       <div className="n1-compact:hidden">
         <Pagination
+          appearance="solid"
           aria-label={d.page}
           compact
           compactLabel={({ page: current, totalPages }) => `${current} / ${totalPages}`}
@@ -51,11 +52,11 @@ export const CatalogPagination = ({
           pageSize={pageSize}
           size="md"
           translations={translations}
-          appearance="solid"
         />
       </div>
       <div className="hidden n1-compact:block md:hidden">
         <Pagination
+          appearance="solid"
           aria-label={d.page}
           count={count}
           getPageUrl={getPageUrl}
@@ -65,11 +66,11 @@ export const CatalogPagination = ({
           siblingCount={0}
           size="md"
           translations={translations}
-          appearance="solid"
         />
       </div>
       <div className="hidden md:block">
         <Pagination
+          appearance="solid"
           aria-label={d.page}
           count={count}
           getPageUrl={getPageUrl}
@@ -79,7 +80,6 @@ export const CatalogPagination = ({
           siblingCount={1}
           size="sm"
           translations={translations}
-          appearance="solid"
         />
       </div>
     </div>

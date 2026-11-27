@@ -92,6 +92,7 @@ export const StorefrontSearch = ({
         allResultsLink={
           query.trim().length > 0 ? (
             <LinkButton
+              appearance="solid"
               as={NextLink}
               block
               href={href}
@@ -99,9 +100,8 @@ export const StorefrontSearch = ({
               iconPosition="left"
               iconSize="xs"
               onClick={() => setOpen(false)}
-              size="md"
-              appearance="solid"
               severity="secondary"
+              size="md"
             >
               {d.allResults}
             </LinkButton>

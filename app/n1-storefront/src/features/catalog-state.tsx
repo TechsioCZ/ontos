@@ -49,13 +49,13 @@ export const CatalogState = ({
             <AvailabilityStatus pendingLabel={d.loadingAvailability} status="pending" />
           </div>
           <Button
+            appearance="solid"
             block
             isLoading
             loadingText={d.notifications.loading}
-            size="md"
-            appearance="solid"
-            type="button"
             severity="primary"
+            size="md"
+            type="button"
           >
             {d.notifications.loading}
           </Button>
@@ -79,11 +79,11 @@ export const CatalogState = ({
       )}
       {!pending && (
         <Button
+          appearance="solid"
           block
           onClick={() => router.refresh()}
-          size="md"
-          appearance="solid"
           severity="primary"
+          size="md"
         >
           {d.retry}
         </Button>

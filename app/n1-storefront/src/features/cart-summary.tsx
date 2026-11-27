@@ -44,27 +44,27 @@ export const CartSummary = ({
           <div aria-busy={quote.state === "pending" || undefined} className="flex flex-col gap-3">
             {verified === null && quote.state === "unavailable" && (
               <Button
+                appearance="solid"
                 disabled={invalid}
                 onClick={() => quote.verify()}
-                size="md"
-                appearance="solid"
                 severity="secondary"
+                size="md"
               >
                 {d.retry}
               </Button>
             )}
             {canContinue ? (
               <LinkButton
+                appearance="solid"
                 as={NextLink}
                 href={`/${locale}/pokladna`}
-                size="md"
-                appearance="solid"
                 severity="secondary"
+                size="md"
               >
                 {d.shopping.checkout}
               </LinkButton>
             ) : (
-              <Button disabled size="md" appearance="solid" type="button" severity="secondary">
+              <Button appearance="solid" disabled severity="secondary" size="md" type="button">
                 {d.shopping.checkout}
               </Button>
             )}

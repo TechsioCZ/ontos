@@ -252,15 +252,15 @@ export const PasswordRecoveryView = ({
                   </>
                 )}
                 <Button
+                  appearance="solid"
                   block
                   density="compact"
                   disabled={pending}
                   isLoading={pending}
                   loadingText={mode === "request" ? text.requesting : text.resetting}
-                  size="sm"
-                  appearance="solid"
-                  type="submit"
                   severity="primary"
+                  size="sm"
+                  type="submit"
                 >
                   {mode === "request" ? text.request : text.reset}
                 </Button>

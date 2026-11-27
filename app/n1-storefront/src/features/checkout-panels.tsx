@@ -43,13 +43,13 @@ export const CheckoutShipping = ({
       </StatusText>
     ) : (
       <RadioCard
+        appearance="outline"
         disabled={disabled}
         name="shippingMethod"
         onValueChange={onChange}
         required
         size="sm"
         value={value}
-        appearance="outline"
       >
         <div className="sr-only">
           <RadioCardLabel>{d.checkout.shipping}</RadioCardLabel>
