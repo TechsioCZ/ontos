@@ -97,13 +97,15 @@ it.effect('returns once the upload is done while Zerops still builds, and the wa
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect('never pushes when the stage branch moved on or cannot be read', () =>
-  Effect.gen(function* staleHead() {
+// Hotfix delivery (6c6620eafb): a started run delivers its own commit even when a newer push arrived, so frequent
+// pushes never starve stage; deliver_app skips only when stage already runs a newer commit.
+it.effect("pushes this run's commit even when the stage branch moved on or cannot be read", () =>
+  Effect.gen(function* movedHead() {
     for (const head of ['c'.repeat(40), '']) {
-      const { calls, stagePush } = yield* fixture;
+      const { calls, directory, stagePush } = yield* fixture;
       const started = yield* stagePush(['start', 'app'], { REMOTE_HEAD: head });
-      expect(started.status).not.toBe(0);
-      expect(yield* calls).toEqual([]);
+      expect(started.status, started.stderr).toBe(0);
+      expect(yield* calls).toEqual([`app|app-id|app|${HEAD}|${directory}`]);
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -139,13 +141,13 @@ it.effect('fails a push that ends before Zerops builds, and a wait that collects
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect('ends a superseded run, and goes on when the head is this run or unreadable', () =>
+it.effect('says when a newer push follows, and goes on to the origin check whatever the head', () =>
   Effect.gen(function* superseded() {
     const { stagePush } = yield* fixture;
     expect((yield* stagePush(['superseded'])).status).toBe(0);
     expect((yield* stagePush(['superseded'], { REMOTE_HEAD: '' })).status).toBe(0);
     const moved = yield* stagePush(['superseded'], { REMOTE_HEAD: 'c'.repeat(40) });
-    expect(moved.status).not.toBe(0);
+    expect(moved.status).toBe(0);
     expect(moved.stdout).toContain('the stage branch moved on');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

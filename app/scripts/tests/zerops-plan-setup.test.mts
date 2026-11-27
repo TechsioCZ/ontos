@@ -15,7 +15,6 @@ const HISTORY = 'scripts/zerops/read-delivery-history.sh';
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
 const WORKFLOW = '.github/workflows/zerops-stage.yml';
-const SUPERSEDED_HEAD = 'Refuse a superseded stage head before preparation';
 const run = (id: number, number: number, conclusion: string | null, status = 'completed') => ({
   conclusion,
   event: 'push',
@@ -60,80 +59,55 @@ jq -c "$filter" "$FIXTURES/$name.json"
 `;
 const fixtureName = (route: string) => route.replaceAll(/[^A-Za-z0-9]/gu, '_');
 
-it.effect(
-  'rejects superseded or unreadable stage heads before setup without cancelling running Zerops deliveries',
-  () =>
-    Effect.gen(function* rejectSupersededPreparation() {
-      const fs = yield* FileSystem.FileSystem;
-      const workflow = yield* fs.readFileString(path.resolve(app, '..', WORKFLOW)).pipe(
-        Effect.flatMap((source) =>
-          Schema.decodeUnknownEffect(
-            Schema.Struct({
-              concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
-              jobs: Schema.Record(
-                Schema.String,
-                Schema.Struct({
-                  steps: Schema.Array(
-                    Schema.Struct({
-                      name: Schema.String,
-                      run: Schema.optionalKey(Schema.String),
-                      uses: Schema.optionalKey(Schema.String),
-                    }),
-                  ),
-                }),
-              ),
-            }),
-          )(parse(source)),
-        ),
-      );
-      expect(workflow.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const git = path.join(directory, 'git');
-      yield* fs.writeFileString(
-        git,
-        `#!/usr/bin/env bash
-set -euo pipefail
-[ "$*" = 'ls-remote origin refs/heads/demo/sales-crm' ] || exit 9
-[ "$REMOTE_HEAD" != unavailable ] || exit 1
-printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
-`,
-      );
-      yield* fs.chmod(git, 0o700);
-      for (const name of ['deliver', 'build', 'deliver_app']) {
-        const job = workflow.jobs[name];
-        if (job === undefined) {
-          expect.fail(`Missing stage job ${name}`);
-        }
-        const checkpoint = job.steps.findIndex((step) => step.name === SUPERSEDED_HEAD);
-        const checkout = job.steps.findIndex((step) => step.uses?.startsWith('actions/checkout@') === true);
-        expect(checkpoint).toBe(checkout + 1);
-        const script = job.steps[checkpoint]?.run;
-        if (script === undefined) {
-          expect.fail(`Missing stage checkpoint ${name}`);
-        }
-        // No credential sync, download, install or build can occur before the head is checked.
-        expect(job.steps.slice(0, checkpoint).map((step) => step.name)).toEqual(['Checkout']);
-        for (const head of [HEAD, BASE, '', 'unavailable']) {
-          const result = yield* collectToolingProcess(
-            ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', script], {
-              env: {
-                GITHUB_SHA: HEAD,
-                PATH: `${directory}:${yield* Config.String('PATH').pipe(Config.withDefault(''))}`,
-                REMOTE_HEAD: head,
-              },
-              extendEnv: true,
-            }),
-          );
-          expect(result.status === 0, `${name}: ${head}`).toBe(head === HEAD);
-        }
+// Hotfix delivery (0fcf2ae30d, 5b13f3af9b): the planning job holds no delivery group, so a newer push plans and
+// builds while an older one still delivers; deliveries take turns in deliver_app, which no newer run cancels. No job
+// refuses a superseded head any more: every built run delivers, and deliver_app skips only when stage runs newer.
+it.effect('plans and builds every push at once, and lets deliveries alone take turns, none cancelled', () =>
+  Effect.gen(function* deliveriesTakeTurns() {
+    const fs = yield* FileSystem.FileSystem;
+    const Concurrency = Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String });
+    const workflow = yield* fs.readFileString(path.resolve(app, '..', WORKFLOW)).pipe(
+      Effect.flatMap((source) =>
+        Schema.decodeUnknownEffect(
+          Schema.Struct({
+            concurrency: Schema.optionalKey(Concurrency),
+            jobs: Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                concurrency: Schema.optionalKey(Concurrency),
+                steps: Schema.Array(
+                  Schema.Struct({
+                    name: Schema.String,
+                    run: Schema.optionalKey(Schema.String),
+                    uses: Schema.optionalKey(Schema.String),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        )(parse(source)),
+      ),
+    );
+    expect(workflow.concurrency).toBeUndefined();
+    expect(workflow.jobs.deliver?.concurrency).toBeUndefined();
+    expect(workflow.jobs.deliver_app?.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
+    expect(workflow.jobs.build?.concurrency?.['cancel-in-progress']).toBe(false);
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      for (const step of job.steps) {
+        expect(step.run ?? '', `${name}: ${step.name}`).not.toContain('ls-remote');
       }
-      // The last-moment fences are retained: a push after preparation still cannot mutate stage with an old head.
-      for (const name of ['deliver', 'deliver_app']) {
-        const marker = workflow.jobs[name]?.steps.find((step) => step.name === MUTATION_MARKER);
-        expect(marker?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
-        expect(workflow.jobs[name]?.steps.some((step) => step.uses === './.github/actions/deliver-stage')).toBe(true);
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }
+    // Only deliver_app marks an attempt and delivers.
+    for (const [name, delivers] of [
+      ['deliver', false],
+      ['build', false],
+      ['deliver_app', true],
+    ] as const) {
+      const steps = workflow.jobs[name]?.steps ?? [];
+      expect(steps.some((step) => step.name === MUTATION_MARKER), name).toBe(delivers);
+      expect(steps.some((step) => step.uses === './.github/actions/deliver-stage'), name).toBe(delivers);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 /** The API answers, as JSON text by route, and the services of each plan artifact, by its zip route. */
@@ -319,11 +293,11 @@ it.live("executes the real planner over this commit's reference graph: CI-only c
 
 it.live("executes the real planner over this commit's reference graph: what stage runs deploys every service", () =>
   Effect.gen(function* deliveredInputs() {
+    // stage-warmup.mts left this list with the proofs (6c6620eafb): stage no longer runs it.
     for (const changed of [
       WORKFLOW,
       'app/scripts/zerops/app-host.mts',
       'app/scripts/run-zerops-migrator.mjs',
-      'app/scripts/ops/stage-warmup.mts',
       'app/scripts/zerops/push-service.sh',
     ]) {
       const { plan } = yield* planWith(changing([changed]));

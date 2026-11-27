@@ -627,8 +627,6 @@ const DeliveryStepSchema = Schema.Struct({
   with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
 type DeliveryStep = typeof DeliveryStepSchema.Type;
-const stageProofsPath = new URL('../zerops/stage-proofs.sh', import.meta.url);
-const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
 /** The delivery every run shares (.github/actions/deliver-stage), from its secret syncs to its last proof. */
 const deliverySteps = (): readonly DeliveryStep[] =>
   Schema.decodeUnknownSync(Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }) }))(
@@ -644,61 +642,40 @@ const stageJobs = () =>
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs;
 
-it('installs Chromium for the warm-up client before running its bounded browser pass', () => {
-  const steps = deliverySteps();
-  const install = steps.findIndex(
-    ({ run }) =>
-      run?.includes('pnpm --config.verify-deps-before-run=false exec playwright-core install chromium') === true,
-  );
-  // The proofs start from stage-proofs.sh, which runs the warm-up.
-  const starts = steps.flatMap(({ run }, index) => (run === PROOFS_START ? [index] : []));
-  expect(install).toBeGreaterThanOrEqual(0);
-  expect(starts).toHaveLength(2);
-  for (const start of starts) {
-    expect(start).toBeGreaterThan(install);
-  }
-  expect(readFileSync(stageProofsPath, 'utf-8')).toContain('mise exec -- node scripts/ops/stage-warmup.mts');
-});
-
-it('marks the attempt after the plan is retained and before any remote mutation, in both delivering jobs', () => {
+// Hotfix delivery (6c6620eafb): no browser install and no warm-up, MCP OAuth or N1 checkout proof; the delivery checks
+// that every public origin answers. The browser and proof assertions went with those steps.
+it('marks the attempt after the plan is retained and before any remote mutation, in the one delivering job', () => {
   const jobs = stageJobs();
-  for (const job of [jobs.deliver, jobs.deliver_app]) {
-    const index = (name: string) => job.steps.findIndex((step) => step.name === name);
-    const mark = job.steps[index(MUTATION_MARKER)];
-    // The mark refuses a remote head that moved on: a run never deploys an older branch head.
-    expect(mark?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
-    const deliver = job.steps.findIndex(({ uses }) => uses === DELIVER_STAGE);
-    expect(deliver).toBeGreaterThan(index(MUTATION_MARKER));
-    expect(mark?.if).toBe(job.steps[deliver]?.if);
-    // Nothing before the mark syncs a secret or pushes.
-    for (const step of job.steps.slice(0, index(MUTATION_MARKER))) {
-      expect(step.run ?? '', step.name).not.toMatch(/sync-service-secret|stage-push|push-service/u);
-    }
+  // The planning job only plans (0fcf2ae30d): it syncs no secret, pushes nothing and runs no delivery.
+  const { deliver, deliver_app: deliverApp } = jobs;
+  expect(deliver.steps.some(({ name }) => name === MUTATION_MARKER)).toBe(false);
+  expect(deliver.steps.some(({ uses }) => uses === DELIVER_STAGE)).toBe(false);
+  for (const step of deliver.steps) {
+    expect(step.run ?? '', step.name).not.toMatch(/sync-service-secret|stage-push|push-service/u);
   }
-  const { deliver } = jobs;
   const plan = deliver.steps.findIndex(({ name }) => name === 'Retain the delivery decision');
   expect(plan).toBeGreaterThan(-1);
-  expect(plan).toBeLessThan(deliver.steps.findIndex(({ name }) => name === MUTATION_MARKER));
-  // The delivery syncs every secret before its first push, and every push checks the branch head itself.
+  const index = (name: string) => deliverApp.steps.findIndex((step) => step.name === name);
+  const mark = deliverApp.steps[index(MUTATION_MARKER)];
+  const deliverStep = deliverApp.steps.findIndex(({ uses }) => uses === DELIVER_STAGE);
+  expect(deliverStep).toBeGreaterThan(index(MUTATION_MARKER));
+  expect(mark?.if).toBe(deliverApp.steps[deliverStep]?.if);
+  // Nothing before the mark syncs a secret or pushes.
+  for (const step of deliverApp.steps.slice(0, index(MUTATION_MARKER))) {
+    expect(step.run ?? '', step.name).not.toMatch(/sync-service-secret|stage-push|push-service/u);
+  }
+  // The delivery syncs every secret before its first push, and ends with the origin check, unconditionally.
   const steps = deliverySteps();
   const sync = steps.findIndex(({ run }) => run?.includes('sync-service-secret.sh') === true);
   const firstPush = steps.findIndex(({ run }) => run?.includes('stage-push.sh start') === true);
   expect(sync).toBe(0);
   expect(firstPush).toBeGreaterThan(sync);
-  expect(readFileSync(stagePushPath, 'utf-8')).toContain('if [ "$head" != "$GITHUB_SHA" ]; then');
-  // The live proofs stay mandatory: their verdict has no condition, and fails when they never started.
-  const finish = steps.find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
-  expect(finish).toBeDefined();
-  expect(finish?.if).toBeUndefined();
-  expect(finish?.['continue-on-error']).toBeUndefined();
-  const proofs = readFileSync(stageProofsPath, 'utf-8');
-  for (const proof of [
-    'scripts/ops/stage-warmup.mts',
-    'scripts/ops/stage-n1-checkout.mts quote',
-    'scripts/zerops/verify-service.mjs app',
-    'scripts/demo/prove-mcp-oauth.mts',
-  ]) {
-    expect(proofs, proof).toContain(`mise exec -- node ${proof}`);
+  const origins = steps.find(({ name }) => name === 'Check that the stage origins answer');
+  expect(origins).toBeDefined();
+  expect(origins?.if).toBeUndefined();
+  expect(origins?.['continue-on-error']).toBeUndefined();
+  for (const url of ['STAGE_SHELL_URL', 'STAGE_STOREFRONT_URL', 'STAGE_SHOP_URL', 'STAGE_N1_URL']) {
+    expect(origins?.run, url).toContain(`"$${url}"`);
   }
   for (const step of steps) {
     expect(step.with?.['fail-on-cache-miss'], step.name ?? step.uses).not.toBe(true);
@@ -730,16 +707,17 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   const kept = at(({ with: options }) => options?.name === 'zerops-units-0');
   const storefront = at(({ run }) => run?.includes('build-storefront.sh') === true);
   const appWait = at(({ run }) => run === 'bash app/scripts/zerops/stage-push.sh wait app');
-  // After the app upload and before the wait for it, so off the delivery's critical path; on a clean checkout (the
-  // pushed archive set aside, no storefront build yet); kept only after the build.
+  // Hotfix: after the app deployment, off the path to live, and allowed to fail (a failure only costs the next push a
+  // rebuild); still on a clean checkout of this commit, and kept only after the build.
   expect(appPush).toBeGreaterThanOrEqual(0);
   expect(aside).toBeGreaterThan(appPush);
   expect(steps[aside]?.run).toContain('mv app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"');
   expect(install).toBeGreaterThan(aside);
-  expect(build).toBeGreaterThan(install);
-  expect(storefront).toBeGreaterThan(build);
+  expect(storefront).toBeGreaterThan(install);
+  expect(appWait).toBeGreaterThan(storefront);
+  expect(build).toBeGreaterThan(appWait);
   expect(kept).toBeGreaterThan(build);
-  expect(appWait).toBeGreaterThan(kept);
+  expect(steps[build]?.['continue-on-error']).toBe(true);
   expect(steps[build]?.run).toContain('git status --porcelain --untracked-files=all');
   expect(steps[build]?.run).toContain('pack-prebuilt-units.sh "$DISTS" "$RUNNER_TEMP/units-keep/units.tar.zst"');
   // The same declared build environment as the identity step, so each build carries this commit's identity.
@@ -750,9 +728,14 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
     expect(steps[build]?.env?.[variable], variable).toBe(value);
   }
   expect(steps[build]?.run).toContain('zerops-unit-identities/digests.tsv');
-  // The units it builds are the ones the front path could not lend.
-  const delivery = deliver.steps.find(({ uses }) => uses === DELIVER_STAGE);
-  expect(delivery?.with?.['build-units']).toBe(`\${{ steps.taken.outputs.missing }}`);
+  // The units it builds are the ones the front path could not lend; the planning job hands them to deliver_app.
+  const delivery = stageJobs().deliver_app.steps.find(({ uses }) => uses === DELIVER_STAGE);
+  expect(delivery?.with?.['build-units']).toBe(
+    `\${{ needs.deliver.outputs.build_units != 'true' && needs.deliver.outputs.missing || '' }}`,
+  );
+  expect(parse(readFileSync(stageWorkflowPath, 'utf-8')).jobs.deliver.outputs.missing).toBe(
+    `\${{ steps.taken.outputs.missing }}`,
+  );
 });
 
 /** Lines that run, without comments: a comment may name node or pnpm. */
@@ -829,17 +812,16 @@ it('pushes the app before any install: nothing up to the upload needs the toolch
     'stage-push.sh',
     'sync-service-secret.sh',
   ]);
-  // The job after the unit builds installs nothing before it pushes; the planning job installed the root importer.
+  // The one delivering job installs nothing before it pushes; the planning job installs the root importer and never
+  // delivers (0fcf2ae30d).
   const { deliver, deliver_app: deliverApp } = stageJobs();
   expect(deliverApp.steps[delivery(deliverApp)]?.with?.toolchain).toBe('none');
   for (const step of deliverApp.steps.slice(0, delivery(deliverApp))) {
     expect(step.uses ?? '', step.name).not.toBe(INSTALL_APP);
     expect(code(step.run ?? ''), step.name).not.toMatch(TOOLCHAIN);
   }
-  expect(deliver.steps[delivery(deliver)]?.with?.toolchain).toBe('installed');
-  const planInstall = deliver.steps.findIndex(({ uses }) => uses === INSTALL_APP);
-  expect(planInstall).toBeGreaterThanOrEqual(0);
-  expect(planInstall).toBeLessThan(delivery(deliver));
+  expect(delivery(deliver)).toBe(-1);
+  expect(deliver.steps.findIndex(({ uses }) => uses === INSTALL_APP)).toBeGreaterThanOrEqual(0);
 });
 
 it('plans from the run history with only the root importer and a depth-1 checkout', () => {
@@ -857,41 +839,10 @@ it('plans from the run history with only the root importer and a depth-1 checkou
   expect(plan).toBeGreaterThan(history);
 });
 
-const verificationSteps = deliverySteps;
-
-it('installs the full verification workspace and caches the frozen browser graph plus per-OS apt archives', () => {
-  const steps = verificationSteps();
-  // The whole workspace, once the app upload is done, from the store of the caller's root importer install.
-  expect(steps.find(({ name }) => name === INSTALL_WORKSPACE)?.run).toBe(
+it('installs the whole workspace once the app upload is done, from the store of the root importer install', () => {
+  expect(deliverySteps().find(({ name }) => name === INSTALL_WORKSPACE)?.run).toBe(
     'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
   );
-  const versions = steps.find(({ id }) => id === 'verification-browser-versions');
-  expect(versions?.run).toContain(
-    'pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version',
-  );
-  expect(versions?.run).toContain('pnpm --config.verify-deps-before-run=false exec playwright-core --version');
-  const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
-  expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml')");
-  // One apt archive entry per image OS and Playwright pair: the rotating image versions share it (apt checks each
-  // cached package against its own index).
-  const aptKey = steps.find(({ id }) => id === 'chromium-debs')?.run;
-  expect(aptKey).toBe(
-    `echo "key=playwright-apt-debs-$ImageOS-\${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"`,
-  );
-  expect(aptKey).not.toContain('ImageVersion');
-  const aptRestore = steps.findIndex(({ id }) => id === 'chromium-debs-cache');
-  const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install --with-deps chromium') === true);
-  const aptSeed = steps.findIndex(({ run }) => run?.includes('sudo find ~/.cache/playwright-apt-debs') === true);
-  expect(aptRestore).toBeGreaterThanOrEqual(0);
-  expect(aptSeed).toBeGreaterThan(aptRestore);
-  expect(aptInstall).toBeGreaterThan(aptSeed);
-  expect(steps[aptInstall]?.if).toBeUndefined();
-  expect(steps[aptSeed]?.run).toContain('/var/cache/apt/archives/');
-  for (const command of ['playwright install --with-deps chromium', 'playwright-core install chromium']) {
-    const download = steps.findIndex(({ run }) => run?.includes(command) === true);
-    expect(download).toBeGreaterThan(restore);
-    expect(steps[download]?.if).toBeUndefined();
-  }
 });
 
 it('counts a module as a caller by its declared requirement callers or registered-workload calls', () => {
@@ -905,24 +856,9 @@ it('counts a module as a caller by its declared requirement callers or registere
   expect(declaresModuleCalls({ registeredWorkloadCalls: [{ workloadKey: 'commerce.catalog.read' }] })).toBe(true);
 });
 
-it('binds N1 pushes to the packaged Next build and configured origin, not an unrelated app commit', () => {
+it('names the packaged N1 Next build before its standalone bundle moves into the push', () => {
   const build = readFileSync(new URL('../zerops/build-storefront.sh', import.meta.url), 'utf-8');
   expect(build).toContain('build_id="$(cat "$package/.next/BUILD_ID")"');
   expect(build).toContain(String.raw`printf 'STAGE_N1_BUILD_ID=%s\n'`);
   expect(build.indexOf('STAGE_N1_BUILD_ID')).toBeLessThan(build.indexOf('mv "$package/.next/standalone"'));
-  const finish = deliverySteps().find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
-  expect(finish?.env?.PUSH_N1).toBe(`\${{ inputs.n1 }}`);
-  const proofs = readFileSync(stageProofsPath, 'utf-8');
-  expect(proofs).toContain(`checkout_args=(--origin "\${STAGE_N1_URL:?STAGE_N1_URL is required}")`);
-  expect(proofs).toContain(`if [ "\${PUSH_N1:-false}" = true ]; then`);
-  expect(proofs).toContain(`"--expect-build-id=\${STAGE_N1_BUILD_ID:?packaged N1 build id is required}"`);
-  expect(proofs).toContain(
-    'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build',
-  );
-  expect(proofs).toContain('test "$checkout" -eq 0 && test "$warmup" -eq 0');
-  expect(proofs).not.toContain('test "$checkout" -eq 3;');
-  expect(proofs).toContain(
-    `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "\${checkout_args[@]}"`,
-  );
-  expect(proofs).not.toContain('--expect-build-id "$GITHUB_SHA"');
 });

@@ -174,7 +174,10 @@ const exempt = (referrer: string, file: string) =>
   (referrer === 'app/quality-audit/knip-runtime-model.mts' && stageRoot(file)) ||
   // The app runtime manifest names the whole app/scripts tree for the migrator artifact that the gates workflow's
   // migrator job assembles; that job is no ci-matrices row, so no scope skips it.
-  referrer === 'app/scripts/zerops/app-runtime-paths.txt';
+  referrer === 'app/scripts/zerops/app-runtime-paths.txt' ||
+  // The operator's stable catalogue copy runs by hand against stable, never in a gate or a stage delivery; it reuses
+  // the stable bootstrap's readers.
+  (referrer === 'app/scripts/demo/copy-stage-catalog-to-stable.mts' && file.startsWith('ops/zerops-stable/'));
 
 it('keeps every stage-delivery file out of everything a scoped plan skips', () => {
   const scoped = tracked.filter((file) => inScope(STAGE, file));

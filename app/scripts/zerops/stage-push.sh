@@ -7,9 +7,10 @@
 #                                       Zerops process exists) or the push has ended; a push that ended failed fails
 #   stage-push.sh wait <service>...     waits for those pushes to end and prints each one's log; fails if any failed
 #   stage-push.sh wait-started          the same for every push this job started (after a failed step)
-#   stage-push.sh superseded            fails when the stage branch has moved past this run's commit
+#   stage-push.sh superseded            says when the stage branch has moved past this run's commit
 #
-# Every push first checks that the stage branch still points at this run's commit: a run never deploys an older head.
+# Every push delivers this run's commit, even after a newer push (hotfix: frequent pushes never starve stage);
+# deliver_app skips a run only when stage already runs a newer commit, so stage never goes back.
 #
 # <service> is app, storefront, shop or n1. The app pushes the checkout itself (push-service.sh stages it). A storefront
 # service pushes only app/zerops.yaml and the archive its setup built on this runner, staged by the storefront build
@@ -44,10 +45,9 @@ project_hosts() {
 branch_head() { git ls-remote origin refs/heads/demo/sales-crm | cut -f1; }
 
 start() {
-  local service="$1" id setup source log status resolved head
+  local service="$1" id setup source log status resolved
   resolved="$(target "$service")"
   read -r id setup <<<"$resolved"
-  # Hotfix: a run delivers its commit even when a newer push arrived, so frequent pushes never starve stage.
   source="$PWD"
   if [ "$service" != app ]; then source="$RUNNER_TEMP/storefront-push/$setup"; fi
   log="$state/$service.log"
