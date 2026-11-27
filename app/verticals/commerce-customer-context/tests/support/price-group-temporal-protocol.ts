@@ -48,6 +48,7 @@ import {
   Stream,
 } from 'effect';
 import { Socket } from 'effect/socket';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 const commerceAppId = 'commerce-customer-context';
 const commerceModuleId = 'commerce.customer-context';
@@ -533,7 +534,7 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
       ),
     )(shellFederationDocument);
     const shellSingletons = yield* Effect.forEach(
-      shellFederation.shared.filter(({ singleton }) => singleton === true),
+      sharedPackagesOf(shellFederation.shared).filter(({ singleton }) => singleton === true),
       Effect.fn(function* versionedPublishedSingleton(entry) {
         if (entry.requiredVersion === undefined) {
           return yield* failure('actual-shell-singleton-version');

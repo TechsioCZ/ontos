@@ -60,6 +60,7 @@
       "default": "./src/modules/active-application-composition-source.node.ts"
     },
     "./modules/manifest": "./src/modules/manifest.ts",
+    "./modules/shared-packages": "./src/modules/shared-packages.ts",
     "./modules/mcp-contribution": "./src/modules/mcp-contribution.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
