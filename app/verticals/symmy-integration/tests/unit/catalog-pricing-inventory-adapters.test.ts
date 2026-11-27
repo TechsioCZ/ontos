@@ -1047,6 +1047,45 @@ const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(functi
   );
 });
 
+/** The Catalog source lookup answering the Product as Catalog holds it now, past its draft. */
+const currentProductWire = (lifecycle: 'ACTIVE' | 'RETIRED', revision: number) => ({
+  action: 'catalog-source-products',
+  response: {
+    items: [
+      {
+        entityKind: 'PRODUCT',
+        originalActionInvocationId: invocationId,
+        product: {
+          ...result.product,
+          catalogReady: lifecycle === 'ACTIVE',
+          lifecycle,
+          revision,
+          variants: result.product.variants.map((variant) => ({ ...variant, lifecycle: 'ACTIVE' })),
+        },
+        source: Struct.omit(sourceCorrelation, ['sourceOccurrenceId']),
+        variantId,
+        variantSources: [],
+      },
+    ],
+    outcome: 'FOUND',
+  },
+});
+
+const replayedCreate = (current?: ReturnType<typeof currentProductWire>) =>
+  harness(
+    false,
+    effect,
+    productId,
+    priceGroupA,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    priceGroupA,
+    undefined,
+    current,
+  );
+
 describe('Symmy native public owner adapter transport', () => {
   it.effect('identifies owner request persistence failure without replacing or logging the original cause', () => {
     const h = harness(false);
@@ -3575,43 +3614,6 @@ describe('Symmy Product readiness', () => {
     }),
   );
 
-  /** The Catalog source lookup answering the Product as Catalog holds it now, past its draft. */
-  const currentProductWire = (lifecycle: 'ACTIVE' | 'RETIRED', revision: number) => ({
-    action: 'catalog-source-products',
-    response: {
-      items: [
-        {
-          entityKind: 'PRODUCT',
-          originalActionInvocationId: invocationId,
-          product: {
-            ...result.product,
-            catalogReady: lifecycle === 'ACTIVE',
-            lifecycle,
-            revision,
-            variants: result.product.variants.map((variant) => ({ ...variant, lifecycle: 'ACTIVE' })),
-          },
-          source: Struct.omit(sourceCorrelation, ['sourceOccurrenceId']),
-          variantId,
-          variantSources: [],
-        },
-      ],
-      outcome: 'FOUND',
-    },
-  });
-  const replayedCreate = (current?: ReturnType<typeof currentProductWire>) =>
-    harness(
-      false,
-      effect,
-      productId,
-      priceGroupA,
-      false,
-      undefined,
-      undefined,
-      undefined,
-      priceGroupA,
-      undefined,
-      current,
-    );
   const newCoreId = '10000000-0000-4000-8000-000000000045';
 
   it.effect(

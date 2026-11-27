@@ -108,7 +108,10 @@ const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, sym
     ),
   ),
 );
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  symmyIntegrationBackendRegistration,
+).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,

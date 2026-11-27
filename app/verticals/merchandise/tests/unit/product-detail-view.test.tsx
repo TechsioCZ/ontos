@@ -13,7 +13,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { settle as uiSettle, waitUntil as uiWaitUntil, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act } from 'react';
@@ -23,8 +23,7 @@ import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-act
 import { recordStockMovementActionSchemaErrorLive } from '../../api/record-stock-movement-action-problems.ts';
 import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
 import { RecordStockMovementActionApi } from '../../shared/apis/record-stock-movement-action.ts';
-import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
-import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogPayloadSchema, ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
 import type { RecordStockMovementPayloadSchema } from '../../shared/actions/record-stock-movement.ts';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
@@ -228,16 +227,19 @@ it.layer(network, { excludeTestServices: true })('product editor with one Save b
       yield* networkIdle;
       // The save names the product version the editor read, so only a change of this product refuses it.
       expect(
-        catalogRequests.map(({ command }) =>
-          Predicate.isTagged(command, 'UpdateProduct')
-            ? {
+        catalogRequests
+          .map((request) => Schema.decodeSync(ManageCatalogPayloadSchema)(request))
+          .map(({ command: decodedCommand }) =>
+            Match.value(decodedCommand).pipe(
+              Match.tag('UpdateProduct', (command) => ({
                 expectedUpdatedAt:
                   command.expectedUpdatedAt === undefined ? null : DateTime.toEpochMillis(command.expectedUpdatedAt),
                 id: command.id,
                 patch: command.patch,
-              }
-            : command._tag,
-        ),
+              })),
+              Match.orElse((other) => other._tag),
+            ),
+          ),
       ).toEqual([
         {
           expectedUpdatedAt: DateTime.toEpochMillis(product.updatedAt),

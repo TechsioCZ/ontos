@@ -60,6 +60,98 @@ export const loadSourceAdmissionCounterparty = Effect.fn('SourceCounterpartyAdmi
   },
 );
 
+/** The admission of an exact Counterparty whose source correlation and target Privacy are already proven. */
+export const currentSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmission.currentCustomer')(
+  function* currentCustomer(
+    transaction: AdmissionTransaction,
+    scope: OperationalScope,
+    legalEntityId: string,
+    input: SourceCounterpartyAdmissionRequest,
+    counterparty: SourceAdmissionCounterparty,
+    partyRevision: number,
+  ): Effect.fn.Return<SourceCounterpartyAdmissionResponse, PartyPersistenceUnavailableError> {
+    const partyRef = makePartyRef(scope.tenantId, counterparty.partyId);
+    const now = yield* DateTime.nowAsDate;
+    const roles = yield* transaction
+      .select()
+      .from(counterpartyRolePeriods)
+      .where(
+        and(
+          eq(counterpartyRolePeriods.tenantId, scope.tenantId),
+          eq(counterpartyRolePeriods.legalEntityId, legalEntityId),
+          eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
+          eq(counterpartyRolePeriods.roleType, 'CUSTOMER'),
+          eq(counterpartyRolePeriods.state, 'ACTIVE'),
+          lte(counterpartyRolePeriods.validFrom, now),
+          or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, now)),
+        ),
+      )
+      .limit(2)
+      .pipe(Effect.mapError(unavailable));
+    const [role] = roles;
+    if (roles.length !== 1 || role === undefined) {
+      return notAdmissible;
+    }
+    return {
+      outcome: 'CUSTOMER_CURRENT',
+      counterpartyRef: input.counterpartyRef,
+      partyRef,
+      legalEntityRef: legalEntityRef(scope.tenantId, legalEntityId),
+      partyRevision,
+      counterpartyRevision: revision([
+        counterparty.tenantId,
+        counterparty.counterpartyId,
+        counterparty.partyId,
+        counterparty.legalEntityId,
+        counterparty.createdAt.toISOString(),
+        counterparty.updatedAt.toISOString(),
+        counterparty.archivedAt?.toISOString() ?? null,
+        counterparty.recordedAt.toISOString(),
+        counterparty.creationReason,
+        counterparty.evidenceRefs,
+        counterparty.sourceRecordRefs,
+        counterparty.provenanceSource,
+        counterparty.provenanceMethod,
+        counterparty.acceptedByActionInvocationId,
+        counterparty.acceptedByPrincipalId,
+        counterparty.policyVersion,
+      ]),
+      currentCustomerRoleRef: {
+        moduleId: 'party.registry',
+        resourceType: 'party.registry.counterparty-role-period',
+        resourceId: role.rolePeriodId,
+        tenantId: scope.tenantId,
+      },
+      currentCustomerRoleRevision: revision([
+        role.tenantId,
+        role.rolePeriodId,
+        role.counterpartyId,
+        role.legalEntityId,
+        role.roleType,
+        role.state,
+        role.isCurrent,
+        role.validFrom.toISOString(),
+        role.validTo?.toISOString() ?? null,
+        role.recordedAt.toISOString(),
+        role.addReason,
+        role.addEvidenceRefs,
+        role.endReason,
+        role.endProvenanceSource,
+        role.endProvenanceMethod,
+        role.endEvidenceRefs,
+        role.endedByActionInvocationId,
+        role.endedByPrincipalId,
+        role.endedRecordedAt?.toISOString() ?? null,
+        role.provenanceSource,
+        role.provenanceMethod,
+        role.acceptedByActionInvocationId,
+        role.acceptedByPrincipalId,
+        role.policyVersion,
+      ]),
+    };
+  },
+);
+
 /** CUSTOMER ownership is proven only from the exact Counterparty and effective owner role row. */
 export const readSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmission.read')(function* readAdmission(
   transaction: AdmissionTransaction,
@@ -99,94 +191,4 @@ export const readSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmi
     counterparty,
     correlated.party.revision,
   );
-});
-
-/** The admission of an exact Counterparty whose source correlation and target Privacy are already proven. */
-export const currentSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmission.currentCustomer')(function* currentCustomer(
-  transaction: AdmissionTransaction,
-  scope: OperationalScope,
-  legalEntityId: string,
-  input: SourceCounterpartyAdmissionRequest,
-  counterparty: SourceAdmissionCounterparty,
-  partyRevision: number,
-): Effect.fn.Return<SourceCounterpartyAdmissionResponse, PartyPersistenceUnavailableError> {
-  const partyRef = makePartyRef(scope.tenantId, counterparty.partyId);
-  const now = yield* DateTime.nowAsDate;
-  const roles = yield* transaction
-    .select()
-    .from(counterpartyRolePeriods)
-    .where(
-      and(
-        eq(counterpartyRolePeriods.tenantId, scope.tenantId),
-        eq(counterpartyRolePeriods.legalEntityId, legalEntityId),
-        eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
-        eq(counterpartyRolePeriods.roleType, 'CUSTOMER'),
-        eq(counterpartyRolePeriods.state, 'ACTIVE'),
-        lte(counterpartyRolePeriods.validFrom, now),
-        or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, now)),
-      ),
-    )
-    .limit(2)
-    .pipe(Effect.mapError(unavailable));
-  const [role] = roles;
-  if (roles.length !== 1 || role === undefined) {
-    return notAdmissible;
-  }
-  return {
-    outcome: 'CUSTOMER_CURRENT',
-    counterpartyRef: input.counterpartyRef,
-    partyRef,
-    legalEntityRef: legalEntityRef(scope.tenantId, legalEntityId),
-    partyRevision,
-    counterpartyRevision: revision([
-      counterparty.tenantId,
-      counterparty.counterpartyId,
-      counterparty.partyId,
-      counterparty.legalEntityId,
-      counterparty.createdAt.toISOString(),
-      counterparty.updatedAt.toISOString(),
-      counterparty.archivedAt?.toISOString() ?? null,
-      counterparty.recordedAt.toISOString(),
-      counterparty.creationReason,
-      counterparty.evidenceRefs,
-      counterparty.sourceRecordRefs,
-      counterparty.provenanceSource,
-      counterparty.provenanceMethod,
-      counterparty.acceptedByActionInvocationId,
-      counterparty.acceptedByPrincipalId,
-      counterparty.policyVersion,
-    ]),
-    currentCustomerRoleRef: {
-      moduleId: 'party.registry',
-      resourceType: 'party.registry.counterparty-role-period',
-      resourceId: role.rolePeriodId,
-      tenantId: scope.tenantId,
-    },
-    currentCustomerRoleRevision: revision([
-      role.tenantId,
-      role.rolePeriodId,
-      role.counterpartyId,
-      role.legalEntityId,
-      role.roleType,
-      role.state,
-      role.isCurrent,
-      role.validFrom.toISOString(),
-      role.validTo?.toISOString() ?? null,
-      role.recordedAt.toISOString(),
-      role.addReason,
-      role.addEvidenceRefs,
-      role.endReason,
-      role.endProvenanceSource,
-      role.endProvenanceMethod,
-      role.endEvidenceRefs,
-      role.endedByActionInvocationId,
-      role.endedByPrincipalId,
-      role.endedRecordedAt?.toISOString() ?? null,
-      role.provenanceSource,
-      role.provenanceMethod,
-      role.acceptedByActionInvocationId,
-      role.acceptedByPrincipalId,
-      role.policyVersion,
-    ]),
-  };
 });

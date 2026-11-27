@@ -72,7 +72,12 @@ describe('product detail draft', () => {
   });
 
   it('never sends a product price for a product priced by its variants', () => {
-    const variant = Schema.decodeSync(ProductVariantSchema)({ attributes: '', id: 'variant-1', name: '250 g', priceMinor: 25_804 });
+    const variant = Schema.decodeSync(ProductVariantSchema)({
+      attributes: '',
+      id: 'variant-1',
+      name: '250 g',
+      priceMinor: 25_804,
+    });
     const priced = draftOf({ ...product, currentPriceMinor: 0, variants: [variant] });
     expect(priced.realVariants).toHaveLength(1);
     expect(detailSaveOf({ ...priced, priceCzk: 300 }, priced).priceChanged).toBe(false);

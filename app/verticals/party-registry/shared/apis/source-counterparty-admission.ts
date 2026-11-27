@@ -100,35 +100,37 @@ export const SourceCounterpartyAdmissionInternalProblemSchema = makeProblemDetai
 );
 
 export const SourceCounterpartyAdmissionApi = HttpApi.make('SourceCounterpartyAdmissionApi').add(
-  HttpApiGroup.make('sourceCounterpartyAdmission').add(
-    HttpApiEndpoint.post('execute', '/reads/source-counterparty-admission', {
-      error: [
-        SourceCounterpartyAdmissionInvalidProblemSchema,
-        SourceCounterpartyAdmissionAuthenticationProblemSchema,
-        SourceCounterpartyAdmissionForbiddenProblemSchema,
-        SourceCounterpartyAdmissionNotFoundProblemSchema,
-        SourceCounterpartyAdmissionPolicyConflictProblemSchema,
-        SourceCounterpartyAdmissionPolicyProblemSchema,
-        SourceCounterpartyAdmissionUnavailableProblemSchema,
-        SourceCounterpartyAdmissionInternalProblemSchema,
-      ],
-      payload: SourceCounterpartyAdmissionRequestSchema,
-      success: SourceCounterpartyAdmissionResponseSchema,
-    }),
-  ).add(
-    HttpApiEndpoint.post('executeSet', '/reads/source-admission-set', {
-      error: [
-        SourceCounterpartyAdmissionInvalidProblemSchema,
-        SourceCounterpartyAdmissionAuthenticationProblemSchema,
-        SourceCounterpartyAdmissionForbiddenProblemSchema,
-        SourceCounterpartyAdmissionNotFoundProblemSchema,
-        SourceCounterpartyAdmissionPolicyConflictProblemSchema,
-        SourceCounterpartyAdmissionPolicyProblemSchema,
-        SourceCounterpartyAdmissionUnavailableProblemSchema,
-        SourceCounterpartyAdmissionInternalProblemSchema,
-      ],
-      payload: SourceAdmissionSetRequestSchema,
-      success: SourceAdmissionSetResponseSchema,
-    }),
-  ),
+  HttpApiGroup.make('sourceCounterpartyAdmission')
+    .add(
+      HttpApiEndpoint.post('execute', '/reads/source-counterparty-admission', {
+        error: [
+          SourceCounterpartyAdmissionInvalidProblemSchema,
+          SourceCounterpartyAdmissionAuthenticationProblemSchema,
+          SourceCounterpartyAdmissionForbiddenProblemSchema,
+          SourceCounterpartyAdmissionNotFoundProblemSchema,
+          SourceCounterpartyAdmissionPolicyConflictProblemSchema,
+          SourceCounterpartyAdmissionPolicyProblemSchema,
+          SourceCounterpartyAdmissionUnavailableProblemSchema,
+          SourceCounterpartyAdmissionInternalProblemSchema,
+        ],
+        payload: SourceCounterpartyAdmissionRequestSchema,
+        success: SourceCounterpartyAdmissionResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('executeSet', '/reads/source-admission-set', {
+        error: [
+          SourceCounterpartyAdmissionInvalidProblemSchema,
+          SourceCounterpartyAdmissionAuthenticationProblemSchema,
+          SourceCounterpartyAdmissionForbiddenProblemSchema,
+          SourceCounterpartyAdmissionNotFoundProblemSchema,
+          SourceCounterpartyAdmissionPolicyConflictProblemSchema,
+          SourceCounterpartyAdmissionPolicyProblemSchema,
+          SourceCounterpartyAdmissionUnavailableProblemSchema,
+          SourceCounterpartyAdmissionInternalProblemSchema,
+        ],
+        payload: SourceAdmissionSetRequestSchema,
+        success: SourceAdmissionSetResponseSchema,
+      }),
+    ),
 );

@@ -12,9 +12,9 @@ const variant = (key: string, attributes: string, priceText = '100') => ({
 describe('product draft merge', () => {
   it('keeps the fields only the operator changed and takes every other field from the fresh version', () => {
     const base = { brand: '', seo: { title: '' }, weight: '' };
-    expect(
-      mergeDraft(base, { ...base, seo: { title: 'Šroub M8' } }, { ...base, brand: 'Akros', weight: '7' }),
-    ).toEqual({ merged: { brand: 'Akros', seo: { title: 'Šroub M8' }, weight: '7' }, overlap: false });
+    expect(mergeDraft(base, { ...base, seo: { title: 'Šroub M8' } }, { ...base, brand: 'Akros', weight: '7' })).toEqual(
+      { merged: { brand: 'Akros', seo: { title: 'Šroub M8' }, weight: '7' }, overlap: false },
+    );
   });
 
   it('reports the same field changed on both sides and keeps the operator value there', () => {

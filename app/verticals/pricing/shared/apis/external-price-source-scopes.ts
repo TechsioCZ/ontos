@@ -6,6 +6,15 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 export const ExternalPriceSourceScopesRequestSchema = Schema.Struct({});
 export type ExternalPriceSourceScopesRequest = typeof ExternalPriceSourceScopesRequestSchema.Type;
 
+export const ExternalPriceSourceMarketIdSchema = Schema.String.pipe(Schema.brand('ExternalPriceSourceMarketId')).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+  Schema.isTrimmed(),
+);
+export const ExternalPriceSourceUnitIdSchema = Schema.String.pipe(Schema.brand('ExternalPriceSourceUnitId')).check(
+  Schema.isUUID(),
+);
+
 /**
  * One Price key scope a standing external price source policy of the selected company covers now for prices without
  * a Price Group: the Channel, Commerce Market, currency and Unit basis an imported base price is keyed by.
@@ -13,8 +22,8 @@ export type ExternalPriceSourceScopesRequest = typeof ExternalPriceSourceScopesR
 export const ExternalPriceSourceScopeSchema = Schema.Struct({
   channelId: Schema.Literals(['B2C', 'B2B']),
   currencyCode: Schema.String.check(Schema.isPattern(/^[A-Z]{3}$/u)),
-  marketId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()),
-  unitId: Schema.String.check(Schema.isUUID()),
+  marketId: ExternalPriceSourceMarketIdSchema,
+  unitId: ExternalPriceSourceUnitIdSchema,
   /** Canonical decimal text without trailing zeros (`1`, not `1.000000000`). */
   unitQuantity: Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u)),
 });

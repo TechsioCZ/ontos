@@ -4,7 +4,15 @@ import type { ReactNode } from 'react';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 
 /** Two tag chips, then `+N`. Keeps the Štítky column narrow. `lead` sits first; `maxChips` caps the chips. */
-export const TagsCell = ({ lead, maxChips = 2, tags }: { lead?: ReactNode; maxChips?: number; tags: readonly Tag[] }) => {
+export const TagsCell = ({
+  lead,
+  maxChips = 2,
+  tags,
+}: {
+  lead?: ReactNode;
+  maxChips?: number;
+  tags: readonly Tag[];
+}) => {
   const visible = tags.slice(0, maxChips);
   const hiddenCount = tags.length - visible.length;
   return (

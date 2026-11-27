@@ -86,8 +86,7 @@ export const storefrontVisibilityStatus = (facts: StorefrontVisibility): Storefr
     ...(offered.length > 0 && offered.length < facts.markets.length
       ? [
           `Na trhu ${facts.markets
-            .filter((market) => !market.offered)
-            .map((market) => market.marketCode)
+            .flatMap((market) => (market.offered ? [] : [market.marketCode]))
             .join(', ')} se nenabízí.`,
         ]
       : []),

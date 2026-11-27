@@ -265,7 +265,10 @@ export const loadOrderMarketContext = Effect.fn('MarketStore.loadOrderMarketCont
  * Storefront product predicate of a market (on the `products` table of the consuming statement): WHOLE_CATALOGUE
  * hides `offered: false` exceptions, SELECTED_PRODUCTS shows only `offered: true`, an unknown market shows nothing.
  */
-export const marketOfferPredicate = (scope: StoreScope, market: Option.Option<StoredMarket>): SQL =>
+export const marketOfferPredicate = (
+  scope: StoreScope,
+  market: Option.Option<Pick<StoredMarket, 'marketId' | 'offerMode'>>,
+): SQL =>
   Option.match(market, {
     onNone: () => sql`false`,
     onSome: ({ marketId, offerMode }) => {

@@ -1321,8 +1321,8 @@ it.live('in-app AKROS reset writes the bundled baseline part by part and advance
       const next = yield* db.transaction((transaction) => resetToAkrosBaseline(transaction, scope));
       expect(next).toBe(revision + 1);
       const totals = yield* indicators(db, scope);
-      expect(totals.productCount).toBe(1289);
-      expect(totals.orderCount).toBe(6);
+      expect(totals.indicators.productCount).toBe(1289);
+      expect(totals.indicators.orderCount).toBe(6);
       const head = yield* loadHead(db, scope);
       expect(head?.homepageFeaturedProductIds.length).toBeGreaterThan(0);
       expect(

@@ -202,7 +202,9 @@ export const MovementForm = ({
   readonly stockOnHand: number;
   /** A Symmy product: the Pricing/Inventory variant the new on-hand is written to first, so Symmy reads it back. */
   readonly symmyTarget?:
-    | ((variantId: string | undefined) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
+    | ((
+        variantId: string | undefined,
+      ) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
     | undefined;
   readonly variants?: readonly VariantRow[] | undefined;
 }) => {
@@ -267,7 +269,8 @@ export const MovementForm = ({
         onDraftChange(EMPTY_MOVEMENT_DRAFT);
         setSubmitted(false);
         const recorded = k('messages.movementRecorded');
-        const message = corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
+        const message =
+          corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
         setDone(message);
         onCommitted(message);
       });
@@ -285,7 +288,13 @@ export const MovementForm = ({
         record(expected);
         return;
       }
-      const sync = { _tag: 'RecordStockMovement', delta: correction, note: 'Srovnání se stavem skladu v ERP', productId, reason: 'ADJUSTMENT' } satisfies MerchandiseCommand;
+      const sync = {
+        _tag: 'RecordStockMovement',
+        delta: correction,
+        note: 'Srovnání se stavem skladu v ERP',
+        productId,
+        reason: 'ADJUSTMENT',
+      } satisfies MerchandiseCommand;
       runCommand(variant === undefined ? sync : { ...sync, variantId: variant.id }, expected, (outcome) => {
         if (!outcome.ok) {
           setBusy(false);

@@ -6,15 +6,17 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 export const SymmyCompanyStockSourceRequestSchema = Schema.Struct({});
 export type SymmyCompanyStockSourceRequest = typeof SymmyCompanyStockSourceRequestSchema.Type;
 
+export const SymmyStockCustomerConfigurationIdSchema = Schema.String.pipe(
+  Schema.brand('SymmyStockCustomerConfigurationId'),
+).check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
+
 /**
  * The Inventory Customer Configurations the selected company's active Symmy routes resolve stock in: the
  * `inventorySource` of the company's own routes and of the Tenant-wide stock route of the same integration principal.
  * Distinct and sorted; none when the company has no Symmy stock enrollment.
  */
 export const SymmyCompanyStockSourceResponseSchema = Schema.Struct({
-  customerConfigurationIds: Schema.Array(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()),
-  ).check(Schema.isMaxLength(100)),
+  customerConfigurationIds: Schema.Array(SymmyStockCustomerConfigurationIdSchema).check(Schema.isMaxLength(100)),
 });
 export type SymmyCompanyStockSourceResponse = typeof SymmyCompanyStockSourceResponseSchema.Type;
 

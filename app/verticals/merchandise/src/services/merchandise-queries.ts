@@ -11,6 +11,7 @@ import type {
   LedgerMovement,
   RecordsView,
   StorefrontCatalogQuery,
+  StorefrontCatalogQuerySchema,
   StorefrontOrderStatus,
 } from '../../shared/apis/records.ts';
 import {
@@ -585,13 +586,18 @@ const storefrontPriceOrder = (sort: StorefrontCatalogQuery['sort'], ranked: SQL[
   return ranked;
 };
 
+const categoryReadFailure = 'Categories could not be read';
+
 const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
 
 /**
  * Hides orphan source variants from the storefront's listings when its saved policy says so, read in the same
  * snapshot as the filtered count and page. Exact reads still resolve them for saved links and carts.
  */
-const mainSourceListingFilter = (scope: StoreScope, catalog: StorefrontCatalogQuery): SQL | undefined =>
+const mainSourceListingFilter = (
+  scope: StoreScope,
+  catalog: Pick<typeof StorefrontCatalogQuerySchema.Encoded, 'storefrontAppId' | 'slug' | 'productIds'>,
+): SQL | undefined =>
   catalog.storefrontAppId === undefined || catalog.slug !== undefined || catalog.productIds !== undefined
     ? undefined
     : sql`(not coalesce((select (${catalogHeads.storefrontCatalogSettings}->${catalog.storefrontAppId}->>'mainSourceProductsOnly')::boolean
@@ -1254,7 +1260,7 @@ export const categoryTrailsOf = Effect.fn('MerchandiseQueries.categoryTrailsOf')
 export const hasCategoryTree = (db: MerchandiseDb, scope: StoreScope) =>
   query(
     db.select({ id: categories.id }).from(categories).where(whereScope(categories, scope)).limit(1),
-    'Categories could not be read',
+    categoryReadFailure,
   ).pipe(Effect.map((rows) => rows.length > 0));
 
 /**
@@ -1373,7 +1379,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
       .from(categories)
       .where(and(whereScope(categories, scope), contentBranch))
       .orderBy(asc(categories.ordinal)),
-    'Categories could not be read',
+    categoryReadFailure,
   );
   const issue = categoryForestIssue(rows, 'projection');
   if (issue !== undefined) {
@@ -1402,7 +1408,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         .from(products)
         .where(and(whereScope(products, scope), listed))
         .groupBy(products.categoryId, products.categoryPathIds),
-      'Categories could not be read',
+      categoryReadFailure,
     );
     // The active category and every ancestor of a kept category stay, so the tree remains a forest.
     const keep = (id: string | null | undefined) => {
@@ -1414,7 +1420,9 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     };
     for (const row of held) {
       keep(row.categoryId);
-      for (const id of row.path ?? []) keep(id);
+      for (const id of row.path ?? []) {
+        keep(id);
+      }
     }
     keep(contentId);
   }
@@ -1717,6 +1725,9 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
   };
 });
 
+const holds = (condition: SQL | undefined) =>
+  condition === undefined ? sql<boolean>`true` : sql<boolean>`coalesce((${condition}), false)`;
+
 /**
  * The storefront's own filters (storefrontFilters, sellableClassificationFilter, marketOfferPredicate per market,
  * mainSourceListingFilter) evaluated per product for staff rows: the same SQL the storefront read applies.
@@ -1734,8 +1745,6 @@ export const storefrontVisibilityFacts = Effect.fn('MerchandiseQueries.storefron
     if (input.productIds.length === 0) {
       return [];
     }
-    const holds = (condition: SQL | undefined) =>
-      condition === undefined ? sql<boolean>`true` : sql<boolean>`coalesce((${condition}), false)`;
     const markets =
       input.markets.length === 0
         ? sql<{ marketCode: string; offered: boolean }[]>`'[]'::json`
@@ -1743,7 +1752,7 @@ export const storefrontVisibilityFacts = Effect.fn('MerchandiseQueries.storefron
             input.markets.map(
               (market) =>
                 sql`json_build_object('marketCode', ${market.marketCode}::text, 'offered', ${holds(
-                  marketOfferPredicate(scope, Option.some(market as StoredMarket)),
+                  marketOfferPredicate(scope, Option.some(market)),
                 )})`,
             ),
             sql`, `,
@@ -1759,9 +1768,7 @@ export const storefrontVisibilityFacts = Effect.fn('MerchandiseQueries.storefron
           activeVariants: variantCount(sql`and v.active`),
           archived: products.archived,
           id: products.id,
-          mainSource: holds(
-            mainSourceListingFilter(scope, { storefrontAppId: input.storefrontAppId } as StorefrontCatalogQuery),
-          ),
+          mainSource: holds(mainSourceListingFilter(scope, { storefrontAppId: input.storefrontAppId })),
           markets,
           priced: sql<boolean>`(${products.grossPriceMinor} is not null or exists (select 1 from ${productVariants} v
             where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid

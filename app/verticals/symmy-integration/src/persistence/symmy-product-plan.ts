@@ -500,12 +500,15 @@ const inventoryItemKey = (row: SymmyProductRow, variant: PlannedVariant, initial
 const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'StockProvisioningHint')[]) =>
   kinds.map((kind) => ({ branchKey: kind, kind }));
 
-const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
-  row.lifecycle === 'ACTIVE' && policy !== undefined && hintIneligible(row);
-
 /** A hint the readiness policy cannot answer keeps the product and its prices back. */
 const hintIneligible = (row: SymmyProductRow) =>
   row.unsupported.includes('AttributeHint') || row.unsupported.includes('ClassificationHint');
+
+const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
+  row.lifecycle === 'ACTIVE' && policy !== undefined && hintIneligible(row);
+
+const lifecycleUpdatesProduct = (lifecycle: SymmyProductRow['lifecycle']) =>
+  lifecycle === 'ACTIVE' || lifecycle === 'RETIRED';
 
 const categoryAssignmentEffects = (
   categories: SymmyProductRow['categories'],
@@ -581,7 +584,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   );
   const productTexts = productTextEffects(row.localized, parent, evidenceRefs);
   const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
-  const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
+  const updates = !readinessIneligible && lifecycleUpdatesProduct(row.lifecycle);
   const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
   // The axis-free policy confirms the initial Variant, activates the Product and decides it needs no Product Type.
   // Catalog holds one ACTIVE Variant per axis combination (variant-persistence.ts duplicate_combination), so a product
@@ -592,7 +595,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     variants.length === 1
       ? (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const)
       : (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT'] as const);
-  const readinessLast = `readiness-${readinessSteps[readinessSteps.length - 1]?.toLowerCase() ?? ''}`;
+  const readinessLast = `readiness-${readinessSteps.at(-1)?.toLowerCase() ?? ''}`;
   const readinessEffects =
     ready === undefined
       ? []

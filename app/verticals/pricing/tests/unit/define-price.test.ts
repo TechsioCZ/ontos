@@ -643,58 +643,65 @@ describe('Define Price Action', () => {
     }),
   );
 
-  it.effect('accepts the amount another source holds as a new revision that takes the Price back onto this source', () =>
-    Effect.gen(function* acceptTakeoverAtSameAmount() {
-      // The staff ERP editor asserted the Current fact; the ERP sends the very same amount later.
-      const confirmed = sameKeyAssertion({
-        amount: payload.monetaryAmount.amount,
-        effectiveFrom: '2026-09-28T10:00:00.000Z',
-        sourceAssertionId: 'dededede-dede-4ede-8ede-dededededede',
-      });
-      const supersession = {
-        kind: 'SUPERSESSION',
-        reason: 'The source asserted the amount another source holds for this exact Price key.',
-        supersededSourceAssertionId: 'acacacac-acac-4cac-8cac-acacacacacac',
-      } as const;
-      const takenBack = {
-        ...definition,
-        revision: {
-          effectiveFrom: confirmed.effectiveFrom,
-          monetaryAmount: payload.monetaryAmount,
-          monetaryBoundary: 'PRE_TAX' as const,
-          revision: 3,
-          revisionId: 'bdbdbdbd-bdbd-4dbd-8dbd-bdbdbdbdbdbd',
-        },
-      };
-      const takeoverProvenance = yield* Schema.decodeUnknownEffect(PriceSourceProvenanceSchema)({
-        canonicalLink: {
-          effectiveFrom: confirmed.effectiveFrom,
-          identityKey: definition.identityKey,
-          monetaryAmount: payload.monetaryAmount,
-          monetaryBoundary: 'PRE_TAX',
-          priceRef,
-          revision: 3,
-          revisionId: takenBack.revision.revisionId,
-        },
-        evidence: {
-          lineage: { ...supersession, actingPrincipalId: trusted.actingPrincipalId },
-          recordedAt: '2026-09-28T10:00:01.000Z',
-          sourceAssertion: { ...confirmed.sourceAssertion, lineage: supersession },
-          sourceFactFingerprint: priceSourceFactFingerprint(confirmed.sourceAssertion),
-          tenantId,
-        },
-        provenanceRef: confirmed.sourceAssertion.sourceAssertionId,
-      });
+  it.effect(
+    'accepts the amount another source holds as a new revision that takes the Price back onto this source',
+    () =>
+      Effect.gen(function* acceptTakeoverAtSameAmount() {
+        // The staff ERP editor asserted the Current fact; the ERP sends the very same amount later.
+        const confirmed = sameKeyAssertion({
+          amount: payload.monetaryAmount.amount,
+          effectiveFrom: '2026-09-28T10:00:00.000Z',
+          sourceAssertionId: 'dededede-dede-4ede-8ede-dededededede',
+        });
+        const supersession = {
+          kind: 'SUPERSESSION',
+          reason: 'The source asserted the amount another source holds for this exact Price key.',
+          supersededSourceAssertionId: 'acacacac-acac-4cac-8cac-acacacacacac',
+        } as const;
+        const takenBack = {
+          ...definition,
+          revision: {
+            effectiveFrom: confirmed.effectiveFrom,
+            monetaryAmount: payload.monetaryAmount,
+            monetaryBoundary: 'PRE_TAX' as const,
+            revision: 3,
+            revisionId: 'bdbdbdbd-bdbd-4dbd-8dbd-bdbdbdbdbdbd',
+          },
+        };
+        const takeoverProvenance = yield* Schema.decodeUnknownEffect(PriceSourceProvenanceSchema)({
+          canonicalLink: {
+            effectiveFrom: confirmed.effectiveFrom,
+            identityKey: definition.identityKey,
+            monetaryAmount: payload.monetaryAmount,
+            monetaryBoundary: 'PRE_TAX',
+            priceRef,
+            revision: 3,
+            revisionId: takenBack.revision.revisionId,
+          },
+          evidence: {
+            lineage: { ...supersession, actingPrincipalId: trusted.actingPrincipalId },
+            recordedAt: '2026-09-28T10:00:01.000Z',
+            sourceAssertion: { ...confirmed.sourceAssertion, lineage: supersession },
+            sourceFactFingerprint: priceSourceFactFingerprint(confirmed.sourceAssertion),
+            tenantId,
+          },
+          provenanceRef: confirmed.sourceAssertion.sourceAssertionId,
+        });
 
-      const result = yield* applyPriceDefinition(
-        confirmed,
-        laterTrusted,
-        servicesFor(() => Effect.succeed({ definition: takenBack, outcome: 'CREATED', provenance: takeoverProvenance })),
-      );
+        const result = yield* applyPriceDefinition(
+          confirmed,
+          laterTrusted,
+          servicesFor(() =>
+            Effect.succeed({ definition: takenBack, outcome: 'CREATED', provenance: takeoverProvenance }),
+          ),
+        );
 
-      expect(result).toEqual({ outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED', provenance: takeoverProvenance });
-      expect(takenBack.revision.monetaryAmount).toEqual(definition.revision.monetaryAmount);
-    }),
+        expect(result).toEqual({
+          outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED',
+          provenance: takeoverProvenance,
+        });
+        expect(takenBack.revision.monetaryAmount).toEqual(definition.revision.monetaryAmount);
+      }),
   );
 
   it.effect(

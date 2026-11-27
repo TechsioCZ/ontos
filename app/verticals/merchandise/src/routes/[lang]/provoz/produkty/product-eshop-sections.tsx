@@ -185,14 +185,18 @@ export const RestoreSection = ({
   const archive = product.demoArchive;
   const handleRestore = () => {
     setBusy(true);
-    runCommand({ _tag: 'RestoreProduct', expectedUpdatedAt: product.updatedAt, id: product.id }, revision, (outcome) => {
-      setBusy(false);
-      if (!outcome.ok) {
-        setError(failure(outcome.reason, onReload, outcome.proposal));
-        return;
-      }
-      onCommitted('Produkt obnoven. Je v seznamu produktů, neaktivní a skrytý v e-shopu.');
-    });
+    runCommand(
+      { _tag: 'RestoreProduct', expectedUpdatedAt: product.updatedAt, id: product.id },
+      revision,
+      (outcome) => {
+        setBusy(false);
+        if (!outcome.ok) {
+          setError(failure(outcome.reason, onReload, outcome.proposal));
+          return;
+        }
+        onCommitted('Produkt obnoven. Je v seznamu produktů, neaktivní a skrytý v e-shopu.');
+      },
+    );
   };
   return (
     <SectionCard title="Archivovaný produkt">

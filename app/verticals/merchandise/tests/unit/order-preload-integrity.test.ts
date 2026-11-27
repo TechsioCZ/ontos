@@ -19,7 +19,7 @@ import {
   ProductRecordSchema,
   RecordsForbiddenProblemSchema,
   RecordsResponseSchema,
-  StockMovementSchema,
+  LedgerMovementSchema,
 } from '../../shared/apis/records.ts';
 import { mountInRoute } from '../support/module-ui.ts';
 import {
@@ -90,8 +90,9 @@ const full = Schema.decodeSync(ProductRecordSchema)({
     },
   ],
 });
-const movement = Schema.decodeSync(StockMovementSchema)({
+const movement = Schema.decodeSync(LedgerMovementSchema)({
   at: instant,
+  balanceAfter: 6,
   delta: -2,
   id: 'movement-1',
   productId: 'product-1',
@@ -250,7 +251,7 @@ it.live('a complete warm order keeps the full variant read revision and retries 
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
     answer = ({ view }) =>
-      Effect.succeed({
+      Effect.succeed<RecordsResponse>({
         ...base,
         movements: view?.productId === undefined ? [] : [movement],
         orders: [],
@@ -270,7 +271,7 @@ it.live('a cold exact order link obtains the same complete product and revision 
   Effect.gen(function* coldOrderLink() {
     yield* pinTestDocument;
     answer = ({ view }) =>
-      Effect.succeed({
+      Effect.succeed<RecordsResponse>({
         ...base,
         movements: view?.productId === undefined ? [] : [movement],
         products: view?.orderId === undefined ? [view?.summary === true ? summary : full] : [],

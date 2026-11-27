@@ -149,7 +149,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
     });
     const liveIds = [...new Set(live.flatMap((party) => (party === undefined ? [] : [party.partyId])))];
     if (liveIds.length === 0) {
-      return inputs.map(() => undefined);
+      return Array.from<SourceCorrelatedParty | undefined>({ length: inputs.length });
     }
     const aliasRows = yield* transaction
       .select({ aliasPartyId: partyAliases.aliasPartyId })
@@ -162,7 +162,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
       return party === undefined || aliased.has(party.partyId) ? [] : [{ index, input, party }];
     });
     if (candidates.length === 0) {
-      return inputs.map(() => undefined);
+      return Array.from<SourceCorrelatedParty | undefined>({ length: inputs.length });
     }
     const evidence = sql`${partyMatchDecisions.evidenceEvaluation}->'evidence'`;
     const containments = candidates.map(({ input }) => {
@@ -198,14 +198,13 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
       .pipe(Effect.mapError(unavailable));
     const chosen = candidates.map(({ index, party }, position) => {
       // The same first 65 matches in the same order as the single query of this input.
-      const decisions = decisionRows.filter((row) => String(row.matches).charAt(position) === '1').slice(0, 65);
-      if (decisions.length === 0 || decisions.length > 64 || decisions.some((item) => item.partyId !== party.partyId)) {
-        return undefined;
-      }
+      const decisions = decisionRows.filter((row) => row.matches.charAt(position) === '1').slice(0, 65);
       const decision =
-        decisions.find((item) => item.operation === 'CREATE') ??
-        decisions.find((item) => item.operation === 'REVIEW_MATCH') ??
-        decisions.find((item) => item.operation === 'MATCH');
+        decisions.length === 0 || decisions.length > 64 || decisions.some((item) => item.partyId !== party.partyId)
+          ? undefined
+          : (decisions.find((item) => item.operation === 'CREATE') ??
+            decisions.find((item) => item.operation === 'REVIEW_MATCH') ??
+            decisions.find((item) => item.operation === 'MATCH'));
       return decision === undefined ? undefined : { decision, index, party };
     });
     const needReceipt = chosen.flatMap((entry) =>
@@ -237,7 +236,9 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
             )
             .pipe(Effect.mapError(unavailable));
     const receipts = new Set(receiptRows.map((row) => `${row.actionInvocationId}|${row.matchDecisionId}`));
-    const results: (SourceCorrelatedParty | undefined)[] = inputs.map(() => undefined);
+    const results: (SourceCorrelatedParty | undefined)[] = Array.from<SourceCorrelatedParty | undefined>({
+      length: inputs.length,
+    });
     for (const entry of chosen) {
       if (entry === undefined) {
         continue;
@@ -276,19 +277,6 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
 /** The exact correlation and lifecycle proof of a source-correlated Party. */
 export type SourceCorrelatedParty = NonNullable<Effect.Success<ReturnType<typeof loadAuthorizedSourceCorrelatedParty>>>;
 export const sourcePersonNotAdmissible = notAdmissible;
-
-/** Source pre-target Privacy runs before proof; no PARTY target Privacy call can create a circular admission. */
-export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')(function* readAdmission(
-  transaction: Pick<PartyTransaction, 'select'>,
-  scope: OperationalScope,
-  input: SourcePersonAdmissionRequest,
-): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
-  const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
-  if (correlated === undefined) {
-    return notAdmissible;
-  }
-  return yield* currentSourcePersonAdmission(transaction, scope, input, correlated);
-});
 
 /** The PERSON admission of a Party whose source correlation and pre-target Privacy are already proven. */
 export const currentSourcePersonAdmission = Effect.fn('SourcePersonAdmission.current')(function* currentPerson(
@@ -335,4 +323,17 @@ export const currentSourcePersonAdmission = Effect.fn('SourcePersonAdmission.cur
     sourceDecisionRef: makePartyMatchDecisionRef(scope.tenantId, correlated.decision.matchDecisionId),
     sourceActionInvocationId: correlated.decision.actionInvocationId,
   };
+});
+
+/** Source pre-target Privacy runs before proof; no PARTY target Privacy call can create a circular admission. */
+export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')(function* readAdmission(
+  transaction: Pick<PartyTransaction, 'select'>,
+  scope: OperationalScope,
+  input: SourcePersonAdmissionRequest,
+): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
+  const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
+  if (correlated === undefined) {
+    return notAdmissible;
+  }
+  return yield* currentSourcePersonAdmission(transaction, scope, input, correlated);
 });

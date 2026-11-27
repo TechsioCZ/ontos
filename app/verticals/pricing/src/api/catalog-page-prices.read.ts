@@ -34,11 +34,13 @@ import {
 } from '../services/catalog-page-prices.service.ts';
 import type { CatalogPagePricesOwnerReads, CatalogPageVariant } from '../services/catalog-page-prices.service.ts';
 import { exactPriceResolutionServiceForScope } from '../services/exact-price-resolution.service.ts';
-import type { ExactPriceResolutionTrustedContext } from '../services/exact-price-resolution.service.ts';
+import type {
+  ExactPriceResolutionTrustedContext,
+  ExactPriceResolutionDependencies,
+} from '../services/exact-price-resolution.service.ts';
 import { makePriceGroupInterpretationService } from '../services/price-group-interpretation.service.ts';
 import { quantityTierPersistenceForScope } from '../services/quantity-tier-persistence.service.ts';
 import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
-import type { ExactPriceResolutionDependencies } from '../services/exact-price-resolution.service.ts';
 
 const MODULE_KEY = 'commerce.pricing' as const;
 /** The one module whose portal admits a signed-in customer and may name that customer here. */
@@ -227,27 +229,36 @@ const staffGroupPrices = (
         effectiveAt,
         exactKey: {
           catalogSelection: item.catalogSelection,
-          commercialScope: { channelId: input.channelId, marketId: input.marketId, sellingLegalEntityId: legalEntityId },
+          commercialScope: {
+            channelId: input.channelId,
+            marketId: input.marketId,
+            sellingLegalEntityId: legalEntityId,
+          },
           currencyCode: input.currencyCode,
           priceGroupSelector,
           unitBasis: item.unitBasis,
         },
-      } as Parameters<ExactPriceResolutionDependencies['lookupExact']>[0]).pipe(
+      }).pipe(
         Effect.map((found): CatalogPagePrice =>
-          found._tag === 'FOUND'
-            ? {
-                _tag: 'PRICE_FOUND',
-                catalogSelection: item.catalogSelection,
-                channelId: input.channelId,
-                priceGroupSelector,
-                priceRef: found.priceRef,
-                priceRevision: found.priceRevision,
-                quantityTiers: { _tag: 'QUANTITY_TIERS_UNAVAILABLE', retryable: true },
-                unitBasis: item.unitBasis,
-              }
-            : { _tag: 'NO_APPLICABLE_PRICE', ...item, retryable: false },
+          Match.value(found).pipe(
+            Match.tag(
+              'FOUND',
+              (current) =>
+                ({
+                  _tag: 'PRICE_FOUND',
+                  catalogSelection: item.catalogSelection,
+                  channelId: input.channelId,
+                  priceGroupSelector,
+                  priceRef: current.priceRef,
+                  priceRevision: current.priceRevision,
+                  quantityTiers: { _tag: 'QUANTITY_TIERS_UNAVAILABLE', retryable: true },
+                  unitBasis: item.unitBasis,
+                }) satisfies CatalogPagePrice,
+            ),
+            Match.orElse(() => ({ _tag: 'NO_APPLICABLE_PRICE', ...item, retryable: false }) satisfies CatalogPagePrice),
+          ),
         ),
-        Effect.catch(() =>
+        Effect.catchTag('PricePersistenceUnavailable', () =>
           Effect.succeed<CatalogPagePrice>({
             _tag: 'PRICING_INDETERMINATE',
             ...item,

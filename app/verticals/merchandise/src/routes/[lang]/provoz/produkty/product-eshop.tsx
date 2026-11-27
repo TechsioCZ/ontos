@@ -618,6 +618,7 @@ const useVariantsPanel = ({
       !variantsInvalid(value) && (!variantsOwnedBySymmy(product) || value.every((draft) => draft.id !== undefined)),
     // A changed price of a variant from Symmy goes to Pricing first, one variant after another; when Pricing refuses,
     // nothing of the draft is saved.
+    keepAs: `variants:${product.id}`,
     writeThrough: (value, confirmed) =>
       Effect.forEach(
         value,
@@ -633,13 +634,10 @@ const useVariantsPanel = ({
                 ...target,
                 priceNet: (priceMinor / 100).toFixed(2),
                 reason: `Změna ceny varianty ${draft.name.trim()}`,
-              }).pipe(
-                Effect.mapError((message) => `Cena varianty ${draft.name.trim()} nebyla uložena: ${message}`),
-              );
+              }).pipe(Effect.mapError((message) => `Cena varianty ${draft.name.trim()} nebyla uložena: ${message}`));
         },
-        { discard: true },
+        { concurrency: 1, discard: true },
       ),
-    keepAs: `variants:${product.id}`,
     // Two operators edit different variants of one product: each variant merges on its own.
     merge: mergeKeyedDrafts,
     onReload,

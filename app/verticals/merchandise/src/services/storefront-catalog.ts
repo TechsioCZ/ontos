@@ -51,7 +51,11 @@ export const toStorefrontProduct = (record: ProductRecord, fields: 'card' | 'ful
     Object.assign(full, {
       variantRecords: record.variantRecords.map((variant) => {
         const catalogVariantId = catalogVariants.get(variant.id);
-        return { ...variant, priceHistory: [], ...(catalogVariantId === undefined ? {} : { catalogVariantId }) };
+        const projected: typeof variant = { ...variant, priceHistory: [] };
+        if (catalogVariantId !== undefined) {
+          Object.assign(projected, { catalogVariantId });
+        }
+        return projected;
       }),
     });
   }

@@ -1537,11 +1537,12 @@ const productKeyFilters = (keys: WorkingSetRequest['productKeys']): SQL[] => {
   if (keys?.skus !== undefined && keys.skus.length > 0) {
     const skuKeys = [...new Set(keys.skus.map(skuKeyOf))];
     filters.push(inArray(products.skuKey, skuKeys));
+    const normalizedSku = sql`lower(trim(${productVariants.sku}))`;
     filters.push(sql`exists (select 1 from ${productVariants}
       where ${productVariants.tenantId} = ${products.tenantId}
         and ${productVariants.legalEntityId} = ${products.legalEntityId}
         and ${productVariants.productId} = ${products.id}
-        and ${inArray(sql`lower(trim(${productVariants.sku}))`, skuKeys)})`);
+        and ${inArray(normalizedSku, skuKeys)})`);
   }
   if (keys?.slug !== undefined) {
     filters.push(sql`lower(${products.slug}) = ${keys.slug.trim().toLowerCase()}`);

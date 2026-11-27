@@ -20,7 +20,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandResultSchema, MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import {
   catalogHeads,
   categories,
@@ -52,7 +52,15 @@ const nativeMerchandise = makeNativeReadTestContext({
   ownerFixtureRetention: 'retain-complete-context',
 }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, merchandiseRegistration));
 
-const ProductDocumentSchema = Schema.Struct({ lowStockThreshold: Schema.Number, name: Schema.String });
+const ProductDocumentSchema = Schema.Struct({
+  lowStockThreshold: Schema.Number,
+  name: Schema.String,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+
+const UpdatedProductResultSchema = Schema.toType(
+  Schema.Struct({ ...ApplyCommandResultSchema.fields, updatedAt: Schema.DateTimeUtcFromString }),
+);
 
 it.live('a product edit naming its version is refused only when that product changed since', () =>
   Effect.scoped(
@@ -122,13 +130,16 @@ it.live('a product edit naming its version is refused only when that product cha
       expect(yield* head).toBeGreaterThan(loaded);
 
       // The save made against the revision p1 was read at still goes through.
-      const saved = yield* apply(
-        { _tag: 'UpdateProduct', expectedUpdatedAt: at, id: 'p1', patch: { lowStockThreshold: 7 } },
-        loaded,
+      const saved = yield* Schema.decodeUnknownEffect(UpdatedProductResultSchema)(
+        yield* apply(
+          { _tag: 'UpdateProduct', expectedUpdatedAt: at, id: 'p1', patch: { lowStockThreshold: 7 } },
+          loaded,
+        ),
       );
-      expect((yield* p1).lowStockThreshold).toBe(7);
-      expect(saved.updatedAt).toBeDefined();
-      const version = saved.updatedAt === undefined ? at : DateTime.formatIso(saved.updatedAt);
+      const persisted = yield* p1;
+      expect(persisted.lowStockThreshold).toBe(7);
+      expect(saved.updatedAt).toEqual(persisted.updatedAt);
+      const version = DateTime.formatIso(saved.updatedAt);
       expect(version).not.toBe(at);
 
       // Another session still holding the version that save replaced is refused, and nothing is written.

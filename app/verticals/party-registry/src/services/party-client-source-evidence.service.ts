@@ -2,7 +2,10 @@ import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement
 import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { checkPartyClientSourcePrivacy, checkPartyClientSourcePrivacySet } from './party-client-source-privacy.service.ts';
+import {
+  checkPartyClientSourcePrivacy,
+  checkPartyClientSourcePrivacySet,
+} from './party-client-source-privacy.service.ts';
 import { and, eq, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { Config, Context, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 
@@ -188,9 +191,13 @@ export const authorizePartyClientSourceReferences = Effect.fn('PartyClientSource
     );
     const privacy = yield* Effect.serviceOption(PartyClientSourcePrivacy);
     const outcomes = Option.isSome(privacy)
-      ? yield* Effect.forEach(items, ({ assertion, intent }) => privacy.value.checkImport({ assertion, scope, intent }), {
-          concurrency: 1,
-        })
+      ? yield* Effect.forEach(
+          items,
+          ({ assertion, intent }) => privacy.value.checkImport({ assertion, scope, intent }),
+          {
+            concurrency: 1,
+          },
+        )
       : yield* checkPartyClientSourcePrivacySet(scope, items);
     if (outcomes.length !== items.length || outcomes.some((outcome) => outcome === 'DENIED')) {
       return yield* evidenceDenied('client_source_privacy_denied');

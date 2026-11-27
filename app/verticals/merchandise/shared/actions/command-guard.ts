@@ -1,5 +1,5 @@
 // Narrow registered Actions supply authority. This guard keeps the existing human-only protocol.
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
 import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
@@ -54,7 +54,6 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'AiRevertBatch',
 ]);
 /** Commands only the source-catalog import Action runs; they write server-owned provenance, so no person sends them. */
-const sourceImportOnlyCommands: ReadonlySet<string> = new Set(['UpsertSourceProduct']);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 
 export const assertCommandAllowed = (
@@ -103,7 +102,7 @@ export const withCommandGuard =
     handler: (payload: Payload, context: Context) => Effect.Effect<Success, Failure, Requirements>,
   ) =>
   (payload: Payload, context: Context): Effect.Effect<Success, Failure | MerchandisePermissionDenied, Requirements> =>
-    (sourceImportOnlyCommands.has(payload.command._tag)
+    (Predicate.isTagged(payload.command, 'UpsertSourceProduct')
       ? Effect.fail(
           new MerchandisePermissionDenied({
             code: 'merchandise_permission_denied',

@@ -187,7 +187,7 @@ it('encodes root and child category parents without changing their ids or null s
 });
 
 it('preserves a missing variant minimum and an omitted versus missing storefront order status', () => {
-  const summary = { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] };
+  const summary = { count: 0, firstOrderableQuantity: null, minGrossPriceMinor: null, stockOnHand: 0, units: [] };
   const decoded = Schema.decodeSync(VariantSummarySchema)(summary);
   expect(decoded.minGrossPriceMinor).toEqual(Option.none());
   expect(Schema.encodeSync(VariantSummarySchema)(decoded)).toEqual(summary);
