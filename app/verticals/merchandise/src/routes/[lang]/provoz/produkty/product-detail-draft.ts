@@ -165,7 +165,9 @@ export const detailSaveOf = (draft: DetailDraft, base: DetailDraft): DetailSave 
     patch.active = draft.active;
   }
   const priceMinor = Math.round(draft.priceCzk * 100);
-  return { patch, priceChanged: priceMinor !== Math.round(base.priceCzk * 100), priceMinor };
+  // A product with sellable variants has no price of its own: its prices live on the variants (Varianty a ceny).
+  const priceChanged = draft.realVariants.length === 0 && priceMinor !== Math.round(base.priceCzk * 100);
+  return { patch, priceChanged, priceMinor };
 };
 
 const tooLong = (value: string, maximum: number): boolean => value.trim().length > maximum;
