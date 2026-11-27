@@ -483,7 +483,10 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
           approved.compositionRevision,
         );
         await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
-        await expect(page.getByRole('alert')).toHaveCount(0);
+        // The denial is an error StatusText, which the kit announces as an alert; no render failure remains.
+        await expect(
+          page.getByText('This module could not be displayed. Reload the page to try again.', { exact: true }),
+        ).toHaveCount(0);
         const deniedResponse = await page.request.post(moduleTargetPath, requestOptions);
         expect(deniedResponse.status()).toBe(403);
         const deniedBody = await deniedResponse.json();
