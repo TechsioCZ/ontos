@@ -54,7 +54,7 @@ export default defineConfig(
             languages: ['en', 'cs'],
             localePathRedirect: true,
             // SAFETY: the generated route metadata is a locale-to-route string map consumed read-only by the plugin.
-            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,
+            localisedUrls: ultramodernLocalisedUrls,
           },
           reactI18next: false,
         }),

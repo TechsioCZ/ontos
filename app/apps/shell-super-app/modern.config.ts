@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { PAYMENT_GATEWAY_RELAY_PATH_PREFIX } from '@app/payment/payment-gateway-relay';
 import { SYMMY_REST_PREFIX } from '@app/shared-contracts/symmy/route-catalog';
@@ -16,7 +15,6 @@ import {
   Struct,
   check,
   decodeUnknownResult,
-  fromJsonString,
   is,
   makeFilter,
 } from 'effect/Schema';
@@ -28,6 +26,7 @@ import {
   CLOUDFLARE_WORKER_CPU_MS,
   createWorkspaceModernConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import referenceTopology from '../../topology/reference-topology.json' with { type: 'json' };
 
 const appId = 'shell-super-app';
 const shellBffPrefix = '/shell-super-app-api';
@@ -38,7 +37,6 @@ const internalSymmyIngress =
   is(Literal('1'))(getBuildConfigEnvironment('ONTOS_INTERNAL_SYMMY_INGRESS')) &&
   resolveDeployTarget().target === 'node';
 
-const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
 // This is a build check of the native BFF convention, never a runtime module registry.
 const NativeBffTopologySchema = Struct({
   verticals: SchemaArray(
@@ -54,9 +52,9 @@ const NativeBffTopologySchema = Struct({
     ),
   ),
 });
-getResultOrThrow(
-  decodeUnknownResult(fromJsonString(NativeBffTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
-);
+getResultOrThrow(decodeUnknownResult(NativeBffTopologySchema)(referenceTopology));
+
+const isCi = is(NonEmptyString)(getBuildConfigEnvironment('CI'));
 
 const ontos = createWorkspaceModernConfig({
   appId,
@@ -83,7 +81,7 @@ export default defineConfig(
         runtimeFramework: 'effect',
       },
       deploy: { ...ontos.deploy, releaseEnvelopeRole: 'shell' },
-      dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
+      dev: isCi ? { ...ontos.dev, lazyCompilation: false } : { ...ontos.dev },
       plugins: [
         bffPlugin(),
         tanstackRouterPlugin(),

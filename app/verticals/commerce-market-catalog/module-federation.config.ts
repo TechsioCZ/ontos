@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
+import { resolveEffectTsrsCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import {
   decodeUnknownSync as decodePackageVersion,
@@ -20,7 +20,7 @@ const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
-const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+const tsrsCompilerInstance = resolveEffectTsrsCompiler({ from: import.meta.url });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
@@ -29,7 +29,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   dts: {
     displayErrorInTerminal: true,
     generateTypes: {
-      compilerInstance: tsgoCompilerInstance,
+      compilerInstance: tsrsCompilerInstance,
     },
     tsConfigPath: './tsconfig.mf-types.json',
   },

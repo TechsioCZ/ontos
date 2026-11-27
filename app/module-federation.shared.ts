@@ -1,4 +1,5 @@
 /// <reference types="node" />
+// @effect-diagnostics nodeBuiltinImport:off -- Module Federation requires synchronous filesystem discovery while loading its Node config; remove-when: its config factory supports an asynchronous Effect layer.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';

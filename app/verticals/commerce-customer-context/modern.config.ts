@@ -8,27 +8,27 @@ import {
 
 const appId = 'commerce-customer-context';
 
-export default defineConfig(
-  presetUltramodernWorkspace(
-    {
-      ...createWorkspaceModernConfig({
-        appId,
-        cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
-        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
-        headless: true,
-        moduleUrl: import.meta.url,
-      }),
-      bff: {
-        effect: {
-          entry: './api/index',
-          openapi: { path: '/openapi.json' },
-          strictEffectApproach: true,
-        },
-        prefix: '/commerce-customer-context-api',
-        runtimeFramework: 'effect',
+export const commerceConfig = presetUltramodernWorkspace(
+  {
+    ...createWorkspaceModernConfig({
+      appId,
+      cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
+      cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
+      headless: true,
+      moduleUrl: import.meta.url,
+    }),
+    bff: {
+      effect: {
+        entry: './api/index',
+        openapi: { path: '/openapi.json' },
+        strictEffectApproach: true,
       },
-      plugins: [bffPlugin()],
+      prefix: '/commerce-customer-context-api',
+      runtimeFramework: 'effect',
     },
-    { appId, from: import.meta.url },
-  ),
+    plugins: [bffPlugin()],
+  },
+  { appId, from: import.meta.url },
 );
+
+export default defineConfig(commerceConfig);
