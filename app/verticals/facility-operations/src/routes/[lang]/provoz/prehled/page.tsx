@@ -29,6 +29,7 @@ import {
   OpsAgendas,
   SearchResults,
   UpcomingTimeline,
+  useOverviewSearch,
 } from './dashboard-parts.tsx';
 
 // The Shell supplies this raw query string on both server and client renders.
@@ -54,7 +55,9 @@ const OverviewView = ({
   const { loadSearch, names, sources } = useRentalOverviewSources();
   const [view, setView] = useState(() => ({ selected: readKpiParam(search), today: pragueToday() }));
   const { selected, today } = view;
-  const [query, setQuery] = useState('');
+  const overviewSearch = useOverviewSearch();
+  const { query } = overviewSearch;
+  const handleClearSearch = overviewSearch.clear;
 
   // Search rows of the provoz records are fetched only when someone actually searches.
   useEffect(() => {
@@ -125,8 +128,7 @@ const OverviewView = ({
         deadlines={deadlines}
         displayName={displayName}
         kpis={kpis}
-        onQuery={setQuery}
-        query={query}
+        searchReady={overviewSearch.ready}
         sources={sources}
         today={today}
         unread={unread}
@@ -136,7 +138,7 @@ const OverviewView = ({
           agendaRevision={agendaEnvelope?.revision ?? 0}
           canLog={agendaEnvelope?.canWrite === true}
           index={index}
-          onClear={() => setQuery('')}
+          onClear={handleClearSearch}
           query={query}
           sources={sources}
         />

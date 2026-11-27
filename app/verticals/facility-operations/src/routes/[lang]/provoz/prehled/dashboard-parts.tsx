@@ -1,10 +1,11 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Building blocks of the Nájempark overview dashboard (S15). Owned by the ops-agenda lane.
 import { EmptyState, SectionCard, formatMoney, formatNumber, formatPercent } from '@app/admin-ui';
+import { BareTextField, FormBuilder, FormReact, FormRoot, useAtomSet } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useState } from 'react';
-import { DateTime, Effect, Match } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { agendaIds } from '../../../../../shared/agendas.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
@@ -15,6 +16,7 @@ import type { DrillRow, Kpi, KpiId, SearchKind, SearchRow, Tone } from '../../..
 import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import {
   Dot,
   Icon,
@@ -37,6 +39,28 @@ const card = {
   background: 'var(--color-surface)',
   border: '1px solid transparent',
 } as const;
+
+/** The overview's global search: what it holds is searched for at once (`SearchResults`) and is never submitted. */
+const overviewSearchForm = FormReact.make(FormBuilder.empty.addField('query', Schema.String), {
+  fields: { query: BareTextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noOverviewSearch = { query: '' };
+const overviewQuery = overviewSearchForm.getFieldAtoms(overviewSearchForm.fields.query);
+
+/** The search text of the overview; render `ready` as `Hero`'s `searchReady`. */
+export const useOverviewSearch = () => {
+  const { ready, values } = useFormValues(overviewSearchForm, noOverviewSearch);
+  const setQuery = useAtomSet(overviewQuery.setValue);
+  return {
+    clear: () => {
+      setQuery('');
+    },
+    query: values.query,
+    ready,
+  };
+};
 
 const useLang = () => {
   const { language, t } = useModernI18n();
@@ -185,8 +209,7 @@ export const Hero = ({
   deadlines,
   displayName,
   kpis,
-  onQuery,
-  query,
+  searchReady,
   sources,
   today,
   unread,
@@ -194,8 +217,8 @@ export const Hero = ({
   readonly deadlines: readonly Deadline[];
   readonly displayName: string | undefined;
   readonly kpis: readonly Kpi[];
-  readonly onQuery: (value: string) => void;
-  readonly query: string;
+  /** `useOverviewSearch().ready` of the page that reads the search. */
+  readonly searchReady: ReactNode;
   readonly sources: RentalOverviewSources;
   readonly today: string;
   readonly unread: number;
@@ -244,28 +267,34 @@ export const Hero = ({
             <HeroStat label={t(`${k}.overview.unreadLabel`)} tone={unread > 0 ? 'warning' : 'neutral'} value={unread} />
           </a>
         </div>
-        <label className="facilityoperations:relative facilityoperations:block facilityoperations:max-w-2xl">
-          <span className="facilityoperations:sr-only">{t(`${k}.search.label`)}</span>
-          <span
-            className="facilityoperations:pointer-events-none facilityoperations:absolute facilityoperations:left-3 facilityoperations:top-1/2 facilityoperations:-translate-y-1/2"
-            style={muted}
-          >
-            <Icon name="magnify" size={20} />
-          </span>
-          <input
-            className="facilityoperations:w-full facilityoperations:rounded-xl facilityoperations:py-3 facilityoperations:pl-10 facilityoperations:pr-3 facilityoperations:text-base facilityoperations:outline-none"
-            id="ops-global-search"
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder={t(`${k}.search.placeholder`)}
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--color-border-primary, #d1d5db)',
-              boxShadow: '0 1px 2px rgba(0,0,0,.04)',
-            }}
-            type="search"
-            value={query}
-          />
-        </label>
+        <FormRoot
+          className="facilityoperations:max-w-2xl"
+          defaultValues={noOverviewSearch}
+          form={overviewSearchForm}
+          translateMessage={(message) => t(message)}
+        >
+          {searchReady}
+          <label className="facilityoperations:relative facilityoperations:block">
+            <span className="facilityoperations:sr-only">{t(`${k}.search.label`)}</span>
+            <span
+              className="facilityoperations:pointer-events-none facilityoperations:absolute facilityoperations:left-3 facilityoperations:top-1/2 facilityoperations:-translate-y-1/2"
+              style={muted}
+            >
+              <Icon name="magnify" size={20} />
+            </span>
+            <overviewSearchForm.query
+              className="facilityoperations:w-full facilityoperations:rounded-xl facilityoperations:py-3 facilityoperations:pl-10 facilityoperations:pr-3 facilityoperations:text-base facilityoperations:outline-none"
+              id="ops-global-search"
+              placeholder={t(`${k}.search.placeholder`)}
+              style={{
+                background: '#ffffff',
+                border: '1px solid var(--color-border-primary, #d1d5db)',
+                boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+              }}
+              type="search"
+            />
+          </label>
+        </FormRoot>
         <SourceHealth sources={sources} />
       </div>
       <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:justify-center">
