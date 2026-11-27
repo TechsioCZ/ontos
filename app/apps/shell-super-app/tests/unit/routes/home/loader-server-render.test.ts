@@ -14,7 +14,8 @@ import {
 import type { CurrentSession, ShellComposition } from '../../../../shared/browser-api.ts';
 import { loadHomePageModel, loadServerModuleDocument } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
-import { makeShellBff } from '../../../support/shell-bff-double.ts';
+import { businessThemeRead, makeShellBff } from '../../../support/shell-bff-double.ts';
+import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -85,7 +86,10 @@ const serverModel = (bff: Bff, url?: string) =>
     Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
   );
 
-const documentContext = Schema.decodeUnknownSync(ShellDocumentContextSchema);
+const decodeDocumentContext = Schema.decodeUnknownSync(ShellDocumentContextSchema);
+/** A document context as the BFF answers it: a signed-in document carries its tenant's theme, Business by default. */
+const documentContext = (context: typeof ShellDocumentContextSchema.Encoded) =>
+  decodeDocumentContext({ theme: businessThemeRead, ...context });
 const documentContextOf = (overrides: Partial<typeof ShellDocumentContextSchema.Encoded> = {}) =>
   documentContext({
     canManagePeople: false,
@@ -185,12 +189,14 @@ it.effect('server rendering reads the whole document context in one request', ()
       selectedLegalEntityId: legalEntityId,
       state: 'authenticated',
       tenants: { items: [{ name: 'Alpha tenant', tenantId }], state: 'available' },
+      theme: businessShellTheme,
       // Exactly the separate endpoints' answers to this person here, and nothing else (no token, no assertion).
       browserReads: {
         canManagePeople: false,
         composition,
         legalEntities,
         tenants: { tenants: [{ name: 'Alpha tenant', tenantId }] },
+        theme: businessShellTheme,
       },
     });
     // One request: no separate session, composition, choice, capability, assertion or target read.

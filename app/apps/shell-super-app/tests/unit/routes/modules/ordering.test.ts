@@ -22,11 +22,12 @@ import {
   availableTenants,
   canManageDemoAccounts,
   currentSession,
+  executeTenantTheme,
   resolveModuleTarget,
   shellComposition,
 } from '../../../../src/api/auth-client.ts';
 import { loader, loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
-import { makeShellBff } from '../../../support/shell-bff-double.ts';
+import { businessThemeRead, makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffEndpoint, ShellBffScript } from '../../../support/shell-bff-double.ts';
 
 const revision = 'a'.repeat(64);
@@ -102,6 +103,7 @@ const endpoints = [
   'demoAccountCapability',
   'availableLegalEntities',
   'availableTenants',
+  'executeTenantTheme',
   'resolveModuleTarget',
 ] satisfies ShellBffEndpoint[];
 const reads = (bff: ReturnType<typeof moduleBff>, endpoint: ShellBffEndpoint) =>
@@ -343,6 +345,7 @@ it.effect(
         availableTenants: 150,
         currentSession: 100,
         demoAccountCapability: 300,
+        executeTenantTheme: 100,
         resolveModuleTarget: 500,
         shellComposition: 400,
       };
@@ -354,6 +357,7 @@ it.effect(
             availableTenants: yield* Deferred.make<boolean>(),
             currentSession: yield* Deferred.make<boolean>(),
             demoAccountCapability: yield* Deferred.make<boolean>(),
+            executeTenantTheme: yield* Deferred.make<boolean>(),
             resolveModuleTarget: yield* Deferred.make<boolean>(),
             shellComposition: yield* Deferred.make<boolean>(),
           };
@@ -369,6 +373,7 @@ it.effect(
               availableTenants: () => answer('availableTenants', tenants),
               currentSession: () => answer('currentSession', session),
               demoAccountCapability: () => answer('demoAccountCapability', { canManage: false }),
+              executeTenantTheme: () => answer('executeTenantTheme', businessThemeRead),
               resolveModuleTarget: () => answer('resolveModuleTarget', servedTarget),
               shellComposition: () => answer('shellComposition', composition),
             }),
@@ -381,7 +386,12 @@ it.effect(
         yield* currentSession(options);
         yield* shellComposition({ compositionRevision: revision }, options);
         yield* canManageDemoAccounts(options);
-        yield* Effect.all([availableLegalEntities(options), availableTenants(options)], { concurrency: 2 });
+        yield* Effect.all(
+          [availableLegalEntities(options), availableTenants(options), executeTenantTheme({}, options)],
+          {
+            concurrency: 3,
+          },
+        );
         return yield* resolveModuleTarget({ canonicalPath: '/contacts', compositionRevision: revision }, options);
       });
       const control = yield* timedBff(latencies);
@@ -391,9 +401,15 @@ it.effect(
         yield* networkQuietExcept(1);
         yield* TestClock.adjust(latencies[endpoint]);
       }
-      yield* Effect.all([control.started('availableLegalEntities'), control.started('availableTenants')]);
-      yield* networkQuietExcept(2);
-      yield* TestClock.adjust(Math.max(latencies.availableLegalEntities, latencies.availableTenants));
+      yield* Effect.all([
+        control.started('availableLegalEntities'),
+        control.started('availableTenants'),
+        control.started('executeTenantTheme'),
+      ]);
+      yield* networkQuietExcept(3);
+      yield* TestClock.adjust(
+        Math.max(latencies.availableLegalEntities, latencies.availableTenants, latencies.executeTenantTheme),
+      );
       yield* control.started('resolveModuleTarget');
       yield* networkQuietExcept(1);
       yield* TestClock.adjust(latencies.resolveModuleTarget);
@@ -415,9 +431,10 @@ it.effect(
       yield* Effect.all(
         endpoints.filter((endpoint) => endpoint !== 'currentSession').map((endpoint) => candidate.started(endpoint)),
       );
-      yield* networkQuietExcept(5);
+      yield* networkQuietExcept(6);
       yield* TestClock.adjust(
         Math.max(
+          candidateLatencies.executeTenantTheme,
           candidateLatencies.shellComposition,
           candidateLatencies.demoAccountCapability,
           candidateLatencies.availableLegalEntities,
