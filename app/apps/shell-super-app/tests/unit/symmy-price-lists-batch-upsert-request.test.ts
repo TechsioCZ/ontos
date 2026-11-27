@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { mapSymmyPriceListsBatchRequest } from '../../api/symmy/price-lists-batch-upsert-public-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import {
   commercialScope,
@@ -8,7 +9,9 @@ import {
   productId,
   productRef,
   unitBasis,
+  unitRef,
   variantId,
+  variantRef,
 } from './symmy-price-requests.fixtures.ts';
 import type { Json } from './symmy-price-requests.fixtures.ts';
 
@@ -160,6 +163,27 @@ describe('Symmy price lists batch upsert request', () => {
     expect(
       accepts(withPrices([{ ...price, unitBasis: { quantity: '1', unitRef: { resourceId: priceGroupId } } }])),
     ).toBe(false);
+  });
+
+  it('builds the owner references of each price with the tenant of the route', () => {
+    const routeTenant = '99999999-9999-4999-8999-999999999999';
+    const inRoute = <Ref>(ref: Ref) => ({ ...ref, tenantId: routeTenant });
+    const body = Schema.decodeUnknownSync(SymmyPriceListsBatchRequestSchema)({
+      priceLists: [{ ...list, prices: [price] }, list],
+    });
+    const [priced, bare] = mapSymmyPriceListsBatchRequest(body, routeTenant);
+    expect(priced?.prices).toEqual([
+      {
+        amount: price.amount,
+        commercialScope,
+        currencyCode: price.currencyCode,
+        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        productRef: inRoute(productRef),
+        unitBasis: { quantity: unitBasis.quantity, unitRef: inRoute(unitRef) },
+        variantRef: inRoute(variantRef),
+      },
+    ]);
+    expect(bare).toEqual(body.priceLists[1]);
   });
 
   it('refuses null in any field', () => {

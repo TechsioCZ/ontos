@@ -121,6 +121,12 @@ const SymmyProductSchema = Schema.Struct({
   variants: Schema.NonEmptyArray(VariantSchema),
 });
 
+/** The plan size counts what the admission receives, where the sent category ids are the categories. */
+const asPlanSizeInput = (products: readonly (typeof SymmyProductSchema.Type)[]) =>
+  products.map(({ categoryIds, ...product }) =>
+    categoryIds === undefined ? product : { ...product, categories: categoryIds },
+  );
+
 /**
  * The public body of `POST /products/batch`: one to sixteen products, each with at least one variant.
  * There is no product-level price and no version field. A plan holds sixteen items of at most thirty-two
@@ -130,7 +136,8 @@ export const SymmyProductsBatchRequestSchema = Schema.Struct({
   products: Schema.NonEmptyArray(SymmyProductSchema).check(
     Schema.isMaxLength(16),
     Schema.makeFilter(
-      (products) => Schema.is(SymmyProductPlanSizeSchema)(products) || 'A request needs more than one plan holds',
+      (products) =>
+        Schema.is(SymmyProductPlanSizeSchema)(asPlanSizeInput(products)) || 'A request needs more than one plan holds',
     ),
   ),
 });

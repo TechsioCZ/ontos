@@ -7,6 +7,7 @@ import {
   SymmyCustomersResponseSchema,
 } from '../../api/symmy/customers-public-contract.ts';
 import { SymmyInternalCustomersProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { arrayLimits } from './symmy-array-limits.fixtures.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -87,6 +88,14 @@ const projection = () =>
 const decodeQuery = Schema.decodeUnknownResult(SymmyCustomersReadQuerySchema);
 
 describe('Symmy public customers body', () => {
+  it('keeps the owner limit on the contact points it declares itself', () => {
+    const owner = SymmyInternalCustomersProjectionSchema.fields.customers.value.fields.party.schema.fields;
+    const published = SymmyCustomersResponseSchema.fields.customers.value.fields.party.schema.fields;
+    const owned = arrayLimits(owner.contactPoints);
+    expect(owned.maxItems).toBe(256);
+    expect(arrayLimits(published.contactPoints)).toEqual(owned);
+  });
+
   it('maps the internal projection to camelCase without markers, cursor or unsupported fields', () => {
     const body = mapSymmyCustomersProjection(projection());
     expect(body).toMatchObject({ count: 3, limit: 50, offset: 1 });

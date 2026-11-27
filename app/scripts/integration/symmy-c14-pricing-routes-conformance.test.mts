@@ -213,6 +213,48 @@ const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes
   },
 );
 
+/**
+ * A refused price neither fails its request nor holds back the next price list. Here the price names a product
+ * nobody holds: no source authority covers its identity, so Pricing holds it and writes nothing.
+ */
+const assertRefusedPriceDoesNotBlockNextList = Effect.fn('InternalC14PricingRoutes.refusedPriceThenNextList')(
+  function* refusedPriceThenNextList<E, R>(
+    fixture: PricingFixture,
+    input: {
+      readonly priceFacts: Omit<Parameters<typeof publicPrice>[0], 'at'>;
+      readonly settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>;
+    },
+  ) {
+    const priceCount = fixture.admin<{ count: number }>`select count(*)::integer as count
+      from pricing.prices where tenant_id=${fixture.tenantId}`;
+    const before = yield* priceCount;
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
+    const settled = yield* input.settleLists('INTERNAL_C14_REFUSED_PRICE_AND_NEXT_LIST', [
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_REFUSED',
+        code: 'INTERNAL_C14_REFUSED_PRICE_LIST',
+        effectiveFrom: startsAt,
+        prices: [{ ...publicPrice({ ...input.priceFacts, at: startsAt }), productId: randomUUID() }],
+        purpose: 'Explicit INTERNAL_C14 price of an unknown product',
+      }),
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_AFTER_REFUSED',
+        code: 'INTERNAL_C14_AFTER_REFUSED_LIST',
+        effectiveFrom: startsAt,
+        prices: [],
+        purpose: 'Explicit INTERNAL_C14 list after a refused price',
+      }),
+    ]);
+    expect(settled.status).toBe('completed_partial');
+    expect(
+      outcomesOf(settled),
+      `Refused price lists starting ${startsAt}; native Group: ${yield* fixture.groupOwner.diagnostic}`,
+    ).toEqual(['accepted_change', 'unresolved', 'accepted_change']);
+    expect(yield* priceCount).toEqual(before);
+    yield* waitUntil(DateTime.makeUnsafe(startsAt));
+  },
+);
+
 it.live(
   'INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority',
   () =>
@@ -704,6 +746,7 @@ it.live(
             ),
           );
         yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
+        yield* assertRefusedPriceDoesNotBlockNextList(fixture, { priceFacts, settleLists });
 
         const selectedAt = DateTime.formatIso(yield* DateTime.now);
         const batchPrice = { ...publicPrice({ ...priceFacts, at: selectedAt }), operation: 'DEFINE' };

@@ -1,3 +1,4 @@
+import { ProductSchema } from '@app/catalog/domain/product';
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -9,6 +10,7 @@ import {
   SymmyProductsSelectedResponseSchema,
 } from '../../api/symmy/products-public-contract.ts';
 import { SymmyInternalProductsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { arrayLimits } from './symmy-array-limits.fixtures.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '33333333-3333-4333-8333-333333333333';
@@ -63,6 +65,14 @@ const projection = () =>
 const decodeQuery = Schema.decodeUnknownResult(SymmyProductsReadQuerySchema);
 
 describe('Symmy public products body', () => {
+  it('keeps the owner limit on the variants it declares itself', () => {
+    const owned = arrayLimits(ProductSchema.fields.variants);
+    expect(owned.minItems).toBe(1);
+    expect(arrayLimits(SymmyProductsResponseSchema.fields.products.value.fields.product.fields.variants)).toEqual(
+      owned,
+    );
+  });
+
   it('maps the internal projection to camelCase without markers, cursor or unsupported fields', () => {
     const body = mapSymmyProductsProjection(projection());
     expect(body.count).toBe(3);
