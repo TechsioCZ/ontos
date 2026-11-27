@@ -3149,23 +3149,7 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
   }
   const gate = yield* AccessDecisionGate;
   const question = { legalEntityScope: 'required' as const, now: yield* DateTime.nowAsDate, scope };
-  const read = yield* gate.decide({ ...question, carrier: recordsCarrier });
-  if (read.outcome === 'UNAVAILABLE') {
-    return yield* referenceUnavailable();
-  }
-  if (read.outcome !== 'ALLOWED') {
-    return yield* new MerchandisePermissionDenied({
-      code: 'merchandise_permission_denied',
-      reason: 'Merchandise records are forbidden',
-    });
-  }
-  // A workload admission grants only its native Storefront protocol. It can never become staff rights.
-  if (isStorefrontAdmission(read) && request.view?.storefront !== true) {
-    return yield* new MerchandisePermissionDenied({
-      code: 'merchandise_permission_denied',
-      reason: 'The registered Storefront workload may only read its own Storefront view',
-    });
-  }
+  const staff = request.view?.storefront !== true;
   const carriers = [
     applyCommandCarrier,
     manageCatalogCarrier,
@@ -3178,14 +3162,29 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
     proposeOrderChangesCarrier,
     reviewOrderChangesCarrier,
   ];
-  const decisions =
-    request.view?.storefront === true
-      ? []
-      : yield* gate.decideMany(carriers.map((carrier) => ({ ...question, carrier })));
-  if (
-    request.view?.storefront !== true &&
-    (decisions.length !== carriers.length || decisions.some(({ outcome }) => outcome === 'UNAVAILABLE'))
-  ) {
+  // A staff read asks its own right and its capabilities in ONE gate round (one identity and scope read, one engine
+  // call, one evidence write on the shared pool), not a second round after the first: every list page, search and
+  // detail of "Produkty" is a staff read. A Storefront read asks only its own right.
+  const [read, ...decisions] = staff
+    ? yield* gate.decideMany([recordsCarrier, ...carriers].map((carrier) => ({ ...question, carrier })))
+    : [yield* gate.decide({ ...question, carrier: recordsCarrier })];
+  if (read === undefined || read.outcome === 'UNAVAILABLE') {
+    return yield* referenceUnavailable();
+  }
+  if (read.outcome !== 'ALLOWED') {
+    return yield* new MerchandisePermissionDenied({
+      code: 'merchandise_permission_denied',
+      reason: 'Merchandise records are forbidden',
+    });
+  }
+  // A workload admission grants only its native Storefront protocol. It can never become staff rights.
+  if (isStorefrontAdmission(read) && staff) {
+    return yield* new MerchandisePermissionDenied({
+      code: 'merchandise_permission_denied',
+      reason: 'The registered Storefront workload may only read its own Storefront view',
+    });
+  }
+  if (staff && (decisions.length !== carriers.length || decisions.some(({ outcome }) => outcome === 'UNAVAILABLE'))) {
     return yield* referenceUnavailable();
   }
   const allowed = (index: number) => decisions[index]?.outcome === 'ALLOWED';
