@@ -675,6 +675,7 @@ export const merchandiseSearchRefreshTarget = (
       RemoveMarket: () => base,
       ResetDemoData: () => ({ ...base, rebuild: true }),
       RestoreProduct: (value) => ({ ...base, productIds: [value.id] }),
+      SetSymmyLink: (value) => ({ ...base, productIds: [value.id] }),
       SetMarketProductOffers: () => base,
       SetProductMarketOffer: () => base,
       SyncTaxRates: () => base,

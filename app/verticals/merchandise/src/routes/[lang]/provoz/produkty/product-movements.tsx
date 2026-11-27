@@ -223,6 +223,7 @@ export const MovementForm = ({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   // Only read when sending, so a ref: the revision the last own command returned.
   const savedRevision = useRef(revision);
 
@@ -245,6 +246,7 @@ export const MovementForm = ({
     }
     setBusy(true);
     setServerError(null);
+    setDone(null);
     const trimmed = note.trim();
     const stockMovement = {
       _tag: 'RecordStockMovement',
@@ -265,7 +267,9 @@ export const MovementForm = ({
         onDraftChange(EMPTY_MOVEMENT_DRAFT);
         setSubmitted(false);
         const recorded = k('messages.movementRecorded');
-        onCommitted(corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`);
+        const message = corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
+        setDone(message);
+        onCommitted(message);
       });
     const target = symmyTarget?.(variant?.id);
     if (target === undefined) {
@@ -327,6 +331,11 @@ export const MovementForm = ({
       {serverError !== null && (
         <StatusText showIcon status="error">
           {serverError}
+        </StatusText>
+      )}
+      {done !== null && (
+        <StatusText showIcon status="success">
+          {done}
         </StatusText>
       )}
       {needsVariant && (

@@ -80,6 +80,8 @@ export const symmyUpsertSourceProductCommand = (
     lifecycle: item.product.lifecycle,
     name,
     sourceRecordId: item.source_record_id,
+    // A shop product staff unlinked from Symmy links again only once the ERP changed the product after the unlink.
+    sourceUpdatedAt: item.product.updatedAt,
     variants,
     ...(description === undefined || description === '' ? {} : { description: description.slice(0, 20_000) }),
   };
@@ -440,13 +442,14 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
     const command = skipped.has(String(item.product.productRef.resourceId))
       ? undefined
       : symmyUpsertSourceProductCommand(item, figures);
-    // A product whose current price is not known in this sweep is not written: never a row at 0 Kč.
+    // A product whose price page failed is not written in this sweep. One without a price is still sent: the upsert
+    // never creates a row without a price (never a row at 0 Kč), but an existing row keeps taking its stock figure.
     const withoutPrice = command !== undefined && command.variants.some((variant) => variant.priceNetMinor === undefined);
     if (command === undefined || withoutPrice) {
       unpriced.push(code);
     }
     const result =
-      command === undefined || withoutPrice
+      command === undefined
         ? { outcome: 'SKIPPED', reason: undefined }
         : yield* upsert({ ...write, legalEntityId }, admission, command, runId).pipe(
             Effect.catchCause((cause) =>
@@ -462,7 +465,7 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
   }
   yield* Console.log(
     `${LOG} company=${legalEntityId} products=${String(products.length)} ${JSON.stringify({ ...outcomes, priced, stocked })}` +
-      ` refused=[${refused.join(', ')}] skippedWithoutPrice=[${unpriced.join(', ')}]`,
+      ` refused=[${refused.join(', ')}] withoutPrice=[${unpriced.join(', ')}]`,
   );
   return { outcomes } as const;
 });
