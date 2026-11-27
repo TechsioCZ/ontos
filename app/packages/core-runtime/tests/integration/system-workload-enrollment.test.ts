@@ -668,15 +668,22 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       yield* Ref.set(catalog, enrollmentCatalog());
       yield* setModuleState(enrollmentDormantModule, 'active');
       const borrower = yield* enrollmentOf(yield* change(yield* sessionOf(administrator), enroll));
-      yield* admin.insert(accessWorkloadBindings).values({
-        bindingId: yield* nextUuid,
-        createdAt: DateTime.toDateUtc(yield* DateTime.now),
-        incarnation: yield* nextUuid,
-        principalId: borrower.principalId,
-        status: 'active',
-        tenantId,
-        workloadKey: enrollmentDormantJob,
+      // A binding written past every governed writer, as an earlier composition or a hand left it.
+      const leftBinding = Effect.fn('SystemWorkloadEnrollmentTest.leftBinding')(function* insertBinding(
+        principalId: string,
+        workloadKey: string,
+      ) {
+        yield* admin.insert(accessWorkloadBindings).values({
+          bindingId: yield* nextUuid,
+          createdAt: DateTime.toDateUtc(yield* DateTime.now),
+          incarnation: yield* nextUuid,
+          principalId,
+          status: 'active',
+          tenantId,
+          workloadKey,
+        });
       });
+      yield* leftBinding(borrower.principalId, enrollmentDormantJob);
       const owner = { moduleKey: enrollmentDormantModule, workloadKey: enrollmentDormantJob };
       const ownerIdentity = Effect.fn('SystemWorkloadEnrollmentTest.ownerIdentity')(function* resolveOwner() {
         return yield* enrolled.resolveEnrolled({
@@ -706,6 +713,35 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(reclaimAudits).toContainEqual({
         evidence: expect.objectContaining({ change: 'ENROLLED', reclaimedFrom: [borrower.principalId] }),
       });
+
+      // A system Principal with no recorded workload, as one made before the record existed: END never ends it and
+      // ENROLL never adopts it, but ENROLL takes the key from it and leaves its other bindings.
+      const ownEnded = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(ownEnded, 'ENDED')).toBe(true);
+      const unrecorded = yield* nextUuid;
+      yield* admin.insert(principals).values({
+        displayName: 'Unrecorded system principal',
+        kind: 'system',
+        principalId: unrecorded,
+        status: 'active',
+        tenantId,
+      });
+      yield* leftBinding(unrecorded, enrollmentDormantJob);
+      yield* leftBinding(unrecorded, readerRead);
+      expect((yield* ownerIdentity()).principalId).toBe(unrecorded);
+      const notEnded = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'END' });
+      expect(Predicate.isTagged(notEnded, 'NOT_ENROLLED')).toBe(true);
+      expect(yield* principalStatus(unrecorded)).toEqual([{ status: 'active' }]);
+      const replacing = yield* change(yield* sessionOf(administrator), { ...owner, _tag: 'ENROLL' });
+      expect(Predicate.isTagged(replacing, 'ENROLLED')).toBe(true);
+      const replacement = yield* enrollmentOf(replacing);
+      expect(replacement.principalId).not.toBe(unrecorded);
+      expect((yield* ownerIdentity()).principalId).toBe(replacement.principalId);
+      expect(yield* principalBindings(unrecorded)).toEqual([
+        { status: 'revoked', workloadKey: enrollmentDormantJob },
+        { status: 'active', workloadKey: readerRead },
+      ]);
+      expect(yield* principalStatus(unrecorded)).toEqual([{ status: 'active' }]);
     }),
   );
 });

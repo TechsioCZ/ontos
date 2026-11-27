@@ -97,7 +97,7 @@ const ChangeSystemWorkloadEnrollmentResultSchema = Schema.Union([
     revoked: Schema.Array(binding),
     workloadKey,
   }),
-  /** Nothing held the workload; nothing changed. */
+  /** No enrollment held the workload; nothing changed. */
   Schema.TaggedStruct('NOT_ENROLLED', { moduleKey, workloadKey }),
 ]);
 
@@ -107,7 +107,7 @@ const ChangeSystemWorkloadEnrollmentAuditEvidenceSchema = Schema.Struct({
   change: Schema.Literals(['ENROLLED', 'ALREADY_ENROLLED', 'ENDED', 'NOT_ENROLLED']),
   moduleKey,
   reason,
-  /** The system Principals of other workloads whose binding of this workload's key this change revoked. */
+  /** The system Principals not enrolled for this workload whose binding of its key this change revoked. */
   reclaimedFrom: Schema.optionalKey(Schema.Array(PrincipalIdSchema)),
   systemPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   workloadKey,
@@ -206,7 +206,7 @@ const enroll = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enroll')(function
   if (own === undefined) {
     return yield* enrollmentUnavailable();
   }
-  // The holder has its own key now; no Principal of another workload keeps a binding of it.
+  // The holder has its own key now; no system Principal not enrolled for it keeps a binding of it.
   const reclaimedFrom = yield* repository.reclaimWorkloadKey(own.workloadKey);
   const tag = Option.isSome(holder) ? 'ALREADY_ENROLLED' : 'ENROLLED';
   const evidence = {
