@@ -10,7 +10,7 @@ import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
 import { StorefrontStatusCell, storefrontListNote } from './storefront-status.tsx';
-import { ErpCodeLine, SymmyImportedBadge } from './symmy-provenance.tsx';
+import { ErpCodeLine, SymmyImportedBadge, isSymmyImported } from './symmy-provenance.tsx';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
 const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
@@ -70,10 +70,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && <ProductThumbnail image={image} productId={product.id} />}
           <span className="flex min-w-0 flex-col">
-            <span className="flex min-w-0 items-center gap-100">
-              <span className="truncate">{product.name}</span>
-              <SymmyImportedBadge product={product} />
-            </span>
+            <span className="truncate">{product.name}</span>
             {(variants > 0 || note !== null) && (
               <span className="truncate text-fg-secondary text-xs">
                 {[variantsLabel, note]
@@ -143,16 +140,21 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     header: label('columns.stockValue'),
     meta: { align: 'end', type: 'number', width: 140 },
   },
-  // A role that may not read tags (`tagsOf` is `null`) gets no Štítky column.
-  ...(tagsOf === null
-    ? []
-    : [
-        {
-          cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
-          enableSorting: false,
-          header: label('columns.tags'),
-          id: 'tags',
-          meta: { width: 150 },
-        } satisfies ColumnDef<ProductRecord>,
-      ]),
+  // Always present: a Symmy mark shows here even for a role that may not read tags (`tagsOf` is `null`).
+  {
+    cell: (info) => {
+      const product = info.row.original;
+      return (
+        <TagsCell
+          lead={<SymmyImportedBadge product={product} />}
+          maxChips={isSymmyImported(product) ? 1 : 2}
+          tags={tagsOf === null ? [] : tagsOf(product.id)}
+        />
+      );
+    },
+    enableSorting: false,
+    header: label('columns.tags'),
+    id: 'tags',
+    meta: { width: 280 },
+  },
 ];

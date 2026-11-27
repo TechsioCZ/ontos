@@ -417,7 +417,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
 
         <ProductStats indicators={ready?.indicators} label={k} />
 
-        <div className="flex flex-wrap items-end gap-150">
+        <div className="flex flex-wrap items-start gap-150">
           <Input
             aria-label={k('filters.search')}
             className="w-64"
