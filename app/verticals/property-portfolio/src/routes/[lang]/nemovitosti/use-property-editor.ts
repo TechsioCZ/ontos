@@ -1,5 +1,15 @@
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { useDraftSave } from '@app/admin-ui';
+import {
+  ComboboxField,
+  EntryTextField,
+  FormBuilder,
+  FormReact,
+  MultiComboboxField,
+  TextAreaField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
@@ -12,7 +22,7 @@ import { PropertyLifecycleSchema } from '../../../../shared/apis/records.ts';
 import type { RecordsResponse } from '../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../api/records-client.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
 type Property = RecordsResponse['properties'][number];
 export type EmployeeOption = Pick<Employee, 'active' | 'fullName' | 'id'>;
@@ -262,6 +272,64 @@ export const withResponsibleEmployees = (draft: PropertyDraft, value: string | s
   responsibleEmployeeIds: [...new Set((Array.isArray(value) ? value : [value]).filter(Schema.is(EmployeeIdSchema)))],
 });
 
+/**
+ * The fields of the building or unit form. The draft is validated as a whole against the register (required texts,
+ * a free code, a responsible employee unless an older building keeps its stored name), so the texts are one record
+ * field whose entries the form marks with that verdict. Uložit sends the draft through the save bar; the form's own
+ * submit (Enter) only asks for that save.
+ */
+const recordFormBuilder = FormBuilder.empty
+  .addField('lifecycleState', Schema.String)
+  .addField('note', Schema.String)
+  .addField('responsibleEmployeeIds', Schema.Array(Schema.String))
+  .addField('text', Schema.Record(Schema.String, Schema.String));
+const makeRecordForm = () =>
+  FormReact.make(recordFormBuilder, {
+    fields: {
+      lifecycleState: ComboboxField,
+      note: TextAreaField,
+      responsibleEmployeeIds: MultiComboboxField,
+      text: EntryTextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+/** The new building or unit. */
+export const createRecordForm = makeRecordForm();
+/** The existing building or unit open in the edit dialog. */
+export const editRecordForm = makeRecordForm();
+export type RecordForm = typeof createRecordForm;
+export type RecordValues = typeof createRecordForm.schema.Encoded;
+
+/** The texts of a draft that are one entry each of the form's `text` field. */
+const textEntries = ['address', 'code', 'name', 'propertyType'] as const;
+export type RecordTextEntry = (typeof textEntries)[number];
+
+/** What the form shows for a draft. */
+export const recordValuesOf = (draft: PropertyDraft): RecordValues => ({
+  lifecycleState: draft.lifecycleState,
+  note: draft.note,
+  responsibleEmployeeIds: draft.responsibleEmployeeIds,
+  text: { address: draft.address, code: draft.code, name: draft.name, propertyType: draft.propertyType },
+});
+export const emptyRecordValues = recordValuesOf(emptyDraft);
+
+/** The draft the form's values make of `base`: a unit keeps its code, an unknown state or employee id is left out. */
+export const draftOfValues = (base: PropertyDraft, values: RecordValues): PropertyDraft => {
+  let draft = withTextField(base, 'note', values.note);
+  for (const entry of textEntries) {
+    draft = withTextField(draft, entry, values.text[entry] ?? draft[entry]);
+  }
+  return withResponsibleEmployees(withLifecycle(draft, values.lifecycleState), [...values.responsibleEmployeeIds]);
+};
+
+/** Whether the form shows exactly these values. */
+export const sameRecordValues = (left: RecordValues, right: RecordValues): boolean =>
+  left.lifecycleState === right.lifecycleState &&
+  left.note === right.note &&
+  left.responsibleEmployeeIds.join(',') === right.responsibleEmployeeIds.join(',') &&
+  textEntries.every((entry) => left.text[entry] === right.text[entry]);
+
 const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt }, { concurrency: 1 }).pipe(
   Effect.map(({ now, random }) => `property:${DateTime.toEpochMillis(now)}:${random}`),
 );
@@ -319,8 +387,21 @@ export const usePropertyEditor = (
   employees: readonly EmployeeOption[] | undefined,
   onSaved: (result: ApplyCommandResult) => void,
 ) => {
+  /**
+   * The new-record dialog that is open: an empty building, or a unit of `unitFor`; undefined while none is. Its values
+   * are the create form's.
+   */
+  const [createBase, setCreateBase] = useState<PropertyDraft>();
+  const createValues = useAtomValue(createRecordForm.values);
+  const setCreateValues = useAtomSet(createRecordForm.setValues);
   /** The new building or unit being entered; undefined while no create form is open. */
-  const [draft, setDraft] = useState<PropertyDraft>();
+  const draft =
+    createBase === undefined
+      ? undefined
+      : Option.match(createValues, {
+          onNone: () => createBase,
+          onSome: (values) => draftOfValues(createBase, values),
+        });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<
     | 'alreadyCommitted'
@@ -361,7 +442,7 @@ export const usePropertyEditor = (
           return 'failed';
         },
         onSuccess: (result): SaveOutcome => {
-          setDraft(undefined);
+          setCreateBase(undefined);
           // A change parked for approval is not saved yet: no saved line and no refresh of the register.
           if (Schema.is(ActionProposalAcceptedSchema)(result)) {
             setFeedback('approvalRequired');
@@ -384,15 +465,19 @@ export const usePropertyEditor = (
     save: saveCreate,
     value: draft ?? emptyDraft,
   });
-  const change = (field: TextField, value: string) =>
-    setDraft((current) => (current === undefined ? current : withTextField(current, field, value)));
-  const begin = (property?: Property) => {
+  /** Opens the new-record dialog on `base`, with empty fields. */
+  const startCreate = (base: PropertyDraft) => {
     setFeedback(undefined);
+    createDraft.adopt(base);
+    setCreateValues(emptyRecordValues);
+    setCreateBase(base);
+  };
+  const begin = (property?: Property) => {
     if (property === undefined) {
-      createDraft.adopt(emptyDraft);
-      setDraft(emptyDraft);
+      startCreate(emptyDraft);
       return;
     }
+    setFeedback(undefined);
     setEditing(propertyDraftOf(property));
   };
   const submit = (raw: PropertyCommand) => {
@@ -422,7 +507,7 @@ export const usePropertyEditor = (
             );
           },
           onSuccess: (result) => {
-            setDraft(undefined);
+            setCreateBase(undefined);
             // A change parked for approval is not saved yet: no saved line and no refresh of the register.
             if (Schema.is(ActionProposalAcceptedSchema)(result)) {
               setFeedback('approvalRequired');
@@ -450,12 +535,7 @@ export const usePropertyEditor = (
   }
   return {
     begin,
-    beginUnit: (property: Property) => {
-      setFeedback(undefined);
-      const next: PropertyDraft = { ...emptyDraft, unitFor: property };
-      createDraft.adopt(next);
-      setDraft(next);
-    },
+    beginUnit: (property: Property) => startCreate({ ...emptyDraft, unitFor: property }),
     beginUnitEdit: (unit: Unit) => {
       setFeedback(undefined);
       setEditing(unitDraftOf(unit));
@@ -470,16 +550,11 @@ export const usePropertyEditor = (
     archiveUnit: (unit: Unit, reason: string) => submit({ _tag: 'ArchiveUnit', reason, unitRef: unit.unitRef }),
     busy: busy || createDraft.status === 'saving',
     cancel: () => {
-      setDraft(undefined);
+      setCreateBase(undefined);
       setFeedback(undefined);
       // A closed create form starts clean the next time it opens.
       createDraft.adopt(emptyDraft);
     },
-    change,
-    changeLifecycle: (value: string) =>
-      setDraft((current) => (current === undefined ? current : withLifecycle(current, value))),
-    changeResponsibleEmployees: (value: string | string[]) =>
-      setDraft((current) => (current === undefined ? current : withResponsibleEmployees(current, value))),
     closeEdit: () => setEditing(undefined),
     /** The new-record draft and its Save control: `createDraft.save` is the only send. */
     createDraft,
