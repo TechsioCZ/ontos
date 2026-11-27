@@ -164,11 +164,21 @@ export const registrationInput = (input: Record<string, unknown>, t: Dictionary 
   };
 };
 
-export const readAccount = async (
+/**
+ * The session as Commerce sees it. "enrollment": signed in, but Commerce does not admit the person as a customer (the
+ * owner answers 403: the registration is not finished yet, or admission was refused). Such a session has no customer
+ * context: it sees, quotes and orders exactly as a guest does, and is offered to finish the registration; never an error.
+ */
+export type AccountState =
+  | { readonly state: "anonymous"; readonly account: null }
+  | { readonly state: "enrollment"; readonly account: null }
+  | { readonly state: "authenticated"; readonly account: CustomerAccount };
+
+export const readAccountState = async (
   origin: string,
   cookie: string | null,
   options: PortalRequestOptions = {},
-): Promise<CustomerAccount | null> => {
+): Promise<AccountState> => {
   const response = await portalRequest(
     "/customer-account",
     origin,
@@ -177,10 +187,11 @@ export const readAccount = async (
     undefined,
     options,
   );
-  if (response.status === 401) return null;
+  if (response.status === 401) return { state: "anonymous", account: null };
+  if (response.status === 403) return { state: "enrollment", account: null };
   if (!response.ok) throw new Error("Customer account unavailable");
   const value = (await response.json()) as { state?: string; account?: CustomerAccount };
-  if (value.state === "anonymous") return null;
+  if (value.state === "anonymous") return { state: "anonymous", account: null };
   if (
     value.state !== "authenticated" ||
     !value.account?.email ||
@@ -191,13 +202,23 @@ export const readAccount = async (
   )
     throw new Error("Customer account response is malformed");
   return {
-    id: value.account.id,
-    partyId: value.account.partyId,
-    tenantId: value.account.tenantId,
-    email: value.account.email,
-    name: value.account.name,
+    state: "authenticated",
+    account: {
+      id: value.account.id,
+      partyId: value.account.partyId,
+      tenantId: value.account.tenantId,
+      email: value.account.email,
+      name: value.account.name,
+    },
   };
 };
+
+/** The admitted customer, or null: a guest and a signed-in person Commerce does not admit have no customer context. */
+export const readAccount = async (
+  origin: string,
+  cookie: string | null,
+  options: PortalRequestOptions = {},
+): Promise<CustomerAccount | null> => (await readAccountState(origin, cookie, options)).account;
 
 /** The current server request's own origin and cookie, as the portal routes are called with them. */
 export const requestPortal = async (): Promise<{ origin: string; cookie: string | null }> => {
@@ -221,7 +242,10 @@ export const readRequestAccount = async (
 export const requireCustomerAccount = async (
   options: PortalRequestOptions = {},
 ): Promise<CustomerAccount> => {
-  const account = await readRequestAccount(options);
-  if (!account) redirect(await marketHref("/prihlaseni"));
-  return account;
+  const { origin, cookie } = await requestPortal();
+  const current = await readAccountState(origin, cookie, options);
+  // Signed in with an unfinished registration: the shop offers to finish it rather than a second sign-in.
+  if (current.state === "enrollment") redirect(await marketHref("/dokonceni-registrace"));
+  if (current.state === "anonymous") redirect(await marketHref("/prihlaseni"));
+  return current.account;
 };

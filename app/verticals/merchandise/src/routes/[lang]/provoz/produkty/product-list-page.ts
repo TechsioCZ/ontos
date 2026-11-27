@@ -35,9 +35,11 @@ export const useCategoryChoices = (legalEntityId: string) => {
   const held = useHeldSnapshot(categoryChoicesData.key(legalEntityId), snapshot);
   return {
     choices: held.state === 'ready' ? held.value : NO_CHOICES,
+    /** The choices answered (or failed): whether the company filters by a tree is known. */
     reload: () => {
       browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
     },
+    settled: held.state !== 'pending',
   };
 };
 
@@ -76,7 +78,7 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
     () => productListData.snapshot(input),
     () => pageDataPending,
   );
-  const { archived, category, categoryId, limit, lowStockOnly, offset, search, sort } = query;
+  const { archived, category, categoryId, limit, lowStockOnly, offset, search, sort, symmyOnly } = query;
   const taggedIdsJson = query.taggedIds === null ? null : Result.getOrThrow(encodeQueryIds(query.taggedIds));
   // The effect owns its request object; only changed filter values ensure another entry.
   useEffect(() => {
@@ -91,11 +93,25 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
         offset,
         search,
         sort,
+        symmyOnly,
         taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
       },
       scope,
     });
-  }, [archived, category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, taggedIdsJson]);
+  }, [
+    archived,
+    category,
+    categoryId,
+    legalEntityId,
+    limit,
+    lowStockOnly,
+    offset,
+    scope,
+    search,
+    sort,
+    symmyOnly,
+    taggedIdsJson,
+  ]);
   // The strict store reads as pending while it reloads this request (freshness window, live change, settled write).
   // The table keeps the last ready read of the same request until the reload settles; another request never reuses
   // it, and a failed or refused reload replaces it at once.

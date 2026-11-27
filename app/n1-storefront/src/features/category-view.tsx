@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import NextLink from "next/link";
+import { Option, Schema, flow } from "effect";
 import NextImage from "next/image";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
@@ -17,6 +18,49 @@ import { ListingCards } from "./listing-cards";
 import { CatalogPagination } from "./catalog-pagination";
 import { CategoryTreeNode } from "./category-tree-node";
 import { CategoryProductCount } from "./category-product-count";
+
+const categoryText = flow(
+  Schema.decodeUnknownOption(Schema.String),
+  Option.map((value) => value.trim()),
+  Option.filter((value) => value.length > 0),
+  Option.getOrUndefined,
+);
+
+const categoryPresentation = (catalog: CatalogModel, slug: string, d: Dictionary) => {
+  const trail = categoryTrail(catalog.categories, slug);
+  const current = trail.at(-1);
+  const title = current?.name ?? d.catalog;
+  // Staff edit the page heading, descriptions and image of a category in OntOS (Kategorie e-shopu).
+  const heading = categoryText(current?.heading) ?? title;
+  const description = categoryText(current?.description);
+  const longDescription = categoryText(current?.longDescription);
+  const imageSrc = categoryText(current?.imageSrc);
+  const imageAlt = categoryText(current?.imageAlt) ?? title;
+  const children = catalog.categories.filter((item) => item.parentId === current?.id);
+  const childRows: (typeof children)[] = [];
+  for (let offset = 0; offset < children.length; offset += 2) {
+    childRows.push(children.slice(offset, offset + 2));
+  }
+  const nodes = categoryTree(catalog.categories);
+  const treeRoot = nodes.find((node) => node.id === trail[0]?.id);
+  const browseNodes =
+    treeRoot !== undefined && treeRoot.children.length > 0 ? treeRoot.children : nodes;
+  return {
+    browseNodes,
+    children,
+    childRows,
+    current,
+    description,
+    heading,
+    imageAlt,
+    imageSrc,
+    longDescription,
+    nodes,
+    title,
+    trail,
+    treeRoot,
+  };
+};
 
 /** Category composition over the current owner page and its real navigation tree. */
 export const CategoryView = ({
@@ -39,26 +83,21 @@ export const CategoryView = ({
       browseTree.current?.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
     }
   }, [browseOpen]);
-  const trail = categoryTrail(catalog.categories, slug);
-  const current = trail.at(-1);
-  const title = current?.name ?? d.catalog;
-  // Staff edit the page heading, descriptions and image of a category in OntOS (Kategorie e-shopu).
-  const text = (value: unknown) =>
-    typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-  const heading = text(current?.heading) ?? title;
-  const description = text(current?.description);
-  const longDescription = text(current?.longDescription);
-  const imageSrc = text(current?.imageSrc);
-  const imageAlt = text(current?.imageAlt) ?? title;
-  const children = catalog.categories.filter((item) => item.parentId === current?.id);
-  const childRows: (typeof children)[] = [];
-  for (let offset = 0; offset < children.length; offset += 2) {
-    childRows.push(children.slice(offset, offset + 2));
-  }
-  const nodes = categoryTree(catalog.categories);
-  const treeRoot = nodes.find((node) => node.id === trail[0]?.id);
-  const browseNodes =
-    treeRoot !== undefined && treeRoot.children.length > 0 ? treeRoot.children : nodes;
+  const {
+    browseNodes,
+    children,
+    childRows,
+    current,
+    description,
+    heading,
+    imageAlt,
+    imageSrc,
+    longDescription,
+    nodes,
+    title,
+    trail,
+    treeRoot,
+  } = categoryPresentation(catalog, slug, d);
   const pathname = `/${locale}/kategorie/${encodeURIComponent(slug)}`;
   return (
     <section className="p-4">

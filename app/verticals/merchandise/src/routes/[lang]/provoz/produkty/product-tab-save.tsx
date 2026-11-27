@@ -138,6 +138,11 @@ export interface ProductTabSaveOptions<V> {
    * so the server refuses it only when this product changed since, not when another write in the company did.
    */
   readonly version: number;
+  /**
+   * Writes what another owner keeps first (a Symmy variant's price to Pricing); its Czech failure sentence saves
+   * nothing and becomes the save's error.
+   */
+  readonly writeThrough?: (value: V, confirmed: V) => Effect.Effect<void, string>;
 }
 
 export interface ProductTabSave<V> {
@@ -182,13 +187,15 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   const confirmedNow = useRef(kept?.confirmed ?? options.value);
   // A save someone else's change refused, until the draft is rebased on the version they saved.
   const refusal = useRef<Refusal<V> | undefined>(undefined);
-  const draft = useDraftSave<V, never>({
-    initial: kept?.confirmed,
-    isValid: (value) => options.isValid(value),
-    runtime: browserRuntime,
-    save: (value) =>
-      runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current, options.revision).pipe(
-        Effect.map(({ committed, outcome, refused, sent }): DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>> => {
+  const saveCommands = (value: V) =>
+    runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current, options.revision).pipe(
+      Effect.map(
+        ({
+          committed,
+          outcome,
+          refused,
+          sent,
+        }): DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>> => {
           // Commands that went through before a refused one moved the version; a retry starts after them.
           base.current = Math.max(base.current, committed);
           if (outcome.ok) {
@@ -216,6 +223,22 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
             return result;
           }
           return { confirmed: confirmedNow.current, outcome: result, revision: committed };
+        },
+      ),
+    );
+  const draft = useDraftSave<V, never>({
+    initial: kept?.confirmed,
+    isValid: (value) => options.isValid(value),
+    runtime: browserRuntime,
+    save: (value) =>
+      (options.writeThrough?.(value, confirmedNow.current) ?? Effect.void).pipe(
+        Effect.matchEffect({
+          onFailure: (message) =>
+            Effect.sync((): DraftSaveOutcome => {
+              setError(message);
+              return 'failed';
+            }),
+          onSuccess: () => saveCommands(value),
         }),
       ),
     value: options.value,

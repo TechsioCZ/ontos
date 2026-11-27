@@ -162,6 +162,8 @@ const privacyMcpContributionWith = (
       'retention-rules': { title: { cs: 'Pravidla uchování údajů', en: 'Data retention rules' } },
       // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
       'source-processing-eligibility': OntosMcpHidden,
+      // Owner-to-owner source-workload integration read of a whole source page; never a general agent tool.
+      'source-processing-eligibility-set': OntosMcpHidden,
     },
   });
 

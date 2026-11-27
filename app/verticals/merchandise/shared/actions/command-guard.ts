@@ -39,6 +39,8 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'ResetDemoData',
   'ArchiveProduct',
   'RestoreProduct',
+  // Undoing a Symmy link is a person's decision in the product editor; no key, job or agent sends it.
+  'SetSymmyLink',
   'CreateCategory',
   'UpdateCategory',
   'DeleteCategory',

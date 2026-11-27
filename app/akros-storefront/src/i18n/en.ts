@@ -130,6 +130,8 @@ export const en: Dictionary = {
     priceExcludingVat: "Price excl. VAT",
     priceIncludingVat: "Price incl. VAT",
     excludingVat: "excl. VAT",
+    yourPrice: "Your price",
+    basePrice: "Base price",
     noValidPrice: "OntOS did not return a valid price for this item.",
     cannotBuyNow: "It cannot be bought right now.",
     availabilityCannotConfirm:
@@ -1025,7 +1027,7 @@ export const en: Dictionary = {
         "Registration is complete, but access to the account is not permitted at the moment. Resuming the registration does not grant access.",
       admitted: "Your account is ready.",
       intro:
-        "Signing in does not complete the registration by itself. Here you can check that your account has been approved and resume any steps in progress.",
+        "Your registration completes by itself after you sign in, usually within a few seconds. You can shop right away. Here you can see its state and resume it if it stops.",
       checking: "Checking…",
       check: "Check status",
       resume: "Resume registration",

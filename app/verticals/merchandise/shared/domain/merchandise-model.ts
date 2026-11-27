@@ -304,6 +304,11 @@ export const ProductSchema = Schema.Struct({
   catalogProductId: Schema.optionalKey(Schema.String),
   /** The main Catalog variant of a product imported with exactly one variant (no merchandise variants). */
   catalogVariantId: Schema.optionalKey(Schema.String),
+  /**
+   * Server-owned: when staff unlinked this shop product from Symmy ("Odpojit od Symmy"). The Symmy copy does not link
+   * it by its SKU again until the ERP changes the source product after this moment, or staff allow the link again.
+   */
+  symmyLinkRefusedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),
@@ -352,6 +357,8 @@ export const VariantRecordSchema = Schema.Struct({
   sku: Schema.String,
   stockOnHand: Schema.Finite,
   unit: Schema.optionalKey(Schema.String),
+  /** Storefront reads only: the main Catalog variant a variant linked through Symmy is priced by (customer prices). */
+  catalogVariantId: Schema.optionalKey(Schema.String),
 });
 export type VariantRecord = typeof VariantRecordSchema.Type;
 
@@ -448,6 +455,18 @@ export const StockMovementSchema = Schema.Struct({
 });
 export type StockMovement = typeof StockMovementSchema.Type;
 
+/**
+ * The signed-in customer's own Price Group price of one unit imported or linked through Symmy (the unit's main Catalog
+ * variant), as the storefront server read it from Pricing through Commerce's portal for that customer: the net (PRE_TAX)
+ * amount and the group. A storefront order line priced with it charges its gross at the line's rate, for every quantity.
+ */
+export const CustomerGroupPriceSchema = Schema.Struct({
+  catalogVariantId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  netMinor: MinorAmountSchema,
+  priceGroupId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+export type CustomerGroupPrice = typeof CustomerGroupPriceSchema.Type;
+
 export const OrderLineSchema = Schema.Struct({
   productId: ProductIdSchema,
   productName: TextSchema(200),
@@ -462,6 +481,8 @@ export const OrderLineSchema = Schema.Struct({
   taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
   /** The Tax rule revision the rate came from; absent for a non-payer and for lines older than Tax. */
   taxRuleRevisionId: Schema.optionalKey(TaxRuleRevisionIdSchema),
+  /** A storefront line charged at the customer's own Price Group price: that price (its net) and the group. */
+  customerGroupPrice: Schema.optionalKey(CustomerGroupPriceSchema),
 });
 export type OrderLine = typeof OrderLineSchema.Type;
 

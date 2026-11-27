@@ -1,7 +1,7 @@
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
+import { ProductRecordSchema, ProductVariantSchema } from '../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
 import {
   detailDraftInvalid,
@@ -69,6 +69,22 @@ describe('product detail draft', () => {
       taxClassificationCode: CZ_VAT_STANDARD,
     });
     expect(edited.patch).not.toHaveProperty('vatRate');
+  });
+
+  it('never sends a product price for a product priced by its variants', () => {
+    const variant = Schema.decodeSync(ProductVariantSchema)({
+      attributes: '',
+      id: 'variant-1',
+      name: '250 g',
+      priceMinor: 25_804,
+    });
+    const priced = draftOf({ ...product, currentPriceMinor: 0, variants: [variant] });
+    expect(priced.realVariants).toHaveLength(1);
+    expect(detailSaveOf({ ...priced, priceCzk: 300 }, priced).priceChanged).toBe(false);
+    expect(detailSaveOf({ ...priced, description: 'Nová káva' }, priced)).toMatchObject({
+      patch: { description: 'Nová káva' },
+      priceChanged: false,
+    });
   });
 
   it('takes the classification from the product and treats a changed one as an unsaved change', () => {

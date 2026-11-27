@@ -66,6 +66,7 @@ export const parseStoredCart = (value: string | null): CartState => {
             ? { vatRate: line.vatRate }
             : {}),
           stockCount: line.stockCount,
+          ...(line.yourPrice === true ? { yourPrice: true as const } : {}),
           ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
         };
         const quantity = normalizeOrderQuantity(item, line.quantity);

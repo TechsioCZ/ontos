@@ -192,6 +192,8 @@ export interface ProductListQuery {
   readonly offset: number;
   readonly search: string;
   readonly sort: ProductSort | null;
+  /** Only products imported through the ERP connector Symmy. */
+  readonly symmyOnly: boolean;
   /** Ids of the products carrying the selected tag; null = no tag filter. */
   readonly taggedIds: readonly string[] | null;
 }
@@ -216,6 +218,9 @@ export const productListView = (query: ProductListQuery): ViewPayload => {
   }
   if (query.lowStockOnly) {
     view.lowStockOnly = true;
+  }
+  if (query.symmyOnly) {
+    view.importedVia = 'symmy';
   }
   if (query.archived) {
     view.archived = true;
@@ -265,6 +270,7 @@ const productListKey = ({ legalEntityId, query, scope }: ProductListInput): stri
     String(query.lowStockOnly),
     String(query.archived),
     query.sort ?? '',
+    String(query.symmyOnly),
     query.taggedIds === null ? '*' : query.taggedIds.join(','),
   ]);
 
@@ -305,6 +311,7 @@ export const firstProductPage = (limit: number): ProductListQuery => ({
   offset: 0,
   search: '',
   sort: null,
+  symmyOnly: false,
   taggedIds: null,
 });
 
@@ -403,6 +410,7 @@ export type ProductCommand = Extract<
       | 'RemoveMarket'
       | 'ArchiveProduct'
       | 'RestoreProduct'
+      | 'SetSymmyLink'
       | 'DeleteCategory'
       | 'ChangeProductImages'
       | 'RecordStockMovement';
@@ -424,6 +432,7 @@ const submitProductCommand = (command: ProductCommand, expectedRevision: number,
       'DeleteCategory',
       'ArchiveProduct',
       'RestoreProduct',
+      'SetSymmyLink',
       (value) => executeManageCatalog({ command: value, expectedRevision }, idempotencyKey, options),
     ),
     Match.tag('SetProductMarketOffer', 'ConfigureMarket', 'SetMarketProductOffers', 'RemoveMarket', (value) =>

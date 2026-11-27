@@ -20,7 +20,10 @@ import {
   SourcePartySearchRequestSchema,
 } from '@app/party-registry/apis/source-party-search';
 import { executeSourcePartySearchWithAuthorization } from '@app/party-registry/apis/source-party-search/client';
-import { SourceProfileExportRequestSchema } from '@app/party-registry/apis/source-profile-export';
+import {
+  SourceProfileExportRequestSchema,
+  SourceProfileExportSetRequestSchema,
+} from '@app/party-registry/apis/source-profile-export';
 import { executeSourceProfileExportWithAuthorization } from '@app/party-registry/apis/source-profile-export/client';
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
 import { executeOrganizationBusinessNameExportWithAuthorization } from '@app/party-registry/apis/organization-business-name-export/client';
@@ -199,6 +202,7 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
         id: qualifySymmyReadId(scope, 'VARIANT', variant.source.recordId),
         source_record_id: variant.source.recordId,
         variantId: variant.variantId,
+        ...(variant.localizedNames === undefined ? {} : { localizedNames: variant.localizedNames }),
       })),
     })),
     projection: 'products',
@@ -380,6 +384,51 @@ const readCustomerParty = Effect.fn('SymmyReadProjection.customerParty')(functio
   }
   return result;
 });
+type CustomerParty = NonNullable<CustomerRow['party']>;
+/**
+ * The Party profiles of a whole page of source-sync customers in one owner call, each checked exactly as
+ * readCustomerParty checks its own, keyed by the page item they belong to.
+ */
+const readCustomerParties = Effect.fn('SymmyReadProjection.customerParties')(function* customerParties(
+  items: readonly CustomerProfileSourceItem[],
+  scope: SymmySourceReadScope,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: RequestIdentifier,
+): Effect.fn.Return<ReadonlyMap<CustomerProfileSourceItem, CustomerParty>, SymmyIngressProblem> {
+  if (items.length === 0) {
+    return new Map();
+  }
+  const input = yield* Schema.decodeUnknownEffect(SourceProfileExportSetRequestSchema)({
+    parties: items.map((item) => ({ partyRef: item.partyRef, sourceReference: item.partySourceReference })),
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
+  const assertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
+  const result = yield* executeSourceProfileExportWithAuthorization(
+    input,
+    `Bearer ${Redacted.value(assertion.assertion)}`,
+    yield* newRequestIdentifier,
+    {
+      baseUrl: assertion.apiBaseUrl,
+      compositionRevision: assertion.compositionRevision,
+    },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  if (result.outcome !== 'SET' || result.items.length !== items.length) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
+  const parties = new Map<CustomerProfileSourceItem, CustomerParty>();
+  for (const [index, item] of items.entries()) {
+    const party = result.items[index];
+    if (
+      party?.outcome !== 'AVAILABLE' ||
+      party.partyRef.tenantId !== scope.tenantId ||
+      party.partyRef.resourceId !== item.partyRef.resourceId ||
+      party.contactPoints.some(({ contactPointRef }) => contactPointRef.tenantId !== scope.tenantId)
+    ) {
+      return yield* Effect.fail(symmyUnavailableProblem);
+    }
+    parties.set(item, party);
+  }
+  return parties;
+});
 const readOrganizationName = Effect.fn('SymmyReadProjection.organizationName')(function* organizationName(
   item: CustomerProfileSourceItem,
   scope: SymmySourceReadScope,
@@ -410,6 +459,15 @@ const readOrganizationName = Effect.fn('SymmyReadProjection.organizationName')(f
     Match.exhaustive,
   );
 });
+/** Whether a source-sync customer's row carries its Party profile: selected, and the route enrolls the export. */
+const selectsSourceSyncParty = (
+  item: CustomerProfileSourceItem,
+  scope: SymmySourceReadScope,
+  fields: CustomersQuery['fields'],
+): boolean =>
+  item.sourceProcessingMode === 'SOURCE_SYNC' &&
+  (fields === undefined || fields.includes('party')) &&
+  routeAllows(scope, partyModule, partyProfileRead);
 /** An absent `fields` selects every part. An unselected part is never read from its owner. */
 const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* customer(
   item: CustomerProfileSourceItem,
@@ -417,6 +475,7 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
   fields: CustomersQuery['fields'],
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
+  sourceSyncParties: ReadonlyMap<CustomerProfileSourceItem, CustomerParty>,
 ): Effect.fn.Return<CustomerRow, SymmyIngressProblem> {
   const selects = (name: SymmyCustomerFieldName) => fields === undefined || fields.includes(name);
   let result: CustomerRow = {
@@ -429,8 +488,12 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
     if (fields?.includes('addresses') === true && item.sourceAddresses !== undefined) {
       result = { ...result, addresses: item.sourceAddresses };
     }
-    if (selects('party') && routeAllows(scope, partyModule, partyProfileRead)) {
-      result = { ...result, party: yield* readCustomerParty(item, scope, admission, newRequestIdentifier) };
+    if (selectsSourceSyncParty(item, scope, fields)) {
+      const party = sourceSyncParties.get(item);
+      if (party === undefined) {
+        return yield* Effect.fail(symmyUnavailableProblem);
+      }
+      result = { ...result, party };
     }
     return result;
   }
@@ -612,10 +675,17 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
   if (!customerPageIsValid(page, scope, paging)) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
+  // Every source-sync customer's Party profile comes from one owner call for the whole page.
+  const sourceSyncParties = yield* readCustomerParties(
+    page.items.filter((item) => selectsSourceSyncParty(item, scope, query.fields)),
+    scope,
+    admission,
+    newRequestIdentifier,
+  );
   const customers = yield* Effect.forEach(
     page.items,
-    (item) => projectCustomer(item, scope, query.fields, admission, newRequestIdentifier),
-    // Independent owner reads; one at a time a page of 25 customers outlives the 30 s owner-call budget.
+    (item) => projectCustomer(item, scope, query.fields, admission, newRequestIdentifier, sourceSyncParties),
+    // Independent owner reads of the other paths; one at a time a page of 25 customers outlives the owner-call budget.
     { concurrency: 6 },
   );
   return {

@@ -202,7 +202,9 @@ export const MovementForm = ({
   readonly stockOnHand: number;
   /** A Symmy product: the Pricing/Inventory variant the new on-hand is written to first, so Symmy reads it back. */
   readonly symmyTarget?:
-    | ((variantId: string | undefined) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
+    | ((
+        variantId: string | undefined,
+      ) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
     | undefined;
   readonly variants?: readonly VariantRow[] | undefined;
 }) => {
@@ -223,6 +225,7 @@ export const MovementForm = ({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   // Only read when sending, so a ref: the revision the last own command returned.
   const savedRevision = useRef(revision);
 
@@ -245,6 +248,7 @@ export const MovementForm = ({
     }
     setBusy(true);
     setServerError(null);
+    setDone(null);
     const trimmed = note.trim();
     const stockMovement = {
       _tag: 'RecordStockMovement',
@@ -265,7 +269,10 @@ export const MovementForm = ({
         onDraftChange(EMPTY_MOVEMENT_DRAFT);
         setSubmitted(false);
         const recorded = k('messages.movementRecorded');
-        onCommitted(corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`);
+        const message =
+          corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
+        setDone(message);
+        onCommitted(message);
       });
     const target = symmyTarget?.(variant?.id);
     if (target === undefined) {
@@ -281,7 +288,13 @@ export const MovementForm = ({
         record(expected);
         return;
       }
-      const sync = { _tag: 'RecordStockMovement', delta: correction, note: 'Srovnání se stavem skladu v ERP', productId, reason: 'ADJUSTMENT' } satisfies MerchandiseCommand;
+      const sync = {
+        _tag: 'RecordStockMovement',
+        delta: correction,
+        note: 'Srovnání se stavem skladu v ERP',
+        productId,
+        reason: 'ADJUSTMENT',
+      } satisfies MerchandiseCommand;
       runCommand(variant === undefined ? sync : { ...sync, variantId: variant.id }, expected, (outcome) => {
         if (!outcome.ok) {
           setBusy(false);
@@ -327,6 +340,11 @@ export const MovementForm = ({
       {serverError !== null && (
         <StatusText showIcon status="error">
           {serverError}
+        </StatusText>
+      )}
+      {done !== null && (
+        <StatusText showIcon status="success">
+          {done}
         </StatusText>
       )}
       {needsVariant && (

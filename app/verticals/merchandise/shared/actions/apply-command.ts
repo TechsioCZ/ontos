@@ -23,6 +23,7 @@ import {
   CatalogCategoryIdSchema,
   ClientRequestIdSchema,
   CustomerAccountIdSchema,
+  CustomerGroupPriceSchema,
   ProductIdReferenceSchema,
   VariantIdReferenceSchema,
   OrderIdReferenceSchema,
@@ -127,6 +128,11 @@ const QuantitySchema = Schema.Finite.check(
 
 /** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
 export const StorefrontOrderLineRequestSchema = Schema.Struct({
+  /**
+   * Storefront server only: the signed-in customer's Price Group price of the unit, read by the storefront from
+   * Pricing through Commerce's portal (never a browser value). Used only when it names the unit's own Catalog variant.
+   */
+  customerGroupPrice: Schema.optionalKey(CustomerGroupPriceSchema),
   expectedUnitPriceMinor: MinorAmountSchema,
   productId: ProductIdSchema,
   quantity: QuantitySchema,
@@ -372,6 +378,19 @@ const ApplyRestoreProductCommandSchema = Schema.TaggedStruct('RestoreProduct', {
   id: ProductIdSchema,
 });
 
+/**
+ * Staff only, from the product editor. UNLINK ("Odpojit od Symmy") undoes the SKU link of a shop product to a Symmy
+ * product: it removes the mark, the ERP code and the Catalog product and variant ids, changes nothing else (price,
+ * stock, texts, pictures, publication stay), and records the refusal (`symmyLinkRefusedAt`) so the Symmy copy does not
+ * link the product again until the ERP changes its source product. ALLOW drops the refusal: the next copy links again.
+ */
+const ApplySetSymmyLinkCommandSchema = Schema.TaggedStruct('SetSymmyLink', {
+  action: Schema.Literals(['UNLINK', 'ALLOW']),
+  /** The product's `updatedAt` the operator saw; as for ArchiveProduct. */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  id: ProductIdSchema,
+});
+
 /** A product edit naming the product version (`expectedUpdatedAt`) it was made against. */
 export const VersionedProductEditCommandSchema = Schema.Union([
   Schema.Struct({ ...ApplyUpdateProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
@@ -379,6 +398,7 @@ export const VersionedProductEditCommandSchema = Schema.Union([
   Schema.Struct({ ...ApplyChangeProductImagesCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
   Schema.Struct({ ...ApplyArchiveProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
   Schema.Struct({ ...ApplyRestoreProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplySetSymmyLinkCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
 ]);
 
 /** Deletes a storefront category that has no subcategory and no live (not archived) product. */
@@ -464,29 +484,36 @@ const SourceIdTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMax
  * Reachable only through the source-catalog import Action.
  */
 export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('UpsertSourceProduct', {
-  sourceRecordId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   catalogProductId: SourceIdTextSchema,
-  erpCode: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
-  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  lifecycle: Schema.Literals(['ACTIVE', 'DRAFT', 'RETIRED']),
   categoryName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
+  erpCode: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   imageUrl: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  lifecycle: Schema.Literals(['ACTIVE', 'DRAFT', 'RETIRED']),
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  sourceRecordId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  /**
+   * When the ERP last changed the source product (main Catalog `updatedAt`). A shop product staff unlinked from Symmy
+   * is linked again only by a source product changed after the unlink; without it the unlink stays.
+   */
+  sourceUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   variants: Schema.Array(
     Schema.Struct({
       catalogVariantId: SourceIdTextSchema,
-      sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
       name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
-      unit: Schema.optionalKey(Schema.String),
       priceNetMinor: Schema.optionalKey(Schema.NullOr(MinorAmountSchema)),
+      sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
       stockOnHand: Schema.optionalKey(Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)))),
+      unit: Schema.optionalKey(Schema.String),
     }),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });
 export const SourceUpsertResultSchema = Schema.Struct({
   outcome: Schema.Literals(['CREATED', 'UPDATED', 'UNCHANGED', 'REFUSED']),
   productId: Schema.String,
-  reason: Schema.optionalKey(Schema.Literals(['CODE_HELD_BY_NATIVE_PRODUCT', 'SKU_HELD_BY_NATIVE_PRODUCT'])),
+  reason: Schema.optionalKey(
+    Schema.Literals(['CODE_HELD_BY_NATIVE_PRODUCT', 'SKU_HELD_BY_NATIVE_PRODUCT', 'UNLINKED_BY_STAFF']),
+  ),
 });
 export type SourceUpsertResult = typeof SourceUpsertResultSchema.Type;
 
@@ -510,6 +537,7 @@ export const MerchandiseCommandSchema = Schema.Union([
   ApplyCreateOrderCommandSchema,
   ApplyArchiveProductCommandSchema,
   ApplyRestoreProductCommandSchema,
+  ApplySetSymmyLinkCommandSchema,
   /**
    * AKROS administrators only: replaces this company's catalog, stock and orders with the predictable demo baseline
    * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
@@ -653,6 +681,7 @@ export const ManageCatalogPayloadSchema = Schema.Struct({
     ApplyDeleteCategoryCommandSchema,
     ApplyArchiveProductCommandSchema,
     ApplyRestoreProductCommandSchema,
+    ApplySetSymmyLinkCommandSchema,
     ApplyCreateOrderCommandSchema,
     ApplyEditOrderCommandSchema,
     ApplyLinkOrderCustomerCommandSchema,

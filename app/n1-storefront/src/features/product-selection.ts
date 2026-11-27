@@ -4,22 +4,25 @@ import type { ProductDetailModel } from "@/ontos/catalog-model";
 export const productCardForVariant = (
   product: ProductDetailModel,
   variant: ProductDetailModel["variants"][number],
-) => ({
-  ...Struct.omit(product, ["packageQuantity", "originalPriceMinor"]),
-  ...Struct.pick(variant, ["packageQuantity"]),
-  ...(variant.originalPriceMinor === null || variant.originalPriceMinor === undefined
-    ? {}
-    : { originalPriceMinor: variant.originalPriceMinor }),
-  image: variant.image ?? product.image,
-  minimumQuantity: variant.minimumQuantity,
-  priceExcludingVatMinor: variant.priceExcludingVatMinor,
-  priceFrom: false,
-  priceMinor: variant.priceMinor,
-  sku: variant.sku,
-  stock: variant.stock,
-  stockQuantity: variant.stockQuantity,
-  unit: variant.unit,
-});
+) => {
+  const card = {
+    ...Struct.omit(product, ["packageQuantity", "originalPriceMinor"]),
+    ...Struct.pick(variant, ["packageQuantity"]),
+    image: variant.image ?? product.image,
+    minimumQuantity: variant.minimumQuantity,
+    priceExcludingVatMinor: variant.priceExcludingVatMinor,
+    priceFrom: false,
+    priceMinor: variant.priceMinor,
+    sku: variant.sku,
+    stock: variant.stock,
+    stockQuantity: variant.stockQuantity,
+    unit: variant.unit,
+  };
+  if (variant.originalPriceMinor !== null && variant.originalPriceMinor !== undefined) {
+    Object.assign(card, { originalPriceMinor: variant.originalPriceMinor });
+  }
+  return card;
+};
 
 /** Presentation of a genuine owner variant; unknown selections never choose an unrelated variant. */
 export const selectProductDetail = (product: ProductDetailModel, variantId: string | undefined) => {

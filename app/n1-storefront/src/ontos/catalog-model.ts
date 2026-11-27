@@ -1,4 +1,4 @@
-import { Schema, Struct } from "effect";
+import { Option, Schema, Struct, flow } from "effect";
 import { categoryForestIssue } from "@app/merchandise/domain/category-forest";
 import { isStorefrontMediaPath, productMediaPath } from "./media-path";
 
@@ -20,21 +20,45 @@ const ownerFlagFields = {
 export const ProductLabelSchema = Schema.Literals(["action", "new", "recommended", "sale"]);
 export type ProductLabel = typeof ProductLabelSchema.Type;
 const productLabels: readonly ProductLabel[] = ["action", "new", "recommended", "sale"];
-const flagKey = { action: "isAction", new: "isNew", recommended: "isRecommended", sale: "isSale" };
-/** The four OntOS storefront labels, set as booleans, a nested flags object or a labels list. */
-const labelsOf = (record: Readonly<Record<string, unknown>>): ProductLabel[] => {
-  const nested =
-    typeof record.flags === "object" && record.flags !== null
-      ? (record.flags as Readonly<Record<string, unknown>>)
-      : {};
+const flagKey = {
+  action: "isAction",
+  new: "isNew",
+  recommended: "isRecommended",
+  sale: "isSale",
+} as const;
+const LabelFlagsSchema = Schema.Struct({
+  isAction: optionalUnknown,
+  isNew: optionalUnknown,
+  isRecommended: optionalUnknown,
+  isSale: optionalUnknown,
+  labels: optionalUnknown,
+});
+/** Parse optional owner extensions independently: malformed hints never hide the catalogue. */
+const labelsOf = (
+  record: Pick<
+    OwnerProduct,
+    "flags" | "isAction" | "isNew" | "isRecommended" | "isSale" | "labels"
+  >,
+): ProductLabel[] => {
+  const nested = Schema.decodeUnknownOption(LabelFlagsSchema)(record.flags).pipe(
+    Option.getOrElse(() => ({})),
+  );
   const all = { ...record, ...nested };
-  const listed = Array.isArray(all.labels) ? all.labels : [];
+  const listed = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown))(all.labels).pipe(
+    Option.getOrElse((): readonly unknown[] => []),
+  );
   return productLabels.filter((label) => all[flagKey[label]] === true || listed.includes(label));
 };
-const positive = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-const filled = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+const positive = flow(
+  Schema.decodeUnknownOption(Schema.Finite.check(Schema.isGreaterThan(0))),
+  Option.getOrUndefined,
+);
+const filled = flow(
+  Schema.decodeUnknownOption(Schema.String),
+  Option.map((value) => value.trim()),
+  Option.filter((value) => value.length > 0),
+  Option.getOrUndefined,
+);
 const StoreCurrencySchema = Schema.Literals(["CZK", "EUR", "PLN"]);
 const VariantPreviewItemsSchema = Schema.Array(
   Schema.Struct({ id: Schema.String, name: Schema.String }),
@@ -84,9 +108,6 @@ export const CatalogResponseSchema = Schema.Struct({
       ...ownerFlagFields,
       brand: optionalString,
       categoryId: optionalString,
-      heightMm: optionalUnknown,
-      lengthMm: optionalUnknown,
-      widthMm: optionalUnknown,
       currency: optionalString,
       currentPriceMinor: optionalNumber,
       description: optionalString,
@@ -96,9 +117,11 @@ export const CatalogResponseSchema = Schema.Struct({
       ),
       gallery: Schema.optionalKey(Schema.Array(Schema.String)),
       grossPriceMinor: optionalNumber,
+      heightMm: optionalUnknown,
       id: Schema.String,
       imageAlt: optionalString,
       imageSrc: optionalString,
+      lengthMm: optionalUnknown,
       minimumQuantity: optionalNumber,
       name: Schema.String,
       packageQuantity: optionalNumber,
@@ -151,6 +174,7 @@ export const CatalogResponseSchema = Schema.Struct({
           stockOnHand: Schema.Number,
         }),
       ),
+      widthMm: optionalUnknown,
     }),
   ),
   total: optionalNumber,
@@ -198,16 +222,16 @@ interface ProductVariantModel {
   readonly minimumQuantity: number;
   readonly name: string;
   readonly originalPriceMinor?: number | null;
-  readonly priceTiers: readonly QuantityPriceModel[];
-  readonly weightGrams: number | null;
   readonly packageQuantity?: number;
   readonly parameters: typeof ParametersSchema.Type;
   readonly priceExcludingVatMinor: number | null;
   readonly priceMinor: number | null;
+  readonly priceTiers: readonly QuantityPriceModel[];
   readonly sku: string;
   readonly stock: ProductCardModel["stock"];
   readonly stockQuantity: number | null;
   readonly unit: string;
+  readonly weightGrams: number | null;
 }
 
 export interface ProductDetailModel extends ProductCardModel {
@@ -237,18 +261,18 @@ const quantityPricesOf = (
   minimum: number,
 ): QuantityPriceModel[] =>
   (tiers ?? [])
-    .filter(
-      (tier) =>
-        Number.isSafeInteger(tier.priceMinor) &&
-        tier.priceMinor > 0 &&
-        Number.isFinite(tier.minimumQuantity) &&
-        tier.minimumQuantity > minimum,
+    .flatMap((tier) =>
+      Number.isSafeInteger(tier.priceMinor) &&
+      tier.priceMinor > 0 &&
+      Number.isFinite(tier.minimumQuantity) &&
+      tier.minimumQuantity > minimum
+        ? [{ minimumQuantity: tier.minimumQuantity, priceMinor: tier.priceMinor }]
+        : [],
     )
-    .map((tier) => ({ minimumQuantity: tier.minimumQuantity, priceMinor: tier.priceMinor }))
-    .sort((a, b) => a.minimumQuantity - b.minimumQuantity);
+    .toSorted((a, b) => a.minimumQuantity - b.minimumQuantity);
 
-const originalOf = (original: unknown, price: number | null): number | null => {
-  const amount = positive(original);
+const originalOf = (original: number | undefined, price: number | null): number | null => {
+  const amount = original;
   return amount !== undefined && price !== null && Number.isSafeInteger(amount) && amount > price
     ? amount
     : null;
@@ -393,7 +417,7 @@ const variantDetailsOf = (
       labels: labelsOf(variant),
       minimumQuantity,
       name: variant.name,
-      originalPriceMinor: originalOf(variant.originalPriceMinor, priceMinor),
+      originalPriceMinor: originalOf(positive(variant.originalPriceMinor), priceMinor),
       priceTiers: quantityPricesOf(variant.priceTiers, minimumQuantity),
       weightGrams: positive(variant.weightGrams) ?? null,
       ...Struct.pick(variant, ["packageQuantity"]),
@@ -475,12 +499,19 @@ const dimensionsOf = (product: OwnerProduct): string | null => {
 /** A group shows the struck price of its cheapest active variant; a simple product its own. */
 const cardOriginalOf = (product: OwnerProduct, price: number | null): number | null => {
   if ((product.variantSummary?.count ?? 0) === 0) {
-    return originalOf(product.originalPriceMinor, price);
+    return originalOf(positive(product.originalPriceMinor), price);
   }
   const cheapest = (product.variantRecords ?? []).find(
     (variant) => variant.active && variant.grossPriceMinor === price,
   );
-  return cheapest === undefined ? null : originalOf(cheapest.originalPriceMinor, price);
+  return cheapest === undefined ? null : originalOf(positive(cheapest.originalPriceMinor), price);
+};
+
+const minimumQuantityOf = (value: number | undefined) =>
+  value !== undefined && value > 0 ? value : 1;
+const cardDescriptionOf = (product: OwnerProduct) => {
+  const shortDescription = product.shortDescription ?? "";
+  return shortDescription.length > 0 ? shortDescription : (product.description ?? "");
 };
 
 const detailOf = (
@@ -502,10 +533,7 @@ const detailOf = (
     ),
     imageAlt: product.imageAlt ?? product.name,
     images: detailImagesOf(product, hosts),
-    minimumQuantity:
-      product.minimumQuantity !== undefined && product.minimumQuantity > 0
-        ? product.minimumQuantity
-        : 1,
+    minimumQuantity: minimumQuantityOf(product.minimumQuantity),
     paragraphs: detailParagraphsOf(product, card.description),
     parameters: product.parameters ?? [],
     priceExcludingVatMinor:
@@ -564,12 +592,8 @@ export const projectCatalog = (
     const unit = filled(product.sourceUnit) ?? product.unit;
     const card: ProductCardModel = {
       ...Struct.pick(product, ["minimumQuantity", "packageQuantity"]),
-      ...(unit === undefined ? {} : { unit }),
       currency: body.market.currency,
-      description:
-        (product.shortDescription ?? "").length > 0
-          ? (product.shortDescription ?? "")
-          : (product.description ?? ""),
+      description: cardDescriptionOf(product),
       id: product.id,
       image: imageOf(
         product.id,
@@ -586,6 +610,9 @@ export const projectCatalog = (
       stockQuantity: stockQuantityOf(product),
       variantPreview: product.storefrontVariantPreview?.variants ?? [],
     };
+    if (unit !== undefined) {
+      Object.assign(card, { unit });
+    }
     const variantCount = variantCountOf(product);
     if (variantCount !== undefined) {
       Object.assign(card, { variantCount });

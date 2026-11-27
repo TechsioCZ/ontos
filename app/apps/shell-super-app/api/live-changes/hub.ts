@@ -2,6 +2,7 @@ import type { LiveChange } from '@app/core-runtime/live/change-notification';
 import { Clock, Context, Deferred, Duration, Effect, Layer, Option, Queue, Random, RcRef, Stream } from 'effect';
 
 import { LiveChangeTail } from './listener.ts';
+import type { LiveChangeSink } from './listener.ts';
 import { appsForChange } from './live-scope.ts';
 import type { LiveScope } from './live-scope.ts';
 
@@ -146,6 +147,11 @@ const evictionsFor = (subscribers: ReadonlySet<Subscriber>, principalId: string)
 
 export interface LiveChangeHubService {
   readonly connections: Effect.Effect<number>;
+  /**
+   * Feeds every committed change and every reset to `sink` until interrupted, holding the change tail open meanwhile
+   * whether or not a browser is connected (server-side followers: the Symmy merchandise copy).
+   */
+  readonly follow: (sink: LiveChangeSink) => Effect.Effect<never>;
   /** Routes one committed change to the affected connections and remembers it for resumed streams. */
   readonly publish: (change: LiveChange) => Effect.Effect<void>;
   /** Asks every connection to revalidate everything (after possibly missed notifications). */
@@ -170,6 +176,12 @@ export const LiveChangeHubLive = Layer.effect(
   Effect.gen(function* makeLiveChangeHub() {
     const tail = yield* LiveChangeTail;
     const subscribers = new Set<Subscriber>();
+    const followers = new Set<LiveChangeSink>();
+    // A follower never stops the tail: whatever one does with a change is its own.
+    const toFollowers = (feed: (follower: LiveChangeSink) => Effect.Effect<void>) =>
+      Effect.forEach(followers, (follower) => feed(follower).pipe(Effect.catchCause(() => Effect.void)), {
+        discard: true,
+      });
     const log: ChangeLog = {
       entries: [],
       epoch: (yield* Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER)).toString(36),
@@ -184,14 +196,14 @@ export const LiveChangeHubLive = Layer.effect(
           log.floor = log.entries.shift()?.sequence ?? log.floor;
         }
         routeChange(subscribers, change);
-      });
+      }).pipe(Effect.andThen(toFollowers((follower) => follower.publish(change))));
     // Notifications may have been lost: nothing before this point can be replayed any more.
     const resetAll = Effect.sync(() => {
       log.sequence += 1;
       log.floor = log.sequence;
       log.entries.length = 0;
       resetSubscribers(subscribers);
-    });
+    }).pipe(Effect.andThen(toFollowers((follower) => follower.resetAll)));
     const tailLease = yield* RcRef.make({
       acquire: Effect.forkScoped(tail.run({ publish, resetAll })),
       idleTimeToLive: TAIL_IDLE,
@@ -250,8 +262,15 @@ export const LiveChangeHubLive = Layer.effect(
       return Option.some(Stream.unwrap(open(scope, lastEventId, retryMillis)));
     });
 
+    const follow = (sink: LiveChangeSink) =>
+      Effect.acquireRelease(
+        Effect.sync(() => followers.add(sink)),
+        () => Effect.sync(() => followers.delete(sink)),
+      ).pipe(Effect.andThen(RcRef.get(tailLease)), Effect.andThen(Effect.never), Effect.scoped);
+
     return {
       connections: Effect.sync(() => subscribers.size),
+      follow,
       publish,
       resetAll,
       subscribe,

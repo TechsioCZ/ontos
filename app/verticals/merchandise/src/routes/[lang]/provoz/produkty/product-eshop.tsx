@@ -10,7 +10,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime, formatMoney, ScrollRegion, SectionCard } from '@app/admin-ui';
-import { DateTime } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type {
@@ -22,6 +22,9 @@ import type {
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { productVersionOf, runCommand } from './products-api.ts';
+import type { CommandOutcome } from './products-api.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { writeThroughSymmyVariant } from './symmy-write-through.ts';
 import { fieldError } from './product-form-validation.ts';
 import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
@@ -70,6 +73,26 @@ const parseCzk = (text: string): number | null => {
   const value = Number(normalized);
   return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;
 };
+
+/**
+ * The Catalog variant a staff price or stock change of this variant is written to first (Pricing, Inventory): a variant
+ * the ERP connector Symmy imported or linked by SKU. Other variants, also of the same product, save as ordinary ones.
+ */
+const symmyVariantTarget = (product: ProductRecord, variantId: string | undefined) => {
+  const catalogVariantId = (product.variants ?? []).find(
+    (variant) => variant.id !== undefined && variant.id === variantId,
+  )?.catalogVariantId;
+  return product.importedVia !== 'symmy' ||
+    product.catalogProductId === undefined ||
+    catalogVariantId === undefined ||
+    catalogVariantId === ''
+    ? undefined
+    : { catalogProductId: product.catalogProductId, catalogVariantId };
+};
+
+/** A product Symmy created (not a shop product linked by SKU): the ERP owns its variant list, so none is added here. */
+const variantsOwnedBySymmy = (product: ProductRecord) =>
+  product.importedVia === 'symmy' && product.id.startsWith('symmy-');
 
 interface VariantDraft extends VariantDetailDraft {
   readonly active: boolean;
@@ -183,6 +206,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
   const [quantityText, setQuantityText] = useState('10');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   // A refused quantity is marked on its field until it is typed again.
   const [quantityRefused, setQuantityRefused] = useState(false);
   const firstVariant = variants[0]?.id ?? '';
@@ -215,29 +239,82 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
     const delta = variantMovementDelta(reason, quantity);
     setBusy(true);
     setError(null);
-    runCommand(
-      {
-        _tag: 'RecordStockMovement',
-        delta,
-        note: `Varianta ${variant.name}`,
-        productId: product.id,
-        reason,
-        variantId: variant.id,
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setError(
-            outcome.reason === 'rejected'
-              ? 'Sklad varianty nesmí klesnout pod nulu.'
-              : failure(outcome.reason, onReload, outcome.proposal),
-          );
-          return;
-        }
-        clear();
-        onCommitted(`Pohyb zapsán: ${variant.name} ${formatDelta(delta)} ks`);
-      },
+    setDone(null);
+    const refused = (outcome: Extract<CommandOutcome, { readonly ok: false }>) => {
+      setBusy(false);
+      setError(
+        outcome.reason === 'rejected'
+          ? 'Sklad varianty nesmí klesnout pod nulu.'
+          : failure(outcome.reason, onReload, outcome.proposal),
+      );
+    };
+    const record = (at: number, corrected?: number) =>
+      runCommand(
+        {
+          _tag: 'RecordStockMovement',
+          delta,
+          note: `Varianta ${variant.name}`,
+          productId: product.id,
+          reason,
+          variantId: variant.id,
+        },
+        at,
+        (outcome) => {
+          if (!outcome.ok) {
+            refused(outcome);
+            return;
+          }
+          setBusy(false);
+          clear();
+          const message = `Pohyb zapsán: ${variant.name} ${formatDelta(delta)} ks${
+            corrected === undefined ? '' : `, stav ve skladu ERP je nyní ${corrected} ks`
+          }.`;
+          setDone(message);
+          onCommitted(message);
+        },
+      );
+    const target = symmyVariantTarget(product, variant.id);
+    if (target === undefined) {
+      record(revision);
+      return;
+    }
+    // A variant from Symmy: the movement is applied to Inventory's CURRENT on-hand first (never to this row's figure,
+    // which can lag behind the ERP); when that fails nothing is recorded here. A row that differed from the ERP is first
+    // corrected to the ERP figure, so after the save both hold the same on-hand.
+    void browserRuntime.runPromise(
+      writeThroughSymmyVariant({ ...target, reason: `Varianta ${variant.name}`, stockDelta: delta }).pipe(
+        Effect.match({
+          onFailure: (message) => {
+            setBusy(false);
+            setError(`Pohyb nebyl zapsán, sklad v ERP ho nepřijal: ${message}`);
+          },
+          onSuccess: ({ stock }) => {
+            const correction = stock === undefined ? 0 : Math.round((stock.before - variant.stockOnHand) * 1000) / 1000;
+            if (stock === undefined || correction === 0) {
+              record(revision, stock?.after);
+              return;
+            }
+            runCommand(
+              {
+                _tag: 'RecordStockMovement',
+                delta: correction,
+                note: 'Srovnání se stavem skladu v ERP',
+                productId: product.id,
+                reason: 'ADJUSTMENT',
+                variantId: variant.id,
+              },
+              revision,
+              (outcome) => {
+                if (!outcome.ok) {
+                  refused(outcome);
+                  return;
+                }
+                record(outcome.revision, stock.after);
+              },
+            );
+          },
+        }),
+      ),
     );
   };
 
@@ -303,6 +380,11 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
       {error !== null && (
         <StatusText showIcon status="error">
           {error}
+        </StatusText>
+      )}
+      {done !== null && (
+        <StatusText showIcon status="success">
+          {done}
         </StatusText>
       )}
       {dialog}
@@ -531,15 +613,31 @@ const useVariantsPanel = ({
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
   const save = useProductTabSave<readonly VariantDraft[]>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
-    // A Symmy product: no saved price may differ from the stored one and no variant may be added (ERP-only prices).
+    // A product Symmy created: no variant may be added (the ERP owns its variant list).
     isValid: (value) =>
-      !variantsInvalid(value) &&
-      (product.importedVia !== 'symmy' ||
-        value.every((draft) => {
-          const stored = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
-          return stored !== undefined && stored.priceMinor === parseCzk(draft.priceText);
-        })),
+      !variantsInvalid(value) && (!variantsOwnedBySymmy(product) || value.every((draft) => draft.id !== undefined)),
+    // A changed price of a variant from Symmy goes to Pricing first, one variant after another; when Pricing refuses,
+    // nothing of the draft is saved.
     keepAs: `variants:${product.id}`,
+    writeThrough: (value, confirmed) =>
+      Effect.forEach(
+        value,
+        (draft) => {
+          const target = symmyVariantTarget(product, draft.id);
+          const before = confirmed.find((entry) => entry.key === draft.key);
+          const priceMinor = parseCzk(draft.priceText);
+          return target === undefined ||
+            priceMinor === null ||
+            (before !== undefined && parseCzk(before.priceText) === priceMinor)
+            ? Effect.void
+            : writeThroughSymmyVariant({
+                ...target,
+                priceNet: (priceMinor / 100).toFixed(2),
+                reason: `Změna ceny varianty ${draft.name.trim()}`,
+              }).pipe(Effect.mapError((message) => `Cena varianty ${draft.name.trim()} nebyla uložena: ${message}`));
+        },
+        { discard: true },
+      ),
     // Two operators edit different variants of one product: each variant merges on its own.
     merge: mergeKeyedDrafts,
     onReload,
@@ -870,8 +968,8 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                       <Table.Cell align="end">
                         <div className="ml-auto w-32">
                           <FormNumericInput
-                            // A Symmy product's prices live in the ERP; this panel does not write them there.
-                            disabled={!canWrite || product.importedVia === 'symmy'}
+                            // A variant from Symmy saves its price to the ERP (Pricing) first; see writeThrough.
+                            disabled={!canWrite}
                             formatOptions={MONEY_FORMAT}
                             id={`variant-price-${draft.key}`}
                             label={<span className="sr-only">Cena bez DPH</span>}
@@ -947,14 +1045,14 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           SKU variant se nesmí opakovat.
         </StatusText>
       )}
-      {product.importedVia === 'symmy' && (
-        <p className="text-fg-secondary text-sm">Cenu tohoto produktu měňte v detailu produktu.</p>
+      {variantsOwnedBySymmy(product) && (
+        <p className="text-fg-secondary text-sm">Varianty tohoto produktu přidává ERP (Symmy).</p>
       )}
       {canWrite && (
         <div className="flex flex-wrap items-center justify-between gap-150">
           <Button
             appearance="outline"
-            disabled={product.importedVia === 'symmy'}
+            disabled={variantsOwnedBySymmy(product)}
             icon="icon-[mdi--plus]"
             onClick={addDraft}
             severity="secondary"

@@ -130,6 +130,8 @@ export const sk: Dictionary = {
     priceExcludingVat: "Cena bez DPH",
     priceIncludingVat: "Cena s DPH",
     excludingVat: "bez DPH",
+    yourPrice: "Vaša cena",
+    basePrice: "Základná cena",
     noValidPrice: "OntOS pre túto položku nevrátil platnú cenu.",
     cannotBuyNow: "Kúpiť ju preto teraz nemožno.",
     availabilityCannotConfirm:
@@ -1016,7 +1018,7 @@ export const sk: Dictionary = {
         "Registrácia bola dokončená, ale prístup k účtu teraz nie je povolený. Obnovenie registrácie neoprávňuje na prístup.",
       admitted: "Účet je pripravený.",
       intro:
-        "Samotné prihlásenie registráciu nedokončuje. Tu overíte prijatie účtu a obnovíte rozpracované kroky.",
+        "Registrácia sa po prihlásení dokončí sama, zvyčajne v priebehu niekoľkých sekúnd. Nakupovať môžete hneď. Tu vidíte jej stav a môžete ju obnoviť, keby sa zastavila.",
       checking: "Overujem…",
       check: "Overiť stav",
       resume: "Obnoviť registráciu",

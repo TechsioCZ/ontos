@@ -665,7 +665,6 @@ export const merchandiseSearchRefreshTarget = (
       CreateCategory: () => base,
       CreateOrder: () => ({ ...base, orderIds: ids }),
       CreateProduct: () => ({ ...base, productIds: ids }),
-      UpsertSourceProduct: () => ({ ...base, productIds: ids }),
       DeleteCategory: () => base,
       EditOrder: (value) => ({ ...base, orderIds: [value.id] }),
       LinkOrderCustomer: (value) => ({ ...base, orderIds: [value.id] }),
@@ -677,9 +676,11 @@ export const merchandiseSearchRefreshTarget = (
       RestoreProduct: (value) => ({ ...base, productIds: [value.id] }),
       SetMarketProductOffers: () => base,
       SetProductMarketOffer: () => base,
+      SetSymmyLink: (value) => ({ ...base, productIds: [value.id] }),
       SyncTaxRates: () => base,
       UpdateCategory: () => base,
       UpdateProduct: (value) => ({ ...base, productIds: [value.id] }),
+      UpsertSourceProduct: () => ({ ...base, productIds: ids }),
     }),
   );
 };

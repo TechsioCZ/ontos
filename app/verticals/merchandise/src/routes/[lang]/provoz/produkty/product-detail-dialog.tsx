@@ -183,7 +183,9 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
   const nameError = name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
   const categoryError =
     category.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
-  const priceKey = priceErrorKey(priceCzk);
+  // A product with sellable variants is priced by them: its own price is not asked for, so it is never refused.
+  const pricedByVariants = draft.realVariants.length > 0;
+  const priceKey = pricedByVariants ? undefined : priceErrorKey(priceCzk);
   const priceError = priceKey === undefined ? undefined : k(priceKey);
   const lowStockKey = lowStockErrorKey(lowStock);
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
@@ -277,26 +279,28 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
         </p>
       )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormNumericInput
-          disabled={disabled}
-          formatOptions={MONEY_FORMAT}
-          id="detail-price"
-          label={k('fields.priceNet')}
-          locale="cs-CZ"
-          min={0}
-          name="price"
-          onValueChange={(details) => {
-            onDraftChange({ priceCzk: details.valueAsNumber, priceText: details.value });
-          }}
-          required
-          step={1}
-          value={priceText}
-          {...fieldError(true, priceError)}
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-valuemax={undefined} />
-          </NumericInput.Control>
-        </FormNumericInput>
+        {!pricedByVariants && (
+          <FormNumericInput
+            disabled={disabled}
+            formatOptions={MONEY_FORMAT}
+            id="detail-price"
+            label={k('fields.priceNet')}
+            locale="cs-CZ"
+            min={0}
+            name="price"
+            onValueChange={(details) => {
+              onDraftChange({ priceCzk: details.valueAsNumber, priceText: details.value });
+            }}
+            required
+            step={1}
+            value={priceText}
+            {...fieldError(true, priceError)}
+          >
+            <NumericInput.Control>
+              <NumericInput.Input aria-valuemax={undefined} />
+            </NumericInput.Control>
+          </FormNumericInput>
+        )}
         <FormNumericInput
           clampValueOnBlur={false}
           disabled={disabled}
@@ -327,7 +331,11 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
         {...(grossNote === undefined ? {} : { helpText: grossNote })}
       />
       {/* A product with variants sells at its variants' prices: its own net price stores no gross that staff see. */}
-      {gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>}
+      {pricedByVariants ? (
+        <p className="text-fg-secondary text-sm">{k('detail.variantPriceHint')}</p>
+      ) : (
+        gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>
+      )}
       <SymmyWriteThroughNote product={product} />
       <FormTextarea
         disabled={disabled}
@@ -494,13 +502,15 @@ export const ProductDetailView = ({
   // The Pricing/Inventory variant a stock movement of this Symmy product writes through to; none for other products.
   const symmyStockTarget = (variantId: string | undefined) => {
     if (product.importedVia !== 'symmy' || product.catalogProductId === undefined) {
-      return undefined;
+      return;
     }
     const catalogVariantId =
       variantId === undefined
         ? product.catalogVariantId
         : product.variants?.find((variant) => variant.id === variantId)?.catalogVariantId;
-    return catalogVariantId === undefined ? undefined : { catalogProductId: product.catalogProductId, catalogVariantId };
+    return catalogVariantId === undefined
+      ? undefined
+      : { catalogProductId: product.catalogProductId, catalogVariantId };
   };
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
