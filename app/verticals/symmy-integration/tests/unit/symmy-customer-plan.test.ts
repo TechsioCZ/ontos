@@ -348,48 +348,24 @@ describe('Symmy customer plan from the public rows', () => {
     }),
   );
 
-  it.effect('writes the ICO of an organization to its profile and keeps its DIČ on the Party', () =>
+  it.effect('writes the ICO and the DIČ of an organization to its Party', () =>
     Effect.gen(function* plansIdentifiers() {
-      const plan = Option.getOrThrow(
-        yield* build(
-          rowsOf(
-            organization({
-              officialIdentifiers: [
-                { identifierType: 'ICO', value: '27082440' },
-                { identifierType: 'CZ_DIC', value: 'CZ27082440' },
-              ],
-            }),
-          ),
-        ),
-      );
+      const identifiers = [
+        { identifierType: 'ICO', value: '27082440' },
+        { identifierType: 'CZ_DIC', value: 'CZ27082440' },
+      ];
+      const plan = Option.getOrThrow(yield* build(rowsOf(organization({ officialIdentifiers: identifiers }))));
       const [item] = plan.items;
       expect(item?.unsupportedBranches).toBeUndefined();
+      // The company ICO is no profile effect of its own: Party keeps it beside the DIČ.
       expect(item?.effects.map(({ effectKey }) => effectKey)).toEqual([
         'party-create',
         'counterparty-onboard',
         'counterparty-profile',
-        'ico-set',
       ]);
-      expect(item?.effects[0]?.intent).toMatchObject({
-        payload: { candidate: { officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ27082440' }] } },
-      });
-      const ico = item?.effects[3];
-      expect(ico?.dependsOn).toEqual(['counterparty-profile']);
-      expect(ico?.operation).toMatchObject(operations.ico);
-      expect(tagOf(ico)).toBe('OrganizationCustomerProfileIcoFromProfileEffect');
-      expect(ico?.intent).toMatchObject({
-        fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
-        payload: {
-          countryCode: 'CZ',
-          effectiveAt: '2026-11-16T10:00:00.000Z',
-          expectedRevision: 0,
-          identifier: { identifierType: 'ICO', value: '27082440' },
-          operation: 'SET',
-          originalInput: '27082440',
-        },
-        sourceReference: { occurrenceId: item?.sourceOccurrenceId, recordId: 'company-1' },
-      });
-      expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema)(ico?.intent))).toBe(true);
+      const [create] = item?.effects ?? [];
+      expect(create?.intent).toMatchObject({ payload: { candidate: { officialIdentifiers: identifiers } } });
+      expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema)(create?.intent))).toBe(true);
       const [without] = Option.getOrThrow(yield* build(rowsOf(person()))).items;
       expect(without?.unsupportedBranches).toBeUndefined();
     }),
@@ -410,8 +386,9 @@ describe('Symmy customer plan from the public rows', () => {
         ),
       ).items;
       expect(item?.unsupportedBranches).toBeUndefined();
-      expect(item?.effects.filter(({ effectKey }) => effectKey === 'ico-set')).toHaveLength(1);
-      expect(item?.effects[3]?.intent).toMatchObject({ payload: { identifier: { value: '19' }, originalInput: '19' } });
+      expect(item?.effects[0]?.intent).toMatchObject({
+        payload: { candidate: { officialIdentifiers: [{ identifierType: 'ICO', value: '19' }] } },
+      });
     }),
   );
 
@@ -419,10 +396,11 @@ describe('Symmy customer plan from the public rows', () => {
     Effect.gen(function* reportsUnwritten() {
       const ico = [{ identifierType: 'ICO', value: '27082440' }];
       const hint = [{ branchKey: 'identifier', kind: 'IdentifierHint' }];
-      // A person's ICO is not written: the Retail profile is no company profile.
+      // A person's ICO is not written: a person is no company.
       const [forPerson] = Option.getOrThrow(yield* build(rowsOf(person({ officialIdentifiers: ico })))).items;
       expect(forPerson?.unsupportedBranches).toEqual(hint);
       expect(forPerson?.effects.map(({ effectKey }) => effectKey)).toEqual(['party-create', 'retail-profile']);
+      expect(forPerson?.effects[0]?.intent).toMatchObject({ payload: { candidate: { officialIdentifiers: [] } } });
       // Two different ICOs of one organization name no single company ICO.
       const [conflicting] = Option.getOrThrow(
         yield* build(
@@ -434,20 +412,7 @@ describe('Symmy customer plan from the public rows', () => {
         ),
       ).items;
       expect(conflicting?.unsupportedBranches).toEqual(hint);
-      expect(conflicting?.effects.map(({ effectKey }) => effectKey)).not.toContain('ico-set');
-      // A route that does not enroll the company ICO change cannot write it.
-      const { ico: _enrolled, ...others } = operations;
-      const [unenrolled] = Option.getOrThrow(
-        yield* build(rowsOf(organization({ officialIdentifiers: ico })), {
-          template: templateWith(...Object.values(others)),
-        }),
-      ).items;
-      expect(unenrolled?.unsupportedBranches).toEqual(hint);
-      expect(unenrolled?.effects.map(({ effectKey }) => effectKey)).toEqual([
-        'party-create',
-        'counterparty-onboard',
-        'counterparty-profile',
-      ]);
+      expect(conflicting?.effects[0]?.intent).toMatchObject({ payload: { candidate: { officialIdentifiers: [] } } });
     }),
   );
 

@@ -87,14 +87,20 @@ const unsafeCandidates: readonly Schema.Json[] = [
   { ...candidate, lastName: 'Personal value' },
   { ...candidate, email: 'unwanted@example.invalid' },
   { ...candidate, evidenceRefs: ['unbounded-evidence'] },
-  { ...candidate, officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }] },
-  // A nine- or ten-digit DIČ carries a birth number; an organization states one company DIČ at most.
+  // A nine- or ten-digit DIČ carries a birth number; an organization states one company IČO and one DIČ at most.
   { ...candidate, officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ8001011234' }] },
   {
     ...candidate,
     officialIdentifiers: [
       { identifierType: 'CZ_DIC', value: 'CZ27074358' },
       { identifierType: 'CZ_DIC', value: 'CZ25209361' },
+    ],
+  },
+  {
+    ...candidate,
+    officialIdentifiers: [
+      { identifierType: 'ICO', value: '27074358' },
+      { identifierType: 'ICO', value: '25209361' },
     ],
   },
   { ...candidate, provenance: { ...candidate.provenance, method: 'SIGNED_CONTRACT' } },
@@ -105,8 +111,8 @@ const unsafeCandidates: readonly Schema.Json[] = [
   { ...candidate, subjectEvidence: [{ ...assertion, subjectKey: 'OTHER_RECORD' }] },
   { ...candidate, subjectEvidence: [assertion, assertion] },
 ];
-it.effect('the corporate projection carries the company DIČ', () =>
-  Effect.gen(function* companyDic() {
+it.effect('the corporate projection carries the company IČO and DIČ', () =>
+  Effect.gen(function* companyIdentifiers() {
     const withDic = yield* organizationBusinessSourceInputDigest({
       operation: 'CREATE',
       payload: {
@@ -114,6 +120,19 @@ it.effect('the corporate projection carries the company DIČ', () =>
       },
     });
     expect(withDic.inputDigest).not.toBe((yield* organizationBusinessSourceInputDigest(input())).inputDigest);
+    const withBoth = yield* organizationBusinessSourceInputDigest({
+      operation: 'CREATE',
+      payload: {
+        candidate: {
+          ...candidate,
+          officialIdentifiers: [
+            { identifierType: 'ICO', value: '27074358' },
+            { identifierType: 'CZ_DIC', value: 'CZ27074358' },
+          ],
+        },
+      },
+    });
+    expect(withBoth.inputDigest).not.toBe(withDic.inputDigest);
     // A member of a VAT group states the group's DIČ, CZ699 and six digits: a company identifier, no birth number.
     yield* organizationBusinessSourceInputDigest({
       operation: 'CREATE',

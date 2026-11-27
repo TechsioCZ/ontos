@@ -329,15 +329,15 @@ export const organizationBusinessRecordInputDigest = (input: Schema.Json) =>
   );
 
 /**
- * The one identifier a source organization states to Party: its company DIČ, CZ and the eight IČO digits, or the DIČ
- * of the VAT group it belongs to, CZ699 and six digits. Any other nine- or ten-digit DIČ carries a birth number,
- * personal data no organization business fact may hold. The IČO belongs to the customer profile.
+ * The identifiers a source organization states to Party, each type at most once: its company IČO, and its company DIČ,
+ * CZ and the eight IČO digits, or the DIČ of the VAT group it belongs to, CZ699 and six digits. Any other nine- or
+ * ten-digit DIČ carries a birth number, personal data no organization business fact may hold.
  */
-export const OrganizationBusinessSourceDicSchema = OfficialIdentifierInputSchema.check(
+export const OrganizationBusinessSourceIdentifierSchema = OfficialIdentifierInputSchema.check(
   Schema.makeFilter((identifier) =>
-    identifier.identifierType === 'CZ_DIC' && /^CZ(?:[0-9]{8}|699[0-9]{6})$/u.test(identifier.value.trim().toUpperCase())
+    identifier.identifierType === 'ICO' || /^CZ(?:[0-9]{8}|699[0-9]{6})$/u.test(identifier.value.trim().toUpperCase())
       ? undefined
-      : 'Expected a company CZ_DIC: CZ and eight digits, or a VAT group CZ699 and six digits',
+      : 'Expected a company ICO or a company CZ_DIC: CZ and eight digits, or a VAT group CZ699 and six digits',
   ),
 );
 /** A strict subset of the native payload. This validates an existing assertion; it never rewrites one. */
@@ -347,7 +347,14 @@ export const OrganizationBusinessSourceCandidateSchema = Schema.Struct({
   firstName: Schema.optionalKey(Schema.Never),
   lastName: Schema.optionalKey(Schema.Never),
   evidenceRefs: Schema.Array(Schema.Never),
-  officialIdentifiers: Schema.Array(OrganizationBusinessSourceDicSchema).check(Schema.isMaxLength(1)),
+  officialIdentifiers: Schema.Array(OrganizationBusinessSourceIdentifierSchema).check(
+    Schema.isMaxLength(2),
+    Schema.makeFilter((identifiers) =>
+      new Set(identifiers.map(({ identifierType }) => identifierType)).size === identifiers.length
+        ? undefined
+        : 'Expected at most one company ICO and one company CZ_DIC',
+    ),
+  ),
   provenance: Schema.Struct({
     ...PartyCandidateSchema.fields.provenance.fields,
     externalEvidence: Schema.optionalKey(Schema.Never),

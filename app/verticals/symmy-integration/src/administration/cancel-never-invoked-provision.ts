@@ -4,31 +4,32 @@ import { Effect, Option, Schema } from 'effect';
 
 type DrizzleTransaction = Parameters<Parameters<EffectPgDatabase['transaction']>[0]>[0];
 // Requiring rollback excludes the pooled executor, which cannot keep locks or tenant scope across statements.
-type Transaction = Pick<DrizzleTransaction, 'execute' | 'rollback'>;
+export type SymmyAdministrationTransaction = Pick<DrizzleTransaction, 'execute' | 'rollback'>;
 const uuid = Schema.String.check(Schema.isUUID());
 const bounded = (max: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max), Schema.isTrimmed());
-const inputSchema = Schema.Struct({
+/** One exact job, its execution delivery message, the tenant, and the operator evidence for acting on it. */
+export const SymmyJobOperatorInputSchema = Schema.Struct({
   jobId: uuid.pipe(Schema.brand('SymmyImportJobId')),
   operatorName: bounded(200),
   outboxMessageId: uuid.pipe(Schema.brand('OutboxMessageId')),
   reason: bounded(2000),
   tenantId: uuid.pipe(Schema.brand('TenantId')),
 });
-export type SymmyProvisionCancellationInput = typeof inputSchema.Encoded;
-type Cancellation = typeof inputSchema.Type;
+export type SymmyProvisionCancellationInput = typeof SymmyJobOperatorInputSchema.Encoded;
+type Cancellation = typeof SymmyJobOperatorInputSchema.Type;
 
 export class SymmyProvisionCancellationError extends Schema.TaggedError<SymmyProvisionCancellationError>()(
   'SymmyProvisionCancellationError',
   { cause: Schema.optionalKey(Schema.Defect()), reason: Schema.String },
 ) {}
-const refused = (reason: string) => new SymmyProvisionCancellationError({ reason });
+export const refused = (reason: string) => new SymmyProvisionCancellationError({ reason });
 
-const schemaRefusal = (reason: string) => (cause: Schema.SchemaError) =>
+export const schemaRefusal = (reason: string) => (cause: Schema.SchemaError) =>
   new SymmyProvisionCancellationError({ cause, reason });
 
 const lockPendingProvision = Effect.fn('SymmyAdministration.lockPendingProvision')(function* lockPendingProvision(
-  transaction: Transaction,
+  transaction: SymmyAdministrationTransaction,
   input: Cancellation,
 ) {
   const jobs = yield* transaction
@@ -94,8 +95,67 @@ const lockPendingProvision = Effect.fn('SymmyAdministration.lockPendingProvision
   return job;
 });
 
+/** The unrestricted native administrator in READ COMMITTED, so that a read after the barrier sees owner commits. */
+export const requireNativeAdministrator = Effect.fn('SymmyAdministration.requireNativeAdministrator')(
+  function* requireNativeAdministrator(transaction: SymmyAdministrationTransaction) {
+    const facts = yield* transaction
+      .execute(
+        sql`
+      select session_user::text as "recordedBy",
+        current_setting('transaction_isolation') = 'read committed' as "readCommitted",
+        has_table_privilege(session_user, 'symmy_integration.job_effects', 'UPDATE')
+          and has_table_privilege(session_user, 'core.audit_events', 'INSERT')
+          and has_table_privilege(session_user, 'core.outbox_delivery_resolutions', 'INSERT')
+          and not row_security_active('core.action_invocations')
+          and not row_security_active('symmy_integration.job_effects') as administrative
+    `,
+        'objects',
+      )
+      .pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                administrative: Schema.Boolean,
+                readCommitted: Schema.Boolean,
+                recordedBy: bounded(200),
+              }),
+            ),
+          ),
+        ),
+      );
+    const [identity] = facts;
+    if (facts.length !== 1 || identity?.administrative !== true || !identity.readCommitted) {
+      return yield* refused('An operator settlement requires an unrestricted native administrator and READ COMMITTED');
+    }
+    yield* transaction.execute(sql`set local lock_timeout = '5s'`);
+    return identity.recordedBy;
+  },
+);
+
+/** The existing native admission barrier: the UPDATE waits for owner SHARE locks, later owner execution refuses. */
+export const cancelAdmissionFence = Effect.fn('SymmyAdministration.cancelAdmissionFence')(function* cancelFence(
+  transaction: SymmyAdministrationTransaction,
+  tenantId: string,
+  admissionId: string,
+) {
+  yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
+  const cancelled = yield* transaction
+    .execute(
+      sql`
+      select allowed from trust.cancel_source_execution_fence(${tenantId}::uuid, ${admissionId}::uuid)
+    `,
+      'objects',
+    )
+    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ allowed: Schema.Boolean })))));
+  if (cancelled.length !== 1 || cancelled[0]?.allowed !== true) {
+    return yield* refused('The native original-admission cancellation barrier did not close');
+  }
+  return yield* Effect.void;
+});
+
 const lockUnsettledProvision = Effect.fn('SymmyAdministration.lockUnsettledProvision')(function* lockUnsettledProvision(
-  transaction: Transaction,
+  transaction: SymmyAdministrationTransaction,
   input: Cancellation,
   fenceState: string,
 ) {
@@ -164,57 +224,16 @@ const lockUnsettledProvision = Effect.fn('SymmyAdministration.lockUnsettledProvi
  * payload or completion debt is changed. The normal worker alone finishes the partially accepted job.
  */
 export const cancelNeverInvokedSymmyProvision = Effect.fn('SymmyAdministration.cancelNeverInvokedProvision')(
-  function* cancel(transaction: Transaction, rawInput: SymmyProvisionCancellationInput) {
-    const input = yield* Schema.decodeUnknownEffect(inputSchema, { onExcessProperty: 'error' })(rawInput).pipe(
-      Effect.mapError(schemaRefusal('An exact job, delivery, tenant and bounded operator reason are required')),
-    );
-    const facts = yield* transaction
-      .execute(
-        sql`
-      select session_user::text as "recordedBy",
-        current_setting('transaction_isolation') = 'read committed' as "readCommitted",
-        has_table_privilege(session_user, 'symmy_integration.job_effects', 'UPDATE')
-          and has_table_privilege(session_user, 'core.audit_events', 'INSERT')
-          and has_table_privilege(session_user, 'core.outbox_delivery_resolutions', 'INSERT')
-          and not row_security_active('core.action_invocations')
-          and not row_security_active('symmy_integration.job_effects') as administrative
-    `,
-        'objects',
-      )
-      .pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(
-            Schema.Array(
-              Schema.Struct({
-                administrative: Schema.Boolean,
-                readCommitted: Schema.Boolean,
-                recordedBy: bounded(200),
-              }),
-            ),
-          ),
-        ),
-      );
-    const [identity] = facts;
-    if (facts.length !== 1 || identity?.administrative !== true || !identity.readCommitted) {
-      return yield* refused('Cancellation requires an unrestricted native administrator and READ COMMITTED');
-    }
-    yield* transaction.execute(sql`set local lock_timeout = '5s'`);
+  function* cancel(transaction: SymmyAdministrationTransaction, rawInput: SymmyProvisionCancellationInput) {
+    const input = yield* Schema.decodeUnknownEffect(SymmyJobOperatorInputSchema, { onExcessProperty: 'error' })(
+      rawInput,
+    ).pipe(Effect.mapError(schemaRefusal('An exact job, delivery, tenant and bounded operator reason are required')));
+    const recordedBy = yield* requireNativeAdministrator(transaction);
     const job = yield* lockPendingProvision(transaction, input);
     const effect = yield* lockUnsettledProvision(transaction, input, job.fenceState);
     // This is the existing native admission barrier, not an invented invocation or an observational absence.
     // UPDATE waits for owner SHARE locks; subsequent owner preparation/execution refuses the permanent cancellation.
-    yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${input.tenantId}, true)`);
-    const cancelled = yield* transaction
-      .execute(
-        sql`
-      select allowed from trust.cancel_source_execution_fence(${input.tenantId}::uuid, ${job.admissionId}::uuid)
-    `,
-        'objects',
-      )
-      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ allowed: Schema.Boolean })))));
-    if (cancelled.length !== 1 || cancelled[0]?.allowed !== true) {
-      return yield* refused('The native original-admission cancellation barrier did not close');
-    }
+    yield* cancelAdmissionFence(transaction, input.tenantId, job.admissionId);
     // A new READ COMMITTED observation AFTER the barrier includes commits that the UPDATE waited for.
     // Any invocation under this globally unique effect key is refused, even with an unexpected actor or hash.
     const invocations = yield* transaction.execute(
@@ -252,7 +271,7 @@ export const cancelNeverInvokedSymmyProvision = Effect.fn('SymmyAdministration.c
       effectId: effect.effectId,
       outboxUnchanged: true,
       previousVersion: effect.version,
-      recordedBy: identity.recordedBy,
+      recordedBy,
     };
     const evidenceJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(evidence).pipe(
       Effect.mapError(schemaRefusal('The exact operator evidence could not be encoded')),

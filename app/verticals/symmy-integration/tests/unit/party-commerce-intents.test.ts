@@ -279,20 +279,21 @@ describe('internal Party and Commerce normalized intents', () => {
     ).toBe(false);
   });
 
-  it('keeps Czech ICO writes out of the Party import path', () => {
+  it("keeps a person's ICO out of the Party import path and lets an organization state its company ICO", () => {
+    const officialIdentifiers = [{ identifierType: 'ICO', value: '27074358' }];
     expect(
-      match(
-        decodeIntent({
-          _tag: 'PartyCreate',
-          payload: {
-            candidate: {
-              ...candidate,
-              officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
-            },
-          },
-        }),
-      ),
+      match(decodeIntent({ _tag: 'PartyCreate', payload: { candidate: { ...candidate, officialIdentifiers } } })),
     ).toBe(false);
+    const { firstName: _firstName, lastName: _lastName, ...unnamed } = candidate;
+    const organization = {
+      ...unnamed,
+      businessName: 'Internal company',
+      evidenceRefs: [],
+      officialIdentifiers: [...officialIdentifiers, { identifierType: 'CZ_DIC', value: 'CZ27074358' }],
+      partyType: 'ORGANIZATION',
+      subjectEvidence: [{ ...evidence, observedSubject: 'ORGANIZATION' }],
+    };
+    expect(match(decodeIntent({ _tag: 'PartyCreate', payload: { candidate: organization } }))).toBe(true);
   });
 
   it('requires real native group meaning rather than defaulting it from a legacy name', () => {

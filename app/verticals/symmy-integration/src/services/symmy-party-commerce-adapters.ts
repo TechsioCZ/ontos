@@ -441,6 +441,14 @@ const addressSourceMatches = (
   );
 };
 
+/** Only an organization states its company IČO to Party, beside its DIČ; a person's IČO is never imported. */
+const companyIcoOnly = (candidate: {
+  readonly officialIdentifiers: readonly { readonly identifierType: string }[];
+  readonly partyType: string;
+}) =>
+  candidate.partyType === 'ORGANIZATION' ||
+  candidate.officialIdentifiers.every((identifier) => identifier.identifierType !== 'ICO');
+
 /** Reject mismatched evidence before acquiring any owner credential or invoking a business Action. */
 export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent: SymmyPartyCommerceIntent): boolean =>
   Match.value(intent).pipe(
@@ -524,11 +532,11 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
         ),
       PartyCreate: ({ payload }) =>
         input.effect.ref.originalTarget === undefined &&
-        payload.candidate.officialIdentifiers.every((identifier) => identifier.identifierType !== 'ICO') &&
+        companyIcoOnly(payload.candidate) &&
         partyEvidenceMatches(input, payload.candidate.subjectEvidence),
       PartyMatch: ({ payload }) =>
         input.effect.ref.originalTarget === undefined &&
-        payload.candidate.officialIdentifiers.every((identifier) => identifier.identifierType !== 'ICO') &&
+        companyIcoOnly(payload.candidate) &&
         partyEvidenceMatches(input, payload.candidate.subjectEvidence),
       PartyUpdate: ({ payload }) =>
         targetMatches(input, payload.partyRef) && partyEvidenceMatches(input, payload.subjectEvidence),
