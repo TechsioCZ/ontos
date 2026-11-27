@@ -36,7 +36,10 @@ import { ProfilePersistenceDependencyFailure } from '../persistence/profile-pers
 import type { CounterpartyRoleEligibility } from '../persistence/profile-persistence.ts';
 import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
-const ownerProofFailure = (cause: unknown) =>
+const partyAudience = 'party-registry';
+const callerApplication = 'commerce-customer-context';
+
+const ownerProofFailure = (cause?: unknown) =>
   Object.defineProperty(
     new ProfilePersistenceDependencyFailure({ reason: 'Current source-qualified Party owner proof is unavailable' }),
     'cause',
@@ -143,6 +146,77 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
   Effect.gen(function* sourceProfileOwnerProof() {
     const crypto = yield* Crypto.Crypto;
     return {
+      admissionSet: Effect.fn('CommerceSourceProfileOwnerProof.admissionSet')(
+        function* admissionSet(scope, items, operationRequirementKey) {
+          if (items.length === 0) {
+            return [];
+          }
+          const request = yield* Schema.decodeUnknownEffect(SourceAdmissionSetRequestSchema)({
+            items: items.map((item) =>
+              item.kind === 'COUNTERPARTY'
+                ? {
+                    counterpartyRef: {
+                      moduleId: 'party.registry',
+                      resourceId: item.counterpartyResourceId,
+                      resourceType: 'party.registry.counterparty',
+                      tenantId: scope.tenantId,
+                    },
+                    kind: 'COUNTERPARTY',
+                    sourceReference: item.partySourceReference,
+                  }
+                : { kind: 'PERSON', partyRef: item.partyRef, sourceReference: item.partySourceReference },
+            ),
+          }).pipe(Effect.mapError(ownerProofFailure));
+          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
+          const issued = yield* acquireDelegatedGatewayContext(
+            {
+              audience: partyAudience,
+              callingAppId: callerApplication,
+              legalEntityScope: 'subject',
+              requestCorrelation: scope.correlationId,
+              subject: commerceSourceDelegationSubject(
+                scope,
+                'party.registry.source-admission-set.read',
+                request,
+                operationRequirementKey,
+              ),
+            },
+            crypto,
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
+          const response = yield* executeSourceAdmissionSetWithAuthorization(
+            request,
+            issued.authorization,
+            scope.correlationId,
+            { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
+          const result = yield* Schema.decodeUnknownEffect(SourceAdmissionSetResponseSchema)(response).pipe(
+            Effect.mapError(ownerProofFailure),
+          );
+          if (result.items.length !== request.items.length) {
+            return yield* ownerProofFailure();
+          }
+          return yield* Effect.forEach(
+            request.items,
+            (asked, index): Effect.Effect<SourceProfileAdmission, ProfilePersistenceDependencyFailure> => {
+              const answer = result.items[index];
+              if (asked.kind === 'COUNTERPARTY' && answer?.kind === 'COUNTERPARTY') {
+                return Effect.succeed({
+                  kind: 'COUNTERPARTY',
+                  proof: counterpartyProofOf(scope, asked.counterpartyRef.resourceId, asked, answer.result),
+                });
+              }
+              if (asked.kind === 'PERSON' && answer?.kind === 'PERSON') {
+                return Effect.succeed({
+                  kind: 'RETAIL',
+                  proof: retailProofOf(scope, asked.partyRef, asked, answer.result),
+                });
+              }
+              return Effect.fail(ownerProofFailure());
+            },
+            { concurrency: 1 },
+          );
+        },
+      ),
       counterparty: Effect.fn('CommerceSourceProfileOwnerProof.counterparty')(
         function* counterparty(scope, counterpartyResourceId, _source, partySourceReference, operationRequirementKey) {
           const request = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionRequestSchema)({
@@ -157,8 +231,8 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
           const issued = yield* acquireDelegatedGatewayContext(
             {
-              audience: 'party-registry',
-              callingAppId: 'commerce-customer-context',
+              audience: partyAudience,
+              callingAppId: callerApplication,
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -190,8 +264,8 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           }).pipe(Effect.mapError(ownerProofFailure));
           const issued = yield* acquireDelegatedGatewayContext(
             {
-              audience: 'party-registry',
-              callingAppId: 'commerce-customer-context',
+              audience: partyAudience,
+              callingAppId: callerApplication,
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -213,76 +287,6 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
             Effect.mapError(ownerProofFailure),
           );
           return retailProofOf(scope, partyRef, request, result);
-        },
-      ),
-      admissionSet: Effect.fn('CommerceSourceProfileOwnerProof.admissionSet')(
-        function* admissionSet(scope, items, operationRequirementKey) {
-          if (items.length === 0) {
-            return [];
-          }
-          const request = yield* Schema.decodeUnknownEffect(SourceAdmissionSetRequestSchema)({
-            items: items.map((item) =>
-              item.kind === 'COUNTERPARTY'
-                ? {
-                    counterpartyRef: {
-                      moduleId: 'party.registry',
-                      resourceId: item.counterpartyResourceId,
-                      resourceType: 'party.registry.counterparty',
-                      tenantId: scope.tenantId,
-                    },
-                    kind: 'COUNTERPARTY',
-                    sourceReference: item.partySourceReference,
-                  }
-                : { kind: 'PERSON', partyRef: item.partyRef, sourceReference: item.partySourceReference },
-            ),
-          }).pipe(Effect.mapError(ownerProofFailure));
-          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
-          const issued = yield* acquireDelegatedGatewayContext(
-            {
-              audience: 'party-registry',
-              callingAppId: 'commerce-customer-context',
-              legalEntityScope: 'subject',
-              requestCorrelation: scope.correlationId,
-              subject: commerceSourceDelegationSubject(
-                scope,
-                'party.registry.source-admission-set.read',
-                request,
-                operationRequirementKey,
-              ),
-            },
-            crypto,
-          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
-          const response = yield* executeSourceAdmissionSetWithAuthorization(
-            request,
-            issued.authorization,
-            scope.correlationId,
-            { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
-          const result = yield* Schema.decodeUnknownEffect(SourceAdmissionSetResponseSchema)(response).pipe(
-            Effect.mapError(ownerProofFailure),
-          );
-          if (result.items.length !== request.items.length) {
-            return yield* Effect.fail(ownerProofFailure(undefined));
-          }
-          return yield* Effect.forEach(
-            request.items,
-            (asked, index): Effect.Effect<SourceProfileAdmission, ProfilePersistenceDependencyFailure> => {
-              const answer = result.items[index];
-              if (asked.kind === 'COUNTERPARTY' && answer?.kind === 'COUNTERPARTY') {
-                return Effect.succeed({
-                  kind: 'COUNTERPARTY',
-                  proof: counterpartyProofOf(scope, asked.counterpartyRef.resourceId, asked, answer.result),
-                });
-              }
-              if (asked.kind === 'PERSON' && answer?.kind === 'PERSON') {
-                return Effect.succeed({
-                  kind: 'RETAIL',
-                  proof: retailProofOf(scope, asked.partyRef, asked, answer.result),
-                });
-              }
-              return Effect.fail(ownerProofFailure(undefined));
-            },
-          );
         },
       ),
     };
