@@ -392,7 +392,7 @@ const SalesQuoteLines = ({
             placeholder={k('sales.form.descriptionPlaceholder')}
             value={line.description}
           />
-          <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
+          <div className="grid grid-cols-3 items-end gap-100">
             <FormInput
               id={`sales-line-${index}-quantity`}
               inputMode="numeric"

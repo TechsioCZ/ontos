@@ -13,6 +13,7 @@ import {
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -70,37 +71,24 @@ const PlanActualBars = ({
       {rows.map((row) => (
         <li className="grid grid-cols-1 items-center gap-100 text-sm md:grid-cols-[10rem_1fr]" key={row.label}>
           <span className="truncate">{row.label}</span>
-          <span className="flex min-w-0 flex-col gap-50">
-            <span className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
-              <span className="min-w-0">
+          <div className="flex min-w-0 flex-col gap-50">
+            <div className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
+              <div className="min-w-0">
                 <span className="sr-only">{`Plán: ${formatMoney(row.planned)}`}</span>
-                <span
-                  className="block h-3 rounded-sm"
-                  style={{
-                    background: 'var(--color-fg-secondary)',
-                    opacity: 0.35,
-                    width: `${Math.max(0, (row.planned / max) * 100)}%`,
-                  }}
-                />
-              </span>
+                <Meter aria-hidden max={max} severity="neutral" size="md" value={row.planned} />
+              </div>
               <span className="whitespace-nowrap text-fg-secondary text-xs tabular-nums">
                 plán {wholeKc(row.planned)}
               </span>
-            </span>
-            <span className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
-              <span className="min-w-0">
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
+              <div className="min-w-0">
                 <span className="sr-only">{`Skutečnost: ${formatMoney(row.actual)}`}</span>
-                <span
-                  className="block h-3 rounded-sm"
-                  style={{
-                    background: row.over ? 'var(--color-danger)' : 'var(--color-success)',
-                    width: `${Math.max(0, (row.actual / max) * 100)}%`,
-                  }}
-                />
-              </span>
+                <Meter aria-hidden max={max} severity={row.over ? 'danger' : 'success'} size="md" value={row.actual} />
+              </div>
               <span className="whitespace-nowrap text-xs tabular-nums">skutečnost {wholeKc(row.actual)}</span>
-            </span>
-          </span>
+            </div>
+          </div>
         </li>
       ))}
     </ul>

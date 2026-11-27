@@ -6,6 +6,7 @@ import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 
@@ -236,18 +237,10 @@ export const SummaryTable = ({
                       <GroupLabel group={group} grouping={grouping} lang={lang} onPick={onPick} />
                     </th>
                     <td aria-label={formatNumber(group.count)} className="py-100 pr-200">
-                      <span className="flex items-center gap-150">
+                      <div className="flex items-center gap-150">
                         <span className="w-8 text-right tabular-nums">{formatNumber(group.count)}</span>
-                        <span aria-hidden className="h-2 w-28 rounded-sm">
-                          <span
-                            className="block h-full rounded-sm"
-                            style={{
-                              backgroundColor: 'var(--color-chart-series-1)',
-                              width: `${(group.count / maxCount) * 100}%`,
-                            }}
-                          />
-                        </span>
-                      </span>
+                        <Meter aria-hidden className="w-28" max={maxCount} severity="info" value={group.count} />
+                      </div>
                     </td>
                     {report.currencies.map((currency) => {
                       const total = totalIn(group.totals, currency);

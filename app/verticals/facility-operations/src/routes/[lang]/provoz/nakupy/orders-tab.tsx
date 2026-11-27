@@ -6,6 +6,7 @@ import { DetailList, SectionCard, SidePanel, formatDate, surfaceTileClassName } 
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
@@ -79,12 +80,7 @@ const DeliveryProgress = ({ order }: { readonly order: PurchaseOrder }) => {
   const ratio = ordered === 0 ? 0 : received / ordered;
   return (
     <div className="flex min-w-32 flex-col gap-50">
-      <div className="h-1.5 w-full overflow-hidden rounded-full">
-        <div
-          className={ratio >= 1 ? 'h-full bg-success' : 'h-full bg-primary'}
-          style={{ width: `${Math.round(ratio * 100)}%` }}
-        />
-      </div>
+      <Meter aria-hidden max={ordered} severity={ratio >= 1 ? 'success' : 'primary'} value={received} />
       <span className="text-fg-secondary text-xs tabular-nums">{`${received} / ${ordered}`}</span>
     </div>
   );

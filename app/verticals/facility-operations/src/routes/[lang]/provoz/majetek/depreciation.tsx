@@ -202,7 +202,7 @@ const PlanCard = ({
                   <Table.Cell className="whitespace-nowrap">
                     {entry?.documentRef ?? (entry === undefined ? '' : k('notProvided'))}
                   </Table.Cell>
-                  <Table.Cell className="min-w-65 max-w-80 text-fg-secondary" style={{ fontSize: '1rem' }}>
+                  <Table.Cell className="min-w-65 max-w-80 text-[1rem] text-fg-secondary">
                     {entry === undefined ? null : (
                       <>
                         <div>{principalLabel(entry.by, actor, k('you'))}</div>
@@ -217,10 +217,7 @@ const PlanCard = ({
           </Table.Body>
         </Table>
       </ScrollRegion>
-      <div
-        className="flex flex-wrap items-center justify-between gap-100 text-fg-secondary"
-        style={{ fontSize: '1rem' }}
-      >
+      <div className="flex flex-wrap items-center justify-between gap-100 text-[1rem] text-fg-secondary">
         <span>{k('depreciation.indicativeNote')}</span>
         {(full || schedule.length > visible.length) && (
           <Button appearance="ghost" onClick={() => setFull((value) => !value)} severity="secondary" size="sm">

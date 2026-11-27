@@ -6,6 +6,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Label } from '@techsio/ui-kit/atoms/label';
 import { Link } from '@techsio/ui-kit/atoms/link';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { useState } from 'react';
 import { DateTime, Effect, Match } from 'effect';
 import type { ReactNode } from 'react';
@@ -79,22 +80,18 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   return (
     <div className="flex w-full max-w-75 flex-col gap-3">
       <span className="text-sm font-medium text-fg-secondary">{t(`${k}.overview.occupiedToday`)}</span>
-      <strong className="font-semibold" style={{ fontSize: 56, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+      <strong className="font-semibold text-[3.5rem] leading-[1.1] tracking-[-0.04em]">
         {ready ? formatPercent(kpi.value ?? 0) : '—'}
       </strong>
       {ready ? (
         <>
-          <meter
+          <Meter
             aria-label={t(`${k}.kpi.occupancy.label`)}
             aria-valuetext={t(`${k}.kpi.occupancy.secondary`, { occupied, reserved, total })}
-            className="sr-only"
             max={total}
-            min={0}
+            size="md"
             value={occupied}
           />
-          <div aria-hidden="true" className="h-2.5 overflow-hidden rounded bg-primary-light">
-            <span className="block h-full bg-primary" style={{ width: `${(occupied / total) * 100}%` }} />
-          </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-secondary">
             <span>{t(`${k}.overview.legend.occupied`, { count: occupied })}</span>
             <span>{t(`${k}.overview.legend.reserved`, { count: reserved })}</span>
@@ -177,13 +174,7 @@ export const Hero = ({
   const overdue = open.filter((row) => row.date < today && daysUntil(row.date, today) >= -60).length;
   const week = open.filter((row) => row.date >= today && daysUntil(row.date, today) <= 7).length;
   return (
-    <section
-      className="grid grid-cols-1 gap-6 rounded-lg p-6 lg:grid-cols-[minmax(0,1fr)_auto]"
-      style={{
-        background:
-          'radial-gradient(1200px 300px at 0% 0%, var(--color-primary-100) 0%, transparent 60%), linear-gradient(135deg, var(--color-base) 0%, var(--color-surface) 100%)',
-      }}
-    >
+    <section className="grid grid-cols-1 gap-6 rounded-lg bg-surface p-6 lg:grid-cols-[minmax(0,1fr)_auto]">
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wide text-fg-secondary">{fmt.long(lang, today)}</span>
@@ -336,12 +327,7 @@ export const KpiGrid = ({
               <span className="text-sm font-medium text-fg-secondary">{t(`${k}.kpi.${kpi.id}.label`)}</span>
               <KpiValue kpi={kpi} />
               {kpi.kind === 'percent' && ready && (
-                <span className="block h-1.5 w-full overflow-hidden rounded-full bg-overlay">
-                  <span
-                    className={`block h-full rounded-full ${colors.accent}`}
-                    style={{ width: `${Math.round((kpi.value ?? 0) * 100)}%` }}
-                  />
-                </span>
+                <Meter aria-hidden max={1} severity={kpi.tone} value={kpi.value ?? 0} />
               )}
               {ready && kpi.secondary !== undefined && (
                 <span className="text-sm">{t(`${k}.kpi.${kpi.id}.secondary`, secondaryValues(kpi))}</span>
@@ -476,7 +462,7 @@ export const DrillDown = ({
     );
   };
   return (
-    <div id="ops-overview-drilldown" style={{ scrollMarginTop: 16 }}>
+    <div className="scroll-mt-4" id="ops-overview-drilldown">
       <SectionCard
         actions={
           <>
@@ -800,20 +786,15 @@ export const OccupancyByBuilding = ({
                     : `${formatPercent(building.occupied / building.total)} · ${building.occupied}/${building.total}`}
                 </span>
               </div>
-              <div className="flex h-3 w-full overflow-hidden rounded-full bg-overlay">
-                {building.total > 0 && (
-                  <>
-                    <span
-                      className={toneColors('primary').accent}
-                      style={{ width: `${(building.occupied / building.total) * 100}%` }}
-                    />
-                    <span
-                      className={toneColors('warning').accent}
-                      style={{ width: `${(building.reserved / building.total) * 100}%` }}
-                    />
-                  </>
-                )}
-              </div>
+              <Meter
+                aria-hidden
+                max={building.total}
+                segments={[
+                  { severity: 'primary', value: building.occupied },
+                  { severity: 'warning', value: building.reserved },
+                ]}
+                size="md"
+              />
               <span className="text-xs text-fg-secondary">
                 {t(`${k}.overview.buildingLine`, {
                   free: building.free,

@@ -5,6 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Label } from '@techsio/ui-kit/atoms/label';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { DateTime, Effect, Option, Result } from 'effect';
@@ -301,12 +302,7 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
             Zbývá <strong className="tabular-nums">{formatMoney(remaining)}</strong>
           </span>
         </div>
-        <div aria-hidden className="h-2 overflow-hidden rounded-full">
-          <div
-            className="h-full rounded-full bg-(--color-chart-series-1)"
-            style={{ width: `${Math.min(100, (invoice.paidMinor / Math.max(1, invoice.totalMinor)) * 100)}%` }}
-          />
-        </div>
+        <Meter aria-hidden max={Math.max(1, invoice.totalMinor)} severity="info" value={invoice.paidMinor} />
         {events.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím nebyla potvrzena žádná úhrada.</p>
         ) : (

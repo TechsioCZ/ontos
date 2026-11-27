@@ -56,9 +56,7 @@ const PropertyEquipmentContent = ({ language = 'cs', propertyId, unitId }: Prope
   const state = equipmentState(records.status, agenda !== undefined, rows.length);
   return (
     <section aria-label={title} className="min-w-0">
-      <h2 className="mb-3 font-semibold" style={{ fontSize: '1rem' }}>
-        {title}
-      </h2>
+      <h2 className="mb-3 font-semibold text-[1rem]">{title}</h2>
       {state === 'loading' && <LoadingSkeleton label={labels.loading} rows={3} />}
       {state === 'error' && (
         <output>

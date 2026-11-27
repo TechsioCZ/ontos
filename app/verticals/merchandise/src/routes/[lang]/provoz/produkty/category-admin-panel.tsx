@@ -891,7 +891,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
                         size="sm"
                         type="button"
                       >
-                        <span className="block w-full text-left" style={{ textAlign: 'left' }}>
+                        <span className="block w-full text-left">
                           {`${c.name} · /${c.slug} · pořadí ${c.position}${c.published === false ? ' · Skryto' : ' · Zveřejněno'}`}
                         </span>
                       </Button>

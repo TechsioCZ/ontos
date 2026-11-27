@@ -1,6 +1,7 @@
 import { EmptyState, SectionCard, StatCard, StatRow } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
@@ -96,20 +97,10 @@ const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
     >
       {points.map((point) => {
         const unassigned = point.key === UNASSIGNED_KEY;
-        const share = max > 0 ? (point.value / max) * 100 : 0;
         return (
           <li className="col-span-full grid grid-cols-subgrid items-center" key={point.key}>
             <span className="col-span-2 min-w-0 break-words md:col-span-1">{point.label}</span>
-            <span className="h-4 rounded-sm border border-border-primary">
-              <span
-                className="block h-full rounded-sm"
-                style={{
-                  backgroundColor: unassigned ? 'var(--color-fg-secondary)' : 'var(--color-chart-series-1)',
-                  opacity: unassigned ? 0.45 : 1,
-                  width: `${share}%`,
-                }}
-              />
-            </span>
+            <Meter aria-hidden max={max} severity={unassigned ? 'neutral' : 'info'} size="md" value={point.value} />
             <span className="text-end tabular-nums">{formatMetricValue(point.value, unit)}</span>
           </li>
         );

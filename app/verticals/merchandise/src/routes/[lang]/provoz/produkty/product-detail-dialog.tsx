@@ -508,7 +508,9 @@ export const ProductDetailView = ({
       variantId === undefined
         ? product.catalogVariantId
         : product.variants?.find((variant) => variant.id === variantId)?.catalogVariantId;
-    return catalogVariantId === undefined ? undefined : { catalogProductId: product.catalogProductId, catalogVariantId };
+    return catalogVariantId === undefined
+      ? undefined
+      : { catalogProductId: product.catalogProductId, catalogVariantId };
   };
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
@@ -573,27 +575,27 @@ export const ProductDetailView = ({
           }}
           value={tab}
         >
-          <div style={{ overflowX: 'auto' }}>
-            <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="detail">
+          <div className="overflow-x-auto">
+            <Tabs.List className="min-w-full w-max">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="detail">
                 {k('detail.tab')}
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="variants">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="variants">
                 Varianty a ceny
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="eshop">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="eshop">
                 E-shop a obrázky
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="content">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="content">
                 Obsah e-shopu
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="markets">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="markets">
                 {k('markets.tab')}
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="prices">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="prices">
                 {k('prices.tab')}
               </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="movements">
+              <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="movements">
                 {k('movements.tab')}
               </Tabs.Trigger>
               <Tabs.Indicator />
