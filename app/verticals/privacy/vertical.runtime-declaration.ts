@@ -74,10 +74,8 @@ import { recordRetentionExceptionAction } from './src/actions/record-retention-e
 import { ResponsibilityAssignmentsApi } from './shared/apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './shared/apis/retention-rules.ts';
 import { SourceProcessingEligibilityApi } from '@app/privacy-contracts/source-processing-eligibility';
-import {
-  sourceProcessingEligibilityRead,
-  sourceProcessingEligibilitySetRead,
-} from './src/api/source-processing-eligibility.read.ts';
+import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
+import { sourceProcessingEligibilitySetRead } from './src/api/source-processing-eligibility.read.ts';
 import { transitionProcessingActivityAction } from './src/actions/transition-processing-activity.action.ts';
 import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';
 import { upsertDsrOwnerTaskAction } from './src/actions/upsert-dsr-owner-task.action.ts';
