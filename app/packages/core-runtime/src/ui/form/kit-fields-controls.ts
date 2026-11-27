@@ -17,7 +17,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { Option } from 'effect';
+import { Option, Schema } from 'effect';
 import { createElement, useId } from 'react';
 import { jsx } from 'react/jsx-runtime';
 import type { ComponentProps, ReactNode } from 'react';
@@ -71,10 +71,8 @@ type CheckboxProps = Omit<
  * A localized number input's value: the text as typed and the number it reads as (`NaN` while it reads as none). The
  * text is what the input shows, so a trailing decimal comma survives a keystroke; checks read the number.
  */
-export interface NumberText {
-  readonly number: number;
-  readonly text: string;
-}
+export const NumberTextSchema = Schema.Struct({ number: Schema.Number, text: Schema.String });
+export type NumberText = typeof NumberTextSchema.Type;
 
 /** The validation status and help text of a field: its translated error, else the caller's verdict. */
 const useFeedback = (error: Option.Option<string>, helpText: ReactNode, { invalid = false }: Verdict) => {
@@ -206,3 +204,11 @@ export const FormCheckboxField: FormReact.FieldComponent<boolean, CheckboxProps>
     validateStatus: statusOf(feedback.invalid),
   });
 };
+
+/**
+ * A field the form holds that no binding renders: a row's identity, or a value that a composite control without a
+ * binding (a select template, a search combobox) reads and writes through the field's atoms.
+ */
+const Unrendered = () => null;
+
+export const unrenderedField = <A>(): FormReact.FieldComponent<A> => Unrendered;

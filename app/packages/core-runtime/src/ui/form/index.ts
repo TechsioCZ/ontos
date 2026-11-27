@@ -31,5 +31,7 @@ export {
   InputField,
   NumericField,
   SwitchField,
+  NumberTextSchema,
+  unrenderedField,
   type NumberText,
 } from './kit-fields-controls.ts';

@@ -9,8 +9,8 @@ import {
   FormBuilder,
   FormReact,
   FormRoot,
-  InputField,
   SwitchField,
+  unrenderedField,
   useAtomSet,
   useAtomValue,
 } from '@app/core-runtime/ui/form';
@@ -39,8 +39,8 @@ const marketsForm = FormReact.make(
     Field.makeArrayField('offers', Schema.Struct({ marketId: MarketIdSchema, offered: Schema.Boolean })),
   ),
   {
-    // `marketId` names the market of a row and is never rendered.
-    fields: { offers: { marketId: InputField, offered: SwitchField } },
+    // `marketId` names the market of a row.
+    fields: { offers: { marketId: unrenderedField<string>(), offered: SwitchField } },
     onSubmit: () => Effect.void,
     runtime: browserAtomRuntime,
   },
