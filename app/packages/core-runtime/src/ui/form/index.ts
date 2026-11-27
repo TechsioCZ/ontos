@@ -24,3 +24,12 @@ export {
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export {
+  AllRowsCheckboxField,
+  ComboboxField,
+  DateField,
+  FileField,
+  NumberField,
+  RowCheckboxField,
+  SelectField,
+} from './kit-fields-pickers.ts';
