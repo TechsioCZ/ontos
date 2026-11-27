@@ -1062,20 +1062,16 @@ export default defineConfig({
       // effect-form port: paths not yet migrated. Each port step removes the paths it moves onto
       // @app/core-runtime/ui/form, so the rule applies there.
       files: [
-        'verticals/catalog/src/**',
-        'verticals/commerce-market-catalog/src/**',
         'verticals/crm/src/**',
         'verticals/crm-activities/src/**',
         'verticals/facility-operations/src/**',
         'verticals/finance-billing/src/**',
         'verticals/legal-agreements/src/**',
         'verticals/merchandise/src/**',
-        'verticals/party-registry/src/**',
         'verticals/property-leasing/src/**',
         'verticals/property-portfolio/src/**',
         'verticals/sales-insights/src/**',
         'verticals/sales-pipeline/src/**',
-        'verticals/symmy-integration/src/**',
         'verticals/tagging/src/**',
         'verticals/work-tasks/src/**',
         'verticals/workforce/src/**',
