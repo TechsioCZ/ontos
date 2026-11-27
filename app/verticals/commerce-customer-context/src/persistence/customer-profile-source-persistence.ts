@@ -117,6 +117,8 @@ const sourcePageRoutine = defineScopedRoutine({
   schema: DATABASE_SCHEMA,
 });
 const routeNotAuthorized = 'The current route does not authorize this source Profile read';
+/** Items of one source Profile page proved at once: bounded below the per-role pool cap their owner reads draw on. */
+const SOURCE_PAGE_ITEM_CONCURRENCY = 8;
 const sourcePartiesRoutine = defineScopedRoutine({
   name: 'read_customer_profile_source_parties',
   ownerModuleKey: OWNER_MODULE_KEY,
@@ -675,7 +677,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
                       ),
                     ),
                   ),
-                { concurrency: 1 },
+                // Each item's owner proofs are independent remote reads; one item after another a page of 25
+                // customers took 10-20 s and pushed GET /admin/customers past the 30 s HTTP budget. Order is kept.
+                { concurrency: SOURCE_PAGE_ITEM_CONCURRENCY },
               ),
             );
       return { ...page, items };
