@@ -40,6 +40,7 @@ import {
 import type {
   MerchandiseCommandPayload,
   MerchandiseCommand,
+  SourceUpsertResult,
   StorefrontIssue,
   StorefrontOrderResult,
 } from '../../shared/actions/apply-command.ts';
@@ -58,6 +59,7 @@ import {
   PartyIdSchema,
   ProductIdReferenceSchema,
   ProductIdSchema,
+  ProductUnitSchema,
   StockMovementIdSchema,
   VariantIdSchema,
   grossUnitPriceMinor,
@@ -273,6 +275,8 @@ export interface MerchandiseChange {
   readonly entityIds: readonly EntityId[];
   readonly state: MerchandiseState;
   readonly storefrontOrder?: StorefrontOrderResult;
+  /** UpsertSourceProduct: what the import did to the row. */
+  readonly sourceUpsert?: SourceUpsertResult;
 }
 
 /** Errors command logic raises from the state alone. Persistence adds its own around this. */
@@ -757,7 +761,14 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
               priceTiers: yield* carriedVariantTiers(previous, previous.priceTiers, variant.priceMinor, rate),
             }
           : withGross;
-      const withId = id === undefined ? withTiers : { ...withTiers, id };
+      // Server-owned: the Catalog variant a Symmy import mapped stays with the stored variant; a client value is ignored.
+      const { catalogVariantId: _clientCatalogVariant, ...withoutSource } = withTiers;
+      void _clientCatalogVariant;
+      const withSource =
+        previous?.catalogVariantId === undefined
+          ? withoutSource
+          : { ...withoutSource, catalogVariantId: previous.catalogVariantId };
+      const withId = id === undefined ? withSource : { ...withSource, id };
       const normalized: ProductVariant = Option.isSome(history) ? { ...withId, priceHistory: history.value } : withId;
       return normalized;
     }),
@@ -850,6 +861,231 @@ const reconciledVariants = Effect.fn('Merchandise.reconciledVariants')(function*
   const variants = yield* normalizeVariants(product, incoming, input);
   yield* requireReconciledVariantStock(state, product, variants);
   return variants;
+});
+
+type SourceUpsertChange = MerchandiseChange;
+type SourceVariantInput = CommandOf<'UpsertSourceProduct'>['variants'][number];
+
+/** The deterministic merchandise row of one main Catalog product imported through Symmy. */
+export const symmyProductIdOf = (catalogProductId: string) => `symmy-${catalogProductId}`;
+const symmyVariantIdOf = (catalogVariantId: string) => `symmy-${catalogVariantId}`;
+const SOURCE_UNITS: ReadonlySet<string> = new Set(ProductUnitSchema.literals);
+const sourceUnitOf = (unit: string | undefined, fallback: Product['unit']): Product['unit'] => {
+  const normalized = unit?.trim().toLowerCase();
+  return normalized !== undefined && SOURCE_UNITS.has(normalized) ? (normalized as Product['unit']) : fallback;
+};
+/** The fields a Symmy import owns, compared to tell a replay (no write at all) from a real change. */
+const sourceOwnedKey = (product: Product) =>
+  JSON.stringify([
+    product.active,
+    product.demoArchive !== undefined,
+    product.published,
+    product.name,
+    product.category,
+    product.description,
+    product.unit,
+    product.sku,
+    product.erpCode,
+    product.catalogProductId,
+    product.catalogVariantId,
+    product.currentPriceMinor,
+    product.stockTracked,
+    product.images,
+    product.imageSrc,
+    (product.variants ?? []).map((variant) => [
+      variant.id,
+      variant.sku,
+      variant.name,
+      variant.unit,
+      variant.priceMinor,
+      variant.catalogVariantId,
+    ]),
+  ]);
+
+/**
+ * One Symmy product as an ordinary product row (see ApplyUpsertSourceProductCommandSchema). Symmy owns the name, code,
+ * lifecycle, unit, price and stock; a description or picture is filled only while the row has none, so staff
+ * enrichment stays. A missing or zero price never sells: the row stays unpublished until a price arrives.
+ */
+const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(function* upsertSourceProduct(
+  state: MerchandiseState,
+  value: CommandOf<'UpsertSourceProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const id = yield* mintId(ProductIdSchema, symmyProductIdOf(value.catalogProductId));
+  const entity = yield* entityIdOf(id);
+  const existing = state.products.find((entry) => entry.id === id);
+  const refused = (reason: NonNullable<SourceUpsertResult['reason']>): SourceUpsertChange => ({
+    entityIds: [entity],
+    sourceUpsert: { outcome: 'REFUSED', productId: id, reason },
+    state,
+  });
+  if (state.products.some((entry) => entry.id !== id && sameSku(entry.sku, value.erpCode))) {
+    return refused('CODE_HELD_BY_NATIVE_PRODUCT');
+  }
+  const single = value.variants.length === 1 ? value.variants[0] : undefined;
+  const variantSkus = single === undefined ? value.variants.map((variant) => variant.sku) : [];
+  if (
+    variantSkus.some((sku) =>
+      state.products.some(
+        (entry) =>
+          entry.id !== id &&
+          (sameSku(entry.sku, sku) ||
+            (entry.variants ?? []).some((variant) => variant.sku !== undefined && sameSku(variant.sku, sku))),
+      ),
+    )
+  ) {
+    return refused('SKU_HELD_BY_NATIVE_PRODUCT');
+  }
+  const now = input.now;
+  const singlePrice = single?.priceNetMinor ?? undefined;
+  // Product without merchandise variants: Symmy's one variant is the product itself.
+  const created = existing === undefined;
+  const start: Product =
+    existing ??
+    ({
+      active: true,
+      catalogProductId: value.catalogProductId,
+      category: value.categoryName ?? 'Symmy',
+      createdAt: now,
+      currentPriceMinor: singlePrice ?? 0,
+      erpCode: value.erpCode,
+      id,
+      importedVia: 'symmy',
+      lowStockThreshold: 0,
+      name: value.name,
+      priceHistory: [{ changedBy: input.actor, effectiveFrom: now, priceMinor: singlePrice ?? 0 }],
+      sku: value.erpCode,
+      slug: newProductSlug(state.products, value.name, value.erpCode),
+      stockTracked: value.variants.some((variant) => typeof variant.stockOnHand === 'number'),
+      taxClassificationCode: CZ_VAT_STANDARD,
+      unit: sourceUnitOf(single?.unit, 'ks'),
+      updatedAt: now,
+    } satisfies Product);
+  const startPriced: Product =
+    created && single !== undefined && singlePrice !== undefined
+      ? withEnteredGross(start, singlePrice, enteredRateOf(input.tax, start))
+      : start;
+  const repricedSingle: Product =
+    !created && single !== undefined && singlePrice !== undefined && singlePrice !== startPriced.currentPriceMinor
+      ? yield* repriced(startPriced, singlePrice, input)
+      : startPriced;
+  let variants = repricedSingle.variants;
+  if (single === undefined) {
+    const previous = new Map((repricedSingle.variants ?? []).map((variant) => [variant.id, variant] as const));
+    const incoming = yield* Effect.forEach(
+      value.variants,
+      Effect.fn('Merchandise.sourceVariant')(function* sourceVariant(variant: SourceVariantInput) {
+        const variantId = symmyVariantIdOf(variant.catalogVariantId);
+        const before = previous.get(yield* mintId(VariantIdSchema, variantId));
+        const priceMinor = variant.priceNetMinor ?? before?.priceMinor;
+        const sourceFields = {
+          id: yield* mintId(VariantIdSchema, variantId),
+          name: variant.name ?? variant.sku,
+          sku: variant.sku,
+          ...(variant.unit === undefined ? {} : { unit: variant.unit }),
+        };
+        const base: ProductVariant =
+          before === undefined ? { attributes: '', ...sourceFields } : { ...before, ...sourceFields };
+        const sourced: ProductVariant = priceMinor === undefined ? base : { ...base, priceMinor };
+        return sourced;
+      }),
+      { concurrency: 1 },
+    );
+    const normalized = yield* reconciledVariants(state, repricedSingle, incoming, input);
+    variants = normalized.map((variant, index) => ({
+      ...variant,
+      catalogVariantId: value.variants[index]?.catalogVariantId ?? '',
+    }));
+  }
+  const multiPrices = (variants ?? []).flatMap((variant) =>
+    variant.priceMinor === undefined || variant.priceMinor <= 0 ? [] : [variant.priceMinor],
+  );
+  const priced = single === undefined ? multiPrices.length > 0 : repricedSingle.currentPriceMinor > 0;
+  const stockTracked =
+    repricedSingle.stockTracked === true || value.variants.some((variant) => typeof variant.stockOnHand === 'number');
+  // RETIRED is archived exactly as ArchiveProduct archives; any other lifecycle brings the row back.
+  const { demoArchive: _archive, ...unarchived } = repricedSingle;
+  void _archive;
+  const retired = value.lifecycle === 'RETIRED';
+  const lifecycleBase: Product = retired
+    ? {
+        ...repricedSingle,
+        demoArchive: repricedSingle.demoArchive ?? {
+          actor: input.actor,
+          at: now,
+          reason: 'Vyřazeno v ERP (Symmy)',
+        },
+      }
+    : unarchived;
+  const withSource: Product = {
+    ...lifecycleBase,
+    active: !retired,
+    ...(value.categoryName === undefined ? {} : { category: value.categoryName }),
+    ...(value.description !== undefined && (repricedSingle.description ?? '') === ''
+      ? { description: value.description }
+      : {}),
+    ...(value.imageUrl !== undefined && (repricedSingle.images ?? []).length === 0
+      ? { imageSrc: value.imageUrl, images: [value.imageUrl] }
+      : {}),
+    catalogProductId: value.catalogProductId,
+    erpCode: value.erpCode,
+    importedVia: 'symmy',
+    name: value.name,
+    published: value.lifecycle === 'ACTIVE' && priced,
+    sku: value.erpCode,
+    stockTracked,
+    unit: sourceUnitOf(single?.unit, repricedSingle.unit),
+    ...(single === undefined ? {} : { catalogVariantId: single.catalogVariantId }),
+    ...(variants === undefined ? {} : { variants }),
+  };
+  const movements = yield* Effect.forEach(
+    value.variants,
+    Effect.fn('Merchandise.sourceStock')(function* sourceStock(variant: SourceVariantInput, index: number) {
+      if (typeof variant.stockOnHand !== 'number') {
+        return [];
+      }
+      const variantId =
+        single === undefined
+          ? yield* mintId(VariantIdSchema, symmyVariantIdOf(variant.catalogVariantId))
+          : undefined;
+      const current =
+        variantId === undefined
+          ? stockOnHandOf(state.movements, id)
+          : variantStockOf(state.movements, id, variantId);
+      const delta = normalizeQuantity(variant.stockOnHand - current);
+      if (delta === 0) {
+        return [];
+      }
+      const movement: StockMovement = {
+        at: now,
+        delta,
+        id: yield* movementIdOf(input.resourceId, index),
+        note: 'Symmy',
+        productId: id,
+        reason: 'ADJUSTMENT',
+        ...stockVariantFields(variantId),
+      };
+      return [movement];
+    }),
+    { concurrency: 1 },
+  ).pipe(Effect.map((lists) => lists.flat()));
+  if (!created && movements.length === 0 && sourceOwnedKey(withSource) === sourceOwnedKey(existing)) {
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'UNCHANGED', productId: id },
+      state,
+    } satisfies SourceUpsertChange;
+  }
+  const product: Product = created ? withSource : { ...withSource, updatedAt: now };
+  const next: MerchandiseState = created
+    ? { ...state, products: [...state.products, product] }
+    : withProduct(state, product);
+  return {
+    entityIds: [entity],
+    sourceUpsert: { outcome: created ? 'CREATED' : 'UPDATED', productId: id },
+    state: movements.length === 0 ? next : { ...next, movements: [...next.movements, ...movements] },
+  } satisfies SourceUpsertChange;
 });
 
 const skuTakenByOther = (products: readonly Product[], sku: string | undefined, id: string): boolean =>
@@ -2083,6 +2319,9 @@ export const evolveMerchandiseState = (
   command: MerchandiseCommand,
   input: MerchandiseCommandInput,
 ): Effect.Effect<MerchandiseChange, MerchandiseCommandError> => {
+  if (Predicate.isTagged(command, 'UpsertSourceProduct')) {
+    return upsertSourceProduct(state, command, input);
+  }
   // Outside the matcher because its pipe() is typed for at most 20 steps. Keeping the state reference when the value is
   // already in force makes the command a no-op without a new revision.
   if (Predicate.isTagged(command, 'ConfigureStorefrontCatalog')) {
@@ -2377,6 +2616,12 @@ export const workingSetRequestOf = (
             },
       ChangeOrderStatus: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
+      // The row itself, any product holding its code or a variant SKU, and the ledger for the stock reconciliation.
+      UpsertSourceProduct: (value): WorkingSetRequest => ({
+        movements: true,
+        productIds: [symmyProductIdOf(value.catalogProductId)],
+        productKeys: { sku: value.erpCode, slugPrefix: productSlugBase(value.name, value.erpCode) },
+      }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ConfigureStorefrontCatalog: (): WorkingSetRequest => ({ productIds: [] }),
       CreateCategory: (value): WorkingSetRequest => ({
@@ -2812,6 +3057,8 @@ const ownRevisionGuard = (command: Exclude<MerchandiseCommand, AiCommand>): bool
   isMarketCommand(command) ||
   Predicate.isTagged(command, 'PlaceStorefrontOrder') ||
   Predicate.isTagged(command, 'SyncTaxRates') ||
+  // An idempotent source upsert compares against the locked rows themselves; a replay writes nothing.
+  Predicate.isTagged(command, 'UpsertSourceProduct') ||
   (Predicate.isTagged(command, 'ChangeProductImages') && !Predicate.isTagged(command.change, 'Set'));
 
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
@@ -3038,6 +3285,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         storefrontBrand === undefined ? marketInput : { ...marketInput, storefrontBrand };
       const change = yield* evolveMerchandiseState(working.state, command, commandInput);
       const revision = yield* persist(working, change.state, now, tax, synced);
+      if (change.sourceUpsert !== undefined) {
+        return { entityIds: [...change.entityIds], revision, sourceUpsert: change.sourceUpsert };
+      }
       const version = productVersionAfter(change.state, command);
       return change.storefrontOrder === undefined
         ? { entityIds: [...change.entityIds], revision, ...version }
