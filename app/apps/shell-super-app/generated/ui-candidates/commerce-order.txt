@@ -1,4 +1,0 @@
-absolute
-rounded
-table
-transition

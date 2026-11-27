@@ -3,7 +3,7 @@
 /* Shell UI uses unprefixed ui-kit utilities too (home tiles, frame, selectors). */
 @source '..';
 @source '../../../../packages/admin-ui/src';
-/* Projected with scripts/generate-shell-ui-candidates.mts; every release checks freshness for all verticals. */
+/* Projected with scripts/generate-shell-ui-candidates.mts, which the Shell's build and dev scripts run for all verticals. */
 @source '../../generated/ui-candidates/*.txt';
 
 /* The theme sets --radius-checkbox to --radius-sm (0.5rem), which draws an 18 px checkbox as a circle. Keep it square. */

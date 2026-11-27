@@ -97,7 +97,7 @@
     },
     {
       "name": "Module Entrypoint and Codesmith Generation Tests",
-      "commands": "pnpm shell:ui-candidates:check\npnpm module-entrypoints:check\npnpm test:generation\n"
+      "commands": "pnpm shell:ui-candidates\npnpm module-entrypoints:check\npnpm test:generation\n"
     }
   ],
   "unit": [

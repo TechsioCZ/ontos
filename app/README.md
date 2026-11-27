@@ -183,7 +183,7 @@ but the other lanes continue, and the summary names each failed step. On a machi
 of memory, run `mise exec -- pnpm check --concurrency 2`.
 
 `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact commands
-(`shell:ui-candidates:check`, `test:scripts`, `module-entrypoints:check`, `test:generation`). Use existing
+(`shell:ui-candidates`, `test:scripts`, `module-entrypoints:check`, `test:generation`). Use existing
 package-filtered tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
 the full scope leaves out without running anything; it is not validation.
 

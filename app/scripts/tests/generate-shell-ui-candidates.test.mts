@@ -138,6 +138,10 @@ it.live('fails closed when a vertical writes ui-kit token utilities with its own
 );
 
 it.live(
-  'the webpack compiler emits byte-identical production CSS from the committed projection and original globs',
-  () => Effect.sync(() => succeeds(workspace, CHECK, ALL, GOLDEN)),
+  'the webpack compiler emits byte-identical production CSS from the generated projection and original globs',
+  () =>
+    Effect.sync(() => {
+      succeeds(workspace, ALL);
+      succeeds(workspace, CHECK, ALL, GOLDEN);
+    }),
 );

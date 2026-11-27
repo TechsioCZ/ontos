@@ -12,7 +12,7 @@
     "./outbox-worker-host": "./src/entry.core-system-worker.ts"
   },
   "scripts": {
-    "dev": "modern dev",
+    "dev": "node ../../scripts/generate-shell-ui-candidates.mts --all && modern dev",
     "build": "node ../../scripts/generate-shell-ui-candidates.mts --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node && node ../../scripts/materialize-packaged-workspace-packages.mts . && node ../../scripts/complete-packaged-node-dependencies.mts .",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
