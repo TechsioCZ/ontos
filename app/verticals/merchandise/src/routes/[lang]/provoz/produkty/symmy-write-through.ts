@@ -225,7 +225,8 @@ const ScheduleSchema = Schema.Struct({
             }),
             revision: Schema.Struct({ revision: Schema.Unknown, revisionId: Schema.Unknown }),
           }),
-          effectivePeriod: Schema.Struct({ effectiveFrom: Schema.String }),
+          // Revise fences on the whole period, the open end (null) included.
+          effectivePeriod: Schema.Struct({ effectiveFrom: Schema.String, effectiveTo: Schema.NullOr(Schema.String) }),
         }),
       ),
       scheduleRevision: Schema.Unknown,
