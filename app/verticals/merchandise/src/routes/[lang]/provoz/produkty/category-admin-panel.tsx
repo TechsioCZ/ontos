@@ -1,39 +1,54 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
   formatDateTime,
+  requiredLabelFor,
   saveLabelsFor,
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
-import { DateTime, Effect, Match, Option, Predicate } from 'effect';
-import { useState } from 'react';
+import {
+  FormBuilder,
+  FormInputField,
+  FormReact,
+  FormRoot,
+  FormTextareaField,
+  SwitchField,
+  unrenderedField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
+import type { Dispatch, SetStateAction } from 'react';
+import { useRef, useState } from 'react';
 import type { CategoryNode, ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { CatalogCategoryIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useRecordForm } from '../../../../ui/record-form.ts';
 import { newUuid } from './browser-crypto.ts';
 import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
 import {
   categoryDraftErrors,
+  categorySlugOf,
   categorySlugValid,
   createCategoryCommandOf,
   draftOf,
   newCategoryInvalid,
-  newCategorySlug,
   sameCategoryDraft,
   saveCategoryEdit,
   savedCategory,
 } from './category-save.ts';
 import type { CategoryDraft, NewCategoryDraft } from './category-save.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
-import { fieldError } from './product-form-validation.ts';
+import { fieldVerdict } from './product-form-validation.ts';
 import { LiveShopConfirm } from './live-shop-confirm.tsx';
 import { useCommandFailure } from './product-form-labels.ts';
 import { loadProductRecord } from './product-reads.ts';
@@ -127,6 +142,106 @@ type Selected =
 
 const NO_CATEGORIES: readonly CategoryNode[] = [];
 
+const CategoryParentSchema = Schema.OptionFromNullOr(
+  Schema.Struct({ id: CatalogCategoryIdSchema, trail: Schema.String }),
+);
+
+/**
+ * The open category's own fields. The record draft owns them (`useRecordDraft`); typing changes only the draft, the
+ * panel's Save button sends it, and Enter in a field is the same one save. The parent is picked in a search combobox
+ * that writes its field.
+ */
+const categoryForm = FormReact.make(
+  FormBuilder.empty
+    .addField('description', Schema.String)
+    .addField('heading', Schema.String)
+    .addField('imageAlt', Schema.String)
+    .addField('imageSrc', Schema.String)
+    .addField('longDescription', Schema.String)
+    .addField('name', Schema.String)
+    .addField('parent', CategoryParentSchema)
+    .addField('positionText', Schema.String)
+    .addField('published', Schema.Boolean)
+    .addField('slug', Schema.String),
+  {
+    fields: {
+      description: FormTextareaField,
+      heading: FormInputField,
+      imageAlt: FormInputField,
+      imageSrc: FormInputField,
+      longDescription: FormTextareaField,
+      name: FormInputField,
+      parent: unrenderedField<CategoryDraft['parent']>(),
+      positionText: FormInputField,
+      published: SwitchField,
+      slug: FormInputField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const categoryParentField = categoryForm.getFieldAtoms(categoryForm.fields.parent);
+const categoryPositionField = categoryForm.getFieldAtoms(categoryForm.fields.positionText);
+const categoryImageField = categoryForm.getFieldAtoms(categoryForm.fields.imageSrc);
+/** The form's values are the category draft itself. */
+const sameDraft = (draft: CategoryDraft): CategoryDraft => draft;
+const valuesAsDraft = (values: CategoryDraft): CategoryDraft => values;
+
+/**
+ * A new category being typed. Its slug follows the name until the slug is typed; Enter or "Vytvořit kategorii"
+ * creates it. The parent is picked in a search combobox that writes its field.
+ */
+const newCategoryForm = FormReact.make(
+  FormBuilder.empty
+    .addField('heading', Schema.String)
+    .addField('name', Schema.String)
+    .addField('parent', CategoryParentSchema)
+    .addField('positionText', Schema.String)
+    .addField('published', Schema.Boolean)
+    .addField('slug', Schema.String)
+    .addField('slugFollowsName', Schema.Boolean),
+  {
+    fields: {
+      heading: FormInputField,
+      name: FormInputField,
+      parent: unrenderedField<NewCategoryDraft['parent']>(),
+      positionText: FormInputField,
+      published: SwitchField,
+      slug: FormInputField,
+      slugFollowsName: unrenderedField<boolean>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type NewCategoryValues = typeof newCategoryForm.schema.Encoded;
+const newCategoryFields = {
+  name: newCategoryForm.getFieldAtoms(newCategoryForm.fields.name),
+  parent: newCategoryForm.getFieldAtoms(newCategoryForm.fields.parent),
+  slug: newCategoryForm.getFieldAtoms(newCategoryForm.fields.slug),
+  slugFollowsName: newCategoryForm.getFieldAtoms(newCategoryForm.fields.slugFollowsName),
+};
+const newCategoryDraftOf = (values: NewCategoryValues): NewCategoryDraft => ({
+  heading: values.heading,
+  name: values.name,
+  parent: values.parent,
+  positionText: values.positionText,
+  published: values.published,
+  slug: values.slugFollowsName ? null : values.slug,
+});
+/** The typed slug as plain text, which changes only when the text does. */
+const newCategorySlugText = newCategoryFields.slug.value.pipe(Atom.map(Option.getOrElse(() => '')));
+
+/** The search over the category list. It filters the list at once; the form itself is never submitted. */
+const categorySearchForm = FormReact.make(FormBuilder.empty.addField('search', Schema.String), {
+  fields: { search: FormInputField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const categorySearch = categorySearchForm.values.pipe(
+  Atom.map(Option.match({ onNone: () => '', onSome: ({ search }) => search })),
+);
+
 /** The storefront's own order: position, then Czech name. */
 const byStorefrontOrder = (a: CategoryNode, b: CategoryNode) =>
   a.position - b.position || a.name.localeCompare(b.name, 'cs');
@@ -179,28 +294,42 @@ const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
 );
 
 interface CategoryEditorProps {
+  /** The record's draft (`useRecordDraft`), which owns the form's values. */
   readonly draft: CategoryDraft;
-  readonly nameError: 'required' | 'tooLong' | undefined;
+  /** The form was submitted (Enter in a field): the same one save as the Save button. */
+  readonly onSave: () => void;
   readonly parentName: string | undefined;
-  readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
-  readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
   readonly selected: CategoryNode;
+  readonly setDraft: Dispatch<SetStateAction<CategoryDraft>>;
   readonly siblings: readonly CategoryNode[];
-  readonly slugError: 'invalid' | undefined;
 }
 
 /** The category's own fields. Editing them changes the draft only; the panel's Save button sends it. */
 const CategoryEditor = ({
-  draft,
-  nameError,
+  draft: recordDraft,
+  onSave,
   parentName,
-  patchDraft,
-  positionError,
   selected,
+  setDraft,
   siblings,
-  slugError,
 }: CategoryEditorProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  useRecordForm({ draft: recordDraft, draftOf: valuesAsDraft, form: categoryForm, setDraft, valuesOf: sameDraft });
+  // Enter in a field is the Save button.
+  useAtomSubscribe(
+    categoryForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        onSave();
+      }
+    },
+    { immediate: false },
+  );
+  const draft = Option.getOrElse(useAtomValue(categoryForm.values), () => recordDraft);
+  const setParent = useAtomSet(categoryParentField.setValue);
+  const setPosition = useAtomSet(categoryPositionField.setValue);
+  const setImageSrc = useAtomSet(categoryImageField.setValue);
+  const { name: nameError, position: positionError, slug: slugError } = categoryDraftErrors(draft);
   const siblingNames = siblings
     .slice(0, 6)
     .map((c) => `${c.name} (${c.position})`)
@@ -216,34 +345,23 @@ const CategoryEditor = ({
   return (
     <>
       <p className="text-fg-secondary text-sm">{`Adresa v e-shopu: /${selected.slug}${parentDescription}`}</p>
-      <Switch
-        checked={draft.published}
-        name="categoryPublished"
-        onCheckedChange={(published) => patchDraft({ published })}
-      >
-        Zobrazit v navigaci e-shopu
-      </Switch>
-      <FormInput
+      <categoryForm.published name="categoryPublished">Zobrazit v navigaci e-shopu</categoryForm.published>
+      <categoryForm.name
         id="category-name"
         label={t('merchandise.ui.name')}
         maxLength={200}
         name="name"
-        onChange={(event) => patchDraft({ name: event.target.value })}
         required
-        value={draft.name}
-        {...(nameError === undefined ? {} : { helpText: nameMessage, validateStatus: 'error' as const })}
+        requiredLabel={requiredLabelFor(language)}
+        {...fieldVerdict(nameError !== undefined, nameMessage)}
       />
-      <FormInput
+      <categoryForm.slug
         helpText="Adresa stránky kategorie v e-shopu (/kategorie/…). Po změně přestane platit stará adresa."
         id="category-slug"
         label="Adresa (slug)"
         maxLength={200}
         name="slug"
-        onChange={(event) => patchDraft({ slug: event.target.value })}
-        value={draft.slug}
-        {...(slugError === undefined
-          ? {}
-          : { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const })}
+        {...fieldVerdict(slugError !== undefined, 'Jen malá písmena bez diakritiky, číslice a pomlčky')}
       />
       <CategorySearchCombobox
         allLabel="Kořen (hlavní kategorie)"
@@ -254,7 +372,7 @@ const CategoryEditor = ({
         loadingMessage="Načítám kategorie…"
         moreMessage={(shown, total) => `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání.`}
         noResultsMessage="Žádná kategorie neodpovídá hledání."
-        onSelect={(parent) => patchDraft({ parent })}
+        onSelect={setParent}
         placeholder="Hledat nadřazenou kategorii"
         retryLabel="Zkusit znovu"
         selected={
@@ -263,56 +381,39 @@ const CategoryEditor = ({
             : { id: CatalogCategoryIdSchema.make(draft.parent.id), trail: draft.parent.trail }
         }
       />
-      <FormInput
+      <categoryForm.heading
         id="category-heading"
         label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
         name="heading"
-        onChange={(event) => patchDraft({ heading: event.target.value })}
-        value={draft.heading}
       />
-      <FormTextarea
+      <categoryForm.description
         id="category-description"
         label={t('merchandise.ui.shortDescription')}
         maxLength={5000}
         name="description"
-        onChange={(event) => patchDraft({ description: event.target.value })}
-        value={draft.description}
       />
-      <FormTextarea
+      <categoryForm.longDescription
         id="category-long-description"
         label={t('merchandise.ui.categoryDescription')}
         maxLength={50_000}
         name="longDescription"
-        onChange={(event) => patchDraft({ longDescription: event.target.value })}
-        value={draft.longDescription}
       />
-      <FormInput
+      <categoryForm.imageSrc
         helpText="Akros zobrazí jen cestu začínající /…, https adresu na www.akros.cz/data/ nebo hostitele z STOREFRONT_IMAGE_HOSTS; jinou adresu vynechá. Tlačítko Vybrat z fotek produktu vloží cestu /obrazky/… k nahrané fotce; funguje, dokud je ten produkt zveřejněný."
         id="category-image-src"
         label="Obrázek kategorie (adresa)"
         maxLength={500}
         name="imageSrc"
-        onChange={(event) => patchDraft({ imageSrc: event.target.value })}
-        value={draft.imageSrc}
       />
-      <CategoryImagePicker onPick={(src) => patchDraft({ imageSrc: src })} />
-      <FormInput
-        id="category-image-alt"
-        label="Popis obrázku"
-        maxLength={300}
-        name="imageAlt"
-        onChange={(event) => patchDraft({ imageAlt: event.target.value })}
-        value={draft.imageAlt}
-      />
-      <FormInput
+      <CategoryImagePicker onPick={setImageSrc} />
+      <categoryForm.imageAlt id="category-image-alt" label="Popis obrázku" maxLength={300} name="imageAlt" />
+      <categoryForm.positionText
         id="category-position"
         inputMode="numeric"
         label={t('merchandise.ui.siblingPosition')}
         name="position"
-        onChange={(event) => patchDraft({ positionText: event.target.value })}
-        value={draft.positionText}
-        {...(positionError === undefined ? {} : { helpText: positionMessage, validateStatus: 'error' as const })}
+        {...fieldVerdict(positionError !== undefined, positionMessage)}
       />
       {siblings.length > 0 && (
         <div className="flex flex-col gap-100">
@@ -322,7 +423,7 @@ const CategoryEditor = ({
           <div className="flex flex-wrap gap-100">
             <Button
               appearance="outline"
-              onClick={() => patchDraft({ positionText: String(Math.max(0, (siblings[0]?.position ?? 0) - 10)) })}
+              onClick={() => setPosition(String(Math.max(0, (siblings[0]?.position ?? 0) - 10)))}
               severity="secondary"
               size="sm"
               type="button"
@@ -331,7 +432,7 @@ const CategoryEditor = ({
             </Button>
             <Button
               appearance="outline"
-              onClick={() => patchDraft({ positionText: String((siblings.at(-1)?.position ?? 0) + 10) })}
+              onClick={() => setPosition(String((siblings.at(-1)?.position ?? 0) + 10))}
               severity="secondary"
               size="sm"
               type="button"
@@ -346,13 +447,14 @@ const CategoryEditor = ({
   );
 };
 
-const EMPTY_NEW_CATEGORY: NewCategoryDraft = {
+const EMPTY_NEW_CATEGORY: NewCategoryValues = {
   heading: '',
   name: '',
   parent: null,
   positionText: '0',
   published: true,
-  slug: null,
+  slug: '',
+  slugFollowsName: true,
 };
 
 interface CategoryCreateFormProps {
@@ -361,13 +463,51 @@ interface CategoryCreateFormProps {
   readonly revision: number;
 }
 
-/** A new storefront category. Slug and parent are set here once; the rest is edited afterwards like any category. */
-const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFormProps) => {
-  const [draft, setDraft] = useState<NewCategoryDraft>(EMPTY_NEW_CATEGORY);
+/** The new category's name and slug, as one value: which of them changed tells whether the slug was typed. */
+const nameAndSlug = newCategoryForm.values.pipe(
+  Atom.map(Option.map((values) => ({ follows: values.slugFollowsName, name: values.name, slug: values.slug }))),
+);
+
+/**
+ * The slug follows the name until it is typed: a changed name writes its slug while it follows, a slug typed to
+ * anything else stops it following.
+ */
+const useSlugFollowingName = () => {
+  const setSlug = useAtomSet(newCategoryFields.slug.setValue);
+  const setFollows = useAtomSet(newCategoryFields.slugFollowsName.setValue);
+  const previous = useRef<{ readonly name: string; readonly slug: string } | null>(null);
+  useAtomSubscribe(
+    nameAndSlug,
+    (next) => {
+      if (Option.isNone(next)) {
+        return;
+      }
+      const { follows, name, slug } = next.value;
+      const before = previous.current;
+      previous.current = { name, slug };
+      if (!follows || before === null) {
+        return;
+      }
+      if (slug !== before.slug) {
+        if (slug !== categorySlugOf(name)) {
+          setFollows(false);
+        }
+      } else if (name !== before.name) {
+        setSlug(categorySlugOf(name));
+      }
+    },
+    { immediate: true },
+  );
+};
+
+const CategoryCreateFields = ({ onCancel, onCreated, revision }: CategoryCreateFormProps) => {
+  const { language } = useModernI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const patch = (next: Partial<NewCategoryDraft>) => setDraft((current) => ({ ...current, ...next }));
-  const slug = newCategorySlug(draft);
+  useSlugFollowingName();
+  const draft = newCategoryDraftOf(Option.getOrElse(useAtomValue(newCategoryForm.values), () => EMPTY_NEW_CATEGORY));
+  const setParent = useAtomSet(newCategoryFields.parent.setValue);
+  const slug = useAtomValue(newCategorySlugText);
   const invalid = newCategoryInvalid(draft);
   const submit = () => {
     if (invalid || busy) {
@@ -389,34 +529,34 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
       onCreated(id);
     });
   };
-  return (
-    <form
-      className="flex flex-col gap-200 rounded border border-border-secondary p-200"
-      noValidate
-      onSubmit={(event) => {
-        event.preventDefault();
+  // Enter in a field and the button create the category.
+  useAtomSubscribe(
+    newCategoryForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
         submit();
-      }}
-    >
+      }
+    },
+    { immediate: false },
+  );
+  return (
+    <>
       <h3 className="font-semibold text-sm">Nová kategorie</h3>
-      <FormInput
+      <newCategoryForm.name
         id="new-category-name"
         label="Název"
         maxLength={200}
         name="newCategoryName"
-        onChange={(event) => patch({ name: event.target.value })}
         required
-        value={draft.name}
+        requiredLabel={requiredLabelFor(language)}
       />
-      <FormInput
+      <newCategoryForm.slug
         helpText="Adresa v e-shopu; po vytvoření ji nelze změnit."
         id="new-category-slug"
         label="Adresa (slug)"
         maxLength={200}
         name="newCategorySlug"
-        onChange={(event) => patch({ slug: event.target.value })}
-        value={slug}
-        {...fieldError(!categorySlugValid(slug), 'Jen malá písmena bez diakritiky, číslice a pomlčky')}
+        {...fieldVerdict(!categorySlugValid(slug), 'Jen malá písmena bez diakritiky, číslice a pomlčky')}
       />
       <CategorySearchCombobox
         errorMessage="Kategorie se nepodařilo načíst."
@@ -426,7 +566,7 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
         loadingMessage="Načítám kategorie…"
         moreMessage={(shown, total) => `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání.`}
         noResultsMessage="Žádná kategorie neodpovídá hledání."
-        onSelect={(parent) => patch({ parent })}
+        onSelect={setParent}
         placeholder="Hledat nadřazenou kategorii"
         retryLabel="Zkusit znovu"
         selected={
@@ -435,29 +575,19 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
             : { id: CatalogCategoryIdSchema.make(draft.parent.id), trail: draft.parent.trail }
         }
       />
-      <FormInput
+      <newCategoryForm.heading
         id="new-category-heading"
         label="Nadpis stránky (prázdné = název)"
         maxLength={300}
         name="newCategoryHeading"
-        onChange={(event) => patch({ heading: event.target.value })}
-        value={draft.heading}
       />
-      <FormInput
+      <newCategoryForm.positionText
         id="new-category-position"
         inputMode="numeric"
         label="Pořadí mezi sourozenci"
         name="newCategoryPosition"
-        onChange={(event) => patch({ positionText: event.target.value })}
-        value={draft.positionText}
       />
-      <Switch
-        checked={draft.published}
-        name="newCategoryPublished"
-        onCheckedChange={(published) => patch({ published })}
-      >
-        Zobrazit v navigaci e-shopu
-      </Switch>
+      <newCategoryForm.published name="newCategoryPublished">Zobrazit v navigaci e-shopu</newCategoryForm.published>
       {error === null ? null : (
         <StatusText showIcon status="error">
           {error}
@@ -471,7 +601,22 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
           Zrušit
         </Button>
       </div>
-    </form>
+    </>
+  );
+};
+
+/** A new storefront category. Slug and parent are set here once; the rest is edited afterwards like any category. */
+const CategoryCreateForm = (props: CategoryCreateFormProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot
+      className="flex flex-col gap-200 rounded border border-border-secondary p-200"
+      defaultValues={EMPTY_NEW_CATEGORY}
+      form={newCategoryForm}
+      translateMessage={t}
+    >
+      <CategoryCreateFields {...props} />
+    </FormRoot>
   );
 };
 
@@ -594,9 +739,6 @@ const CategoryEditPanel = ({
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
-  const { draft } = record;
-  const errors = categoryDraftErrors(draft);
-  const patchDraft = (patch: Partial<CategoryDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
   const close = () => {
     guard.request(onBack);
   };
@@ -624,26 +766,22 @@ const CategoryEditPanel = ({
         size="md"
         title={t('merchandise.ui.storefrontCategories')}
       >
-        <form
+        <FormRoot
           className="flex flex-col gap-200 py-200"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSave();
-          }}
+          defaultValues={record.draft}
+          form={categoryForm}
+          translateMessage={t}
         >
           <p className="text-fg-secondary text-sm">Uložené změny uvidí zákazník v e-shopu.</p>
           <CategoryEditor
-            draft={draft}
-            nameError={errors.name}
+            draft={record.draft}
+            onSave={handleSave}
             parentName={parentName}
-            patchDraft={patchDraft}
-            positionError={errors.position}
             selected={category}
+            setDraft={record.setDraft}
             siblings={siblings}
-            slugError={errors.slug}
           />
-        </form>
+        </FormRoot>
         <CategoryDeleteSection
           category={category}
           disabled={record.dirty}
@@ -662,7 +800,7 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState<Loaded>({ status: 'idle' });
-  const [search, setSearch] = useState('');
+  const search = useAtomValue(categorySearch);
   const [selection, setSelection] = useState<Selected | null>(null);
   /** Whether a save landed while the panel is open: the list refreshes once, when the user leaves the editor. */
   const [savedOnce, setSavedOnce] = useState(false);
@@ -763,7 +901,6 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
     selection,
     setCreating,
     setOpen,
-    setSearch,
     siblings,
     t,
   };
@@ -796,7 +933,6 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
     selection,
     setCreating,
     setOpen,
-    setSearch,
     siblings,
     t,
   } = model;
@@ -804,6 +940,8 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
 
   return (
     <>
+      {/* The list's search survives opening a category and coming back, as long as the page shows the button. */}
+      <categorySearchForm.KeepAlive />
       <Button
         appearance="outline"
         icon="icon-[mdi--file-tree-outline]"
@@ -866,15 +1004,15 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
             ) : null}
             {listState.visible && loaded.status === 'ready' && (
               <>
-                <FormInput
-                  id="category-admin-search"
-                  label={t('merchandise.ui.searchCategories')}
-                  name="categorySearch"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t('merchandise.ui.categorySearchPlaceholder')}
-                  size="sm"
-                  value={search}
-                />
+                <FormRoot defaultValues={{ search: '' }} form={categorySearchForm} translateMessage={t}>
+                  <categorySearchForm.search
+                    id="category-admin-search"
+                    label={t('merchandise.ui.searchCategories')}
+                    name="categorySearch"
+                    placeholder={t('merchandise.ui.categorySearchPlaceholder')}
+                    size="sm"
+                  />
+                </FormRoot>
                 <p className="text-fg-secondary text-sm">
                   {search.trim() === ''
                     ? 'Hlavní kategorie podle pořadí v e-shopu. Pro podkategorie použijte hledání.'

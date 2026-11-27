@@ -37,7 +37,7 @@ import { AsyncResult, Atom } from 'effect/reactivity';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { reloadKeepingDrafts } from '@app/shared-contracts';
 import type { Dispatch, SetStateAction } from 'react';
-import { useEffect, useRef } from 'react';
+
 import type { CategoryTrail, LedgerMovement, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { ProductUnitSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductVariant } from '../../../../../shared/domain/merchandise-model.ts';
@@ -68,6 +68,7 @@ import { SalesTermsPanel } from './product-sales-terms.tsx';
 import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useRecordForm } from '../../../../ui/record-form.ts';
 
 const ProductDetailTabSchema = Schema.Literals([
   'detail',
@@ -382,30 +383,15 @@ const DetailFields = ({ canWrite, draft: recordDraft, onSave, product, setDraft,
   const taxLabels = useTaxLabels();
   const disabled = !canWrite;
   const values = Option.getOrElse(useAtomValue(productDetailForm.values), () => detailValuesOf(recordDraft));
-  const setValues = useAtomSet(productDetailForm.setValues);
   const setUnit = useAtomSet(unitField.setValue);
   const setTaxClassification = useAtomSet(taxClassificationField.setValue);
-  // The draft this form last wrote into the record. Any other draft of the record (the reloaded product, Zahodit
-  // změny, a rebase) is put into the form.
-  const written = useRef(recordDraft);
-  useAtomSubscribe(
-    productDetailForm.values,
-    (next) => {
-      if (Option.isSome(next)) {
-        setDraft((current) => {
-          written.current = detailDraftOf(next.value, current.realVariants);
-          return written.current;
-        });
-      }
-    },
-    { immediate: false },
-  );
-  useEffect(() => {
-    if (recordDraft !== written.current) {
-      written.current = recordDraft;
-      setValues(detailValuesOf(recordDraft));
-    }
-  }, [recordDraft, setValues]);
+  useRecordForm({
+    draft: recordDraft,
+    draftOf: (next, current) => detailDraftOf(next, current.realVariants),
+    form: productDetailForm,
+    setDraft,
+    valuesOf: detailValuesOf,
+  });
   // Enter in a field is the Save button.
   useAtomSubscribe(
     productDetailForm.submit,
