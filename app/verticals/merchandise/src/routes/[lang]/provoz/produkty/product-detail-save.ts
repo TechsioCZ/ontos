@@ -12,6 +12,9 @@ import { executeManageCatalog } from '../../../../api/manage-catalog-action-clie
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { detailDraftInvalid, detailSaveOf, draftOf, sameDetailDraft } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
+import { mergeDraft } from './product-draft-merge.ts';
+import { refusedSave, useDraftRebase } from './product-draft-rebase.ts';
+import type { Refusal } from './product-draft-rebase.ts';
 
 type CommandFailure = Effect.Error<ReturnType<typeof runProductCommand>>;
 
@@ -104,6 +107,22 @@ const saveDetailEffect = ({
   );
 };
 
+/** A save someone else's change refused: the version it was based on and the revision it expected. */
+const refusalOf = (
+  result: DraftSaveEnd<DetailDraft>,
+  confirmed: DetailDraft,
+  expectedRevision: number,
+): Refusal<DetailDraft> | undefined => {
+  if (result === 'conflict') {
+    return refusedSave(confirmed, expectedRevision);
+  }
+  // The fields went through and left `revision`; the price, sent against it, was refused.
+  if (typeof result === 'object' && result.outcome === 'conflict') {
+    return refusedSave(result.confirmed, result.revision);
+  }
+  return undefined;
+};
+
 /** The revision a chain of this page's own stock commands left behind, starting from the one they replaced. */
 const afterStockCommits = (commits: ReadonlyMap<number, number>, revision: number): number => {
   const next = commits.get(revision);
@@ -111,6 +130,8 @@ const afterStockCommits = (commits: ReadonlyMap<number, number>, revision: numbe
 };
 
 interface ProductDetailDraftOptions {
+  /** Re-reads the product: after a save someone else's change refused, and on "Načíst aktuální verzi". */
+  readonly onReload: () => void;
   readonly product: ProductRecord;
   /** The catalog revision `product` was read at. */
   readonly revision: number;
@@ -120,12 +141,14 @@ interface ProductDetailDraftOptions {
  * Draft and save of the product detail form. Nothing is sent until `record.save()`, the form's Save button. The
  * editor stays mounted while its product reloads: an untouched draft takes the reloaded product, a changed one stays
  * and keeps expecting the revision it was based on (`useRecordDraft`), so a change someone else made in the meantime
- * ends in a conflict instead of being overwritten.
+ * ends in a conflict instead of being overwritten. A refused save re-reads the product and puts the draft's own changes
+ * over the version someone else saved (`useDraftRebase`): saved again at once when they overlap nothing that version
+ * changed, otherwise kept behind the conflict message until "Načíst aktuální verzi".
  *
  * `product` still shows the version before the form's own save until its reload lands, so a save sends what differs
  * from the version the server last confirmed, not from `product`.
  */
-export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftOptions) => {
+export const useProductDetailDraft = ({ onReload, product, revision }: ProductDetailDraftOptions) => {
   // Real variants are read-only on the detail tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const realVariants = (product.variants ?? []).filter(isRealVariant);
@@ -143,23 +166,55 @@ export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftO
           value: { ...server, ...draft.value, realVariants },
         };
   });
+  // A save someone else's change refused, until the draft is rebased on the version they saved.
+  const refusal = useRef<Refusal<DetailDraft> | undefined>(undefined);
   const record = useRecordDraft<DetailDraft, never>({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
     kept,
     revision,
     runtime: browserRuntime,
-    save: (value, expectedRevision, confirmed) =>
-      saveDetailEffect({
+    save: (value, expectedRevision, confirmed) => {
+      const expected = afterStockCommits(stockCommits.current, expectedRevision);
+      return saveDetailEffect({
         confirmed: { ...confirmed, realVariants },
-        expectedRevision: afterStockCommits(stockCommits.current, expectedRevision),
+        expectedRevision: expected,
         productId: product.id,
         value: { ...value, realVariants },
-      }),
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            const refused = refusalOf(result, confirmed, expected);
+            if (refused !== undefined) {
+              // Read the version someone else saved; the draft's own changes then go over it.
+              refusal.current = refused;
+              onReload();
+            }
+          }),
+        ),
+      );
+    },
     server,
   });
   const { kept: keptNow } = record;
   useEffect(() => keepDraftOnReload(keepKey, keptNow), [keepKey, keptNow]);
+  const reloadLatest = useDraftRebase({
+    current: () => ({ base: record.confirmed, from: record.kept()?.revision ?? revision }),
+    // Real variants are not this form's: they always come from the latest product.
+    merge: (base, mine, theirs) => mergeDraft({ ...base, realVariants }, { ...mine, realVariants }, theirs),
+    onReload,
+    refusal,
+    revision,
+    save: record.save,
+    server,
+    stale: false,
+    status: record.status,
+    take: (fresh, merged) => {
+      record.adopt(fresh);
+      record.setDraft(merged);
+    },
+    value: record.draft,
+  });
   /**
    * A stock movement of this page went through: it replaced `expectedRevision` with `next` and changed no field of
    * this form. A draft based on exactly the replaced revision is therefore based on `next` too, and its save does
@@ -172,5 +227,5 @@ export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftO
       stockCommits.current.set(expectedRevision, next);
     }
   };
-  return { draft: { ...record.draft, realVariants }, followStockCommit, record };
+  return { draft: { ...record.draft, realVariants }, followStockCommit, record, reloadLatest };
 };

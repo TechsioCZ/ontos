@@ -25,7 +25,7 @@ import type { ProductUnit } from '../../../../../shared/domain/merchandise-model
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { useProductDetailDraft } from './product-detail-save.ts';
-import { detailDraftInvalid, draftOf, measurementInvalid, detailGrossOf, detailVatOf } from './product-detail-draft.ts';
+import { detailDraftInvalid, measurementInvalid, detailGrossOf, detailVatOf } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
@@ -489,7 +489,7 @@ export const ProductDetailView = ({
   const variantDestination = resolveProductVariantDestination(product, variantId);
   // The page re-reads the product after each save; the editor stays mounted across that reload
   // (`useProductDetailDraft`).
-  const { draft, followStockCommit, record } = useProductDetailDraft({ product, revision });
+  const { draft, followStockCommit, record, reloadLatest } = useProductDetailDraft({ onReload, product, revision });
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
   const dirty = record.dirty || movementDirty;
@@ -513,10 +513,7 @@ export const ProductDetailView = ({
   };
 
   const handleSave = record.save;
-  const handleReloadLatest = () => {
-    record.adopt(draftOf(product));
-    onReload();
-  };
+  const handleReloadLatest = reloadLatest;
 
   return (
     <>

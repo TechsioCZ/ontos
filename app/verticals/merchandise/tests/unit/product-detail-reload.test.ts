@@ -13,6 +13,7 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -139,7 +140,7 @@ let latest: ProductEdit | null = null;
 const edit = (): ProductEdit => Option.getOrThrow(Option.fromNullOr(latest));
 
 const Harness = ({ product, revision }: { readonly product: ProductRecord; readonly revision: number }) => {
-  const value = useProductDetailDraft({ product, revision });
+  const value = useProductDetailDraft({ onReload: constVoid, product, revision });
   useEffect(() => {
     latest = value;
   }, [value]);
@@ -390,6 +391,50 @@ describe('mounted product detail draft while its product reloads', () => {
       expect(edit().record.status).toBe('dirty');
       yield* saveNow;
       expect(sent()).toHaveLength(2);
+      expect(edit().record.status).toBe('saved');
+    }).pipe(Effect.provide(network)),
+  );
+  it.live('a save refused over another field someone else saved is rebased on the fresh read and saved again', () =>
+    Effect.gen(function* rebaseAndSave() {
+      yield* pinTestDocument;
+      const view = yield* mount(productOf({}), 1);
+      // Another session saved the description: the register is at revision 2, this page still shows revision 1.
+      register.revision = 2;
+      yield* type({ name: 'Etiopie B' });
+      yield* saveNow;
+      expect(edit().record.status).toBe('conflict');
+
+      yield* view.reload(productOf({ description: 'Nový popis' }), 2);
+      yield* waitUntil(() => edit().record.status === 'saved');
+      expect(sent()).toEqual([
+        { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+      ]);
+      expect(edit().draft.name).toBe('Etiopie B');
+      expect(edit().draft.description).toBe('Nový popis');
+    }).pipe(Effect.provide(network)),
+  );
+
+  it.live('a save refused over the same field keeps the typed value; "Načíst aktuální verzi" makes it savable', () =>
+    Effect.gen(function* overlapThenReload() {
+      yield* pinTestDocument;
+      const view = yield* mount(productOf({}), 1);
+      register.revision = 2;
+      yield* type({ name: 'Etiopie B' });
+      yield* saveNow;
+      yield* view.reload(productOf({ description: 'Nový popis', name: 'Etiopie C' }), 2);
+      // Both changed the name: nothing is sent again by itself, and the typed name stays.
+      expect(edit().record.status).toBe('conflict');
+      expect(edit().draft.name).toBe('Etiopie B');
+      expect(sent()).toHaveLength(1);
+
+      yield* acted(() => edit().reloadLatest());
+      expect(edit().record.status).toBe('dirty');
+      expect(edit().record.canSave).toBe(true);
+      expect(edit().draft.name).toBe('Etiopie B');
+      expect(edit().draft.description).toBe('Nový popis');
+      yield* saveNow;
+      expect(sent()[1]).toEqual({ expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' });
       expect(edit().record.status).toBe('saved');
     }).pipe(Effect.provide(network)),
   );
