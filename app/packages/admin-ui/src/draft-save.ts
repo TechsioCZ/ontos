@@ -470,6 +470,17 @@ export class DraftForm<V, R = never> {
     new DraftForm({ confirmed, revision, value }, this.options, this.forms);
 
   /**
+   * Starts over from `value`, a server version ("Načíst aktuální verzi", a refused save rebased onto a newer read): the
+   * new form is on screen at once, so a draft set right after it in the same handler (`update`, such as the rebased
+   * draft) lands on the new form instead of the one it replaces.
+   */
+  readonly adopt = (value: V, revision: number): DraftForm<V, R> => {
+    const next = this.successor(value, value, revision);
+    next.takeOver();
+    return next;
+  };
+
+  /**
    * This form is now the one on screen: a call that still reaches a form before it (a callback created before the
    * editor took a newer server version) lands here.
    */
@@ -667,7 +678,7 @@ export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSav
   }, [form, value]);
   const status = statusOf(options, ledger, value);
   const record = draftSaveOf(form, ledger, status, (next) => {
-    setForm(form.successor(next, next, 0));
+    setForm(form.adopt(next, 0));
   });
   // Only a changed draft can be untouched: once a save of the opening values ran, its result is the user's.
   const untouched =
@@ -802,7 +813,7 @@ export const useRecordDraft = <V, R>(options: UseRecordDraftOptions<V, R>): Reco
   }, [form, revision, same, server]);
   const adopt = (value: V) => {
     setPassedOver(Option.none());
-    setForm(form.successor(value, value, revision));
+    setForm(form.adopt(value, revision));
   };
   return {
     ...draftSaveOf(form, view.ledger, status, adopt),
