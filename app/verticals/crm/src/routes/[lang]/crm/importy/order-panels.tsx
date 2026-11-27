@@ -1,8 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { pipe, DateTime, Effect } from 'effect';
+import { pipe, DateTime, Effect, Option, Schema } from 'effect';
 import { orderDateText, isOpenDuplicate } from '../../../../../shared/domain/imports.ts';
 import type { ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 // AREA: imports — owned by the crm-imports lane. Order detail side panel (state history, lines, pairing history,
 // review decisions) and the manual pairing form (C03/C04). Every action is a governed CRM command.
@@ -11,13 +11,21 @@ import {
   SidePanel,
   UnsavedChangesBoundary,
   formatDateTime,
+  requiredLabelFor,
   surfaceTileClassName,
   useUnsavedChangesScope,
 } from '@app/admin-ui';
+import {
+  EntryTextAreaField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { PairingForm } from './pairing-form.tsx';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
@@ -83,29 +91,40 @@ const Section = ({ children, title }: { readonly children: ReactNode; readonly t
   </section>
 );
 
-const ReasonField = ({
-  id,
-  label = 'Důvod (uloží se do historie)',
-  onChange,
-  value,
-}: {
-  readonly id: string;
-  readonly label?: string;
-  readonly onChange: (value: string) => void;
-  readonly value: string;
-}) => (
-  <FormTextarea
-    autoComplete="off"
-    id={id}
-    label={label}
-    maxLength={2000}
-    onChange={(event) => onChange(event.target.value)}
-    required
-    rows={2}
-    size="sm"
-    value={value}
-  />
-);
+/**
+ * The reasons typed into the decision forms of one place on the order's panel, one entry per decision form (keyed by
+ * its id). Nothing submits them: a decision's own button sends its command with the reason.
+ */
+const makeDecisionReasons = () =>
+  FormReact.make(FormBuilder.empty.addField('reasons', Schema.Record(Schema.String, Schema.String)), {
+    fields: { reasons: EntryTextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+
+type DecisionReasons = ReturnType<typeof makeDecisionReasons>;
+
+/** Status events under review (one decision per event), a suspected duplicate, and taking a pairing back. */
+const statusDecisions = makeDecisionReasons();
+const duplicateDecision = makeDecisionReasons();
+const unpairDecision = makeDecisionReasons();
+
+const noReasons: DecisionReasons['schema']['Encoded'] = { reasons: {} };
+
+/** The form of the decision forms inside it. */
+const DecisionReasonsRoot = ({ children, form }: { readonly children: ReactNode; readonly form: DecisionReasons }) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot
+      className="contents"
+      defaultValues={noReasons}
+      form={form}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      {children}
+    </FormRoot>
+  );
+};
 
 export const PairingStateBadge = ({ order }: { readonly order: ImportedOrder }) => {
   const meta = pairingMeta[orderQueueState(order)];
@@ -122,22 +141,39 @@ export const RawStatusBadge = ({ status }: { readonly status: string }) => (
   </Badge>
 );
 
+/** One decision with its reason; inside the `DecisionReasonsRoot` of `form`. */
 const DecisionForm = ({
   actions,
   busy,
+  form,
   id,
   intro,
 }: {
   readonly actions: readonly { free?: boolean; label: string; primary?: boolean; run: (reason: string) => void }[];
   readonly busy: boolean;
+  readonly form: DecisionReasons;
   readonly id: string;
   readonly intro: ReactNode;
 }) => {
-  const [reason, setReason] = useState('');
+  const { language } = useModernI18n();
+  const { reasons } = Option.getOrElse(useAtomValue(form.values), () => noReasons);
+  const setValues = useAtomSet(form.setValues);
+  const reason = reasons[id] ?? '';
+  const setReason = (next: string) => setValues({ reasons: { ...reasons, [id]: next } });
   return (
     <div className="flex flex-col gap-150 rounded-lg bg-bg-light-warning-base p-150">
       <div className="text-sm">{intro}</div>
-      <ReasonField id={id} onChange={setReason} value={reason} />
+      <form.reasons
+        autoComplete="off"
+        entry={id}
+        id={id}
+        label="Důvod (uloží se do historie)"
+        maxLength={2000}
+        required
+        requiredLabel={requiredLabelFor(language)}
+        rows={2}
+        size="sm"
+      />
       <div className="flex flex-wrap justify-end gap-100">
         {actions.map((action) => (
           <Button
@@ -176,106 +212,109 @@ const StatusTimeline = ({
   const batchName = (batchId: string) => records.state.imports.batches.find((batch) => batch.id === batchId)?.fileName;
   const events = order.statusHistory.map((event, index) => ({ event, index })).toReversed();
   return (
-    <ol className="flex flex-col gap-100">
-      {events.map(({ event, index }) => {
-        const flagged = event.review === true;
-        const open = flagged && event.resolution === undefined;
-        const current =
-          !flagged &&
-          event.rawStatus === order.rawStatus &&
-          (event.eventAt === undefined
-            ? order.lastEventAt === undefined
-            : order.lastEventAt !== undefined && DateTime.Equivalence(event.eventAt, order.lastEventAt));
-        return (
-          <li
-            className={`flex flex-col gap-100 p-150 ${open ? 'rounded-lg bg-bg-light-warning-base' : surfaceTileClassName}`}
-            key={`${event.batchId}-${String(index)}`}
-          >
-            <div className="flex flex-wrap items-center gap-100">
-              <RawStatusBadge status={event.rawStatus} />
-              <span className="font-medium text-sm">
-                {event.eventAt === undefined
-                  ? 'čas události neposkytnut'
-                  : pipe(event.eventAt, orderDateText, formatDateTime)}
+    <DecisionReasonsRoot form={statusDecisions}>
+      <ol className="flex flex-col gap-100">
+        {events.map(({ event, index }) => {
+          const flagged = event.review === true;
+          const open = flagged && event.resolution === undefined;
+          const current =
+            !flagged &&
+            event.rawStatus === order.rawStatus &&
+            (event.eventAt === undefined
+              ? order.lastEventAt === undefined
+              : order.lastEventAt !== undefined && DateTime.Equivalence(event.eventAt, order.lastEventAt));
+          return (
+            <li
+              className={`flex flex-col gap-100 p-150 ${open ? 'rounded-lg bg-bg-light-warning-base' : surfaceTileClassName}`}
+              key={`${event.batchId}-${String(index)}`}
+            >
+              <div className="flex flex-wrap items-center gap-100">
+                <RawStatusBadge status={event.rawStatus} />
+                <span className="font-medium text-sm">
+                  {event.eventAt === undefined
+                    ? 'čas události neposkytnut'
+                    : pipe(event.eventAt, orderDateText, formatDateTime)}
+                </span>
+                {current && (
+                  <Badge severity="success" size="sm">
+                    Aktuální stav
+                  </Badge>
+                )}
+                {open && (
+                  <Badge severity="warning" size="sm">
+                    Vyžaduje kontrolu
+                  </Badge>
+                )}
+                {event.resolution !== undefined && (
+                  <Badge severity={event.resolution.decision === 'applied' ? 'info' : 'neutral'} size="sm">
+                    {event.resolution.decision === 'applied' ? 'Ručně použito' : 'Ručně ponecháno beze změny'}
+                  </Badge>
+                )}
+              </div>
+              <span className="text-fg-secondary text-xs">
+                {[
+                  `Importováno ${pipe(event.importedAt, orderDateText, formatDateTime)}`,
+                  event.source,
+                  batchName(event.batchId),
+                  event.row === undefined ? undefined : `řádek ${String(event.row)}`,
+                ]
+                  .filter((part) => part !== undefined)
+                  .join(' · ')}
               </span>
-              {current && (
-                <Badge severity="success" size="sm">
-                  Aktuální stav
-                </Badge>
-              )}
-              {open && (
-                <Badge severity="warning" size="sm">
-                  Vyžaduje kontrolu
-                </Badge>
+              {flagged && event.reviewReason !== undefined && (
+                <span className="text-sm">{statusReviewReasonLabel(event.reviewReason)}</span>
               )}
               {event.resolution !== undefined && (
-                <Badge severity={event.resolution.decision === 'applied' ? 'info' : 'neutral'} size="sm">
-                  {event.resolution.decision === 'applied' ? 'Ručně použito' : 'Ručně ponecháno beze změny'}
-                </Badge>
+                <span className="text-fg-secondary text-xs">
+                  {`Rozhodl(a) ${principalLabel(records, event.resolution.by)}, ${pipe(event.resolution.at, orderDateText, formatDateTime)}: ${event.resolution.reason}`}
+                </span>
               )}
-            </div>
-            <span className="text-fg-secondary text-xs">
-              {[
-                `Importováno ${pipe(event.importedAt, orderDateText, formatDateTime)}`,
-                event.source,
-                batchName(event.batchId),
-                event.row === undefined ? undefined : `řádek ${String(event.row)}`,
-              ]
-                .filter((part) => part !== undefined)
-                .join(' · ')}
-            </span>
-            {flagged && event.reviewReason !== undefined && (
-              <span className="text-sm">{statusReviewReasonLabel(event.reviewReason)}</span>
-            )}
-            {event.resolution !== undefined && (
-              <span className="text-fg-secondary text-xs">
-                {`Rozhodl(a) ${principalLabel(records, event.resolution.by)}, ${pipe(event.resolution.at, orderDateText, formatDateTime)}: ${event.resolution.reason}`}
-              </span>
-            )}
-            {open && canDecide && (
-              <DecisionForm
-                actions={[
-                  {
-                    label: 'Ponechat stávající stav',
-                    run: (reason) => {
-                      run(
-                        {
-                          _tag: 'ResolveOrderStatusEvent',
-                          decision: 'dismiss',
-                          eventIndex: index,
-                          orderId: order.id,
-                          reason,
-                        },
-                        'Rozhodnutí uloženo',
-                      );
+              {open && canDecide && (
+                <DecisionForm
+                  actions={[
+                    {
+                      label: 'Ponechat stávající stav',
+                      run: (reason) => {
+                        run(
+                          {
+                            _tag: 'ResolveOrderStatusEvent',
+                            decision: 'dismiss',
+                            eventIndex: index,
+                            orderId: order.id,
+                            reason,
+                          },
+                          'Rozhodnutí uloženo',
+                        );
+                      },
                     },
-                  },
-                  {
-                    label: 'Použít jako aktuální stav',
-                    primary: true,
-                    run: (reason) => {
-                      run(
-                        {
-                          _tag: 'ResolveOrderStatusEvent',
-                          decision: 'apply',
-                          eventIndex: index,
-                          orderId: order.id,
-                          reason,
-                        },
-                        'Stav aktualizován',
-                      );
+                    {
+                      label: 'Použít jako aktuální stav',
+                      primary: true,
+                      run: (reason) => {
+                        run(
+                          {
+                            _tag: 'ResolveOrderStatusEvent',
+                            decision: 'apply',
+                            eventIndex: index,
+                            orderId: order.id,
+                            reason,
+                          },
+                          'Stav aktualizován',
+                        );
+                      },
                     },
-                  },
-                ]}
-                busy={busy}
-                id={`resolve-${order.id}-${String(index)}`}
-                intro="Starší nebo sporná zpráva nepřepsala novější stav. Rozhodněte ručně:"
-              />
-            )}
-          </li>
-        );
-      })}
-    </ol>
+                  ]}
+                  busy={busy}
+                  form={statusDecisions}
+                  id={`resolve-${order.id}-${String(index)}`}
+                  intro="Starší nebo sporná zpráva nepřepsala novější stav. Rozhodněte ručně:"
+                />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </DecisionReasonsRoot>
   );
 };
 
@@ -330,21 +369,24 @@ const UnpairButton = ({
   }
   return (
     <div className="w-full">
-      <DecisionForm
-        actions={[
-          { free: true, label: 'Zpět', run: () => setOpen(false) },
-          {
-            label: 'Vrátit do fronty k napárování',
-            primary: true,
-            run: (reason) => {
-              run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false));
+      <DecisionReasonsRoot form={unpairDecision}>
+        <DecisionForm
+          actions={[
+            { free: true, label: 'Zpět', run: () => setOpen(false) },
+            {
+              label: 'Vrátit do fronty k napárování',
+              primary: true,
+              run: (reason) => {
+                run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false));
+              },
             },
-          },
-        ]}
-        busy={busy}
-        id={`unpair-${order.id}`}
-        intro="Původní přiřazení zůstane v historii s vaším jménem a důvodem."
-      />
+          ]}
+          busy={busy}
+          form={unpairDecision}
+          id={`unpair-${order.id}`}
+          intro="Původní přiřazení zůstane v historii s vaším jménem a důvodem."
+        />
+      </DecisionReasonsRoot>
     </div>
   );
 };
@@ -463,32 +505,40 @@ export const OrderDetailPanel = ({
                 </span>
               ))}
               {isOpenDuplicate(order) && canDecide && (
-                <DecisionForm
-                  actions={[
-                    {
-                      label: 'Jde o samostatnou objednávku',
-                      run: (reason) => {
-                        run(
-                          { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
-                          'Rozhodnutí uloženo',
-                        );
+                <DecisionReasonsRoot form={duplicateDecision}>
+                  <DecisionForm
+                    actions={[
+                      {
+                        label: 'Jde o samostatnou objednávku',
+                        run: (reason) => {
+                          run(
+                            { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
+                            'Rozhodnutí uloženo',
+                          );
+                        },
                       },
-                    },
-                    {
-                      label: 'Potvrdit duplicitu',
-                      primary: true,
-                      run: (reason) => {
-                        run(
-                          { _tag: 'ResolveOrderDuplicate', decision: 'confirmed_duplicate', orderId: order.id, reason },
-                          'Duplicita potvrzena',
-                        );
+                      {
+                        label: 'Potvrdit duplicitu',
+                        primary: true,
+                        run: (reason) => {
+                          run(
+                            {
+                              _tag: 'ResolveOrderDuplicate',
+                              decision: 'confirmed_duplicate',
+                              orderId: order.id,
+                              reason,
+                            },
+                            'Duplicita potvrzena',
+                          );
+                        },
                       },
-                    },
-                  ]}
-                  busy={busy}
-                  id={`duplicate-${order.id}`}
-                  intro="Bez potvrzené korelace se objednávka nezapočítává do potvrzených souhrnů. Potvrzená duplicita zůstane mimo souhrny trvale."
-                />
+                    ]}
+                    busy={busy}
+                    form={duplicateDecision}
+                    id={`duplicate-${order.id}`}
+                    intro="Bez potvrzené korelace se objednávka nezapočítává do potvrzených souhrnů. Potvrzená duplicita zůstane mimo souhrny trvale."
+                  />
+                </DecisionReasonsRoot>
               )}
             </Section>
           )}

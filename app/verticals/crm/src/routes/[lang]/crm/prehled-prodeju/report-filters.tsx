@@ -1,10 +1,19 @@
 // Filter bar of the sales report (crm-reports lane): období, obchodník, klient, stav (mapped meaning or raw).
 // Filters live in the URL (?obdobi=&obchodnik=&klient=&stav=&seskupit=) so a drill-down and back keeps them.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { useEffect, useRef, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { orderDateText } from '../../../../../shared/domain/imports.ts';
 import type { ReportFilters } from '../../../../../shared/domain/reports.ts';
@@ -24,6 +33,7 @@ import { ALL, periodOf, periodWithDate } from '../../../../crm/report-query.ts';
 import type { PeriodOption } from './report-format.ts';
 import { periodOptions } from './report-format.ts';
 import { formatDate, surfaceTileClassName } from '@app/admin-ui';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 export type { ReportQuery } from '../../../../crm/report-query.ts';
 export { ALL, readQuery, writeQuery } from '../../../../crm/report-query.ts';
@@ -107,6 +117,86 @@ export interface ReportFilterBarProps {
   readonly scopeAll: boolean;
 }
 
+/**
+ * The report filters as the bar edits them. The URL keeps them, so the form follows the URL and every change of the
+ * form goes to the URL; the two dates edit the period. The bar is never submitted.
+ */
+const reportFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('client', Schema.String)
+    .addField('from', Schema.String)
+    .addField('period', Schema.String)
+    .addField('salesperson', Schema.String)
+    .addField('status', Schema.String)
+    .addField('to', Schema.String),
+  {
+    fields: {
+      client: SelectTemplateField,
+      from: TextField,
+      period: SelectTemplateField,
+      salesperson: SelectTemplateField,
+      status: SelectTemplateField,
+      to: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type ReportFilterValues = typeof reportFilterForm.schema.Encoded;
+
+/** What the bar shows for a query: its period also as the two dates it spans. */
+const filterValuesOf = (query: ReportQuery, periods: readonly PeriodOption[]): ReportFilterValues => {
+  const period = periodOf(query.period, periods);
+  return {
+    client: query.client,
+    from: period?.from ?? '',
+    period: query.period,
+    salesperson: query.salesperson,
+    status: query.status,
+    to: period?.to ?? '',
+  };
+};
+
+const filterKeys = ['client', 'from', 'period', 'salesperson', 'status', 'to'] as const;
+const sameFilterValues = (left: ReportFilterValues, right: ReportFilterValues) =>
+  filterKeys.every((key) => left[key] === right[key]);
+
+/** The query change one edit of the bar asks for; none when the bar shows the query as it is. */
+const queryPatchOf = (
+  next: ReportFilterValues,
+  shown: ReportFilterValues,
+  period: Parameters<typeof periodWithDate>[0],
+): Partial<ReportQuery> => {
+  const patch: { -readonly [Key in keyof ReportQuery]?: ReportQuery[Key] } = {};
+  if (next.period !== shown.period) {
+    patch.period = next.period === '' ? ALL : next.period;
+  } else if (next.from !== shown.from) {
+    patch.period = periodWithDate(period, 'from', next.from);
+  } else if (next.to !== shown.to) {
+    patch.period = periodWithDate(period, 'to', next.to);
+  }
+  if (next.salesperson !== shown.salesperson) {
+    patch.salesperson = next.salesperson === '' ? ALL : next.salesperson;
+  }
+  if (next.client !== shown.client) {
+    patch.client = next.client === '' ? ALL : next.client;
+  }
+  if (next.status !== shown.status) {
+    patch.status = next.status === '' ? ALL : next.status;
+  }
+  return patch;
+};
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier visit left, so its values are read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
 export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }: ReportFilterBarProps) => {
   const { t } = useModernI18n();
   const period = periodOf(query.period, periods) ?? {};
@@ -134,50 +224,66 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
   ];
   const own = records.state.salespeople.find((person) => person.id === records.viewer.salespersonId);
   const active = query.period !== ALL || query.salesperson !== ALL || query.client !== ALL || query.status !== ALL;
+  const shown = filterValuesOf(query, periods);
+  const [ready, setReady] = useState(false);
+  const values = Option.filter(useAtomValue(reportFilterForm.values), () => ready);
+  const setValues = useAtomSet(reportFilterForm.setValues);
+  useAtomSubscribe(
+    reportFilterForm.values,
+    (next) => {
+      if (!ready || Option.isNone(next)) {
+        return;
+      }
+      const patch = queryPatchOf(next.value, shown, period);
+      if (Object.keys(patch).length > 0) {
+        onChange(patch);
+      }
+    },
+    { immediate: false },
+  );
+  // The URL changes without the bar too (Back, Zrušit filtry, a drill-down): the bar then shows it.
+  const seen = useRef(shown);
+  useEffect(() => {
+    if (sameFilterValues(seen.current, shown)) {
+      return;
+    }
+    seen.current = shown;
+    if (Option.exists(values, (current) => !sameFilterValues(current, shown))) {
+      setValues(shown);
+    }
+  }, [setValues, shown, values]);
 
   return (
-    <div className={`${surfaceTileClassName} flex flex-wrap items-end gap-150 p-200`}>
+    <FormRoot
+      className={`${surfaceTileClassName} flex flex-wrap items-end gap-150 p-200`}
+      defaultValues={shown}
+      form={reportFilterForm}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      <FormReady onReady={setReady} />
       <div className="w-52">
-        <SelectTemplate
+        <reportFilterForm.period
           id="crm-report-period"
           items={periodItems}
           label={t('crm.ciWorkflow.period')}
           labelProps={labelProps}
-          onValueChange={(details) => onChange({ period: details.value[0] ?? ALL })}
           size="sm"
-          value={[query.period]}
         />
       </div>
       <div className="w-44">
-        <FormInput
-          id="crm-report-from"
-          label={t('crm.reports.dateFrom')}
-          onChange={(event) => onChange({ period: periodWithDate(period, 'from', event.target.value) })}
-          size="sm"
-          type="date"
-          value={period.from ?? ''}
-        />
+        <reportFilterForm.from id="crm-report-from" label={t('crm.reports.dateFrom')} size="sm" type="date" />
       </div>
       <div className="w-44">
-        <FormInput
-          id="crm-report-to"
-          label={t('crm.reports.dateTo')}
-          onChange={(event) => onChange({ period: periodWithDate(period, 'to', event.target.value) })}
-          size="sm"
-          type="date"
-          value={period.to ?? ''}
-        />
+        <reportFilterForm.to id="crm-report-to" label={t('crm.reports.dateTo')} size="sm" type="date" />
       </div>
       {scopeAll ? (
         <div className="w-52">
-          <SelectTemplate
+          <reportFilterForm.salesperson
             id="crm-report-salesperson"
             items={salespeopleItems}
             label={t('crm.ciWorkflow.salesperson')}
             labelProps={labelProps}
-            onValueChange={(details) => onChange({ salesperson: details.value[0] ?? ALL })}
             size="sm"
-            value={[query.salesperson]}
           />
         </div>
       ) : (
@@ -187,25 +293,21 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
         </div>
       )}
       <div className="w-64">
-        <SelectTemplate
+        <reportFilterForm.client
           id="crm-report-client"
           items={clientItems}
           label={t('crm.ciWorkflow.client')}
           labelProps={labelProps}
-          onValueChange={(details) => onChange({ client: details.value[0] ?? ALL })}
           size="sm"
-          value={[query.client]}
         />
       </div>
       <div className="w-64">
-        <SelectTemplate
+        <reportFilterForm.status
           id="crm-report-status"
           items={statusItems}
           label={t('crm.ciWorkflow.status')}
           labelProps={labelProps}
-          onValueChange={(details) => onChange({ status: details.value[0] ?? ALL })}
           size="sm"
-          value={[query.status]}
         />
       </div>
       {active && (
@@ -219,6 +321,6 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
           Zrušit filtry
         </Button>
       )}
-    </div>
+    </FormRoot>
   );
 };
