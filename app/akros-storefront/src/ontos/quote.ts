@@ -303,7 +303,7 @@ export async function quoteCart(
             label,
             unit: item?.unit ?? cartLine?.unit,
             minimumQuantity: item?.minimumQuantity ?? cartLine?.minimumQuantity,
-            packageQuantity: item?.packageQuantity ?? cartLine?.quantityStep,
+            packageQuantity: item?.packageQuantity,
           },
           t,
           money,

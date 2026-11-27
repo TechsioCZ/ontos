@@ -11,7 +11,8 @@ import {
   requestOrigin,
 } from "@/ontos/http";
 import { assertCart } from "@/ontos/quote";
-import { readProducts } from "@/ontos/catalog-server";
+import { readCartProducts, readProducts } from "@/ontos/catalog-server";
+import { createCatalog } from "@/ontos/catalog-model";
 import { callAction } from "@/ontos/gateway";
 import { readAccount } from "@/ontos/account";
 import { readCustomerOrders } from "@/ontos/customer-orders";
@@ -151,28 +152,40 @@ export async function POST(request: Request) {
     if (order?.outcome === "REJECTED") {
       // The owner's messages are Czech: each issue is worded from its code in the request's language.
       const money = { currency: market.currency, locale: market.formatLocale };
-      const issues = (order.issues ?? [])
-        .filter((issue) => typeof issue === "object" && issue !== null)
-        .map((issue) => {
-          const line = cart.lines.find(
-            (l) =>
-              l.productId === issue.productId && (l.variantId ?? "") === (issue.variantId ?? ""),
-          );
-          return {
-            ...issue,
-            message: ownerIssueText(
-              issue,
-              line && {
-                label: `${line.name || t.server.cart.fallbackItem}${line.variantLabel ? ` (${line.variantLabel})` : ""}`,
-                unit: line.unit,
-                minimumQuantity: line.minimumQuantity,
-                packageQuantity: line.quantityStep,
-              },
-              t,
-              money,
-            ),
-          };
-        });
+      const ownerIssues = (order.issues ?? []).filter(
+        (issue) => typeof issue === "object" && issue !== null,
+      );
+      // The browser's cart line has no package: a quantity rule is named from a fresh read of the owner's units.
+      const fresh = ownerIssues.some(
+        (issue) => issue.code === "MINIMUM_QUANTITY" || issue.code === "PACKAGE_QUANTITY",
+      )
+        ? createCatalog(await readCartProducts(cart.lines, { operation: lifetime }), {
+            categories: [],
+          })
+        : undefined;
+      const issues = ownerIssues.map((issue) => {
+        const line = cart.lines.find(
+          (l) => l.productId === issue.productId && (l.variantId ?? "") === (issue.variantId ?? ""),
+        );
+        const product = issue.productId ? fresh?.getProductById(issue.productId) : undefined;
+        const item = issue.variantId
+          ? product?.detail.variants.find((variant) => variant.id === issue.variantId)
+          : product;
+        return {
+          ...issue,
+          message: ownerIssueText(
+            issue,
+            line && {
+              label: `${line.name || t.server.cart.fallbackItem}${line.variantLabel ? ` (${line.variantLabel})` : ""}`,
+              unit: item?.unit ?? line.unit,
+              minimumQuantity: item?.minimumQuantity,
+              packageQuantity: item?.packageQuantity,
+            },
+            t,
+            money,
+          ),
+        };
+      });
       return Response.json(
         {
           message: issues.map((i) => i.message).join(" ") || t.server.orders.cartChanged,

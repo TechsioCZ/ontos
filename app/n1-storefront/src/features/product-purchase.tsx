@@ -128,6 +128,16 @@ export const ProductPurchase = ({
             max={Math.max(firstQuantity, maximum)}
             min={firstQuantity}
             onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
+            // The kit clamps a quantity outside the range on blur; one between packages snaps to the nearest package.
+            onValueCommit={({ valueAsNumber }) => {
+              const pack = current.packageQuantity ?? 0;
+              if (exhausted || !(pack > 0) || !Number.isFinite(valueAsNumber)) return;
+              const snapped = Number((Math.round(valueAsNumber / pack) * pack).toFixed(12));
+              setDraft({
+                key: selectionKey,
+                value: String(Math.min(Math.max(snapped, firstQuantity), maximum)),
+              });
+            }}
             size="md"
             step={cartQuantityStep(current.packageQuantity)}
             value={quantity}

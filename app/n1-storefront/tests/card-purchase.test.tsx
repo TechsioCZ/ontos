@@ -204,8 +204,12 @@ describe("simple card purchase uses real native values", () => {
       ),
     ).not.toBeNull();
   });
-  it("rejects an owner minimum that is not a native package multiple", () => {
-    expect(simpleCardEntry({ ...product, packageQuantity: 2 }, cartState())).toBeNull();
+  it("offers the first whole package when the owner minimum is not a package multiple", () => {
+    expect(simpleCardEntry({ ...product, packageQuantity: 2 }, cartState())).toMatchObject({
+      minimumQuantity: 3,
+      packageQuantity: 2,
+      quantity: 4,
+    });
     expect(simpleCardEntry({ ...product, packageQuantity: 1.5 }, cartState())).toMatchObject({
       packageQuantity: 1.5,
       quantity: 3,

@@ -4,7 +4,12 @@ import type { ProductCardModel } from "@/ontos/catalog-model";
 import { CartScopeSchema } from "@/ontos/cart-quote";
 import type { useCart } from "./cart-provider";
 import type { CartEntry } from "./cart-state";
-import { cartLineKey, cartQuantityMaximum, validCartQuantity } from "./cart-state";
+import {
+  cartLineKey,
+  cartQuantityMaximum,
+  cartQuantityMinimum,
+  validCartQuantity,
+} from "./cart-state";
 
 const SimpleCardProductSchema = Schema.Struct({
   ...ProductCardModelSchema.fields,
@@ -21,7 +26,7 @@ const SimpleCardProductSchema = Schema.Struct({
   ),
 );
 
-/** A card may add only an explicitly simple owner product, at its actual minimum. */
+/** A card may add only an explicitly simple owner product, at its first orderable quantity. */
 export const simpleCardEntry = (
   product: ProductCardModel,
   cart: ReturnType<typeof useCart>,
@@ -36,10 +41,11 @@ export const simpleCardEntry = (
   ) {
     return null;
   }
-  // Match the native order contract; never round the owner's minimum for a shortcut.
+  // The owner sells whole packages: the first orderable quantity is the minimum rounded up to a package.
+  const quantity = cartQuantityMinimum(product.minimumQuantity, product.packageQuantity);
   if (
     !validCartQuantity(
-      product.minimumQuantity,
+      quantity,
       product.minimumQuantity,
       product.packageQuantity,
       cartQuantityMaximum(
@@ -65,7 +71,7 @@ export const simpleCardEntry = (
     name: product.name,
     packageQuantity: product.packageQuantity ?? null,
     productId: product.id,
-    quantity: product.minimumQuantity,
+    quantity,
     sku: product.sku,
     slug: product.slug,
     stockQuantity: product.stockQuantity ?? null,

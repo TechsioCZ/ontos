@@ -198,7 +198,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
           aria-invalid={error ? true : undefined}
           aria-label={isPackage ? cs.product.packagesOf(label) : cs.product.quantityOf(label)}
           aria-roledescription="numberfield"
-          aria-valuemax={maximum}
+          aria-valuemax={Math.max(maximum, minimum)}
           aria-valuemin={minimum}
           aria-valuenow={Number.isFinite(selectedQuantity) ? selectedQuantity : undefined}
           autoComplete="off"

@@ -157,6 +157,9 @@ const rejected = {
   },
 };
 
+let orderVerdict: unknown = rejected;
+let catalogProducts: unknown[] = [product];
+
 describe("cart quote and order speak the market language for owner rejections", () => {
   const markets = [
     testMarket,
@@ -193,7 +196,7 @@ describe("cart quote and order speak the market language for owner rejections", 
       if (path === "/shell-super-app-api/owner/api/portal-auth/customer-account")
         return Response.json({ state: "anonymous" });
       if (path === "/shell-super-app-api/owner/merchandise/actions/place-storefront-order")
-        return Response.json(rejected);
+        return Response.json(orderVerdict);
       if (path !== "/shell-super-app-api/auth/api-key/gateway-read")
         throw new Error(`Unexpected owner request: ${request.method} ${path}`);
 
@@ -259,7 +262,7 @@ describe("cart quote and order speak the market language for owner rejections", 
         {
           market,
           revision: full ? 3 : 7,
-          products: full ? [product] : [],
+          products: full ? catalogProducts : [],
         },
         { headers },
       );
@@ -309,17 +312,17 @@ describe("cart quote and order speak the market language for owner rejections", 
     expect(quote.issues[0]).toBe("Vruty (3,5 × 16): k dispozici je jen 4 ks.");
   });
 
-  it("rewords a rejected order in Slovak (409)", async () => {
+  const placeOrder = async (line: typeof cartLine & { quantityStep?: number }, locale: string) => {
     const request = nextRequest(`${network.origin}/api/ontos/orders`, {
       method: "POST",
       headers: {
         origin: network.origin,
         "content-type": "application/json",
-        "x-akros-market-locale": "sk",
+        "x-akros-market-locale": locale,
       },
       body: JSON.stringify({
         clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
-        cart: { version: 3, lines: [cartLine] },
+        cart: { version: 3, lines: [line] },
         draft: {
           ...createCheckoutDraft(),
           deliveryId: "PPL",
@@ -341,14 +344,40 @@ describe("cart quote and order speak the market language for owner rejections", 
       .finally(() => request.close());
     await network.idle();
     expect(response.status).toBe(409);
-    const body = (await response.json()) as {
+    return (await response.json()) as {
       message: string;
       issues: { code: string; message: string }[];
     };
+  };
+
+  it("rewords a rejected order in Slovak (409)", async () => {
+    const body = await placeOrder(cartLine, "sk");
     expect(body.issues.map((issue) => issue.code)).toEqual(["INSUFFICIENT_STOCK", "PRICE_CHANGED"]);
     expect(body.issues[0]!.message).toBe(
       sk.server.cart.insufficientStock("Vruty (3,5 × 16)", 4, "ks"),
     );
     expect(body.message).not.toMatch(czechOnly);
+  });
+
+  it("names the owner's current quantity rule, never the browser's cart line (409)", async () => {
+    const [variant] = product.variantRecords;
+    const reject = (code: string) => ({
+      storefrontOrder: { outcome: "REJECTED", issues: [{ code, productId: "p", variantId: "v" }] },
+    });
+    // The browser's line claims an unpackaged unit sold from one piece.
+    const browserLine = { ...cartLine, minimumQuantity: 1, quantityStep: 1 };
+    try {
+      orderVerdict = reject("PACKAGE_QUANTITY");
+      catalogProducts = [{ ...product, variantRecords: [{ ...variant, packageQuantity: 10 }] }];
+      const packaged = await placeOrder({ ...browserLine, quantity: 11 }, "cs");
+      expect(packaged.message).toBe(cs.server.cart.packageQuantity("Vruty (3,5 × 16)", 10, "ks"));
+      orderVerdict = reject("MINIMUM_QUANTITY");
+      catalogProducts = [{ ...product, variantRecords: [{ ...variant, minimumQuantity: 5 }] }];
+      const unpackaged = await placeOrder({ ...browserLine, quantity: 2 }, "cs");
+      expect(unpackaged.message).toBe(cs.server.cart.minimumQuantity("Vruty (3,5 × 16)", 5, "ks"));
+    } finally {
+      orderVerdict = rejected;
+      catalogProducts = [product];
+    }
   });
 });

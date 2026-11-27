@@ -270,6 +270,39 @@ describe("product purchase feedback", () => {
       }),
     );
   }
+  it.live("snaps a typed quantity between packages to the nearest whole package", () =>
+    Effect.gen(function* packageSnap() {
+      seed([]);
+      yield* mount({ ...product, minimumQuantity: 1, packageQuantity: 5, stockQuantity: 100 });
+      const input = container.querySelector("input");
+      if (input === null) {
+        throw new Error("Expected the quantity input");
+      }
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      for (const [typed, committed] of [
+        ["7", "5"],
+        ["8", "10"],
+        ["999", "100"],
+      ] as const) {
+        yield* Effect.promise(() =>
+          act(async () => {
+            input.focus();
+            setValue?.call(input, typed);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }),
+        );
+        yield* Effect.promise(() =>
+          act(async () => {
+            input.blur();
+          }),
+        );
+        yield* idle;
+        expect(input.value).toBe(committed);
+        expect(container.textContent).not.toContain(d.shopping.invalidQuantity);
+        expect(purchaseButton().disabled).toBe(false);
+      }
+    }),
+  );
   it.live.each([
     { outcome: "saved", saved: true },
     { outcome: "failed", saved: false },
