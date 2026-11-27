@@ -1,6 +1,7 @@
 import { businessBrand } from '@techsio/ui-kit/theme/built-in-brands';
 import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
-import { Effect, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { DateTime, Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector, getActionHandler } from '../../src/testing/actions.ts';
@@ -13,6 +14,7 @@ import { AttachTenantThemePayloadSchema } from '../../src/themes/contract.ts';
 import type { TenantThemeDefinition } from '../../src/themes/contract.ts';
 import { DEFAULT_TENANT_THEME, effectiveTenantTheme, tenantThemeRevision } from '../../src/themes/definition.ts';
 import { TenantThemeInvalid, TenantThemeNotFound } from '../../src/themes/errors.ts';
+import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import type { tenantThemeRepositoryFromTransaction } from '../../src/themes/repository.ts';
 
 /*
@@ -179,3 +181,30 @@ it.effect('attaches a saved theme, refuses an unknown key and detaches back to t
     expect(effectiveTenantTheme(yield* store.repository.attached())).toBe(businessBrand);
   }),
 );
+
+/*
+ * The read through the real Read runtime, as the Shell calls it: a signed-in member, without a company (the Shell
+ * drops a selected one, the theme is the tenant's), gets the tenant's theme. Only the SQL transport is scripted. While
+ * the read declared `optional` company scope, it answered every member with ReadPermissionUnavailable (a Shell 503).
+ */
+it.layer(NodeCrypto.layer)('the tenant theme read in the Read runtime', (suite) => {
+  suite.effect('answers a signed-in member of the tenant without any company', () =>
+    Effect.gen(function* memberReadsTheme() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.succeed([]),
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-11-27T09:00:00.000Z'))),
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const answer = yield* harness.runtime.runRead({
+        input: {},
+        principal: Struct.omit(scope, ['correlationId']),
+        registration: tenantThemeRead,
+        transport: { correlationId: 'core-themes' },
+      });
+      expect(answer).toEqual({ revision: yield* tenantThemeRevision(businessBrand), theme: businessBrand });
+      expect(harness.snapshot().ownerQueries.map((query) => query.scope.tenantId)).toEqual([tenantId]);
+    }),
+  );
+});
