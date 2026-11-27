@@ -14,6 +14,8 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { hasRenderLifetime, renderOperation } from "./render-operation";
 import { callAction } from "./gateway";
 import { ownerIssueText, type OwnerIssue } from "./owner-issues";
+import { groupPriceClaimOf } from "./customer-prices";
+import type { ProductPage } from "./catalog-projection";
 export function assertCart(value: unknown, t: Dictionary = cs): asserts value is CartState {
   const cart = value as CartState;
   if (
@@ -111,18 +113,24 @@ interface OwnerDryRun {
  */
 async function ownerDryRun(
   cart: CartState,
-  revision: number,
+  snapshot: ProductPage,
   deliveryId: unknown,
   marketId: string | undefined,
   options: OperationOptions,
 ) {
+  const { revision } = snapshot;
   const method = ownerShippingMethod(deliveryId);
-  const lines = cart.lines.map((l) => ({
-    productId: l.productId,
-    ...(l.variantId ? { variantId: l.variantId } : {}),
-    quantity: l.quantity,
-    expectedUnitPriceMinor: l.priceMinor,
-  }));
+  const lines = cart.lines.map((l) => {
+    // The customer's group price as this server read it from Pricing, never a price from the browser.
+    const customerGroupPrice = groupPriceClaimOf(snapshot, l);
+    return {
+      productId: l.productId,
+      ...(l.variantId ? { variantId: l.variantId } : {}),
+      quantity: l.quantity,
+      expectedUnitPriceMinor: l.priceMinor,
+      ...(customerGroupPrice === undefined ? {} : { customerGroupPrice }),
+    };
+  });
   const digest = createHash("sha256")
     .update(JSON.stringify({ lines, method, revision, marketId }))
     .digest("hex")
@@ -170,8 +178,9 @@ export async function quoteCart(
   try {
     const messages = t.server.cart;
     const market = await getActiveMarket(marketReadsFor(operation));
-    // Only products offered in this market are returned, priced in its currency.
-    const snapshot = await readCartProducts(cart.lines, lifetime);
+    // Only products offered in this market are returned, priced in its currency (a signed-in customer's own group
+    // prices included: a quote charges them).
+    const snapshot = await readCartProducts(cart.lines, { ...lifetime, charged: true });
     const model = createCatalog(snapshot, { categories: [] });
     const lineIssues: QuoteLineIssue[] = [];
     let priceChanged = false;
@@ -261,7 +270,7 @@ export async function quoteCart(
           code: "PACKAGE_QUANTITY",
           message: messages.packageQuantity(label, step, item.unit),
         });
-      const { unitWeightKg: _clientWeight, ...verifiedLine } = line;
+      const { unitWeightKg: _clientWeight, yourPrice: _clientYours, ...verifiedLine } = line;
       // Fresh kg per sales unit from the projection (source feed index); unknown stays absent.
       const unitWeightKg = v ? v.sourceNetWeight : p.netWeight;
       return {
@@ -276,6 +285,7 @@ export async function quoteCart(
         ...purchaseConstraints(item.minimumQuantity, item.packageQuantity),
         priceMinor: price,
         priceExcludingVatMinor: tier?.priceExcludingVatMinor,
+        ...(item.customerPrice ? { yourPrice: true as const } : {}),
       };
     });
     let totals: QuoteTotals | null = null;
@@ -283,7 +293,7 @@ export async function quoteCart(
       // Same lines the order will send; OntOS has the final word on availability and totals.
       const { order, shippingIncluded } = await ownerDryRun(
         cart,
-        snapshot.revision,
+        snapshot,
         deliveryId,
         market.marketId,
         lifetime,

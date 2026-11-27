@@ -403,6 +403,7 @@ export type ProductCommand = Extract<
       | 'RemoveMarket'
       | 'ArchiveProduct'
       | 'RestoreProduct'
+      | 'SetSymmyLink'
       | 'DeleteCategory'
       | 'ChangeProductImages'
       | 'RecordStockMovement';
@@ -424,6 +425,7 @@ const submitProductCommand = (command: ProductCommand, expectedRevision: number,
       'DeleteCategory',
       'ArchiveProduct',
       'RestoreProduct',
+      'SetSymmyLink',
       (value) => executeManageCatalog({ command: value, expectedRevision }, idempotencyKey, options),
     ),
     Match.tag('SetProductMarketOffer', 'ConfigureMarket', 'SetMarketProductOffers', 'RemoveMarket', (value) =>

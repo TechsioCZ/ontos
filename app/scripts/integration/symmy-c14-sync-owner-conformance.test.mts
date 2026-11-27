@@ -1117,10 +1117,8 @@ const syncConformance = Effect.fn('InternalC14Sync.ownerConformance')(function* 
   const adoptionInvocations = adoptedCatalog.flatMap(({ invocations }) =>
     invocations.map(({ invocationId }) => invocationId),
   );
-  // Five Actions per SKU run anew; NAME only observes the existing owner fact.
-  expect(adoptionInvocations).toHaveLength(internalStockItemKeys.length * 5);
-  expect(new Set(adoptionInvocations).size).toBe(adoptionInvocations.length);
-  expect(adoptionInvocations.some((invocationId) => originalReadinessInvocations.has(invocationId))).toBe(false);
+  // The Products are ACTIVE already: none of their readiness Actions runs again, the NAME included.
+  expect(adoptionInvocations).toEqual([]);
   // The absence of a linked receipt must not hide a separate, unrecorded NAME dispatch.
   const nameInvocations = yield* admin`select action_invocation_id from core.action_invocations
           where tenant_id=${tenantId} and action_key='commerce.catalog.set-product-localized-facts'`.pipe(

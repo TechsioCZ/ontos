@@ -163,7 +163,10 @@ const ProductPageSchema = Schema.Struct({
 });
 const pageSize = 100;
 
-/** The Catalog references of the variant (Pricing and Inventory key them with the tenant), page by page. */
+/**
+ * The Catalog references of the variant (Pricing and Inventory key them with the tenant), page by page. The variant id
+ * alone decides: a shop product linked to Symmy by SKU can hold variants of several Catalog products.
+ */
 const findCatalogRefs = (
   input: SymmyWriteThroughInput,
   offset = 0,
@@ -176,7 +179,9 @@ const findCatalogRefs = (
   }).pipe(
     Effect.flatMap(decode('Čtení produktu z ERP', ProductPageSchema)),
     Effect.flatMap((page) => {
-      const item = page.items.find(({ productRef }) => productRef.resourceId === input.catalogProductId);
+      const item = page.items.find(({ variants }) =>
+        variants.some(({ variantRef }) => variantRef.resourceId === input.catalogVariantId),
+      );
       const variant = item?.variants.find(({ variantRef }) => variantRef.resourceId === input.catalogVariantId);
       if (item !== undefined && variant !== undefined) {
         return Effect.succeed({ productRef: item.productRef, variantRef: variant.variantRef });
@@ -210,10 +215,18 @@ const ScheduleSchema = Schema.Struct({
       current: Schema.optionalKey(
         Schema.Struct({
           definition: Schema.Struct({
-            identityKey: Schema.Struct({ currencyCode: Schema.String, unitBasis: Schema.Unknown }),
+            // Every key of the identity: the grant names the exact key, and a decode keeps only the declared ones.
+            identityKey: Schema.Struct({
+              catalogSelection: Schema.Unknown,
+              commercialScope: Schema.Unknown,
+              currencyCode: Schema.String,
+              priceGroupSelector: Schema.Unknown,
+              unitBasis: Schema.Unknown,
+            }),
             revision: Schema.Struct({ revision: Schema.Unknown, revisionId: Schema.Unknown }),
           }),
-          effectivePeriod: Schema.Struct({ effectiveFrom: Schema.String }),
+          // Revise fences on the whole period, the open end (null) included.
+          effectivePeriod: Schema.Struct({ effectiveFrom: Schema.String, effectiveTo: Schema.NullOr(Schema.String) }),
         }),
       ),
       scheduleRevision: Schema.Unknown,

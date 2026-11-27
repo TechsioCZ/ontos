@@ -58,6 +58,7 @@ const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPur
   priceMinor: variant.priceMinor,
   priceExcludingVatMinor: variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
     ?.priceExcludingVatMinor,
+  ...(variant.customerPrice ? { yourPrice: true as const } : {}),
   variantLabel: formatVariantLabel(variant),
   // kg per sales unit from the source feed index; the server quote refreshes it from OntOS projection.
   ...(variant.sourceNetWeight ? { unitWeightKg: variant.sourceNetWeight } : {}),
@@ -440,6 +441,7 @@ export function ProductPurchaseForm({
       priceExcludingVatMinor: (variant?.priceTiers ?? product.detail.priceTiers).find(
         (tier) => tier.priceMinor === purchaseItem.priceMinor,
       )?.priceExcludingVatMinor,
+      ...(purchaseItem.customerPrice ? { yourPrice: true as const } : {}),
       variantLabel: variant ? formatVariantLabel(variant) : undefined,
       ...(unitWeightKg ? { unitWeightKg } : {}),
     };
@@ -790,6 +792,11 @@ export function ProductPurchaseForm({
                                 <small className="sf-variant-table__net">
                                   {formatPrice(basePriceTier.priceExcludingVatMinor)}{" "}
                                   {cs.product.excludingVat}
+                                </small>
+                              )}
+                              {item.customerPrice && (
+                                <small className="sf-variant-table__net" data-sf-your-price="">
+                                  {cs.product.yourPrice}
                                 </small>
                               )}
                             </>

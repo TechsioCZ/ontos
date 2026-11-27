@@ -22,7 +22,7 @@ import type {
 } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Config, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
+import { Config, Console, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -69,6 +69,7 @@ import {
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Availability,
+  CustomerGroupPrice,
   EntityId,
   Order,
   OrderHistoryEntry,
@@ -870,32 +871,8 @@ const holdsSku = (entry: Product, sku: string) =>
   sameSku(entry.sku, sku) ||
   (entry.variants ?? []).some((variant) => variant.sku !== undefined && sameSku(variant.sku, sku));
 
-/** Category ids minted only by the Symmy create route /catalog/products/batch (demo-catalog-identity.ts). */
-const SYMMY_ROUTE_CATEGORY_ID = /^symmy-[0-9a-f]{64}-[0-9a-f]{64}$/u;
-
-/**
- * The one plain row the old create-only Symmy route made for this source product: no provenance yet, filed in a
- * category that route minted, holding the source product's code or its only variant SKU, and the only holder. Such a
- * row is adopted (keeps its id) instead of duplicated; any other holder makes the upsert refuse.
- */
-const adoptableRouteRow = (
-  holders: readonly Product[],
-  value: CommandOf<'UpsertSourceProduct'>,
-): Product | undefined => {
-  const [only, ...others] = holders;
-  const [variant, ...moreVariants] = value.variants;
-  return only !== undefined &&
-    others.length === 0 &&
-    variant !== undefined &&
-    moreVariants.length === 0 &&
-    only.importedVia === undefined &&
-    (only.variants ?? []).length === 0 &&
-    only.categoryId !== undefined &&
-    SYMMY_ROUTE_CATEGORY_ID.test(only.categoryId) &&
-    (sameSku(only.sku, variant.sku) || sameSku(only.sku, value.erpCode))
-    ? only
-    : undefined;
-};
+/** A row the shop sells or may sell: neither archived nor deactivated. Only such a row takes a Symmy product's SKU. */
+const isLiveRow = (entry: Product) => entry.active && entry.demoArchive === undefined;
 
 /** The deterministic merchandise row of one main Catalog product imported through Symmy. */
 export const symmyProductIdOf = (catalogProductId: string) => `symmy-${catalogProductId}`;
@@ -908,6 +885,7 @@ const sourceUnitOf = (unit: string | undefined, fallback: Product['unit']): Prod
 /** The fields a Symmy import owns, compared to tell a replay (no write at all) from a real change. */
 const sourceOwnedKey = (product: Product) =>
   JSON.stringify([
+    product.importedVia,
     product.active,
     product.demoArchive !== undefined,
     product.published,
@@ -934,6 +912,207 @@ const sourceOwnedKey = (product: Product) =>
   ]);
 
 /**
+ * The shop product without its Symmy link: no mark, ERP code or Catalog product id, and no Catalog variant id on the
+ * product or on a variant whose id `drop` names (every one when `drop` is undefined). The mark and the ERP code stay
+ * while another variant is still linked. Price, stock, texts, pictures and publication are untouched.
+ */
+const withoutSymmyLink = (product: Product, drop?: ReadonlySet<string>): Product => {
+  const dropped = (catalogVariantId: string | undefined) =>
+    catalogVariantId !== undefined && (drop === undefined || drop.has(catalogVariantId));
+  const {
+    catalogProductId,
+    catalogVariantId,
+    erpCode,
+    importedVia,
+    variants: storedVariants,
+    ...rest
+  } = product;
+  const variants = storedVariants?.map((variant): ProductVariant => {
+    if (!dropped(variant.catalogVariantId)) {
+      return variant;
+    }
+    const { catalogVariantId: _catalogVariant, ...unlinked } = variant;
+    void _catalogVariant;
+    return unlinked;
+  });
+  const keptVariant = dropped(catalogVariantId) ? undefined : catalogVariantId;
+  const stillLinked = keptVariant !== undefined || (variants ?? []).some((variant) => variant.catalogVariantId !== undefined);
+  return {
+    ...rest,
+    ...(stillLinked && importedVia !== undefined ? { importedVia } : {}),
+    ...(stillLinked && erpCode !== undefined ? { erpCode } : {}),
+    ...(stillLinked && catalogProductId !== undefined ? { catalogProductId } : {}),
+    ...(keptVariant === undefined ? {} : { catalogVariantId: keptVariant }),
+    ...(variants === undefined ? {} : { variants }),
+  };
+};
+
+/** Whether the shop product is linked to this Symmy product (the product or one of its variants). */
+const linkedToSource = (entry: Product, value: CommandOf<'UpsertSourceProduct'>) => {
+  const sourceVariants = new Set(value.variants.map((variant) => variant.catalogVariantId));
+  return (
+    entry.importedVia === 'symmy' &&
+    (entry.catalogProductId === value.catalogProductId ||
+      (entry.catalogVariantId !== undefined && sourceVariants.has(entry.catalogVariantId)) ||
+      (entry.variants ?? []).some(
+        (variant) => variant.catalogVariantId !== undefined && sourceVariants.has(variant.catalogVariantId),
+      ))
+  );
+};
+
+/**
+ * Staff unlinked this shop product ("Odpojit od Symmy") and the ERP has not changed the source product since: the copy
+ * must not link it again. A source product without `sourceUpdatedAt` never lifts the refusal.
+ */
+const linkRefusedByStaff = (entry: Product, value: CommandOf<'UpsertSourceProduct'>) =>
+  entry.symmyLinkRefusedAt !== undefined &&
+  (value.sourceUpdatedAt === undefined ||
+    DateTime.toEpochMillis(value.sourceUpdatedAt) <= DateTime.toEpochMillis(entry.symmyLinkRefusedAt));
+
+/**
+ * Links one Symmy product to the live shop product that already holds its code or a variant SKU (the same SKU is the
+ * same product): marks it imported through Symmy, maps the matched variant (or the plain product) to its Catalog
+ * Variant and writes only the ERP price and stock onto it. Name, texts, category, pictures, published state and the
+ * other variants stay as the shop has them; no row is created. Undefined when no variant pairs with the product.
+ */
+const linkSourceProduct = Effect.fn('Merchandise.linkSourceProduct')(function* linkSourceProduct(
+  state: MerchandiseState,
+  target: Product,
+  value: CommandOf<'UpsertSourceProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const only = value.variants.length === 1 ? value.variants[0] : undefined;
+  // A Symmy product of one variant is identified by its code as well as by its variant key.
+  const pairsWith = (sku: string | undefined, source: SourceVariantInput) =>
+    sku !== undefined && (sameSku(sku, source.sku) || (source === only && sameSku(sku, value.erpCode)));
+  const nativeVariants = target.variants ?? [];
+  const plain =
+    nativeVariants.length === 0 ? value.variants.find((source) => pairsWith(target.sku, source)) : undefined;
+  const pairs = value.variants.flatMap((source) => {
+    const native = nativeVariants.find((variant) => variant.id !== undefined && pairsWith(variant.sku, source));
+    return native?.id === undefined ? [] : [{ nativeId: native.id, source }];
+  });
+  if (plain === undefined && pairs.length === 0) {
+    return undefined;
+  }
+  const plainPrice = plain?.priceNetMinor ?? undefined;
+  const base = plainPrice === undefined ? target : yield* repriced(target, plainPrice, input);
+  const variants =
+    target.variants === undefined
+      ? undefined
+      : yield* Effect.forEach(
+          target.variants,
+          Effect.fn('Merchandise.linkVariant')(function* linkVariant(native: ProductVariant) {
+            const pair = pairs.find(({ nativeId }) => nativeId === native.id);
+            if (pair === undefined) {
+              return native;
+            }
+            const price = pair.source.priceNetMinor ?? undefined;
+            // A new price goes through the variant normalization (history, gross, scaled tiers) like a staff edit.
+            const { priceTiers: _tiers, ...untiered } = native;
+            void _tiers;
+            const [normalized] =
+              price === undefined || price === native.priceMinor
+                ? [native]
+                : yield* normalizeVariants(target, [{ ...untiered, priceMinor: price }], input);
+            return { ...(normalized ?? native), catalogVariantId: pair.source.catalogVariantId };
+          }),
+          { concurrency: 1 },
+        );
+  const stockOf = (source: SourceVariantInput) => (typeof source.stockOnHand === 'number' ? source.stockOnHand : undefined);
+  const targets = [
+    ...(plain === undefined ? [] : [{ onHand: stockOf(plain), variantId: undefined }]),
+    ...pairs.map(({ nativeId, source }) => ({ onHand: stockOf(source), variantId: nativeId })),
+  ];
+  const movements = yield* Effect.forEach(
+    targets,
+    Effect.fn('Merchandise.linkStock')(function* linkStock(
+      { onHand, variantId }: { readonly onHand: number | undefined; readonly variantId: ProductVariant['id'] },
+      index: number,
+    ) {
+      if (onHand === undefined) {
+        return [];
+      }
+      const current =
+        variantId === undefined
+          ? stockOnHandOf(state.movements, target.id)
+          : variantStockOf(state.movements, target.id, variantId);
+      const delta = normalizeQuantity(onHand - current);
+      if (delta === 0) {
+        return [];
+      }
+      const movement: StockMovement = {
+        at: input.now,
+        delta,
+        id: yield* movementIdOf(input.resourceId, index),
+        note: 'Symmy',
+        productId: target.id,
+        reason: 'ADJUSTMENT',
+        ...stockVariantFields(variantId),
+      };
+      return [movement];
+    }),
+    { concurrency: 1 },
+  ).pipe(Effect.map((lists) => lists.flat()));
+  // Linking again (the ERP changed the source product after a staff unlink) ends that unlink.
+  const { symmyLinkRefusedAt: _refused, ...unrefused } = base;
+  void _refused;
+  const linked: Product = {
+    ...unrefused,
+    catalogProductId: target.catalogProductId ?? value.catalogProductId,
+    erpCode: target.erpCode ?? value.erpCode,
+    importedVia: 'symmy',
+    // An ERP on-hand figure makes the stock tracked; without one the shop product keeps its own setting (unset = tracked).
+    ...(targets.some(({ onHand }) => onHand !== undefined) ? { stockTracked: true } : {}),
+    ...(plain === undefined ? {} : { catalogVariantId: plain.catalogVariantId }),
+    ...(variants === undefined ? {} : { variants }),
+  };
+  const entity = yield* entityIdOf(target.id);
+  if (movements.length === 0 && sourceOwnedKey(linked) === sourceOwnedKey(target)) {
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'UNCHANGED', productId: target.id },
+      state,
+    } satisfies SourceUpsertChange;
+  }
+  const next = withProduct(state, { ...linked, updatedAt: input.now });
+  return {
+    entityIds: [entity],
+    sourceUpsert: { outcome: 'UPDATED', productId: target.id },
+    state: movements.length === 0 ? next : { ...next, movements: [...next.movements, ...movements] },
+  } satisfies SourceUpsertChange;
+});
+
+/**
+ * Staff "Odpojit od Symmy" (UNLINK) and its way back (ALLOW); see ApplySetSymmyLinkCommandSchema. A row the copy created
+ * itself (`symmy-…`) is the ERP product and is never unlinked; the ERP retires it instead.
+ */
+const setSymmyLink = Effect.fn('Merchandise.setSymmyLink')(function* setSymmyLink(
+  state: MerchandiseState,
+  value: CommandOf<'SetSymmyLink'>,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, value.id);
+  const entity = yield* entityIdOf(product.id);
+  if (value.action === 'ALLOW') {
+    if (product.symmyLinkRefusedAt === undefined) {
+      return { entityIds: [entity], state } satisfies MerchandiseChange;
+    }
+    const { symmyLinkRefusedAt: _refused, ...allowed } = product;
+    void _refused;
+    return { entityIds: [entity], state: withProduct(state, { ...allowed, updatedAt: input.now }) } satisfies MerchandiseChange;
+  }
+  if (product.id.startsWith('symmy-')) {
+    return yield* Effect.fail(conflict('A product the ERP connector Symmy created is retired in the ERP, not unlinked'));
+  }
+  if (product.importedVia === undefined && product.symmyLinkRefusedAt !== undefined) {
+    return { entityIds: [entity], state } satisfies MerchandiseChange;
+  }
+  const unlinked: Product = { ...withoutSymmyLink(product), symmyLinkRefusedAt: input.now, updatedAt: input.now };
+  return { entityIds: [entity], state: withProduct(state, unlinked) } satisfies MerchandiseChange;
+});
+
+/**
  * One Symmy product as an ordinary product row (see ApplyUpsertSourceProductCommandSchema). Symmy owns the name, code,
  * lifecycle, unit, price and stock; a description or picture is filled only while the row has none, so staff
  * enrichment stays. A missing or zero price never sells: the row stays unpublished until a price arrives.
@@ -944,30 +1123,64 @@ const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(functio
   input: MerchandiseCommandInput,
 ) {
   const symmyId = yield* mintId(ProductIdSchema, symmyProductIdOf(value.catalogProductId));
-  const linked = state.products.find(
-    (entry) =>
-      entry.id === symmyId || (entry.importedVia === 'symmy' && entry.catalogProductId === value.catalogProductId),
-  );
+  const existing = state.products.find((entry) => entry.id === symmyId);
   // Every other row holding the code or a source variant SKU (the working set loads them by the indexed SKU keys).
   const sourceSkus = [value.erpCode, ...value.variants.map((variant) => variant.sku)];
   const holders = state.products.filter(
-    (entry) => entry.id !== linked?.id && sourceSkus.some((sku) => holdsSku(entry, sku)),
+    (entry) => entry.id !== symmyId && sourceSkus.some((sku) => holdsSku(entry, sku)),
   );
-  const adopted = linked === undefined ? adoptableRouteRow(holders, value) : undefined;
-  const existing = linked ?? adopted;
   const id = existing?.id ?? symmyId;
   const entity = yield* entityIdOf(id);
-  const refused = (reason: NonNullable<SourceUpsertResult['reason']>): SourceUpsertChange => ({
-    entityIds: [entity],
-    sourceUpsert: { outcome: 'REFUSED', productId: id, reason },
-    state,
-  });
-  if (adopted === undefined && holders.length > 0) {
-    return refused(
-      holders.some((entry) => holdsSku(entry, value.erpCode))
-        ? 'CODE_HELD_BY_NATIVE_PRODUCT'
-        : 'SKU_HELD_BY_NATIVE_PRODUCT',
+  const reasonOf = (entries: readonly Product[]): NonNullable<SourceUpsertResult['reason']> =>
+    entries.some((entry) => holdsSku(entry, value.erpCode)) ? 'CODE_HELD_BY_NATIVE_PRODUCT' : 'SKU_HELD_BY_NATIVE_PRODUCT';
+  // A Symmy product retired in the ERP catalogue ends its links: each shop product linked to it loses the mark, the
+  // ERP code and the Catalog ids and keeps everything else (it is never archived or hidden: only rows the copy created
+  // itself are archived). A retired product never links a shop product, so later sweeps leave it unlinked.
+  const nativeHolders = holders.filter((entry) => !entry.id.startsWith('symmy-'));
+  if (existing === undefined && value.lifecycle === 'RETIRED' && nativeHolders.length > 0) {
+    const sourceVariants = new Set(value.variants.map((variant) => variant.catalogVariantId));
+    const unlinked = nativeHolders.flatMap((entry) =>
+      linkedToSource(entry, value) ? [{ ...withoutSymmyLink(entry, sourceVariants), updatedAt: input.now }] : [],
     );
+    const touched = unlinked.length > 0 ? unlinked : nativeHolders;
+    if (unlinked.length > 0) {
+      yield* Console.log(
+        `[merchandise-source-upsert] ${value.sourceRecordId} retired: unlinked ${unlinked.map((entry) => entry.id).join(', ')}`,
+      );
+    }
+    return {
+      entityIds: yield* Effect.forEach(touched, (entry) => entityIdOf(entry.id)),
+      sourceUpsert: { outcome: unlinked.length > 0 ? 'UPDATED' : 'UNCHANGED', productId: touched[0]?.id ?? id },
+      state: unlinked.reduce((next, product) => withProduct(next, product), state),
+    } satisfies SourceUpsertChange;
+  }
+  // The same SKU is the same product: the one live shop product holding it is linked (price and stock only), unless
+  // staff unlinked it and the ERP has not changed the source product since.
+  const [target, ...otherTargets] = holders.filter(isLiveRow);
+  if (existing === undefined && target !== undefined && otherTargets.length === 0 && !target.id.startsWith('symmy-')) {
+    if (linkRefusedByStaff(target, value)) {
+      yield* Console.log(`[merchandise-source-upsert] ${value.sourceRecordId} not linked: staff unlinked ${target.id}`);
+      return {
+        entityIds: [yield* entityIdOf(target.id)],
+        sourceUpsert: { outcome: 'REFUSED', productId: target.id, reason: 'UNLINKED_BY_STAFF' },
+        state,
+      } satisfies SourceUpsertChange;
+    }
+    const link = yield* linkSourceProduct(state, target, value, input);
+    if (link !== undefined) {
+      return link;
+    }
+  }
+  if (holders.length > 0) {
+    yield* Console.warn(
+      `[merchandise-source-upsert] ${value.sourceRecordId} refused: ${reasonOf(holders)} held by ` +
+        holders.map((entry) => `${entry.id}${isLiveRow(entry) ? '' : ' (archived)'}`).join(', '),
+    );
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'REFUSED', productId: id, reason: reasonOf(holders) },
+      state,
+    } satisfies SourceUpsertChange;
   }
   const single = value.variants.length === 1 ? value.variants[0] : undefined;
   const now = input.now;
@@ -1035,8 +1248,19 @@ const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(functio
     variant.priceMinor === undefined || variant.priceMinor <= 0 ? [] : [variant.priceMinor],
   );
   const priced = single === undefined ? multiPrices.length > 0 : repricedSingle.currentPriceMinor > 0;
+  // Never a row at 0 Kč: a Symmy product without a price is not created; a row that exists still takes its stock.
+  if (created && !priced) {
+    yield* Console.log(`[merchandise-source-upsert] ${value.sourceRecordId} not created: no price`);
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'UNCHANGED', productId: id },
+      state,
+    } satisfies SourceUpsertChange;
+  }
+  // One stock rule for every product: an Inventory on-hand figure makes the stock tracked (the ERP figure wins over a
+  // staff switch-off); without a figure the row keeps its setting, so a staff switch-on stays (unset = tracked).
   const stockTracked =
-    repricedSingle.stockTracked === true || value.variants.some((variant) => typeof variant.stockOnHand === 'number');
+    repricedSingle.stockTracked !== false || value.variants.some((variant) => typeof variant.stockOnHand === 'number');
   // RETIRED is archived exactly as ArchiveProduct archives; any other lifecycle brings the row back.
   const { demoArchive: _archive, ...unarchived } = repricedSingle;
   void _archive;
@@ -1566,6 +1790,8 @@ const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): Store
 
 interface PricedUnit {
   readonly availability: Availability;
+  /** Set when the unit is priced at the customer's own Price Group price the storefront sent (`groupPriceOf`). */
+  readonly customerGroupPrice?: CustomerGroupPrice;
   readonly grossPriceMinor: number;
   readonly minimumQuantity?: number;
   readonly name: string;
@@ -1576,6 +1802,20 @@ interface PricedUnit {
   readonly variantId?: OrderLine['variantId'];
   readonly variantName?: string;
 }
+
+/**
+ * The customer's Price Group price the storefront sent for a unit, when it names the unit's own main Catalog variant
+ * (a Symmy product or a SKU-linked one): its gross at the unit's rate, for every quantity. Any other claim is ignored
+ * and the stored price applies.
+ */
+const groupPriceOf = (
+  claim: CustomerGroupPrice | undefined,
+  catalogVariantId: string | undefined,
+  vatRate: number,
+): { readonly customerGroupPrice: CustomerGroupPrice; readonly grossPriceMinor: number } | undefined =>
+  claim !== undefined && catalogVariantId !== undefined && claim.catalogVariantId === catalogVariantId
+    ? { customerGroupPrice: claim, grossPriceMinor: grossUnitPriceMinor(claim.netMinor, vatRate) }
+    : undefined;
 
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
@@ -1613,19 +1853,19 @@ const sellableUnitOf = (
         issue: { ...ids, code: 'NOT_AVAILABLE', message: `Varianta ${variant.name} už není v nabídce.` },
       };
     }
+    const stored = product.variants?.find((entry) => entry.id === variant.id);
+    const group = groupPriceOf(line.customerGroupPrice, stored?.catalogVariantId, tax.vatRate);
     return {
       product,
       tax,
       unit: {
         availability: variant.availability,
+        ...(group === undefined ? {} : { customerGroupPrice: group.customerGroupPrice }),
         // The price its record shows below the first break (`baseGrossOf`); a missing one is refused below.
         grossPriceMinor:
-          grossForQuantity(
-            product.variants?.find((entry) => entry.id === variant.id) ?? variant,
-            variant.priceMinor,
-            tax.vatRate,
-            line.quantity,
-          ) ?? 0,
+          group?.grossPriceMinor ??
+          grossForQuantity(stored ?? variant, variant.priceMinor, tax.vatRate, line.quantity) ??
+          0,
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1637,13 +1877,18 @@ const sellableUnitOf = (
       },
     };
   }
+  const group = groupPriceOf(line.customerGroupPrice, product.catalogVariantId, tax.vatRate);
   return {
     product,
     tax,
     unit: {
       availability: record.availability ?? 'UNKNOWN',
+      ...(group === undefined ? {} : { customerGroupPrice: group.customerGroupPrice }),
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
-      grossPriceMinor: grossForQuantity(product, product.currentPriceMinor, tax.vatRate, line.quantity) ?? 0,
+      grossPriceMinor:
+        group?.grossPriceMinor ??
+        grossForQuantity(product, product.currentPriceMinor, tax.vatRate, line.quantity) ??
+        0,
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,
@@ -1889,6 +2134,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
         ...tax,
+        ...(unit.customerGroupPrice === undefined ? {} : { customerGroupPrice: unit.customerGroupPrice }),
       } satisfies OrderLine;
       const withVariant =
         unit.variantId === undefined
@@ -2153,10 +2399,14 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       // A line the editor added (also one it removed and added again) is priced as a new line, never kept.
       const kept = request.offeredUnitPriceMinor === undefined ? before : undefined;
       if (kept !== undefined) {
+        const unitPriceMinor = request.unitPriceMinor ?? kept.unitPriceMinor;
+        // A staff price replaces the customer's group price the line was charged at.
+        const { customerGroupPrice: _group, ...repriced } = kept;
+        void _group;
         return {
-          ...kept,
+          ...(unitPriceMinor === kept.unitPriceMinor ? kept : repriced),
           quantity: normalizeQuantity(request.quantity),
-          unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
+          unitPriceMinor,
         };
       }
       return yield* addedOrderLine(state, existing, request, input);
@@ -2354,6 +2604,9 @@ export const evolveMerchandiseState = (
 ): Effect.Effect<MerchandiseChange, MerchandiseCommandError> => {
   if (Predicate.isTagged(command, 'UpsertSourceProduct')) {
     return upsertSourceProduct(state, command, input);
+  }
+  if (Predicate.isTagged(command, 'SetSymmyLink')) {
+    return setSymmyLink(state, command, input);
   }
   // Outside the matcher because its pipe() is typed for at most 20 steps. Keeping the state reference when the value is
   // already in force makes the command a no-op without a new revision.
@@ -2655,7 +2908,8 @@ export const workingSetRequestOf = (
         productIds: [symmyProductIdOf(value.catalogProductId)],
         productKeys: {
           sku: value.erpCode,
-          skus: value.variants.map((variant) => variant.sku),
+          // The code too: a Symmy product of one variant links the shop variant holding its code as SKU.
+          skus: [value.erpCode, ...value.variants.map((variant) => variant.sku)],
           slugPrefix: productSlugBase(value.name, value.erpCode),
         },
       }),
@@ -2715,6 +2969,7 @@ export const workingSetRequestOf = (
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       // The product's categories as stored: a restore drops memberships of categories deleted meanwhile.
       RestoreProduct: (value): WorkingSetRequest => ({ productCategoryMemberships: true, productIds: [value.id] }),
+      SetSymmyLink: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       // A sync touches only the head row and the stored prices, which persistence reprices in place.
       SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => {

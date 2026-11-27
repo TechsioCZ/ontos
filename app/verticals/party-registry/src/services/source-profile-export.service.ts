@@ -6,14 +6,19 @@ import type {
   SourceProfileExportRequest,
   SourceProfileExportResponse,
   SourceProfileExportContact,
+  SourceProfileExportSetRequest,
 } from '../../shared/apis/source-profile-export.ts';
 import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import { parties, partyAliases, partyContactPoints, partyContactPointPurposes } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
-import { authorizePartyClientSourceReference } from './party-client-source-evidence.service.ts';
-import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
-import { loadSourceCorrelatedParty } from './source-person-admission.service.ts';
+import {
+  authorizePartyClientSourceReference,
+  authorizePartyClientSourceReferences,
+} from './party-client-source-evidence.service.ts';
+import { lockTenantIdentityReads } from './party-identifier-claim.service.ts';
+import { loadAuthorizedSourceCorrelatedParty, loadSourceCorrelatedParty } from './source-person-admission.service.ts';
+import type { SourceCorrelatedParty } from './source-person-admission.service.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.assign(
@@ -24,12 +29,15 @@ const unavailable = (cause?: unknown) =>
     { cause },
   );
 
+type ExportTransaction = Pick<PartyTransaction, 'select'>;
+type SourceProfileExportItem = Exclude<SourceProfileExportResponse, { readonly outcome: 'SET' }>;
+
 /** Required source correlation and current target Privacy precede all name/contact value queries. */
 export const readSourceProfileExport = Effect.fn('SourceProfileExport.read')(function* readExport(
-  transaction: Pick<PartyTransaction, 'select'>,
+  transaction: ExportTransaction,
   scope: OperationalScope,
   input: SourceProfileExportRequest,
-): Effect.fn.Return<SourceProfileExportResponse, PartyPersistenceUnavailableError> {
+): Effect.fn.Return<SourceProfileExportItem, PartyPersistenceUnavailableError> {
   const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
   if (correlated === undefined) {
     return { outcome: 'NOT_AVAILABLE' };
@@ -38,7 +46,71 @@ export const readSourceProfileExport = Effect.fn('SourceProfileExport.read')(fun
     operation: 'PROFILE_EXPORT',
     target: { kind: 'PARTY', partyId: correlated.party.partyId },
   }).pipe(Effect.mapError(unavailable));
-  yield* lockTenantIdentityWrites(transaction, scope.tenantId);
+  yield* lockTenantIdentityReads(transaction, scope.tenantId);
+  return yield* exportSourceCorrelatedProfile(transaction, scope, input, correlated);
+});
+
+/**
+ * The profiles of a whole source page with the same checks, in the same order, as one export each: the pre-target
+ * Privacy decisions of every reference in one set call, the exact correlations, the PROFILE_EXPORT decisions of every
+ * correlated Party in a second set call, then the name and contact values under one shared identity lock. A reference
+ * without a current correlation is NOT_AVAILABLE; any refused or unavailable check fails the whole set, as it fails
+ * its single export.
+ */
+export const readSourceProfileExportSet = Effect.fn('SourceProfileExport.readSet')(function* readExportSet(
+  transaction: ExportTransaction,
+  scope: OperationalScope,
+  input: SourceProfileExportSetRequest,
+): Effect.fn.Return<SourceProfileExportResponse, PartyPersistenceUnavailableError> {
+  const entries = input.parties;
+  yield* authorizePartyClientSourceReferences(
+    entries
+      .filter((entry) => entry.partyRef.tenantId === scope.tenantId)
+      .map((entry) => ({ assertion: entry.sourceReference, intent: { operation: 'EVIDENCE_READ' as const } })),
+    scope,
+  ).pipe(Effect.mapError(unavailable));
+  const correlations = yield* Effect.forEach(
+    entries,
+    (entry) =>
+      entry.partyRef.tenantId === scope.tenantId
+        ? loadAuthorizedSourceCorrelatedParty(transaction, scope, entry)
+        : Effect.succeed(undefined),
+    { concurrency: 1 },
+  );
+  const correlated = entries.flatMap((entry, index) => {
+    const correlation = correlations[index];
+    return correlation === undefined ? [] : [{ correlation, entry }];
+  });
+  yield* authorizePartyClientSourceReferences(
+    correlated.map(({ correlation, entry }) => ({
+      assertion: entry.sourceReference,
+      intent: { operation: 'PROFILE_EXPORT' as const, target: { kind: 'PARTY' as const, partyId: correlation.party.partyId } },
+    })),
+    scope,
+  ).pipe(Effect.mapError(unavailable));
+  if (correlated.length > 0) {
+    yield* lockTenantIdentityReads(transaction, scope.tenantId);
+  }
+  const items = yield* Effect.forEach(
+    entries,
+    (entry, index): Effect.Effect<SourceProfileExportItem, PartyPersistenceUnavailableError> => {
+      const correlation = correlations[index];
+      return correlation === undefined
+        ? Effect.succeed({ outcome: 'NOT_AVAILABLE' as const })
+        : exportSourceCorrelatedProfile(transaction, scope, entry, correlation);
+    },
+    { concurrency: 1 },
+  );
+  return { outcome: 'SET', items };
+});
+
+/** The name and contact values of a Party whose correlation and PROFILE_EXPORT Privacy are already proven. */
+const exportSourceCorrelatedProfile = Effect.fn('SourceProfileExport.exportCorrelated')(function* exportCorrelated(
+  transaction: ExportTransaction,
+  scope: OperationalScope,
+  input: SourceProfileExportRequest,
+  correlated: SourceCorrelatedParty,
+): Effect.fn.Return<SourceProfileExportItem, PartyPersistenceUnavailableError> {
   const [party] = yield* transaction
     .select({ firstName: parties.firstName, lastName: parties.lastName, businessName: parties.businessName })
     .from(parties)

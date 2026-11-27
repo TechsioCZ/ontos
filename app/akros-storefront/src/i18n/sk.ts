@@ -130,6 +130,8 @@ export const sk: Dictionary = {
     priceExcludingVat: "Cena bez DPH",
     priceIncludingVat: "Cena s DPH",
     excludingVat: "bez DPH",
+    yourPrice: "Vaša cena",
+    basePrice: "Základná cena",
     noValidPrice: "OntOS pre túto položku nevrátil platnú cenu.",
     cannotBuyNow: "Kúpiť ju preto teraz nemožno.",
     availabilityCannotConfirm:

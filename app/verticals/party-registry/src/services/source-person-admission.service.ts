@@ -135,6 +135,10 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
   },
 );
 
+/** The exact correlation and lifecycle proof of a source-correlated Party. */
+export type SourceCorrelatedParty = NonNullable<Effect.Success<ReturnType<typeof loadAuthorizedSourceCorrelatedParty>>>;
+export const sourcePersonNotAdmissible = notAdmissible;
+
 /** Source pre-target Privacy runs before proof; no PARTY target Privacy call can create a circular admission. */
 export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')(function* readAdmission(
   transaction: Pick<PartyTransaction, 'select'>,
@@ -142,7 +146,20 @@ export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')
   input: SourcePersonAdmissionRequest,
 ): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
   const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
-  if (correlated === undefined || correlated.party.currentType !== 'PERSON') {
+  if (correlated === undefined) {
+    return notAdmissible;
+  }
+  return yield* currentSourcePersonAdmission(transaction, scope, input, correlated);
+});
+
+/** The PERSON admission of a Party whose source correlation and pre-target Privacy are already proven. */
+export const currentSourcePersonAdmission = Effect.fn('SourcePersonAdmission.current')(function* currentPerson(
+  transaction: Pick<PartyTransaction, 'select'>,
+  scope: OperationalScope,
+  input: SourcePersonAdmissionRequest,
+  correlated: SourceCorrelatedParty,
+): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
+  if (correlated.party.currentType !== 'PERSON') {
     return notAdmissible;
   }
   const now = yield* DateTime.nowAsDate;

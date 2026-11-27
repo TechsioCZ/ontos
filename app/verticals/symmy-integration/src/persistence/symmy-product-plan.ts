@@ -618,6 +618,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
             intent: {
               _tag: 'CatalogProductDependentEffect',
               parent,
+              // The owner adapter pins Catalog's current revision when it runs: the Product may exist already.
               request: {
                 _tag: 'UpdateProduct',
                 payload: { expectedRevision: 1, reason: SYMMY_PRODUCT_REASON, targetLifecycle: row.lifecycle },

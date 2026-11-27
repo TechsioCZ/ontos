@@ -165,6 +165,38 @@ describe('Product lifecycle committed event and outbox', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  it.effect('links the retirement of an importing source, sent as an update, to its transition', () =>
+    Effect.gen(function* sourceRetirement() {
+      const state = yield* context(updateProductAction.descriptor.domainEvents, {
+        update: () => Effect.succeed({ _tag: 'updated', changed: true, product: product('RETIRED', 3) }),
+      });
+      yield* handleUpdateProduct(
+        { expectedRevision: 2, productRef, reason: 'Retired in the ERP', targetLifecycle: 'RETIRED' },
+        state.value,
+      );
+      const event = state.events.find(({ eventType }) => eventType === 'commerce.catalog.product-lifecycle-changed.v1');
+      expect(state.outbox).toHaveLength(1);
+      expect(state.outbox[0]?.event).toBe(event?.reference);
+      expect(state.outbox[0]?.message.payloadJson).toMatchObject({
+        changeKind: 'RETIRED',
+        lifecycle: 'RETIRED',
+        productRef,
+        revision: 3,
+        tenantId,
+      });
+
+      const again = yield* context(updateProductAction.descriptor.domainEvents, {
+        update: () => Effect.succeed({ _tag: 'updated', changed: false, product: product('RETIRED', 3) }),
+      });
+      yield* handleUpdateProduct(
+        { expectedRevision: 3, productRef, reason: 'Retired in the ERP', targetLifecycle: 'RETIRED' },
+        again.value,
+      );
+      expect(again.events).toHaveLength(0);
+      expect(again.outbox).toHaveLength(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it('rejects a lifecycle payload whose tenant or state contradicts its Product', () => {
     const payload = { changeKind: 'ACTIVATED', lifecycle: 'ACTIVE', productRef, revision: 2, tenantId };
     expect(Schema.is(OutboxPayloadSchema)(payload)).toBe(true);

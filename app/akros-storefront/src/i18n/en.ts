@@ -130,6 +130,8 @@ export const en: Dictionary = {
     priceExcludingVat: "Price excl. VAT",
     priceIncludingVat: "Price incl. VAT",
     excludingVat: "excl. VAT",
+    yourPrice: "Your price",
+    basePrice: "Base price",
     noValidPrice: "OntOS did not return a valid price for this item.",
     cannotBuyNow: "It cannot be bought right now.",
     availabilityCannotConfirm:

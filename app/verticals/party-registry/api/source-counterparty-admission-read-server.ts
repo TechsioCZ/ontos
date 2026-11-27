@@ -13,6 +13,7 @@ import {
   SourceCounterpartyAdmissionPolicyProblemSchema,
   SourceCounterpartyAdmissionUnavailableProblemSchema,
 } from '../shared/apis/source-counterparty-admission.ts';
+import { sourceAdmissionSetRead } from '../src/api/source-admission-set.read.ts';
 import { sourceCounterpartyAdmissionRead } from '../src/api/source-counterparty-admission.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
@@ -31,12 +32,21 @@ export const sourceCounterpartyAdmissionReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,
   'sourceCounterpartyAdmission',
   (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: sourceCounterpartyAdmissionRead,
-      }),
-    ),
+    handlers
+      .handle(
+        'execute',
+        makeGovernedReadHttpHandler({
+          authenticatePrincipal: authenticateOperationPrincipal,
+          problems,
+          registration: sourceCounterpartyAdmissionRead,
+        }),
+      )
+      .handle(
+        'executeSet',
+        makeGovernedReadHttpHandler({
+          authenticatePrincipal: authenticateOperationPrincipal,
+          problems,
+          registration: sourceAdmissionSetRead,
+        }),
+      ),
 );

@@ -9,6 +9,8 @@ const privacyCoreOrganizationBusinessApplicabilityRead = 'privacy.core.organizat
 const privacyCoreOrganizationBusinessCheck = 'privacy.core.organization-business-check';
 const privacyCoreSourceProcessingCheck = 'privacy.core.source-processing-check';
 const privacyCoreSourceProcessingEligibilityRead = 'privacy.core.source-processing-eligibility.read';
+const privacyCoreApiSourceProcessingEligibilitySet = 'privacy.core.api.source-processing-eligibility-set';
+const privacyCoreSourceProcessingEligibilitySetRead = 'privacy.core.source-processing-eligibility-set.read';
 
 /**
  * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
@@ -32,6 +34,17 @@ export const partyRegistryRegisteredWorkloadCalls = [
     audience: 'privacy',
     declarationKey: privacyCoreSourceProcessingEligibilityRead,
     entrypointKey: privacyCoreApiSourceProcessingEligibility,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: partyRegistrySourceRead,
+    workloadKey: privacyCoreSourceProcessingCheck,
+  },
+  // symmy-customers-under-3s: a source page's admission set and profile export set ask Privacy once per phase
+  {
+    audience: 'privacy',
+    declarationKey: privacyCoreSourceProcessingEligibilitySetRead,
+    entrypointKey: privacyCoreApiSourceProcessingEligibilitySet,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
