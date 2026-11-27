@@ -71,6 +71,7 @@ import { SymmyGroupCustomersBatchRequestSchema } from './group-customers-batch-r
 import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract.ts';
 import { SymmyCustomerGroupsBatchResponseSchema } from './customer-groups-batch-public-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
+import { scheduleSymmyMerchandiseCopy } from './merchandise-copy.ts';
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
@@ -635,6 +636,8 @@ const handleProductsRead = handle(SymmyProductsSuccessSchema, (ingress, input: F
       Effect.map((body) =>
         input.request.fields === undefined ? body : selectSymmyProductFields(body, input.request.fields),
       ),
+      // A products read also refreshes the merchandise copy of every Symmy product ("Produkty", shop catalogue).
+      Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
     ),
 );
 const validateRegionsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsResponseSchema));
@@ -686,11 +689,34 @@ const handleGroupApply = handle(SymmyCustomerGroupsBatchResponseSchema, (ingress
   ),
 );
 /** One result per submitted row, in request order, each carrying the keys of the row it answers. */
+/** The on-hand figures of the rows Inventory accepted, by item key; an item named at several locations is left out. */
+const acceptedOnHand = (items: readonly SymmyItemOutcome[], rows: StockApply['stock']): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    counts.set(String(row.itemKey), (counts.get(String(row.itemKey)) ?? 0) + 1);
+  }
+  const onHand = new Map<string, number>();
+  items.forEach((item, index) => {
+    const row = rows[index];
+    const quantity = Number(String(row?.quantity));
+    if (
+      row !== undefined &&
+      counts.get(String(row.itemKey)) === 1 &&
+      summarizeSymmyItemOutcome(item) === 'accepted' &&
+      Number.isFinite(quantity) &&
+      quantity >= 0
+    ) {
+      onHand.set(String(row.itemKey), quantity);
+    }
+  });
+  return onHand;
+};
 const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: FixtureInput<StockApply>) =>
   (input.request.idempotencyKey === undefined
     ? Effect.fail(symmyIdempotencyRequiredProblem)
     : ingress.dispatch.apply(input)
   ).pipe(
+    Effect.tap((items) => scheduleSymmyMerchandiseCopy(input.admission, acceptedOnHand(items, input.request.stock))),
     Effect.flatMap((items) =>
       items.length === input.request.stock.length
         ? Effect.succeed({
@@ -709,6 +735,8 @@ const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: Fixtur
 );
 const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureInput<FixturePoll>) =>
   ingress.dispatch.poll(input).pipe(
+    // A finished job (products, prices) refreshes the merchandise copy from the owners' accepted state.
+    Effect.tap((state) => (state.phase === 'completed' ? scheduleSymmyMerchandiseCopy(input.admission) : Effect.void)),
     Effect.map((state) => {
       const jobId = input.request.id;
       if (state.phase === 'admitted' || state.phase === 'running' || state.phase === 'blocked') {
