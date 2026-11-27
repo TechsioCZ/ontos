@@ -5,6 +5,7 @@ const routeMeta = defineRouteMeta({
   accessDeclaration: {
     key: 'commerce.catalog.products.view',
     kind: 'read',
+    lineage: { splitFrom: 'commerce.catalog.navigation-products.read' },
     modes: ['run'],
     placement: { group: 'product', level: 'basic' },
     risk: 'routine',

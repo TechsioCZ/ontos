@@ -850,7 +850,7 @@ const PriceChangePanel = ({
           )}
           {symmyProducts.length > 0 && (
             <StatusText showIcon status="error">
-              Cenu tohoto produktu měňte v detailu produktu. Importováno přes Symmy:{' '}
+              Cenu produktů se značkou „Symmy“ měňte v jejich detailu:{' '}
               {symmyProducts.map((product) => product.name).join(', ')}
             </StatusText>
           )}
