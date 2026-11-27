@@ -1,6 +1,6 @@
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { Effect, Match, Option, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — Majetek a odpisy (S02 evidence majetku, revize, inventury + S03 odpisové plány).
 // OWNED BY THE `assets` LANE (ops-assets). Data: governed records read (agenda `assets`); every change is one
 // command through the apply-command Action (shared/commands/assets.ts), then the agenda is reloaded.
@@ -17,16 +17,24 @@ import {
   formatMoney,
   formatNumber,
 } from '@app/admin-ui';
+import {
+  BareTextField,
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { Asset, AssetsState, Inventory, InventoryItem, Investment } from '../../../../../shared/domain/assets.ts';
@@ -48,12 +56,46 @@ import {
 import { AssetSummary } from './asset-summary.tsx';
 import { DepreciationOverview } from './depreciation.tsx';
 import { InvestmentForm, InvestmentPlan } from './investments.tsx';
-import { TextField } from './form-kit.tsx';
+import { textInput } from './form-kit.tsx';
 import type { AssetSubmit } from './form-kit.tsx';
 import { FooterSlotProvider, useFooterSlot } from '../../../../ui/footer-slot.tsx';
 import { InventoryTab } from './inventory.tsx';
 
 const ALL = 'all';
+
+/** The filters over the asset register; they act as they change, so Enter sends nothing. */
+const registerFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('acquiredFrom', Schema.String)
+    .addField('acquiredTo', Schema.String)
+    .addField('kindFilter', Schema.String)
+    .addField('propertyFilter', Schema.String)
+    .addField('responsibleFilter', Schema.String)
+    .addField('search', Schema.String)
+    .addField('statusFilter', Schema.String),
+  {
+    fields: {
+      acquiredFrom: TextField,
+      acquiredTo: TextField,
+      kindFilter: ChoiceField,
+      propertyFilter: ChoiceField,
+      responsibleFilter: ChoiceField,
+      search: BareTextField,
+      statusFilter: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noRegisterFilters = {
+  acquiredFrom: '',
+  acquiredTo: '',
+  kindFilter: ALL,
+  propertyFilter: ALL,
+  responsibleFilter: ALL,
+  search: '',
+  statusFilter: 'active',
+};
 const KIND_LABEL = 'fields.kind';
 const LOCATION_LABEL = 'fields.location';
 const RESPONSIBLE_LABEL = 'fields.responsible';
@@ -181,9 +223,6 @@ const AssetNextDueCell = (info: CellContext<Asset>) => {
   );
 };
 
-const filterItems = (items: readonly { label: string; value: string }[]) =>
-  items.map((item) => ({ displayValue: item.label, label: item.label, value: item.value }));
-
 const createPanelLabels = (panel: CreatePanel | undefined, k: ReturnType<typeof useAssetLabel>) => {
   if (panel === undefined) {
     return { success: '', title: '' };
@@ -283,13 +322,14 @@ const useAssetsViewModel = () => {
   const today = todayIsoDate();
 
   const [tab, setTab] = useState('register');
-  const [search, setSearch] = useState('');
-  const [kindFilter, setKindFilter] = useState(ALL);
-  const [propertyFilter, setPropertyFilter] = useState(ALL);
-  const [statusFilter, setStatusFilter] = useState('active');
-  const [responsibleFilter, setResponsibleFilter] = useState(ALL);
-  const [acquiredFrom, setAcquiredFrom] = useState('');
-  const [acquiredTo, setAcquiredTo] = useState('');
+  const filters = Option.getOrElse(useAtomValue(registerFilterForm.values), () => noRegisterFilters);
+  const setStatusFilter = useAtomSet(registerFilterForm.getFieldAtoms(registerFilterForm.fields.statusFilter).setValue);
+  const { acquiredFrom, acquiredTo, search } = filters;
+  // No choice reads as what the picker fell back to.
+  const kindFilter = filters.kindFilter === '' ? ALL : filters.kindFilter;
+  const propertyFilter = filters.propertyFilter === '' ? ALL : filters.propertyFilter;
+  const statusFilter = filters.statusFilter === '' ? 'active' : filters.statusFilter;
+  const responsibleFilter = filters.responsibleFilter === '' ? ALL : filters.responsibleFilter;
   // Deep link from the calendar / overview: /cs/provoz/majetek?asset=<id>
   const [openId, setOpenId] = useState<string | undefined>(() =>
     Schema.decodeOption(AssetQuerySchema)(globalThis.location?.search ?? '').pipe(
@@ -424,15 +464,8 @@ const useAssetsViewModel = () => {
     rows,
     scoped,
     search,
-    setAcquiredFrom,
-    setAcquiredTo,
-    setKindFilter,
     setOpenId,
     setPanel,
-    setPropertyFilter,
-    setResponsibleFilter,
-    setSearch,
-    setStatusFilter,
     setTab,
     state,
     stats,
@@ -520,117 +553,77 @@ const AssetsStatistics = ({ vm }: { readonly vm: AssetsViewModel }) => {
 };
 
 const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
-  const {
-    acquiredFrom,
-    acquiredTo,
-    columns,
-    filtered,
-    k,
-    kindFilter,
-    properties,
-    propertyFilter,
-    responsibleFilter,
-    responsibles,
-    rows,
-    scoped,
-    search,
-    setAcquiredFrom,
-    setAcquiredTo,
-    setKindFilter,
-    setOpenId,
-    setPropertyFilter,
-    setResponsibleFilter,
-    setSearch,
-    setStatusFilter,
-    statusFilter,
-    t,
-    today,
-  } = vm;
+  const { columns, filtered, k, properties, responsibles, rows, scoped, setOpenId, statusFilter, t, today } = vm;
   return (
     <Tabs.Content className="flex flex-col gap-200 py-250" value="register">
-      <div className="flex flex-wrap items-end gap-150">
+      <FormRoot
+        className="flex flex-wrap items-end gap-150"
+        defaultValues={noRegisterFilters}
+        form={registerFilterForm}
+        translateMessage={(message) => t(message)}
+      >
         <div className="min-w-[16rem] flex-1">
-          <Input
+          <registerFilterForm.search
             aria-label={k('filters.search')}
-            onChange={(event) => setSearch(event.target.value)}
             placeholder={k('filters.searchPlaceholder')}
             size="md"
-            value={search}
           />
         </div>
         <div className="w-[11rem]">
-          <Select
-            items={filterItems([
+          <registerFilterForm.statusFilter
+            items={[
               { label: k('filters.active'), value: 'active' },
               { label: k('filters.disposed'), value: 'disposed' },
               { label: k('filters.allStatuses'), value: ALL },
               { label: k('filters.archived'), value: 'archived' },
-            ])}
+            ]}
             label={k('filters.status')}
-            name="statusFilter"
-            onValueChange={({ value }) => setStatusFilter(value[0] ?? 'active')}
-            size="md"
-            value={[statusFilter]}
           />
         </div>
         <div className="w-[11rem]">
-          <Select
-            items={filterItems([
+          <registerFilterForm.kindFilter
+            items={[
               { label: k('filters.allKinds'), value: ALL },
               ...assetKinds.map((kind) => ({ label: k(`kind.${kind}`), value: kind })),
-            ])}
+            ]}
             label={k(KIND_LABEL)}
-            name="kindFilter"
-            onValueChange={({ value }) => setKindFilter(value[0] ?? ALL)}
-            size="md"
-            value={[kindFilter]}
           />
         </div>
         <div className="w-[15rem]">
-          <Select
-            items={filterItems([
+          <registerFilterForm.propertyFilter
+            items={[
               { label: k('filters.allProperties'), value: ALL },
               ...properties.map(([id, name]) => ({ label: name, value: id })),
-            ])}
+            ]}
             label={k('filters.property')}
-            name="propertyFilter"
-            onValueChange={({ value }) => setPropertyFilter(value[0] ?? ALL)}
-            size="md"
-            value={[propertyFilter]}
           />
         </div>
         <div className="w-[13rem]">
-          <Select
-            items={filterItems([
+          <registerFilterForm.responsibleFilter
+            items={[
               { label: k('filters.allResponsible'), value: ALL },
               ...responsibles.map((name) => ({ label: name, value: name })),
-            ])}
+            ]}
             label={k(RESPONSIBLE_LABEL)}
-            name="responsibleFilter"
-            onValueChange={({ value }) => setResponsibleFilter(value[0] ?? ALL)}
-            size="md"
-            value={[responsibleFilter]}
           />
         </div>
         <div className="w-[10rem]">
-          <TextField
+          <registerFilterForm.acquiredFrom
+            {...textInput}
             id="assets-acquired-from"
             label={k('filters.acquiredFrom')}
-            onChange={setAcquiredFrom}
             type="date"
-            value={acquiredFrom}
           />
         </div>
         <div className="w-[10rem]">
-          <TextField
+          <registerFilterForm.acquiredTo
+            {...textInput}
             id="assets-acquired-to"
             label={k('filters.acquiredTo')}
-            onChange={setAcquiredTo}
             type="date"
-            value={acquiredTo}
           />
         </div>
-      </div>
+      </FormRoot>
       {filtered && <p className="text-fg-secondary text-xs">{k('filters.scopedTotals', { count: scoped.length })}</p>}
       <AssetTodayContext value={today}>
         <DataTable
