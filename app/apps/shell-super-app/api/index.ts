@@ -1801,13 +1801,16 @@ const documentTarget = Effect.fn('shell.composition.documentTarget')(function* d
   );
 });
 
+/** The caller as a tenant-wide principal, for a company-free Read (a tenant's theme, a reserved upload's row). */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
 /** The signed-in tenant's effective theme; none when it could not be read, which the document then reports. */
 const documentTheme = (request: RequestWithHeaders, principal: TrustedPrincipalContext) =>
   Effect.gen(function* readDocumentTheme() {
     const runtime = yield* ReadRuntime;
     return yield* runtime.runRead({
       input: {},
-      principal,
+      principal: withoutSelectedLegalEntity(principal),
       registration: tenantThemeRead,
       transport: { correlationId: correlationFromRequest(request) },
     });
@@ -4214,9 +4217,6 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
       ),
     ),
 );
-
-/** The caller as a tenant-wide principal, for a company-free Read (a tenant's theme, a reserved upload's row). */
-const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
 
 // @ontos-core-read tenant-theme
 const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadTenantTheme', (handlers) =>
