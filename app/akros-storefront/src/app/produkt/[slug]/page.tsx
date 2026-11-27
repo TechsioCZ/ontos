@@ -17,6 +17,7 @@ import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { formatPrice, formatWeight, priceUnavailableText } from "@/lib/format";
 import { getProductDescriptionParagraphs } from "@/lib/product-description";
+import { getProductStockStatus, stockStatusLabel } from "@/lib/product-stock";
 import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
 import {
   matchesProductVariantSearch,
@@ -110,11 +111,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const packageQuantity = purchaseItem.packageQuantity ?? purchaseItem.minimumQuantity;
   // A single-variant product shows the variant's struck price, else the product's own (Historie cen › Původní cena).
   const originalPriceMinor = purchaseItem.originalPriceMinor ?? product.originalPriceMinor;
-  const availableVariantCount = detail.variants.filter(
-    (variant) => !variant.availabilityUnknown && variant.stockCount >= variant.minimumQuantity,
-  ).length;
-  const unknownVariantCount = detail.variants.filter(
-    (variant) => variant.availabilityUnknown,
+  const variantStock = detail.variants.map(getProductStockStatus);
+  const availableVariantCount = variantStock.filter((status) => status === "in-stock").length;
+  const unknownVariantCount = variantStock.filter((status) => status === "unknown").length;
+  const belowPackageVariantCount = variantStock.filter(
+    (status) => status === "below-package",
   ).length;
   const number = (value: number, maximumFractionDigits = 0) =>
     value.toLocaleString(money.locale, { maximumFractionDigits });
@@ -173,19 +174,20 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         )
         .slice(0, 3);
 
-  const simpleStockLabel = purchaseItem.availabilityUnknown
-    ? cs.product.availabilityNowUnknown
-    : purchaseItem.stockCount >= purchaseItem.minimumQuantity
-      ? cs.product.inStockCount(purchaseItem.stockCount, purchaseItem.unit)
-      : purchaseItem.stockCount > 0
-        ? cs.product.limitedStockCount(purchaseItem.stockCount, purchaseItem.unit)
-        : cs.product.outOfStock;
-  const stockState = purchaseItem.availabilityUnknown
-    ? "limited"
-    : purchaseItem.stockCount >= purchaseItem.minimumQuantity
-      ? "available"
-      : purchaseItem.stockCount > 0
-        ? "limited"
+  const purchaseStock = getProductStockStatus(purchaseItem);
+  const simpleStockLabel =
+    purchaseStock === "unknown"
+      ? cs.product.availabilityNowUnknown
+      : purchaseStock === "in-stock"
+        ? cs.product.inStockCount(purchaseItem.stockCount, purchaseItem.unit)
+        : purchaseStock === "below-package"
+          ? stockStatusLabel(cs, purchaseStock, purchaseItem.belowPackage, purchaseItem.unit)
+          : cs.product.outOfStock;
+  const stockState =
+    purchaseStock === "unknown"
+      ? "limited"
+      : purchaseStock === "in-stock"
+        ? "available"
         : "unavailable";
 
   const page = (
@@ -350,7 +352,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   ? cs.product.variantsInStock(availableVariantCount, detail.variants.length)
                   : unknownVariantCount > 0
                     ? cs.product.variantsUnknown
-                    : cs.product.variantsOutOfStock}
+                    : belowPackageVariantCount > 0
+                      ? cs.product.stockStatus["below-package"]
+                      : cs.product.variantsOutOfStock}
               </p>
             ) : (
               <>

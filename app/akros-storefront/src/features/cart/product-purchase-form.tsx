@@ -10,6 +10,7 @@ import { useCart } from "@/features/cart/cart-provider";
 import { useDictionary, useFormatPrice, useMoney } from "@/ontos/market-context";
 import type { Dictionary } from "@/i18n";
 import { priceUnavailableText } from "@/lib/format";
+import { getProductStockStatus, stockStatusLabel } from "@/lib/product-stock";
 import { getVariantRangeFilters, type NumericRange } from "@/lib/product-variant-filters";
 import { VariantRangeFilter } from "./variant-range-filter";
 import {
@@ -43,12 +44,16 @@ const formatVariantLabel = (variant: CatalogPurchaseVariant) => {
   return `M ${dimension[1]} × ${dimension[2]}`;
 };
 
-const variantAvailabilityLabel = (cs: Dictionary, variant: CatalogPurchaseVariant): string =>
-  variant.availabilityUnknown
+const variantAvailabilityLabel = (cs: Dictionary, variant: CatalogPurchaseVariant): string => {
+  const status = getProductStockStatus(variant);
+  return status === "unknown"
     ? cs.product.variantAvailability.unknown
-    : variant.stockCount >= variant.minimumQuantity
+    : status === "in-stock"
       ? cs.product.variantAvailability.inStock
-      : cs.product.variantAvailability.outOfStock;
+      : status === "below-package"
+        ? stockStatusLabel(cs, status, variant.belowPackage, variant.unit)
+        : cs.product.variantAvailability.outOfStock;
+};
 
 const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPurchaseVariant) => ({
   vatRate: product.vatRate,
@@ -543,8 +548,7 @@ export function ProductPurchaseForm({
               <Table.Body>
                 {shownVariants.map((item, index) => {
                   const label = formatVariantLabel(item);
-                  const isAvailable =
-                    !item.availabilityUnknown && item.stockCount >= item.minimumQuantity;
+                  const isAvailable = getProductStockStatus(item) === "in-stock";
                   const basePriceTier = item.priceTiers[0];
                   const hasSeparatePackage =
                     item.packageQuantity !== undefined && item.packageQuantity > 0;
@@ -600,9 +604,7 @@ export function ProductPurchaseForm({
                           <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
                             <span
                               className="sf-variant-table__availability text-xs font-normal"
-                              data-available={
-                                !item.availabilityUnknown && item.stockCount >= item.minimumQuantity
-                              }
+                              data-available={isAvailable}
                             >
                               {variantAvailabilityLabel(cs, item)}
                             </span>

@@ -9,6 +9,8 @@ import { imagePlaceholder, isImagePlaceholder, productMediaPath } from "./media-
 import { purchaseConstraints } from "./purchase-constraints";
 import { sourceUnitWeightKg } from "./variant-weights";
 import { assertCategoryForest } from "@app/merchandise/domain/category-forest";
+import { firstOrderableQuantity } from "@app/merchandise/domain/order-quantity";
+import type { StockBelowPackage } from "@/lib/product-stock";
 import type {
   CatalogVariantSummary,
   CatalogData,
@@ -60,6 +62,7 @@ export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProdu
   stockCount: product.stockCount,
   priceMinor: product.priceMinor,
   availabilityUnknown: product.availabilityUnknown,
+  belowPackage: product.belowPackage,
   priceUnavailableReason: product.priceUnavailableReason,
   netWeight: product.netWeight,
   detail: { priceTiers: product.detail.priceTiers },
@@ -160,6 +163,24 @@ const isAvailabilityUnknown = (availability: unknown, stockTracked: unknown): bo
 /** Sellable quantity from the owner ledger; OUT_OF_STOCK is 0 whatever the raw count says. */
 const stockOf = (stockOnHand: unknown, availability: unknown): number =>
   text(availability) === "OUT_OF_STOCK" ? 0 : Math.max(0, number(stockOnHand) ?? 0);
+/**
+ * Stock OntOS holds but does not sell (OUT_OF_STOCK): less than the unit's first orderable quantity,
+ * its minimum rounded up to whole packages (the owner's own rule). Shown „Skladem 6 ks, prodej po
+ * 10 ks“, never bought (its `stockOf` stays 0). A group of several variants has no one first order;
+ * any other OUT_OF_STOCK stays „Není skladem“.
+ */
+const belowPackageOf = (
+  availability: unknown,
+  stockOnHand: unknown,
+  firstOrderable: number | undefined,
+): { belowPackage?: StockBelowPackage } => {
+  const stock = number(stockOnHand) ?? 0;
+  if (text(availability) !== "OUT_OF_STOCK" || stock <= 0) return {};
+  if (firstOrderable === undefined) return { belowPackage: { stockOnHand: stock } };
+  return stock < firstOrderable
+    ? { belowPackage: { stockOnHand: stock, firstOrderableQuantity: firstOrderable } }
+    : {};
+};
 const dedupeTiers = (tiers: CatalogPriceTier[]): CatalogPriceTier[] =>
   [...new Map(tiers.map((tier) => [tier.minimumQuantity, tier] as const)).values()].sort(
     (a, b) => a.minimumQuantity - b.minimumQuantity,
@@ -253,7 +274,13 @@ const searchOfferOf = (
       : {}),
     ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
     stockCount: availabilityUnknown ? 0 : stockOf(stock, availability),
-    ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
+    ...(availabilityUnknown
+      ? { availabilityUnknown: true }
+      : belowPackageOf(
+          availability,
+          stock,
+          firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity }),
+        )),
     ...purchaseConstraints(minimum),
     packageQuantity,
     imageSrc: productMediaPath(text(product.id), image ?? "") ?? safeImage(image),
@@ -326,8 +353,10 @@ export interface CatalogSnapshot {
 const variantSummaryOf = (value: unknown): CatalogVariantSummary => {
   const raw = value && typeof value === "object" ? (value as Raw) : {};
   const minGross = number(raw.minGrossPriceMinor);
+  const firstOrder = number(raw.firstOrderableQuantity);
   return {
     count: Math.max(0, number(raw.count) ?? 0),
+    ...(firstOrder === undefined ? {} : { firstOrderableQuantity: firstOrder }),
     minGrossPriceMinor: minGross ?? null,
     stockOnHand: Math.max(0, number(raw.stockOnHand) ?? 0),
     units: strings(raw.units),
@@ -391,7 +420,13 @@ export function projectProducts(body: Raw): ProductPage {
           : {}),
         // Unknown availability is never sold from the raw ledger count.
         stockCount: availabilityUnknown ? 0 : stockOf(v.stockOnHand, v.availability),
-        ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
+        ...(availabilityUnknown
+          ? { availabilityUnknown: true }
+          : belowPackageOf(
+              v.availability,
+              v.stockOnHand,
+              firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity }),
+            )),
         ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
         ...purchaseConstraints(minimum),
         packageQuantity,
@@ -437,6 +472,9 @@ export function projectProducts(body: Raw): ProductPage {
       ? priceUnavailableReason(groupGross, groupGross, p.currency, money)
       : priceUnavailableReason(gross, net, p.currency, money);
     const productAvailabilityUnknown = isAvailabilityUnknown(p.availability, p.stockTracked);
+    // The owner stores 0 for a cleared package: only a positive package is one.
+    const productPackage =
+      (number(p.packageQuantity) ?? 0) > 0 ? number(p.packageQuantity) : undefined;
     const priced = variants.filter((v) => !v.priceUnavailableReason);
     const first = priced.reduce<CatalogProductVariant | undefined>(
       (a, b) => (!a || b.priceMinor < a.priceMinor ? b : a),
@@ -508,19 +546,27 @@ export function projectProducts(body: Raw): ProductPage {
       ...(seoDescription ? { seoDescription } : {}),
       documents: documentsOf(p.documents),
       relatedProductIds: strings(p.relatedProductIds).filter((id) => id.trim() !== ""),
-      ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),
+      ...(productAvailabilityUnknown
+        ? { availabilityUnknown: true }
+        : isGroup
+          ? // The owner judged each variant against its own first order; only one variant names it.
+            belowPackageOf(
+              p.availability,
+              variantSummary.stockOnHand,
+              variantSummary.count === 1 ? variantSummary.firstOrderableQuantity : undefined,
+            )
+          : belowPackageOf(
+              p.availability,
+              p.stockOnHand,
+              firstOrderableQuantity({ minimumQuantity: minimum, packageQuantity: productPackage }),
+            )),
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(first?.minimumQuantity ?? minimum),
-      // The owner stores 0 for a cleared package: only a positive package is one.
-      packageQuantity: first
-        ? first.packageQuantity
-        : (number(p.packageQuantity) ?? 0) > 0
-          ? number(p.packageQuantity)
-          : undefined,
+      packageQuantity: first ? first.packageQuantity : productPackage,
       stockCount: productAvailabilityUnknown
         ? 0
         : isGroup
-          ? variantSummary.stockOnHand
+          ? stockOf(variantSummary.stockOnHand, p.availability)
           : stockOf(p.stockOnHand, p.availability),
       variantSummary,
       ...(searchMatch === undefined ? {} : { searchMatch }),

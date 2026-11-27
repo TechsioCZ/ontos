@@ -1054,8 +1054,14 @@ it.live('summarizes active sellable variants on every storefront product', () =>
         const page = yield* catalogPage(fixture, { fields, productIds: ['p1', 'p2'] });
         const summaries = Object.fromEntries(page.products.map((product) => [product.id, product.variantSummary]));
         expect(summaries).toEqual({
-          p1: { count: 2, minGrossPriceMinor: Option.some(121), stockOnHand: 8, units: ['bal', 'ks'] },
-          p2: { count: 0, minGrossPriceMinor: Option.none(), stockOnHand: 0, units: [] },
+          p1: {
+            count: 2,
+            firstOrderableQuantity: 1,
+            minGrossPriceMinor: Option.some(121),
+            stockOnHand: 8,
+            units: ['bal', 'ks'],
+          },
+          p2: { count: 0, firstOrderableQuantity: null, minGrossPriceMinor: Option.none(), stockOnHand: 0, units: [] },
         });
       }
     }),
@@ -1399,7 +1405,7 @@ const packageStockVariant = (id: string, constraints: { minimumQuantity?: number
   ...constraints,
 });
 
-it.live('counts only independently orderable variant packages in both card and detail summaries', () => {
+it.live("sums the stock held and judges every variant against its own first order, never the product's", () => {
   const balances = [
     ['partial-one', 15],
     ['partial-two', 40],
@@ -1438,12 +1444,23 @@ it.live('counts only independently orderable variant packages in both card and d
         const page = yield* catalogPage(fixture, { fields, productIds: ['p1'] });
         expect(page.products[0]?.variantSummary).toEqual({
           count: 5,
+          // `fallback` states no minimum or package of its own, so it sells from 1 piece as checkout does.
+          firstOrderableQuantity: 1,
           minGrossPriceMinor: Option.some(121),
-          stockOnHand: 100,
+          stockOnHand: 279,
           units: ['ks'],
         });
+        expect(page.products[0]?.availability).toBe('IN_STOCK');
         if (fields === 'full') {
           expect(page.products[0]?.variantRecords?.map((row) => row.stockOnHand)).toEqual([15, 40, 75, 100, 49]);
+          // Below one package of 50, or below the minimum 75 rounded up to 100: not orderable, whatever is on hand.
+          expect(page.products[0]?.variantRecords?.map((row) => row.availability)).toEqual([
+            'OUT_OF_STOCK',
+            'OUT_OF_STOCK',
+            'OUT_OF_STOCK',
+            'IN_STOCK',
+            'IN_STOCK',
+          ]);
         }
       }
     }),

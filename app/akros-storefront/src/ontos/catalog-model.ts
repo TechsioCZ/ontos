@@ -26,20 +26,21 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
 
   // Listing cards carry no variant records: a group's stock comes from the owner's variant summary.
   const summarizeProductStock = (product: CatalogProduct): CatalogProductSummary["stock"] => {
-    const { variantSummary } = product;
+    const { belowPackage, variantSummary } = product;
+    const status = getProductStockStatus(product);
     if (variantSummary.count === 0) {
       return {
         kind: "quantity",
         minimumQuantity: product.minimumQuantity,
         quantityStep: product.quantityStep,
         packageQuantity: product.packageQuantity,
-        status: getProductStockStatus(product),
+        status,
         stockCount: product.stockCount,
+        ...(belowPackage ? { belowPackage } : {}),
         unit: product.unit,
       };
     }
 
-    const status = getProductStockStatus(product);
     if (variantSummary.units.length !== 1) return { kind: "variants", status };
 
     return {
@@ -47,6 +48,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       minimumQuantity: product.minimumQuantity,
       status,
       stockCount: product.stockCount,
+      ...(belowPackage ? { belowPackage } : {}),
       unit: variantSummary.units[0],
     };
   };

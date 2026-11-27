@@ -11,7 +11,7 @@ import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { useDictionary, useMoney } from "@/ontos/market-context";
 import { formatPrice } from "@/lib/format";
 import { describeCatalogPrice } from "@/lib/product-price";
-import { productStockTone } from "@/lib/product-stock";
+import { productStockTone, stockStatusLabel } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -161,7 +161,14 @@ export function ProductGrid({
                   className="sf-catalog-product-card__stock m-0 uppercase"
                   status={productStockTone(product.stock.status)}
                 >
-                  {cs.product.stockStatus[product.stock.status]}
+                  {product.stock.kind === "quantity"
+                    ? stockStatusLabel(
+                        cs,
+                        product.stock.status,
+                        product.stock.belowPackage,
+                        product.stock.unit,
+                      )
+                    : cs.product.stockStatus[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && product.priceIsFrom && (
                   <Badge className="whitespace-nowrap" size="sm" variant="secondary">

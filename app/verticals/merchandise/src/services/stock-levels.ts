@@ -1,4 +1,4 @@
-import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
+import { firstOrderableQuantity, normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 import { shownGrossOf } from '../../shared/domain/unit-price.ts';
 // Stock levels and the derived product/variant record (availability, gross price, stock value). Pure; the
 // store keeps the levels as columns, in-memory callers derive them from the movement ledger.
@@ -67,9 +67,14 @@ export const variantStockOf = (movements: readonly StockMovement[], productId: P
   return onHand;
 };
 
-/** Availability for a sellable unit. Untracked stock is UNKNOWN (never silently „skladem“). */
+/**
+ * Availability for a sellable unit. Untracked stock is UNKNOWN (never silently „skladem“). Stock below the unit's first
+ * orderable quantity (its minimum rounded up to whole packages, {@link firstOrderableQuantity}) cannot be bought, so it
+ * is OUT_OF_STOCK: 6 pieces of a unit sold in packages of 10 are not „skladem“. Checkout refuses the same quantities.
+ */
 export const availabilityOf = (input: {
   readonly active: boolean;
+  readonly firstOrderable: number;
   readonly stock: number;
   readonly stockTracked: boolean;
   readonly threshold: number;
@@ -81,7 +86,7 @@ export const availabilityOf = (input: {
     return 'UNKNOWN';
   }
   const stock = normalizeQuantity(input.stock);
-  if (stock <= 0) {
+  if (stock <= 0 || stock < input.firstOrderable) {
     return 'OUT_OF_STOCK';
   }
   return stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
@@ -111,6 +116,8 @@ const toVariantRecord = (
     attributes: variant.attributes,
     availability: availabilityOf({
       active,
+      // The variant's own minimum and package, exactly as checkout reads them (never the product's).
+      firstOrderable: firstOrderableQuantity(variant),
       stock: stockOnHand,
       stockTracked: product.stockTracked !== false,
       threshold: product.lowStockThreshold,
@@ -158,6 +165,7 @@ export const toProductRecord = (
       ...product,
       availability: availabilityOf({
         active: product.active,
+        firstOrderable: firstOrderableQuantity(product),
         stock: stockOnHand,
         stockTracked: product.stockTracked !== false,
         threshold: product.lowStockThreshold,

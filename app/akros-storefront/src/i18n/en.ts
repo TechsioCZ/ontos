@@ -104,7 +104,7 @@ export const en: Dictionary = {
     perUnit: "per unit",
     stockStatus: {
       "in-stock": "In stock",
-      "limited-stock": "Limited stock",
+      "below-package": "Less than one package in stock",
       "out-of-stock": "Out of stock",
       unknown: "Availability cannot be verified",
     },
@@ -120,8 +120,8 @@ export const en: Dictionary = {
     minimumOrderByVariant: "Depends on the variant",
     variantCount: "Variants",
     inStockCount: (quantity: number, unit: string) => `In stock: ${count(quantity)} ${unit}`,
-    limitedStockCount: (quantity: number, unit: string) =>
-      `Limited quantity: ${count(quantity)} ${unit}`,
+    belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
+      `In stock: ${count(quantity)} ${unit}, sold in ${count(firstOrder)} ${unit}`,
     availabilityNowUnknown: "Availability cannot be verified right now",
     outOfStock: "Out of stock",
     variantsInStock: (available: number, total: number) =>
@@ -1079,6 +1079,8 @@ export const en: Dictionary = {
       availabilityUnknown: (label: string) =>
         `${label}: availability cannot be verified right now, so the order cannot be completed. Remove the item or try again later.`,
       outOfStock: (label: string) => `${label}: currently out of stock.`,
+      belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
+        `${label}: only ${count(stock)} ${unit} in stock, sold in ${count(firstOrder)} ${unit}.`,
       insufficientStock: (label: string, stock: number, unit: string) =>
         `${label}: only ${count(stock)} ${unit} available.`,
       minimumQuantity: (label: string, minimum: number, unit: string) =>

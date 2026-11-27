@@ -223,7 +223,16 @@ export async function quoteCart(
         lineIssues.push({
           ...ids,
           code: "OUT_OF_STOCK",
-          message: messages.outOfStock(label),
+          // Stock held below one first order is named, never sold: the product page's words.
+          message:
+            item.belowPackage?.firstOrderableQuantity === undefined
+              ? messages.outOfStock(label)
+              : messages.belowPackage(
+                  label,
+                  item.belowPackage.stockOnHand,
+                  item.belowPackage.firstOrderableQuantity,
+                  item.unit,
+                ),
         });
       else if (line.quantity > item.stockCount)
         lineIssues.push({

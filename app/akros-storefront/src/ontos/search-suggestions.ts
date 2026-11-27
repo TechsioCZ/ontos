@@ -233,6 +233,7 @@ export function toSearchGridItem(
       quantityStep: variant.quantityStep,
       status: getProductStockStatus(variant),
       stockCount: variant.stockCount,
+      ...(variant.belowPackage ? { belowPackage: variant.belowPackage } : {}),
       unit: variant.unit,
     },
     detailHref,

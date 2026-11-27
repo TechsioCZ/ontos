@@ -102,7 +102,7 @@ export const cs = {
     perUnit: "za jednotku",
     stockStatus: {
       "in-stock": "Skladem",
-      "limited-stock": "Omezeně skladem",
+      "below-package": "Skladem méně než balení",
       "out-of-stock": "Není skladem",
       unknown: "Dostupnost nelze ověřit",
     },
@@ -118,8 +118,8 @@ export const cs = {
     minimumOrderByVariant: "Podle zvolené varianty",
     variantCount: "Počet variant",
     inStockCount: (quantity: number, unit: string) => `Skladem ${count(quantity)} ${unit}`,
-    limitedStockCount: (quantity: number, unit: string) =>
-      `Omezené množství: ${count(quantity)} ${unit}`,
+    belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
+      `Skladem ${count(quantity)} ${unit}, prodej po ${count(firstOrder)} ${unit}`,
     availabilityNowUnknown: "Dostupnost nyní nelze ověřit",
     outOfStock: "Není skladem",
     variantsInStock: (available: number, total: number) =>
@@ -1067,6 +1067,8 @@ export const cs = {
       availabilityUnknown: (label: string) =>
         `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit. Položku odeberte nebo to zkuste později.`,
       outOfStock: (label: string) => `${label}: momentálně není skladem.`,
+      belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
+        `${label}: skladem je jen ${count(stock)} ${unit}, prodává se po ${count(firstOrder)} ${unit}.`,
       insufficientStock: (label: string, stock: number, unit: string) =>
         `${label}: k dispozici je jen ${count(stock)} ${unit}.`,
       minimumQuantity: (label: string, minimum: number, unit: string) =>
