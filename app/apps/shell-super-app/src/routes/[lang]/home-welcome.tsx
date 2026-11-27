@@ -34,9 +34,9 @@ const DestinationRow = ({ link }: { readonly link: ShellNavigationLink }) =>
         className="justify-start hover:bg-overlay"
         icon={link.icon}
         size="sm"
-        theme="unstyled"
+        unstyled
         to={link.href}
-        variant="secondary"
+        severity="secondary"
       >
         <span className="min-w-0 flex-1 truncate text-start">{link.label}</span>
         <Icon className="text-fg-secondary" icon="icon-[mdi--chevron-right]" size="sm" />
@@ -76,7 +76,7 @@ export const HomeWelcome = ({
               {t('shell.dashboard.home.welcomeKicker')}
             </span>
             {companyName === undefined ? null : (
-              <Badge size="sm" variant="outline">
+              <Badge size="sm" appearance="outline" severity="neutral">
                 {companyName}
               </Badge>
             )}
@@ -91,9 +91,9 @@ export const HomeWelcome = ({
             className="shrink-0"
             icon={start.icon}
             size="md"
-            theme="solid"
+            appearance="solid"
             to={start.href}
-            variant="primary"
+            severity="primary"
           >
             {t('shell.dashboard.home.start', { destination: start.label })}
           </LinkButton>

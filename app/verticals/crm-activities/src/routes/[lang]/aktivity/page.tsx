@@ -482,14 +482,14 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
           {message}
         </output>
         {loadFailed && (
-          <Button disabled={pending} onClick={retry} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={pending} onClick={retry} size="sm" appearance="outline" severity="secondary">
             {t(`${key}.retry`)}
           </Button>
         )}
         {records !== undefined && (
           <>
             <div className="crmactivities:overflow-x-auto">
-              <Table size="sm" variant="line">
+              <Table size="sm" appearance="line">
                 <Table.Caption>{t(`${key}.timeline`)}</Table.Caption>
                 <Table.Header>
                   <Table.Row>
@@ -519,11 +519,11 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                       <Table.Cell>
                         <Badge
                           size="sm"
-                          variant={Match.value(activity.kind).pipe(
+                          severity={Match.value(activity.kind).pipe(
                             Match.when('CALL', () => 'info' as const),
                             Match.when('EMAIL', () => 'warning' as const),
                             Match.when('MEETING', () => 'success' as const),
-                            Match.when('NOTE', () => 'outline' as const),
+                            Match.when('NOTE', () => 'neutral' as const),
                             Match.exhaustive,
                           )}
                         >
@@ -548,8 +548,8 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                             disabled={pending}
                             onClick={() => showCard(activity)}
                             size="sm"
-                            theme="borderless"
-                            variant="secondary"
+                            appearance="ghost"
+                            severity="secondary"
                           >
                             {t(`${key}.contact`)}
                           </Button>
@@ -593,7 +593,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                       <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.roles`)}</dt>
                       <dd className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2">
                         {card.currentRoles.map((role) => (
-                          <Badge key={role.roleType} size="sm" variant="outline">
+                          <Badge key={role.roleType} size="sm" appearance="outline" severity="neutral">
                             {t(`${key}.roleTypes.${role.roleType}`)}
                           </Badge>
                         ))}
@@ -624,9 +624,9 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           disabled={pending || query.trim() === ''}
                           onClick={findCounterparty}
                           size="sm"
-                          theme="outlined"
+                          appearance="outline"
                           type="button"
-                          variant="secondary"
+                          severity="secondary"
                         >
                           {t(`${key}.find`)}
                         </Button>

@@ -38,10 +38,10 @@ const AppIdentity = ({ connection: c }: { readonly connection: ConnectionSummary
     <div className="grid min-w-0 gap-50">
       <span className="font-medium">{c.client.name}</span>
       <div className="flex flex-wrap gap-100">
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           {c.client.host}
         </Badge>
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           {clientKindLabel[c.client.kind]}
         </Badge>
       </div>
@@ -68,10 +68,10 @@ const RowActions = ({
   readonly onRevoke: (c: ConnectionSummary) => void;
 }) => (
   <div className="flex flex-wrap justify-end gap-100 [&_button]:whitespace-nowrap">
-    <Button onClick={() => onEdit(connection)} size="sm" theme="outlined" variant="secondary">
+    <Button onClick={() => onEdit(connection)} size="sm" appearance="outline" severity="secondary">
       Upravit přístup
     </Button>
-    <Button onClick={() => onRevoke(connection)} size="sm" variant="danger">
+    <Button onClick={() => onRevoke(connection)} size="sm" severity="danger">
       Odpojit
     </Button>
   </div>
@@ -126,10 +126,10 @@ const RevokeDialog = ({
     <Dialog
       actions={
         <>
-          <Button onClick={onCancel} theme="outlined" variant="secondary">
+          <Button onClick={onCancel} appearance="outline" severity="secondary">
             Zrušit
           </Button>
-          <Button disabled={busy} onClick={revoke} variant="danger">
+          <Button disabled={busy} onClick={revoke} severity="danger">
             Odpojit
           </Button>
         </>
@@ -263,7 +263,7 @@ export const ConnectedAppsSection = () => {
                     </td>
                     <td className="py-150 pr-150">{accessSummary(c)}</td>
                     <td className="whitespace-nowrap py-150 pr-150">
-                      <Badge size="sm" variant={writePolicyBadge[c.writePolicy]}>
+                      <Badge size="sm" severity={writePolicyBadge[c.writePolicy]}>
                         {writePolicyLabel[c.writePolicy]}
                       </Badge>
                     </td>
@@ -288,7 +288,7 @@ export const ConnectedAppsSection = () => {
                 </Field>
                 <Field label={t('shell.profile.connections.access')}>{accessSummary(c)}</Field>
                 <Field label={t('shell.connect.access.write')}>
-                  <Badge size="sm" variant={writePolicyBadge[c.writePolicy]}>
+                  <Badge size="sm" severity={writePolicyBadge[c.writePolicy]}>
                     {writePolicyLabel[c.writePolicy]}
                   </Badge>
                 </Field>

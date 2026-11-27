@@ -66,7 +66,7 @@ export const OrderEmailDeliveries = ({ orderId }: { readonly orderId: string }) 
           {state.deliveries.map((delivery) => (
             <li className="flex flex-wrap items-center gap-150 py-100" key={delivery.event}>
               <span className="font-medium">{delivery.eventLabel ?? emailEventLabels[delivery.event]}</span>
-              <Badge size="sm" variant={emailStatusVariant[delivery.status]}>
+              <Badge size="sm" severity={emailStatusVariant[delivery.status]}>
                 {deliveryLabel(delivery, (iso) => formatDateTime(iso))}
               </Badge>
             </li>

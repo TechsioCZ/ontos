@@ -40,8 +40,8 @@ function showResult(cs: Dictionary, cartHref: string, orderNumber: string, resul
             href={cartHref}
             prefetch={false}
             size="sm"
-            theme="outlined"
-            variant="primary"
+            appearance="outline"
+            severity="primary"
             onClick={() => toaster.dismiss(notificationId)}
           >
             {cs.account.reorder.goToCart}
@@ -120,7 +120,7 @@ export function ReorderAction({
       <Button
         type="button"
         size="sm"
-        variant="primary"
+        severity="primary"
         disabled={!available || !ready}
         isLoading={pending}
         loadingText={cs.account.reorder.pending}

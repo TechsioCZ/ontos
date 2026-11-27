@@ -82,11 +82,11 @@ const StateBadges = ({
   readonly t: PropertyWorkspaceTranslate;
 }) => (
   <span className={badgeRowClass}>
-    <Badge size="sm" variant="outline">
+    <Badge size="sm" appearance="outline" severity="neutral">
       {stateLabel}
     </Badge>
     {archived && (
-      <Badge size="sm" variant="secondary">
+      <Badge size="sm" severity="secondary">
         {t('archived')}
       </Badge>
     )}
@@ -122,7 +122,7 @@ const PortfolioCards = ({
               className="propertyportfolio:font-semibold"
               onClick={() => onSelectResource(item.id)}
               size="current"
-              theme="unstyled"
+              unstyled
             >
               {item.name}
             </Button>
@@ -160,14 +160,14 @@ export const PropertyWorkspace = ({
       {messages}
       <div className={rowClass}>
         {property !== undefined && (
-          <Button onClick={() => onSelectResource()} size="sm" theme="borderless" variant="secondary">
+          <Button onClick={() => onSelectResource()} size="sm" appearance="ghost" severity="secondary">
             ← {t('backToPortfolio')}
           </Button>
         )}
         <div className={`${rowClass} propertyportfolio:ms-auto`}>
           {filters}
           {property === undefined && (
-            <Button disabled={busy} onClick={onCreateProperty} size="sm" theme="outlined" variant="primary">
+            <Button disabled={busy} onClick={onCreateProperty} size="sm" appearance="outline" severity="primary">
               {t('addProperty')}
             </Button>
           )}
@@ -183,8 +183,8 @@ export const PropertyWorkspace = ({
               block
               onClick={() => onSelectResource(property.id)}
               size="sm"
-              theme={propertySelected ? 'solid' : 'borderless'}
-              variant={propertySelected ? 'primary' : 'secondary'}
+              appearance={propertySelected ? 'solid' : 'ghost'}
+              severity={propertySelected ? 'primary' : 'secondary'}
             >
               {property.code} · {property.name}
             </Button>
@@ -204,8 +204,8 @@ export const PropertyWorkspace = ({
                         aria-current={selected ? 'page' : undefined}
                         onClick={() => onSelectResource(item.id)}
                         size="sm"
-                        theme={selected ? 'solid' : 'borderless'}
-                        variant={selected ? 'primary' : 'secondary'}
+                        appearance={selected ? 'solid' : 'ghost'}
+                        severity={selected ? 'primary' : 'secondary'}
                       >
                         {item.code} · {item.name}
                       </Button>
@@ -215,7 +215,7 @@ export const PropertyWorkspace = ({
                 })}
                 {units.length === 0 && <p className={mutedClass}>{t('noUnits')}</p>}
                 {canCreateUnit && (
-                  <Button disabled={busy} onClick={onCreateUnit} size="sm" theme="borderless" variant="primary">
+                  <Button disabled={busy} onClick={onCreateUnit} size="sm" appearance="ghost" severity="primary">
                     {t('addUnit')}
                   </Button>
                 )}
@@ -225,7 +225,7 @@ export const PropertyWorkspace = ({
           <div className={detailClass}>
             {details}
             {actions}
-            <TabsTemplate items={[...tabs]} onValueChange={onSelectTab} value={activeTab} variant="solid" />
+            <TabsTemplate items={[...tabs]} onValueChange={onSelectTab} value={activeTab} appearance="solid" />
           </div>
         </div>
       )}

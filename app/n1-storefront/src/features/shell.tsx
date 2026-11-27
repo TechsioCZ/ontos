@@ -136,8 +136,8 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                     )
                   }
                   size="current"
-                  theme="unstyled"
-                  variant="tertiary"
+                  unstyled
+                  severity="tertiary"
                 />
               </Header.ActionItem>
             </div>

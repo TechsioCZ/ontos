@@ -134,8 +134,8 @@ export const DownloadButton = ({
         );
       }}
       size={size}
-      theme="outlined"
-      variant="secondary"
+      appearance="outline"
+      severity="secondary"
     >
       {t(`${k}.download`)}
     </Button>
@@ -159,7 +159,7 @@ export const FilePreviewDialog = ({
         file === undefined ? undefined : (
           <>
             <DownloadButton file={file} />
-            <Button onClick={onClose} size="sm" variant="primary">
+            <Button onClick={onClose} size="sm" severity="primary">
               {t('facility-operations.common.close')}
             </Button>
           </>

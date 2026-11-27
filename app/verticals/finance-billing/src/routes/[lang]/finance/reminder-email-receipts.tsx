@@ -99,7 +99,7 @@ export const ReminderEmailStatus = ({
   }
   if (receipts.kind === 'unavailable') {
     return (
-      <Badge size="sm" variant="warning">
+      <Badge size="sm" severity="warning">
         Stav e-mailu nedostupný – e-mailová služba neběží
       </Badge>
     );
@@ -107,13 +107,13 @@ export const ReminderEmailStatus = ({
   const delivery = receipts.byReminderId.get(reminderId);
   if (delivery === undefined) {
     return (
-      <Badge size="sm" variant="secondary">
+      <Badge size="sm" severity="secondary">
         Čeká na odeslání e-mailem
       </Badge>
     );
   }
   return (
-    <Badge size="sm" variant={emailStatusVariant[delivery.status]}>
+    <Badge size="sm" severity={emailStatusVariant[delivery.status]}>
       {deliveryLabel(delivery, (iso) => formatDateTime(iso))}
     </Badge>
   );

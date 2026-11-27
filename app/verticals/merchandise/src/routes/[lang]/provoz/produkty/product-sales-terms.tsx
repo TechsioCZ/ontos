@@ -98,9 +98,9 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => onChange(tiers.filter((entry) => entry.key !== tier.key))}
                 size="sm"
-                theme="borderless"
+                appearance="ghost"
                 type="button"
-                variant="secondary"
+                severity="secondary"
               />
             )}
           </div>
@@ -117,9 +117,9 @@ export const PriceTierRows = ({ disabled, idPrefix, minimum, onChange, tiers, va
               ])
             }
             size="sm"
-            theme="outlined"
+            appearance="outline"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             Přidat množstevní cenu
           </Button>

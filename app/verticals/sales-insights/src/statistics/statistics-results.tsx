@@ -319,8 +319,8 @@ export const StatisticsResults = ({
               link.click();
             }}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {t(`${key}.exportCsv`)}
           </Button>

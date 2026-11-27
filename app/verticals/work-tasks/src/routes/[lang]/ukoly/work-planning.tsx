@@ -217,7 +217,7 @@ export const ProjectEditor = ({
       <SidePanel
         actions={
           <>
-            <Button disabled={busy} onClick={() => guard.request(close)} theme="outlined" variant="secondary">
+            <Button disabled={busy} onClick={() => guard.request(close)} appearance="outline" severity="secondary">
               Zrušit
             </Button>
             <SaveBar
@@ -324,7 +324,7 @@ export const ProjectEditor = ({
                 });
               }}
               size="sm"
-              variant="secondary"
+              severity="secondary"
             >
               Přidat milník
             </Button>
@@ -379,7 +379,7 @@ export const ProjectEditor = ({
                 disabled={busy}
                 onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
                 size="sm"
-                variant="secondary"
+                severity="secondary"
               >
                 Odebrat milník
               </Button>
@@ -453,7 +453,7 @@ export const WorkPlanning = ({
       <SectionCard
         actions={
           records.canWrite && (
-            <Button onClick={() => setEditor({})} size="sm" variant="primary">
+            <Button onClick={() => setEditor({})} size="sm" severity="primary">
               Nový projekt
             </Button>
           )
@@ -489,7 +489,12 @@ export const WorkPlanning = ({
                   <div className="flex items-center gap-150">
                     <span>{states[project.state]}</span>
                     {records.canWrite && (
-                      <Button onClick={() => setEditor({ project })} size="sm" theme="outlined" variant="secondary">
+                      <Button
+                        onClick={() => setEditor({ project })}
+                        size="sm"
+                        appearance="outline"
+                        severity="secondary"
+                      >
                         Upravit projekt
                       </Button>
                     )}

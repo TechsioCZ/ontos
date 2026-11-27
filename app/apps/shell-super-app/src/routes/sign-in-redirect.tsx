@@ -26,7 +26,7 @@ export const SignInRedirect = ({ reason }: { readonly reason?: SignInReason | un
       <StatusText aria-live="polite" showIcon status="default">
         {t('shell.moduleTarget.sign_in_required')}
       </StatusText>
-      <LinkButton href={`/${language}/login`} size="sm" theme="solid" variant="primary">
+      <LinkButton href={`/${language}/login`} size="sm" appearance="solid" severity="primary">
         {t('shell.auth.loginLink')}
       </LinkButton>
     </main>

@@ -106,8 +106,8 @@ export const ProductPurchase = ({
         density="compact"
         disabled
         size="md"
-        theme="solid"
-        variant="secondary"
+        appearance="solid"
+        severity="secondary"
       >
         {d.selectVariantAction}
       </Button>
@@ -171,8 +171,8 @@ export const ProductPurchase = ({
           disabled={purchaseDisabled}
           onClick={addToCart}
           size="md"
-          theme="solid"
-          variant="secondary"
+          appearance="solid"
+          severity="secondary"
         >
           {current.stock === "unavailable" ? d.stock.unavailable : d.addToCartDetail}
         </Button>

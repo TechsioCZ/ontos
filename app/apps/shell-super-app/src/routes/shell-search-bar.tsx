@@ -263,8 +263,8 @@ export const ShellSearchBar = ({
             onClick={handleSubmit}
             onMouseDown={keepFieldFocus}
             size="sm"
-            theme="borderless"
-            variant="secondary"
+            appearance="ghost"
+            severity="secondary"
           >
             {t('shell.search.suggestions.all', { query: suggestions.query })}
           </Button>

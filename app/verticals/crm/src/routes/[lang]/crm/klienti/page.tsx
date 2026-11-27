@@ -216,8 +216,8 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
             icon="icon-[mdi--filter-remove-outline]"
             onClick={onReset}
             size="sm"
-            theme="borderless"
-            variant="secondary"
+            appearance="ghost"
+            severity="secondary"
           >
             {t('crm.clientFilters.filters.reset')}
           </Button>
@@ -306,9 +306,9 @@ const ClientsList = ({
               icon="icon-[mdi--download]"
               onClick={() => downloadCsv(exportCsv, `kontakty-${DateTime.formatIsoDateUtc(records.now)}.csv`)}
               size="sm"
-              theme="outlined"
+              appearance="outline"
               title={t('crm.ciClientsVisits.clients.exportDescription')}
-              variant="secondary"
+              severity="secondary"
             >
               {t('crm.clientFilters.actions.export')}
             </Button>
@@ -317,14 +317,14 @@ const ClientsList = ({
                 icon="icon-[mdi--account-group-outline]"
                 onClick={() => setTeamOpen(true)}
                 size="sm"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {t('crm.clientFilters.actions.team')}
               </Button>
             )}
             {canCreate && (
-              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" severity="primary">
                 {t('crm.clientFilters.actions.create')}
               </Button>
             )}
@@ -364,8 +364,8 @@ const ClientsList = ({
               );
             }}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             Propojit s evidencí zákazníků
           </Button>

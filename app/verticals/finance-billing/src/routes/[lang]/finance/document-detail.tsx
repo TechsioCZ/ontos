@@ -109,8 +109,8 @@ const DocumentBack = ({ onBack }: { readonly onBack: () => void }) => {
         icon="icon-[mdi--arrow-left]"
         onClick={onBack}
         size="sm"
-        theme="borderless"
-        variant="secondary"
+        appearance="ghost"
+        severity="secondary"
       >
         {t(`${ns}.back`)}
       </Button>
@@ -155,7 +155,7 @@ const ClosedDocument = ({
         </StatusText>
       )}
       {detail.state === 'missing' || detail.state === 'unavailable' ? (
-        <Button className="self-start" onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+        <Button className="self-start" onClick={onRetry} size="sm" appearance="outline" severity="secondary">
           {t(`${ns}.retry`)}
         </Button>
       ) : null}
@@ -207,8 +207,8 @@ const DocumentActions = ({
         loadingText={t(`${ns}.loadingFile`)}
         onClick={() => onLoad('preview')}
         size="sm"
-        theme="outlined"
-        variant="secondary"
+        appearance="outline"
+        severity="secondary"
       >
         {t(`${ns}.preview`)}
       </Button>
@@ -219,7 +219,7 @@ const DocumentActions = ({
         loadingText={t(`${ns}.loadingFile`)}
         onClick={() => onLoad('download')}
         size="sm"
-        variant="primary"
+        severity="primary"
       >
         {t(`${ns}.download`)}
       </Button>

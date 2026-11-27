@@ -56,7 +56,7 @@ export const TeamPanel = ({
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
+        <Button onClick={onClose} appearance="outline" severity="secondary">
           Zavřít
         </Button>
       }
@@ -86,7 +86,7 @@ export const TeamPanel = ({
                 <span className="flex min-w-0 flex-col">
                   <span className="flex items-center gap-100 font-medium">
                     {person.name}
-                    <Badge size="sm" variant={person.active ? 'success' : 'outline'}>
+                    <Badge size="sm" severity={person.active ? 'success' : 'neutral'}>
                       {hasDeparted ? 'Odešel – přeřadit' : activeLabel}
                     </Badge>
                   </span>
@@ -111,9 +111,9 @@ export const TeamPanel = ({
                     )
                   }
                   size="sm"
-                  theme="outlined"
+                  appearance="outline"
                   title={person.active && owned > 0 ? 'Nejprve převeďte jeho klienty jinému obchodníkovi' : undefined}
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {person.active ? 'Vyřadit' : 'Vrátit mezi aktivní'}
                 </Button>
@@ -151,7 +151,7 @@ export const TeamPanel = ({
                   )
                 }
                 size="sm"
-                variant="primary"
+                severity="primary"
               >
                 Zařadit mezi obchodníky
               </Button>

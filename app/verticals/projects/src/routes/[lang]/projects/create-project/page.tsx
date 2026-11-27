@@ -336,7 +336,7 @@ const OpenCreateButton = () => {
         void navigate({ search: {}, to: `/${language ?? 'cs'}/projects/create-project` });
       }}
       type="button"
-      variant="secondary"
+      severity="secondary"
     >
       {t(`${projectDetailKey}.openCreate`)}
     </Button>
@@ -396,7 +396,7 @@ const ProjectTargetMessage = ({
       {(notice.retry && onRetry !== undefined) || showOpenCreate ? (
         <div className="projects:mt-6 projects:flex projects:flex-wrap projects:gap-3">
           {notice.retry && onRetry !== undefined && (
-            <Button onClick={onRetry} type="button" variant="secondary">
+            <Button onClick={onRetry} type="button" severity="secondary">
               {t(`${projectDetailKey}.retry`)}
             </Button>
           )}
@@ -440,7 +440,7 @@ const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) =
             {t(`${projectDetailKey}.fields.prefix`)}: {project.prefix}
           </p>
         </div>
-        <Badge size="md" variant={archived ? 'warning' : 'success'}>
+        <Badge size="md" severity={archived ? 'warning' : 'success'}>
           {t(`${projectDetailKey}.lifecycle.${project.lifecycleState}`)}
         </Badge>
       </div>

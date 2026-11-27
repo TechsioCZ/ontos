@@ -19,14 +19,14 @@ export const useMarketText = () => {
 
 const lifecycleVariant = {
   ACTIVE: 'success',
-  RETIRED: 'outline',
+  RETIRED: 'neutral',
   SUSPENDED: 'warning',
-} as const satisfies Record<MarketLifecycle, 'outline' | 'success' | 'warning'>;
+} as const satisfies Record<MarketLifecycle, 'neutral' | 'success' | 'warning'>;
 
 export const LifecycleBadge = ({ lifecycle }: { readonly lifecycle: MarketLifecycle }) => {
   const { text } = useMarketText();
   return (
-    <Badge size="sm" variant={lifecycleVariant[lifecycle]}>
+    <Badge size="sm" severity={lifecycleVariant[lifecycle]}>
       {text(`market.lifecycle.${lifecycle}`)}
     </Badge>
   );
@@ -64,7 +64,7 @@ export const LoadFailure = ({ message, onRetry }: { readonly message: string; re
       <StatusText showIcon status="error">
         {message}
       </StatusText>
-      <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+      <Button onClick={onRetry} size="sm" appearance="outline" severity="secondary">
         {text('eshops.retry')}
       </Button>
     </div>

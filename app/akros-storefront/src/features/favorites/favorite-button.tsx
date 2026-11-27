@@ -87,8 +87,8 @@ export function FavoriteButton({
         iconSize={placement === "action" ? "sm" : "lg"}
         onClick={handleClick}
         size={placement === "detail" ? "md" : "sm"}
-        theme={placement === "detail" ? "outlined" : "borderless"}
-        variant="secondary"
+        appearance={placement === "detail" ? "outline" : "ghost"}
+        severity="secondary"
       >
         {placement === "action" &&
           (concrete

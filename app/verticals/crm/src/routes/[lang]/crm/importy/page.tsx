@@ -136,13 +136,13 @@ const orderColumns = (
       const order = info.row.original;
       if (needsReview(order)) {
         return (
-          <Badge size="sm" variant="warning">
+          <Badge size="sm" severity="warning">
             Ke kontrole
           </Badge>
         );
       }
       return order.duplicateOf === undefined ? null : (
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           Duplicita
         </Badge>
       );
@@ -200,7 +200,7 @@ const batchColumns = (records: RecordsResponse): ColumnDef<ImportBatch>[] => [
     cell: (info) => {
       const meta = batchStatusMeta[info.row.original.status];
       return (
-        <Badge size="sm" variant={meta.variant}>
+        <Badge size="sm" severity={meta.variant}>
           {meta.label}
         </Badge>
       );
@@ -227,7 +227,7 @@ const BatchPanel = ({
   return (
     <SidePanel
       actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
+        <Button onClick={onClose} appearance="outline" severity="secondary">
           Zavřít
         </Button>
       }
@@ -244,10 +244,10 @@ const BatchPanel = ({
     >
       <div className="flex flex-col gap-250">
         <div className="flex flex-wrap gap-100">
-          <Badge size="sm" variant={meta.variant}>
+          <Badge size="sm" severity={meta.variant}>
             {meta.label}
           </Badge>
-          <Badge size="sm" variant="secondary">
+          <Badge size="sm" severity="secondary">
             {`Formát ${batch.format}`}
           </Badge>
         </div>
@@ -311,8 +311,8 @@ const TemplateTab = ({
             icon="icon-[mdi--download]"
             onClick={() => downloadText('sablona-import-objednavek.csv', ordersCsvTemplate())}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             Stáhnout šablonu
           </Button>
@@ -338,7 +338,7 @@ const TemplateTab = ({
                 <tr className="border-border-primary border-t align-top" key={column.key}>
                   <td className="px-150 py-100">
                     {column.required && (
-                      <Badge className="ms-100" size="sm" variant="info">
+                      <Badge className="ms-100" size="sm" severity="info">
                         povinné
                       </Badge>
                     )}
@@ -381,7 +381,7 @@ const TemplateTab = ({
             samples.map((sample, index) => (
               <div className={`${surfaceTileClassName} flex flex-col gap-100 p-200`} key={sample.key}>
                 <div className="flex items-center gap-100">
-                  <Badge size="sm" variant="secondary">
+                  <Badge size="sm" severity="secondary">
                     {String(index + 1)}
                   </Badge>
                   <span className="font-medium text-sm">{sample.title}</span>
@@ -393,8 +393,8 @@ const TemplateTab = ({
                     icon="icon-[mdi--download]"
                     onClick={() => downloadText(sample.fileName, sample.csv)}
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
+                    appearance="outline"
+                    severity="secondary"
                   >
                     Stáhnout
                   </Button>
@@ -402,8 +402,8 @@ const TemplateTab = ({
                     icon="icon-[mdi--database-import-outline]"
                     onClick={() => onImportSample({ csv: sample.csv, fileName: sample.fileName })}
                     size="sm"
-                    theme="borderless"
-                    variant="secondary"
+                    appearance="ghost"
+                    severity="secondary"
                   >
                     Otevřít v importu
                   </Button>
@@ -477,12 +477,12 @@ const ImportsContent = () => {
                       icon="icon-[mdi--download]"
                       onClick={() => downloadText('sablona-import-objednavek.csv', ordersCsvTemplate())}
                       size="sm"
-                      theme="outlined"
-                      variant="secondary"
+                      appearance="outline"
+                      severity="secondary"
                     >
                       Šablona CSV
                     </Button>
-                    <Button icon="icon-[mdi--upload]" onClick={() => openImport()} size="sm" variant="primary">
+                    <Button icon="icon-[mdi--upload]" onClick={() => openImport()} size="sm" severity="primary">
                       Importovat CSV
                     </Button>
                   </>
@@ -490,7 +490,7 @@ const ImportsContent = () => {
               }
               description={t('crm.pages.imports.description')}
               meta={
-                <Badge size="sm" variant="outline">
+                <Badge size="sm" appearance="outline" severity="neutral">
                   CSV import
                 </Badge>
               }
@@ -533,7 +533,7 @@ const ImportsContent = () => {
                 na vaše klienty.
               </p>
             )}
-            <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
+            <Tabs onValueChange={setTab} size="sm" value={tab} appearance="line">
               <Tabs.List>
                 <Tabs.Trigger value="orders">{`Objednávky (${String(orders.length)})`}</Tabs.Trigger>
                 {lead && <Tabs.Trigger value="batches">{`Historie importů (${String(batches.length)})`}</Tabs.Trigger>}
@@ -590,7 +590,7 @@ const ImportsContent = () => {
                     <EmptyState
                       action={
                         canImport ? (
-                          <Button onClick={() => openImport()} size="sm" variant="primary">
+                          <Button onClick={() => openImport()} size="sm" severity="primary">
                             Importovat CSV
                           </Button>
                         ) : undefined

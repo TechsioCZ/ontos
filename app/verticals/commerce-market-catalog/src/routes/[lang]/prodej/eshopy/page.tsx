@@ -141,13 +141,13 @@ export const StorefrontListingSetting = ({
         readOnly={settings.canManageCatalog !== true}
       />
       {settings.canManageCatalog === true && (
-        <Button disabled={!record.canSave} onClick={handleSave} size="sm" variant="primary">
+        <Button disabled={!record.canSave} onClick={handleSave} size="sm" severity="primary">
           {text(saving ? 'eshops.listing.saving' : 'eshops.listing.save')}
         </Button>
       )}
       {failure !== null && <StatusText status="error">{failureText(text, failure)}</StatusText>}
       {record.status === 'conflict' && (
-        <Button onClick={handleReload} size="sm" theme="outlined" variant="secondary">
+        <Button onClick={handleReload} size="sm" appearance="outline" severity="secondary">
           {text('eshops.listing.reload')}
         </Button>
       )}
@@ -177,7 +177,7 @@ const EshopCardView = ({
       title={
         <span className="flex flex-wrap items-center gap-100">
           {card.name}
-          <Badge size="sm" variant={card.lifecycle === 'ACTIVE' ? 'success' : 'outline'}>
+          <Badge size="sm" severity={card.lifecycle === 'ACTIVE' ? 'success' : 'neutral'}>
             {text(`eshops.storefrontLifecycle.${card.lifecycle}`)}
           </Badge>
         </span>
@@ -227,7 +227,7 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
     <PageHeader
       actions={
         canCreate ? (
-          <Button onClick={() => setCreating(true)} variant="primary">
+          <Button onClick={() => setCreating(true)} severity="primary">
             {text('eshops.newMarket')}
           </Button>
         ) : undefined

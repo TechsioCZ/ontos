@@ -268,8 +268,46 @@ export const connectSeedClient = (
     const composition = yield* get('/shell-super-app-api/shell/composition').pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(Composition)),
     );
+    /**
+     * One Core Action through the Shell BFF (`/core/actions/<slug>`), as the signed-in person for the selected
+     * tenant. The idempotency key comes from the checkpoint when there is one, so an interrupted write reuses it.
+     */
+    const coreAction = <P extends Schema.Top, R extends Schema.Top>(
+      slug: string,
+      payloadSchema: P,
+      payload: P['Type'],
+      resultSchema: R,
+    ) =>
+      Effect.gen(function* callCoreAction() {
+        const path = `/shell-super-app-api/core/actions/${slug}`;
+        const idempotencyKey =
+          checkpoint === undefined
+            ? randomUUID()
+            : yield* checkpoint(
+                'core',
+                path,
+                yield* Schema.encodeEffect(Schema.fromJsonString(payloadSchema))(payload),
+              );
+        const response = yield* post(origin, path, payloadSchema, payload, {
+          cookie: Cookies.toCookieHeader(cookies),
+          'idempotency-key': idempotencyKey,
+        });
+        return yield* HttpClientResponse.schemaBodyJson(resultSchema)(response);
+      });
+    /** One Core Read through the Shell BFF (`/core/reads/<slug>`). */
+    const coreRead = <P extends Schema.Top, R extends Schema.Top>(
+      slug: string,
+      payloadSchema: P,
+      payload: P['Type'],
+      resultSchema: R,
+    ) =>
+      shell(`/shell-super-app-api/core/reads/${slug}`, payloadSchema, payload).pipe(
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(resultSchema)),
+      );
     return {
       ...makeOwnerClient(target, origin, Cookies.toCookieHeader(cookies), composition.compositionRevision, checkpoint),
+      coreAction,
+      coreRead,
       /** Ends this login session; use as the release of an acquired client so no seed session outlives its run. */
       signOut: shell('/shell-super-app-api/auth/sign-out', Empty, {}).pipe(Effect.asVoid),
     };

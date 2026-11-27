@@ -129,11 +129,11 @@ export const pairingMeta = {
 
 export const outcomeMeta = {
   created: { label: 'Nová objednávka', variant: 'success' },
-  duplicate: { label: 'Duplicita – beze změny', variant: 'outline' },
+  duplicate: { label: 'Duplicita – beze změny', variant: 'neutral' },
   error: { label: 'Chyba', variant: 'danger' },
   review: { label: 'Vyžaduje kontrolu', variant: 'warning' },
   updated: { label: 'Změna stavu', variant: 'info' },
-} satisfies Record<ImportRowOutcome, { label: string; variant: 'success' | 'info' | 'outline' | 'warning' | 'danger' }>;
+} satisfies Record<ImportRowOutcome, { label: string; variant: 'success' | 'info' | 'neutral' | 'warning' | 'danger' }>;
 
 export const batchStatusMeta = {
   completed: { label: 'Dokončeno', variant: 'success' },

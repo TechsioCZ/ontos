@@ -181,7 +181,7 @@ export const PipelineDetailBody = ({ context, lookups, opportunity, revision }: 
                 <>
                   <Link href={workHref(task)}>{task.title}</Link>
                   <StatusBadge kind="task" value={task.state} />
-                  <Badge size="sm" variant={task.assignedToCase ? 'info' : 'outline'}>
+                  <Badge size="sm" severity={task.assignedToCase ? 'info' : 'neutral'}>
                     {task.assignedToCase
                       ? t('sales-pipeline.detail.taskAssignedToCase')
                       : t('sales-pipeline.detail.taskCustomer')}
@@ -209,7 +209,7 @@ export const PipelineDetailBody = ({ context, lookups, opportunity, revision }: 
                           : 'sales-pipeline.detail.contractDefault',
                       )}
                   </Link>
-                  <Badge size="sm" variant={contract.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
+                  <Badge size="sm" severity={contract.lifecycleState === 'ACTIVE' ? 'success' : 'neutral'}>
                     {t(contractStateKeys[contract.lifecycleState])}
                   </Badge>
                   <span className="text-fg-secondary">
@@ -243,7 +243,7 @@ export const PipelineDetailBody = ({ context, lookups, opportunity, revision }: 
           <p className="p-200 text-fg-secondary text-sm">{t('sales-pipeline.detail.noOfferLines')}</p>
         ) : (
           <ScrollRegion label={t('sales-pipeline.detail.offerLinesLabel')}>
-            <Table size="sm" variant="line">
+            <Table size="sm" appearance="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{t('sales-pipeline.detail.lineItem')}</Table.ColumnHeader>
@@ -308,7 +308,7 @@ export const PipelineDetailActions = ({
   return (
     <>
       {onClose !== undefined && (
-        <Button className="shrink-0 whitespace-nowrap" onClick={onClose} theme="outlined" variant="secondary">
+        <Button className="shrink-0 whitespace-nowrap" onClick={onClose} appearance="outline" severity="secondary">
           {t('sales-pipeline.pages.records.edit.close')}
         </Button>
       )}
@@ -316,14 +316,14 @@ export const PipelineDetailActions = ({
         <Button
           className="shrink-0 whitespace-nowrap"
           onClick={() => onStage(opportunity)}
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {t('sales-pipeline.pages.records.actions.changeStage')}
         </Button>
       )}
       {canWrite && open && (
-        <Button className="shrink-0 whitespace-nowrap" onClick={() => onEdit(opportunity)} variant="primary">
+        <Button className="shrink-0 whitespace-nowrap" onClick={() => onEdit(opportunity)} severity="primary">
           {t('sales-pipeline.pages.records.actions.edit')}
         </Button>
       )}

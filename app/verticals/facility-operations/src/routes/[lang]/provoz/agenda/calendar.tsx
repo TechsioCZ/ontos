@@ -561,20 +561,20 @@ export const CalendarView = ({
             aria-label={t(`${k}.calendar.previous`)}
             onClick={() => step(-1)}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             <Icon name="chevronLeft" size={18} />
           </Button>
-          <Button onClick={() => setCursor(today)} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={() => setCursor(today)} size="sm" appearance="outline" severity="secondary">
             {t(`${k}.calendar.today`)}
           </Button>
           <Button
             aria-label={t(`${k}.calendar.next`)}
             onClick={() => step(1)}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             <Icon name="chevronRight" size={18} />
           </Button>
@@ -608,7 +608,7 @@ export const CalendarView = ({
               </button>
             ))}
           </fieldset>
-          <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={csv} size="sm" appearance="outline" severity="secondary">
             {t(`${k}.export.csv`)}
           </Button>
         </div>

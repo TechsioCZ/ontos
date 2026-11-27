@@ -47,7 +47,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
           aria-label={t('shell.accessAdmin.accessible.outcomeBadge', {
             outcome: t(`shell.accessAdmin.outcome.${decision.outcome}`),
           })}
-          variant={outcomeVariants[decision.outcome]}
+          severity={outcomeVariants[decision.outcome]}
         >
           {t(`shell.accessAdmin.outcome.${decision.outcome}`)}
         </Badge>
@@ -142,7 +142,7 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
           </StatusText>
         )}
         {decision.authorityMetadata === 'unavailable' ? (
-          <Button onClick={onRetry} variant="secondary">
+          <Button onClick={onRetry} severity="secondary">
             {t('shell.accessAdmin.common.retry')}
           </Button>
         ) : null}
@@ -153,13 +153,15 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
   return (
     <div className="shell:grid shell:gap-3">
       {result.state === 'unavailable' ? (
-        <Badge variant="outline">{t('shell.accessAdmin.outcome.unavailable')}</Badge>
+        <Badge appearance="outline" severity="neutral">
+          {t('shell.accessAdmin.outcome.unavailable')}
+        </Badge>
       ) : null}
       <StatusText showIcon status={result.state === 'idle' ? 'default' : 'error'}>
         {t(stateKeys[result.state])}
       </StatusText>
       {result.state === 'unavailable' || result.state === 'conflict' ? (
-        <Button onClick={onRetry} variant="secondary">
+        <Button onClick={onRetry} severity="secondary">
           {t('shell.accessAdmin.common.retry')}
         </Button>
       ) : null}
@@ -268,7 +270,7 @@ export const WhyView = ({
           isLoading={pending}
           loadingText={t('shell.accessAdmin.common.loading')}
           type="submit"
-          variant="primary"
+          severity="primary"
         >
           {t('shell.accessAdmin.why.submit')}
         </Button>
@@ -281,7 +283,7 @@ export const WhyView = ({
         )}
       </div>
       <div className="shell:grid shell:gap-2">
-        <Button aria-describedby="why-request-unavailable" disabled type="button" variant="secondary">
+        <Button aria-describedby="why-request-unavailable" disabled type="button" severity="secondary">
           {t('shell.accessAdmin.why.requestAccess')}
         </Button>
         <p id="why-request-unavailable">{t('shell.accessAdmin.why.requestAccessUnavailable')}</p>

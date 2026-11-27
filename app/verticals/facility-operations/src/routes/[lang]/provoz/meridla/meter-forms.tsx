@@ -311,8 +311,8 @@ export const MeterForm = ({
                 onClick={() => {
                   guard.request(onCancel);
                 }}
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {t('facility-operations.common.close')}
               </Button>
@@ -702,7 +702,7 @@ export const ReadingForm = ({
             type="file"
           />
           <div className="flex flex-wrap items-center gap-150">
-            <Button onClick={() => photoInput.current?.click()} size="sm" theme="outlined" variant="secondary">
+            <Button onClick={() => photoInput.current?.click()} size="sm" appearance="outline" severity="secondary">
               {t(`${k}.reading.photoPick`)}
             </Button>
             <span className="text-sm">
@@ -717,8 +717,8 @@ export const ReadingForm = ({
                   }
                 }}
                 size="sm"
-                theme="borderless"
-                variant="secondary"
+                appearance="ghost"
+                severity="secondary"
               >
                 {t(CANCEL_LABEL)}
               </Button>

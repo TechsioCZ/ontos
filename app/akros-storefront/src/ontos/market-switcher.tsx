@@ -26,8 +26,8 @@ export function MarketSwitcher() {
           hrefLang={entry.locale}
           lang={entry.locale}
           size="sm"
-          theme="borderless"
-          variant="secondary"
+          appearance="ghost"
+          severity="secondary"
         >
           {marketLabel(entry)}
         </LinkButton>

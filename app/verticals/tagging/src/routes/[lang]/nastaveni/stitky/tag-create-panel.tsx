@@ -67,7 +67,7 @@ export const TagCreatePanel = ({ onClose }: { readonly onClose: () => void }) =>
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(onClose)} theme="outlined" type="button" variant="secondary">
+            <Button onClick={() => guard.request(onClose)} appearance="outline" type="button" severity="secondary">
               {t('tagging.tags.form.cancel')}
             </Button>
             <SaveBar

@@ -55,7 +55,7 @@ const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => voi
   const [state, setState] = useState<ProductRecordState>({ status: 'idle' });
   if (!open) {
     return (
-      <Button onClick={() => setOpen(true)} size="sm" type="button" variant="secondary">
+      <Button onClick={() => setOpen(true)} size="sm" type="button" severity="secondary">
         Vybrat z fotek produktu
       </Button>
     );
@@ -109,7 +109,7 @@ const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => voi
           })}
         </div>
       ) : null}
-      <Button onClick={() => setOpen(false)} size="sm" type="button" variant="secondary">
+      <Button onClick={() => setOpen(false)} size="sm" type="button" severity="secondary">
         Zavřít
       </Button>
     </div>
@@ -323,18 +323,18 @@ const CategoryEditor = ({
             <Button
               onClick={() => patchDraft({ positionText: String(Math.max(0, (siblings[0]?.position ?? 0) - 10)) })}
               size="sm"
-              theme="outlined"
+              appearance="outline"
               type="button"
-              variant="secondary"
+              severity="secondary"
             >
               Na začátek
             </Button>
             <Button
               onClick={() => patchDraft({ positionText: String((siblings.at(-1)?.position ?? 0) + 10) })}
               size="sm"
-              theme="outlined"
+              appearance="outline"
               type="button"
-              variant="secondary"
+              severity="secondary"
             >
               Na konec
             </Button>
@@ -464,10 +464,10 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
         </StatusText>
       )}
       <div className="flex flex-wrap gap-100">
-        <Button disabled={invalid} isLoading={busy} type="submit" variant="primary">
+        <Button disabled={invalid} isLoading={busy} type="submit" severity="primary">
           Vytvořit kategorii
         </Button>
-        <Button onClick={onCancel} theme="outlined" type="button" variant="secondary">
+        <Button onClick={onCancel} appearance="outline" type="button" severity="secondary">
           Zrušit
         </Button>
       </div>
@@ -525,9 +525,9 @@ const CategoryDeleteSection = ({
         disabled={disabled || busy || category.hasChildren}
         isLoading={busy}
         onClick={() => setAsking(true)}
-        theme="outlined"
+        appearance="outline"
         type="button"
-        variant="danger"
+        severity="danger"
       >
         Smazat kategorii
       </Button>
@@ -607,7 +607,7 @@ const CategoryEditPanel = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={close} theme="outlined" variant="secondary">
+            <Button onClick={close} appearance="outline" severity="secondary">
               Zpět na seznam
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
@@ -804,7 +804,13 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
 
   return (
     <>
-      <Button icon="icon-[mdi--file-tree-outline]" onClick={openPanel} size="sm" theme="outlined" variant="secondary">
+      <Button
+        icon="icon-[mdi--file-tree-outline]"
+        onClick={openPanel}
+        size="sm"
+        appearance="outline"
+        severity="secondary"
+      >
         Kategorie e-shopu
       </Button>
       {selection?.status === 'ready' && selected !== undefined ? (
@@ -821,7 +827,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
       ) : (
         <SidePanel
           actions={
-            <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
+            <Button onClick={() => setOpen(false)} appearance="outline" severity="secondary">
               Zavřít
             </Button>
           }
@@ -838,7 +844,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
                 <StatusText showIcon status="error">
                   Kategorie se nepodařilo načíst.
                 </StatusText>
-                <Button onClick={reload} variant="secondary">
+                <Button onClick={reload} severity="secondary">
                   Zkusit znovu
                 </Button>
               </>
@@ -852,8 +858,8 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
                 icon="icon-[mdi--plus]"
                 onClick={() => setCreating(true)}
                 size="sm"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 Nová kategorie
               </Button>
@@ -881,9 +887,9 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
                         className="h-auto w-full justify-start whitespace-normal text-left"
                         onClick={() => select(c.id)}
                         size="sm"
-                        theme="borderless"
+                        appearance="ghost"
                         type="button"
-                        variant="secondary"
+                        severity="secondary"
                       >
                         <span className="block w-full text-left" style={{ textAlign: 'left' }}>
                           {`${c.name} · /${c.slug} · pořadí ${c.position}${c.published === false ? ' · Skryto' : ' · Zveřejněno'}`}
@@ -900,7 +906,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
                 <StatusText showIcon status="error">
                   Kategorii se nepodařilo načíst.
                 </StatusText>
-                <Button onClick={() => select(selection.id)} variant="secondary">
+                <Button onClick={() => select(selection.id)} severity="secondary">
                   Zkusit znovu
                 </Button>
               </>

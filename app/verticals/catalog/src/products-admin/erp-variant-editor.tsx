@@ -637,7 +637,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button disabled={busy} onClick={onClose} theme="outlined" type="button" variant="secondary">
+          <Button disabled={busy} onClick={onClose} appearance="outline" type="button" severity="secondary">
             Zrušit
           </Button>
           <Button
@@ -646,7 +646,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
             loadingText="Ukládám…"
             onClick={save}
             type="button"
-            variant="primary"
+            severity="primary"
           >
             Uložit
           </Button>

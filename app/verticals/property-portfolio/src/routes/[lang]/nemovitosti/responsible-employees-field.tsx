@@ -76,7 +76,7 @@ export const ResponsibleEmployeesField = ({
         <ul aria-labelledby={`${fieldId}-label`} className="propertyportfolio:flex propertyportfolio:flex-wrap gap-50">
           {shown.map((item) => (
             <li key={item.key}>
-              <Badge size="sm" variant="outline">
+              <Badge size="sm" appearance="outline" severity="neutral">
                 {item.label}
               </Badge>
             </li>

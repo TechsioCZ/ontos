@@ -126,7 +126,7 @@ export interface SourceRow {
   readonly href: string;
   readonly id: string;
   readonly label: string;
-  readonly tone?: 'danger' | 'warning' | 'success' | 'info' | 'outline';
+  readonly tone?: 'danger' | 'warning' | 'success' | 'info' | 'neutral';
 }
 
 export interface AttentionItem {

@@ -63,7 +63,14 @@ export const ShellStatusPanel = ({
       </span>
       <p className="text-sm">{t(messageKey ?? `shell.moduleTarget.${status}`)}</p>
       <div className="flex flex-wrap gap-150">
-        <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
+        <LinkButton
+          as={LocalizedLink}
+          icon="icon-[mdi--home-outline]"
+          size="sm"
+          appearance="solid"
+          to="/"
+          severity="primary"
+        >
           {t('shell.recovery.home')}
         </LinkButton>
         {missing || forbidden ? null : (
@@ -71,9 +78,9 @@ export const ShellStatusPanel = ({
             icon="icon-[mdi--refresh]"
             onClick={retry}
             size="sm"
-            theme="outlined"
+            appearance="outline"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             {t('shell.recovery.retry')}
           </Button>

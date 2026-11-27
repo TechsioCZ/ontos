@@ -36,10 +36,10 @@ export const PaymentReview = ({
     <Dialog
       actions={
         <>
-          <Button disabled={saving} onClick={onBack} theme="outlined" variant="secondary">
+          <Button disabled={saving} onClick={onBack} appearance="outline" severity="secondary">
             {t(`${P}.reviewBack`)}
           </Button>
-          <Button disabled={saving} isLoading={saving} onClick={onConfirm} variant="primary">
+          <Button disabled={saving} isLoading={saving} onClick={onConfirm} severity="primary">
             {t(`${P}.reviewConfirm`)}
           </Button>
         </>

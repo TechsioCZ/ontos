@@ -153,10 +153,10 @@ export const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }:
       <Dialog
         actions={
           <>
-            <Button onClick={() => setConfirming(false)} theme="outlined" type="button" variant="secondary">
+            <Button onClick={() => setConfirming(false)} appearance="outline" type="button" severity="secondary">
               {t(`${connectionsKey}.operators.cancel`)}
             </Button>
-            <Button onClick={handleConfirmedSave} type="button" variant="danger">
+            <Button onClick={handleConfirmedSave} type="button" severity="danger">
               {t(`${connectionsKey}.operators.confirm`)}
             </Button>
           </>

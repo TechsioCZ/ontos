@@ -44,7 +44,7 @@ const auditDetail = (entry: AgentAuditEntry, field: string): string | undefined 
 const STATUS_OPERATION = 'change-status';
 const AgentDetailSearchSchema = Schema.Struct({ agent: Schema.optionalKey(Schema.String) });
 
-const statusVariant = { active: 'success', archived: 'outline', disabled: 'danger' } as const;
+const statusVariant = { active: 'success', archived: 'neutral', disabled: 'danger' } as const;
 
 type Notify = (title: string, description?: string) => void;
 
@@ -113,7 +113,7 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
       <div className="flex min-w-0 flex-1 flex-col gap-50">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
           <span className="font-medium">{clientName}</span>
-          <Badge size="sm" variant="outline">
+          <Badge size="sm" appearance="outline" severity="neutral">
             {connection.client.host}
           </Badge>
         </div>
@@ -132,7 +132,7 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-100">
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           {t(`${connectionsKey}.policy.${connection.writePolicy}`)}
         </Badge>
         <Button
@@ -141,7 +141,7 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
             setOpen(true);
           }}
           size="sm"
-          variant="danger"
+          severity="danger"
         >
           {t(`${connectionsKey}.list.revoke`)}
         </Button>
@@ -149,10 +149,10 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
       <Dialog
         actions={
           <>
-            <Button onClick={close} theme="outlined" type="button" variant="secondary">
+            <Button onClick={close} appearance="outline" type="button" severity="secondary">
               {t(`${connectionsKey}.list.cancel`)}
             </Button>
-            <Button disabled={busy} isLoading={busy} onClick={confirm} type="button" variant="danger">
+            <Button disabled={busy} isLoading={busy} onClick={confirm} type="button" severity="danger">
               {t(`${connectionsKey}.list.confirm`)}
             </Button>
           </>
@@ -269,37 +269,42 @@ const AgentCard = ({
       <header className="flex flex-wrap items-start justify-between gap-150">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
           <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{agent.displayName}</span>
-          <Badge size="sm" variant={statusVariant[agent.status]}>
+          <Badge size="sm" severity={statusVariant[agent.status]}>
             {t(`${connectionsKey}.status.${agent.status}`)}
           </Badge>
-          <Badge size="sm" variant="outline">
+          <Badge size="sm" appearance="outline" severity="neutral">
             {agent.hasProfile ? t(`${connectionsKey}.policy.${agent.writePolicy}`) : t(`${key}.noProfile`)}
           </Badge>
           {agent.roles.length === 0 && (
-            <Badge size="sm" variant="warning">
+            <Badge size="sm" severity="warning">
               {t('shell.agents.roles.badgeNone')}
             </Badge>
           )}
         </div>
         <div className="flex flex-wrap gap-100">
-          <Button onClick={onEdit} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={onEdit} size="sm" appearance="outline" severity="secondary">
             {t(`${key}.edit`)}
           </Button>
           {agent.status === 'active' ? (
-            <Button onClick={() => onStatus({ agent, kind: 'deactivate' })} size="sm" theme="outlined" variant="danger">
+            <Button
+              onClick={() => onStatus({ agent, kind: 'deactivate' })}
+              size="sm"
+              appearance="outline"
+              severity="danger"
+            >
               {t(`${key}.deactivate`)}
             </Button>
           ) : (
             <Button
               onClick={() => onStatus({ agent, kind: 'activate' })}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               {t(`${key}.activate`)}
             </Button>
           )}
-          <Button onClick={() => onStatus({ agent, kind: 'delete' })} size="sm" variant="danger">
+          <Button onClick={() => onStatus({ agent, kind: 'delete' })} size="sm" severity="danger">
             {t(`${key}.delete`)}
           </Button>
         </div>
@@ -459,13 +464,13 @@ const AgentStatusDialog = ({ action, onChanged, onClose, onNotify }: AgentStatus
                 onClose();
               }
             }}
-            theme="outlined"
+            appearance="outline"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             {t(`${key}.dialog.cancel`)}
           </Button>
-          <Button disabled={busy} isLoading={busy} onClick={confirm} type="button" variant={copy.variant}>
+          <Button disabled={busy} isLoading={busy} onClick={confirm} type="button" severity={copy.variant}>
             {t(`${key}.dialog.${copy.confirmKey}`)}
           </Button>
         </>
@@ -584,7 +589,7 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
                   </p>
                 </div>
                 <span className="shrink-0 self-start">
-                  <Badge size="sm" variant={denied ? 'danger' : 'success'}>
+                  <Badge size="sm" severity={denied ? 'danger' : 'success'}>
                     {t(denied ? `${key}.audit.deniedStatus` : `${key}.audit.succeeded`)}
                   </Badge>
                 </span>
@@ -654,7 +659,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
               icon="icon-[mdi--robot-outline]"
               onClick={() => setEditing({ mode: 'create' })}
               size="sm"
-              variant="primary"
+              severity="primary"
             >
               {t(`${key}.create`)}
             </Button>
@@ -686,8 +691,8 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
                 disabled={state.refreshing}
                 onClick={fetchOverview}
                 size="sm"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {t(`${key}.retry`)}
               </Button>

@@ -31,7 +31,7 @@ export function ProductVariantLink({
       open={previewOpen || focused}
       onOpenChange={({ open }) => setPreviewOpen(open)}
       className="sf-variant-preview"
-      variant="outline"
+      appearance="outline"
       interactive={false}
       closeOnClick
       closeOnScroll={false}

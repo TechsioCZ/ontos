@@ -298,7 +298,7 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
       <PageHeader
         actions={
           commands.canWrite ? (
-            <Button onClick={() => setCreating(true)} size="sm" variant="primary">
+            <Button onClick={() => setCreating(true)} size="sm" severity="primary">
               {t(`${k}.create.title`)}
             </Button>
           ) : undefined
@@ -306,7 +306,7 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
         description={t(`${k}.description`)}
         meta={
           unread > 0 ? (
-            <Badge size="sm" variant="warning">
+            <Badge size="sm" severity="warning">
               {t(`${k}.notifications.unreadBadge`, { count: unread })}
             </Badge>
           ) : undefined
@@ -341,7 +341,7 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
         }}
         size="sm"
         value={tab}
-        variant="line"
+        appearance="line"
       >
         <Tabs.List>
           <Tabs.Trigger value="kalendar">{t(`${k}.tabs.kalendar`)}</Tabs.Trigger>

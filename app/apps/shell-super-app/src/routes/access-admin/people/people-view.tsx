@@ -36,7 +36,7 @@ const PersonDetails = ({
   return (
     <li className="shell:grid shell:gap-4">
       <h3 className="shell:text-title-md">{person.label}</h3>
-      {person.suspended ? <Badge variant="warning">{t(`${prefix}.status.suspended`)}</Badge> : null}
+      {person.suspended ? <Badge severity="warning">{t(`${prefix}.status.suspended`)}</Badge> : null}
       <h4 className="shell:text-title-sm">{t(`${prefix}.companyMemberships`)}</h4>
       {person.memberships.length === 0 ? (
         <p>{t(`${prefix}.noCompany`)}</p>
@@ -45,8 +45,10 @@ const PersonDetails = ({
           {person.memberships.map((membership) => (
             <li className="shell:flex shell:flex-wrap shell:gap-2" key={membership.id}>
               <span>{membership.scope}</span>
-              <Badge variant="outline">{t(`${prefix}.kind.${membership.kind}`)}</Badge>
-              <Badge variant={membership.status === 'active' ? 'info' : 'warning'}>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.kind.${membership.kind}`)}
+              </Badge>
+              <Badge severity={membership.status === 'active' ? 'info' : 'warning'}>
                 {t(`${prefix}.status.${membership.status}`)}
               </Badge>
               <span>
@@ -71,7 +73,7 @@ const PersonDetails = ({
                     })
                   }
                   type="button"
-                  variant="secondary"
+                  severity="secondary"
                 >
                   {t(`${prefix}.endMembership`)}
                 </Button>
@@ -103,7 +105,9 @@ const PersonDetails = ({
               <p>
                 {assignment.role} · {assignment.scope}
               </p>
-              <Badge variant="outline">{t(`${prefix}.status.${assignment.status}`)}</Badge>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.status.${assignment.status}`)}
+              </Badge>
               <p>
                 {assignment.expiryLabel === null
                   ? t(`${prefix}.noExpiry`)
@@ -142,7 +146,7 @@ const PersonDetails = ({
                   })
                 }
                 type="button"
-                variant="secondary"
+                severity="secondary"
               >
                 {t(`${prefix}.removeRole`)}
               </Button>
@@ -170,7 +174,7 @@ const PersonDetails = ({
                   })
                 }
                 type="button"
-                variant="secondary"
+                severity="secondary"
               >
                 {t(`${prefix}.teamRemove`)}
               </Button>
@@ -201,7 +205,9 @@ const PersonDetails = ({
                 <dt>{t(`${prefix}.endDate`)}</dt>
                 <dd>{delegation.expiryLabel}</dd>
               </dl>
-              <Badge variant="outline">{t(`${prefix}.status.${delegation.status}`)}</Badge>
+              <Badge appearance="outline" severity="neutral">
+                {t(`${prefix}.status.${delegation.status}`)}
+              </Badge>
               <p>{t(`${prefix}.delegationHelp`)}</p>
               <Button
                 disabled={busy || !delegation.canRevoke}
@@ -219,7 +225,7 @@ const PersonDetails = ({
                   })
                 }
                 type="button"
-                variant="secondary"
+                severity="secondary"
               >
                 {t(`${prefix}.delegationRevoke`)}
               </Button>
@@ -287,7 +293,7 @@ const ConfirmDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: R
     <Dialog
       actions={
         <>
-          <Button disabled={busy} onClick={onCancel} type="button" variant="secondary">
+          <Button disabled={busy} onClick={onCancel} type="button" severity="secondary">
             {t('shell.accessAdmin.common.cancel')}
           </Button>
           <Button disabled={blocked} onClick={onConfirm} type="button">
@@ -355,7 +361,7 @@ const EndMembershipDialog = ({
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={close} type="button" variant="secondary">
+            <Button disabled={busy} onClick={close} type="button" severity="secondary">
               {t('shell.accessAdmin.common.cancel')}
             </Button>
             <Button disabled={blocked} onClick={onConfirm} type="button">
@@ -463,7 +469,7 @@ export const PeopleView = ({
           {t(feedbackKey(feedback))}
         </StatusText>
       )}
-      <Button disabled={busy} onClick={onRefresh} type="button" variant="secondary">
+      <Button disabled={busy} onClick={onRefresh} type="button" severity="secondary">
         {t('shell.accessAdmin.common.refresh')}
       </Button>
       {model.people.length === 0 ? (
@@ -476,7 +482,7 @@ export const PeopleView = ({
         </ul>
       )}
       {model.hasMore ? (
-        <Button disabled={busy} onClick={onNextPage} type="button" variant="secondary">
+        <Button disabled={busy} onClick={onNextPage} type="button" severity="secondary">
           {t(`${prefix}.nextPage`)}
         </Button>
       ) : null}

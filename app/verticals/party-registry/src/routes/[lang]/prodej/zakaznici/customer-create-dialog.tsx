@@ -485,7 +485,7 @@ export const CustomerCreateDialog = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => guard.request(leave)} theme="outlined" type="button" variant="secondary">
+            <Button onClick={() => guard.request(leave)} appearance="outline" type="button" severity="secondary">
               {t(`${KEY}.cancel`)}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />

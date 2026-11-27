@@ -130,7 +130,7 @@ export const KeyConfirmation = <C extends { readonly key?: { readonly name: stri
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={requestClose} theme="outlined" type="button" variant="secondary">
+            <Button disabled={busy} onClick={requestClose} appearance="outline" type="button" severity="secondary">
               {t(`${copyKey}.cancel`)}
             </Button>
             <SaveBar

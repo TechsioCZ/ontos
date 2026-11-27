@@ -360,7 +360,9 @@ interface ProductEditDialogProps {
 export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: ProductEditDialogProps) => {
   const keepKey = erpProductKeepKey(item);
   const [kept] = useState(() => keptDraft<KeptProductDraft>(keepKey));
-  const [draft, setDraft] = useState<Draft>(() => (kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept)));
+  const [draft, setDraft] = useState<Draft>(() =>
+    kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept),
+  );
   const [newCategory, setNewCategory] = useState('');
   const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>(() => kept?.created ?? []);
   useEffect(
@@ -473,10 +475,10 @@ export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: 
     <Dialog
       actions={
         <div className="flex w-full flex-wrap justify-end gap-100">
-          <Button disabled={busy} onClick={onClose} theme="outlined" type="button" variant="secondary">
+          <Button disabled={busy} onClick={onClose} appearance="outline" type="button" severity="secondary">
             Zrušit
           </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
+          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" severity="primary">
             Uložit
           </Button>
         </div>
@@ -588,9 +590,9 @@ export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: 
               loadingText="Vytvářím…"
               onClick={createCategory}
               size="sm"
-              theme="outlined"
+              appearance="outline"
               type="button"
-              variant="secondary"
+              severity="secondary"
             >
               Vytvořit a přidat
             </Button>

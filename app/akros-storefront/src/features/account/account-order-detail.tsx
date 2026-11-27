@@ -49,8 +49,8 @@ export function AccountOrderDetail({
           href="/historie-objednavek"
           data-account-action
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {text.back}
         </LinkButton>
@@ -59,8 +59,8 @@ export function AccountOrderDetail({
           href={`/sledovani-zasilky?order=${encodeURIComponent(order.id)}`}
           data-account-action
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {order.status === "SHIPPED" ? text.trackShipment : text.orderState}
         </LinkButton>
@@ -132,7 +132,7 @@ export function AccountOrderDetail({
           {text.lines}
         </h2>
         <div data-account-table className="hidden xl:block">
-          <Table size="sm" variant="line">
+          <Table size="sm" appearance="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{text.product}</Table.ColumnHeader>

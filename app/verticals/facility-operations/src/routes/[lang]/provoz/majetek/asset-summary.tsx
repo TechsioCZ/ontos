@@ -107,7 +107,7 @@ const GroupTable = ({
   readonly title: string;
 }) => (
   <div className="overflow-x-auto">
-    <Table size="sm" variant="line">
+    <Table size="sm" appearance="line">
       <Table.Header>
         <Table.Row>
           <Table.ColumnHeader>{title}</Table.ColumnHeader>
@@ -186,7 +186,7 @@ export const AssetSummary = ({
       <SectionCard title={k('summary.years')}>
         <p className="text-fg-secondary text-xs">{k('summary.yearsHint')}</p>
         <div className="overflow-x-auto">
-          <Table size="sm" variant="line">
+          <Table size="sm" appearance="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>{k('summary.year')}</Table.ColumnHeader>
@@ -230,7 +230,7 @@ export const AssetSummary = ({
           <p className="text-fg-secondary text-sm">{k('states.noDisposed')}</p>
         ) : (
           <div className="overflow-x-auto">
-            <Table size="sm" variant="line">
+            <Table size="sm" appearance="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{k('fields.inventoryNumber')}</Table.ColumnHeader>

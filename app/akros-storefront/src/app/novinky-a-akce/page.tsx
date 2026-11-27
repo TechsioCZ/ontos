@@ -67,7 +67,7 @@ export default async function NewsPage() {
           />
           <div className="sf-news-hero__overlay">
             <div>
-              <Badge size="sm" variant="danger">
+              <Badge size="sm" severity="danger">
                 {copy.badge}
               </Badge>
               <h1>{copy.heading}</h1>

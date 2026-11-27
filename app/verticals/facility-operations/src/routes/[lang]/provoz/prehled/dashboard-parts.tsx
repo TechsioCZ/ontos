@@ -556,11 +556,11 @@ export const DrillDown = ({
         actions={
           <>
             {kpi.status === 'ready' && kpi.rows.length > 0 && (
-              <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
+              <Button onClick={csv} size="sm" appearance="outline" severity="secondary">
                 {t(`${k}.export.csv`)}
               </Button>
             )}
-            <Button onClick={onClose} size="sm" theme="borderless" variant="secondary">
+            <Button onClick={onClose} size="sm" appearance="ghost" severity="secondary">
               {t('facility-operations.common.close')}
             </Button>
           </>
@@ -656,11 +656,11 @@ export const SearchResults = ({
       actions={
         <>
           {results.length > 0 && (
-            <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
+            <Button onClick={csv} size="sm" appearance="outline" severity="secondary">
               {t(`${k}.export.csv`)}
             </Button>
           )}
-          <Button onClick={onClear} size="sm" theme="borderless" variant="secondary">
+          <Button onClick={onClear} size="sm" appearance="ghost" severity="secondary">
             {t(`${k}.search.clear`)}
           </Button>
         </>
@@ -808,7 +808,7 @@ export const UpcomingTimeline = ({
         </ol>
       )}
       {upcoming.length > 8 && (
-        <Button onClick={() => setShowAll((value) => !value)} size="sm" theme="borderless" variant="secondary">
+        <Button onClick={() => setShowAll((value) => !value)} size="sm" appearance="ghost" severity="secondary">
           {showAll
             ? t(`${k}.overview.showLess`)
             : t(`${k}.overview.showMore`, { count: Math.min(upcoming.length, 24) - 8 })}

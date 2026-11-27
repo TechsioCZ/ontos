@@ -51,7 +51,7 @@ export const CatalogPagination = ({
           pageSize={pageSize}
           size="md"
           translations={translations}
-          variant="filled"
+          appearance="solid"
         />
       </div>
       <div className="hidden n1-compact:block md:hidden">
@@ -65,7 +65,7 @@ export const CatalogPagination = ({
           siblingCount={0}
           size="md"
           translations={translations}
-          variant="filled"
+          appearance="solid"
         />
       </div>
       <div className="hidden md:block">
@@ -79,7 +79,7 @@ export const CatalogPagination = ({
           siblingCount={1}
           size="sm"
           translations={translations}
-          variant="filled"
+          appearance="solid"
         />
       </div>
     </div>

@@ -66,8 +66,8 @@ const PropertyEquipmentContent = ({ language = 'cs', propertyId, unitId }: Prope
               browserRuntime.runFork(records.reload());
             }}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {labels.retry}
           </Button>
@@ -77,7 +77,7 @@ const PropertyEquipmentContent = ({ language = 'cs', propertyId, unitId }: Prope
       {state === 'empty' && <p>{labels.empty}</p>}
       {state === 'ready' && (
         <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
-          <Table size="sm" variant="line">
+          <Table size="sm" appearance="line">
             <Table.Header>
               <Table.Row>
                 {labels.columns.map((label) => (

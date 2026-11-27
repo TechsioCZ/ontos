@@ -532,7 +532,7 @@ export function ProductPurchaseForm({
             }}
             size="md"
             uppercase
-            variant="primary"
+            severity="primary"
           >
             {cs.product.buy}
           </Button>
@@ -580,8 +580,8 @@ export function ProductPurchaseForm({
             <Button
               type="button"
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
               onClick={() => {
                 setRanges({});
                 setPage(1);
@@ -599,7 +599,7 @@ export function ProductPurchaseForm({
       {waitingForAll && list.status === "failed" ? (
         <p className="sf-variant-purchase__status" role="alert">
           {cs.variants.loadFailed}{" "}
-          <Button type="button" size="sm" theme="outlined" variant="secondary" onClick={load}>
+          <Button type="button" size="sm" appearance="outline" severity="secondary" onClick={load}>
             {cs.variants.retry}
           </Button>
         </p>
@@ -622,7 +622,7 @@ export function ProductPurchaseForm({
               showColumnBorder
               size="sm"
               style={{ tableLayout: "fixed" }}
-              variant="line"
+              appearance="line"
             >
               <Table.Header>
                 <Table.Row>

@@ -203,11 +203,11 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
     accessorKey: 'via',
     cell: (info) =>
       info.row.original.via === 'manual' ? (
-        <Badge size="sm" variant="info">
+        <Badge size="sm" severity="info">
           Ručně
         </Badge>
       ) : (
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           Schválená vazba
         </Badge>
       ),
@@ -389,8 +389,8 @@ const PairingContent = () => {
                     icon="icon-[mdi--link-plus]"
                     onClick={() => setLinkOpen(true)}
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
+                    appearance="outline"
+                    severity="secondary"
                   >
                     Nová schválená vazba
                   </Button>

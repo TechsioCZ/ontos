@@ -49,24 +49,24 @@ export const ProductBulkBar = ({
       </span>
       {canWrite && (
         <div className="flex flex-wrap items-center gap-100">
-          <Button disabled={busy} onClick={onChangePrice} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={onChangePrice} size="sm" appearance="outline" severity="secondary">
             {k('bulk.changePrice')}
           </Button>
-          <Button disabled={busy} onClick={onChangeCategory} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={onChangeCategory} size="sm" appearance="outline" severity="secondary">
             {k('bulk.changeCategory')}
           </Button>
-          <Button disabled={busy} onClick={() => setAsking(true)} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={() => setAsking(true)} size="sm" appearance="outline" severity="secondary">
             {k('bulk.activate')}
           </Button>
-          <Button disabled={busy} onClick={() => setAsking(false)} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={() => setAsking(false)} size="sm" appearance="outline" severity="secondary">
             {k('bulk.deactivate')}
           </Button>
-          <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={onTags} size="sm" appearance="outline" severity="secondary">
             {k('bulk.tags')}
           </Button>
         </div>
       )}
-      <Button className="ms-auto" onClick={onClear} size="sm" theme="borderless" variant="secondary">
+      <Button className="ms-auto" onClick={onClear} size="sm" appearance="ghost" severity="secondary">
         {k('bulk.clear')}
       </Button>
       <LiveShopConfirm

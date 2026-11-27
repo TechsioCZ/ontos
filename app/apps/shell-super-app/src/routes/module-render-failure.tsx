@@ -13,7 +13,7 @@ export const ModuleRenderFailure = ({ onReload }: ModuleRenderFailureProps) => {
       <StatusText aria-live="polite" role="alert" showIcon status="error">
         {t('shell.moduleTarget.render_failed')}
       </StatusText>
-      <Button onClick={onReload} size="md" theme="outlined" type="button" variant="secondary">
+      <Button onClick={onReload} size="md" appearance="outline" type="button" severity="secondary">
         {t('shell.moduleTarget.reload_page')}
       </Button>
     </div>

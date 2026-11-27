@@ -340,7 +340,7 @@ export const StorefrontsSection = ({
     <SectionCard
       actions={
         editable && choices.length > 0 ? (
-          <Button onClick={() => setEditing({ kind: 'associate' })} size="sm" theme="solid" variant="primary">
+          <Button onClick={() => setEditing({ kind: 'associate' })} size="sm" appearance="solid" severity="primary">
             {text('detail.storefronts.associate')}
           </Button>
         ) : undefined
@@ -375,16 +375,16 @@ export const StorefrontsSection = ({
                   <Button
                     onClick={() => setEditing({ association, kind: 'revise' })}
                     size="sm"
-                    theme="outlined"
-                    variant="secondary"
+                    appearance="outline"
+                    severity="secondary"
                   >
                     {text('detail.storefronts.revise')}
                   </Button>
                   <Button
                     onClick={() => setEditing({ association, kind: 'remove' })}
                     size="sm"
-                    theme="outlined"
-                    variant="danger"
+                    appearance="outline"
+                    severity="danger"
                   >
                     {text('detail.storefronts.remove')}
                   </Button>

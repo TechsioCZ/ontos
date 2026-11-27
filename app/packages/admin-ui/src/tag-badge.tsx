@@ -12,7 +12,7 @@ export const TagBadge = ({ color, name }: TagBadgeProps) => (
     {color !== undefined && (
       <span aria-hidden className="size-100 shrink-0 rounded-full" style={{ backgroundColor: color }} />
     )}
-    <Badge size="sm" variant="outline">
+    <Badge size="sm" appearance="outline" severity="neutral">
       {name}
     </Badge>
   </span>

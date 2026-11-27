@@ -32,8 +32,8 @@ const ReviewParty = ({
         }
         onClick={() => review.setSelectedPartyId(partyRef.resourceId)}
         size="sm"
-        theme="outlined"
-        variant="secondary"
+        appearance="outline"
+        severity="secondary"
       >
         {t(`${reviewKey}.selectParty`, {
           name:
@@ -149,7 +149,7 @@ const ReviewCaseDetail = ({
           disabled={!review.canResolve || review.selectedPartyId === '' || review.reason.trim() === ''}
           onClick={() => review.resolve('MATCH_EXISTING')}
           size="sm"
-          variant="primary"
+          severity="primary"
         >
           {t(`${reviewKey}.match`)}
         </Button>
@@ -157,8 +157,8 @@ const ReviewCaseDetail = ({
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('CREATE_NEW')}
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {t(`${reviewKey}.createNew`)}
         </Button>
@@ -166,8 +166,8 @@ const ReviewCaseDetail = ({
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('NEEDS_EVIDENCE')}
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {t(`${reviewKey}.needsEvidence`)}
         </Button>
@@ -175,8 +175,8 @@ const ReviewCaseDetail = ({
           disabled={!review.canResolve || review.reason.trim() === ''}
           onClick={() => review.resolve('DISMISSED_AS_NON_SUBJECT')}
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           {t(`${reviewKey}.dismiss`)}
         </Button>
@@ -191,7 +191,12 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
   return (
     <SidePanel
       actions={
-        <Button disabled={review.busy} onClick={() => review.closeReview(false)} theme="outlined" variant="secondary">
+        <Button
+          disabled={review.busy}
+          onClick={() => review.closeReview(false)}
+          appearance="outline"
+          severity="secondary"
+        >
           {t(`${reviewKey}.close`)}
         </Button>
       }
@@ -218,8 +223,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
                 }
               }}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               {t(`${reviewKey}.next`)}
             </Button>
@@ -233,8 +238,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
               disabled={review.busy || review.uncertain}
               onClick={() => review.retryQueue()}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               {t(`${reviewKey}.retryQueue`)}
             </Button>
@@ -250,8 +255,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
                 key={item.caseRef.resourceId}
                 onClick={() => review.selectCase(item.caseRef)}
                 size="sm"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {t(`${reviewKey}.caseLabel`, {
                   name: item.displayName ?? t(`${reviewKey}.unnamed`),
@@ -271,8 +276,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
               disabled={review.busy || review.uncertain}
               onClick={() => review.retryDetail()}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               {t(`${reviewKey}.retryDetail`)}
             </Button>
@@ -285,8 +290,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
             disabled={review.busy}
             onClick={() => review.checkStatus()}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             {t(`${reviewKey}.checkStatus`)}
           </Button>

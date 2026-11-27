@@ -135,7 +135,7 @@ const textCell = (info: CellContext<CustomerListItem>) => (
 );
 const dateCell = (info: CellContext<CustomerListItem>) => formatDate(info.row.original.createdAt);
 const statusCell = (info: CellContext<CustomerListItem>) => (
-  <Badge size="sm" variant={info.row.original.status === 'ACTIVE' ? 'success' : 'outline'}>
+  <Badge size="sm" severity={info.row.original.status === 'ACTIVE' ? 'success' : 'neutral'}>
     {info.getValue<string>()}
   </Badge>
 );
@@ -256,12 +256,24 @@ const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount, tag
   return (
     <BulkActionBar onClear={onClear} selectedCount={selectedCount}>
       {tagsWritable && (
-        <Button icon="icon-[mdi--tag-multiple-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
+        <Button
+          icon="icon-[mdi--tag-multiple-outline]"
+          onClick={onTags}
+          size="sm"
+          appearance="outline"
+          severity="secondary"
+        >
           {t(`${key}.bulk.tags`)}
         </Button>
       )}
       {onEdit !== undefined && (
-        <Button icon="icon-[mdi--square-edit-outline]" onClick={onEdit} size="sm" theme="outlined" variant="secondary">
+        <Button
+          icon="icon-[mdi--square-edit-outline]"
+          onClick={onEdit}
+          size="sm"
+          appearance="outline"
+          severity="secondary"
+        >
           {t(`${key}.bulk.edit`)}
         </Button>
       )}
@@ -269,8 +281,8 @@ const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount, tag
         icon="icon-[mdi--file-delimited-outline]"
         onClick={onExport}
         size="sm"
-        theme="outlined"
-        variant="secondary"
+        appearance="outline"
+        severity="secondary"
       >
         {t(`${key}.bulk.exportCsv`)}
       </Button>
@@ -295,7 +307,7 @@ const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }:
     return (
       <EmptyState
         action={
-          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={onRetry} size="sm" appearance="outline" severity="secondary">
             {t(`${key}.state.retry`)}
           </Button>
         }
@@ -311,7 +323,7 @@ const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }:
     return (
       <EmptyState
         action={
-          <Button onClick={onClearFilters} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={onClearFilters} size="sm" appearance="outline" severity="secondary">
             {t(`${key}.state.clearFilters`)}
           </Button>
         }
@@ -323,7 +335,7 @@ const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }:
     <EmptyState
       action={
         onCreate === undefined ? undefined : (
-          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={onCreate} size="sm" appearance="outline" severity="secondary">
             {t(`${key}.newCustomer`)}
           </Button>
         )
@@ -380,11 +392,11 @@ const CustomersHeaderActions = ({
         panelLabel={t(`${key}.detailView.panel`)}
         value={viewMode}
       />
-      <Button onClick={onOpenReview} size="sm" theme="outlined" variant="secondary">
+      <Button onClick={onOpenReview} size="sm" appearance="outline" severity="secondary">
         {t(`${key}.identityReview.open`)}
       </Button>
       {!writesRefused && (
-        <Button icon="icon-[mdi--plus]" onClick={onCreate} size="sm" variant="primary">
+        <Button icon="icon-[mdi--plus]" onClick={onCreate} size="sm" severity="primary">
           {t(`${key}.newCustomer`)}
         </Button>
       )}

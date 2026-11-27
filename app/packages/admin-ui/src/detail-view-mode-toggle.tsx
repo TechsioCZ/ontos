@@ -28,8 +28,8 @@ export const DetailViewModeToggle = ({
           }
         }}
         size="sm"
-        theme="outlined"
-        variant={active ? 'primary' : 'secondary'}
+        appearance="outline"
+        severity={active ? 'primary' : 'secondary'}
       >
         {label}
       </Button>

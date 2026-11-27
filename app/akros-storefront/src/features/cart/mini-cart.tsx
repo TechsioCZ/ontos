@@ -125,7 +125,7 @@ export function MiniCart() {
           onPointerLeave={scheduleClose}
           ref={triggerRef}
           size="sm"
-          variant="primary"
+          severity="primary"
         >
           <strong className="shrink-0 whitespace-nowrap text-md leading-tight font-medium uppercase max-lg:hidden">
             {cs.header.cart}
@@ -136,7 +136,7 @@ export function MiniCart() {
               className="sf-header__cart-count absolute -top-1 -right-1 h-5 min-w-5 leading-none"
               aria-live="polite"
               size="sm"
-              variant="secondary"
+              severity="secondary"
             >
               {String(itemCount)}
             </Badge>

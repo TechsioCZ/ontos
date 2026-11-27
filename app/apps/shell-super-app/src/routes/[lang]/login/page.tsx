@@ -249,7 +249,7 @@ const LoginPage = () => {
               <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
             </span>
             <span className="flex-1 font-semibold text-xl">OntOS</span>
-            <Badge size="sm" variant="outline">
+            <Badge size="sm" appearance="outline" severity="neutral">
               DEMO
             </Badge>
           </div>
@@ -340,9 +340,9 @@ const LoginPage = () => {
                 isLoading={attempt !== 'idle'}
                 loadingText={t(attempt === 'opening' ? 'shell.login.opening' : 'shell.login.pending')}
                 size="md"
-                theme="solid"
+                appearance="solid"
                 type="submit"
-                variant="primary"
+                severity="primary"
               >
                 {t('shell.login.submit')}
               </Button>

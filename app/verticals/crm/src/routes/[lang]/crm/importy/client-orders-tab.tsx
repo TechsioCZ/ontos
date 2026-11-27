@@ -36,7 +36,7 @@ const OrderHistory = ({ order }: { readonly order: ImportedOrder }) => {
               </span>
               <span className="text-fg-secondary">{`načteno ${pipe(event.importedAt, orderDateText, formatDateTime)}`}</span>
               {event.review === true && (
-                <Badge size="sm" variant={event.resolution === undefined ? 'warning' : 'outline'}>
+                <Badge size="sm" severity={event.resolution === undefined ? 'warning' : 'neutral'}>
                   {event.resolution === undefined ? 'Vyžaduje kontrolu' : 'Rozhodnuto ručně'}
                 </Badge>
               )}
@@ -150,12 +150,12 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                         />
                         <span className="font-medium">{orderTitle(order)}</span>
                         {order.duplicateOf !== undefined && (
-                          <Badge size="sm" variant="outline">
+                          <Badge size="sm" appearance="outline" severity="neutral">
                             Duplicita
                           </Badge>
                         )}
                         {needsReview(order) && (
-                          <Badge size="sm" variant="warning">
+                          <Badge size="sm" severity="warning">
                             Kontrola
                           </Badge>
                         )}

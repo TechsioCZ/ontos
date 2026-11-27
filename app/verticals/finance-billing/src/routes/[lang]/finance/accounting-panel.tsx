@@ -42,7 +42,7 @@ const FORMAT_LABEL = {
 } satisfies Readonly<Record<AccountingExportFormat, string>>;
 
 const statusBadge = (entry: AccountingExport) => (
-  <Badge className="whitespace-nowrap" size="sm" variant={EXPORT_STATUS[entry.status].variant}>
+  <Badge className="whitespace-nowrap" size="sm" severity={EXPORT_STATUS[entry.status].variant}>
     {EXPORT_STATUS[entry.status].label}
   </Badge>
 );
@@ -53,7 +53,7 @@ const authorText = (entry: AccountingExport) => entry.actorLabel ?? 'neznámý u
 const AccountingSetupValue = ({ field, value }: { readonly field: SetupKey; readonly value: string | undefined }) => {
   if (value === undefined) {
     return (
-      <Badge size="sm" variant="warning">
+      <Badge size="sm" severity="warning">
         ČEKÁ NA VSTUP
       </Badge>
     );
@@ -236,8 +236,8 @@ const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
             icon="icon-[mdi--pencil-outline]"
             onClick={() => setEditing(true)}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             Upravit
           </Button>
@@ -281,7 +281,7 @@ const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
                   <dt className="text-fg-secondary text-xs">{label}</dt>
                   <dd>
                     {setup[key] ?? (
-                      <Badge size="sm" variant="warning">
+                      <Badge size="sm" severity="warning">
                         ČEKÁ NA VSTUP
                       </Badge>
                     )}
@@ -346,7 +346,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
                 createExport();
               }}
               size="sm"
-              variant="primary"
+              severity="primary"
             >
               Vytvořit balíček ({selected.size})
             </Button>
@@ -400,7 +400,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
         <p className="text-fg-secondary text-sm">Žádné potvrzené doklady k předání.</p>
       ) : (
         <div className="max-h-[22rem] overflow-auto">
-          <Table size="sm" variant="line">
+          <Table size="sm" appearance="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>
@@ -445,7 +445,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
                   </Table.Cell>
                   <Table.Cell>
                     {handedOver.has(invoice.ref.resourceId) ? (
-                      <Badge size="sm" variant="info">
+                      <Badge size="sm" severity="info">
                         Už předáno
                       </Badge>
                     ) : (
@@ -501,7 +501,7 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
         </div>
       ) : (
         <FinanceTableScroll label={t('finance-billing.financeUi.accounting.historyTable')}>
-          <Table size="sm" variant="line">
+          <Table size="sm" appearance="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>Balíček</Table.ColumnHeader>
@@ -585,8 +585,8 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                           icon="icon-[mdi--download]"
                           onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
                           size="sm"
-                          theme="borderless"
-                          variant="secondary"
+                          appearance="ghost"
+                          severity="secondary"
                         >
                           Stáhnout
                         </Button>
@@ -600,8 +600,8 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                             handOver(entry);
                           }}
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
+                          appearance="outline"
+                          severity="secondary"
                         >
                           Předat účetní
                         </Button>
@@ -611,8 +611,8 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                           className="whitespace-nowrap"
                           onClick={() => setConfirmTarget(entry)}
                           size="sm"
-                          theme="outlined"
-                          variant="secondary"
+                          appearance="outline"
+                          severity="secondary"
                         >
                           Potvrzení účetní
                         </Button>
@@ -622,8 +622,8 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                           className="whitespace-nowrap"
                           onClick={() => setFailTarget(entry)}
                           size="sm"
-                          theme="borderless"
-                          variant="secondary"
+                          appearance="ghost"
+                          severity="secondary"
                         >
                           Označit chybu
                         </Button>

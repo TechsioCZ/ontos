@@ -134,8 +134,8 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                     key={entry}
                     onClick={() => setChosenCurrency(entry)}
                     size="sm"
-                    theme={entry === currency ? 'solid' : 'borderless'}
-                    variant={entry === currency ? 'primary' : 'secondary'}
+                    appearance={entry === currency ? 'solid' : 'ghost'}
+                    severity={entry === currency ? 'primary' : 'secondary'}
                   >
                     {entry}
                   </Button>

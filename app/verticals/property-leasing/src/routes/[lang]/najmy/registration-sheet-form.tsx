@@ -212,7 +212,7 @@ export const RegistrationSheetForm = ({
             value={occupant.address}
           />
           {draft.occupants.length > 1 && (
-            <Button onClick={() => removeOccupant(index)} size="sm" theme="borderless" variant="secondary">
+            <Button onClick={() => removeOccupant(index)} size="sm" appearance="ghost" severity="secondary">
               Odebrat osobu
             </Button>
           )}
@@ -223,8 +223,8 @@ export const RegistrationSheetForm = ({
           disabled={draft.occupants.length >= 20}
           onClick={addOccupant}
           size="sm"
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           Přidat osobu
         </Button>
@@ -257,7 +257,7 @@ export const RegistrationSheetForm = ({
         value={draft.note}
       />
       <div className="sp-tenant-actions">
-        <Button onClick={handleCancel} size="sm" theme="outlined" variant="secondary">
+        <Button onClick={handleCancel} size="sm" appearance="outline" severity="secondary">
           {t('property-leasing.demo.cancel')}
         </Button>
         <SaveBar

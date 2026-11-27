@@ -35,8 +35,8 @@ export const ProductVariants = ({
               href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
               prefetch={false}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               {item.name}
             </LinkButton>

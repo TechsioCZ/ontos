@@ -89,7 +89,7 @@ const InvitePersonForm = ({
       <Dialog
         actions={
           <>
-            <Button disabled={busy} onClick={requestClose} theme="outlined" variant="secondary">
+            <Button disabled={busy} onClick={requestClose} appearance="outline" severity="secondary">
               Zrušit
             </Button>
             <SaveBar
@@ -168,7 +168,7 @@ export const InvitePersonButton = ({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button icon="icon-[mdi--account-plus-outline]" onClick={() => setOpen(true)} size="sm" variant="primary">
+      <Button icon="icon-[mdi--account-plus-outline]" onClick={() => setOpen(true)} size="sm" severity="primary">
         Pozvat člověka
       </Button>
       {open ? <InvitePersonForm onClose={() => setOpen(false)} onCommitted={onCommitted} /> : null}

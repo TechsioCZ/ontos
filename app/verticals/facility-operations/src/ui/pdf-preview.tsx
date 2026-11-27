@@ -247,8 +247,8 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
                 disabled={page <= 1 || rendering}
                 onClick={() => setDocument((current) => ({ ...current, page: current.page - 1 }))}
                 size="sm"
-                theme="borderless"
-                variant="secondary"
+                appearance="ghost"
+                severity="secondary"
               >
                 {t(`${k}.pdfPrevious`)}
               </Button>
@@ -257,8 +257,8 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
                 disabled={page >= pdf.numPages || rendering}
                 onClick={() => setDocument((current) => ({ ...current, page: current.page + 1 }))}
                 size="sm"
-                theme="borderless"
-                variant="secondary"
+                appearance="ghost"
+                severity="secondary"
               >
                 {t(`${k}.pdfNext`)}
               </Button>

@@ -144,7 +144,7 @@ const AdmitSection = ({
                   )
                 }
                 type="button"
-                variant="secondary"
+                severity="secondary"
               >
                 {t(`${prefix}.admitMember`)}
               </Button>

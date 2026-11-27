@@ -392,12 +392,12 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
                   icon="icon-[mdi--package-down]"
                   onClick={() => openDialog('receipt')}
                   size="sm"
-                  theme="outlined"
-                  variant="secondary"
+                  appearance="outline"
+                  severity="secondary"
                 >
                   {k('actions.receipt')}
                 </Button>
-                <Button icon="icon-[mdi--plus]" onClick={() => openDialog('create')} size="sm" variant="primary">
+                <Button icon="icon-[mdi--plus]" onClick={() => openDialog('create')} size="sm" severity="primary">
                   {k('actions.newProduct')}
                 </Button>
               </div>
@@ -534,7 +534,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
             <StatusText showIcon status="warning">
               {k('states.reloadRequired')}
             </StatusText>
-            <Button onClick={() => window.location.reload()} variant="secondary">
+            <Button onClick={() => window.location.reload()} severity="secondary">
               {k('common.reloadPage')}
             </Button>
           </div>

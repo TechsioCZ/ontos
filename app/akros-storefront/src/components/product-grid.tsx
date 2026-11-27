@@ -108,7 +108,7 @@ export function ProductGrid({
                       data-sf-product-tags
                     >
                       {product.isRecommended && (
-                        <Badge size="sm" variant="primary">
+                        <Badge size="sm" severity="primary">
                           {cs.product.tags.recommended}
                         </Badge>
                       )}
@@ -116,7 +116,7 @@ export function ProductGrid({
                         <Badge
                           size="sm"
                           title={product.hasVariants ? cs.product.tags.saleVariants : undefined}
-                          variant="discount"
+                          severity="discount"
                         >
                           {cs.product.tags.sale}
                         </Badge>
@@ -124,13 +124,13 @@ export function ProductGrid({
                         <Badge
                           size="sm"
                           title={product.hasVariants ? cs.product.tags.actionVariants : undefined}
-                          variant="discount"
+                          severity="discount"
                         >
                           {cs.product.tags.action}
                         </Badge>
                       ) : null}
                       {product.isNew && (
-                        <Badge size="sm" variant="secondary">
+                        <Badge size="sm" severity="secondary">
                           {cs.product.tags.new}
                         </Badge>
                       )}
@@ -171,7 +171,7 @@ export function ProductGrid({
                     : cs.product.stockStatus[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && product.priceIsFrom && (
-                  <Badge className="whitespace-nowrap" size="sm" variant="secondary">
+                  <Badge className="whitespace-nowrap" size="sm" severity="secondary">
                     {cs.product.moreVariants}
                   </Badge>
                 )}
@@ -243,7 +243,7 @@ export function ProductGrid({
                     href={detailHref}
                     size="sm"
                     uppercase
-                    variant="primary"
+                    severity="primary"
                   >
                     {product.hasVariants ? cs.product.chooseVariant : cs.actions.viewDetail}
                   </LinkButton>

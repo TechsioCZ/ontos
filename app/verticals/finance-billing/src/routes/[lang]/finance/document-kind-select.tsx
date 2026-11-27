@@ -69,10 +69,10 @@ export const DocumentKindSelect = ({ disabled, invoice, kinds, vm }: DocumentKin
       <Dialog
         actions={
           <>
-            <Button disabled={sending} onClick={handleCancel} theme="outlined" variant="secondary">
+            <Button disabled={sending} onClick={handleCancel} appearance="outline" severity="secondary">
               {t('finance-billing.financeUi.common.cancel')}
             </Button>
-            <Button disabled={sending} isLoading={sending} onClick={handleConfirm} variant="primary">
+            <Button disabled={sending} isLoading={sending} onClick={handleConfirm} severity="primary">
               {t(`${P}.confirm`)}
             </Button>
           </>

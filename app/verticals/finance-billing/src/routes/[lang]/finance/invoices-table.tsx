@@ -149,7 +149,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
         const confirmed = info.row.original.businessState === 'CONFIRMED';
         return (
           <span className="flex min-w-0 flex-col items-start gap-50">
-            <Badge className="max-w-full truncate" size="sm" variant={presentation.variant}>
+            <Badge className="max-w-full truncate" size="sm" severity={presentation.variant}>
               {presentation.label}
             </Badge>
             {confirmed && <StatusBadge {...invoiceStatusBadge(info.row.original, referenceDate)} />}
@@ -303,8 +303,8 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
               disabled={busy}
               icon="icon-[mdi--dots-vertical]"
               size="sm"
-              theme="borderless"
-              variant="secondary"
+              appearance="ghost"
+              severity="secondary"
             />
           }
           items={rowMenuItems(invoice)}
@@ -415,7 +415,13 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
             return (
               <EmptyState
                 action={
-                  <Button className="whitespace-nowrap" onClick={reload} size="sm" theme="outlined" variant="secondary">
+                  <Button
+                    className="whitespace-nowrap"
+                    onClick={reload}
+                    size="sm"
+                    appearance="outline"
+                    severity="secondary"
+                  >
                     {t(`${ns}.retry`)}
                   </Button>
                 }

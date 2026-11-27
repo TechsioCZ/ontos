@@ -65,9 +65,9 @@ const AdditionalCategories = ({ canWrite, extras, hasPrimaryCategory, onChange }
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => remove(category.id)}
                 size="sm"
-                theme="borderless"
+                appearance="ghost"
                 type="button"
-                variant="secondary"
+                severity="secondary"
               />
             ) : null}
           </li>
@@ -144,9 +144,9 @@ const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasS
                   icon="icon-[mdi--arrow-up]"
                   onClick={() => update(moved(extras.related, index, -1))}
                   size="sm"
-                  theme="borderless"
+                  appearance="ghost"
                   type="button"
-                  variant="secondary"
+                  severity="secondary"
                 />
                 <Button
                   aria-label="Posunout dolů"
@@ -154,18 +154,18 @@ const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasS
                   icon="icon-[mdi--arrow-down]"
                   onClick={() => update(moved(extras.related, index, 1))}
                   size="sm"
-                  theme="borderless"
+                  appearance="ghost"
                   type="button"
-                  variant="secondary"
+                  severity="secondary"
                 />
                 <Button
                   aria-label={`Odebrat ${relatedLabelOf(labels, entry)}`}
                   icon="icon-[mdi--delete-outline]"
                   onClick={() => update(extras.related.filter((other) => other !== entry))}
                   size="sm"
-                  theme="borderless"
+                  appearance="ghost"
                   type="button"
-                  variant="secondary"
+                  severity="secondary"
                 />
               </>
             ) : null}
@@ -239,9 +239,9 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
                 icon="icon-[mdi--delete-outline]"
                 onClick={() => remove(document.key)}
                 size="sm"
-                theme="borderless"
+                appearance="ghost"
                 type="button"
-                variant="secondary"
+                severity="secondary"
               />
             ) : null}
           </div>
@@ -258,9 +258,9 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
               }))
             }
             size="sm"
-            theme="outlined"
+            appearance="outline"
             type="button"
-            variant="secondary"
+            severity="secondary"
           >
             Přidat dokument
           </Button>

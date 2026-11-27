@@ -82,7 +82,7 @@ const ReadingConsumption = ({
   if (reading.voided !== undefined) {
     content = (
       <span>
-        <Badge size="sm" variant="outline">
+        <Badge size="sm" appearance="outline" severity="neutral">
           {t(`${k}.void.voided`)}
         </Badge>
       </span>
@@ -99,7 +99,7 @@ const ReadingConsumption = ({
         <span className="flex flex-wrap items-center gap-100">
           <strong>{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
           {row.anomaly && row.change !== undefined && (
-            <Badge size="sm" variant="danger">
+            <Badge size="sm" severity="danger">
               {t(`${k}.row.anomaly`, { change: formatChange(row.change) })}
             </Badge>
           )}
@@ -162,7 +162,7 @@ const MeterHistoryItem = ({
           </div>
         )}
         {canManage && voided === undefined && (
-          <Button onClick={() => onVoid(reading)} size="sm" theme="borderless" variant="danger">
+          <Button onClick={() => onVoid(reading)} size="sm" appearance="ghost" severity="danger">
             {t(`${k}.actions.void`)}
           </Button>
         )}
@@ -182,8 +182,8 @@ const MeterHistoryItem = ({
             isLoading={photoLoading === reading.id}
             onClick={() => onShowPhoto(reading)}
             size="sm"
-            theme="borderless"
-            variant="secondary"
+            appearance="ghost"
+            severity="secondary"
           >
             {t(`${k}.actions.showPhoto`)}
           </Button>
@@ -454,14 +454,14 @@ export const MeterDetail = ({
   return (
     <div className="flex flex-col gap-250">
       <div className="flex flex-wrap items-center gap-100">
-        <Badge size="sm" variant={mediumVariant[meter.medium]}>
+        <Badge size="sm" severity={mediumVariant[meter.medium]}>
           {t(`${k}.medium.${meter.medium}`)}
         </Badge>
-        <Badge size="sm" variant={meter.status === 'RETIRED' ? 'outline' : 'success'}>
+        <Badge size="sm" severity={meter.status === 'RETIRED' ? 'neutral' : 'success'}>
           {t(`${k}.status.${meter.status ?? 'ACTIVE'}`)}
         </Badge>
         {anomaly?.change !== undefined && (
-          <Badge size="sm" variant="danger">
+          <Badge size="sm" severity="danger">
             {`${anomalySummary} · ${formatDate(anomaly.reading.date)}`}
           </Badge>
         )}
@@ -469,12 +469,12 @@ export const MeterDetail = ({
         {canWrite && (
           <>
             {canManage && (
-              <Button onClick={() => onModeChange('edit')} size="sm" theme="outlined" variant="secondary">
+              <Button onClick={() => onModeChange('edit')} size="sm" appearance="outline" severity="secondary">
                 {t(`${k}.actions.edit`)}
               </Button>
             )}
             {meter.status !== 'RETIRED' && (
-              <Button onClick={() => onModeChange('reading')} size="sm" variant="primary">
+              <Button onClick={() => onModeChange('reading')} size="sm" severity="primary">
                 {t(`${k}.actions.recordReading`)}
               </Button>
             )}
@@ -540,8 +540,8 @@ export const MeterDetail = ({
                   setVoidError(undefined);
                 }}
                 size="sm"
-                theme="outlined"
-                variant="secondary"
+                appearance="outline"
+                severity="secondary"
               >
                 {t('facility-operations.common.cancel')}
               </Button>
@@ -552,7 +552,7 @@ export const MeterDetail = ({
                   void browserRuntime.runPromise(confirmVoid());
                 }}
                 size="sm"
-                variant="danger"
+                severity="danger"
               >
                 {t(`${k}.void.submit`)}
               </Button>
@@ -593,7 +593,7 @@ export const MeterDetail = ({
             />
             <figcaption className="flex items-center justify-between text-fg-secondary text-xs">
               {photo.name}
-              <Button onClick={() => setPhoto(undefined)} size="sm" theme="borderless" variant="secondary">
+              <Button onClick={() => setPhoto(undefined)} size="sm" appearance="ghost" severity="secondary">
                 {t('facility-operations.common.close')}
               </Button>
             </figcaption>

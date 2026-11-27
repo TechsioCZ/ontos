@@ -60,7 +60,7 @@ export const RowResults = ({
             <tr className="border-border-primary border-t align-top" key={`${String(result.row)}-${result.outcome}`}>
               <td className="px-150 py-100 tabular-nums">{result.row}</td>
               <td className="px-150 py-100">
-                <Badge size="sm" variant={outcomeMeta[result.outcome].variant}>
+                <Badge size="sm" severity={outcomeMeta[result.outcome].variant}>
                   {outcomeMeta[result.outcome].label}
                 </Badge>
               </td>
@@ -217,7 +217,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
     <SidePanel
       actions={
         <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
+          <Button onClick={onClose} appearance="outline" severity="secondary">
             Zrušit
           </Button>
           {/* A command, not a form: the import sends a previewed file once; nothing here edits a stored record. */}
@@ -227,7 +227,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
             isLoading={busy}
             loadingText="Importuji…"
             onClick={confirm}
-            variant="primary"
+            severity="primary"
           >
             {counts === undefined ? 'Importovat' : importRowsLabel(counts.rowCount)}
           </Button>
@@ -272,7 +272,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
               icon="icon-[mdi--folder-open-outline]"
               onClick={() => inputRef.current?.click()}
               size="sm"
-              variant="secondary"
+              severity="secondary"
             >
               Vybrat soubor
             </Button>
@@ -280,8 +280,8 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
               icon="icon-[mdi--clipboard-text-outline]"
               onClick={() => setPasteOpen((value) => !value)}
               size="sm"
-              theme="outlined"
-              variant="secondary"
+              appearance="outline"
+              severity="secondary"
             >
               Vložit text
             </Button>
@@ -311,8 +311,8 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
                 key={sample.key}
                 onClick={() => setDraft({ csv: sample.csv, fileName: sample.fileName })}
                 size="sm"
-                theme={draft?.fileName === sample.fileName ? 'solid' : 'outlined'}
-                variant="secondary"
+                appearance={draft?.fileName === sample.fileName ? 'solid' : 'outline'}
+                severity="secondary"
               >
                 {sample.title}
               </Button>
@@ -339,7 +339,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
                   setPasteOpen(false);
                 }}
                 size="sm"
-                variant="secondary"
+                severity="secondary"
               >
                 Zobrazit náhled
               </Button>

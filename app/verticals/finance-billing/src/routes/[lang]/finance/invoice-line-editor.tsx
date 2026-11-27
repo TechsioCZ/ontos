@@ -293,8 +293,8 @@ export const InvoiceLineEditor = ({
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
           size="sm"
-          theme="borderless"
-          variant="secondary"
+          appearance="ghost"
+          severity="secondary"
         />
       </div>
       <div className="finance-invoice-line-values grid items-end gap-150">

@@ -140,9 +140,9 @@ const OwningAgendaLinks = ({
               className="justify-start hover:bg-overlay"
               icon={link.icon}
               size="sm"
-              theme="unstyled"
+              unstyled
               to={link.href ?? '/'}
-              variant="secondary"
+              severity="secondary"
             >
               {link.label}
             </LinkButton>
@@ -171,7 +171,14 @@ const UnsupportedDetail = ({
     <>
       <section className="ontos-card flex w-full max-w-2xl flex-col items-start gap-200 rounded-lg border border-border-primary/60 bg-base p-300">
         <p className="text-sm">{t('shell.resource.detail_not_supported')}</p>
-        <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
+        <LinkButton
+          as={LocalizedLink}
+          icon="icon-[mdi--home-outline]"
+          size="sm"
+          appearance="solid"
+          to="/"
+          severity="primary"
+        >
           {t('shell.recovery.home')}
         </LinkButton>
       </section>

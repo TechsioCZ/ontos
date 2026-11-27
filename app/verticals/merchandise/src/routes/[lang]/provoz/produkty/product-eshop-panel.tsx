@@ -96,11 +96,11 @@ export const EshopPanel = (props: EshopPanelProps) => {
           <span className="text-fg-secondary text-sm">s DPH</span>
           <AvailabilityBadge value={product.availability} />
           {published && product.active ? (
-            <Badge size="sm" variant="info">
+            <Badge size="sm" severity="info">
               Zveřejněno v e-shopu
             </Badge>
           ) : (
-            <Badge size="sm" variant="outline">
+            <Badge size="sm" appearance="outline" severity="neutral">
               Skryto v e-shopu
             </Badge>
           )}

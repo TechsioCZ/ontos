@@ -140,7 +140,7 @@ export const ProductImageGalleryView = ({
                 }}
                 tabIndex={0}
               >
-                <Icon aria-hidden="true" color="secondary" icon="icon-[mdi--image-plus-outline]" size="2xl" />
+                <Icon aria-hidden="true" severity="secondary" icon="icon-[mdi--image-plus-outline]" size="2xl" />
                 <span className="font-medium">
                   {remaining === 0
                     ? t('merchandise.pages.products.gallery.dropzoneFull', { limit: PRODUCT_GALLERY_LIMIT })
@@ -168,16 +168,16 @@ export const ProductImageGalleryView = ({
             icon="icon-[mdi--close]"
             onClick={() => dispatch({ key: notice.key, type: 'dismissNotice' })}
             size="sm"
-            theme="borderless"
+            appearance="ghost"
             type="button"
-            variant="secondary"
+            severity="secondary"
           />
         </div>
       ))}
       {undoable && (
         <div className="flex flex-wrap items-center gap-150" data-testid="gallery-undo">
           <StatusText status="default">{t('merchandise.pages.products.gallery.removed')}</StatusText>
-          <Button onClick={onUndo} size="sm" theme="outlined" type="button" variant="secondary">
+          <Button onClick={onUndo} size="sm" appearance="outline" type="button" severity="secondary">
             {t('merchandise.pages.products.gallery.undo')}
           </Button>
         </div>

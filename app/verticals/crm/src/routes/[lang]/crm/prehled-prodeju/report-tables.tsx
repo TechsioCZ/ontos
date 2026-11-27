@@ -76,15 +76,15 @@ export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: Cr
   );
 
 const meaningVariant = {
-  cancelled: 'outline',
+  cancelled: 'neutral',
   fulfilled: 'success',
   open: 'info',
   paid: 'success',
   unmapped: 'warning',
-} satisfies Record<StatusMeaningOrUnmapped, 'outline' | 'info' | 'success' | 'warning' | 'danger'>;
+} satisfies Record<StatusMeaningOrUnmapped, 'neutral' | 'info' | 'success' | 'warning' | 'danger'>;
 
 export const MeaningBadge = ({ meaning }: { readonly meaning: StatusMeaningOrUnmapped }) => (
-  <Badge size="sm" variant={meaningVariant[meaning]}>
+  <Badge size="sm" severity={meaningVariant[meaning]}>
     {statusMeaningLabels[meaning]}
   </Badge>
 );
@@ -169,8 +169,8 @@ export const SummaryTable = ({
                 key={key}
                 onClick={() => onGroupingChange(key)}
                 size="sm"
-                theme={key === grouping ? 'solid' : 'borderless'}
-                variant={key === grouping ? 'primary' : 'secondary'}
+                appearance={key === grouping ? 'solid' : 'ghost'}
+                severity={key === grouping ? 'primary' : 'secondary'}
               >
                 {groupingLabels[key]}
               </Button>
@@ -181,8 +181,8 @@ export const SummaryTable = ({
             icon="icon-[mdi--download]"
             onClick={onExport}
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             Export souhrnu (CSV)
           </Button>
@@ -371,7 +371,7 @@ const orderColumns = (
         <span>{orderStatusLabel(info.getValue<string>())}</span>
         {info.row.original.meaning !== 'unmapped' && <MeaningBadge meaning={info.row.original.meaning} />}
         {info.row.original.order.statusHistory.some((event) => event.review === true) && (
-          <Badge size="sm" variant="warning">
+          <Badge size="sm" severity="warning">
             Sporná změna stavu
           </Badge>
         )}
@@ -432,8 +432,8 @@ export const OrdersTable = ({
               downloadCsv(ordersCsv({ ...report, rows: table.getRowModel().rows.map((row) => row.original) }), fileName)
             }
             size="sm"
-            theme="outlined"
-            variant="secondary"
+            appearance="outline"
+            severity="secondary"
           >
             Export objednávek (CSV)
           </Button>

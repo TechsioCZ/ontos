@@ -164,7 +164,7 @@ export const CustomerBulkEditDialog = ({
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={() => close()} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={() => close()} size="sm" appearance="outline" severity="secondary">
             {t(`${KEY}.cancel`)}
           </Button>
           <Button
@@ -173,7 +173,7 @@ export const CustomerBulkEditDialog = ({
             loadingText={t(`${KEY}.busy`)}
             onClick={() => submit()}
             size="sm"
-            variant="primary"
+            severity="primary"
           >
             {action === 'archive' ? t(`${KEY}.submit`) : t(`${KEY}.continue`)}
           </Button>

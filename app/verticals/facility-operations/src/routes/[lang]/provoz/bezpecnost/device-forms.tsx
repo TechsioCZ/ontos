@@ -408,7 +408,7 @@ const DeviceEditPanel = ({
       <PanelFrame
         actions={
           <>
-            <Button onClick={close} theme="outlined" variant="secondary">
+            <Button onClick={close} appearance="outline" severity="secondary">
               {t('facility-operations.common.close')}
             </Button>
             <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />

@@ -101,8 +101,8 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
                   )
                 }
                 size="sm"
-                theme="outlined"
-                variant="danger"
+                appearance="outline"
+                severity="danger"
               >
                 {t(`${rolesKey}.remove`)}
               </Button>
@@ -123,7 +123,7 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
             size="sm"
             value={chosen === null ? [] : [chosen]}
           />
-          <Button disabled={busy || chosen === null} onClick={assign} size="sm" variant="primary">
+          <Button disabled={busy || chosen === null} onClick={assign} size="sm" severity="primary">
             {t(`${rolesKey}.assign`)}
           </Button>
         </div>
@@ -143,12 +143,12 @@ export const AgentRolesBlock = ({ agent, onChanged, onNotify, roles, rolesRevisi
             <li className="flex flex-wrap items-center gap-100" key={module.moduleId}>
               <span className="text-sm">{module.label}</span>
               {module.reads && (
-                <Badge size="sm" variant="outline">
+                <Badge size="sm" appearance="outline" severity="neutral">
                   {t(`${rolesKey}.reads`)}
                 </Badge>
               )}
               {module.writes !== 'none' && (
-                <Badge size="sm" variant={module.writes === 'direct' ? 'info' : 'warning'}>
+                <Badge size="sm" severity={module.writes === 'direct' ? 'info' : 'warning'}>
                   {t(`${rolesKey}.writes.${module.writes}`)}
                 </Badge>
               )}

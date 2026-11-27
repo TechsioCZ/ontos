@@ -61,9 +61,9 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
                     prefetch="none"
                     preload={false}
                     size="sm"
-                    theme="borderless"
+                    appearance="ghost"
                     to={value.href}
-                    variant="secondary"
+                    severity="secondary"
                   >
                     {t(`${key}.openRecords`)}
                   </LinkButton>

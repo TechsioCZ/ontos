@@ -119,7 +119,7 @@ const columns = (records: RecordsResponse): ColumnDef<Visit>[] => [
       info.getValue<number>() === 0 ? (
         <span className="text-fg-secondary">—</span>
       ) : (
-        <Badge size="sm" variant="warning">{`Opraveno ${String(info.getValue<number>())}×`}</Badge>
+        <Badge size="sm" severity="warning">{`Opraveno ${String(info.getValue<number>())}×`}</Badge>
       ),
     header: 'Opravy',
     id: 'corrections',
@@ -163,7 +163,7 @@ const ClientFocus = ({
             Karta klienta
           </a>
           {onRecord !== undefined && (
-            <Button icon="icon-[mdi--plus]" onClick={onRecord} size="sm" variant="primary">
+            <Button icon="icon-[mdi--plus]" onClick={onRecord} size="sm" severity="primary">
               Zapsat návštěvu
             </Button>
           )}
@@ -258,13 +258,13 @@ const renderVisitResults = ({
   let emptyAction;
   if (filtered) {
     emptyAction = (
-      <Button onClick={handleClear} size="sm" theme="outlined" variant="secondary">
+      <Button onClick={handleClear} size="sm" appearance="outline" severity="secondary">
         Zrušit filtry
       </Button>
     );
   } else if (canWrite) {
     emptyAction = (
-      <Button onClick={handleRecord} size="sm" theme="outlined" variant="secondary">
+      <Button onClick={handleRecord} size="sm" appearance="outline" severity="secondary">
         Zapsat návštěvu
       </Button>
     );
@@ -339,7 +339,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
             <PageHeader
               actions={
                 canWrite ? (
-                  <Button icon="icon-[mdi--plus]" onClick={() => setRecordOpen(true)} size="sm" variant="primary">
+                  <Button icon="icon-[mdi--plus]" onClick={() => setRecordOpen(true)} size="sm" severity="primary">
                     Zapsat návštěvu
                   </Button>
                 ) : undefined
@@ -437,13 +437,13 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                 />
               </div>
               {filtered && (
-                <Button onClick={clearFilters} size="sm" theme="borderless" variant="secondary">
+                <Button onClick={clearFilters} size="sm" appearance="ghost" severity="secondary">
                   Zrušit filtry
                 </Button>
               )}
             </div>
 
-            <Tabs onValueChange={setView} value={view} variant="line">
+            <Tabs onValueChange={setView} value={view} appearance="line">
               <Tabs.List>
                 <Tabs.Trigger value="timeline">{`Časová osa (${String(visible.length)})`}</Tabs.Trigger>
                 <Tabs.Trigger value="table">Tabulka</Tabs.Trigger>

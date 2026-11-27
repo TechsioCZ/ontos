@@ -24,7 +24,7 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
       <div className="flex flex-wrap items-center justify-between gap-150">
         <div className="flex flex-wrap items-center gap-150">
           <h2 className="font-semibold text-lg">CRM v kostce</h2>
-          <Badge size="sm" variant="info">
+          <Badge size="sm" severity="info">
             {all ? 'Klienti firmy' : 'Jen moji klienti'}
           </Badge>
         </div>

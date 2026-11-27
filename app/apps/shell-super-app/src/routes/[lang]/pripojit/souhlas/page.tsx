@@ -162,10 +162,10 @@ const ConsentPage = () => {
                 <div className="grid min-w-0 flex-1 gap-100">
                   <span className="break-words font-semibold">{summary.client.name}</span>
                   <div className="flex flex-wrap gap-100">
-                    <Badge size="sm" variant="info">
+                    <Badge size="sm" severity="info">
                       {summary.client.host}
                     </Badge>
-                    <Badge size="sm" variant={summary.client.kind === 'loopback' ? 'warning' : 'success'}>
+                    <Badge size="sm" severity={summary.client.kind === 'loopback' ? 'warning' : 'success'}>
                       {t(
                         summary.client.kind === 'loopback'
                           ? 'shell.connect.badge.loopback'
@@ -189,10 +189,17 @@ const ConsentPage = () => {
                 </StatusText>
               )}
               <div className="flex flex-wrap gap-150">
-                <Button disabled={busy} onClick={approve} size="md" theme="solid" type="button" variant="primary">
+                <Button disabled={busy} onClick={approve} size="md" appearance="solid" type="button" severity="primary">
                   {t('shell.connect.consent.allow')}
                 </Button>
-                <Button disabled={busy} onClick={deny} size="md" theme="outlined" type="button" variant="secondary">
+                <Button
+                  disabled={busy}
+                  onClick={deny}
+                  size="md"
+                  appearance="outline"
+                  type="button"
+                  severity="secondary"
+                >
                   {t('shell.connect.consent.deny')}
                 </Button>
               </div>

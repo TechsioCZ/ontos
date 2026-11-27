@@ -305,32 +305,32 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             <header className="sf-product-detail__heading">
               <h1 id="product-title">{product.name}</h1>
               {product.isRecommended && (
-                <Badge size="md" variant="primary">
+                <Badge size="md" severity="primary">
                   {cs.product.tags.recommended}
                 </Badge>
               )}
               {product.isSale && (
-                <Badge size="md" variant="discount">
+                <Badge size="md" severity="discount">
                   {cs.product.tags.sale}
                 </Badge>
               )}
               {product.isAction && (
-                <Badge size="md" variant="discount">
+                <Badge size="md" severity="discount">
                   {cs.product.tags.action}
                 </Badge>
               )}
               {product.isNew && (
-                <Badge size="md" variant="secondary">
+                <Badge size="md" severity="secondary">
                   {cs.product.tags.new}
                 </Badge>
               )}
               {hasMultipleVariants && (
-                <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
+                <Badge className="sf-product-detail__variant-badge" size="md" severity="secondary">
                   {cs.product.moreVariants}
                 </Badge>
               )}
               {singleVariant && (
-                <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
+                <Badge className="sf-product-detail__variant-badge" size="md" severity="secondary">
                   {cs.product.oneVariant}
                 </Badge>
               )}

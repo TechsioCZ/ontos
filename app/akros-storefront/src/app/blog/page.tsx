@@ -34,7 +34,7 @@ export default async function BlogPage() {
           />
           <div>
             <p className="sf-blog-meta">
-              <Badge size="sm" variant="primary">
+              <Badge size="sm" severity="primary">
                 {copy.badge}
               </Badge>
               <span>{copy.date}</span>
@@ -64,7 +64,7 @@ export default async function BlogPage() {
                   />
                   <div className="sf-blog-card__content">
                     <p className="sf-blog-meta">
-                      <Badge size="sm" variant="primary">
+                      <Badge size="sm" severity="primary">
                         {article.category.toUpperCase()}
                       </Badge>
                       <span>{article.date}</span>

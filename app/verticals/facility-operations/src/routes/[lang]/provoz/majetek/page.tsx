@@ -168,7 +168,7 @@ const AssetNextDueCell = (info: CellContext<Asset>) => {
   const due = dueState(next.nextDueOn, today);
   return (
     <span className="flex min-w-0 flex-col items-start gap-50">
-      <Badge size="sm" variant={dueBadgeVariant(due)}>
+      <Badge size="sm" severity={dueBadgeVariant(due)}>
         {isoDateLabel(next.nextDueOn)}
       </Badge>
       <span
@@ -454,15 +454,20 @@ const AssetsHeader = ({ vm }: { readonly vm: AssetsViewModel }) => {
       actions={
         envelope === undefined ? undefined : (
           <>
-            <Button onClick={() => exportCsv(rows, k)} size="sm" theme="borderless" variant="secondary">
+            <Button onClick={() => exportCsv(rows, k)} size="sm" appearance="ghost" severity="secondary">
               {k('actions.exportCsv')}
             </Button>
             {canWrite && (
               <>
-                <Button onClick={() => setPanel({ kind: 'inventory' })} size="sm" theme="outlined" variant="secondary">
+                <Button
+                  onClick={() => setPanel({ kind: 'inventory' })}
+                  size="sm"
+                  appearance="outline"
+                  severity="secondary"
+                >
                   {k('actions.newInventory')}
                 </Button>
-                <Button onClick={() => setPanel({ kind: 'asset' })} size="sm" variant="primary">
+                <Button onClick={() => setPanel({ kind: 'asset' })} size="sm" severity="primary">
                   {k('actions.newAsset')}
                 </Button>
               </>
@@ -473,7 +478,7 @@ const AssetsHeader = ({ vm }: { readonly vm: AssetsViewModel }) => {
       description={k('description')}
       meta={
         envelope !== undefined && !canWrite ? (
-          <Badge size="sm" variant="outline">
+          <Badge size="sm" appearance="outline" severity="neutral">
             {t('facility-operations.common.readOnly')}
           </Badge>
         ) : undefined
@@ -659,7 +664,7 @@ const AssetsServices = ({ vm }: { readonly vm: AssetsViewModel }) => {
   return (
     <Tabs.Content className="flex flex-col gap-200 py-250" value="services">
       <p className="text-fg-secondary text-sm">{k('services.intro')}</p>
-      <Table size="sm" variant="line">
+      <Table size="sm" appearance="line">
         <Table.Header>
           <Table.Row>
             <Table.ColumnHeader>{k('fields.nextDueOn')}</Table.ColumnHeader>
@@ -681,7 +686,7 @@ const AssetsServices = ({ vm }: { readonly vm: AssetsViewModel }) => {
                 <Table.Cell>
                   <span className="flex flex-col items-start gap-50">
                     <span className="tabular-nums">{isoDateLabel(due.nextDueOn)}</span>
-                    <Badge size="sm" variant={dueBadgeVariant(serviceDueState)}>
+                    <Badge size="sm" severity={dueBadgeVariant(serviceDueState)}>
                       {k(`due.${serviceDueState}`)}
                     </Badge>
                   </span>
@@ -730,7 +735,7 @@ const AssetsTabs = ({ vm }: { readonly vm: AssetsViewModel }) => {
     today,
   } = vm;
   return (
-    <Tabs onValueChange={setTab} value={tab} variant="line">
+    <Tabs onValueChange={setTab} value={tab} appearance="line">
       <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
         <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="register">
           {k('tabs.register')}
@@ -813,7 +818,7 @@ const AssetsCreatePanel = ({ vm }: { readonly vm: AssetsViewModel }) => {
       <SidePanel
         actions={
           <>
-            <Button onClick={() => scope.request(close)} theme="outlined" variant="secondary">
+            <Button onClick={() => scope.request(close)} appearance="outline" severity="secondary">
               {t('facility-operations.common.cancel')}
             </Button>
             {footer.target}

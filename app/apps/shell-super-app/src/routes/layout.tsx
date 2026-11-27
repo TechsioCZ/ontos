@@ -1,10 +1,9 @@
-import { Helmet } from '@modern-js/runtime/head';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
 
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import { installBrowserRequestCache } from './browser-request-cache.ts';
 import { installStaleBuildRecovery, useStaleBuildErrorRecovery } from './stale-build-recovery.tsx';
-import { neutralStaffTheme } from './staff-brand.ts';
+import { TenantThemeRoot } from './tenant-theme-root.tsx';
 
 import './ui-kit.css';
 import './index.css';
@@ -15,16 +14,15 @@ if ('document' in globalThis) {
   installStaleBuildRecovery();
 }
 
-// Neutral until a signed-in workspace picks its own theme in the dashboard frame (staff-brand.ts).
+/** Every Shell page and every module rendered in it runs inside the signed-in tenant's theme. */
 const Layout = () => {
   useStaleBuildErrorRecovery();
   return (
-    <>
-      <Helmet htmlAttributes={{ className: 'light', 'data-theme': neutralStaffTheme }} />
+    <TenantThemeRoot>
       <div data-app-id="shell-super-app" data-build-marker={ultramodernUiMarker.build}>
         <Outlet />
       </div>
-    </>
+    </TenantThemeRoot>
   );
 };
 

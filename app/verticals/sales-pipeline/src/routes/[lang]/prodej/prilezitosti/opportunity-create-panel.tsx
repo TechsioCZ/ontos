@@ -105,9 +105,9 @@ export const OpportunityCreatePanel = ({
           <>
             <Button
               onClick={() => guard.request(() => onOpenChange(false))}
-              theme="outlined"
+              appearance="outline"
               type="button"
-              variant="secondary"
+              severity="secondary"
             >
               {t(`${K}.create.cancel`)}
             </Button>

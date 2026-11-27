@@ -91,7 +91,7 @@ export const CrmFormSaveActions = <V,>({
   readonly onCancel: () => void;
 }) => (
   <>
-    <Button onClick={() => form.guard.request(onCancel)} theme="outlined" variant="secondary">
+    <Button onClick={() => form.guard.request(onCancel)} appearance="outline" severity="secondary">
       Zrušit
     </Button>
     <SaveBar

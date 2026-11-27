@@ -46,15 +46,15 @@ const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
   LOW_STOCK: { label: 'Poslední kusy', variant: 'warning' },
   OUT_OF_STOCK: { label: 'Nedostupné', variant: 'danger' },
-  UNKNOWN: { label: 'Nelze ověřit', variant: 'outline' },
+  UNKNOWN: { label: 'Nelze ověřit', variant: 'neutral' },
 } as const satisfies Readonly<
-  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
+  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'neutral' | 'success' | 'warning' }>
 >;
 
 export const AvailabilityBadge = ({ value }: { readonly value: Availability | undefined }) => {
   const presentation = availabilityPresentation[value ?? 'UNKNOWN'];
   return (
-    <Badge size="sm" variant={presentation.variant}>
+    <Badge size="sm" severity={presentation.variant}>
       {presentation.label}
     </Badge>
   );
@@ -292,9 +292,9 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           isLoading={busy}
           loadingText="Zapisuji…"
           onClick={submit}
-          theme="outlined"
+          appearance="outline"
           type="button"
-          variant="secondary"
+          severity="secondary"
         >
           Zapsat pohyb
         </Button>
@@ -315,7 +315,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
       <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
-        <Table size="sm" variant="line">
+        <Table size="sm" appearance="line">
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Platí od</Table.ColumnHeader>
@@ -737,8 +737,8 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
         <Button
           disabled={currentPage === 0}
           onClick={() => setVariantPage(currentPage - 1)}
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           Předchozí
         </Button>
@@ -748,8 +748,8 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
         <Button
           disabled={currentPage + 1 >= pageCount}
           onClick={() => setVariantPage(currentPage + 1)}
-          theme="outlined"
-          variant="secondary"
+          appearance="outline"
+          severity="secondary"
         >
           Další
         </Button>
@@ -762,7 +762,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           </p>
         ) : (
           <ScrollRegion label={t('merchandise.ui.variantsScrollLabel')}>
-            <Table size="sm" variant="line">
+            <Table size="sm" appearance="line">
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>Název a vlastnosti</Table.ColumnHeader>
@@ -803,7 +803,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             {...variantFieldError(submitted, 'Zadejte název', error?.name)}
                           />
                           {draft.key === selectedKey ? (
-                            <Badge size="sm" variant="info">
+                            <Badge size="sm" severity="info">
                               {t('merchandise.pages.products.detail.variantSelected')}
                             </Badge>
                           ) : null}
@@ -890,7 +890,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             <span className="sr-only">Aktivní</span>
                           </Switch>
                         ) : (
-                          <Badge size="sm" variant={draft.active ? 'success' : 'outline'}>
+                          <Badge size="sm" severity={draft.active ? 'success' : 'neutral'}>
                             {draft.active ? 'Aktivní' : 'Neaktivní'}
                           </Badge>
                         )}
@@ -926,7 +926,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
       )}
       {canWrite && (
         <div className="flex flex-wrap items-center justify-between gap-150">
-          <Button icon="icon-[mdi--plus]" onClick={addDraft} theme="outlined" type="button" variant="secondary">
+          <Button icon="icon-[mdi--plus]" onClick={addDraft} appearance="outline" type="button" severity="secondary">
             Přidat variantu
           </Button>
           <ProductTabSaveBar active={props.active ?? true} save={save} />

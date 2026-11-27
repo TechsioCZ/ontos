@@ -98,8 +98,8 @@ export const OrderLineEditor = ({
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
           size="sm"
-          theme="borderless"
-          variant="secondary"
+          appearance="ghost"
+          severity="secondary"
         />
       </div>
       {variants.length > 0 && (

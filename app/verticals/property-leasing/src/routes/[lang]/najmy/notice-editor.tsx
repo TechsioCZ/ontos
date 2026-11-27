@@ -262,7 +262,7 @@ export const NoticeEditor = ({
         </p>
       )}
       <div className="sp-tenant-actions">
-        <Button onClick={handleCopy} size="sm" theme="outlined" variant="secondary">
+        <Button onClick={handleCopy} size="sm" appearance="outline" severity="secondary">
           {copied ? 'Zkopírováno' : 'Zkopírovat text'}
         </Button>
         {draft.channel === 'EMAIL' && (

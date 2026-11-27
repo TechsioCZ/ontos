@@ -260,10 +260,22 @@ export const UnsavedChangesDialog = ({ labels = saveLabels, prompt }: UnsavedCha
       actions={
         // One row from the small breakpoint up: Uložit never drops below Zůstat / Zahodit změny on a desktop.
         <div className="flex w-full flex-wrap justify-end gap-100 sm:flex-nowrap" data-leave-actions="">
-          <Button className="whitespace-nowrap" onClick={handleStay} theme="outlined" type="button" variant="secondary">
+          <Button
+            className="whitespace-nowrap"
+            onClick={handleStay}
+            appearance="outline"
+            type="button"
+            severity="secondary"
+          >
             {labels.stay}
           </Button>
-          <Button className="whitespace-nowrap" onClick={handleDiscard} theme="outlined" type="button" variant="danger">
+          <Button
+            className="whitespace-nowrap"
+            onClick={handleDiscard}
+            appearance="outline"
+            type="button"
+            severity="danger"
+          >
             {labels.discard}
           </Button>
           <Button
@@ -273,7 +285,7 @@ export const UnsavedChangesDialog = ({ labels = saveLabels, prompt }: UnsavedCha
             loadingText={labels.saving}
             onClick={handleSave}
             type="button"
-            variant="primary"
+            severity="primary"
           >
             {labels.save}
           </Button>

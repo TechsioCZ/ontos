@@ -134,7 +134,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           <StatusText showIcon status="error">
             {k(reloadRequired ? 'states.reloadRequired' : 'states.reloadFailed')}
           </StatusText>
-          <Button onClick={handleRetry} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={handleRetry} size="sm" appearance="outline" severity="secondary">
             {k(reloadRequired ? 'common.reloadPage' : 'common.retry')}
           </Button>
         </div>
@@ -180,11 +180,11 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
             )}
           </StatusText>
           {state.status === 'error' && (
-            <Button onClick={handleRetry} variant="secondary">
+            <Button onClick={handleRetry} severity="secondary">
               {k(reloadRequired ? 'common.reloadPage' : 'common.retry')}
             </Button>
           )}
-          <Button onClick={back} theme="outlined" variant="secondary">
+          <Button onClick={back} appearance="outline" severity="secondary">
             {k('detail.back')}
           </Button>
         </div>
