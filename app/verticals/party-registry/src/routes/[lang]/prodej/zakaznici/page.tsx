@@ -1,4 +1,3 @@
-import { selectItem } from '../../../../ui/select-item.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import {
   BulkActionBar,
@@ -17,7 +16,6 @@ import {
 import type { DetailViewMode } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
@@ -28,12 +26,20 @@ import type {
   DataTableTranslations,
   TanstackTable,
 } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Effect, Match, Predicate } from 'effect';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 
@@ -43,7 +49,7 @@ import { partyRegistryI18nResources } from '../../../../i18n/resources.ts';
 import type { TagId } from '@app/tagging/contracts/records';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { customerSegmentDefinitions } from '../../../../api/customer-segments-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
@@ -91,6 +97,26 @@ const allSegments = 'all';
 /** Archived customers stay out of the list until the status filter asks for them. */
 const allStatuses = 'all';
 const defaultStatusFilter = 'ACTIVE';
+
+/** The filters of the customer list: they narrow what the table shows and are never submitted. */
+const customerFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('search', Schema.String)
+    .addField('segment', Schema.String)
+    .addField('status', Schema.String),
+  {
+    fields: { search: TextField, segment: ChoiceField, status: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type CustomerFilters = typeof customerFilterForm.schema.Encoded;
+
+/** What an opened list filters by: every segment, active customers, no search. */
+const defaultFilters: CustomerFilters = { search: '', segment: allSegments, status: defaultStatusFilter };
+/** What "clear filters" leaves: nothing narrows the list. */
+const noFilters: CustomerFilters = { search: '', segment: allSegments, status: allStatuses };
 
 type LoadState =
   | { readonly status: 'loading' }
@@ -154,86 +180,66 @@ const downloadCsv = (csv: string) => {
 };
 
 interface CustomerFilterRowProps {
-  readonly onSearchChange: (search: string) => void;
-  readonly onSegmentChange: (segment: string) => void;
-  readonly onStatusChange: (status: string) => void;
   readonly onTagChange: (tagId: TagId | null) => void;
-  readonly search: string;
-  /** Null hides the segment select, which appears only while segments load. */
-  readonly segmentFilter: string | null;
-  readonly statusFilter: string;
+  /** False hides the segment select, which appears only while segments load. */
+  readonly segmentsShown: boolean;
   readonly tagFilter: TagId | null;
   readonly tagFilterFailed: boolean;
   readonly tagFilterLoading: boolean;
 }
 
-/** The one filter row: search, status, tag and segment, all size sm at fixed widths. */
+/** The one filter row: search, status, tag and segment, at fixed widths. */
 const CustomerFilterRow = ({
-  onSearchChange,
-  onSegmentChange,
-  onStatusChange,
   onTagChange,
-  search,
-  segmentFilter,
-  statusFilter,
+  segmentsShown,
   tagFilter,
   tagFilterFailed,
   tagFilterLoading,
 }: CustomerFilterRowProps) => {
   const { t } = useModernI18n();
   const segmentItems = [
-    selectItem(allSegments, t(`${key}.filters.allSegments`)),
-    ...customerSegmentDefinitions.map((definition) => selectItem(definition.businessCode, definition.name)),
+    { label: t(`${key}.filters.allSegments`), value: allSegments },
+    ...customerSegmentDefinitions.map((definition) => ({ label: definition.name, value: definition.businessCode })),
   ];
   const statusItems = [
-    selectItem(allStatuses, t(`${key}.filters.allStatuses`)),
-    selectItem('ACTIVE', t(`${key}.status.ACTIVE`)),
-    selectItem('ARCHIVED', t(`${key}.status.ARCHIVED`)),
+    { label: t(`${key}.filters.allStatuses`), value: allStatuses },
+    { label: t(`${key}.status.ACTIVE`), value: 'ACTIVE' },
+    { label: t(`${key}.status.ARCHIVED`), value: 'ARCHIVED' },
   ];
   return (
     <>
-      <div className="flex flex-wrap items-end gap-150">
-        <Input
-          aria-label={t(`${key}.table.searchLabel`)}
-          className="w-64"
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder={t(`${key}.search.placeholder`)}
-          size="sm"
-          type="search"
-          value={search}
-        />
+      <FormRoot
+        className="flex flex-wrap items-end gap-150"
+        defaultValues={defaultFilters}
+        form={customerFilterForm}
+        translateMessage={(message) => t(message)}
+      >
+        <div className="w-64">
+          <customerFilterForm.search
+            label={<span className="sr-only">{t(`${key}.table.searchLabel`)}</span>}
+            placeholder={t(`${key}.search.placeholder`)}
+            size="sm"
+            type="search"
+          />
+        </div>
         <div className="w-48">
-          <SelectTemplate
+          <customerFilterForm.status
             items={statusItems}
             label={t(`${key}.columns.status`)}
-            name="status"
-            onValueChange={(details) => {
-              const [next] = details.value;
-              onStatusChange(next ?? allStatuses);
-            }}
             placeholder={t('party-registry.selectPlaceholder')}
-            size="sm"
-            value={[statusFilter]}
           />
         </div>
         <TagFilter kind="customer" onChange={onTagChange} value={tagFilter} />
-        {segmentFilter !== null && (
+        {segmentsShown && (
           <div className="w-48">
-            <SelectTemplate
+            <customerFilterForm.segment
               items={segmentItems}
               label={t(`${key}.columns.segment`)}
-              name="segment"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                onSegmentChange(next ?? allSegments);
-              }}
               placeholder={t('party-registry.selectPlaceholder')}
-              size="sm"
-              value={[segmentFilter]}
             />
           </div>
         )}
-      </div>
+      </FormRoot>
       {tagFilterLoading && <p className="text-fg-secondary text-sm">{t(`${key}.tags.filtering`)}</p>}
       {tagFilterFailed && <StatusText status="error">{t(`${key}.tags.filterFailed`)}</StatusText>}
     </>
@@ -461,7 +467,9 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   const reload = () => {
     browserRuntime.runFork(customersData.refresh(query));
   };
-  const [search, setSearch] = useState('');
+  const filters = Option.getOrElse(useAtomValue(customerFilterForm.values), () => defaultFilters);
+  const setFilters = useAtomSet(customerFilterForm.setValues);
+  const { search, segment: segmentFilter, status: statusFilter } = filters;
   const [selection, setSelection] = useState<Selection>({});
   const { closeDetail, detail, detailFailure, detailValue, leaveRunRef, openDetail, retryDetail, runAfterLeave } =
     useCustomerDetailSelection(context);
@@ -471,8 +479,6 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
   const [editOpen, setEditOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
-  const [segmentFilter, setSegmentFilter] = useState<string>(allSegments);
-  const [statusFilter, setStatusFilter] = useState<string>(defaultStatusFilter);
   const [pagination, setPagination] = useState<Pagination>(initialPagination);
   const [sorting, setSorting] = useState<NonNullable<DataTableProps<CustomerListItem>['sorting']>>([]);
   const [table, setTable] = useState<TanstackTable<CustomerListItem>>();
@@ -607,9 +613,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
       tagFilter !== null ||
       (segmentsShown && segmentFilter !== allSegments));
   const clearFilters = () => {
-    setSearch('');
-    setStatusFilter(allStatuses);
-    setSegmentFilter(allSegments);
+    setFilters(noFilters);
     enrichment.handleTagFilterChange(null);
   };
 
@@ -653,13 +657,8 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
         </StatRow>
 
         <CustomerFilterRow
-          onSearchChange={setSearch}
-          onSegmentChange={setSegmentFilter}
-          onStatusChange={setStatusFilter}
           onTagChange={enrichment.handleTagFilterChange}
-          search={search}
-          segmentFilter={segmentsShown ? segmentFilter : null}
-          statusFilter={statusFilter}
+          segmentsShown={segmentsShown}
           tagFilter={tagFilter}
           tagFilterFailed={enrichment.tagFilterFailed}
           tagFilterLoading={enrichment.tagFilterLoading}

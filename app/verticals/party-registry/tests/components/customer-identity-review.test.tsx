@@ -119,9 +119,10 @@ type ReviewModel = ReturnType<typeof useCustomerIdentityReview>;
 const renderReview = () =>
   Effect.gen(function* mountReview() {
     let current: ReviewModel | undefined;
+    // The review renders with its panel, whose form holds the reviewer's reason.
     const Harness = () => {
       current = useCustomerIdentityReview(onResolved);
-      return null;
+      return <CustomerIdentityReviewPanel review={current} />;
     };
     yield* mountInRoute(<Harness />, { path: 'prodej/zakaznici', url: '/cs/prodej/zakaznici' });
     return {
@@ -136,11 +137,6 @@ const renderReview = () =>
     };
   });
 type Review = Effect.Success<ReturnType<typeof renderReview>>;
-const renderPanel = (review: ReviewModel) =>
-  mountInRoute(<CustomerIdentityReviewPanel review={review} />, {
-    path: 'prodej/zakaznici',
-    url: '/cs/prodej/zakaznici',
-  });
 const opened = (review: Review) =>
   Effect.gen(function* openReview() {
     act(() => review.result.current.openReview());
@@ -148,10 +144,22 @@ const opened = (review: Review) =>
     act(() => review.result.current.selectCase(candidateCase.caseRef));
     yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
   });
+/** Types the reason into the open case's reason field. */
+const typeReason = (reason: string) =>
+  Effect.gen(function* typeReviewReason() {
+    yield* waitUntil(() => document.querySelector('#customer-duplicate-reason') !== null);
+    const field = document.querySelector<HTMLInputElement>('#customer-duplicate-reason');
+    if (field === null) {
+      throw new Error('missing #customer-duplicate-reason');
+    }
+    act(() => {
+      fireEvent.change(field, { target: { value: reason } });
+    });
+  });
 const prepare = (review: Review) =>
-  act(() => {
-    review.result.current.setReason('Reviewed the signup evidence');
-    review.result.current.setSelectedPartyId(partyRef.resourceId);
+  Effect.gen(function* prepareResolution() {
+    yield* typeReason('Reviewed the signup evidence');
+    act(() => review.result.current.setSelectedPartyId(partyRef.resourceId));
   });
 
 type ListAnswer = Effect.Effect<
@@ -453,7 +461,8 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         listNext.push(Deferred.await(pendingQueue));
         const review = yield* renderReview();
         act(() => review.result.current.openReview());
-        const panel = yield* renderPanel(review.result.current);
+        // The panel opens on the next frame.
+        yield* settle;
         expect(document.body.textContent).not.toContain(partyRef.resourceId);
         expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
         expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
@@ -462,7 +471,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
         yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
         yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('ready')));
-        yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+        yield* settle;
         expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
         for (const [schema, tag, status, key] of [
           [DuplicateCandidateListForbiddenProblemSchema, 'DuplicateCandidateListForbiddenProblem', 403, 'forbidden'],
@@ -489,7 +498,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
             fireEvent.click(screen.getByRole('button', { name: copy(`${reviewKey}.retryQueue`) }));
           }
           yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('failed')));
-          yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+          yield* settle;
           expect(screen.getByText(copy(`${reviewKey}.${key}`))).toBeTruthy();
           expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
         }
@@ -501,7 +510,6 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       yield* pinTestDocument;
       const review = yield* renderReview();
       yield* opened(review);
-      const panel = yield* renderPanel(review.result.current);
       expect(document.body.textContent).not.toContain(partyRef.resourceId);
       expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
       expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
@@ -514,7 +522,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       fireEvent.change(screen.getByRole('textbox', { name: new RegExp(copy(`${reviewKey}.reason`), 'u') }), {
         target: { value: 'Compared submitted evidence' },
       });
-      yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+      yield* settle;
       expect(confirm().disabled).toBe(false);
       expect(
         screen
@@ -529,7 +537,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       });
       fireEvent.click(confirm());
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
-      yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+      yield* settle;
       expect(screen.getByText(copy(`${reviewKey}.states.RESOLVED`))).toBeTruthy();
       expect(screen.getByText(copy(`${reviewKey}.saved`))).toBeTruthy();
       expect(confirm().disabled).toBe(true);
@@ -607,7 +615,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         yield* networkIdle;
         yield* settle;
         expect(matchCalls).toHaveLength(0);
-        prepare(review);
+        yield* prepare(review);
         act(() => {
           review.result.current.resolve('MATCH_EXISTING');
           review.result.current.resolve('MATCH_EXISTING');
@@ -660,10 +668,8 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         });
       const review = yield* renderReview();
       yield* opened(review);
-      act(() => {
-        review.result.current.setReason('Compared both subjects');
-        review.result.current.setSelectedPartyId(secondPartyRef.resourceId);
-      });
+      yield* typeReason('Compared both subjects');
+      act(() => review.result.current.setSelectedPartyId(secondPartyRef.resourceId));
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* waitUntil(() => matchCalls.length === 1);
       expect(matchCalls[0]?.[0].selectedPartyRef).toEqual(secondPartyRef);
@@ -700,7 +706,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         }
         const review = yield* renderReview();
         yield* opened(review);
-        prepare(review);
+        yield* prepare(review);
         if (state === 'not-candidate') {
           act(() => review.result.current.setSelectedPartyId('20000000-0000-4000-8000-000000000099'));
         }
@@ -730,7 +736,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       matchAnswer = Effect.fail(failure);
       const review = yield* renderReview();
       yield* opened(review);
-      prepare(review);
+      yield* prepare(review);
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('forbidden')));
       expect(review.result.current.reason).toBe('Reviewed the signup evidence');
@@ -749,8 +755,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       yield* settle;
       expect(listCalls).toHaveLength(0);
       yield* opened(review);
-      prepare(review);
-      yield* renderPanel(review.result.current);
+      yield* prepare(review);
       // No button carries any of the module's retry or reload copy (the queue and detail retries, the detail reload).
       const offered = screen.queryAllByRole('button').map((button) => button.textContent?.trim() ?? '');
       expect(offered.length).toBeGreaterThan(0);
@@ -799,7 +804,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       matchAnswer = Effect.fail(failure);
       const review = yield* renderReview();
       yield* opened(review);
-      prepare(review);
+      yield* prepare(review);
       const reloaded = yield* Deferred.make<typeof candidateCase>();
       detailAnswer = Deferred.await(reloaded);
       act(() => review.result.current.resolve('MATCH_EXISTING'));
@@ -812,7 +817,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       // The reload has landed and the network is idle: a resolve sent while the case was stale would be recorded.
       yield* networkIdle;
       expect(matchCalls).toHaveLength(1);
-      prepare(review);
+      yield* prepare(review);
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* waitUntil(() => matchCalls.length === 2);
       expect(matchCalls[1]?.[0].expectedRevision).toBe(4);
@@ -834,7 +839,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       });
       const review = yield* renderReview();
       yield* opened(review);
-      prepare(review);
+      yield* prepare(review);
       listAnswer = Effect.fail(failure);
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('savedReloadFailed')));
@@ -863,7 +868,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         });
         const review = yield* renderReview();
         yield* opened(review);
-        prepare(review);
+        yield* prepare(review);
         listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
         detailAnswer = Effect.fail(failure);
         act(() => review.result.current.resolve('MATCH_EXISTING'));
@@ -894,7 +899,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         yield* pinTestDocument;
         const review = yield* renderReview();
         yield* opened(review);
-        act(() => review.result.current.setReason('Reviewed the evidence'));
+        yield* typeReason('Reviewed the evidence');
         act(() => review.result.current.resolve(resolution));
         yield* waitUntil(() => resolved.length === 1);
         yield* waitUntil(() => !review.result.current.busy);
@@ -927,7 +932,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       commitAnswer = Effect.succeed({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' });
       const review = yield* renderReview();
       yield* opened(review);
-      prepare(review);
+      yield* prepare(review);
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.uncertain).toBe(true)));
       act(() => review.result.current.resolve('CREATE_NEW'));
@@ -953,7 +958,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       yield* pinTestDocument;
       const review = yield* renderReview();
       yield* opened(review);
-      prepare(review);
+      yield* prepare(review);
       const pendingDetail = yield* Deferred.make<typeof candidateCase>();
       detailAnswer = Deferred.await(pendingDetail);
       const next = {
