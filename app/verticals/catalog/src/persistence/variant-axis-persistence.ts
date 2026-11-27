@@ -987,7 +987,8 @@ export const variantAxisPersistenceForScope = (
     if (product === undefined) {
       return yield* conflict('NOT_FOUND', 'Product not found in trusted Tenant');
     }
-    if (product.lifecycleState === 'RETIRED') {
+    // Axis-free initialization only records the empty basis a retired ERP draft needs before it can be restored.
+    if (product.lifecycleState === 'RETIRED' && input.change.kind !== 'AXIS_INITIALIZATION') {
       return yield* conflict('INVALID_INPUT', 'Retired Product cannot change Variant axes');
     }
     const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
@@ -1030,7 +1031,7 @@ export const variantAxisPersistenceForScope = (
     }
     if (
       input.change.kind === 'AXIS_INITIALIZATION' &&
-      (product.lifecycleState !== 'DRAFT' || latest !== undefined || current.length !== 0 || input.axes.length !== 0)
+      (product.lifecycleState === 'ACTIVE' || latest !== undefined || current.length !== 0 || input.axes.length !== 0)
     ) {
       return yield* conflict(
         'INVALID_INPUT',
