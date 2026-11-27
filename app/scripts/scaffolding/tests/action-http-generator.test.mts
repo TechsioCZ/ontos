@@ -81,6 +81,7 @@ it.effect('keeps an existing owner-bound Commerce Order root valid without requi
   }),
 );
 
+// Symmy's root binds its backend-only registration (2cd79df987), so its plain Node owner never loads the UI manifest.
 it.effect('preserves the actual Symmy owner runtimes with public unaliased Core constructors', () =>
   Effect.gen(function* actualSymmyOwnerRoot() {
     const source = yield* Effect.promise(() =>
@@ -88,17 +89,17 @@ it.effect('preserves the actual Symmy owner runtimes with public unaliased Core 
     );
     const owner = { ...vertical, slug: 'symmy-integration' };
     const patched = patchRuntimeRoot(source, owner, 'admitSymmyJobActionApiLive');
-    expect(patched).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
-    expect(patched).toContain('makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
+    expect(patched).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)');
+    expect(patched).toContain('makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)');
     expect(patchRuntimeRoot(patched, owner, 'admitSymmyJobActionApiLive')).toBe(patched);
     for (const [original, counterfeit] of [
       ["from '@app/core-runtime';", "from './counterfeit-core.ts';"],
-      ["from '../vertical.registration.ts';", "from '../foreign/vertical.registration.ts';"],
+      ["from '../vertical.runtime-declaration.ts';", "from '../foreign/vertical.runtime-declaration.ts';"],
       ["from '../shared/ultramodern-build.ts';", "from '../foreign/ultramodern-build.ts';"],
       ['makeReadRuntimeLive,', 'ReadRuntimeLive as makeReadRuntimeLive,'],
       [
-        'makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)',
-        'makeActionRuntimeLive(ultramodernApiMarker, symmyIntegrationRegistration)',
+        'makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationBackendRegistration)',
+        'makeActionRuntimeLive(ultramodernApiMarker, symmyIntegrationBackendRegistration)',
       ],
       [
         'const governedActionRuntimeLive = makeActionRuntimeLive(',

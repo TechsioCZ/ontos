@@ -1997,7 +1997,9 @@ export const hasOwnerBoundGovernedRuntime = (
   kind: 'read' | 'action',
   ownerRegistration: string,
 ): boolean => {
-  if (!hasGovernedHandlerRoot(source)) {
+  // The owner's full registration, or its backend-only registration from the UI-free runtime declaration.
+  const backendRegistration = ownerRegistration.replace(/Registration$/u, 'BackendRegistration');
+  if (!hasGovernedHandlerRoot(source, backendRegistration)) {
     return false;
   }
   const construction = governedRuntimeConstruction[kind];
@@ -2014,7 +2016,13 @@ export const hasOwnerBoundGovernedRuntime = (
     return false;
   }
   const registration = namedSourceImport(source, args[1] ?? '');
-  if (registration?.modulePath !== '../vertical.registration.ts' || registration.imported !== ownerRegistration) {
+  if (
+    !(
+      (registration?.modulePath === '../vertical.registration.ts' && registration.imported === ownerRegistration) ||
+      (registration?.modulePath === '../vertical.runtime-declaration.ts' &&
+        registration.imported === backendRegistration)
+    )
+  ) {
     return false;
   }
   if (kind === 'read') {
