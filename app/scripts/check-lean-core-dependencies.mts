@@ -300,14 +300,23 @@ const allowedCoreExternalSpecifiers = new Set([
   'cloudflare:workers',
   'effect',
   'pg',
+  // The CoreSDK UI surface: the one form model and the React it renders with. The kit's own modules
+  // are admitted by `kitSubpath` below.
+  '@effect/atom-react',
+  '@lucas-barake/effect-form-react',
+  'react',
+  'react/jsx-runtime',
 ]);
+
+/** The design system's atoms and molecules, which the CoreSDK UI surface binds to the form model. */
+const kitSubpath = /^@techsio\/ui-kit\/(?:atoms|molecules)\/[a-z-]+$/u;
 
 // Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
 const effectPlatformSubpath =
   /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
 
 const isAllowedCoreExternalSpecifier = (specifier: string): boolean =>
-  allowedCoreExternalSpecifiers.has(specifier) || effectPlatformSubpath.test(specifier);
+  allowedCoreExternalSpecifiers.has(specifier) || effectPlatformSubpath.test(specifier) || kitSubpath.test(specifier);
 
 const coreExternalDependencyReason = (specifier: string): string =>
   commerceVocabulary.test(specifier)
@@ -577,13 +586,17 @@ const nodeOnlyCoreSources = (
 
 const allowedCorePackageDependencies = new Set([
   '@authzed/authzed-node',
+  '@effect/atom-react',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@lucas-barake/effect-form-react',
   '@noble/hashes',
+  '@techsio/ui-kit',
   'drizzle-kit',
   'drizzle-orm',
   'effect',
   'pg',
+  'react',
 ]);
 
 const checkCorePackageJson = (

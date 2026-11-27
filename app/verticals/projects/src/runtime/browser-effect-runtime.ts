@@ -1,10 +1,12 @@
-import { Layer, Logger, ManagedRuntime, References, Tracer } from 'effect';
+import { Layer, Logger, References, Tracer } from 'effect';
+import { Atom } from 'effect/reactivity';
 
 const browserTracer = Tracer.make({
   span: (options) => new Tracer.NativeSpan(options),
 });
 
-export const browserRuntime = ManagedRuntime.make(
+/** The browser services for atoms: the forms and reads that React renders from atom state. */
+export const browserAtomRuntime = Atom.runtime(
   Layer.mergeAll(
     Logger.layer([Logger.defaultLogger]),
     Layer.succeed(Tracer.Tracer, browserTracer),

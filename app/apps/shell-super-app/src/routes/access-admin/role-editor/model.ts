@@ -89,14 +89,6 @@ export const cellHasSelector = (cell: RoleCellView, selector: RoleSelector): boo
     Match.exhaustive,
   );
 export const roleCellSlot = (cell: RoleCellView): string => `${cell.capabilityKey}:${cell.mode}:${cell.selector._tag}`;
-export const toggleRoleCell = (
-  cells: readonly RoleCellView[],
-  cell: RoleCellView,
-  enabled: boolean,
-): readonly RoleCellView[] => {
-  const remaining = cells.filter((existing) => roleCellSlot(existing) !== roleCellSlot(cell));
-  return enabled ? [...remaining, cell] : remaining;
-};
 
 /** A level materializes only the displayed snapshot; it never records a future-following rule. */
 export const cellsForLevel = (
@@ -159,26 +151,66 @@ export const parseAmountCeiling = (amount: string, currency: string): RoleCellVi
   return Number.isSafeInteger(limitMinor) ? { currency, limitMinor } : 'invalid';
 };
 
+/** The typed amount and currency of every cell that carries a ceiling, keyed by its slot. */
+export const amountEntries = (cells: readonly RoleCellView[]) => ({
+  amounts: Object.fromEntries(
+    cells.flatMap((cell) =>
+      cell.amountCeiling === undefined ? [] : [[roleCellSlot(cell), String(cell.amountCeiling.limitMinor)]],
+    ),
+  ),
+  currencies: Object.fromEntries(
+    cells.flatMap((cell) =>
+      cell.amountCeiling === undefined ? [] : [[roleCellSlot(cell), cell.amountCeiling.currency]],
+    ),
+  ),
+});
+
+/** The slots of the cells whose typed amount and currency do not form a ceiling. */
+export const invalidAmountSlots = (
+  cells: readonly RoleCellView[],
+  amounts: Readonly<Record<string, string>>,
+  currencies: Readonly<Record<string, string>>,
+): readonly string[] =>
+  cells.flatMap((cell) => {
+    const slot = roleCellSlot(cell);
+    return parseAmountCeiling(amounts[slot] ?? '', currencies[slot] ?? '') === 'invalid' ? [slot] : [];
+  });
+
+/**
+ * The cells with the ceilings the person typed: a cell with a typed entry takes its ceiling, an empty
+ * amount removes it, and a cell without an entry keeps the ceiling it has.
+ */
+export const withAmountCeilings = (
+  cells: readonly RoleCellView[],
+  amounts: Readonly<Record<string, string>>,
+  currencies: Readonly<Record<string, string>>,
+): readonly RoleCellView[] =>
+  cells.map((cell) => {
+    const slot = roleCellSlot(cell);
+    const value = parseAmountCeiling(amounts[slot] ?? '', currencies[slot] ?? '');
+    if (!(slot in amounts || slot in currencies) || value === 'invalid') {
+      return cell;
+    }
+    const { amountCeiling: previous, ...base } = cell;
+    void previous;
+    return value === undefined ? base : { ...base, amountCeiling: value };
+  });
+
+/**
+ * The editor's server state: the cells the server previewed and would save, the preview, the edited
+ * cells it was asked for (any other edit makes it stale) and the operation status.
+ */
 export interface RoleDraft {
   readonly cells: readonly RoleCellView[];
-  readonly confirmations: readonly string[];
   readonly editorVersion: number;
-  readonly invalidAmounts: readonly string[];
   readonly preview: RolePreviewView | null;
+  readonly previewedCells: readonly RoleCellView[];
   readonly status: RoleEditorStatus;
 }
 export const initialRoleDraft = (cells: readonly RoleCellView[]): RoleDraft => ({
   cells,
-  confirmations: [],
   editorVersion: 0,
-  invalidAmounts: [],
   preview: null,
-  status: 'idle',
-});
-export const editRoleDraft = (draft: RoleDraft, cells: readonly RoleCellView[]): RoleDraft => ({
-  ...draft,
-  cells,
-  confirmations: [],
-  preview: null,
+  previewedCells: cells,
   status: 'idle',
 });

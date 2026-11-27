@@ -1,8 +1,20 @@
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  MemberCheckboxField,
+  SubmitButton,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
+import { Effect, Option, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
+
+import { browserAtomRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
 import { ChangeCells, ChangeRoleDiff, ChangeSkips } from './changes-diff.tsx';
 import { canConfirmPreview, canPreviewDecision, isBatchEligible } from './changes-model.ts';
@@ -16,23 +28,47 @@ import type {
 
 export interface ChangesViewProps {
   readonly busy: boolean;
-  readonly confirmedItemIds: readonly string[];
   readonly hasMore: boolean;
   readonly items: readonly ChangeItemView[];
   readonly notice: ChangesNotice | null;
   readonly onCancel: () => void;
-  readonly onConfirm: () => void;
-  readonly onConfirmEffect: (id: string, confirmed: boolean) => void;
+  /** Decides the previewed changes with the effects the person confirmed one by one. */
+  readonly onConfirm: (confirmedItemIds: readonly string[]) => void;
   readonly onLoadMore: () => void;
   readonly onPreview: (ids: readonly string[], decision: ChangeDecision) => void;
   readonly onRefresh: () => void;
-  readonly onSelect: (id: string, selected: boolean) => void;
+  /** The batch selection changed, so any preview of the previous selection is stale. */
+  readonly onSelectionChange: () => void;
   readonly preview: ChangePreviewView | undefined;
   readonly receipt: ChangeReceiptView | undefined;
   readonly requiresRefresh: boolean;
-  readonly selectedIds: readonly string[];
+  /** A new value starts an empty batch selection. */
+  readonly selection: number;
   readonly writesAvailable: boolean;
 }
+
+/** The routine changes picked for one batch preview; its submit previews adopting all of them. */
+const changeSelectionForm = FormReact.make(FormBuilder.empty.addField('selectedIds', Schema.Array(Schema.String)), {
+  fields: { selectedIds: MemberCheckboxField },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.selectedIds),
+  runtime: browserAtomRuntime,
+});
+
+/** The named effects of one preview the person confirmed; its submit decides the preview. */
+const changeConfirmationForm = FormReact.make(
+  FormBuilder.empty.addField('confirmedItemIds', Schema.Array(Schema.String)),
+  {
+    fields: { confirmedItemIds: MemberCheckboxField },
+    onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.confirmedItemIds),
+    runtime: browserAtomRuntime,
+  },
+);
+
+const selectedIdsValue = changeSelectionForm.getFieldAtoms(changeSelectionForm.fields.selectedIds).value;
+const confirmedItemIdsValue = changeConfirmationForm.getFieldAtoms(
+  changeConfirmationForm.fields.confirmedItemIds,
+).value;
+const noIds: readonly string[] = [];
 
 const ChangeDetails = ({ item }: { readonly item: ChangeItemView }) => {
   const { t } = useModernI18n();
@@ -76,12 +112,102 @@ const ChangeDetails = ({ item }: { readonly item: ChangeItemView }) => {
   );
 };
 
+const ChangePreview = ({
+  busy,
+  disabled,
+  onCancel,
+  onConfirm,
+  preview,
+  writesAvailable,
+}: {
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly onCancel: () => void;
+  readonly onConfirm: (confirmedItemIds: readonly string[]) => void;
+  readonly preview: ChangePreviewView;
+  readonly writesAvailable: boolean;
+}) => {
+  const { t } = useModernI18n();
+  const confirmedItemIds = Option.getOrElse(useAtomValue(confirmedItemIdsValue), () => noIds);
+  useAtomSubscribe(changeConfirmationForm.submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting) {
+      onConfirm(result.value);
+    }
+  });
+  return (
+    <FormRoot
+      aria-labelledby="access-changes-preview"
+      className="grid gap-150"
+      defaultValues={{ confirmedItemIds: [] }}
+      form={changeConfirmationForm}
+      key={preview.token}
+      translateMessage={t}
+    >
+      <h3 className="text-xl" id="access-changes-preview">
+        {t('shell.accessAdmin.common.preview')}
+      </h3>
+      <p>
+        {preview.affectedHumanCount === null
+          ? t('shell.accessAdmin.common.notAvailable')
+          : t('shell.accessAdmin.changes.affectedPeopleCount', { count: preview.affectedHumanCount })}
+      </p>
+      {preview.items.map((item) => (
+        <div key={item.id}>
+          <h4>{item.capabilityKey}</h4>
+          <ChangeDetails item={item} />
+        </div>
+      ))}
+      <ChangeRoleDiff changes={preview.roleChanges} />
+      {preview.decision === 'undo' && (
+        <>
+          <p>{t('shell.accessAdmin.changes.undoHelp')}</p>
+          <p>{t('shell.accessAdmin.changes.noRevocationRestore')}</p>
+          <ChangeSkips skipped={preview.undoSkips} />
+        </>
+      )}
+      {preview.effects.map((effect) => (
+        <changeConfirmationForm.confirmedItemIds
+          disabled={disabled}
+          id={`confirm-change-${effect.itemId}`}
+          key={effect.itemId}
+          label={t('shell.accessAdmin.changes.confirmItem', { effect: effect.description })}
+          member={effect.itemId}
+        />
+      ))}
+      <div className="flex flex-wrap gap-150">
+        <SubmitButton disabled={disabled || !writesAvailable || !canConfirmPreview(preview, confirmedItemIds)}>
+          {t(`shell.accessAdmin.changes.${preview.decision}`)}
+        </SubmitButton>
+        <Button disabled={busy} onClick={onCancel} severity="secondary" type="button">
+          {t('shell.accessAdmin.common.cancel')}
+        </Button>
+      </div>
+    </FormRoot>
+  );
+};
+
 export const ChangesView = (props: ChangesViewProps) => {
   const { t } = useModernI18n();
-  const selectedIds = new Set(props.selectedIds);
-  const confirmedIds = new Set(props.confirmedItemIds);
+  const selection = Option.getOrElse(useAtomValue(selectedIdsValue), () => noIds);
+  const selectedIds = new Set(selection);
   const selected = props.items.filter((item) => selectedIds.has(item.id));
   const disabled = props.busy || props.requiresRefresh;
+  // The field also notifies when a submit records its state; only a different selection is a change.
+  useAtomSubscribe(
+    selectedIdsValue,
+    (next) => {
+      const ids = Option.getOrElse(next, () => noIds);
+      if (ids.length !== selection.length || ids.some((id, index) => id !== selection[index])) {
+        props.onSelectionChange();
+      }
+    },
+    { immediate: false },
+  );
+  useAtomSubscribe(changeSelectionForm.submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting) {
+      props.onPreview(result.value, 'adopt');
+    }
+  });
   return (
     <section aria-busy={props.busy} aria-label={t('shell.accessAdmin.changes.title')} className="grid gap-300">
       <p>{t('shell.accessAdmin.changes.description')}</p>
@@ -95,91 +221,84 @@ export const ChangesView = (props: ChangesViewProps) => {
           {t(`shell.accessAdmin.common.${props.notice}`)}
         </StatusText>
       )}
-      <div className="flex flex-wrap gap-150">
-        <Button disabled={props.busy} onClick={props.onRefresh} severity="secondary" type="button">
-          {t('shell.accessAdmin.common.refresh')}
-        </Button>
-        <Button
-          disabled={disabled || !canPreviewDecision(selected, 'adopt')}
-          onClick={() =>
-            props.onPreview(
-              selected.map((item) => item.id),
-              'adopt',
-            )
-          }
-          type="button"
-        >
-          {t('shell.accessAdmin.changes.previewBatch')}
-        </Button>
-      </div>
-      {props.items.length === 0 ? (
-        <StatusText status="default">{t('shell.accessAdmin.changes.empty')}</StatusText>
-      ) : (
-        <ul aria-label={t('shell.accessAdmin.accessible.changeList')} className="grid gap-300">
-          {props.items.map((item) => (
-            <li className="grid gap-150" key={item.id}>
-              <h3 className="text-xl">{item.capabilityKey}</h3>
-              <div className="flex flex-wrap gap-150">
-                <Badge appearance="outline" severity="neutral">
-                  {t(`shell.accessAdmin.changes.kind.${item.kind}`)}
-                </Badge>
-                <Badge appearance="outline" severity="neutral">
-                  {t(`shell.accessAdmin.changes.status.${item.status}`)}
-                </Badge>
-                <Badge severity={item.risk === 'routine' ? 'info' : 'warning'}>
-                  {t(`shell.accessAdmin.risk.${item.risk}`)}
-                </Badge>
-              </div>
-              <ChangeDetails item={item} />
-              {item.widening === true && (
-                <StatusText status="warning">{t('shell.accessAdmin.changes.wideningWarning')}</StatusText>
-              )}
-              {isBatchEligible(item) && (
-                <FormCheckbox
-                  checked={selectedIds.has(item.id)}
-                  disabled={disabled}
-                  id={`change-select-${item.id}`}
-                  label={t('shell.accessAdmin.changes.selectItem', { item: item.capabilityKey })}
-                  onCheckedChange={(checked) => props.onSelect(item.id, checked)}
-                />
-              )}
-              {item.status === 'pending' && (
+      <FormRoot
+        className="grid gap-300"
+        defaultValues={{ selectedIds: [] }}
+        form={changeSelectionForm}
+        key={props.selection}
+        translateMessage={t}
+      >
+        <div className="flex flex-wrap gap-150">
+          <Button disabled={props.busy} onClick={props.onRefresh} severity="secondary" type="button">
+            {t('shell.accessAdmin.common.refresh')}
+          </Button>
+          <SubmitButton disabled={disabled || !canPreviewDecision(selected, 'adopt')}>
+            {t('shell.accessAdmin.changes.previewBatch')}
+          </SubmitButton>
+        </div>
+        {props.items.length === 0 ? (
+          <StatusText status="default">{t('shell.accessAdmin.changes.empty')}</StatusText>
+        ) : (
+          <ul aria-label={t('shell.accessAdmin.accessible.changeList')} className="grid gap-300">
+            {props.items.map((item) => (
+              <li className="grid gap-150" key={item.id}>
+                <h3 className="text-xl">{item.capabilityKey}</h3>
                 <div className="flex flex-wrap gap-150">
-                  <Button disabled={disabled} onClick={() => props.onPreview([item.id], 'adopt')} type="button">
-                    {t('shell.accessAdmin.changes.previewAdopt')}
-                  </Button>
-                  <Button
-                    disabled={disabled}
-                    onClick={() => props.onPreview([item.id], 'decline')}
-                    severity="secondary"
-                    type="button"
-                  >
-                    {t('shell.accessAdmin.changes.previewDecline')}
-                  </Button>
+                  <Badge appearance="outline" severity="neutral">
+                    {t(`shell.accessAdmin.changes.kind.${item.kind}`)}
+                  </Badge>
+                  <Badge appearance="outline" severity="neutral">
+                    {t(`shell.accessAdmin.changes.status.${item.status}`)}
+                  </Badge>
+                  <Badge severity={item.risk === 'routine' ? 'info' : 'warning'}>
+                    {t(`shell.accessAdmin.risk.${item.risk}`)}
+                  </Badge>
                 </div>
-              )}
-              {item.status === 'adopted' && (
-                <Button
-                  disabled={disabled}
-                  onClick={() => props.onPreview([item.id], 'undo')}
-                  severity="secondary"
-                  type="button"
-                >
-                  {t('shell.accessAdmin.changes.previewUndo')}
-                </Button>
-              )}
-              {item.status === 'undone' && (
-                <StatusText status="default">{t('shell.accessAdmin.changes.undoneTerminal')}</StatusText>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {props.hasMore && (
-        <Button disabled={props.busy} onClick={props.onLoadMore} severity="secondary" type="button">
-          {t('shell.accessAdmin.changes.loadMore')}
-        </Button>
-      )}
+                <ChangeDetails item={item} />
+                {item.widening === true && (
+                  <StatusText status="warning">{t('shell.accessAdmin.changes.wideningWarning')}</StatusText>
+                )}
+                {isBatchEligible(item) && (
+                  <changeSelectionForm.selectedIds
+                    disabled={disabled}
+                    id={`change-select-${item.id}`}
+                    label={t('shell.accessAdmin.changes.selectItem', { item: item.capabilityKey })}
+                    member={item.id}
+                  />
+                )}
+                {item.status === 'pending' && (
+                  <div className="flex flex-wrap gap-150">
+                    <Button disabled={disabled} onClick={() => props.onPreview([item.id], 'adopt')} type="button">
+                      {t('shell.accessAdmin.changes.previewAdopt')}
+                    </Button>
+                    <Button
+                      disabled={disabled}
+                      onClick={() => props.onPreview([item.id], 'decline')}
+                      severity="secondary"
+                      type="button"
+                    >
+                      {t('shell.accessAdmin.changes.previewDecline')}
+                    </Button>
+                  </div>
+                )}
+                {item.status === 'adopted' && (
+                  <Button disabled={disabled} onClick={() => props.onPreview([item.id], 'undo')} type="button">
+                    {t('shell.accessAdmin.changes.previewUndo')}
+                  </Button>
+                )}
+                {item.status === 'undone' && (
+                  <StatusText status="default">{t('shell.accessAdmin.changes.undoneTerminal')}</StatusText>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {props.hasMore && (
+          <Button disabled={props.busy} onClick={props.onLoadMore} severity="secondary" type="button">
+            {t('shell.accessAdmin.changes.loadMore')}
+          </Button>
+        )}
+      </FormRoot>
       {props.receipt !== undefined && props.receipt.skipped.length > 0 && (
         <section aria-label={t('shell.accessAdmin.changes.undo')} className="grid gap-150">
           <p>{t('shell.accessAdmin.changes.undoHelp')}</p>
@@ -188,52 +307,14 @@ export const ChangesView = (props: ChangesViewProps) => {
         </section>
       )}
       {props.preview !== undefined && (
-        <section aria-labelledby="access-changes-preview" className="grid gap-150">
-          <h3 className="text-xl" id="access-changes-preview">
-            {t('shell.accessAdmin.common.preview')}
-          </h3>
-          <p>
-            {props.preview.affectedHumanCount === null
-              ? t('shell.accessAdmin.common.notAvailable')
-              : t('shell.accessAdmin.changes.affectedPeopleCount', { count: props.preview.affectedHumanCount })}
-          </p>
-          {props.preview.items.map((item) => (
-            <div key={item.id}>
-              <h4>{item.capabilityKey}</h4>
-              <ChangeDetails item={item} />
-            </div>
-          ))}
-          <ChangeRoleDiff changes={props.preview.roleChanges} />
-          {props.preview.decision === 'undo' && (
-            <>
-              <p>{t('shell.accessAdmin.changes.undoHelp')}</p>
-              <p>{t('shell.accessAdmin.changes.noRevocationRestore')}</p>
-              <ChangeSkips skipped={props.preview.undoSkips} />
-            </>
-          )}
-          {props.preview.effects.map((effect) => (
-            <FormCheckbox
-              checked={confirmedIds.has(effect.itemId)}
-              disabled={disabled}
-              id={`confirm-change-${effect.itemId}`}
-              key={effect.itemId}
-              label={t('shell.accessAdmin.changes.confirmItem', { effect: effect.description })}
-              onCheckedChange={(checked) => props.onConfirmEffect(effect.itemId, checked)}
-            />
-          ))}
-          <div className="flex flex-wrap gap-150">
-            <Button
-              disabled={disabled || !props.writesAvailable || !canConfirmPreview(props.preview, props.confirmedItemIds)}
-              onClick={props.onConfirm}
-              type="button"
-            >
-              {t(`shell.accessAdmin.changes.${props.preview.decision}`)}
-            </Button>
-            <Button disabled={props.busy} onClick={props.onCancel} severity="secondary" type="button">
-              {t('shell.accessAdmin.common.cancel')}
-            </Button>
-          </div>
-        </section>
+        <ChangePreview
+          busy={props.busy}
+          disabled={disabled}
+          onCancel={props.onCancel}
+          onConfirm={props.onConfirm}
+          preview={props.preview}
+          writesAvailable={props.writesAvailable}
+        />
       )}
     </section>
   );

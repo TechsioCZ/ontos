@@ -5,7 +5,7 @@ import { createAccessAdministrationIdempotencyKey } from '../../../api/auth-clie
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { ChangesClientFailure, changesFailureNotice } from './changes-client.ts';
 import type { ChangesClient, ChangesListView } from './changes-client.ts';
-import { canConfirmPreview, canPreviewDecision, isBatchEligible, previewMatchesSelection } from './changes-model.ts';
+import { canConfirmPreview, canPreviewDecision, previewMatchesSelection } from './changes-model.ts';
 import type { ChangeDecision, ChangePreviewView, ChangeReceiptView, ChangesNotice } from './changes-model.ts';
 import { ChangesView } from './changes-view.tsx';
 
@@ -19,9 +19,8 @@ export const ChangesFeature = ({
   readonly initialNotice: ChangesNotice | null;
 }) => {
   const [list, setList] = useState(initial);
-  const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
+  const [selectionKey, setSelectionKey] = useState(0);
   const [preview, setPreview] = useState<ChangePreviewView>();
-  const [confirmedItemIds, setConfirmedItemIds] = useState<readonly string[]>([]);
   const [notice, setNotice] = useState(initialNotice);
   const [receipt, setReceipt] = useState<ChangeReceiptView>();
   const [requiresRefresh, setRequiresRefresh] = useState(initialNotice === 'stalePreview');
@@ -31,9 +30,9 @@ export const ChangesFeature = ({
 
   const clearPreview = () => {
     setPreview(undefined);
-    setConfirmedItemIds([]);
     commandKey.current = null;
   };
+  const clearSelection = () => setSelectionKey((current) => current + 1);
   const run = <A,>(operation: Effect.Effect<A, ChangesClientFailure>, onSuccess: (value: A) => void) => {
     if (pending.current) {
       return;
@@ -51,7 +50,7 @@ export const ChangesFeature = ({
               clearPreview();
               const failureNotice = changesFailureNotice(error);
               if (failureNotice !== 'unavailable') {
-                setSelectedIds([]);
+                clearSelection();
               }
               setNotice(failureNotice);
               setRequiresRefresh(true);
@@ -75,7 +74,7 @@ export const ChangesFeature = ({
       return;
     }
     clearPreview();
-    setSelectedIds([]);
+    clearSelection();
     run(client.list(), (result) => {
       setList(result);
       setRequiresRefresh(false);
@@ -110,7 +109,7 @@ export const ChangesFeature = ({
       },
     );
   };
-  const confirm = () => {
+  const confirm = (confirmedItemIds: readonly string[]) => {
     if (
       pending.current ||
       requiresRefresh ||
@@ -130,7 +129,7 @@ export const ChangesFeature = ({
       ),
       (result) => {
         setList(result);
-        setSelectedIds([]);
+        clearSelection();
         setNotice('saved');
       },
     );
@@ -138,26 +137,17 @@ export const ChangesFeature = ({
   return (
     <ChangesView
       busy={busy}
-      confirmedItemIds={confirmedItemIds}
       hasMore={list.nextCursor !== null}
       items={list.items}
       notice={notice}
       onCancel={clearPreview}
       onConfirm={confirm}
-      onConfirmEffect={(id, confirmed) => {
-        if (pending.current) {
-          return;
-        }
-        setConfirmedItemIds((current) =>
-          confirmed ? [...new Set([...current, id])] : current.filter((value) => value !== id),
-        );
-      }}
       onLoadMore={() => {
         if (pending.current || list.nextCursor === null) {
           return;
         }
         clearPreview();
-        setSelectedIds([]);
+        clearSelection();
         const loaded = new Set(list.items.map((item) => item.id));
         run(client.list(list.nextCursor), (result) => {
           const additional = result.items.filter((item) => !loaded.has(item.id));
@@ -166,19 +156,11 @@ export const ChangesFeature = ({
       }}
       onPreview={requestPreview}
       onRefresh={refresh}
-      onSelect={(id, selected) => {
-        if (pending.current || !list.items.some((item) => item.id === id && isBatchEligible(item))) {
-          return;
-        }
-        clearPreview();
-        setSelectedIds((current) =>
-          selected ? [...new Set([...current, id])] : current.filter((value) => value !== id),
-        );
-      }}
+      onSelectionChange={clearPreview}
       preview={preview}
       receipt={receipt}
       requiresRefresh={requiresRefresh}
-      selectedIds={selectedIds}
+      selection={selectionKey}
       writesAvailable={list.writeAvailability?.available === true}
     />
   );

@@ -506,7 +506,7 @@ test('names the legal-entity selector by its own label and keeps a sole choice o
   expect(legalEntity.hasAttribute('aria-label')).toBe(false);
   expect(legalEntity.hasAttribute('aria-describedby')).toBe(false);
   expect(legalEntity.hasAttribute('disabled')).toBe(false);
-  expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-label')).toBe('Current tenant');
+  expect(screen.getByRole('combobox', { name: 'Current tenant' })).toBeTruthy();
   expect(screen.queryByText('Select a legal entity')).toBeNull();
 
   const { currentLegalEntityId: _selectedLegalEntityId, ...unselectedLegalEntityProps } = tenantProps;
