@@ -120,6 +120,12 @@ _Avoid_: override, fork, redirecting a module's address.
 **Application Composition** — A named dependency-closed graph of compatible Foundational and
 Business Modules serving a coherent purpose.
 
+**Release Channel** — A named selection of one version of every Platform Module, owned by OntOS
+operators, that decides which Platform Module versions serve the people it applies to. A Tenant
+never chooses a Release Channel or the version of a Platform Module.
+_Avoid_: tag, track, bare channel (a Release Channel is not a Commerce Channel, a Channel
+Application, or a Communication Channel).
+
 **Customer Configuration** — Declarative selection of permitted modules, implementations,
 policies, settings, locales, clients, connectors, and Integration Routes for one customer. It cannot
 fork Core or hide customer code behind an existing implementation identity.

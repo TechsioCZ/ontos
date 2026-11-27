@@ -5,9 +5,9 @@ status: proposed
 # ADR-0032: One CoreSDK for Platform and Tenant Modules
 
 Proposed. It records what the Product Owner has decided so far in the CoreSDK design interview and
-the outcome of two four-model design councils. The interview is still open: this ADR gains decisions
-round by round and is accepted only when the Product Owner confirms the complete design. Everything
-below is target architecture; none of it is implemented yet.
+the outcome of three four-model design councils. The interview is still open: this ADR gains
+decisions round by round and is accepted only when the Product Owner confirms the complete design.
+Everything below is target architecture; none of it is implemented yet.
 
 ## Context
 
@@ -103,8 +103,11 @@ under Open points.
      Module writes no migration for it.
    - The declaring Module receives operations and interface primitives with which it can build a
      management interface for its members when it needs one.
-   - Accounts stay separate, but OntOS must be able to connect members of different Module Audiences
-     and analyse them. How is an open point.
+   - Accounts stay separate, but a member can be linked to a Party of the same Tenant in the Party
+     Registry, so that one real person who belongs to two Module Audiences of that Tenant shows as
+     one Party. Members of Module Audiences in different Tenants are never linked to one Party.
+     Every Module Audience publishes the same standard Published Events, such as a member
+     registering, signing in, or being removed, which any analytics Module can consume.
 
    The first CoreSDK version includes this capability, and it applies to any Module. Commerce owns a
    separate realm for Commerce Portal Accounts today
@@ -136,25 +139,47 @@ under Open points.
     Effect, React, and the design system. Each is a Module Federation shared singleton, and
     admission to the Application Composition rejects a Module built against another version. Inside
     one runtime that is one shared instance; between runtimes it is the same pinned version.
-15. **Several immutable versions of one Module may be live in one deployment.**
-    - Which version serves a request is selected without a new deployment: by Environment, by
-      domain, and by a rule over Tenants or people, such as a beta group or a share of traffic in an
-      A/B test. An OntOS operator can, for example, run a domain on which every Platform Module is
-      at its latest version.
-    - OntOS operators select versions of Platform Modules. A Tenant's administrators select versions
-      of that Tenant's own Tenant Modules. A Tenant never selects the version of a Platform Module.
-    - The Application Composition stays the one authority for what is live. An artifact store,
-      Zephyr Cloud included, only stores immutable files.
-    - The selection is data that can be changed and overridden at runtime. It is never a value
-      pinned in code.
-    - Each version states which database migrations it needs applied. Versions are live side by side
-      only when they need the same migrations, and a version that needs a further migration replaces
-      every older version.
-    - A switch can move a Module's server code as well as its browser code. The selection may change
-      between two live versions, in either direction, only when that is safe forwards and backwards:
-      no breaking change separates them and they need the same migrations. A version that needs a
-      further migration is not selected this way; it goes live by replacing every older version, as
-      the previous point says.
+15. **Several immutable versions of one Module may be live in one deployment, selected through
+    Release Channels.**
+    - A Release Channel is a named, complete selection of one version of every Platform Module. An
+      OntOS operator attaches it to an Environment, a domain, a Tenant, or a group of people and
+      changes it at runtime, without a new deployment. An operator can, for example, run a domain on
+      which every Platform Module is at its latest version.
+    - An operator does not have to select every version by hand. A Release Channel can be defined
+      through groups of Modules, for example "every Business Module at its stable version" or "every
+      Business Module that depends on a named Module at its beta version". OntOS offers presets, and
+      an operator can also define a Release Channel completely on their own.
+    - An operator with permission can select a Release Channel or a single Module version for
+      themselves, for testing. Core issues a signed preview that expires and is bound to that
+      person, and it applies to browser and server code alike.
+    - OntOS must also support A/B tests and gradual rollout, for example to 10 % of customers and
+      then to 25 %. They are not part of the first version, and how they are modelled is an open
+      point.
+    - All of this is built on Module Federation for both browser and server code and on
+      MicroVerticals.
+    - OntOS operators select versions of Platform Modules, through Release Channels. A Tenant's
+      administrators select versions of that Tenant's own Tenant Modules. A Tenant never selects a
+      Release Channel or the version of a Platform Module.
+    - The Application Composition stays the one authority for what is live. OntOS stores the
+      immutable files of every Module version itself, on S3-compatible object storage, and never
+      needs Zephyr Cloud to run. The Zephyr build plugin stays optional. Delivery is still Module
+      Federation.
+    - The selection is data that an operator can change and override at runtime, but only between
+      versions that Core admits under the check in the next point. It is never a value pinned in
+      code.
+    - The build records, for every Module version, the database migrations it needs and its public
+      contract. Core lets two versions be live side by side, and lets the selection change between
+      them in either direction, only when they need the same migrations and their public operations,
+      Published Events, and embedded interface contracts are compatible in both directions. When
+      Core cannot prove that, it refuses, and no operator can override the refusal. A version that
+      needs a further migration is not selected this way; it goes live by replacing every older
+      version.
+    - A switch can move a Module's server code as well as its browser code.
+    - An open browser document is not simply left on the version it loaded until its next reload,
+      because that could lead to serious problems after a breaking change. The person is shown that
+      a new version exists, and OntOS supports replacing the running version inside the open
+      document while keeping what the person has entered, such as the contents of forms. How that
+      replacement works is an open point.
 16. **A Tenant Module never blocks a CoreSDK upgrade.** Every Platform Module builds and passes on a
     new CoreSDK version before an Environment moves to it. A Tenant Module that still fails after
     the automatic codemod does not hold the Environment back. Its Tenant receives a highly visible
@@ -200,24 +225,72 @@ under Open points.
     has migrated. Migrating a Module also turns its direct imports of other Modules into declared
     calls.
 
+### The shape of a Module Definition
+
+Decisions 24 to 26 come from the third council. The Product Owner accepted decision 24 and adopted
+decision 25 because all three council delegates recommended it. Decision 26 and the amendments
+listed under decision 24 were also recommended by all three delegates and are recorded on that
+basis, without a separate decision by the Product Owner.
+
+24. **A declaration is a named class in its own file, and its handler is in a separate file.**
+    Everything a Module declares is one named class in its own file. The class holds data only: its
+    key, its schemas, its typed errors, its access rule, and the lists of what its handler may call,
+    use, and publish. The handler is created from that class in a separate file and takes every type
+    from it, so an author writes no type annotation. A handler that calls an operation, reads a
+    setting, uses an outside dependency, or publishes an event that its declaration does not list
+    does not compile. The Module Definition is one class that lists the declarations of the Module.
+
+    For example, the declaration of an Action that assigns a tag names its key, its payload,
+    success, and error schemas, its access rule, the one operation it calls, the one setting it
+    uses, and the one event it publishes. Its handler can reach nothing else.
+
+    The amendments on which all three delegates agreed belong to this decision:
+    - A page or a component is bound to its declaration in the same checked way as a handler, not
+      named by a path in a string.
+    - A call that writes declares the read through which its outcome is recovered.
+    - An Inbound Endpoint verifies a request with one of the named signature schemes that the kernel
+      owns.
+    - The CoreSDK checks that a Module declares nothing outside the vocabulary of decision 2 and
+      that every key carries the identifier of its Module.
+
+    The owning Module of a Resource is part of its type, so a handler that writes a Resource of
+    another Module does not compile. This point was not put to the Product Owner and the delegates
+    did not all agree on it; it is recorded because it follows from decision 3, which enforces on
+    types. The alternative was a lint rule with the runtime check of the kernel.
+25. **A provider publishes references, never its declaration classes.** For every public operation,
+    Published Event, and public component, the trusted build produces a reference: its schemas as
+    runnable code, its types, and a machine-readable description. Another Module imports only
+    references. The settings, outside dependencies, and handlers of a provider never leave it; the
+    council showed that publishing the declaration classes would expose them. Public error types and
+    schemas therefore live in files that import nothing private.
+26. **An explicit, checked list binds handlers to declarations.** A missing, duplicated, or orphaned
+    handler fails the build. A file name never decides which handler runs. Whether the build
+    generates that list or Codesmith appends a line to an authored one is an open point: the Product
+    Owner asked for the pros and cons of both.
+
 ## Open points
 
 These are not decided yet. They are listed so that no reader takes the decisions above as complete.
 
-- How the selection in decision 15 is modelled and overridden.
-- How members of Module Audiences are connected and analysed (decision 8).
+- Whether the build generates the list of decision 26 or Codesmith appends to an authored one.
+- How a running version is replaced inside an open document (decision 15): how what the person has
+  entered is carried over, what else is kept, and when the replacement is required rather than
+  offered.
+- Whether a Release Channel defined through groups moves to a newer qualifying version on its own or
+  only when an operator applies it.
+- How A/B tests and gradual rollout are modelled (decision 15).
 - When the Commerce Portal realm moves onto a Module Audience.
 - Whether inference from one Module Definition stays fast and readable at the size of the largest
-  module. It is measured before the current representations are deleted.
-- The exact shape of the Module Definition.
+  module. It is measured on a real Module before the current representations are deleted.
 - For Tenant Modules, later: where their source lives (the Product Owner leans towards files that
   OntOS itself stores and versions), and which module state a Tenant Module enters when it stops
   under decision 16.
 
 ## Considered options
 
-Two councils (GPT-6.2 Astra, GPT-6.1 Sol, Claude Opus 5.5, Claude Fable 5.2) each chose the accepted
-option unanimously.
+Three councils of GPT-6.2 Astra, GPT-6.1 Sol, Claude Opus 5.5, and Claude Fable 5.2 were held. The
+first two each chose the accepted option unanimously. In the third, Claude Fable 5.2 made the
+proposal, and the three other seats accepted option 4 only with the two changes named under it.
 
 **One SDK or two.**
 
@@ -247,6 +320,19 @@ through Codesmith operations, or whether the trusted build alone decides what sh
 takes both: the trusted build is the rule for every author, and Codesmith operations make the limit
 possible.
 
+**The shape of a Module Definition.** Three working prototypes of the same Module were built and
+compared before the council chose.
+
+1. **Contract first.** Every declaration is a plain value in a contract folder, and handlers are
+   bound to those values in a separate implementation folder. Not chosen on its own.
+2. **Co-located.** A declaration and its handler are one value in one file, and a build step strips
+   the handlers to produce what other Modules import. Not chosen on its own.
+3. **A class for every declaration, with separate handlers.** The base of the accepted option.
+4. **Named declaration classes with separate handlers, references published for each public
+   operation, and an explicit, checked handler list (decisions 24 to 26).** Accepted. The proposal
+   put to the council bound handlers by a naming convention and let other Modules import the
+   declaration classes of a provider; all three delegates required both to change.
+
 ## Consequences
 
 - A CoreSDK upgrade is a rebuild of every Module, Tenant Modules included, because the shared
@@ -259,6 +345,8 @@ possible.
   the CoreSDK. Confinement of a Tenant Module is the job of its Module Runtime.
 - The contract check stops comparing generated files with their source. It compares a candidate
   public contract with the released one and reports what changed.
+- The shape of decision 24 relies on type inference across files, so Module code cannot use
+  TypeScript's `isolatedDeclarations` mode. Checking file by file still works.
 - When the Product Owner confirms the complete design, this ADR is accepted for everything outside
   the Tenant Module direction, and ADR-0004, ADR-0014, ADR-0017, and ADR-0020 are each marked
   partially superseded by it, naming the exact point that changed. Until then those decisions stand:
@@ -270,11 +358,16 @@ possible.
     with [ADR-0017](0017-commerce-application-boundaries.md), which rejects customer-pinned product
     versions, and with the Build Revision term, which is not a customer-selectable product version.
     Decision 15 keeps one part of their intent: a Tenant never selects the version of a Platform
-    Module. Selecting by a rule over Tenants, and letting a Tenant select the versions of its own
-    Tenant Modules, still contradicts them. ADR-0020 also pins one browser document to one
-    composition revision and rejects runtime hot-swap; whether a changed selection may take effect
-    inside an open document is part of the same reconciliation.
-  - Decision 8 changes ADR-0017 and ADR-0014, under which Commerce owns its portal realm.
+    Module. Attaching a Release Channel to a Tenant or to a group of people, and letting a Tenant
+    select the versions of its own Tenant Modules, still contradicts them.
+  - ADR-0020 pins one browser document to one composition revision, lets a routine upgrade take
+    effect only on a full reload or a new document, and rejects runtime hot-swap because it can
+    silently change the code serving an active document. Decision 15 changes that: the person is
+    shown that a new version exists, and the running version can be replaced inside the open
+    document.
+  - Decision 8 changes ADR-0017 and ADR-0014, under which Commerce owns its portal realm. Linking a
+    member to a Party leaves the Party Registry as the owner of shared identity
+    ([ADR-0015](0015-party-registry-owns-shared-identity.md)).
   - Decision 5 allows an exception to [ADR-0004](0004-postgres-canonical-neo4j-projection.md), which
     makes PostgreSQL canonical for operational facts. ADR-0004 is amended before the first Module
     uses that exception.
