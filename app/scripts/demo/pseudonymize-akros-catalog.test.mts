@@ -229,6 +229,26 @@ describe('pseudonymous demo catalog', () => {
       expect(galleryConsistent({ ...gallery, imageSrc: 'media:b', variants: [] })).toBe(false);
     }),
   );
+  it.effect('a variant keeps its own upload outside the gallery: never planned as a gallery photo', () =>
+    Effect.gen(function* variantOwnUpload() {
+      const { first } = yield* fixture;
+      const upload = 'media:9bfbed21-f244-4adc-adee-6bf875d4fb86';
+      const variant = { ...first.variants?.[0], attributes: '', name: 'M' };
+      const source = 'https://www.akros.cz/data/product/hak.jpg';
+      const product = {
+        ...first,
+        images: [source],
+        imageSrc: source,
+        variants: [
+          { ...variant, imageSrc: upload },
+          { ...variant, imageSrc: 'https://www.akros.cz/data/product/hak-2.jpg' },
+        ],
+      };
+      expect(productPhotoPlan(product).kept).toEqual([source, 'https://www.akros.cz/data/product/hak-2.jpg']);
+      const gallery = { ...first, images: ['media:a'], imageSrc: 'media:a' };
+      expect(galleryConsistent({ ...gallery, variants: [{ ...variant, imageSrc: upload }] })).toBe(true);
+    }),
+  );
 });
 
 const twinResolve = (image: string) => (image.includes('img-5293') ? 'media:one' : 'media:two');

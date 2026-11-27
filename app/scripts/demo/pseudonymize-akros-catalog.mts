@@ -14,6 +14,7 @@ import { ChangeProductImagesPayloadSchema } from '../../verticals/merchandise/sh
 import { ManageCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-catalog.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
+import { isMediaImageReference } from '../../verticals/merchandise/shared/domain/product-images.ts';
 import type { AkrosEncodedState } from '../../verticals/merchandise/scripts/akros-baseline.ts';
 import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
 import {
@@ -29,6 +30,7 @@ import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.
 import {
   galleryOrder,
   twinReference,
+  variantOwnUpload,
   Category,
   CategoryPatch,
   Product,
@@ -482,7 +484,9 @@ const seedPhotoSource = (before: CatalogProduct, source: CatalogProduct): Catalo
   if (before.variants !== undefined) {
     photos.variants = before.variants.map((variant) => ({
       ...variant,
-      imageSrc: source.variants?.find(({ id }) => id === variant.id)?.imageSrc ?? source.imageSrc ?? '',
+      imageSrc: isMediaImageReference(variant.imageSrc ?? '')
+        ? variant.imageSrc
+        : (source.variants?.find(({ id }) => id === variant.id)?.imageSrc ?? source.imageSrc ?? ''),
     }));
   }
   return photos;
@@ -644,7 +648,8 @@ const summarizePlan = (root: string) =>
           kept: photos.kept.length,
           name: entry.before.name,
           variantsUsingFallback: (entry.photos.variants ?? []).filter(
-            ({ imageSrc }) => (imageSrc ?? '') !== '' && !photos.kept.includes(imageSrc ?? ''),
+            ({ imageSrc = '' }) =>
+              imageSrc !== '' && !photos.kept.includes(imageSrc) && !variantOwnUpload(photos.gallery, imageSrc),
           ).length,
         })),
       products: plan.products.length,
@@ -772,6 +777,10 @@ const applyProduct = (client: SeedClient, root: string, entry: PlannedProduct) =
         const source = entry.photos.variants?.[index]?.imageSrc ?? '';
         if (source === '' || isSourcePlaceholder(source)) {
           return { ...variant, imageSrc: '' };
+        }
+        // An upload (a gallery photo or the variant's own) is no source photo: the variant keeps it.
+        if (isMediaImageReference(source)) {
+          return { ...variant, imageSrc: source };
         }
         return { ...variant, imageSrc: kept.includes(source) ? resolve(source) : main };
       });

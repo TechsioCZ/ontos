@@ -6,6 +6,7 @@ import {
   CatalogCategorySchema,
   ProductRecordSchema,
 } from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
+import { isMediaImageReference } from '../../verticals/merchandise/shared/domain/product-images.ts';
 import {
   isMarketingCatalogImage,
   isSourcePlaceholder,
@@ -133,9 +134,14 @@ export const categoryHasBrand = (category: CatalogCategory) =>
     category.slug,
   ]);
 
+/** A Core Media upload a variant shows that the gallery does not hold: the variant's own photo, kept as it is. */
+export const variantOwnUpload = (gallery: readonly string[], image: string) =>
+  isMediaImageReference(image) && !gallery.includes(image);
+
 /**
  * Main/gallery first, then distinct variant photos in variant order; excess use the same item's main photo.
- * Placeholders, marketing artwork and `excluded` (source photos that could not be frozen) are never kept.
+ * Placeholders, marketing artwork and `excluded` (source photos that could not be frozen) are never kept. A variant's
+ * own upload outside the gallery is not a gallery photo: the variant keeps it (`variantOwnUpload`).
  */
 export const productPhotoPlan = (product: CatalogProduct, excluded: ReadonlySet<string> = new Set()) => {
   const usable = (image: string) =>
@@ -146,7 +152,7 @@ export const productPhotoPlan = (product: CatalogProduct, excluded: ReadonlySet<
   }
   gallery = gallery.filter(usable);
   const variantImages = (product.variants ?? []).flatMap(({ imageSrc }) =>
-    imageSrc !== undefined && usable(imageSrc) ? [imageSrc] : [],
+    imageSrc !== undefined && usable(imageSrc) && !variantOwnUpload(gallery, imageSrc) ? [imageSrc] : [],
   );
   const all = [...new Set([...gallery, ...variantImages])];
   return { fallback: Math.max(0, all.length - 20), gallery, kept: all.slice(0, 20), total: all.length };
@@ -195,12 +201,14 @@ export const categoryRepresentatives = (
   return new Map(categories.map(({ id }) => [id, pick(id, new Set())]));
 };
 
-/** Post-apply shape: main = first gallery photo, every variant photo is a gallery photo (or none). */
+/** Post-apply shape: main = first gallery photo, every variant photo is a gallery photo, its own upload or none. */
 export const galleryConsistent = (product: CatalogProduct) => {
   const gallery = product.images ?? [];
   return (
     (product.imageSrc ?? '') === (gallery[0] ?? '') &&
-    (product.variants ?? []).every(({ imageSrc }) => (imageSrc ?? '') === '' || gallery.includes(imageSrc ?? ''))
+    (product.variants ?? []).every(
+      ({ imageSrc = '' }) => imageSrc === '' || gallery.includes(imageSrc) || isMediaImageReference(imageSrc),
+    )
   );
 };
 export const protectedProduct = (product: CatalogProduct) => ({

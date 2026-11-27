@@ -10,7 +10,12 @@ import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandisePersistenceUnavailable } from '../../shared/errors/merchandise-persistence-unavailable.ts';
 import { loadAkrosBaselineParts } from './akros-baseline.generated.ts';
 import { categoryForestIssue } from '../../shared/domain/category-forest.ts';
-import { isMediaImageReference, mediaAssetIdOf } from '../../shared/domain/product-images.ts';
+import {
+  isMediaImageReference,
+  mediaAssetIdOf,
+  photoLibraryAfter,
+  shownPhotosOf,
+} from '../../shared/domain/product-images.ts';
 import type { CatalogCategory, Product } from '../../shared/domain/merchandise-model.ts';
 import { categories } from '../database/schema.ts';
 import {
@@ -66,16 +71,21 @@ export interface LinkedPhotos {
   readonly products: ReadonlyMap<string, Product>;
 }
 
+/** Every Core Media upload of a product: the ones its photo library holds, then the ones it shows now. */
+const uploadsOf = (product: Product): readonly string[] =>
+  [...(product.photoLibrary ?? []), ...shownPhotosOf(product)].filter(isMediaImageReference);
+
 /**
  * Core Media links survive the row reset (it deletes merchandise rows only), so the baseline keeps the photos the
- * company already uploaded: a product keeps its uploaded gallery (main = first) and the variant photos among it, a
- * category keeps a storefront photo address of such a kept product photo. Everything else is the baseline's.
+ * company already uploaded: a product keeps its uploaded gallery (main = first), every variant's uploaded photo
+ * (in the gallery or the variant's own) and every upload of its photo library; a category keeps a storefront photo
+ * address of a kept gallery photo. Everything else is the baseline's.
  */
 export const linkedPhotosOf = (
   products: readonly Product[],
   storeCategories: readonly CatalogCategory[],
 ): LinkedPhotos => {
-  const uploaded = products.filter(({ images }) => (images ?? []).some(isMediaImageReference));
+  const uploaded = products.filter((product) => uploadsOf(product).length > 0);
   const paths = new Set(
     uploaded.flatMap(({ id, images }) =>
       (images ?? []).flatMap((image) =>
@@ -96,13 +106,16 @@ const withLinkedPhotos = (product: Product, previous: Product | undefined): Prod
   }
   const images = (previous.images ?? []).filter(isMediaImageReference);
   const variantPhotos = new Map((previous.variants ?? []).map((variant) => [variant.id, variant.imageSrc] as const));
-  const kept: Types.Mutable<Product> = { ...product, images, imageSrc: images[0] ?? '' };
+  const kept: Types.Mutable<Product> =
+    images.length === 0 ? { ...product } : { ...product, images, imageSrc: images[0] ?? '' };
   if (product.variants !== undefined) {
     kept.variants = product.variants.map((variant) => {
       const imageSrc = variantPhotos.get(variant.id);
-      return imageSrc !== undefined && images.includes(imageSrc) ? { ...variant, imageSrc } : variant;
+      return imageSrc !== undefined && isMediaImageReference(imageSrc) ? { ...variant, imageSrc } : variant;
     });
   }
+  // The library a write would leave: the earlier uploads first, then every photo the kept product shows.
+  kept.photoLibrary = photoLibraryAfter({ photoLibrary: uploadsOf(previous) }, kept);
   return kept;
 };
 export const keepLinkedPhotos = (part: MerchandiseState, linked: LinkedPhotos): MerchandiseState => {

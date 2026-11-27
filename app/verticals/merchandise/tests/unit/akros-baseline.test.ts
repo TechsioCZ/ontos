@@ -12,6 +12,7 @@ import { loadAkrosBaselineParts } from '../../src/services/akros-baseline.genera
 import { computeProductRecords } from '../../src/services/stock-levels.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { decodeAkrosBaselinePart, keepLinkedPhotos, linkedPhotosOf } from '../../src/services/akros-demo-reset.ts';
+import { shownPhotosOf } from '../../shared/domain/product-images.ts';
 import { TEST_RATES } from '../support/tax-fixtures.ts';
 
 // A case that rebuilds the whole AKROS catalogue takes seconds on a shared CI runner.
@@ -180,6 +181,39 @@ it.effect(
       const categories = keepLinkedPhotos(headPart, linked).categories ?? [];
       expect(categories.find(({ id }) => id === category.id)?.imageSrc).toBe(storefrontPhoto(product.id, uploaded));
       expect(categories.find(({ id }) => id === other.id)).toEqual(other);
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
+);
+
+it.effect(
+  'the reset keeps a variant photo uploaded outside the gallery and every upload of the photo library',
+  () =>
+    Effect.gen(function* keepVariantAndLibraryUploads() {
+      const part = yield* Effect.fromNullishOr(loadAkrosBaselineParts()[1]);
+      const productPart = yield* decodeAkrosBaselinePart(part);
+      const product = yield* Effect.fromNullishOr(
+        productPart.products.find(({ variants }) => (variants?.length ?? 0) > 1),
+      );
+      const source = 'https://example.test/source.jpg';
+      const previous = {
+        ...product,
+        images: [source],
+        imageSrc: source,
+        photoLibrary: ['https://example.test/earlier.jpg', uploaded, secondUpload],
+        variants: (product.variants ?? []).map((variant, index) =>
+          index === 0 ? { ...variant, imageSrc: uploaded } : variant,
+        ),
+      };
+      const linked = linkedPhotosOf([previous], []);
+      expect(linked.products.has(product.id)).toBe(true);
+      const kept = yield* Effect.fromNullishOr(
+        keepLinkedPhotos(productPart, linked).products.find(({ id }) => id === product.id),
+      );
+      expect(kept.images).toEqual(product.images);
+      expect(kept.imageSrc).toBe(product.imageSrc);
+      expect(kept.variants?.[0]?.imageSrc).toBe(uploaded);
+      expect(kept.variants?.slice(1)).toEqual(product.variants?.slice(1));
+      expect(kept.photoLibrary).toEqual([secondUpload, ...shownPhotosOf(kept)]);
     }),
   CATALOGUE_BUILD_TIMEOUT,
 );

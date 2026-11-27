@@ -5,8 +5,10 @@
 // Steps (default all, in this order; name some to run only those):
 //   catalog  category tree, products with variants, prices, parameters, public image URLs (skips by id / SKU)
 //   stock    every product's and variant's stock on hand set to stage's (RECEIPT/ADJUSTMENT of the difference)
-//   photos   ŠroubShop only: its own stage photos (stage media, read from the public stage shop) uploaded into
-//            the stable gallery in stage order, replacing the AKROS photos the catalog step used
+//   photos   ŠroubShop: its own stage photos (stage media, read from the public stage shop) uploaded into the
+//            stable gallery in stage order, replacing the AKROS photos the catalog step used. Every shop: a variant
+//            showing a stage upload shows the same photo on stable (its own one stored through `Stage`). The stable
+//            photo library holds what the copied product shows: a stage library photo nothing shows has no API.
 //   samples  the 8 synthetic sales-bootstrap products (SALES_PRODUCTS) hidden and archived out of the admin list
 //   verify   products, in-stock products and stock differences versus stage
 // Reads app/.zerops-stable/config.json and bootstrap-bundle.json (owner passwords; never printed). Every step is
@@ -19,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { Duration, Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { connectSeedClient } from './seed-client.mts';
+import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
 import { RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import {
   ApplyCommandPayloadSchema,
@@ -133,6 +136,17 @@ const makeClient = (label, connect) => {
   return {
     call: (path, schema, payload, result = ApplyCommandResultSchema) =>
       run((c) => c.call('merchandise', path, enc(schema), payload, enc(result), true), true),
+    // A product photo through governed staff media: also a variant's own upload and a library photo.
+    media: (productId, image) =>
+      run((c) =>
+        c.call(
+          'merchandise',
+          '/reads/media',
+          enc(MediaRequestSchema),
+          { image, productId, rendition: 'full' },
+          enc(MediaResponseSchema),
+        ),
+      ),
     read: (view) =>
       run((c) =>
         // The stable release may lag the repo, so its reads are not held to this checkout's response schema.
@@ -454,7 +468,7 @@ const program = Effect.gen(function* program() {
     }
     log('STOCK DONE movements', ok, 'failed', fail);
   }
-  if (STEPS.includes('photos') && slug === 'sroubshop') {
+  if (STEPS.includes('photos')) {
     const shopOrigin = 'https://ontos-stage-shop.web-revolution.cz';
     const ImageResult = Schema.Struct({ image: Schema.optionalKey(Schema.String), revision: Schema.Int });
     const stable = new Map();
@@ -469,17 +483,12 @@ const program = Effect.gen(function* program() {
       }
     }
     let { revision } = yield* target.read({ limit: 0, summary: true });
-    // One gallery change; a stale revision (another writer) is refused unapplied, so a fresh one may retry.
-    const imageCall = (id, change) =>
-      Effect.gen(function* imageCall() {
+    // One write; a stale revision (another writer) is refused unapplied, so a fresh one may retry.
+    const writeCall = (path, schema, command, result = ApplyCommandResultSchema) =>
+      Effect.gen(function* writeCall() {
         for (let attempt = 1; ; attempt += 1) {
           const r = yield* target
-            .call(
-              '/merchandise/actions/change-product-images',
-              ChangeProductImagesPayloadSchema,
-              { command: { _tag: 'ChangeProductImages', change, id }, expectedRevision: revision },
-              ImageResult,
-            )
+            .call(path, schema, { command, expectedRevision: revision }, result)
             .pipe(Effect.result);
           if (r._tag === 'Success') {
             ({ revision } = r.success);
@@ -491,61 +500,134 @@ const program = Effect.gen(function* program() {
           }
         }
       });
+    const imageCall = (id, change) =>
+      writeCall(
+        '/merchandise/actions/change-product-images',
+        ChangeProductImagesPayloadSchema,
+        { _tag: 'ChangeProductImages', change, id },
+        ImageResult,
+      );
     let done = 0;
     let fail = 0;
-    for (const p of yield* dump(source, `${D}src-${slug}.jsonl`)) {
-      const media = (p.images ?? []).filter(isMedia).slice(0, 20);
-      const t = stable.get(p.sku.trim().toLowerCase());
-      if (media.length === 0 || !t) {
-        continue;
-      }
-      // Uploads go in stage order, so a rerun continues after the ones an interrupted run stored.
-      const uploaded = (t.images ?? []).filter(isMedia).slice(0, media.length);
-      if (uploaded.length === media.length && (t.images ?? []).length === media.length) {
-        continue;
-      }
-      for (const ref of media.slice(uploaded.length)) {
-        const id = ref.slice('media:'.length);
-        const bytes = yield* Effect.tryPromise({
-          catch: (e) => ({ reason: `TransportError photo ${e}` }),
-          try: async () => {
-            const r = await fetch(`${shopOrigin}/cs/obrazky/${p.id}/${id}`);
-            if (!r.ok) {
-              throw new Error(`HTTP ${r.status}`);
-            }
-            return Buffer.from(await r.arrayBuffer());
-          },
-        }).pipe(Effect.result);
-        if (bytes._tag === 'Failure') {
-          log('photo read fail', p.sku, id, reasonOf(bytes.failure).slice(0, 200));
-          continue;
+    // ŠroubShop's gallery: its own stage photos in stage order. Returns each stage reference's stable one.
+    const copyGallery = (p, t) =>
+      Effect.gen(function* copyGallery() {
+        const media = (p.images ?? []).filter(isMedia).slice(0, 20);
+        // Uploads go in stage order, so a rerun continues after the ones an interrupted run stored.
+        const uploaded = (t.images ?? []).filter(isMedia).slice(0, media.length);
+        const mapping = new Map(uploaded.map((ref, index) => [media[index], ref]));
+        if (media.length === 0 || (uploaded.length === media.length && (t.images ?? []).length === media.length)) {
+          return mapping;
         }
-        const u = yield* imageCall(t.id, {
-          _tag: 'Upload',
-          image: { filename: `${id}.jpg`, full: { contentBase64: bytes.success.toString('base64') } },
-        });
-        if (u._tag === 'Success' && u.success.image) {
-          uploaded.push(u.success.image);
+        for (const ref of media.slice(uploaded.length)) {
+          const id = ref.slice('media:'.length);
+          const bytes = yield* Effect.tryPromise({
+            catch: (e) => ({ reason: `TransportError photo ${e}` }),
+            try: async () => {
+              const r = await fetch(`${shopOrigin}/cs/obrazky/${p.id}/${id}`);
+              if (!r.ok) {
+                throw new Error(`HTTP ${r.status}`);
+              }
+              return Buffer.from(await r.arrayBuffer());
+            },
+          }).pipe(Effect.result);
+          if (bytes._tag === 'Failure') {
+            log('photo read fail', p.sku, id, reasonOf(bytes.failure).slice(0, 200));
+            continue;
+          }
+          const u = yield* imageCall(t.id, {
+            _tag: 'Upload',
+            image: { filename: `${id}.jpg`, full: { contentBase64: bytes.success.toString('base64') } },
+          });
+          if (u._tag === 'Success' && u.success.image) {
+            uploaded.push(u.success.image);
+            mapping.set(ref, u.success.image);
+          } else {
+            log('photo upload fail', p.sku, id, u._tag === 'Failure' ? reasonOf(u.failure).slice(0, 300) : 'no image');
+          }
+        }
+        if (uploaded.length === 0) {
+          fail += 1;
+          return mapping;
+        }
+        const s = yield* imageCall(t.id, { _tag: 'Set', images: uploaded });
+        if (s._tag === 'Success') {
+          done += 1;
         } else {
-          log('photo upload fail', p.sku, id, u._tag === 'Failure' ? reasonOf(u.failure).slice(0, 300) : 'no image');
+          fail += 1;
+          log('photo set fail', p.sku, reasonOf(s.failure).slice(0, 300));
         }
-      }
-      if (uploaded.length === 0) {
-        fail += 1;
+        if ((done + fail) % 50 === 0) {
+          log('photos progress', done, 'fail', fail);
+        }
+        return mapping;
+      });
+    // Every shop: a variant showing a stage upload (a gallery photo or its own) shows the same photo on stable. One
+    // the stable gallery lacks is stored for the product (`Stage`, read through governed staff media) and set on the
+    // variant. The stable library then holds what the product shows; a stage library photo nothing shows has no API.
+    let variantsDone = 0;
+    let variantsFail = 0;
+    const copyVariantPhotos = (p, t, mapping) =>
+      Effect.gen(function* copyVariantPhotos() {
+        const sourceVariants = new Map((p.variants ?? []).filter((v) => isMedia(v.imageSrc)).map((v) => [v.id, v]));
+        if (sourceVariants.size === 0) {
+          return;
+        }
+        const current = (yield* target.read({ ordersLimit: 0, productId: t.id })).products.find(
+          ({ id }) => id === t.id,
+        );
+        const variants = current?.variants ?? [];
+        for (const variant of variants) {
+          const ref = sourceVariants.get(variant.id)?.imageSrc;
+          if (ref === undefined || mapping.has(ref) || isMedia(variant.imageSrc)) {
+            continue;
+          }
+          const label = variant.sku ?? variant.id;
+          const bytes = yield* source.media(p.id, ref).pipe(Effect.result);
+          if (bytes._tag === 'Failure') {
+            log('variant photo read fail', p.sku, label, reasonOf(bytes.failure).slice(0, 200));
+            continue;
+          }
+          const { contentBase64, mimeType } = bytes.success;
+          const filename = `${ref.slice('media:'.length)}.${mimeType.slice('image/'.length)}`;
+          const staged = yield* imageCall(t.id, { _tag: 'Stage', image: { filename, full: { contentBase64 } } });
+          if (staged._tag === 'Success' && staged.success.image) {
+            mapping.set(ref, staged.success.image);
+          } else {
+            log('variant photo upload fail', p.sku, label, reasonOf(staged.failure ?? 'no image').slice(0, 300));
+          }
+        }
+        const next = variants.map((variant) => {
+          const image = mapping.get(sourceVariants.get(variant.id)?.imageSrc);
+          return strip(image === undefined ? variant : { ...variant, imageSrc: image }, [
+            'priceHistory',
+            'grossPriceMinor',
+          ]);
+        });
+        if (next.every((variant, index) => variant.imageSrc === variants[index].imageSrc)) {
+          return;
+        }
+        const u = yield* writeCall('/merchandise/actions/manage-catalog', ManageCatalogPayloadSchema, {
+          _tag: 'UpdateProduct',
+          id: t.id,
+          patch: { variants: next },
+        });
+        if (u._tag === 'Success') {
+          variantsDone += 1;
+        } else {
+          variantsFail += 1;
+          log('variant photo set fail', p.sku, reasonOf(u.failure).slice(0, 300));
+        }
+      });
+    for (const p of yield* dump(source, `${D}src-${slug}.jsonl`)) {
+      const t = stable.get(p.sku.trim().toLowerCase());
+      if (!t) {
         continue;
       }
-      const s = yield* imageCall(t.id, { _tag: 'Set', images: uploaded });
-      if (s._tag === 'Success') {
-        done += 1;
-      } else {
-        fail += 1;
-        log('photo set fail', p.sku, reasonOf(s.failure).slice(0, 300));
-      }
-      if ((done + fail) % 50 === 0) {
-        log('photos progress', done, 'fail', fail);
-      }
+      const mapping = slug === 'sroubshop' ? yield* copyGallery(p, t) : new Map();
+      yield* copyVariantPhotos(p, t, mapping);
     }
-    log('PHOTOS DONE products', done, 'failed', fail);
+    log('PHOTOS DONE products', done, 'failed', fail, 'variant photos products', variantsDone, 'failed', variantsFail);
   }
   if (STEPS.includes('samples')) {
     for (const { sku } of SALES_PRODUCTS) {
