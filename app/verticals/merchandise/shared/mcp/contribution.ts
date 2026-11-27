@@ -79,8 +79,6 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Odebrat sortiment a ceník trhu', en: 'Remove a market offer and price list' },
     },
     ResetDemoData: 'hidden',
-    // The Symmy connector's source upsert: integration-only, never an agent tool.
-    UpsertSourceProduct: 'hidden',
     RestoreProduct: 'hidden',
     SetMarketProductOffers: {
       agentProposalOnly: true,

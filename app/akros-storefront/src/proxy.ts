@@ -18,9 +18,9 @@ const passThrough = (pathname: string, locale: string | undefined) =>
   ) ||
   (locale === undefined && /^\/[^/]*\.[A-Za-z0-9]+$/u.test(pathname));
 
-const ITEM_PATH = /^\/(?:produkt|kategorie)\/[^/]+\/?$/u;
+const ITEM_PATH = /^\/(?:produkt|kategorie|novinky-z-erp)\/[^/]+\/?$/u;
 
-/** A document request for a product or category the market does not sell (soft navigations skip). */
+/** A document request for a product, category or ERP product the market does not sell (soft navigations skip). */
 const missingItem = async (rest: string, headers: Headers, signal: AbortSignal) => {
   if (!ITEM_PATH.test(rest) || rest.startsWith("/kategorie/akroscz-vyroba")) return false;
   if (headers.has("rsc") || headers.has("next-router-prefetch")) return false;

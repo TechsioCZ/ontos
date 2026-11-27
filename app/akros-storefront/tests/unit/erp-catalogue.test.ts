@@ -1,0 +1,305 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  shownVariantRefs,
+  erpCardSummary,
+  erpItemMatches,
+  erpCopy,
+  erpPriceLabel,
+  isYourPrice,
+  hasUndecidedPrice,
+  toErpProducts,
+  withGuestPricesWhereUndecided,
+  type CatalogPagePrices,
+  type CatalogProductPage,
+  type CatalogVariantOnHand,
+} from "@/lib/erp-catalogue";
+import { cs } from "@/i18n/cs";
+import { getProductStockStatus, stockStatusLabel } from "@/lib/product-stock";
+import { parseErpOffers } from "@/ontos/erp-config";
+import { imagePlaceholder } from "@/ontos/media-path";
+
+const tenantId = "bceaa540-13eb-5508-9ac0-9ed7e40a2ee9";
+const ref = (resourceType: string, resourceId: string) => ({
+  moduleId: "commerce.catalog",
+  resourceType,
+  resourceId,
+  tenantId,
+});
+const productRef = ref("commerce.catalog.product", "10000000-0000-4000-8000-000000000001");
+const variantRef = (n: number) =>
+  ref("commerce.catalog.variant", `20000000-0000-4000-8000-00000000000${n}`);
+const variant = (n: number, extra: Record<string, unknown> = {}) => ({
+  variantRef: variantRef(n),
+  lifecycle: "WORK_IN_PROGRESS",
+  sku: `ERP-${n}`,
+  localized: { kind: "MISSING_TRANSLATION" as const, requestedLocale: "cs" },
+  options: [
+    {
+      values: [
+        { kind: "TEXT" as const, text: `M${n}` },
+        { kind: "MEASUREMENT" as const, amount: n * 10, unit: "mm" },
+      ],
+    },
+  ],
+  ...extra,
+});
+const page: CatalogProductPage = {
+  count: 1,
+  items: [
+    {
+      productRef,
+      lifecycle: "DRAFT",
+      localized: {
+        kind: "PRESENT",
+        locale: "cs",
+        name: "Šroub z ERP",
+        description: "První odstavec.\n\nDruhý odstavec.",
+      },
+      categories: [{ name: "Spojovací materiál" }],
+      media: [{ assignment: {}, ownerAvailability: "UNVERIFIED" }],
+      variants: [1, 2, 3, 4, 5, 6]
+        .map((n) => variant(n, n === 6 ? { lifecycle: "ACTIVE" } : {}))
+        .concat([variant(7, { lifecycle: "RETIRED" })]),
+    },
+  ],
+};
+const onHand: CatalogVariantOnHand[] = [
+  { outcome: "ON_HAND", variantRef: variantRef(1), total: { amount: "42" } },
+  { outcome: "ON_HAND", variantRef: variantRef(2), total: { amount: "0" } },
+  { outcome: "ON_HAND_UNKNOWN", variantRef: variantRef(3) },
+  { outcome: "NO_POSITION", variantRef: variantRef(4) },
+  { outcome: "CONFLICTING_BINDINGS", variantRef: variantRef(5) },
+  { outcome: "NO_STOCK_ITEM", variantRef: variantRef(6) },
+];
+const found = (n: number, amount: string, group?: "PRICE_GROUP") => ({
+  _tag: "PRICE_FOUND",
+  catalogSelection: { productRef, variantRef: variantRef(n) },
+  priceGroupSelector: { kind: group ?? "NO_GROUP" },
+  priceRevision: { monetaryAmount: { amount, currencyCode: "CZK" } },
+});
+const prices: CatalogPagePrices = {
+  _tag: "CATALOG_PAGE_PRICED",
+  prices: [
+    found(1, "1234.5"),
+    found(2, "99"),
+    { _tag: "NO_APPLICABLE_PRICE", catalogSelection: { variantRef: variantRef(3) } },
+    { _tag: "PRICING_CONFLICT", catalogSelection: { variantRef: variantRef(4) } },
+    { _tag: "PRICING_INDETERMINATE", catalogSelection: { variantRef: variantRef(5) } },
+  ],
+};
+
+describe("ERP product page model", () => {
+  it("asks stock and price for exactly the variants that are not RETIRED (WORK_IN_PROGRESS and ACTIVE)", () => {
+    expect(shownVariantRefs(page).map(({ resourceId }) => resourceId)).toEqual(
+      [1, 2, 3, 4, 5, 6].map((n) => variantRef(n).resourceId),
+    );
+  });
+
+  it("maps every stock outcome and every price outcome, and never invents an image", () => {
+    const [product] = toErpProducts(page, onHand, prices);
+    expect(product).toMatchObject({
+      id: productRef.resourceId,
+      name: "Šroub z ERP",
+      descriptionParagraphs: ["První odstavec.", "Druhý odstavec."],
+      categories: ["Spojovací materiál"],
+      imageSrc: imagePlaceholder,
+    });
+    const rows = product!.variants.map((item) => [
+      item.sku,
+      item.options.join(", "),
+      erpPriceLabel(item.price, "cs"),
+      stockStatusLabel(
+        cs,
+        getProductStockStatus(item.stock),
+        item.stock.belowPackage,
+        item.stock.unit,
+      ),
+    ]);
+    expect(rows).toEqual([
+      ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem"],
+      ["ERP-2", "M2, 20 mm", "99,00\u00a0Kč bez DPH", "Není skladem"],
+      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+    ]);
+    expect(erpCardSummary(product!, cs, "cs")).toEqual({
+      priceLabel: "od 99,00\u00a0Kč bez DPH",
+      stockLabel: "Skladem",
+      stockTone: "in-stock",
+      yourPrice: false,
+    });
+  });
+
+  it("marks only a Price of the signed-in customer's own Price Group „Vaše cena“", () => {
+    const groupPriced: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [found(1, "950", "PRICE_GROUP"), found(2, "99")],
+    };
+    const [product] = toErpProducts(page, onHand, groupPriced);
+    expect(product!.variants.slice(0, 2).map(({ price }) => [price, isYourPrice(price)])).toEqual([
+      [{ kind: "price", amount: "950", currencyCode: "CZK", yours: true }, true],
+      [{ kind: "price", amount: "99", currencyCode: "CZK", yours: false }, false],
+    ]);
+    expect(product!.variants.slice(2).every(({ price }) => !isYourPrice(price))).toBe(true);
+    // The card shows the lowest price: the no-group 99 here, so no label.
+    expect(erpCardSummary(product!, cs, "cs")).toMatchObject({
+      priceLabel: "od 99,00\u00a0Kč bez DPH",
+      yourPrice: false,
+    });
+    const [single] = toErpProducts(
+      { count: 1, items: [{ ...page.items[0]!, variants: [variant(1)] }] },
+      onHand,
+      groupPriced,
+    );
+    expect(erpCardSummary(single!, cs, "cs")).toEqual({
+      priceLabel: "950,00\u00a0Kč bez DPH",
+      stockLabel: "Skladem",
+      stockTone: "in-stock",
+      yourPrice: true,
+    });
+    expect(erpCopy.yourPrice).toBe("Vaše cena");
+  });
+
+  it("shows the guest price without „Vaše cena“ where the customer's own price is undecided, and keeps an explicit no-price", () => {
+    const undecided = (n: number) => ({
+      _tag: "PRICING_INDETERMINATE",
+      catalogSelection: { variantRef: variantRef(n) },
+    });
+    const none = (n: number) => ({
+      _tag: "NO_APPLICABLE_PRICE",
+      catalogSelection: { variantRef: variantRef(n) },
+    });
+    const customer: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [
+        found(1, "2.25", "PRICE_GROUP"),
+        undecided(2),
+        none(3),
+        undecided(4),
+        undecided(5),
+        found(6, "7"),
+      ],
+    };
+    const guest: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [found(1, "2.75"), found(2, "99"), none(3), undecided(4), none(5), found(6, "7")],
+    };
+    expect(hasUndecidedPrice(customer)).toBe(true);
+    expect(hasUndecidedPrice(guest)).toBe(true);
+    expect(
+      hasUndecidedPrice({ _tag: "CATALOG_PAGE_PRICED", prices: [found(1, "2.25"), none(3)] }),
+    ).toBe(false);
+    expect(hasUndecidedPrice({ _tag: "CURRENCY_SUPPORT_NOT_CURRENT" })).toBe(false);
+    const [product] = toErpProducts(page, onHand, withGuestPricesWhereUndecided(customer, guest));
+    expect(
+      product!.variants.map(({ price }) => [erpPriceLabel(price, "cs"), isYourPrice(price)]),
+    ).toEqual([
+      // The customer's own Price Group price stays the customer's.
+      ["2,25\u00a0Kč bez DPH", true],
+      // Undecided for the customer, priced for a guest: the guest price, never labelled „Vaše cena“.
+      ["99,00\u00a0Kč bez DPH", false],
+      // No price for anyone stays on request, and so does an item the guest page cannot price either.
+      ["Cena na dotaz", false],
+      ["Cena na dotaz", false],
+      ["Cena na dotaz", false],
+      ["7,00\u00a0Kč bez DPH", false],
+    ]);
+    // A guest page that is itself not priced leaves the customer's page as it answered.
+    expect(withGuestPricesWhereUndecided(customer, { _tag: "CURRENCY_SUPPORT_NOT_CURRENT" })).toBe(
+      customer,
+    );
+  });
+
+  it("prices nothing when Currency Support is not current, and shows unknown stock without a figure", () => {
+    const [product] = toErpProducts(page, [], { _tag: "CURRENCY_SUPPORT_NOT_CURRENT" });
+    expect(product!.variants.every(({ price }) => price.kind === "on-request")).toBe(true);
+    expect(product!.variants.every(({ stock }) => stock.availabilityUnknown === true)).toBe(true);
+    expect(erpCardSummary(product!, cs, "cs")).toEqual({
+      priceLabel: "Cena na dotaz",
+      stockLabel: "Dostupnost nelze ověřit",
+      stockTone: "limited-stock",
+      yourPrice: false,
+    });
+  });
+
+  it("titles an untranslated product by its first variant's name, else the ERP's source name, else the SKU, and drops one with only RETIRED variants", () => {
+    const missing = { kind: "MISSING_TRANSLATION" as const, requestedLocale: "cs" };
+    const untranslated: CatalogProductPage = {
+      count: 4,
+      items: [
+        {
+          ...page.items[0]!,
+          localized: missing,
+          variants: [
+            variant(7, {
+              lifecycle: "RETIRED",
+              localized: { kind: "PRESENT", locale: "cs", name: "Vyřazená" },
+            }),
+            variant(1, { localized: { kind: "PRESENT", locale: "cs", name: "Šroub M1" } }),
+          ],
+        },
+        {
+          ...page.items[0]!,
+          localized: missing,
+          name: "VRUT 6X70 DIN7997",
+          variants: [variant(2, { sku: undefined })],
+        },
+        { ...page.items[0]!, localized: missing, variants: [variant(3)] },
+        { ...page.items[0]!, variants: [variant(7, { lifecycle: "RETIRED" })] },
+      ],
+    };
+    const products = toErpProducts(untranslated, onHand.slice(0, 1), prices);
+    expect(
+      products.map(({ name, descriptionParagraphs }) => ({ name, descriptionParagraphs })),
+    ).toEqual([
+      { name: "Šroub M1", descriptionParagraphs: [] },
+      { name: "VRUT 6X70 DIN7997", descriptionParagraphs: [] },
+      { name: "ERP-3", descriptionParagraphs: [] },
+    ]);
+    expect(products[1]!.variants[0]).not.toHaveProperty("sku");
+    expect(products[1]!.imageAlt).toBe(erpCopy.noImage("VRUT 6X70 DIN7997"));
+    // Search finds a product by the name it is shown with.
+    expect(erpItemMatches(untranslated.items[1]!, "vrut din7997")).toBe(true);
+    expect(erpItemMatches(untranslated.items[2]!, "vrut")).toBe(false);
+    expect(erpCardSummary(products[0]!, cs, "cs")).toEqual({
+      priceLabel: "1\u00a0234,50\u00a0Kč bez DPH",
+      stockLabel: "Skladem",
+      stockTone: "in-stock",
+      yourPrice: false,
+    });
+  });
+});
+
+describe("ERP offers by company", () => {
+  const akros = "c0c78a3e-6e2a-57e0-9d0d-86253499fee7";
+  const shop = "71000000-0000-4000-8000-000000000024";
+  const offer = {
+    customerConfigurationId: "akros-eshop",
+    channelId: "B2C",
+    marketId: "akros-cz",
+    currencyCode: "CZK",
+    unitId: "43d5c797-2b36-4877-85ad-caac3a674d9c",
+    unitQuantity: "1",
+  };
+
+  it("takes the entry of this storefront's own company, and none is off", () => {
+    const raw = JSON.stringify({ [akros]: offer });
+    expect(parseErpOffers(raw, akros)).toEqual(offer);
+    expect(parseErpOffers(raw, shop)).toBeUndefined();
+    expect(parseErpOffers(undefined, akros)).toBeUndefined();
+    expect(parseErpOffers(" ", akros)).toBeUndefined();
+  });
+
+  it("refuses a value that is not an object keyed by Legal Entity id, or any malformed entry", () => {
+    expect(() => parseErpOffers(JSON.stringify(offer), akros)).toThrow(/not a Legal Entity id/u);
+    expect(() => parseErpOffers(JSON.stringify([offer]), akros)).toThrow(/not a JSON object/u);
+    expect(() =>
+      parseErpOffers(
+        JSON.stringify({ [akros]: offer, [shop]: { ...offer, channelId: "__CHANNEL__" } }),
+        akros,
+      ),
+    ).toThrow(/needs customerConfigurationId/u);
+  });
+});

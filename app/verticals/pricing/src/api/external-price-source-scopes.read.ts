@@ -101,11 +101,6 @@ export const externalPriceSourceScopesRead = defineRead(
       selectors: [],
     },
     accessKind: 'list',
-    accessWorkload: {
-      reason:
-        "The enrolled Symmy catalog importer reads its company's standing base price key to read the base Prices it copies into the demo store",
-      workloads: ['commerce.symmy-demo-catalog-copy'],
-    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'read',
       authorization: { kind: 'protected' },

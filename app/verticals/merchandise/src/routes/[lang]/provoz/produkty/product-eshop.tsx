@@ -531,14 +531,7 @@ const useVariantsPanel = ({
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
   const save = useProductTabSave<readonly VariantDraft[]>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
-    // A Symmy product: no saved price may differ from the stored one and no variant may be added (ERP-only prices).
-    isValid: (value) =>
-      !variantsInvalid(value) &&
-      (product.importedVia !== 'symmy' ||
-        value.every((draft) => {
-          const stored = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
-          return stored !== undefined && stored.priceMinor === parseCzk(draft.priceText);
-        })),
+    isValid: (value) => !variantsInvalid(value),
     keepAs: `variants:${product.id}`,
     // Two operators edit different variants of one product: each variant merges on its own.
     merge: mergeKeyedDrafts,
@@ -870,8 +863,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                       <Table.Cell align="end">
                         <div className="ml-auto w-32">
                           <FormNumericInput
-                            // A Symmy product's prices live in the ERP; this panel does not write them there.
-                            disabled={!canWrite || product.importedVia === 'symmy'}
+                            disabled={!canWrite}
                             formatOptions={MONEY_FORMAT}
                             id={`variant-price-${draft.key}`}
                             label={<span className="sr-only">Cena bez DPH</span>}
@@ -947,19 +939,9 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           SKU variant se nesmí opakovat.
         </StatusText>
       )}
-      {product.importedVia === 'symmy' && (
-        <p className="text-fg-secondary text-sm">Cenu tohoto produktu měňte v detailu produktu.</p>
-      )}
       {canWrite && (
         <div className="flex flex-wrap items-center justify-between gap-150">
-          <Button
-            appearance="outline"
-            disabled={product.importedVia === 'symmy'}
-            icon="icon-[mdi--plus]"
-            onClick={addDraft}
-            severity="secondary"
-            type="button"
-          >
+          <Button appearance="outline" icon="icon-[mdi--plus]" onClick={addDraft} severity="secondary" type="button">
             Přidat variantu
           </Button>
           <ProductTabSaveBar active={props.active ?? true} save={save} />

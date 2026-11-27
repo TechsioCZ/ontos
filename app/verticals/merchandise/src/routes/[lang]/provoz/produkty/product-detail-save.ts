@@ -16,7 +16,6 @@ import type { DetailDraft } from './product-detail-draft.ts';
 import { mergeDraft } from './product-draft-merge.ts';
 import { refusedSave, useDraftRebase } from './product-draft-rebase.ts';
 import type { Refusal } from './product-draft-rebase.ts';
-import { writeThroughSymmyVariant } from './symmy-write-through.ts';
 
 type CommandFailure = Effect.Error<ReturnType<typeof runProductCommand>>;
 
@@ -76,12 +75,6 @@ interface DetailSaveInput {
   readonly productId: ProductRecord['id'];
   /** The catalogue revision the page read. */
   readonly revision: number;
-  /**
-   * A product imported through Symmy: a changed price is written to Pricing first, so Symmy reads it back; when that
-   * fails, nothing is saved and the failure is the save's outcome.
-   */
-  readonly symmy: { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined;
-  readonly onWriteThroughFailed: (message: string | null) => void;
   readonly value: DetailDraft;
 }
 
@@ -98,36 +91,14 @@ interface DetailSaveInput {
 const saveDetailEffect = ({
   confirmed,
   expectedVersion,
-  onWriteThroughFailed,
   productId,
   revision,
-  symmy,
   value,
 }: DetailSaveInput): Effect.Effect<DraftSaveEnd<DetailDraft>> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, confirmed);
   const fieldsChanged = Object.keys(patch).length !== 0;
   if (!fieldsChanged && !priceChanged) {
     return Effect.succeed('saved');
-  }
-  if (priceChanged && symmy !== undefined) {
-    return writeThroughSymmyVariant({
-      catalogProductId: symmy.catalogProductId,
-      catalogVariantId: symmy.catalogVariantId,
-      priceNet: (priceMinor / 100).toFixed(2),
-      reason: 'Úprava v Produkty',
-    }).pipe(
-      Effect.matchEffect({
-        onFailure: (message) =>
-          Effect.sync((): DraftSaveEnd<DetailDraft> => {
-            onWriteThroughFailed(message);
-            return 'failed';
-          }),
-        onSuccess: () =>
-          Effect.sync(() => onWriteThroughFailed(null)).pipe(
-            Effect.andThen(saveDetailEffect({ confirmed, expectedVersion, onWriteThroughFailed, productId, revision, symmy: undefined, value })),
-          ),
-      }),
-    );
   }
   const update: Effect.Effect<number, CommandFailure> = fieldsChanged
     ? runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, expectedVersion, revision)
@@ -214,12 +185,6 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
   });
   // A save someone else's change refused, until the draft is rebased on the version they saved.
   const refusal = useRef<Refusal<DetailDraft> | undefined>(undefined);
-  // Why the last save of a Symmy product's price wrote nothing: Pricing refused the write-through.
-  const [writeThroughError, setWriteThroughError] = useState<string | null>(null);
-  const symmy =
-    product.importedVia === 'symmy' && product.catalogProductId !== undefined && product.catalogVariantId !== undefined
-      ? { catalogProductId: product.catalogProductId, catalogVariantId: product.catalogVariantId }
-      : undefined;
   const record = useRecordDraft<DetailDraft, never>({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
@@ -230,10 +195,8 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
       saveDetailEffect({
         confirmed: { ...confirmed, realVariants },
         expectedVersion,
-        onWriteThroughFailed: setWriteThroughError,
         productId: product.id,
         revision,
-        symmy,
         value: { ...value, realVariants },
       }).pipe(
         Effect.tap((result) =>
@@ -268,5 +231,5 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
     },
     value: record.draft,
   });
-  return { draft: { ...record.draft, realVariants }, record, reloadLatest, writeThroughError };
+  return { draft: { ...record.draft, realVariants }, record, reloadLatest };
 };

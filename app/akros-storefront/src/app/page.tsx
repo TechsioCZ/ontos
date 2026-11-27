@@ -1,3 +1,4 @@
+import { ErpHomeStrip } from "@/components/erp-home-strip";
 import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { HomeCarousel } from "@/components/home-carousel";
 import { StorefrontShell } from "@/components/storefront-shell";
@@ -27,6 +28,8 @@ export default async function HomePage() {
         </div>
         <FeaturedProductGrid products={getHomepageFeaturedProducts().map(toProductSummary)} />
       </section>
+
+      <ErpHomeStrip />
 
       <section
         aria-label={copy.companyIntro.label}

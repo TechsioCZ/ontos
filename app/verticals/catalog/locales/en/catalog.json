@@ -19,11 +19,14 @@
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "products": {
-        "title": "ERP products",
-        "description": "Catalog products imported from the ERP with the ERP price and stock.",
-        "intro": "Products the ERP (Symmy) imported into the OntOS catalog, in every state. Each variant shows the ERP price and stock. Edit e-shop products (prices, stock, images, publication) under Products.",
-        "editorLink": "Edit e-shop products",
-        "moved": "ERP products now live in Products. Go to Products",
+        "title": "Products",
+        "description": "Products imported from the ERP with the ERP price and stock.",
+        "intro": "Products the ERP (Symmy) imported, in every state. Each variant shows the ERP price and stock. The e-shop's own assortment is on the Assortment tab.",
+        "sources": {
+          "label": "Product source",
+          "own": "Assortment",
+          "erp": "From ERP"
+        },
         "search": "Search by name",
         "searchSubmit": "Search",
         "loading": "Loading products…",

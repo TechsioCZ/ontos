@@ -72,8 +72,8 @@ export const catalogVariantOnHandPageRead = defineRead(
     accessKind: 'detail',
     accessWorkload: {
       reason:
-        'The registered Storefront BFF shows informational on-hand figures for its own catalogue before any human session exists; the enrolled Symmy catalog importer reads the same figures of its company to copy them into the demo store',
-      workloads: ['commerce.storefront-client', 'commerce.symmy-demo-catalog-copy'],
+        'The registered Storefront BFF shows informational on-hand figures for its own catalogue before any human session exists',
+      workloads: ['commerce.storefront-client'],
     },
     entrypoint: catalogVariantOnHandPageEntrypoint,
     evidencePolicy: {

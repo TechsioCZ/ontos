@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { cs } from "@/i18n/cs";
+import {
+  erpDetailStockLabel,
+  erpStockSummary,
+  toErpStock,
+  type CatalogVariantOnHand,
+  type ErpProduct,
+} from "@/lib/erp-catalogue";
 import { getProductStockStatus, productStockTone, stockStatusLabel } from "@/lib/product-stock";
 import { projectProducts } from "@/ontos/catalog-projection";
+import { firstOrderableQuantity } from "@app/merchandise/domain/order-quantity";
+
+const erpVariantRef = {
+  moduleId: "commerce.catalog",
+  resourceType: "commerce.catalog.variant",
+  resourceId: "20000000-0000-4000-8000-000000000001",
+  tenantId: "bceaa540-13eb-5508-9ac0-9ed7e40a2ee9",
+};
 
 describe("getProductStockStatus", () => {
   it("follows the owner: stock held below one package is named and never sold", () => {
@@ -167,5 +182,91 @@ describe("one stock rule: in stock only when stock covers one first order", () =
       label: "Skladem méně než balení",
       tone: "out-of-stock",
     });
+  });
+
+  it.each([
+    {
+      onHand: { outcome: "ON_HAND", total: { amount: "155" } },
+      label: "Skladem",
+      status: "in-stock",
+    },
+    {
+      onHand: { outcome: "ON_HAND", total: { amount: "1" } },
+      label: "Skladem",
+      status: "in-stock",
+    },
+    {
+      onHand: { outcome: "ON_HAND", total: { amount: "0.5" } },
+      label: "Skladem 0,5 ks, prodej po 1 ks",
+      status: "below-package",
+    },
+    {
+      onHand: { outcome: "ON_HAND", total: { amount: "0" } },
+      label: "Není skladem",
+      status: "out-of-stock",
+    },
+    {
+      onHand: { outcome: "ON_HAND_UNKNOWN" },
+      label: "Dostupnost nelze ověřit",
+      status: "unknown",
+    },
+    { onHand: undefined, label: "Dostupnost nelze ověřit", status: "unknown" },
+  ])(
+    "an ERP variant with $onHand.outcome $onHand.total.amount reads „$label“",
+    ({ onHand, label, status }) => {
+      const stock = toErpStock(
+        onHand && ({ ...onHand, variantRef: erpVariantRef } as CatalogVariantOnHand),
+      );
+      expect(shown(stock)).toMatchObject({ status, label });
+    },
+  );
+
+  it("sells an ERP variant from the owner's first order of a unit without minimum or package", () => {
+    const held = toErpStock({
+      outcome: "ON_HAND",
+      variantRef: erpVariantRef,
+      total: { amount: "0.5" },
+    });
+    expect(held.belowPackage?.firstOrderableQuantity).toBe(firstOrderableQuantity({}));
+  });
+
+  it("words one ERP unit alike on its card, suggestion and detail page, and a group as the shop's product page", () => {
+    const stock = (amount?: string) =>
+      toErpStock(
+        amount === undefined
+          ? undefined
+          : ({
+              outcome: "ON_HAND",
+              total: { amount },
+              variantRef: erpVariantRef,
+            } as CatalogVariantOnHand),
+      );
+    const product = (...amounts: (string | undefined)[]) =>
+      ({ variants: amounts.map((amount) => ({ stock: stock(amount) })) }) as unknown as ErpProduct;
+    const card = (item: ErpProduct) => erpStockSummary(item, cs);
+    expect(card(product("155"))).toEqual({ stockLabel: "Skladem", stockTone: "in-stock" });
+    expect(card(product("0.5"))).toEqual({
+      stockLabel: "Skladem 0,5 ks, prodej po 1 ks",
+      stockTone: "out-of-stock",
+    });
+    expect(card(product("0"))).toEqual({ stockLabel: "Není skladem", stockTone: "out-of-stock" });
+    expect(card(product(undefined))).toEqual({
+      stockLabel: "Dostupnost nelze ověřit",
+      stockTone: "limited-stock",
+    });
+    expect(card(product("0", "155"))).toEqual({ stockLabel: "Skladem", stockTone: "in-stock" });
+    expect(card(product("0.5", "0.5"))).toEqual({
+      stockLabel: "Skladem méně než balení",
+      stockTone: "out-of-stock",
+    });
+    for (const amount of ["155", "0.5", "0", undefined])
+      expect(erpDetailStockLabel(product(amount), cs)).toBe(card(product(amount)).stockLabel);
+    expect(erpDetailStockLabel(product("155"), cs)).toBe("Skladem");
+    expect(erpDetailStockLabel(product(undefined), cs)).toBe("Dostupnost nelze ověřit");
+    expect(erpDetailStockLabel(product("0", "155"), cs)).toBe("Skladem 1 z 2 variant");
+    expect(erpDetailStockLabel(product("0.5", "0"), cs)).toBe("Skladem méně než balení");
+    expect(erpDetailStockLabel(product("0", "0"), cs)).toBe(
+      "Momentálně není skladem žádná varianta",
+    );
   });
 });

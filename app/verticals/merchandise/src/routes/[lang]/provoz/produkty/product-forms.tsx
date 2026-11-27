@@ -45,7 +45,6 @@ import {
 import { DEFAULT_TAX_CLASSIFICATION, classificationChoices, useTaxLabels } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
 import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
-import { isSymmyImported } from './symmy-provenance.tsx';
 
 export interface FormDialogProps {
   /** Called after a successful command. The page shows the toast and reloads. */
@@ -525,11 +524,8 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
   const quantityError = isStockQuantity(quantity) && quantity > 0 ? undefined : k('validation.quantity');
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
-  // A Symmy product's stock lives in the ERP: only the movement form of its detail writes it there first.
-  const symmy = fullProduct !== undefined && isSymmyImported(fullProduct);
   const valid =
     fullProduct !== undefined &&
-    !symmy &&
     !variantMissing &&
     productError === undefined &&
     quantityError === undefined &&
@@ -609,11 +605,6 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
           }}
         >
           <ErrorLine message={serverError} />
-          {symmy && (
-            <StatusText showIcon status="error">
-              Sklad tohoto produktu měňte v detailu produktu (Pohyby), aby se zapsal i do ERP.
-            </StatusText>
-          )}
           <ProductSearchCombobox
             errorMessage={k('states.error')}
             id="receipt-product"
@@ -711,12 +702,9 @@ export const PriceChangeDialog = ({
   onReload,
   open,
   revision,
-  symmyProducts = [],
   variantProducts,
 }: FormDialogProps & {
   readonly ids: readonly ProductRecord['id'][];
-  /** Selected products imported through Symmy: their price is written to the ERP only by the detail save. */
-  readonly symmyProducts?: readonly Pick<ProductRecord, 'id' | 'name'>[];
   /** Selected products the list knows to be priced by sellable variants. */
   readonly variantProducts: readonly Pick<ProductRecord, 'id' | 'name'>[];
 }) => {
@@ -727,8 +715,7 @@ export const PriceChangeDialog = ({
     command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: value.percent } }),
     equals: (left, right) => left.percentText === right.percentText,
     initial: noPercent,
-    isValid: (value) =>
-      validPercent(value.percent) && ids.length > 0 && variantProducts.length === 0 && symmyProducts.length === 0,
+    isValid: (value) => validPercent(value.percent) && ids.length > 0 && variantProducts.length === 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.priceChanged')),
@@ -765,12 +752,6 @@ export const PriceChangeDialog = ({
               {t('merchandise.pages.products.priceDialog.variantProducts', {
                 names: variantProducts.map((product) => product.name).join(', '),
               })}
-            </StatusText>
-          )}
-          {symmyProducts.length > 0 && (
-            <StatusText showIcon status="error">
-              Cenu tohoto produktu měňte v detailu produktu. Importováno přes Symmy:{' '}
-              {symmyProducts.map((product) => product.name).join(', ')}
             </StatusText>
           )}
           {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}

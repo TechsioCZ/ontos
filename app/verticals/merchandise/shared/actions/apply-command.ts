@@ -456,43 +456,8 @@ const ApplyConfigureStorefrontCatalogCommandSchema = Schema.TaggedStruct('Config
   storefrontAppId: StorefrontAppIdSchema,
 });
 
-const SourceIdTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120));
-/**
- * Mirrors one product of the ERP connector Symmy (main Catalog/Pricing/Inventory) as an ordinary product row with
- * server-owned provenance. Idempotent: the product id derives from catalogProductId, a replay changes nothing, and a
- * code or SKU held by a product not imported through Symmy is refused (result `sourceUpsert.outcome` REFUSED).
- * Reachable only through the source-catalog import Action.
- */
-export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('UpsertSourceProduct', {
-  sourceRecordId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  catalogProductId: SourceIdTextSchema,
-  erpCode: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
-  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  lifecycle: Schema.Literals(['ACTIVE', 'DRAFT', 'RETIRED']),
-  categoryName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
-  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
-  imageUrl: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
-  variants: Schema.Array(
-    Schema.Struct({
-      catalogVariantId: SourceIdTextSchema,
-      sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
-      name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
-      unit: Schema.optionalKey(Schema.String),
-      priceNetMinor: Schema.optionalKey(Schema.NullOr(MinorAmountSchema)),
-      stockOnHand: Schema.optionalKey(Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)))),
-    }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-});
-export const SourceUpsertResultSchema = Schema.Struct({
-  outcome: Schema.Literals(['CREATED', 'UPDATED', 'UNCHANGED', 'REFUSED']),
-  productId: Schema.String,
-  reason: Schema.optionalKey(Schema.Literals(['CODE_HELD_BY_NATIVE_PRODUCT', 'SKU_HELD_BY_NATIVE_PRODUCT'])),
-});
-export type SourceUpsertResult = typeof SourceUpsertResultSchema.Type;
-
 export const MerchandiseCommandSchema = Schema.Union([
   ApplyConfigureStorefrontCatalogCommandSchema,
-  ApplyUpsertSourceProductCommandSchema,
   ApplyCreateProductCommandSchema,
   /** Edits one storefront category; appends a history entry. A renamed category also renames its products' `category`. */
   ApplyUpdateCategoryCommandSchema,
@@ -609,8 +574,6 @@ export const ApplyCommandResultSchema = Schema.Struct({
   marketRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   revision: Schema.Int,
   storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
-  /** UpsertSourceProduct: what the import did to the product row. */
-  sourceUpsert: Schema.optionalKey(SourceUpsertResultSchema),
   /** UpdateProduct, ChangePrice, ChangeProductImages: the product's `updatedAt` after it, which its next edit names. */
   updatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });

@@ -43,7 +43,6 @@ import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import { StorefrontStatusPanel } from './storefront-status.tsx';
-import { ErpCodeLine, SymmyImportedBadge, SymmyWriteThroughNote } from './symmy-provenance.tsx';
 import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
@@ -328,7 +327,6 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
       />
       {/* A product with variants sells at its variants' prices: its own net price stores no gross that staff see. */}
       {gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>}
-      <SymmyWriteThroughNote product={product} />
       <FormTextarea
         disabled={disabled}
         id="detail-short-description"
@@ -490,18 +488,7 @@ export const ProductDetailView = ({
   const variantDestination = resolveProductVariantDestination(product, variantId);
   // The page re-reads the product after each save; the editor stays mounted across that reload
   // (`useProductDetailDraft`).
-  const { draft, record, reloadLatest, writeThroughError } = useProductDetailDraft({ onReload, product, revision });
-  // The Pricing/Inventory variant a stock movement of this Symmy product writes through to; none for other products.
-  const symmyStockTarget = (variantId: string | undefined) => {
-    if (product.importedVia !== 'symmy' || product.catalogProductId === undefined) {
-      return undefined;
-    }
-    const catalogVariantId =
-      variantId === undefined
-        ? product.catalogVariantId
-        : product.variants?.find((variant) => variant.id === variantId)?.catalogVariantId;
-    return catalogVariantId === undefined ? undefined : { catalogProductId: product.catalogProductId, catalogVariantId };
-  };
+  const { draft, record, reloadLatest } = useProductDetailDraft({ onReload, product, revision });
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
   const dirty = record.dirty || movementDirty;
@@ -549,8 +536,6 @@ export const ProductDetailView = ({
                   : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)} s DPH`
               }`}</span>
               <AvailabilityBadge value={product.availability} />
-              <SymmyImportedBadge product={product} />
-              <ErpCodeLine product={product} />
             </span>
           }
           title={product.name}
@@ -601,7 +586,6 @@ export const ProductDetailView = ({
               vat={vat}
             />
             {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
-            {writeThroughError !== null && <StatusText status="error">{writeThroughError}</StatusText>}
             {canWrite && (
               <SaveBar
                 labels={labels}
@@ -612,8 +596,7 @@ export const ProductDetailView = ({
               />
             )}
           </Tabs.Content>
-          <Tabs.Content className="flex flex-col gap-200 py-200" value="variants">
-            <SymmyWriteThroughNote product={product} />
+          <Tabs.Content className="py-200" value="variants">
             <VariantsPanel
               active={tab === 'variants'}
               canMoveStock={canMoveStock}
@@ -678,7 +661,6 @@ export const ProductDetailView = ({
             <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
-            <SymmyWriteThroughNote product={product} />
             <MovementsTable
               hasOlder={ledger.hasOlder}
               key={ledger.movements.at(-1)?.id ?? ''}
@@ -695,7 +677,6 @@ export const ProductDetailView = ({
                 productId={product.id}
                 revision={revision}
                 stockOnHand={product.stockOnHand}
-                symmyTarget={symmyStockTarget}
                 variants={product.variantRecords}
               />
             )}

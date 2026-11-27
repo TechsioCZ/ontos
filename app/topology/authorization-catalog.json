@@ -19,7 +19,6 @@
     "commerce.pricing.source-read",
     "commerce.pricing.source-write",
     "commerce.storefront-client",
-    "commerce.symmy-demo-catalog-copy",
     "commerce.tax.symmy-seller-vat-fixture-import",
     "communications.core.messaging-adapter",
     "communications.core.request-source",
