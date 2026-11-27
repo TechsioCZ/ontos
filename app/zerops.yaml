@@ -14,7 +14,7 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -169,7 +169,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -220,7 +220,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -280,7 +280,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -331,7 +331,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -384,7 +384,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -437,7 +437,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -494,7 +494,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -545,7 +545,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -596,7 +596,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -647,7 +647,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -700,7 +700,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -751,7 +751,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -804,7 +804,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -855,7 +855,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -906,7 +906,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -961,7 +961,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1020,7 +1020,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1076,7 +1076,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1127,7 +1127,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1237,7 +1237,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1292,7 +1292,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1344,7 +1344,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1401,7 +1401,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1449,7 +1449,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1499,7 +1499,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1555,7 +1555,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1608,7 +1608,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
@@ -1709,7 +1709,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.16.1
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.1 12.21.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.13.1/bin:$PATH" node scripts/verify-zerops-workspace-install.mts

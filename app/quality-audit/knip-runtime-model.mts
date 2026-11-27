@@ -1,7 +1,11 @@
-import { Effect, FileSystem, Path, Schema } from 'effect';
-import { parse as parseJsonc } from 'jsonc-parser';
+import { createRequire } from 'node:module';
+import { isDeepStrictEqual } from 'node:util';
+
+import { Effect, FileSystem, Option, Path, Schema } from 'effect';
+import { findNodeAtLocation, parse as parseJsonc, parseTree } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
-import { parseSync } from 'oxc-parser';
+import { parseSync, Visitor } from 'oxc-parser';
+import { parse as parseYaml } from 'yaml';
 
 import type { KnipModelEvidence } from './knip-model.mts';
 
@@ -12,8 +16,18 @@ const Manifest = Schema.fromJsonString(
   Schema.Struct({
     dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    name: Schema.optional(Schema.String),
+    optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    ultramodern: Schema.optional(
+      Schema.Struct({
+        nativeArtifacts: Schema.optional(Schema.Unknown),
+        sourceName: Schema.optional(Schema.String),
+        supportArtifacts: Schema.optional(Schema.Unknown),
+      }),
+    ),
+    version: Schema.optional(Schema.String),
   }),
 );
 const InstalledPackage = Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String }));
@@ -51,6 +65,210 @@ const ReleaseCohort = Schema.fromJsonString(
     packages: Schema.Array(Schema.Struct({ sourceName: Schema.String })),
   }),
 );
+const HostReleaseCohort = Schema.fromJsonString(
+  Schema.Struct({
+    packages: Schema.Array(
+      Schema.Struct({ sourceName: Schema.String, targetName: Schema.String, version: Schema.String }),
+    ),
+    release: Schema.Struct({ version: Schema.String }),
+  }),
+);
+const HostArtifacts = Schema.Struct({
+  packages: Schema.Record(
+    Schema.String,
+    Schema.Struct({ request: Schema.NonEmptyString, version: Schema.NonEmptyString }),
+  ),
+});
+const DependencyCatalogs = Schema.Struct({
+  catalogs: Schema.optional(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
+});
+
+/** Read manifests, never execute producer code. Bind every peer to its pinned cohort owner and local host. */
+const producerHostEvidence = Effect.fn('QualityAudit.producerHostEvidence')(function* producerHosts(
+  appRoot: string,
+  workspaces: readonly string[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const readManifest = Effect.fn(function* readHostManifest(file: string) {
+    const text = yield* fs.readFileString(file);
+    return { file, manifest: yield* Schema.decodeUnknownEffect(Manifest)(text), text };
+  });
+  const resolveManifest = Effect.fn(function* resolveHostManifest(anchor: string, name: string) {
+    for (const directory of createRequire(anchor).resolve.paths(name) ?? []) {
+      const candidate = path.join(directory, name, PACKAGE_MANIFEST);
+      if (yield* fs.exists(candidate)) {
+        return yield* readManifest(yield* fs.realPath(candidate));
+      }
+    }
+    return null;
+  });
+  const root = yield* readManifest(path.join(appRoot, PACKAGE_MANIFEST));
+  const rootRequest =
+    root.manifest.dependencies?.[GENERATOR_PACKAGE] ?? root.manifest.devDependencies?.[GENERATOR_PACKAGE];
+  if (rootRequest === undefined) {
+    return [];
+  }
+  const workspaceFile = path.join(appRoot, 'pnpm-workspace.yaml');
+  const yaml: unknown = (yield* fs.exists(workspaceFile)) ? parseYaml(yield* fs.readFileString(workspaceFile)) : {};
+  const catalogs = yield* Schema.decodeUnknownEffect(DependencyCatalogs)(yaml);
+  const effectiveRequest = (name: string, request: string) =>
+    request.startsWith('catalog:') ? catalogs.catalogs?.[request.slice(8)]?.[name] : request;
+  const generator = yield* resolveManifest(root.file, GENERATOR_PACKAGE);
+  if (generator === null) {
+    return [];
+  }
+  const cohortFile = path.join(path.dirname(generator.file), 'release-cohort.json');
+  if (!(yield* fs.exists(cohortFile))) {
+    return [];
+  }
+  const cohort = yield* Schema.decodeUnknownEffect(HostReleaseCohort)(yield* fs.readFileString(cohortFile));
+  const releases = new Map(cohort.packages.map((entry) => [entry.sourceName, entry]));
+  const pinned = (name: string, request: string, manifest: typeof Manifest.Type): boolean => {
+    const entry = releases.get(name);
+    return (
+      entry !== undefined &&
+      entry.version === cohort.release.version &&
+      effectiveRequest(name, request) === `npm:${entry.targetName}@${entry.version}` &&
+      manifest.name === entry.targetName &&
+      manifest.version === entry.version &&
+      manifest.ultramodern?.sourceName === name
+    );
+  };
+  if (!pinned(GENERATOR_PACKAGE, rootRequest, generator.manifest)) {
+    return [];
+  }
+  type HostManifest = Effect.Success<ReturnType<typeof readManifest>>;
+  const peerEvidence = Effect.fn(function* provePeerHost(input: {
+    readonly declarationSource: string;
+    readonly key: string;
+    readonly name: string;
+    readonly owner: HostManifest;
+    readonly pin: (typeof HostArtifacts.Type.packages)[string];
+    readonly producer: HostManifest;
+    readonly producerName: string;
+    readonly workspace: string;
+  }) {
+    const { declarationSource, key, name, owner, pin, producer, producerName, workspace } = input;
+    const categories = (['dependencies', 'devDependencies'] as const).filter(
+      (category) => owner.manifest[category]?.[name] === pin.request,
+    );
+    if (categories.length === 0) {
+      return [];
+    }
+    const host = yield* resolveManifest(owner.file, name);
+    const selected = yield* resolveManifest(producer.file, name);
+    if (
+      host === null ||
+      selected?.file !== host.file ||
+      host.manifest.name !== name ||
+      host.manifest.version !== pin.version
+    ) {
+      return [];
+    }
+    const tree = parseTree(owner.text);
+    const facts: KnipModelEvidence[] = [];
+    for (const category of categories) {
+      const declaration =
+        tree === undefined ? undefined : findNodeAtLocation(tree, [category, name])?.parent?.children?.[0];
+      if (declaration !== undefined) {
+        const offset = declaration.offset + 1;
+        facts.push({
+          ...at(
+            declarationSource,
+            owner.text,
+            offset,
+            workspace,
+            'native-resolver',
+            name,
+            `Pinned producer ${producerName} requires the exact ${key} host request ${pin.request}`,
+          ),
+          anchor: owner.file,
+          declarationColumn: offset - owner.text.lastIndexOf('\n', offset - 1),
+          declarationLine: owner.text.slice(0, offset).split('\n').length,
+          declarationSource,
+          dependencyCategory: category,
+          owningManifest: owner.file,
+          producerManifest: producer.file,
+          producerResolved: selected.file,
+          resolved: host.file,
+          specifier: `${name}/package.json`,
+        });
+      }
+    }
+    return facts;
+  });
+  const producerEvidence = Effect.fn(function* proveProducerHosts(input: {
+    readonly declarationSource: string;
+    readonly emitted: Set<string>;
+    readonly owner: HostManifest;
+    readonly producer: HostManifest;
+    readonly producerName: string;
+    readonly workspace: string;
+  }) {
+    const { emitted, owner, producer } = input;
+    const facts: KnipModelEvidence[] = [];
+    for (const key of ['supportArtifacts', 'nativeArtifacts'] as const) {
+      const authority = generator.manifest.ultramodern?.[key];
+      const artifacts = Schema.decodeUnknownOption(HostArtifacts)(authority);
+      if (
+        authority === undefined ||
+        !isDeepStrictEqual(owner.manifest.ultramodern?.[key], authority) ||
+        Option.isNone(artifacts)
+      ) {
+        continue;
+      }
+      for (const [name, requirement] of Object.entries(producer.manifest.peerDependencies ?? {})) {
+        const pin = artifacts.value.packages[name];
+        if (pin !== undefined && (requirement === pin.version || requirement === pin.request) && !emitted.has(name)) {
+          const proof = yield* peerEvidence({ ...input, key, name, pin });
+          facts.push(...proof);
+          if (proof.length > 0) {
+            emitted.add(name);
+          }
+        }
+      }
+    }
+    return facts;
+  });
+  const evidence: KnipModelEvidence[] = [];
+  for (const workspace of workspaces) {
+    const declarationSource = workspace === '.' ? PACKAGE_MANIFEST : `${workspace}/${PACKAGE_MANIFEST}`;
+    const owner = workspace === '.' ? root : yield* readManifest(path.join(appRoot, declarationSource));
+    const queue = Object.entries({ ...owner.manifest.dependencies, ...owner.manifest.devDependencies }).flatMap(
+      ([name, request]) => (releases.has(name) ? [{ anchor: owner.file, name, request }] : []),
+    );
+    const visited = new Set<string>();
+    const emitted = new Set<string>();
+    for (const edge of queue) {
+      const producer = yield* resolveManifest(edge.anchor, edge.name);
+      if (producer === null || !pinned(edge.name, edge.request, producer.manifest) || visited.has(producer.file)) {
+        continue;
+      }
+      visited.add(producer.file);
+      evidence.push(
+        ...(yield* producerEvidence({
+          declarationSource,
+          emitted,
+          owner,
+          producer,
+          producerName: edge.name,
+          workspace,
+        })),
+      );
+      for (const [name, request] of Object.entries({
+        ...producer.manifest.dependencies,
+        ...producer.manifest.optionalDependencies,
+        ...producer.manifest.peerDependencies,
+      })) {
+        if (releases.has(name)) {
+          queue.push({ anchor: producer.file, name, request });
+        }
+      }
+    }
+  }
+  return evidence;
+});
 const isContainedDirectory = (value: string): boolean =>
   value.length > 0 && !value.includes('..') && !value.startsWith('/');
 const declaredNames = (source: string, names: readonly string[]): readonly string[] =>
@@ -60,7 +278,9 @@ const declaredCohort = (manifest: typeof Manifest.Type, cohort: readonly string[
 /** Exact `name@version` specifiers pnpm patches, which the declaring manifest must pin. */
 const patchedSpecifiers = (workspaceYaml: string): readonly string[] => {
   const section = workspaceYaml.split('\npatchedDependencies:')[1]?.split(/\n(?=\S)/u)[0] ?? '';
-  return [...section.matchAll(/^\s+'?(?<specifier>[^'\s:]+)'?:/gmu)].flatMap((match) => match.groups?.specifier ?? []);
+  return section
+    .split('\n')
+    .flatMap((line) => /^'?(?<specifier>[^'\s:]+)'?:/u.exec(line.trimStart())?.groups?.['specifier'] ?? []);
 };
 const pinnedPatchedDependencies = (manifest: typeof Manifest.Type, specifiers: readonly string[]): readonly string[] =>
   specifiers.flatMap((specifier) => {
@@ -162,6 +382,34 @@ const uncomment = (file: string, source: string | undefined): string | undefined
   return result;
 };
 
+const hasWorkspacePresetOwner = (source: string): boolean => {
+  const parsed = parseSync('modern.config.ts', source);
+  let found = false;
+  new Visitor({
+    CallExpression(node) {
+      if (node.callee.type !== 'Identifier' || node.callee.name !== 'presetUltramodernWorkspace') {
+        return;
+      }
+      const [configuration, options] = node.arguments;
+      if (configuration?.type !== 'ObjectExpression' || options?.type !== 'ObjectExpression') {
+        return;
+      }
+      const properties = options.properties.flatMap((property) =>
+        property.type === 'Property' && !property.computed ? [property] : [],
+      );
+      found ||=
+        properties.some((property) => property.key.type === 'Identifier' && property.key.name === 'appId') &&
+        properties.some(
+          (property) =>
+            property.key.type === 'Identifier' &&
+            property.key.name === 'from' &&
+            source.slice(property.value.start, property.value.end).replaceAll(/\s+/gu, '') === 'import.meta.url',
+        );
+    },
+  }).visit(parsed.program);
+  return parsed.errors.length === 0 && found;
+};
+
 const invokedShell = (command: string): string | undefined => {
   const { shell } = /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups ?? {};
   if (shell === undefined || shell.includes('..')) {
@@ -249,7 +497,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       if (!source.includes(`cd "\${script_directory}/.."`) || !source.includes('dirname -- "$0"')) {
         return;
       }
-      for (const match of source.matchAll(/^\s*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu)) {
+      for (const match of source.matchAll(/^[ \t]*node[ \t]+(?<target>[\w./-]+\.[cm]?[jt]s)(?:[ \t]|$)/gmu)) {
         const { target } = match.groups ?? {};
         if (target !== undefined && !target.includes('..') && (yield* read(`${prefix}${target}`)) !== undefined) {
           evidence.push(
@@ -275,9 +523,9 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         manifestText: string,
       ) {
         const target =
-          /^rstest(?: run)? --config(?:=| )(?<quote>['"]?)(?<config>[\w./-]+\.[cm]?[jt]s)\k<quote>(?: --project [\w-]+)?$/u.exec(
+          /^rstest(?: run)? --config[= ](?<quote>['"]?)(?<config>[\w./-]+\.[cm]?[jt]s)\k<quote>(?: --project [\w-]+)?$/u.exec(
             command,
-          )?.groups?.config;
+          )?.groups?.['config'];
         if (
           target === undefined ||
           target.startsWith('/') ||
@@ -410,9 +658,9 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       const federation = uncomment(federationFile, yield* read(federationFile));
       if (
         federation?.includes("from '@modern-js/app-tools-extensions/config'") === true &&
-        /resolveEffectTsgoCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*,?\s*\}\s*\)/u.test(federation)
+        /resolveEffectTsrsCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*(?:,\s*)?\}\s*\)/u.test(federation)
       ) {
-        const offset = federation.indexOf('resolveEffectTsgoCompiler');
+        const offset = federation.indexOf('resolveEffectTsrsCompiler');
         evidence.push(
           at(
             federationFile,
@@ -424,21 +672,6 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
             'Framework DTS resolver resolves the Effect TSGo package from this configuration module',
           ),
         );
-        const readmeFile = `${prefix}node_modules/@effect/tsgo/README.md`;
-        const readme = yield* read(readmeFile);
-        if (readme?.includes('tries `typescript`, then `@typescript/native`') === true) {
-          evidence.push(
-            at(
-              federationFile,
-              federation,
-              offset,
-              workspace,
-              'dependency',
-              '@typescript/native',
-              `Effect TSGo native compiler fallback documented in ${readmeFile}`,
-            ),
-          );
-        }
       }
     });
     // presetUltramodernWorkspace uploads a UI unit to Zephyr by resolving zephyr-rspack-plugin with
@@ -459,9 +692,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       );
       if (
         config?.includes("from '@modern-js/ultramodern-app-tools'") === true &&
-        /presetUltramodernWorkspace\(\s*\{[\s\S]*\{[^{}]*\bappId\b[^{}]*\bfrom:\s*import\.meta\.url\b[^{}]*\}\s*,?\s*\)/u.test(
-          config,
-        ) &&
+        hasWorkspacePresetOwner(config) &&
         preset?.includes('const require = createRequire(from);') === true &&
         preset.includes(`require('${zephyr}')`)
       ) {
@@ -485,10 +716,10 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         if (source === undefined) {
           continue;
         }
-        for (const match of source.matchAll(
-          /^\s*-\s+cd app && (?:[A-Z_]+=\S+\s+)*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
-        )) {
-          const { target } = match.groups ?? {};
+        for (const match of source.matchAll(/^[ \t]*-[ \t]+cd app && (?<command>.*)$/gmu)) {
+          const command = match.groups?.['command'] ?? '';
+          const target = /^(?:[A-Z_]+=\S+[ \t]+)*node[ \t]+(?<target>[\w./-]+\.[cm]?[jt]s)(?:[ \t]|$)/u.exec(command)
+            ?.groups?.['target'];
           if (target !== undefined && !target.includes('..') && (yield* read(target)) !== undefined) {
             evidence.push(
               at(
@@ -620,7 +851,11 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       }
       for (const match of source.matchAll(/^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu)) {
         const { body = '' } = match.groups ?? {};
-        if (/^\s+(?:commands|jobs):\s*$/mu.test(body) && /^\s+-?\s*run:\s+\S.+$/mu.test(body)) {
+        const lines = body.split('\n');
+        if (
+          lines.some((line) => ['commands:', 'jobs:'].includes(line.trim())) &&
+          lines.some((line) => /^run:[ \t]+\S.+$/u.test(line.trimStart().replace(/^-[ \t]*/u, '')))
+        ) {
           evidence.push(
             at(
               file,
@@ -793,6 +1028,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       },
     );
     const workspaces = yield* workspaceDirectories(appRoot);
+    evidence.push(...(yield* producerHostEvidence(appRoot, workspaces)));
     for (const workspace of workspaces) {
       const prefix = workspace === '.' ? '' : `${workspace}/`;
       const manifestFile = `${prefix}package.json`;

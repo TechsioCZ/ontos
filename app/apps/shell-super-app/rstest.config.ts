@@ -1,6 +1,5 @@
 import { createRequire } from 'node:module';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
@@ -15,7 +14,7 @@ const encodedSiteUrl = Result.getOrThrow(
   Schema.encodeResult(Schema.fromJsonString(Schema.String))('http://localhost:3020'),
 );
 
-const coreRuntimeRoot = fileURLToPath(new URL('../../packages/core-runtime/', import.meta.url));
+const coreRuntimeRoot = new URL('../../packages/core-runtime/', import.meta.url).href;
 // Generated owner modules are imported natively from disk, so core-runtime must be one Node
 // instance shared by the test bundle and those modules (brand symbols, private fields).
 const externalizeCoreRuntime = (
@@ -30,9 +29,9 @@ const externalizeCoreRuntime = (
     resolveExternal(undefined, `module-import ${request}`);
     return;
   }
-  const resolved = request.startsWith('.') ? path.resolve(context, request) : undefined;
+  const resolved = request.startsWith('.') ? pathToFileURL(`${context}/${request}`).href : undefined;
   if (resolved !== undefined && resolved.startsWith(coreRuntimeRoot)) {
-    resolveExternal(undefined, `module-import ${pathToFileURL(resolved).href}`);
+    resolveExternal(undefined, `module-import ${resolved}`);
     return;
   }
   resolveExternal();
