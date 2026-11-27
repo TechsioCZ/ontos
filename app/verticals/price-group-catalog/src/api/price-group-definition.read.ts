@@ -205,7 +205,8 @@ export const priceGroupDefinitionRead = defineRead(
       policyKey: 'pricing.price-group-catalog.api.price-group-definition.evidence.v1',
     },
     inputSchema: PriceGroupDefinitionRequestSchema,
-    legalEntityScope: 'forbidden',
+    // Company staff name the Tenant's Price Groups with their company selected.
+    legalEntityScope: 'optional',
     owningModuleKey: priceGroupCatalogModuleKey,
     policies: [],
     readKey: 'pricing.price-group-catalog.api.price-group-definition',

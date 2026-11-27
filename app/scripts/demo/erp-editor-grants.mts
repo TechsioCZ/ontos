@@ -128,11 +128,13 @@ export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
   // erp-media-section.tsx: the current image and its preview.
   'commerce.catalog.catalog-media-current.read',
   'commerce.catalog.api-catalog-media-content.read',
-  // erp-variant-editor.tsx and page-data.ts: the price and the customer-group prices.
+  // erp-variant-editor.tsx and page-data.ts: the price and the customer-group prices; a group the Variant has no
+  // Price in gets its first one (define).
   'commerce.pricing.price.read-catalog-page',
   'commerce.pricing.price.read-schedule',
   'commerce.pricing.external-price-source-authority.grant',
   'commerce.pricing.price.revise',
+  'commerce.pricing.price.define',
   // erp-variant-editor.tsx and page-data.ts: the stock.
   'commerce.inventory.catalog-variant-on-hand-page.read',
   'commerce.inventory.stock-position.receive',

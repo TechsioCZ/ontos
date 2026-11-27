@@ -1,5 +1,6 @@
-// Staff dialog for one ERP Variant on Novinky z ERP: its Price (Pricing revise-price, value only, under the staff
-// source authority) and its stock on hand (Inventory). Each figure goes to its owner; the list reloads afterwards.
+// Staff dialog for one ERP Variant on Novinky z ERP: its Price and each customer Price Group's Price (Pricing
+// revise-price, value only, or define-price for a group without one, under the staff source authority) and its stock on
+// hand (Inventory). Each figure goes to its owner; the list reloads afterwards.
 import { executeCatalogVariantOnHandPage } from '@app/inventory/api/catalog-variant-on-hand-page-client';
 import { GrantStaffStockSourceAuthorityPayloadSchema } from '@app/inventory/api/grant-staff-stock-source-authority';
 import { executeGrantStaffStockSourceAuthority } from '@app/inventory/api/grant-staff-stock-source-authority-action-client';
@@ -12,6 +13,9 @@ import { executeCatalogPagePrices } from '@app/pricing-contracts/catalog-page-pr
 import { CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { GrantExternalPriceSourceAuthorityPayloadSchema } from '@app/pricing-contracts/grant-external-price-source-authority';
 import { executeGrantExternalPriceSourceAuthority } from '@app/pricing-contracts/grant-external-price-source-authority/client';
+import { DefinePricePayloadSchema } from '@app/pricing-contracts/define-price';
+import { executeDefinePrice } from '@app/pricing-contracts/define-price/client';
+import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import { executePriceSchedule } from '@app/pricing-contracts/price-schedule/client';
 import { RevisePricePayloadSchema } from '@app/pricing-contracts/revise-price';
 import { executeRevisePrice } from '@app/pricing-contracts/revise-price/client';
@@ -83,7 +87,8 @@ const foundPrices = (answer: PageAnswer) =>
     CURRENCY_SUPPORT_NOT_CURRENT: () => [],
   });
 
-const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer, group?: ErpPriceGroup) =>
+/** Pricing's answer for the Variant's Price, or with a group for that Price Group's own key (no fallback). */
+const readPriceAnswer = (item: ProductPageItem, variant: Variant, offer: ErpOffer, group?: ErpPriceGroup) =>
   Schema.decodeUnknownEffect(CatalogPagePricesRequestSchema)({
     ...pricesRequestOf(offer, single(item, variant)),
     ...(group === undefined ? {} : { priceGroupRef: group.priceGroupRef }),
@@ -96,6 +101,10 @@ const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer, gro
         ),
       ),
     ),
+  );
+
+const readPrice = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
+  readPriceAnswer(item, variant, offer).pipe(
     Effect.map((answer) => {
       const [found] = foundPrices(answer);
       return found;
@@ -120,12 +129,34 @@ type PriceFound = NonNullable<Effect.Success<ReturnType<typeof readPrice>>>;
 
 interface GroupPrice {
   readonly group: ErpPriceGroup;
+  /** The group's own Price of the Variant; none when Pricing has no Price under the group's key yet. */
   readonly price: PriceFound | undefined;
+  /** Why the group's Price could not be read: the row is shown, and never offered a new Price. */
+  readonly problem?: string;
 }
 
+const groupPriceOf = (group: ErpPriceGroup, answer: PageAnswer): GroupPrice => {
+  const unreadable = (problem: string): GroupPrice => ({ group, price: undefined, problem });
+  return Match.valueTags(answer, {
+    CATALOG_PAGE_PRICED: ({ prices }) => {
+      const [price] = prices;
+      return price === undefined
+        ? unreadable('bez odpovědi')
+        : Match.valueTags(price, {
+            NO_APPLICABLE_PRICE: (): GroupPrice => ({ group, price: undefined }),
+            PRICE_FOUND: (found): GroupPrice => ({ group, price: found }),
+            PRICING_CONFIGURATION_ERROR: ({ _tag }) => unreadable(_tag),
+            PRICING_CONFLICT: ({ _tag }) => unreadable(_tag),
+            PRICING_INDETERMINATE: ({ _tag }) => unreadable(_tag),
+          });
+    },
+    CURRENCY_SUPPORT_NOT_CURRENT: ({ _tag }) => unreadable(_tag),
+  });
+};
+
 /**
- * The variant's Price in each of the company's Price Groups (the group's own key, whichever source wrote it last). A
- * company without readable groups shows none; the base Price and stock stay editable.
+ * The Variant's Price in each of the company's Price Groups (the group's own key, whichever source wrote it last). The
+ * group list itself must load: a company whose groups cannot be read fails the dialog instead of hiding them.
  */
 const readGroupPrices = (item: ProductPageItem, variant: Variant, offer: ErpOffer) =>
   requestId.pipe(
@@ -134,16 +165,61 @@ const readGroupPrices = (item: ProductPageItem, variant: Variant, offer: ErpOffe
       Effect.forEach(
         groups,
         (group) =>
-          readPrice(item, variant, offer, group).pipe(
-            Effect.map((price): GroupPrice => ({ group, price })),
-            Effect.orElseSucceed((): GroupPrice => ({ group, price: undefined })),
+          readPriceAnswer(item, variant, offer, group).pipe(
+            Effect.map((answer) => groupPriceOf(group, answer)),
+            Effect.catch((error: string) => Effect.succeed<GroupPrice>({ group, price: undefined, problem: error })),
           ),
         { concurrency: 4 },
       ),
     ),
-    Effect.orElseSucceed((): readonly GroupPrice[] => []),
   );
 type StockPage = Effect.Success<ReturnType<typeof readStock>>;
+
+/**
+ * The staff source's authority for one exact Price key, from a fixed start. Pricing answers a repeated grant of the same
+ * key and terms as the grant it already holds, so every save may ask again.
+ */
+const grantStaffSource = Effect.fn('ErpVariantEditor.grantStaffSource')(function* grant(
+  identityKey: PriceIdentityKey,
+  reason: string,
+) {
+  const [id, grantKey] = yield* Effect.all([requestId, freshUuid], { concurrency: 1 });
+  return yield* Schema.decodeEffect(GrantExternalPriceSourceAuthorityPayloadSchema)({
+    authority: staffAuthority,
+    effectivePeriod: { effectiveFrom: grantFrom },
+    exactIdentityKey: identityKey,
+    mapping: staffMapping,
+    reason,
+    verificationRef: staffSource,
+  }).pipe(
+    Effect.flatMap((payload) => executeGrantExternalPriceSourceAuthority(payload, id, { idempotencyKey: grantKey })),
+    Effect.mapError((problem) => describe('Oprávnění zdroje ceny', problem)),
+  );
+});
+
+/** The staff source's assertion of one amount at one instant (Pricing requires all three timings to be that instant). */
+const staffAssertion = Effect.fn('ErpVariantEditor.staffAssertion')(function* assertion(
+  sourceRecordRef: string,
+  monetaryAmount: { readonly amount: string; readonly currencyCode: string },
+  unitBasis: PriceIdentityKey['unitBasis'],
+  at: string,
+) {
+  const [sourceAssertionId, version] = yield* Effect.all([freshUuid, freshUuid], { concurrency: 1 });
+  return {
+    lineage: { kind: 'INITIAL' as const },
+    mapping: staffMapping,
+    originalAssertion: { monetaryAmount, monetaryBoundary: 'PRE_TAX' as const, unitBasis },
+    sourceAssertionId,
+    sourceAuthority: staffAuthority,
+    sourceRecord: {
+      sourceChangeCorrelation: `ontos-admin:${version}`,
+      sourceRecordRef,
+      sourceRecordVersion: version,
+      sourceSystem: { ownerModuleId: 'commerce.catalog', sourceSystemRef: staffSource },
+    },
+    timing: { importedAt: at, ownerBusinessEffectiveAt: at, sourceEffectiveAt: at },
+  };
+});
 
 /** Pricing's Current Revision of the Price, revised value-only under the staff source authority. */
 const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
@@ -160,19 +236,7 @@ const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
   }
   const { current } = schedule.schedule;
   const { identityKey } = current.definition;
-  const grantKey = yield* freshUuid;
-  // A key granted before answers a conflict; the revision below is what decides.
-  const grantProblem = yield* Schema.decodeEffect(GrantExternalPriceSourceAuthorityPayloadSchema)({
-    authority: staffAuthority,
-    effectivePeriod: { effectiveFrom: grantFrom },
-    exactIdentityKey: identityKey,
-    mapping: staffMapping,
-    reason,
-    verificationRef: staffSource,
-  }).pipe(
-    Effect.flatMap((payload) => executeGrantExternalPriceSourceAuthority(payload, id, { idempotencyKey: grantKey })),
-    Effect.match({ onFailure: (problem) => describe('Oprávnění zdroje ceny', problem), onSuccess: () => '' }),
-  );
+  yield* grantStaffSource(identityKey, reason);
   // Pricing takes a value-only change at the stated effectiveFrom and requires the assertion's business time to be
   // that same instant. It must not be after the server's operation time (a few seconds back absorbs clock skew) and
   // not before the Current Revision it replaces.
@@ -183,8 +247,9 @@ const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
       ? DateTime.add(currentFrom.value, { milliseconds: 1 })
       : skewed,
   );
-  const [assertionId, version, revisionKey] = yield* Effect.all([freshUuid, freshUuid, freshUuid], { concurrency: 1 });
+  const revisionKey = yield* freshUuid;
   const monetaryAmount = { amount, currencyCode: identityKey.currencyCode };
+  const sourceAssertion = yield* staffAssertion(found.priceRef.resourceId, monetaryAmount, identityKey.unitBasis, now);
   const reviseId = yield* requestId;
   const result = yield* Schema.decodeEffect(RevisePricePayloadSchema)({
     effectiveFrom: now,
@@ -199,26 +264,60 @@ const revisePrice = Effect.fn('ErpVariantEditor.revisePrice')(function* revise(
     monetaryAmount,
     priceRef: found.priceRef,
     reason,
-    sourceAssertion: {
-      lineage: { kind: 'INITIAL' },
-      mapping: staffMapping,
-      originalAssertion: { monetaryAmount, monetaryBoundary: 'PRE_TAX', unitBasis: identityKey.unitBasis },
-      sourceAssertionId: assertionId,
-      sourceAuthority: staffAuthority,
-      sourceRecord: {
-        sourceChangeCorrelation: `ontos-admin:${version}`,
-        sourceRecordRef: found.priceRef.resourceId,
-        sourceRecordVersion: version,
-        sourceSystem: { ownerModuleId: 'commerce.catalog', sourceSystemRef: staffSource },
-      },
-      timing: { importedAt: now, ownerBusinessEffectiveAt: now, sourceEffectiveAt: now },
-    },
+    sourceAssertion,
   }).pipe(
     Effect.flatMap((payload) => executeRevisePrice(payload, reviseId, { idempotencyKey: revisionKey })),
-    Effect.mapError((problem) =>
-      grantProblem === '' ? describe('Změna ceny', problem) : `${describe('Změna ceny', problem)}; ${grantProblem}`,
-    ),
+    Effect.mapError((problem) => describe('Změna ceny', problem)),
   );
+  return result;
+});
+
+/**
+ * A first Price for a customer Price Group the Variant has none in: the key of a Price the Variant has, with the group's
+ * selector, under the staff source authority, effective a few seconds back to absorb clock skew. A later ERP price for
+ * the same key supersedes it, and a later staff edit revises it.
+ */
+const defineGroupPrice = Effect.fn('ErpVariantEditor.defineGroupPrice')(function* define(
+  keyPrice: PriceFound,
+  group: ErpPriceGroup,
+  amount: string,
+  reason: string,
+) {
+  const id = yield* requestId;
+  const schedule = yield* executePriceSchedule({ priceRef: keyPrice.priceRef }, id).pipe(
+    Effect.mapError((problem) => describe('Rozvrh ceny', problem)),
+  );
+  if (schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+    return yield* Effect.fail(`Cena nemá platnou aktuální revizi (${schedule.outcome})`);
+  }
+  const identityKey: PriceIdentityKey = {
+    ...schedule.schedule.current.definition.identityKey,
+    priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: group.priceGroupRef },
+  };
+  yield* grantStaffSource(identityKey, reason);
+  const now = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: 5 }));
+  const [priceId, defineKey] = yield* Effect.all([freshUuid, freshUuid], { concurrency: 1 });
+  const monetaryAmount = { amount, currencyCode: identityKey.currencyCode };
+  const sourceAssertion = yield* staffAssertion(priceId, monetaryAmount, identityKey.unitBasis, now);
+  const defineId = yield* requestId;
+  const step = `Nová cena skupiny ${group.label}`;
+  const result = yield* Schema.decodeEffect(DefinePricePayloadSchema)({
+    effectiveFrom: now,
+    identityKey,
+    monetaryAmount,
+    priceRef: { ...keyPrice.priceRef, resourceId: priceId },
+    reason,
+    sourceAssertion,
+  }).pipe(
+    Effect.flatMap((payload) => executeDefinePrice(payload, defineId, { idempotencyKey: defineKey })),
+    Effect.mapError((problem) => describe(step, problem)),
+  );
+  if (!('outcome' in result)) {
+    return yield* Effect.fail(`${step} čeká na schválení`);
+  }
+  if (result.outcome !== 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
+    return yield* Effect.fail(`${step}: Ceny ji nepřijaly (${'reason' in result ? result.reason : result.dependency})`);
+  }
   return result;
 });
 
@@ -372,6 +471,10 @@ interface KeptFigures {
   readonly stock?: string;
 }
 
+/** The Price whose key a group without a Price takes its new one under: the Variant's own, else any group's. */
+const keyPriceOf = (loaded: Loaded): PriceFound | undefined =>
+  loaded.price ?? loaded.groups.find(({ price }) => price !== undefined)?.price;
+
 interface ErpVariantEditorProps {
   readonly item: ProductPageItem;
   readonly offer: ErpOffer;
@@ -477,12 +580,16 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
       nextAmount !== loaded.price.priceRevision.monetaryAmount.amount;
     const [first] = loaded.stock.items;
     const stockChanged = nextStock !== null && !(first?.outcome === 'ON_HAND' && first.total.amount === nextStock);
-    const groupChanges = loaded.groups.flatMap(({ group, price }) => {
-      const typed = groupAmounts[group.priceGroupRef.resourceId] ?? '';
-      const next = canonical(typed);
-      return price === undefined || next === null || next === price.priceRevision.monetaryAmount.amount
-        ? []
-        : [{ next, price }];
+    const keyPrice = keyPriceOf(loaded);
+    const groupChanges = loaded.groups.flatMap(({ group, price, problem }) => {
+      const next = canonical(groupAmounts[group.priceGroupRef.resourceId] ?? '');
+      if (next === null || problem !== undefined) {
+        return [];
+      }
+      if (price !== undefined) {
+        return next === price.priceRevision.monetaryAmount.amount ? [] : [Effect.asVoid(revisePrice(price, next, why))];
+      }
+      return keyPrice === undefined ? [] : [Effect.asVoid(defineGroupPrice(keyPrice, group, next, why))];
     });
     const badGroup = loaded.groups.some(({ group }) => {
       const typed = groupAmounts[group.priceGroupRef.resourceId] ?? '';
@@ -498,7 +605,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
       ...(priceChanged && loaded.price !== undefined && nextAmount !== null
         ? [Effect.asVoid(revisePrice(loaded.price, nextAmount, why))]
         : []),
-      ...groupChanges.map(({ next, price }) => Effect.asVoid(revisePrice(price, next, why))),
+      ...groupChanges,
       ...(stockChanged ? [Effect.asVoid(writeStock(loaded.stock, nextStock, offer, why))] : []),
     ];
     browserRuntime.runFork(
@@ -519,6 +626,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
     );
   };
   const currency = loaded?.price?.priceRevision.monetaryAmount.currencyCode ?? offer.currencyCode;
+  const keyPrice = loaded === null ? undefined : keyPriceOf(loaded);
   return (
     <Dialog
       actions={
@@ -567,39 +675,37 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
                 />
               </label>
             )}
-            {loaded.groups.some(({ price }) => price !== undefined) && (
+            {loaded.groups.length > 0 && (
               <div className="flex flex-col gap-100 text-sm" data-testid="erp-variant-group-prices">
                 <span className="font-medium">Ceny cenových skupin bez DPH ({currency})</span>
-                {loaded.groups.flatMap(({ group, price }) =>
-                  price === undefined
-                    ? []
-                    : [
-                        <label
-                          className="flex items-center justify-between gap-100"
-                          htmlFor={`erp-group-price-${group.priceGroupRef.resourceId}`}
-                          key={group.priceGroupRef.resourceId}
-                        >
-                          <span>{group.label}</span>
-                          <Input
-                            aria-label={`Cena skupiny ${group.label}`}
-                            id={`erp-group-price-${group.priceGroupRef.resourceId}`}
-                            inputMode="decimal"
-                            onChange={(event) => {
-                              const { value } = event.target;
-                              setGroupAmounts((current) => ({ ...current, [group.priceGroupRef.resourceId]: value }));
-                            }}
-                            size="sm"
-                            value={groupAmounts[group.priceGroupRef.resourceId] ?? ''}
-                          />
-                        </label>,
-                      ],
-                )}
-                {loaded.groups.some(({ price }) => price === undefined) && (
-                  <span className="text-fg-secondary">
-                    Bez ceny pro tuto variantu:{' '}
-                    {loaded.groups.flatMap(({ group, price }) => (price === undefined ? [group.label] : [])).join(', ')}
-                  </span>
-                )}
+                {loaded.groups.map(({ group, price, problem }) => {
+                  const inputId = `erp-group-price-${group.priceGroupRef.resourceId}`;
+                  // A group without a Price gets an empty field: a typed amount becomes its new Price.
+                  return problem === undefined && (price !== undefined || keyPrice !== undefined) ? (
+                    <label className="flex items-center justify-between gap-100" htmlFor={inputId} key={inputId}>
+                      <span>{group.label}</span>
+                      <Input
+                        aria-label={`Cena skupiny ${group.label}`}
+                        id={inputId}
+                        inputMode="decimal"
+                        onChange={(event) => {
+                          const { value } = event.target;
+                          setGroupAmounts((current) => ({ ...current, [group.priceGroupRef.resourceId]: value }));
+                        }}
+                        {...(price === undefined ? { placeholder: 'Bez ceny' } : {})}
+                        size="sm"
+                        value={groupAmounts[group.priceGroupRef.resourceId] ?? ''}
+                      />
+                    </label>
+                  ) : (
+                    <div className="flex items-center justify-between gap-100" key={inputId}>
+                      <span>{group.label}</span>
+                      <span className="text-fg-secondary">
+                        {problem === undefined ? 'Bez ceny' : `Cenu nelze načíst (${problem})`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <label className="flex flex-col gap-50 text-sm" htmlFor="erp-variant-stock">

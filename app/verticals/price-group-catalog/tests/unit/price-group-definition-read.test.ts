@@ -482,9 +482,9 @@ describe('Price Group Definition governed Read', () => {
     }),
   );
 
-  it('declares forbidden legal-entity scope and decides the read through its v2 declaration alone', () => {
+  it('declares optional legal-entity scope and decides the read through its v2 declaration alone', () => {
     const { descriptor } = priceGroupDefinitionRead;
-    expect(descriptor.legalEntityScope).toBe('forbidden');
+    expect(descriptor.legalEntityScope).toBe('optional');
     // The read's record comes from the access gate, not from a legacy permission target (O62):
     // the descriptor carries its own scope-wide declaration and no positional target resolver.
     expect(descriptor.accessDeclaration).toMatchObject({
