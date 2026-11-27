@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { createOperation } from "@ontos/storefront-runtime";
 import type { Operation, OperationOptions } from "@ontos/storefront-runtime";
 import { joined, MAX_STALE_MS } from "./shared-read";
+import { storefrontRuntime } from "./runtime";
 
 // An owner read whose answer every visitor shares while that answer is young (the AKROS storefront's fresh read): it
 // never serves an answer whose read started more than `maxAgeMs` ago, so a state saved in the admin shows on every
@@ -23,7 +24,7 @@ interface State<A> {
   demandAt: number;
   latest?: Answer<A>;
   load: (operation: Operation) => Promise<A>;
-  pending?: Pending<A> | undefined;
+  pending?: Pending<A>;
   polling: boolean;
 }
 export interface FreshReadTiming {
@@ -36,54 +37,85 @@ export interface FreshReadTiming {
    */
   waitMs?: number;
 }
-const states = new Map<string, State<unknown>>();
 let epoch = 0;
 
 /** Tests: forget every answer and stop every background read. */
 export const clearFreshReads = () => {
   epoch += 1;
-  states.clear();
 };
 
+const readAnswer = async <A>(state: State<A>, startedAt: number) => {
+  const operation = storefrontRuntime.runSync(createOperation());
+  try {
+    const value = await state.load(operation);
+    const answer = { startedAt, value };
+    if (state.latest === undefined || state.latest.startedAt < startedAt) {
+      state.latest = answer;
+    }
+    return answer;
+  } finally {
+    operation.dispose();
+  }
+};
+const clearPending = async <A>(state: State<A>, pending: Pending<A>) => {
+  try {
+    await pending.answer;
+  } catch {
+    // The visitor handles read failure; this observer only releases the matching slot.
+  } finally {
+    if (state.pending === pending) {
+      delete state.pending;
+    }
+  }
+};
 const start = <A>(state: State<A>): Pending<A> => {
   const startedAt = Date.now();
-  const operation = Effect.runSync(createOperation());
-  const pending: Pending<A> = {
-    answer: state
-      .load(operation)
-      .then((value) => {
-        const answer = { startedAt, value };
-        if (state.latest === undefined || state.latest.startedAt < startedAt) state.latest = answer;
-        return answer;
-      })
-      .finally(() => {
-        operation.dispose();
-        if (state.pending === pending) state.pending = undefined;
-      }),
-    startedAt,
-  };
+  const pending = { answer: readAnswer(state, startedAt), startedAt };
   state.pending = pending;
+  void clearPending(state, pending);
   return pending;
 };
-
-const pause = (ms: number) =>
-  new Promise<void>((resolve) => {
-    // A test DOM may hand back a timer without unref.
-    setTimeout(resolve, ms).unref?.();
-  });
-
-const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) => {
-  if (state.polling) return;
-  state.polling = true;
-  try {
-    while (owner === epoch && Date.now() - state.demandAt < timing.keepAliveMs) {
-      const begun = Date.now();
-      await (state.pending ?? start(state)).answer.catch(() => undefined);
-      await pause(Math.max(0, timing.intervalMs - (Date.now() - begun)));
-    }
-  } finally {
-    state.polling = false;
+const pause = async (ms: number) => {
+  const elapsed = Promise.withResolvers<null>();
+  // A test DOM may hand back a timer without unref.
+  setTimeout(() => {
+    elapsed.resolve(null);
+  }, ms).unref?.();
+  await elapsed.promise;
+};
+const poll = <A>(state: State<A>, timing: FreshReadTiming, owner: number) => {
+  if (state.polling) {
+    return;
   }
+  state.polling = true;
+  const iteration = Effect.gen(function* refreshAnswer() {
+    const begun = Date.now();
+    yield* Effect.promise(async () => {
+      try {
+        await (state.pending ?? start(state)).answer;
+      } catch {
+        // Keep the newest successful answer during a temporary owner outage.
+      }
+    });
+    yield* Effect.promise(
+      async () => await pause(Math.max(0, timing.intervalMs - (Date.now() - begun))),
+    );
+  });
+  storefrontRuntime.runFork(
+    Effect.whileLoop({
+      body: () => iteration,
+      step: () => {
+        // Each iteration updates its own pending state.
+      },
+      while: () => owner === epoch && Date.now() - state.demandAt < timing.keepAliveMs,
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          state.polling = false;
+        }),
+      ),
+    ),
+  );
 };
 
 const kept = <A>(state: State<A>): Answer<A> | undefined => {
@@ -92,55 +124,69 @@ const kept = <A>(state: State<A>): Answer<A> | undefined => {
 };
 
 /** `answer`, or after `waitMs` the newest kept answer while the read goes on for the visits after it. */
-const within = <A>(answer: Promise<A>, waitMs: number | undefined, state: State<A>): Promise<A> => {
-  if (waitMs === undefined || kept(state) === undefined) return answer;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    answer,
-    new Promise<A>((resolve) => {
-      timer = setTimeout(() => {
-        const newest = kept(state);
-        if (newest !== undefined) resolve(newest.value);
-      }, waitMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
+const within = async <A>(
+  answer: Promise<A>,
+  waitMs: number | undefined,
+  state: State<A>,
+): Promise<A> => {
+  if (waitMs === undefined || kept(state) === undefined) {
+    return await answer;
+  }
+  const fallback = Promise.withResolvers<A>();
+  const timer = setTimeout(() => {
+    const newest = kept(state);
+    if (newest !== undefined) {
+      fallback.resolve(newest.value);
+    }
+  }, waitMs);
+  try {
+    return await Promise.race([answer, fallback.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+const newestAnswer = async <A>(pending: Pending<A>, state: State<A>) => {
+  try {
+    const answer = await pending.answer;
+    return answer.value;
+  } catch (error) {
+    const newest = kept(state);
+    if (newest !== undefined) {
+      return newest.value;
+    }
+    throw error;
+  }
 };
 
-export function freshRead<A>(
-  key: string,
-  timing: FreshReadTiming,
-  load: (operation: Operation) => Promise<A>,
-  caller: OperationOptions = {},
-): Promise<A> {
-  let state = states.get(key) as State<A> | undefined;
-  if (state === undefined) {
-    state = { demandAt: 0, load, polling: false };
-    states.set(key, state as State<unknown>);
-  }
-  // The newest visit's loader reads for the visits after it (equal keys read the same owner state).
-  state.load = load;
-  const now = Date.now();
-  state.demandAt = now;
-  void poll(state, timing, epoch);
-  const young = (startedAt: number) => now - startedAt <= timing.maxAgeMs;
-  if (state.latest !== undefined && young(state.latest.startedAt))
-    return Promise.resolve(state.latest.value);
-  const pending =
-    state.pending !== undefined && young(state.pending.startedAt) ? state.pending : start(state);
-  const current = state;
-  return joined(
-    within(
-      pending.answer.then(
-        ({ value }) => value,
-        (error: unknown) => {
-          const newest = kept(current);
-          if (newest !== undefined) return newest.value;
-          throw error;
-        },
-      ),
-      timing.waitMs,
-      current,
-    ),
-    caller,
-  );
-}
+/** Typed owner read family with the original freshness and bounded-stale guarantees. */
+export const createFreshRead = <A>() => {
+  const states = new Map<string, State<A>>();
+  let owner = epoch;
+  return async (
+    key: string,
+    timing: FreshReadTiming,
+    load: (operation: Operation) => Promise<A>,
+    caller: OperationOptions = {},
+  ): Promise<A> => {
+    if (owner !== epoch) {
+      states.clear();
+      owner = epoch;
+    }
+    let state = states.get(key);
+    if (state === undefined) {
+      state = { demandAt: 0, load, polling: false };
+      states.set(key, state);
+    }
+    state.load = load;
+    const now = Date.now();
+    state.demandAt = now;
+    poll(state, timing, owner);
+    const young = (startedAt: number) => now - startedAt <= timing.maxAgeMs;
+    if (state.latest !== undefined && young(state.latest.startedAt)) {
+      return state.latest.value;
+    }
+    const pending =
+      state.pending !== undefined && young(state.pending.startedAt) ? state.pending : start(state);
+    return await joined(within(newestAnswer(pending, state), timing.waitMs, state), caller);
+  };
+};

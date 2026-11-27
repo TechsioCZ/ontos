@@ -2,7 +2,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { SourceProfileExportApi } from '../../shared/apis/source-profile-export.ts';
-import type { SourceProfileExportRequest } from '../../shared/apis/source-profile-export.ts';
+import type { SourceProfileExportInput } from '../../shared/apis/source-profile-export.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface SourceProfileExportClientOptions {
@@ -37,7 +37,7 @@ const sourceProfileExportClient = (
   );
 
 export const executeSourceProfileExportWithAuthorization = (
-  payload: SourceProfileExportRequest,
+  payload: SourceProfileExportInput,
   ...[credential, requestCorrelation, options = {}]: SourceProfileExportAuthorizedInvocation
 ) =>
   sourceProfileExportClient(Redacted.make(credential), requestCorrelation, options).pipe(
@@ -45,7 +45,7 @@ export const executeSourceProfileExportWithAuthorization = (
   );
 
 export const executeSourceProfileExport = (
-  payload: SourceProfileExportRequest,
+  payload: SourceProfileExportInput,
   ...[requestCorrelation, options = {}]: SourceProfileExportOperationInvocation
 ) =>
   operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>

@@ -9,8 +9,8 @@ import { selectMarket } from "./market";
 import { readCurrentMarketCatalog } from "./market-catalog-read";
 import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { storefrontRuntime } from "./runtime";
-import { freshRead } from "./fresh-read";
-import { sharedRead } from "./shared-read";
+import { createFreshRead } from "./fresh-read";
+import { createSharedRead } from "./shared-read";
 
 export interface CatalogQuery {
   categorySlug?: string;
@@ -131,10 +131,11 @@ const CATALOG_TTL_MS = 15_000;
 // revision, then takes the newest answer (up to 10 minutes old), as AKROS does: a slow owner (stage: 0.6-1 s per read)
 // never holds a page.
 const OWNER_WAIT_MS = 300;
+const freshRead = createFreshRead<number>();
 const REVISION_TIMING = {
   intervalMs: 500,
   keepAliveMs: 10 * 60_000,
-  maxAgeMs: 1_500,
+  maxAgeMs: 1500,
   waitMs: OWNER_WAIT_MS,
 };
 const RevisionSchema = Schema.Struct({ revision: Schema.Int });
@@ -161,24 +162,35 @@ const loadRevision = async (operation: Operation) =>
     ),
   );
 /**
- * While merchandise is unavailable shoppers keep the revision read last, for up to 10 minutes. `undefined` once
+ * While merchandise is unavailable shoppers keep the revision read last, for up to 10 minutes. `null` once
  * merchandise cannot say: such a read is not shared at all.
  */
-const catalogRevision = (options: OperationOptions) =>
-  freshRead("catalog:revision", REVISION_TIMING, loadRevision, options).catch(() => undefined);
+const catalogRevision = async (options: OperationOptions) => {
+  try {
+    return await freshRead("catalog:revision", REVISION_TIMING, loadRevision, options);
+  } catch {
+    return null;
+  }
+};
 
 type CatalogResult = Awaited<ReturnType<typeof readCatalog>>;
+const sharedRead = createSharedRead<CatalogResult>();
+type ReadyCatalog = Extract<CatalogResult, { state: "ready" }>["catalog"];
 // Every listing answer of one revision repeats the same category tree (about 1,800 nodes): shared answers keep one copy.
-let heldTree: { categories: readonly unknown[]; json: string } | undefined;
+let heldTree: { categories: ReadyCatalog["categories"]; json: string } | undefined;
 const shareTree = (result: CatalogResult): CatalogResult => {
-  if (result.state !== "ready" || result.catalog.categories.length === 0) return result;
+  if (result.state !== "ready" || result.catalog.categories.length === 0) {
+    return result;
+  }
   const json = JSON.stringify(result.catalog.categories);
-  if (heldTree?.json !== json) heldTree = { categories: result.catalog.categories, json };
+  if (heldTree?.json !== json) {
+    heldTree = { categories: result.catalog.categories, json };
+  }
   return {
     ...result,
     catalog: {
       ...result.catalog,
-      categories: heldTree.categories as typeof result.catalog.categories,
+      categories: heldTree.categories,
     },
   };
 };
@@ -187,7 +199,9 @@ const shareTree = (result: CatalogResult): CatalogResult => {
 export const getCatalog = cache(
   async (locale: string, queryKey: string, options: OperationOptions = {}) => {
     const revision = await catalogRevision(options);
-    if (revision === undefined) return await readCatalog(locale, queryKey, options);
+    if (revision === null) {
+      return await readCatalog(locale, queryKey, options);
+    }
     return await sharedRead(
       `catalog:${locale}:${queryKey}`,
       CATALOG_TTL_MS,

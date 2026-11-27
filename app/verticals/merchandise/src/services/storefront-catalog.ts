@@ -42,7 +42,18 @@ export const toStorefrontProduct = (record: ProductRecord, fields: 'card' | 'ful
     priceHistory: [],
   };
   if (record.variantRecords !== undefined) {
-    Object.assign(full, { variantRecords: record.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })) });
+    // A variant linked through Symmy names its main Catalog variant, so the storefront can price it for its customer.
+    const catalogVariants = new Map(
+      (record.variants ?? []).flatMap((raw) =>
+        raw.catalogVariantId === undefined ? [] : [[raw.id, raw.catalogVariantId] as const],
+      ),
+    );
+    Object.assign(full, {
+      variantRecords: record.variantRecords.map((variant) => {
+        const catalogVariantId = catalogVariants.get(variant.id);
+        return { ...variant, priceHistory: [], ...(catalogVariantId === undefined ? {} : { catalogVariantId }) };
+      }),
+    });
   }
   if (fields === 'full') {
     return full;

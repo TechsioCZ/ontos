@@ -71,6 +71,13 @@ import { SymmyGroupCustomersBatchRequestSchema } from './group-customers-batch-r
 import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract.ts';
 import { SymmyCustomerGroupsBatchResponseSchema } from './customer-groups-batch-public-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
+import {
+  copySymmyJobOnCompleted,
+  copySymmyProductsOnCommit,
+  copySymmyStockToMerchandise,
+  scheduleSymmyMerchandiseCopy,
+  symmyProductBatchCodes,
+} from './merchandise-copy.ts';
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
@@ -236,6 +243,8 @@ export interface SymmyIngressAdmission {
   readonly apiBaseUrl: string;
   readonly assertion: Redacted.Redacted;
   readonly compositionRevision: string;
+  /** Runtime-owned secure request identifiers retained by background copies after this admission. */
+  readonly newRequestIdentifier?: Effect.Effect<string, typeof symmyUnavailableProblem>;
 }
 
 export interface SymmyOwnerAssertion {
@@ -605,19 +614,24 @@ const projectItems = <Items extends readonly SymmyItemOutcome[]>(items: Items) =
   }))(items);
 
 const validateCustomersBody = Schema.decodeUnknownEffect(Schema.toType(SymmyCustomersResponseSchema));
+/** Below the Node host's 30 s HTTP budget (SHELL_HTTP_BUDGET), which would answer a bare 500 instead. */
+const SYMMY_CUSTOMERS_READ_DEADLINE = '25 seconds';
 /** The customers read answers only the public body. Anything but a customers projection is unavailable, never an empty list. */
 const handleCustomersRead = handle(SymmyCustomersResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
-  ingress.dispatch
-    .read(input)
-    .pipe(
-      Effect.flatMap((result) =>
-        'projection' in result && result.projection === 'customers'
-          ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
-              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
-            )
-          : Effect.fail(symmyUnavailableProblem),
-      ),
+  ingress.dispatch.read(input).pipe(
+    // A page that outlives its deadline answers the retryable 503 problem, never the host's bare 500 at 30 s.
+    Effect.timeoutOrElse({
+      duration: SYMMY_CUSTOMERS_READ_DEADLINE,
+      orElse: () => Effect.fail(symmyUnavailableProblem),
+    }),
+    Effect.flatMap((result) =>
+      'projection' in result && result.projection === 'customers'
+        ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
+            Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
+          )
+        : Effect.fail(symmyUnavailableProblem),
     ),
+  ),
 );
 const validateProductsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyProductsResponseSchema));
 /** The products read answers only the public body. Anything but a products projection is unavailable, never an empty list. */
@@ -635,6 +649,8 @@ const handleProductsRead = handle(SymmyProductsSuccessSchema, (ingress, input: F
       Effect.map((body) =>
         input.request.fields === undefined ? body : selectSymmyProductFields(body, input.request.fields),
       ),
+      // A products read also refreshes the merchandise copy of every Symmy product ("Produkty", shop catalogue).
+      Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
     ),
 );
 const validateRegionsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsResponseSchema));
@@ -657,15 +673,14 @@ const handleRegionsRead = handle(SymmyRegionsSuccessSchema, (ingress, input: Fix
 );
 /** The price lists read answers only the public body. Anything but a price list projection is unavailable. */
 const handlePriceListsRead = handle(SymmyPriceListsResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
-  ingress.dispatch
-    .read(input)
-    .pipe(
-      Effect.flatMap((result) =>
-        'projection' in result && result.projection === 'price_lists'
-          ? Effect.succeed(mapSymmyPriceListsProjection(result))
-          : Effect.fail(symmyUnavailableProblem),
-      ),
+  ingress.dispatch.read(input).pipe(
+    Effect.flatMap((result) =>
+      'projection' in result && result.projection === 'price_lists'
+        ? Effect.succeed(mapSymmyPriceListsProjection(result))
+        : Effect.fail(symmyUnavailableProblem),
     ),
+    Effect.tap(() => scheduleSymmyMerchandiseCopy(input.admission)),
+  ),
 );
 /** One result per submitted group, in request order, each carrying the code of the group it answers. */
 const handleGroupApply = handle(SymmyCustomerGroupsBatchResponseSchema, (ingress, input: FixtureInput<GroupApply>) =>
@@ -691,6 +706,14 @@ const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: 
     ? Effect.fail(symmyIdempotencyRequiredProblem)
     : ingress.dispatch.apply(input)
   ).pipe(
+    // Accepted stock reaches "Produkty" and the shop at once: the products of its items are copied with Inventory's
+    // current on-hand.
+    Effect.tap(() =>
+      copySymmyStockToMerchandise(
+        input.admission,
+        input.request.stock.map((row) => String(row.itemKey)),
+      ),
+    ),
     Effect.flatMap((items) =>
       items.length === input.request.stock.length
         ? Effect.succeed({
@@ -705,10 +728,26 @@ const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: 
   ),
 );
 const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: FixtureInput<FixtureSubmit>) =>
-  ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'queued' as const }))),
+  ingress.dispatch.submit(input).pipe(
+    // A products job: its products are copied the moment their owners commit the job's effects, polled or not.
+    Effect.tap((jobId) =>
+      input.request.route === 'productsBatch'
+        ? copySymmyProductsOnCommit(input.admission, String(jobId), symmyProductBatchCodes(input.request.products))
+        : Effect.void,
+    ),
+    Effect.map((jobId) => ({ jobId, status: 'queued' as const })),
+  ),
 );
 const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureInput<FixturePoll>) =>
   ingress.dispatch.poll(input).pipe(
+    // Any job poll refreshes the merchandise copy of every product from the owners' accepted state (the full sweep,
+    // the safety net of the targeted copies; coalesced, one run at a time); a completed products job whose products no
+    // copy read since it settled is copied at once.
+    Effect.tap((state) =>
+      scheduleSymmyMerchandiseCopy(input.admission).pipe(
+        Effect.andThen(state.phase === 'completed' ? copySymmyJobOnCompleted(input.request.id) : Effect.void),
+      ),
+    ),
     Effect.map((state) => {
       const jobId = input.request.id;
       if (state.phase === 'admitted' || state.phase === 'running' || state.phase === 'blocked') {

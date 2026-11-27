@@ -666,12 +666,37 @@ export const catalogPersistenceForScope = (
     if (existing.revision !== input.expectedRevision && !adoptingSourceActivation) {
       return { _tag: 'revision_conflict' as const, actualRevision: existing.revision };
     }
+    // The source that imported a Product may retire it, exactly as a retirement does, and may say so again.
+    // Everyone else retires a Product only through RetireProduct.
+    const sourceRetirement =
+      sourceMatches &&
+      input.targetLifecycle === 'RETIRED' &&
+      input.activateVariantId === undefined &&
+      input.name === undefined &&
+      input.description === undefined;
     if (existing.lifecycle === 'RETIRED') {
-      return { _tag: 'lifecycle_conflict' as const, product: existing };
+      return sourceRetirement
+        ? { _tag: 'updated' as const, changed: false, product: existing }
+        : { _tag: 'lifecycle_conflict' as const, product: existing };
     }
     const lifecycle = input.targetLifecycle ?? existing.lifecycle;
     if (lifecycle === 'RETIRED') {
-      return { _tag: 'lifecycle_conflict' as const, product: existing };
+      if (!sourceRetirement) {
+        return { _tag: 'lifecycle_conflict' as const, product: existing };
+      }
+      const retired = yield* retire({
+        actionInvocationId: input.actionInvocationId,
+        effectiveAt: DateTime.toDateUtc(yield* DateTime.now),
+        expectedRevision: input.expectedRevision,
+        principalId: input.principalId,
+        productId: input.productId,
+        reason: input.reason,
+        tenantId,
+      });
+      if (retired._tag === 'retired' || retired._tag === 'already_retired') {
+        return { _tag: 'updated' as const, changed: retired._tag === 'retired', product: retired.product };
+      }
+      return retired;
     }
     const activatingVariant =
       input.activateVariantId === undefined

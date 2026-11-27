@@ -91,11 +91,17 @@ export const handleUpdateProduct = Effect.fn('UpdateProductAction.execute')(func
       result,
     );
     // This Action supplies no descriptive fields to persistence, so a changed ACTIVE target
-    // is exactly a DRAFT -> ACTIVE transition, not a cosmetic update of an active Product.
-    if (payload.targetLifecycle === 'ACTIVE' && result.product.lifecycle === 'ACTIVE') {
+    // is exactly a DRAFT -> ACTIVE transition, not a cosmetic update of an active Product,
+    // and a changed RETIRED target is the importing source retiring its Product.
+    const transition =
+      payload.targetLifecycle === 'ACTIVE' && result.product.lifecycle === 'ACTIVE'
+        ? ({ changeKind: 'ACTIVATED', lifecycle: 'ACTIVE' } as const)
+        : payload.targetLifecycle === 'RETIRED' && result.product.lifecycle === 'RETIRED'
+          ? ({ changeKind: 'RETIRED', lifecycle: 'RETIRED' } as const)
+          : undefined;
+    if (transition !== undefined) {
       const eventPayload = {
-        changeKind: 'ACTIVATED' as const,
-        lifecycle: 'ACTIVE' as const,
+        ...transition,
         productRef: result.product.productRef,
         revision: result.product.revision,
         tenantId: context.scope.tenantId,

@@ -12,6 +12,7 @@ import { readRecords } from "./gateway";
 import { freshRead } from "./fresh-read";
 import { MERCHANDISE_OWNERS } from "./live-changes";
 import { renewSharedReads, sharedRead } from "./shared-read";
+import { withCustomerPrices } from "./customer-prices";
 import {
   projectCategories,
   projectProducts,
@@ -62,6 +63,10 @@ const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 // Public catalogue reads are equal for every shopper of a market: shared across requests, served stale while refreshing.
 const CATALOG_TTL_MS = 15_000;
 
+// Operations of a page render (a server component that passed no operation of its own, so its reads share the render's
+// one). Route handlers (search, cart, orders) pass their own operation and are never one.
+const pageRenders = new WeakSet<Operation>();
+
 const catalogWork = async <A>(
   options: OperationOptions,
   work: (operation: Operation) => Promise<A>,
@@ -77,6 +82,8 @@ const catalogWork = async <A>(
         }),
       )
     : base;
+  if (pageRenders.has(base) || (options.operation === undefined && !standalone))
+    pageRenders.add(operation);
   try {
     return await Effect.runPromise(
       operation.run(Effect.tryPromise({ try: () => work(operation), catch: (cause) => cause })),
@@ -122,15 +129,18 @@ const marketIdOf = async (operation: Operation) =>
 // intervalMs), and a newer revision reads the answers visitors used lately again in the background (renewSharedReads,
 // one pass at a time, writes during a pass folded into one more pass), so an admin save shows on the first visit about
 // a second after it.
-// A visit never waits for a revision read that is not young, nor for the first product or tree read of a new revision:
-// it takes the newest answer (up to 10 minutes old) while that read goes on, so a slow owner (stage: 1-5 s per read
-// under order traffic) never holds a page or search.
+// A search or another route handler never waits for a revision read that is not young, nor for the first product read
+// of a new revision: it takes the newest answer (up to 10 minutes old) while that read goes on, so a slow owner (stage:
+// 1-5 s per read under order traffic) never holds a search. A page render waits up to PAGE_WAIT_MS for both, so the
+// first page visit after a save (an ERP price or stock import, an admin edit) already shows it while the owner answers
+// in time; the navigation tree never waits.
 const OWNER_WAIT_MS = 0;
+const PAGE_WAIT_MS = 2_000;
+const waitMsOf = (operation: Operation) => (pageRenders.has(operation) ? PAGE_WAIT_MS : OWNER_WAIT_MS);
 const REVISION_TIMING = {
   maxAgeMs: 1_500,
   intervalMs: 500,
   keepAliveMs: 10 * 60_000,
-  waitMs: OWNER_WAIT_MS,
   owners: MERCHANDISE_OWNERS,
 };
 
@@ -155,7 +165,12 @@ const revisions = new WeakMap<Operation, Promise<number>>();
 const catalogRevision = (operation: Operation): Promise<number> => {
   const held = revisions.get(operation);
   if (held !== undefined) return held;
-  const revision = freshRead("catalog:revision", REVISION_TIMING, loadRevision, operation);
+  const revision = freshRead(
+    "catalog:revision",
+    { ...REVISION_TIMING, waitMs: waitMsOf(operation) },
+    loadRevision,
+    operation,
+  );
   revisions.set(operation, revision);
   return revision;
 };
@@ -179,14 +194,21 @@ const loadProducts = (key: string, operation: Operation) => async () => {
 };
 
 /**
+ * `charged`: the read prices what a cart quote or an order charges (see `withCustomerPrices`). `shared`: the shared
+ * answer only, for a caller that lays the customer's prices over it itself (`withCustomerPrices`).
+ */
+type ProductReadOptions = OperationOptions & { charged?: boolean; shared?: boolean };
+
+/**
  * One bounded product read without the category tree. Equal reads share only the current render.
- * `fresh` bypasses even that memoization for carts/quotes/orders.
+ * `fresh` bypasses even that memoization for carts/quotes/orders. The signed-in customer's own group prices are laid
+ * over the (shared) answer for this request only.
  */
 export async function readProducts(
   query: CatalogQuery,
   fields: CatalogFields,
   fresh = false,
-  options: OperationOptions = {},
+  { charged = false, shared = false, ...options }: ProductReadOptions = {},
 ): Promise<ProductPage> {
   return catalogWork(options, async (operation) => {
     // A fresh read needs no revision: it is the owner's current state.
@@ -195,20 +217,22 @@ export async function readProducts(
       fresh ? undefined : catalogRevision(operation),
     ]);
     const key = productKey(marketId, query, fields);
-    if (fresh) return await loadProducts(key, operation)();
-    return await sharedRead(
-      `products:${key}`,
-      CATALOG_TTL_MS,
-      (detached) => loadProducts(key, detached)(),
-      { stale: true, caller: operation, generation: revision, waitMs: OWNER_WAIT_MS },
-    );
+    const page = fresh
+      ? await loadProducts(key, operation)()
+      : await sharedRead(
+          `products:${key}`,
+          CATALOG_TTL_MS,
+          (detached) => loadProducts(key, detached)(),
+          { stale: true, caller: operation, generation: revision, waitMs: waitMsOf(operation) },
+        );
+    return shared ? page : await withCustomerPrices(page, operation, charged);
   });
 }
 
 /** Fresh full records of the cart's products, each carrying only the cart's variants (cart quote). */
 export async function readCartProducts(
   lines: readonly { productId: string; variantId?: string }[],
-  options: OperationOptions = {},
+  options: ProductReadOptions = {},
 ): Promise<ProductPage> {
   const productIds = [...new Set(lines.map((line) => line.productId))];
   const variantIds = [...new Set(lines.flatMap((line) => line.variantId ?? []))];
@@ -264,7 +288,7 @@ const cachedCategoryPage = cache(
       `catpage:${marketId ?? ""}:${categorySlug}`,
       CATALOG_TTL_MS,
       (detached) => loadCategoryPage(marketId, categorySlug, detached)(),
-      { stale: true, caller: operation, generation: revision, waitMs: OWNER_WAIT_MS },
+      { stale: true, caller: operation, generation: revision, waitMs: waitMsOf(operation) },
     );
   },
 );
@@ -327,7 +351,7 @@ export async function getCategoryListing(
 ): Promise<ProductPage> {
   return catalogWork(options, async (operation) =>
     query.categorySlug !== undefined && isFirstCategoryPage(query)
-      ? (await cachedCategoryPage(operation, query.categorySlug)).page
+      ? await withCustomerPrices((await cachedCategoryPage(operation, query.categorySlug)).page, operation)
       : await readProducts(query, "card", false, { operation }),
   );
 }

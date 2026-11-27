@@ -1234,6 +1234,29 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
           schemaVersion: '1',
         },
       },
+      // A source-sync page proves every customer at once: one Party admission set, then one Privacy decision set.
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-admissions',
+        provider: {
+          entrypointKey: 'party.registry.api.source-admission-set',
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-privacy-set',
+        provider: {
+          entrypointKey: 'privacy.core.api.source-processing-eligibility-set',
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
       {
         condition: currentSourceProcessingCondition,
         entrypointKey: customerProfileSourcePageEntrypoint,

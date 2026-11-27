@@ -27,7 +27,7 @@ const ProductLayout = async ({
       notFound();
     }
   }
-  return children;
+  return await children;
 };
 
 export default ProductLayout;

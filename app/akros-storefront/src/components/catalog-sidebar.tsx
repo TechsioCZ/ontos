@@ -8,8 +8,6 @@ import StoreLink from "@/components/store-link";
 import { useBrand } from "@/brand/brand-context";
 import { useDictionary } from "@/ontos/market-context";
 import type { CatalogCategory } from "@/ontos/catalog-types";
-import { useErpCatalogue } from "@/ontos/erp-catalogue-context";
-import { erpCopy } from "@/lib/erp-catalogue";
 
 interface CategoryNavigationItemProps {
   activeIds: ReadonlySet<string>;
@@ -205,7 +203,6 @@ export function CatalogNavigation({
 
 export function CatalogHelpNavigation() {
   const cs = useDictionary();
-  const erp = useErpCatalogue();
   return (
     <VerticalNavigation
       aria-label={cs.catalog.recommendations}
@@ -222,14 +219,6 @@ export function CatalogHelpNavigation() {
         >
           {cs.catalog.firstSteps}
         </StoreLink>
-        {erp && (
-          <StoreLink
-            className="flex min-h-(--dimension-44) items-center self-start text-xs font-normal underline"
-            href="/novinky-z-erp"
-          >
-            {erpCopy.title}
-          </StoreLink>
-        )}
       </VerticalNavigation.Group>
     </VerticalNavigation>
   );

@@ -4,13 +4,15 @@ import type { IncomingHttpHeaders } from "node:http";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   applyLiveFrame,
-  ERP_OWNERS,
   followLiveChanges,
   isCurrent,
   liveConnected,
   MERCHANDISE_OWNERS,
   resetLiveChanges,
 } from "@/ontos/live-changes";
+
+/** Any second owner group of the stream (the main Catalog, Pricing and Inventory). */
+const ERP_OWNERS = ["catalog", "pricing", "inventory"] as const;
 
 beforeEach(() => resetLiveChanges());
 afterEach(() => vi.unstubAllEnvs());

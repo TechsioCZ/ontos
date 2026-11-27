@@ -161,6 +161,11 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
   Schema.TaggedStruct('ProductCreated', {
     actionInvocationId: ProductActionInvocationIdSchema,
     initialVariantRef: VariantRefSchema,
+    /**
+     * Set when the create settled on a Product Catalog already holds past its draft (a re-import): its readiness has
+     * nothing to prepare. Absent for a draft, which readiness prepares from the original revisions.
+     */
+    lifecycle: Schema.optionalKey(Schema.Literals(['ACTIVE', 'RETIRED'])),
     productRef: ProductRefSchema,
     productRevision: Schema.optionalKey(ProductRevisionSchema),
     variantRevision: Schema.optionalKey(ProductRevisionSchema),

@@ -1,36 +1,54 @@
 // „Na e-shopu: ano/ne“ of a product, from the facts the storefront read itself filters on (staff reads attach them).
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { StorefrontVisibilityStatus } from '../../../../../shared/domain/storefront-visibility.ts';
 import { storefrontVisibilityStatus } from '../../../../../shared/domain/storefront-visibility.ts';
 
-/** List cell: the answer, the first reason and the storefront link. Nothing for a company without an e-shop. */
+/** The label of the storefront badge in the detail: it never contradicts the link next to it. */
+const storefrontBadgeLabel = (status: StorefrontVisibilityStatus) => {
+  if (status.visible) {
+    return 'Na e-shopu: ano';
+  }
+  return status.pageOpens ? 'Jen přímým odkazem' : 'Na e-shopu: ne';
+};
+
+/** The grey line under the product name in the list: what hides the product, from the same status; nothing when fully visible. */
+export const storefrontListNote = (product: ProductRecord): string | null => {
+  const facts = product.storefrontVisibility;
+  if (facts === undefined) {
+    return null;
+  }
+  const status = storefrontVisibilityStatus(facts);
+  if (status.visible) {
+    return null;
+  }
+  return status.pageOpens ? 'jen přímým odkazem, není ve výpisech' : 'skryto v e-shopu';
+};
+
+/** List cell: one icon-only link to the product page on the shop, nothing when the page does not open. */
 export const StorefrontStatusCell = ({ product }: { readonly product: ProductRecord }) => {
   const facts = product.storefrontVisibility;
   if (facts === undefined) {
     return null;
   }
   const status = storefrontVisibilityStatus(facts);
-  const [first] = status.reasons;
   return (
-    <span
-      className="flex min-w-0 flex-col gap-50"
-      data-storefront-status={status.visible ? 'visible' : 'hidden'}
-      title={status.reasons.map((reason) => `${reason.why} ${reason.fix}`).join('\n')}
-    >
-      <span className="flex items-center gap-100">
-        <Badge severity={status.visible ? 'success' : 'warning'} size="sm">
-          {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
-        </Badge>
-        {status.pageOpens && facts.href !== undefined && (
-          <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-            <Link external href={facts.href} target="_blank">
-              Otevřít
-            </Link>
-          </span>
-        )}
-      </span>
-      {first !== undefined && <span className="truncate text-fg-secondary text-xs">{first.why}</span>}
+    <span className="flex justify-center" data-storefront-status={status.visible ? 'visible' : 'hidden'}>
+      {status.pageOpens && facts.href !== undefined && (
+        <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <Link
+            aria-label="Otevřít v e-shopu"
+            className="inline-flex items-center"
+            external
+            href={facts.href}
+            title="Otevřít v e-shopu"
+          >
+            <Icon aria-hidden="true" icon="icon-[mdi--open-in-new]" size="sm" />
+          </Link>
+        </span>
+      )}
     </span>
   );
 };
@@ -49,7 +67,7 @@ export const StorefrontStatusPanel = ({ product }: { readonly product: ProductRe
     >
       <div className="flex flex-wrap items-center gap-150">
         <Badge severity={status.visible ? 'success' : 'warning'} size="sm">
-          {status.visible ? 'Na e-shopu: ano' : 'Na e-shopu: ne'}
+          {storefrontBadgeLabel(status)}
         </Badge>
         <span className="text-sm">
           {status.visible

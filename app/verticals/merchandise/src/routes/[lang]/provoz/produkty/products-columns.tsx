@@ -9,7 +9,8 @@ import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
-import { StorefrontStatusCell } from './storefront-status.tsx';
+import { StorefrontStatusCell, storefrontListNote } from './storefront-status.tsx';
+import { ErpCodeLine, SymmyImportedBadge, isSymmyImported } from './symmy-provenance.tsx';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
 const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
@@ -48,7 +49,12 @@ const variantNoun = (count: number) => {
 export const productColumns = (label: (path: string) => string, tagsOf: TagsOf): ColumnDef<ProductRecord>[] => [
   {
     accessorKey: 'sku',
-    cell: (info) => <span className="whitespace-nowrap">{info.getValue<string>()}</span>,
+    cell: (info) => (
+      <span className="flex min-w-0 flex-col">
+        <span className="whitespace-nowrap">{info.getValue<string>()}</span>
+        <ErpCodeLine product={info.row.original} />
+      </span>
+    ),
     header: label('columns.sku'),
     meta: { type: 'string', width: 120 },
   },
@@ -59,14 +65,15 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       const [image] = product.images ?? [];
       const variants = product.variantCount ?? 0;
       const variantsLabel = variants > 0 ? `${formatNumber(variants)} ${variantNoun(variants)}` : null;
+      const note = storefrontListNote(product);
       return (
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && <ProductThumbnail image={image} productId={product.id} />}
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{product.name}</span>
-            {(variants > 0 || product.published === false) && (
+            {(variants > 0 || note !== null) && (
               <span className="truncate text-fg-secondary text-xs">
-                {[variantsLabel, product.published === false ? 'skryto v e-shopu' : null]
+                {[variantsLabel, note]
                   .filter((part) => part !== null)
                   .join(' · ')}
               </span>
@@ -83,9 +90,9 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
     cell: (info) => <StorefrontStatusCell product={info.row.original} />,
     enableSorting: false,
-    header: 'Na e-shopu',
+    header: 'E-shop',
     id: 'storefront',
-    meta: { type: 'string', width: 200 },
+    meta: { align: 'center', type: 'string', width: 72 },
   },
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
@@ -108,17 +115,17 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
   {
     accessorKey: 'stockOnHand',
     cell: (info) => (
-      <span className="flex items-center justify-end gap-100 tabular-nums">
-        {formatNumber(info.getValue<number>())}
+      <span className="flex items-center justify-end gap-100 whitespace-nowrap">
         {info.row.original.lowStock && (
           <Badge severity="warning" size="sm">
             {label('status.lowStock')}
           </Badge>
         )}
+        <span className="tabular-nums">{formatNumber(info.getValue<number>())}</span>
       </span>
     ),
     header: label('columns.onHand'),
-    meta: { align: 'end', type: 'number', width: 140 },
+    meta: { align: 'end', type: 'number', width: 180 },
   },
   {
     accessorFn: (product) => product.availability ?? 'UNKNOWN',
@@ -133,16 +140,21 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     header: label('columns.stockValue'),
     meta: { align: 'end', type: 'number', width: 140 },
   },
-  // A role that may not read tags (`tagsOf` is `null`) gets no Štítky column.
-  ...(tagsOf === null
-    ? []
-    : [
-        {
-          cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
-          enableSorting: false,
-          header: label('columns.tags'),
-          id: 'tags',
-          meta: { width: 150 },
-        } satisfies ColumnDef<ProductRecord>,
-      ]),
+  // Always present: a Symmy mark shows here even for a role that may not read tags (`tagsOf` is `null`).
+  {
+    cell: (info) => {
+      const product = info.row.original;
+      return (
+        <TagsCell
+          lead={<SymmyImportedBadge product={product} />}
+          maxChips={isSymmyImported(product) ? 1 : 2}
+          tags={tagsOf === null ? [] : tagsOf(product.id)}
+        />
+      );
+    },
+    enableSorting: false,
+    header: label('columns.tags'),
+    id: 'tags',
+    meta: { width: 280 },
+  },
 ];

@@ -298,6 +298,7 @@ import {
 import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from './auth/gateway-payment-route-scope.ts';
 import { SymmyGovernedDispatch, SymmyGovernedDispatchLive } from './symmy/governed-dispatch.ts';
 import { symmyOwnerReleaseFetchLive } from './symmy/owner-release-transport.ts';
+import { SymmyMerchandiseCopyLive } from './symmy/merchandise-copy.ts';
 
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
@@ -3054,6 +3055,7 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const admission = yield* acquireSymmyOwnerAssertion(rawKey, { audience: 'symmy-integration' });
+  const random = yield* Crypto.Crypto;
   const context =
     yield* Effect.context<
       Effect.Services<ReturnType<typeof acquireSymmyOwnerAssertion> | ReturnType<typeof acquireSymmyIngressRouteProof>>
@@ -3102,6 +3104,9 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
       acquireOwner(input).pipe(Effect.provide(context)),
     acquireRouteAssertion: (input: typeof SymmyRouteContextRequestSchema.Encoded) =>
       acquireRoute(input).pipe(Effect.provide(context)),
+    newRequestIdentifier: random
+      .randomUUIDv4()
+      .pipe(Effect.catchTag('PlatformError', () => Effect.fail(symmyUnavailableProblem))),
   };
 });
 
@@ -5506,6 +5511,8 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
+    // Symmy imports reach "Produkty" the moment their owners commit (the change tail held for the process's life).
+    SymmyMerchandiseCopyLive,
     paymentGatewayHandlersLive.pipe(
       Layer.provide(
         Layer.mergeAll(

@@ -37,3 +37,15 @@ export const lockTenantIdentityWrites = (transaction: Pick<PartyTransaction, 'se
     })
     .from(sql`(values (1)) as party_identity_lock_anchor(value)`)
     .pipe(Effect.mapError(unavailable), Effect.asVoid);
+
+/**
+ * The read side of the same tenant lock: a read-only proof waits for an identity write in progress, and a write
+ * waits for it, but reads never wait for each other. A page of source admissions otherwise runs one at a time.
+ */
+export const lockTenantIdentityReads = (transaction: Pick<PartyTransaction, 'select'>, tenantId: string) =>
+  transaction
+    .select({
+      lock: sql`pg_advisory_xact_lock_shared(hashtextextended(${tenantIdentityWriteLockKey(tenantId)}, 0))`,
+    })
+    .from(sql`(values (1)) as party_identity_lock_anchor(value)`)
+    .pipe(Effect.mapError(unavailable), Effect.asVoid);

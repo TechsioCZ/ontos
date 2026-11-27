@@ -2467,6 +2467,58 @@ describe('Symmy commands on the Product the same job creates', () => {
     }),
   );
 
+  it.effect('resolves a retirement at the current Product revision with the source that imported it', () => {
+    const retirement = dependentEffect(
+      {
+        _tag: 'UpdateProduct',
+        payload: { expectedRevision: 1, reason: 'Symmy product import', targetLifecycle: 'RETIRED' },
+      },
+      updateOperation,
+    );
+    const h = harness(
+      false,
+      retirement,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      {
+        action: 'catalog-source-products',
+        response: {
+          items: [
+            {
+              entityKind: 'PRODUCT',
+              originalActionInvocationId: invocationId,
+              product: { ...result.product, lifecycle: 'ACTIVE', revision: 4 },
+              source: Struct.omit(sourceCorrelation, ['sourceOccurrenceId']),
+              variantId,
+              variantSources: [],
+            },
+          ],
+          outcome: 'FOUND',
+        },
+      },
+    );
+    return h.provide(
+      Effect.gen(function* resolvesRetirement() {
+        const adapter = yield* h.adapter;
+        yield* Effect.exit(adapter.execute({ ...h.input, dependencies: [parentState] }));
+        const { payload, tag } = resolvedIntentOf(h.resolvedEffects[0]);
+        expect(tag).toBe('CatalogUpdateProduct');
+        expect(payload).toMatchObject({
+          expectedRevision: 4,
+          productRef,
+          sourceProduct: { name: 'Internal Product', sourceCorrelation },
+          targetLifecycle: 'RETIRED',
+        });
+      }),
+    );
+  });
+
   it.effect('resolves a localized text to the initial Variant of the receipt, or to the further Variant it names', () =>
     Effect.gen(function* resolvesFacts() {
       const initial = yield* resolutionOf(factsEffectOf(), [parentState]);
@@ -3519,6 +3571,150 @@ describe('Symmy Product readiness', () => {
             expect(h.events).not.toContain('owner-readiness');
           }),
         );
+      }
+    }),
+  );
+
+  /** The Catalog source lookup answering the Product as Catalog holds it now, past its draft. */
+  const currentProductWire = (lifecycle: 'ACTIVE' | 'RETIRED', revision: number) => ({
+    action: 'catalog-source-products',
+    response: {
+      items: [
+        {
+          entityKind: 'PRODUCT',
+          originalActionInvocationId: invocationId,
+          product: {
+            ...result.product,
+            catalogReady: lifecycle === 'ACTIVE',
+            lifecycle,
+            revision,
+            variants: result.product.variants.map((variant) => ({ ...variant, lifecycle: 'ACTIVE' })),
+          },
+          source: Struct.omit(sourceCorrelation, ['sourceOccurrenceId']),
+          variantId,
+          variantSources: [],
+        },
+      ],
+      outcome: 'FOUND',
+    },
+  });
+  const replayedCreate = (current?: ReturnType<typeof currentProductWire>) =>
+    harness(
+      false,
+      effect,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      current,
+    );
+  const newCoreId = '10000000-0000-4000-8000-000000000045';
+
+  it.effect(
+    'settles the re-import of a Product that is already ACTIVE or RETIRED as a duplicate of its lifecycle',
+    () =>
+      Effect.gen(function* reimport() {
+        for (const lifecycle of ['ACTIVE', 'RETIRED'] as const) {
+          // The stored create result predates readiness: it carries no initialVariantRevision.
+          const h = replayedCreate(currentProductWire(lifecycle, 3));
+          yield* h.provide(
+            Effect.gen(function* test() {
+              const adapter = yield* h.adapter;
+              const outcome = yield* adapter.execute({
+                ...h.input,
+                acceptedPlan: readinessCreatePlan(),
+                readOriginalActionInvocation: () =>
+                  Effect.succeed(Option.some({ actionInvocationId: newCoreId, status: 'succeeded' })),
+              });
+              expect(outcome.status).toBe('duplicate');
+              expect(h.receipts).toEqual([
+                {
+                  _tag: 'ProductCreated',
+                  actionInvocationId: invocationId,
+                  initialVariantRef: variantRef,
+                  lifecycle,
+                  productRef,
+                },
+              ]);
+            }),
+          );
+        }
+      }),
+  );
+
+  it.effect('keeps the re-import of a legacy draft without original revisions unresolved', () => {
+    const h = replayedCreate();
+    return h.provide(
+      Effect.gen(function* legacyDraft() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({
+          ...h.input,
+          acceptedPlan: readinessCreatePlan(),
+          readOriginalActionInvocation: () =>
+            Effect.succeed(Option.some({ actionInvocationId: newCoreId, status: 'succeeded' })),
+        });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.receipts).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect('settles every readiness step of an ACTIVE Product unchanged without an owner call', () =>
+    Effect.gen(function* activeReadiness() {
+      const steps = [
+        ['AXES', 'govern-variant-axes'],
+        ['CONFIRM', 'confirm-variant-combination'],
+        ['NAME', 'set-product-localized-facts'],
+        ['ACTIVATE', 'update-product'],
+        ['UNIT', 'set-product-unit-target-divisibility'],
+        ['UNTYPED', 'decide-product-type-unnecessary'],
+      ] as const;
+      for (const lifecycle of ['ACTIVE', 'RETIRED'] as const) {
+        const parent = readinessState(productParent.effectKey, {
+          _tag: 'ProductCreated',
+          actionInvocationId: invocationId,
+          initialVariantRef: variantRef,
+          lifecycle,
+          productRef,
+        });
+        for (const [step, action] of steps) {
+          const operation = {
+            entrypointKey: `commerce.catalog.${action}`,
+            moduleId: 'commerce.catalog',
+            schemaVersion: '1',
+          };
+          const original = dependentEffect(
+            {
+              _tag: 'CatalogReadiness',
+              divisible: false,
+              evidenceRefs: ['symmy-product:source'],
+              kind: 'AXIS_FREE_UNTYPED',
+              locale: 'cs-CZ',
+              name: 'Real source name',
+              step,
+              unitRef,
+            },
+            operation,
+          );
+          const h = harness(false, original);
+          yield* h.provide(
+            Effect.gen(function* test() {
+              const adapter = yield* h.adapter;
+              const outcome = yield* adapter.execute({ ...h.input, dependencies: [parent] });
+              // Only the activation of a retired Product differs: an update never brings it back.
+              expect(outcome.status).toBe(
+                lifecycle === 'RETIRED' && step === 'ACTIVATE' ? 'conflict' : 'accepted_no_change',
+              );
+              expect(h.requests).toEqual([]);
+              expect(h.receipts).toEqual([]);
+              expect(h.resolvedEffects).toEqual([]);
+            }),
+          );
+        }
       }
     }),
   );

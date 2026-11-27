@@ -8,10 +8,13 @@ import { RequiredLabelProvider } from "@/features/form-controls";
 import { getCartScope } from "@/ontos/cart-quote-server";
 import { storefrontRuntime } from "@/ontos/runtime";
 import { withOwnerOperation } from "@/ontos/owner-operation";
-import { sharedRead } from "@/ontos/shared-read";
+import { createSharedRead } from "@/ontos/shared-read";
 import { Effect } from "effect";
 
 export const dynamic = "force-dynamic";
+
+type CartScope = Effect.Success<ReturnType<typeof getCartScope>>;
+const sharedRead = createSharedRead<CartScope | null>();
 
 const LocaleLayout = async ({
   children,

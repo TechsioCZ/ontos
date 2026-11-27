@@ -28,7 +28,7 @@ export interface CategorySearchComboboxProps {
   /** An extra first option that picks no category (the list filter's „all categories“). */
   readonly allLabel?: string;
   readonly errorMessage: string;
-  /** A field message (a form's validation) shown under the field instead of the „more matches“ hint. */
+  /** A field message (a form's validation) shown under the field. The „more matches“ hint sits inside the list. */
   readonly helpText?: string;
   /** The label is for assistive tech only (filter rows whose controls carry no visible label). */
   readonly hiddenLabel?: boolean;
@@ -131,7 +131,7 @@ export const CategorySearchCombobox = ({
 
   const { failed, found, loading, total } = searchView(answer, request, open);
   const items = categoryItems(allLabel, selected, found);
-  const hint = helpText ?? (total > found.length ? moreMessage(found.length, total) : undefined);
+  const hint = total > found.length ? moreMessage(found.length, total) : undefined;
 
   return (
     <>
@@ -145,7 +145,8 @@ export const CategorySearchCombobox = ({
         clearable={false}
         error={failed ? errorMessage : undefined}
         filterBehavior="external"
-        {...(hint === undefined ? {} : { helpText: hint })}
+        {...(helpText === undefined ? {} : { helpText })}
+        {...(hint === undefined ? {} : { footer: <span className="text-fg-secondary text-xs">{hint}</span> })}
         id={id}
         items={items}
         {...(hiddenLabel ? {} : { label })}

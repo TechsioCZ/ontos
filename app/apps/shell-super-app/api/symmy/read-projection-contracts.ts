@@ -70,6 +70,7 @@ export const SymmyInternalProductsProjectionSchema = Schema.Struct({
           id: SymmyQualifiedReadIdSchema,
           source_record_id: CatalogSourceCorrelationSchema.fields.recordId,
           variantId: ProductUuidSchema,
+          localizedNames: Schema.optionalKey(Schema.Array(Schema.Struct({ locale: Schema.String, name: Schema.String }))),
         }),
       ),
     }),

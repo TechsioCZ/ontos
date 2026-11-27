@@ -111,6 +111,20 @@ describe('Symmy API documentation', () => {
     expect(JSON.stringify(spec.paths['/api/symmy/v1/catalog/revision']?.get?.responses)).toContain('revision');
   });
 
+  it('tells a sender what a product lifecycle does, also when it is sent on every sync', () => {
+    const { description } = symmyDocumentedRoutes.productsBatch;
+    for (const text of [
+      '`lifecycle`',
+      'every sync',
+      'hidden draft',
+      'accepted_no_change',
+      'RETIRED',
+      'WORK_IN_PROGRESS',
+    ]) {
+      expect(description).toContain(text);
+    }
+  });
+
   it('distinguishes product owners and describes order reads without promising invoice creation', () => {
     expect(symmyDocumentedRoutes.demoCatalogProducts.description).toContain('not a Catalog');
     expect(symmyDocumentedRoutes.productsBatch.description).toContain('engineered Catalog');

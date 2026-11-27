@@ -128,6 +128,8 @@ export const cs = {
     priceExcludingVat: "Cena bez DPH",
     priceIncludingVat: "Cena s DPH",
     excludingVat: "bez DPH",
+    yourPrice: "Vaše cena",
+    basePrice: "Základní cena",
     noValidPrice: "OntOS pro tuto položku nevrátil platnou cenu.",
     cannotBuyNow: "Koupit ji proto nyní nelze.",
     availabilityCannotConfirm:
@@ -1014,7 +1016,7 @@ export const cs = {
         "Registrace byla dokončena, ale přístup k účtu nyní není povolen. Obnovení registrace neopravňuje přístup.",
       admitted: "Účet je připraven.",
       intro:
-        "Přihlášení samo o sobě nedokončuje registraci. Zde ověříte přijetí účtu a obnovíte rozpracované kroky.",
+        "Registrace se po přihlášení dokončí sama, obvykle během několika sekund. Nakupovat můžete hned. Tady vidíte její stav a můžete ji obnovit, kdyby se zastavila.",
       checking: "Ověřuji…",
       check: "Ověřit stav",
       resume: "Obnovit registraci",

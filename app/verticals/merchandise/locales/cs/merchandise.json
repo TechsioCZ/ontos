@@ -168,6 +168,7 @@
           "demoNotice": "E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.",
           "demoStatusNotice": "Změny stavu neodesílají zásilku ani výzvu k platbě.",
           "unitPriceGross": "Cena/j s DPH",
+          "customerGroupPrice": "Cena cenové skupiny zákazníka: {{price}} bez DPH",
           "unitPriceNet": "Cena/j bez DPH",
           "goodsGross": "Zboží s DPH",
           "shippingGross": "Doprava s DPH",
@@ -259,11 +260,6 @@
         "title": "Nová stránka"
       },
       "products": {
-        "sources": {
-          "label": "Zdroj produktů",
-          "own": "Sortiment",
-          "erp": "Z ERP"
-        },
         "actions": {
           "newProduct": "Nový produkt",
           "receipt": "Příjem zboží"
@@ -323,6 +319,7 @@
           "heldRateExplanation": "Tak produkt prodává i e-shop. Nová cena bez DPH se uloží s cenou s DPH podle této sazby. Jakmile firma potvrdí sazby v modulu Daně, nebo když produktu vyberete jinou sazbu, platí sazba podle výběru výše; uložená cena s DPH se tím nemění.",
           "vatShareOnly": "Cena s DPH zůstává stejná, změní se jen podíl DPH v ní.",
           "variantsExplanation": "Evidenční varianty sdílejí SKU, cenu a sklad produktu.",
+          "variantPriceHint": "Ceny se nastavují u variant na záložce Varianty a ceny.",
           "addVariant": "Přidat variantu",
           "removeVariant": "Odebrat variantu",
           "variantSelected": "Vybraná varianta",
@@ -393,7 +390,7 @@
           "priceNet": "Cena bez DPH (Kč)",
           "priceGross": "Cena s DPH (Kč)",
           "priceGrossPreview": "Cena s DPH po uložení (náhled, Kč)",
-          "priceGrossFromVariants": "Cena s DPH od (nejnižší cena varianty, Kč)",
+          "priceGrossFromVariants": "Cena od (s DPH, nejnižší cena varianty, Kč)",
           "shortDescription": "Krátký popis",
           "description": "Popis",
           "weightGrams": "Hmotnost (g)",
@@ -413,6 +410,7 @@
           "categoryRetry": "Zkusit znovu",
           "categoryMore": "Zobrazeno {{shown}} z {{total}} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.",
           "lowStockOnly": "Jen pod minimem",
+          "symmyOnly": "Jen ze Symmy",
           "archived": "Archivované",
           "search": "Hledat podle názvu nebo SKU…"
         },
@@ -489,6 +487,11 @@
           "openOrders": "Otevřené objednávky",
           "products": "Produkty",
           "stockValue": "Hodnota skladu"
+        },
+        "symmy": {
+          "badge": "Importováno přes Symmy",
+          "erpCode": "Kód v ERP",
+          "writeThrough": "Cenu a sklad tohoto produktu zapisujeme také do ERP."
         },
         "status": {
           "active": "Aktivní",
