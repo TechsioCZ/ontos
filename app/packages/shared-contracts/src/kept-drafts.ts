@@ -10,6 +10,12 @@
 
 const registryKey = Symbol.for('ontos.kept-drafts.registry');
 const restoredKey = Symbol.for('ontos.kept-drafts.restored');
+/**
+ * Set on `globalThis` right before the reload that keeps the drafts. The unsaved-changes guard of `@app/admin-ui`
+ * reads the same symbol and then does not make the browser ask "leave page?": a listener added here at click time
+ * runs after the guards' listeners, so it cannot stop their question.
+ */
+const leavingKey = Symbol.for('ontos.kept-drafts.leaving');
 const storagePrefix = 'ontos:kept-drafts:';
 /** A kept entry older than this belongs to an earlier visit of the page, not to the reload that wrote it. */
 const keptForMillis = 10 * 60 * 1000;
@@ -104,11 +110,6 @@ export const keptDraft = <A>(key: string): A | undefined =>
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The entry was written under this key by the same form before the reload.
   restored().get(key) as A | undefined;
 
-/** The reload the user chose keeps the drafts, so the browser's "leave page?" question of the forms is not asked. */
-const leaveWithoutAsking = (event: Event) => {
-  event.stopImmediatePropagation();
-};
-
 /**
  * "Načíst novou verzi a obnovit úpravy": writes every unsaved draft the forms on screen report to this tab's session
  * storage and reloads the page, which loads the release the Shell serves now. Drafts that cannot be written leave the
@@ -121,10 +122,14 @@ export const reloadKeepingDrafts = (): void => {
       return draft === undefined ? [] : [[key, draft] as const];
     }),
   );
+  const storage = sessionStore();
   try {
-    // @effect-diagnostics-next-line globalDate:off -- A plain browser write right before the reload; no Effect runtime is involved.
-    sessionStore()?.setItem(storageKey(), JSON.stringify({ at: Date.now(), drafts } satisfies KeptEntry));
-    globalThis.addEventListener('beforeunload', leaveWithoutAsking, { capture: true });
+    if (storage !== undefined) {
+      // @effect-diagnostics-next-line globalDate:off -- A plain browser write right before the reload; no Effect runtime is involved.
+      storage.setItem(storageKey(), JSON.stringify({ at: Date.now(), drafts } satisfies KeptEntry));
+      // The reload the user chose keeps the drafts, so the forms' "leave page?" question is not asked.
+      Reflect.set(globalThis, leavingKey, true);
+    }
   } catch {
     // Full or blocked storage: the browser asks before the reload drops what is typed.
   }

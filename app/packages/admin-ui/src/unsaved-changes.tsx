@@ -9,6 +9,9 @@ import { saveLabels } from './save-labels.ts';
 import type { SaveLabels } from './save-labels.ts';
 import { dialogCloseLabel } from './ui-kit-labels.ts';
 
+/** Set by `reloadKeepingDrafts` of `@app/shared-contracts` right before its reload: the drafts survive it. */
+const leavingKeepingDrafts = Symbol.for('ontos.kept-drafts.leaving');
+
 /**
  * A router's blocked navigation, as TanStack's `useBlocker({ withResolver: true })` returns it. The guard asks its
  * question while `status` is `blocked`, then calls `proceed` or `reset`.
@@ -159,10 +162,11 @@ export const useUnsavedChangesGuard = ({
     }
   };
 
-  // Closing or reloading the tab: the browser asks with its own prompt.
+  // Closing or reloading the tab: the browser asks with its own prompt, except for the reload that keeps the drafts
+  // ("Načíst novou verzi a obnovit úpravy", kept-drafts.ts of @app/shared-contracts), which loses nothing.
   useEffect(() => {
     const ask = (event: BeforeUnloadEvent) => {
-      if (dirty) {
+      if (dirty && Reflect.get(globalThis, leavingKeepingDrafts) !== true) {
         event.preventDefault();
       }
     };

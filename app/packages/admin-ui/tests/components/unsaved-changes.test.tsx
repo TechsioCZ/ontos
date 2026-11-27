@@ -299,6 +299,22 @@ describe('useUnsavedChangesGuard', () => {
     }),
   );
 
+  it.effect('does not ask on the reload that keeps the drafts ("Načíst novou verzi a obnovit úpravy")', () =>
+    Effect.gen(function* keptReload() {
+      const test = harness();
+      render(<Form test={test} />);
+      type('Akros CZ');
+      yield* Effect.promise(() => waitFor(() => expect(unloadIsBlocked()).toBe(true)));
+      const leaving = Symbol.for('ontos.kept-drafts.leaving');
+      Reflect.set(globalThis, leaving, true);
+      try {
+        expect(unloadIsBlocked()).toBe(false);
+      } finally {
+        Reflect.deleteProperty(globalThis, leaving);
+      }
+    }),
+  );
+
   it.effect('speaks the app language', () =>
     Effect.gen(function* english() {
       const test = harness();
