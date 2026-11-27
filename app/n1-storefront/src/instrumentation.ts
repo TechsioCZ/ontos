@@ -1,6 +1,9 @@
+import { markLandingAnswered } from "./ontos/readiness";
+
 // Shared public reads are served stale for at most 10 minutes (ontos/shared-read.ts). One request to the landing page
 // every few minutes keeps the cart scope, the category tree and the featured products inside that window, so the first
-// shopper after a deploy or a quiet spell gets a warm answer instead of a chain of blocking owner reads.
+// shopper after a deploy or a quiet spell gets a warm answer instead of a chain of blocking owner reads. A new container
+// takes traffic only once the first visit was answered (src/app/api/ready/route.ts).
 const WARM_EVERY_MS = 4 * 60_000;
 let warming = false;
 const warmLanding = () => {
@@ -15,6 +18,8 @@ const warmLanding = () => {
         signal: AbortSignal.timeout(30_000),
       });
       await response.arrayBuffer();
+      // Any answer: the process has rendered its landing once (an owner outage must not hold a deploy).
+      markLandingAnswered();
       return response.ok;
     } catch {
       return false;

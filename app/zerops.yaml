@@ -53,10 +53,13 @@ zerops:
         - app/.zerops/runtime/akros-storefront
     deploy:
       temporaryShutdown: false
+      # A new container takes traffic once its landing answered the boot warm-up
+      # (akros-storefront/src/app/api/ontos/ready/route.ts), so no shopper meets the cold first render; /robots.txt
+      # answered before the warm-up and let the first visits of a new container pay 1-2 s.
       readinessCheck:
         httpGet:
           port: 3070
-          path: /robots.txt
+          path: /api/ontos/ready
         failureTimeout: 3m
         # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
         retryPeriod: 10s
@@ -102,10 +105,12 @@ zerops:
         - app/.zerops/runtime/n1-storefront
     deploy:
       temporaryShutdown: false
+      # A new container takes traffic once its landing answered the boot warm-up
+      # (n1-storefront/src/app/api/ready/route.ts).
       readinessCheck:
         httpGet:
           port: 3071
-          path: /robots.txt
+          path: /api/ready
         failureTimeout: 3m
         # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
         retryPeriod: 10s
